@@ -1,0 +1,20 @@
+{
+	"name": "@stogas/api",
+	"private": true,
+	"scripts": {
+		"// Build": "",
+		"// Deployment": "",
+		"// Development": "",
+		"// Sync": "",
+		"build": "bun scripts/run-lifecycle.ts build",
+		"check": "bun scripts/run-lifecycle.ts check",
+		"clean": "bun scripts/run-lifecycle.ts clean",
+		"deploy:production": "bun -e \"console.log('apps/api deploy:production placeholder')\"",
+		"deploy:staging": "bun -e \"console.log('apps/api deploy:staging placeholder')\"",
+		"dev": "bun scripts/run-lifecycle.ts dev",
+		"pull:origin": "git pull origin main",
+		"pull:upstream": "git pull upstream main",
+		"preview": "bun scripts/run-lifecycle.ts preview"
+	},
+	"version": "0.0.1"
+}
