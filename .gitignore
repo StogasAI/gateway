@@ -118,3 +118,6 @@ terraform.tfstate.backup
 
 # Bifrost benchmarking
 bifrost-benchmarking.envrc
+
+# Stogas dev secrets
+.envrc
