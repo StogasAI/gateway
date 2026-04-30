@@ -13,9 +13,15 @@ const (
 	stogasRouteResponses stogasRoute = "responses"
 )
 
-// The real catalog will own provider/model resolution, provider-specific extra
-// params, upstream/header exposure, cancellation capabilities, and pricing data.
-// Until that lands, keep the policy intentionally narrow and safe.
+// Catalog owns semantic Stogas policy: provider/model resolution, core vs extra
+// parameter allowlists, and global/per-provider request and response header
+// allowlists between clients, Stogas, and providers.
+//
+// The HTTP layer owns mechanistic enforcement at the transport boundary, such as
+// stripping invalid or dangerous wire-level headers immediately before mutating
+// the response.
+//
+// Until the real catalog lands, keep semantic policy intentionally narrow.
 
 func resolveCatalogModel(provider schemas.ModelProvider, model string) bool {
 	return provider == schemas.OpenAI && strings.TrimSpace(model) != ""

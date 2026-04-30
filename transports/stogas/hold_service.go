@@ -6,21 +6,23 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/hkdf"
 )
 
 const (
-	tokenPepperInfo           = "stogas:token:pepper"
-	placeholderHoldAmountNano = int64(1_000_000_000)
-
+	tokenPepperInfo                 = "stogas:token:pepper"
+	placeholderChargeUsdAtoms       = "4000000000" // 4 nanoUSD at 18-decimal USD atom precision.
 	poolMaxConns              int32 = 32
 	poolMinConns              int32 = 4
 	poolMinIdleConns          int32 = 4
@@ -42,6 +44,7 @@ var (
 	ErrInsufficientBalance = errors.New("Insufficient balance")
 	ErrAPIKeySpendLimit    = errors.New("API key spend limit exceeded")
 	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
+	ErrHoldNotFound        = errors.New("Hold not found")
 )
 
 const authorizeHoldQuery = `
@@ -52,7 +55,7 @@ with input_values as (
     $3::uuid as hold_id,
     $4::text as provider_key,
     $5::text as product_key,
-    $6::bigint as authorized_amount,
+    $6::numeric as authorized_amount,
     $7::timestamptz as expires_at,
     $8::text as params_hash,
     $9::jsonb as estimated_metrics,
@@ -66,7 +69,7 @@ usage_exists as (
 ),
 attempt_insert as (
   insert into holds (
-    id, "userId", "keyId", request_id, status, authorized_amount_nano_usd,
+	    id, "userId", "keyId", request_id, status, authorized_amount_usd_atoms,
     "providerKey", "productKey", "estimatedMetrics", "expiresAt", meta
   )
   select
@@ -94,26 +97,26 @@ target_hold as (
 expired_balance_release as (
   update balance_account b
   set
-    available_nano_usd = b.available_nano_usd + th.authorized_amount_nano_usd,
-    on_hold_nano_usd = b.on_hold_nano_usd - th.authorized_amount_nano_usd,
+    available_usd_atoms = b.available_usd_atoms + th.authorized_amount_usd_atoms,
+    on_hold_usd_atoms = b.on_hold_usd_atoms - th.authorized_amount_usd_atoms,
     "updatedAt" = (select now_ts from input_values)
   from target_hold th
   where th.status = 'active'
     and th."expiresAt" <= (select now_ts from input_values)
     and b."userId" = th."userId"
-    and b.on_hold_nano_usd >= th.authorized_amount_nano_usd
+    and b.on_hold_usd_atoms >= th.authorized_amount_usd_atoms
   returning th.id
 ),
 expired_key_release as (
   update api_key k
   set
-    on_hold_nano_usd = k.on_hold_nano_usd - th.authorized_amount_nano_usd,
+    on_hold_usd_atoms = k.on_hold_usd_atoms - th.authorized_amount_usd_atoms,
     "updatedAt" = (select now_ts from input_values)
   from target_hold th
   where th.status = 'active'
     and th."expiresAt" <= (select now_ts from input_values)
     and th."keyId" = k.id
-    and k.on_hold_nano_usd >= th.authorized_amount_nano_usd
+    and k.on_hold_usd_atoms >= th.authorized_amount_usd_atoms
   returning th.id
 ),
 mark_expired as (
@@ -127,9 +130,9 @@ validation as (
     th.*,
     kr.enabled as key_enabled,
     kr."expiresAt" as key_expires_at,
-    kr.spend_limit_nano_usd as key_spend_limit,
-    kr.total_spent_nano_usd as key_total_spent,
-    kr.on_hold_nano_usd as key_on_hold,
+    kr.spend_limit_usd_atoms as key_spend_limit,
+    kr.total_spent_usd_atoms as key_total_spent,
+    kr.on_hold_usd_atoms as key_on_hold,
     case
       when not exists (select 1 from key_row) then 'invalid_key'
       when exists (select 1 from usage_exists) then 'usage_exists'
@@ -139,8 +142,8 @@ validation as (
       when th."expiresAt" <= (select now_ts from input_values) then 'expired'
       when kr.enabled = false then 'key_disabled'
       when kr."expiresAt" is not null and kr."expiresAt" <= (select now_ts from input_values) then 'key_expired'
-      when kr.spend_limit_nano_usd is not null
-        and kr.total_spent_nano_usd + kr.on_hold_nano_usd + th.authorized_amount_nano_usd > kr.spend_limit_nano_usd then 'key_spend_limit'
+      when kr.spend_limit_usd_atoms is not null
+        and kr.total_spent_usd_atoms + kr.on_hold_usd_atoms + th.authorized_amount_usd_atoms > kr.spend_limit_usd_atoms then 'key_spend_limit'
       else 'ok'
     end as validation_result
   from target_hold th
@@ -149,20 +152,20 @@ validation as (
 balance_apply as (
   update balance_account b
   set
-    available_nano_usd = b.available_nano_usd - v.authorized_amount_nano_usd,
-    on_hold_nano_usd = b.on_hold_nano_usd + v.authorized_amount_nano_usd,
+    available_usd_atoms = b.available_usd_atoms - v.authorized_amount_usd_atoms,
+    on_hold_usd_atoms = b.on_hold_usd_atoms + v.authorized_amount_usd_atoms,
     "updatedAt" = (select now_ts from input_values)
   from validation v
   where v.validation_result = 'ok'
     and v.is_new = true
     and b."userId" = v."userId"
-    and b.available_nano_usd >= v.authorized_amount_nano_usd
-  returning b.available_nano_usd
+    and b.available_usd_atoms >= v.authorized_amount_usd_atoms
+  returning b.available_usd_atoms
 ),
 key_apply as (
   update api_key k
   set
-    on_hold_nano_usd = k.on_hold_nano_usd + v.authorized_amount_nano_usd,
+    on_hold_usd_atoms = k.on_hold_usd_atoms + v.authorized_amount_usd_atoms,
     "updatedAt" = (select now_ts from input_values)
   from validation v
   where v.validation_result = 'ok'
@@ -171,7 +174,7 @@ key_apply as (
     and k."userId" = v."userId"
     and k.enabled = true
     and (k."expiresAt" is null or k."expiresAt" > (select now_ts from input_values))
-    and (k.spend_limit_nano_usd is null or k.total_spent_nano_usd + k.on_hold_nano_usd + v.authorized_amount_nano_usd <= k.spend_limit_nano_usd)
+    and (k.spend_limit_usd_atoms is null or k.total_spent_usd_atoms + k.on_hold_usd_atoms + v.authorized_amount_usd_atoms <= k.spend_limit_usd_atoms)
   returning k.id
 ),
 final_status as (
@@ -186,11 +189,11 @@ final_status as (
     v.id as hold_id,
     v."userId" as user_id,
     v."keyId" as key_id,
-    v.authorized_amount_nano_usd as authorized_amount,
+    v.authorized_amount_usd_atoms::text as authorized_amount,
     v."expiresAt" as expires_at,
     coalesce(
-      (select available_nano_usd from balance_apply limit 1),
-      (select available_nano_usd from balance_account where "userId" = v."userId" limit 1)
+      (select available_usd_atoms::text from balance_apply limit 1),
+      (select available_usd_atoms::text from balance_account where "userId" = v."userId" limit 1)
     ) as available_after
   from validation v
 )
@@ -202,17 +205,20 @@ type authorizeRow struct {
 	HoldID           *string
 	UserID           *string
 	KeyID            *string
-	AuthorizedAmount *int64
+	AuthorizedAmount *string
 	ExpiresAt        *time.Time
-	AvailableAfter   *int64
+	AvailableAfter   *string
 }
 
 type HoldAuthorization struct {
-	AuthorizedAmount int64
-	AvailableAfter   int64
+	AuthorizedAmount *big.Int
+	AvailableAfter   *big.Int
 	ExpiresAt        time.Time
 	HoldID           string
 	KeyID            string
+	ProductKey       string
+	ProviderKey      string
+	RequestID        string
 	UserID           string
 }
 
@@ -288,7 +294,7 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	now := time.Now().UTC()
 
 	row := authorizeRow{}
-	err := s.pool.QueryRow(ctx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, placeholderHoldAmountNano, expiresAt, paramsHash, "{}", now).Scan(
+	err := s.pool.QueryRow(ctx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, placeholderChargeUsdAtoms, expiresAt, paramsHash, "{}", now).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.AuthorizedAmount, &row.ExpiresAt, &row.AvailableAfter,
 	)
 	if err != nil {
@@ -320,10 +326,213 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	case "api_key_limit":
 		return nil, &holdError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
-		return &HoldAuthorization{AuthorizedAmount: derefInt64(row.AuthorizedAmount), AvailableAfter: derefInt64(row.AvailableAfter), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), UserID: derefString(row.UserID)}, nil
+		return &HoldAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID)}, nil
 	default:
 		return nil, fmt.Errorf("unknown hold authorization result: %s", row.Result)
 	}
+}
+
+func (s *HoldService) FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, metrics map[string]any) error {
+	if authorization == nil {
+		return nil
+	}
+
+	metricsJSON, err := json.Marshal(metrics)
+	if err != nil {
+		return fmt.Errorf("marshal usage metrics: %w", err)
+	}
+	paramsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey)
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin finalize hold: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	hold, err := lockGatewayHold(ctx, tx, authorization.RequestID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if err := validateGatewayHold(authorization, hold); err != nil {
+		return err
+	}
+
+	actualCost := placeholderChargeUsdAtoms
+	_, err = tx.Exec(ctx, `
+insert into usage_record (request_id, "userId", "providerKey", "productKey", metrics, meta)
+values ($1::uuid, $2, $3, $4, $5::jsonb, jsonb_build_object('paramsHash', $6::text, 'authorizedAmountUsdAtoms', $7::text, 'keyId', $8::text, 'gateway', 'stogas'))
+on conflict (request_id) do nothing
+`, hold.RequestID, hold.UserID, hold.ProviderKey, hold.ProductKey, string(metricsJSON), paramsHash, hold.AuthorizedAmount, hold.KeyID)
+	if err != nil {
+		return fmt.Errorf("insert usage record: %w", err)
+	}
+
+	var finalCost string
+	err = tx.QueryRow(ctx, `select coalesce(final_cost_usd_atoms::text, '') from usage_record where request_id = $1::uuid limit 1`, hold.RequestID).Scan(&finalCost)
+	if err != nil {
+		return fmt.Errorf("load usage record: %w", err)
+	}
+	if finalCost != "" {
+		return tx.Commit(ctx)
+	}
+
+	_, err = tx.Exec(ctx, `
+insert into ledger_event (id, "userId", type, amount_usd_atoms, request_id, "usageId", meta)
+values ($1::uuid, $2, 'capture', -($3::numeric), $4::uuid, $4::uuid, '{}'::jsonb)
+`, uuid.NewString(), hold.UserID, actualCost, hold.RequestID)
+	if err != nil && !isUniqueViolation(err) {
+		return fmt.Errorf("insert capture ledger event: %w", err)
+	}
+
+	_, err = tx.Exec(ctx, `update usage_record set final_cost_usd_atoms = $2::numeric where request_id = $1::uuid`, hold.RequestID, actualCost)
+	if err != nil {
+		return fmt.Errorf("set final usage cost: %w", err)
+	}
+
+	commandTag, err := tx.Exec(ctx, `
+update balance_account
+set
+  on_hold_usd_atoms = on_hold_usd_atoms - $2::numeric,
+  available_usd_atoms = available_usd_atoms + ($2::numeric - $3::numeric),
+  "updatedAt" = $4::timestamptz
+where "userId" = $1 and on_hold_usd_atoms >= $2::numeric
+`, hold.UserID, hold.AuthorizedAmount, actualCost, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("update balance during finalize: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return fmt.Errorf("update balance during finalize: no rows affected")
+	}
+
+	if hold.KeyID != "" {
+		commandTag, err = tx.Exec(ctx, `
+update api_key
+set
+  on_hold_usd_atoms = on_hold_usd_atoms - $2::numeric,
+  total_spent_usd_atoms = total_spent_usd_atoms + $3::numeric,
+  "updatedAt" = $4::timestamptz
+where id = $1 and on_hold_usd_atoms >= $2::numeric
+`, hold.KeyID, hold.AuthorizedAmount, actualCost, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("update api key during finalize: %w", err)
+		}
+		if commandTag.RowsAffected() == 0 {
+			return fmt.Errorf("update api key during finalize: no rows affected")
+		}
+	}
+
+	_, err = tx.Exec(ctx, `delete from holds where id = $1::uuid`, hold.ID)
+	if err != nil {
+		return fmt.Errorf("delete finalized hold: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (s *HoldService) ReleaseHold(ctx context.Context, authorization *HoldAuthorization) error {
+	if authorization == nil {
+		return nil
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin release hold: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	hold, err := lockGatewayHold(ctx, tx, authorization.RequestID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &holdError{err: ErrHoldNotFound, statusCode: 404}
+		}
+		return err
+	}
+	if err := validateGatewayHold(authorization, hold); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	commandTag, err := tx.Exec(ctx, `
+update balance_account
+set
+  available_usd_atoms = available_usd_atoms + $2::numeric,
+  on_hold_usd_atoms = on_hold_usd_atoms - $2::numeric,
+  "updatedAt" = $3::timestamptz
+where "userId" = $1 and on_hold_usd_atoms >= $2::numeric
+`, hold.UserID, hold.AuthorizedAmount, now)
+	if err != nil {
+		return fmt.Errorf("release balance: %w", err)
+	}
+	if commandTag.RowsAffected() == 0 {
+		return fmt.Errorf("release balance: no rows affected")
+	}
+
+	if hold.KeyID != "" {
+		commandTag, err = tx.Exec(ctx, `
+update api_key
+set on_hold_usd_atoms = on_hold_usd_atoms - $2::numeric, "updatedAt" = $3::timestamptz
+where id = $1 and on_hold_usd_atoms >= $2::numeric
+`, hold.KeyID, hold.AuthorizedAmount, now)
+		if err != nil {
+			return fmt.Errorf("release api key hold: %w", err)
+		}
+		if commandTag.RowsAffected() == 0 {
+			return fmt.Errorf("release api key hold: no rows affected")
+		}
+	}
+
+	_, err = tx.Exec(ctx, `delete from holds where id = $1::uuid`, hold.ID)
+	if err != nil {
+		return fmt.Errorf("delete released hold: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+type gatewayHold struct {
+	AuthorizedAmount string
+	ID               string
+	KeyID            string
+	ProductKey       string
+	ProviderKey      string
+	RequestID        string
+	Status           string
+	UserID           string
+	ExpiresAt        time.Time
+}
+
+func lockGatewayHold(ctx context.Context, tx pgx.Tx, requestID string) (*gatewayHold, error) {
+	row := &gatewayHold{}
+	err := tx.QueryRow(ctx, `
+select id::text, "userId", coalesce("keyId", ''), request_id::text, status, authorized_amount_usd_atoms::text, "providerKey", "productKey", "expiresAt"
+from holds
+where request_id = $1::uuid
+for update
+limit 1
+`, requestID).Scan(&row.ID, &row.UserID, &row.KeyID, &row.RequestID, &row.Status, &row.AuthorizedAmount, &row.ProviderKey, &row.ProductKey, &row.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	return row, nil
+}
+
+func validateGatewayHold(authorization *HoldAuthorization, hold *gatewayHold) error {
+	if hold.UserID != authorization.UserID {
+		return &holdError{err: errors.New("Hold does not belong to user"), statusCode: 403}
+	}
+	if hold.KeyID != authorization.KeyID {
+		return &holdError{err: errors.New("Hold already linked to a different API key"), statusCode: 409}
+	}
+	if hold.ProviderKey != authorization.ProviderKey || hold.ProductKey != authorization.ProductKey {
+		return &holdError{err: errors.New("Provider/product key mismatch with hold"), statusCode: 422}
+	}
+	if hold.Status != "active" {
+		return &holdError{err: fmt.Errorf("Hold already %s", hold.Status), statusCode: 409}
+	}
+	return nil
 }
 
 func ErrorStatus(err error) int {
@@ -382,17 +591,27 @@ func warmPool(parent context.Context, pool *pgxpool.Pool, target int) error {
 	return nil
 }
 
-func derefInt64(value *int64) int64 {
-	if value == nil {
-		return 0
-	}
-	return *value
-}
 func derefString(value *string) string {
 	if value == nil {
 		return ""
 	}
 	return *value
+}
+
+func parseMoneyOrZero(value *string) *big.Int {
+	if value == nil || *value == "" {
+		return big.NewInt(0)
+	}
+	parsed, ok := new(big.Int).SetString(*value, 10)
+	if !ok {
+		return big.NewInt(0)
+	}
+	return parsed
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 func derefTime(value *time.Time) time.Time {
 	if value == nil {

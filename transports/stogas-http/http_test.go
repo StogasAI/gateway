@@ -110,6 +110,70 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
+func TestProviderResponseHeaderSafetyBlocksCookieAndControlHeaders(t *testing.T) {
+	blocked := []string{
+		"Set-Cookie",
+		" set-cookie ",
+		"Connection",
+		"Transfer-Encoding",
+		"Content-Length",
+		"Content-Security-Policy",
+		"Strict-Transport-Security",
+		"Access-Control-Allow-Origin",
+		"Sec-Fetch-Site",
+		"Cf-Cache-Status",
+	}
+
+	for _, header := range blocked {
+		t.Run(header, func(t *testing.T) {
+			if isSafeProviderResponseHeader(header) {
+				t.Fatalf("expected %q to be blocked", header)
+			}
+		})
+	}
+}
+
+func TestProviderResponseHeaderSafetyAllowsOrdinaryProviderMetadata(t *testing.T) {
+	allowed := []string{
+		"OpenAI-Processing-Ms",
+		"X-Request-Id",
+		"Anthropic-Organization-Id",
+	}
+
+	for _, header := range allowed {
+		t.Run(header, func(t *testing.T) {
+			if !isSafeProviderResponseHeader(header) {
+				t.Fatalf("expected %q to be allowed by permanent safety filter", header)
+			}
+		})
+	}
+}
+
+func TestSafeProviderResponseHeadersFiltersMixedMap(t *testing.T) {
+	got := safeProviderResponseHeaders(map[string]string{
+		" OpenAI-Processing-Ms ":      "41",
+		"Access-Control-Allow-Origin": "https://evil.example",
+		"Set-Cookie":                  "session=attacker",
+		"X-Request-Id":                "provider-request-id",
+	})
+
+	if got == nil {
+		t.Fatal("expected safe headers to be retained")
+	}
+	if _, ok := got["Set-Cookie"]; ok {
+		t.Fatal("expected Set-Cookie to be filtered")
+	}
+	if _, ok := got["Access-Control-Allow-Origin"]; ok {
+		t.Fatal("expected CORS headers to be filtered")
+	}
+	if got["OpenAI-Processing-Ms"] != "41" {
+		t.Fatalf("expected trimmed provider metadata header to be retained, got %#v", got)
+	}
+	if got["X-Request-Id"] != "provider-request-id" {
+		t.Fatalf("expected ordinary metadata header to be retained, got %#v", got)
+	}
+}
+
 func TestCorsAllowsAnyOrigin(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.SetMethod(fasthttp.MethodOptions)

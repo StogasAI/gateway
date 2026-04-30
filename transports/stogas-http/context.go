@@ -47,7 +47,11 @@ func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType
 		bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
 	}
 
-	extraFields := extraFieldsHeader(ctx)
+	extraFields, err := extraFieldsHeader(ctx)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
 	if returnRawRequest {
 		extraFields["raw_request"] = true
 	}
@@ -61,7 +65,7 @@ func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType
 		}
 	}
 
-	if extraHeaders := catalogExtraHeaders(ctx); len(extraHeaders) > 0 {
+	if extraHeaders := allowedUpstreamRequestHeaders(ctx); len(extraHeaders) > 0 {
 		bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, extraHeaders)
 	}
 
@@ -96,23 +100,26 @@ func boolHeader(ctx *fasthttp.RequestCtx, name string) (bool, error) {
 	}
 }
 
-func extraFieldsHeader(ctx *fasthttp.RequestCtx) map[string]bool {
+func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {
 	fields := make(map[string]bool)
 	raw := strings.TrimSpace(string(ctx.Request.Header.Peek(stogasHeaderReturnExtraFields)))
 	if raw == "" {
-		return fields
+		return fields, nil
 	}
 	for _, field := range strings.Split(raw, ",") {
 		name := strings.ToLower(strings.TrimSpace(field))
 		if name == "" {
 			continue
 		}
+		if !allowsStogasResponseField(name) {
+			return nil, fmt.Errorf("unsupported Stogas extra field: %s", name)
+		}
 		fields[name] = true
 	}
-	return fields
+	return fields, nil
 }
 
-func catalogExtraHeaders(ctx *fasthttp.RequestCtx) map[string][]string {
+func allowedUpstreamRequestHeaders(ctx *fasthttp.RequestCtx) map[string][]string {
 	provider, model := schemas.OpenAI, ""
 	allowed := make(map[string][]string)
 	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {

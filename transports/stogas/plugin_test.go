@@ -28,6 +28,14 @@ func (f *fakeHoldAuthorizer) AuthorizePlaceholderHold(ctx context.Context, rawAP
 	return nil, nil
 }
 
+func (f *fakeHoldAuthorizer) FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, metrics map[string]any) error {
+	return nil
+}
+
+func (f *fakeHoldAuthorizer) ReleaseHold(ctx context.Context, authorization *HoldAuthorization) error {
+	return nil
+}
+
 func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 	initialRequestID := "11111111-1111-1111-1111-111111111111"
 	expected := &HoldAuthorization{HoldID: "hold-1"}
