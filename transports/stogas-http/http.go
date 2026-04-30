@@ -613,9 +613,70 @@ func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload an
 }
 
 func (s *Server) forwardProviderHeaders(ctx *fasthttp.RequestCtx, extra schemas.BifrostResponseExtraFields) {
-	for key, value := range filterCatalogProviderResponseHeaders(extra.Provider, extra.ModelRequested, extra.ProviderResponseHeaders) {
+	headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.ModelRequested, extra.ProviderResponseHeaders)
+	for key, value := range safeProviderResponseHeaders(headers) {
 		ctx.Response.Header.Set(key, value)
 	}
+}
+
+var unsafeProviderResponseHeaders = map[string]bool{
+	"connection":                true,
+	"content-encoding":          true,
+	"content-length":            true,
+	"content-security-policy":   true,
+	"cookie":                    true,
+	"keep-alive":                true,
+	"location":                  true,
+	"proxy-authenticate":        true,
+	"proxy-authorization":       true,
+	"set-cookie":                true,
+	"set-cookie2":               true,
+	"strict-transport-security": true,
+	"te":                        true,
+	"trailer":                   true,
+	"transfer-encoding":         true,
+	"upgrade":                   true,
+	"x-accel-buffering":         true,
+	"x-content-type-options":    true,
+	"x-frame-options":           true,
+}
+
+func isSafeProviderResponseHeader(header string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(header))
+	if normalized == "" {
+		return false
+	}
+	if unsafeProviderResponseHeaders[normalized] {
+		return false
+	}
+	if strings.HasPrefix(normalized, "access-control-") {
+		return false
+	}
+	if strings.HasPrefix(normalized, "cf-") {
+		return false
+	}
+	if strings.HasPrefix(normalized, "sec-") {
+		return false
+	}
+	return true
+}
+
+func safeProviderResponseHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+
+	filtered := make(map[string]string)
+	for name, value := range headers {
+		trimmed := strings.TrimSpace(name)
+		if isSafeProviderResponseHeader(trimmed) {
+			filtered[trimmed] = value
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 func securityHeaders(next fasthttp.RequestHandler) fasthttp.RequestHandler {

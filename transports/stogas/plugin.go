@@ -16,8 +16,10 @@ const maxAuthorizeRequestIDAttempts = 3
 type contextKey string
 
 const (
-	apiKeyContextKey contextKey = "stogas.api_key"
-	holdContextKey   contextKey = "stogas.hold"
+	apiKeyContextKey        contextKey = "stogas.api_key"
+	holdContextKey          contextKey = "stogas.hold"
+	holdFinalizedContextKey contextKey = "stogas.hold_finalized"
+	holdReleasedContextKey  contextKey = "stogas.hold_released"
 )
 
 type Plugin struct {
@@ -26,6 +28,8 @@ type Plugin struct {
 
 type holdAuthorizer interface {
 	AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error)
+	FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, metrics map[string]any) error
+	ReleaseHold(ctx context.Context, authorization *HoldAuthorization) error
 }
 
 func NewPlugin(holds *HoldService) *Plugin {
@@ -86,6 +90,33 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 }
 
 func (p *Plugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
+	authorization, ok := holdAuthorization(ctx)
+	if !ok {
+		return resp, bifrostErr, nil
+	}
+
+	if bifrostErr != nil {
+		if !contextBool(ctx, holdReleasedContextKey) && !contextBool(ctx, holdFinalizedContextKey) {
+			ctx.SetValue(holdReleasedContextKey, true)
+			if err := p.holds.ReleaseHold(context.WithoutCancel(ctx), authorization); err != nil {
+				return resp, billingBifrostError(err), nil
+			}
+		}
+		return resp, bifrostErr, nil
+	}
+
+	if contextBool(ctx, holdFinalizedContextKey) || contextBool(ctx, holdReleasedContextKey) {
+		return resp, bifrostErr, nil
+	}
+
+	if isStreamingContext(ctx) && !contextBool(ctx, schemas.BifrostContextKeyStreamEndIndicator) {
+		return resp, bifrostErr, nil
+	}
+
+	ctx.SetValue(holdFinalizedContextKey, true)
+	if err := p.holds.FinalizePlaceholderHold(context.WithoutCancel(ctx), authorization, usageMetrics(resp)); err != nil {
+		return resp, billingBifrostError(err), nil
+	}
 	return resp, bifrostErr, nil
 }
 
@@ -126,11 +157,62 @@ func APIKey(ctx *schemas.BifrostContext) (string, bool) {
 	return apiKey, ok && apiKey != ""
 }
 
+func holdAuthorization(ctx *schemas.BifrostContext) (*HoldAuthorization, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	authorization, ok := ctx.Value(holdContextKey).(*HoldAuthorization)
+	return authorization, ok && authorization != nil
+}
+
 func setHoldAuthorization(ctx *schemas.BifrostContext, authorization *HoldAuthorization) {
 	if ctx == nil || authorization == nil {
 		return
 	}
 	ctx.SetValue(holdContextKey, authorization)
+}
+
+func contextBool(ctx *schemas.BifrostContext, key any) bool {
+	if ctx == nil {
+		return false
+	}
+	value, ok := ctx.Value(key).(bool)
+	return ok && value
+}
+
+func isStreamingContext(ctx *schemas.BifrostContext) bool {
+	return ctx != nil && ctx.Value(schemas.BifrostContextKeyStreamStartTime) != nil
+}
+
+func usageMetrics(resp *schemas.BifrostResponse) map[string]any {
+	metrics := map[string]any{}
+	usage := llmUsage(resp)
+	if usage == nil {
+		return metrics
+	}
+	metrics["promptTokens"] = usage.PromptTokens
+	metrics["completionTokens"] = usage.CompletionTokens
+	metrics["totalTokens"] = usage.TotalTokens
+	return metrics
+}
+
+func llmUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
+	if resp == nil {
+		return nil
+	}
+	if resp.ChatResponse != nil {
+		return resp.ChatResponse.Usage
+	}
+	if resp.TextCompletionResponse != nil {
+		return resp.TextCompletionResponse.Usage
+	}
+	if resp.ResponsesResponse != nil && resp.ResponsesResponse.Usage != nil {
+		return resp.ResponsesResponse.Usage.ToBifrostLLMUsage()
+	}
+	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.Usage != nil {
+		return resp.ResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage()
+	}
+	return nil
 }
 
 func errorShortCircuit(statusCode int, errorType string, message string) *schemas.LLMPluginShortCircuit {
@@ -164,4 +246,18 @@ func holdErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
 	}
 
 	return errorShortCircuit(statusCode, errorType, message)
+}
+
+func billingBifrostError(err error) *schemas.BifrostError {
+	status := 500
+	allowFallbacks := false
+	return &schemas.BifrostError{
+		AllowFallbacks: &allowFallbacks,
+		Error: &schemas.ErrorField{
+			Message: fmt.Sprintf("Billing settlement failed: %s", err.Error()),
+			Type:    schemas.Ptr("internal_error"),
+		},
+		IsBifrostError: true,
+		StatusCode:     &status,
+	}
 }

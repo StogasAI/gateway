@@ -74,7 +74,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["model_deployment"] && extra.ModelDeployment != "" {
 		metadata["model_deployment"] = extra.ModelDeployment
 	}
-	if fields["latency"] && extra.Latency != 0 {
+	if fields["latency"] {
 		metadata["latency"] = extra.Latency
 	}
 	if fields["raw_request"] && extra.RawRequest != nil {
