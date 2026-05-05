@@ -9,10 +9,11 @@ import (
 )
 
 type fakeHoldAuthorizer struct {
-	attempts  []string
-	results   []*HoldAuthorization
-	errors    []error
-	callCount int
+	attempts    []string
+	finalEvents []GatewayRequestEvent
+	results     []*HoldAuthorization
+	errors      []error
+	callCount   int
 }
 
 func (f *fakeHoldAuthorizer) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error) {
@@ -28,7 +29,8 @@ func (f *fakeHoldAuthorizer) AuthorizePlaceholderHold(ctx context.Context, rawAP
 	return nil, nil
 }
 
-func (f *fakeHoldAuthorizer) FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, metrics map[string]any) error {
+func (f *fakeHoldAuthorizer) FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, event GatewayRequestEvent) error {
+	f.finalEvents = append(f.finalEvents, event)
 	return nil
 }
 
@@ -89,5 +91,82 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
 	if currentRequestID != initialRequestID {
 		t.Fatalf("expected request ID to remain unchanged, got %q", currentRequestID)
+	}
+}
+
+func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
+	authorization := &HoldAuthorization{
+		AuthorizedAmount: mustBigInt(t, placeholderChargeUsdAtoms),
+		AvailableAfter:   mustBigInt(t, "10000000000"),
+		KeyID:            "key-1",
+		ProductKey:       "gpt-4o-mini",
+		ProviderKey:      "openai",
+		RequestID:        "request-1",
+		UserID:           "user-1",
+	}
+	authorizer := &fakeHoldAuthorizer{}
+	plugin := &Plugin{holds: authorizer}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	setHoldAuthorization(ctx, authorization)
+	ctx.SetValue(requestTypeContextKey, string(schemas.ChatCompletionRequest))
+	ctx.SetValue(requestModelContextKey, "gpt-4o-mini")
+	status := 502
+	bifrostErr := &schemas.BifrostError{StatusCode: &status}
+
+	_, returnedErr, err := plugin.PostLLMHook(ctx, nil, bifrostErr)
+	if err != nil {
+		t.Fatalf("PostLLMHook returned plugin error: %v", err)
+	}
+	if returnedErr != bifrostErr {
+		t.Fatalf("expected original provider error to be preserved")
+	}
+	if len(authorizer.finalEvents) != 1 {
+		t.Fatalf("expected one finalization event, got %#v", authorizer.finalEvents)
+	}
+	event := authorizer.finalEvents[0]
+	if event.StogasStatus != "error" || event.UpstreamStatus != "provider_error" {
+		t.Fatalf("expected error statuses, got %#v", event)
+	}
+	if event.StogasBillingStatus != "complete" {
+		t.Fatalf("expected placeholder billing status complete, got %q", event.StogasBillingStatus)
+	}
+	if event.StogasBillingRecordStatus != "committed" {
+		t.Fatalf("expected committed billing record status, got %q", event.StogasBillingRecordStatus)
+	}
+	if event.RequestType != "chat_completion_request" {
+		t.Fatalf("expected normalized request type, got %q", event.RequestType)
+	}
+}
+
+func TestNormalizeUpstreamStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		message    string
+		want       string
+	}{
+		{name: "success", want: "success"},
+		{name: "rate limited", statusCode: 429, want: "rate_limited"},
+		{name: "over budget", statusCode: 402, want: "over_budget"},
+		{name: "invalid request", statusCode: 400, want: "invalid_request"},
+		{name: "content filter", statusCode: 400, message: "blocked by content filter", want: "content_filter"},
+		{name: "network timeout", statusCode: 504, want: "network_error"},
+		{name: "provider error", statusCode: 500, want: "provider_error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var err *schemas.BifrostError
+			if tt.statusCode != 0 || tt.message != "" {
+				statusCode := tt.statusCode
+				err = &schemas.BifrostError{
+					StatusCode: &statusCode,
+					Error:      &schemas.ErrorField{Message: tt.message},
+				}
+			}
+			if got := normalizeUpstreamStatus(err); got != tt.want {
+				t.Fatalf("normalizeUpstreamStatus = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

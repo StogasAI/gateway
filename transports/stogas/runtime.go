@@ -19,7 +19,8 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		return nil, err
 	}
 
-	holds, err := NewHoldService(ctx, config.DatabaseURL, config.AuthSecret)
+	tinybird := NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
+	holds, err := NewHoldService(ctx, config.DatabaseURL, config.AuthSecret, tinybird)
 	if err != nil {
 		return nil, err
 	}

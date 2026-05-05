@@ -23,7 +23,12 @@ const (
 
 func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType) (*schemas.BifrostContext, context.CancelFunc, error) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
-	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, uuid.NewString())
+	requestID, err := uuid.NewV7()
+	if err != nil {
+		cancel()
+		return nil, nil, fmt.Errorf("generate request ID: %w", err)
+	}
+	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID.String())
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, requestType)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestHeaders, requestHeaders(ctx))

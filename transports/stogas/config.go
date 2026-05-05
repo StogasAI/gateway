@@ -15,6 +15,7 @@ const (
 	defaultHost              = "127.0.0.1"
 	defaultPort              = "5185"
 	defaultMaxRequestBodyMiB = 16
+	defaultInfisicalSiteURL  = "https://secrets.stogas.ai"
 )
 
 type Config struct {
@@ -27,59 +28,12 @@ type Config struct {
 	OpenAIAPIKey      string
 	OpenAIBaseURL     string
 	Port              string
+	TinybirdHost      string
+	TinybirdToken     string
 }
 
 func LoadFromEnv() (Config, error) {
-	infisicalClientID := os.Getenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID")
-	infisicalClientSecret := os.Getenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET")
-	projectID := os.Getenv("INFISICAL_PROJECT_ID")
-
-	if infisicalClientID != "" && infisicalClientSecret != "" {
-		fmt.Println("[stogas] Connecting to Infisical (secrets.stogas.ai)...")
-		client := infisical.NewInfisicalClient(context.Background(), infisical.Config{
-			SiteUrl: "https://secrets.stogas.ai",
-		})
-		_, err := client.Auth().UniversalAuthLogin(infisicalClientID, infisicalClientSecret)
-		
-		if err == nil {
-			secrets := []string{"AUTH_SECRET", "DATABASE_URL", "OPENAI_API_KEY"}
-			if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" {
-				secrets = []string{"AUTH_SECRET", "OPENAI_API_KEY"}
-			}
-			for _, secretName := range secrets {
-				// 1. Attempt to resolve from Prod boundary
-				res, err := client.Secrets().Retrieve(infisical.RetrieveSecretOptions{
-					SecretKey:   secretName,
-					Environment: "prod",
-					ProjectID:   projectID,
-					SecretPath:  "/gateway",
-					ExpandSecretReferences: true,
-				})
-
-				if err != nil {
-					res, err = client.Secrets().Retrieve(infisical.RetrieveSecretOptions{
-						SecretKey:   secretName,
-						Environment: "dev",
-						ProjectID:   projectID,
-						SecretPath:  "/gateway",
-						ExpandSecretReferences: true,
-					})
-				}
-
-				if err != nil {
-					fmt.Printf("[stogas] Warning: Failed to retrieve secret %s: %v\n", secretName, err)
-				}
-
-				// Inject if resolved successfully
-				if err == nil && res.SecretValue != "" {
-					fmt.Printf("[stogas] Infisical successfully retrieved %s (length %d)\n", secretName, len(res.SecretValue))
-					os.Setenv(secretName, res.SecretValue)
-				}
-			}
-		} else {
-			fmt.Printf("[stogas] Warning: Failed to authenticate with Infisical: %v\n", err)
-		}
-	}
+	loadInfisicalRuntimeSecrets()
 
 	config := Config{
 		AuthSecret:        strings.TrimSpace(os.Getenv("AUTH_SECRET")),
@@ -91,6 +45,8 @@ func LoadFromEnv() (Config, error) {
 		OpenAIAPIKey:      strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
 		OpenAIBaseURL:     strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:              defaultPort,
+		TinybirdHost:      strings.TrimSpace(os.Getenv("TB_HOST")),
+		TinybirdToken:     strings.TrimSpace(os.Getenv("TB_APPEND_ONLY")),
 	}
 
 	if err := config.Validate(); err != nil {
@@ -98,6 +54,74 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	return config, nil
+}
+
+func loadInfisicalRuntimeSecrets() {
+	if os.Getenv("INFISICAL_SKIP") == "true" {
+		return
+	}
+
+	infisicalClientID := os.Getenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID")
+	infisicalClientSecret := os.Getenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET")
+	projectID := os.Getenv("INFISICAL_PROJECT_ID")
+	if infisicalClientID == "" || infisicalClientSecret == "" || projectID == "" {
+		return
+	}
+
+	siteURL := strings.TrimSpace(os.Getenv("INFISICAL_SITE_URL"))
+	if siteURL == "" {
+		siteURL = defaultInfisicalSiteURL
+	}
+
+	fmt.Printf("[stogas] Connecting to Infisical (%s)...\n", siteURL)
+	client := infisical.NewInfisicalClient(context.Background(), infisical.Config{SiteUrl: siteURL})
+	if _, err := client.Auth().UniversalAuthLogin(infisicalClientID, infisicalClientSecret); err != nil {
+		fmt.Printf("[stogas] Warning: Failed to authenticate with Infisical: %v\n", err)
+		return
+	}
+
+	required := []string{"AUTH_SECRET", "DATABASE_URL", "OPENAI_API_KEY"}
+	if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" || os.Getenv("DATABASE_URL") != "" {
+		required = []string{"AUTH_SECRET", "OPENAI_API_KEY"}
+	}
+	for _, secretName := range required {
+		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
+	}
+	for _, secretName := range []string{"TB_HOST", "TB_APPEND_ONLY"} {
+		resolveInfisicalSecret(client, projectID, "/gateway/tinybird", secretName, false)
+	}
+}
+
+func resolveInfisicalSecret(client infisical.InfisicalClientInterface, projectID string, secretPath string, secretName string, required bool) {
+	if strings.TrimSpace(os.Getenv(secretName)) != "" {
+		return
+	}
+
+	var lastErr error
+	for _, environment := range []string{"prod", "staging", "dev"} {
+		res, err := client.Secrets().Retrieve(infisical.RetrieveSecretOptions{
+			SecretKey:              secretName,
+			Environment:            environment,
+			ProjectID:              projectID,
+			SecretPath:             secretPath,
+			ExpandSecretReferences: true,
+		})
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if strings.TrimSpace(res.SecretValue) == "" {
+			lastErr = fmt.Errorf("empty secret value")
+			continue
+		}
+		fmt.Printf("[stogas] Infisical resolved %s from %s %s\n", secretName, environment, secretPath)
+		os.Setenv(secretName, res.SecretValue)
+		return
+	}
+
+	if required {
+		fmt.Printf("[stogas] Warning: Failed to retrieve required secret %s: %v\n", secretName, lastErr)
+	}
 }
 
 func (c Config) Validate() error {
