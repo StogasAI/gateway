@@ -20,23 +20,21 @@ import (
 )
 
 const (
-	tokenPepperInfo                 = "stogas:token:pepper"
-	placeholderChargeUsdAtoms       = "4000000000" // 4 nanoUSD at 18-decimal USD atom precision.
-	poolMaxConns              int32 = 32
-	poolMinConns              int32 = 4
-	poolMinIdleConns          int32 = 4
-	poolHealthCheckPeriod           = 30 * time.Second
-	poolMaxConnIdleTime             = 5 * time.Minute
-	poolMaxConnLifetime             = 30 * time.Minute
-	poolMaxConnLifetimeJitter       = 5 * time.Minute
-	poolWarmupTimeout               = 5 * time.Second
-	poolWarmupPerConnTimeout        = 2 * time.Second
-	authorizeTimeout                = 1500 * time.Millisecond
-	settleTimeout                   = 2 * time.Second
-	settleRetryWindow               = 90 * time.Second
-	settleRetryInitialDelay         = 250 * time.Millisecond
-	settleRetryMaxDelay             = 5 * time.Second
-	defaultHoldDuration             = 30 * time.Minute
+	tokenPepperInfo           = "stogas:token:pepper"
+	placeholderChargeUsdAtoms = "4000000000" // 4 nanoUSD at 18-decimal USD atom precision.
+
+	poolHealthCheckPeriod     = 30 * time.Second
+	poolMaxConnIdleTime       = 5 * time.Minute
+	poolMaxConnLifetime       = 30 * time.Minute
+	poolMaxConnLifetimeJitter = 5 * time.Minute
+	poolWarmupTimeout         = 5 * time.Second
+	poolWarmupPerConnTimeout  = 2 * time.Second
+	authorizeTimeout          = 1500 * time.Millisecond
+	settleTimeout             = 2 * time.Second
+	settleRetryWindow         = 90 * time.Second
+	settleRetryInitialDelay   = 250 * time.Millisecond
+	settleRetryMaxDelay       = 5 * time.Second
+	defaultHoldDuration       = 30 * time.Minute
 )
 
 var (
@@ -90,7 +88,7 @@ from stogas.release_gateway_hold(
 `
 
 const markOutboxSentQuery = `
-update public.gateway_request_outbox
+update gateway_request_outbox
 set status = 'sent',
     "updatedAt" = now()
 where request_id = $1::uuid
@@ -147,7 +145,14 @@ type holdError struct {
 func (e *holdError) Error() string { return e.err.Error() }
 func (e *holdError) Unwrap() error { return e.err }
 
-func NewHoldService(ctx context.Context, databaseURL string, authSecret string, tinybird *TinybirdClient) (*HoldService, error) {
+func NewHoldService(ctx context.Context, databaseURL string, databaseSchema string, authSecret string, databasePool DatabasePoolConfig, tinybird *TinybirdClient) (*HoldService, error) {
+	if err := databasePool.Validate(); err != nil {
+		return nil, err
+	}
+	searchPath, err := pgrollSearchPath(databaseSchema)
+	if err != nil {
+		return nil, err
+	}
 	tokenPepper, err := deriveTokenPepper(authSecret)
 	if err != nil {
 		return nil, err
@@ -157,21 +162,20 @@ func NewHoldService(ctx context.Context, databaseURL string, authSecret string, 
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
-	poolConfig.MaxConns = poolMaxConns
-	poolConfig.MinConns = poolMinConns
-	poolConfig.MinIdleConns = poolMinIdleConns
+	poolConfig.MaxConns = databasePool.MaxConns
+	poolConfig.MinConns = databasePool.MinConns
+	poolConfig.MinIdleConns = databasePool.MinIdleConns
 	poolConfig.HealthCheckPeriod = poolHealthCheckPeriod
 	poolConfig.MaxConnIdleTime = poolMaxConnIdleTime
 	poolConfig.MaxConnLifetime = poolMaxConnLifetime
 	poolConfig.MaxConnLifetimeJitter = poolMaxConnLifetimeJitter
+	poolConfig.ConnConfig.DefaultQueryExecMode = queryExecMode(databasePool.QueryExecMode)
 	if poolConfig.ConnConfig.RuntimeParams == nil {
 		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "stogas-gateway"
-	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, "set timezone = 'UTC'")
-		return err
-	}
+	poolConfig.ConnConfig.RuntimeParams["search_path"] = searchPath
+	poolConfig.ConnConfig.RuntimeParams["TimeZone"] = "UTC"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -190,6 +194,21 @@ func NewHoldService(ctx context.Context, databaseURL string, authSecret string, 
 	}
 
 	return &HoldService{pool: pool, tinybird: tinybird, tokenPepper: tokenPepper}, nil
+}
+
+func queryExecMode(mode string) pgx.QueryExecMode {
+	switch mode {
+	case "cache_describe":
+		return pgx.QueryExecModeCacheDescribe
+	case "describe_exec":
+		return pgx.QueryExecModeDescribeExec
+	case "exec":
+		return pgx.QueryExecModeExec
+	case "simple_protocol":
+		return pgx.QueryExecModeSimpleProtocol
+	default:
+		return pgx.QueryExecModeCacheStatement
+	}
 }
 
 func (s *HoldService) Close() {

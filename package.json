@@ -5,7 +5,7 @@
 		"build": "bun ../../scripts/stogas.ts build api",
 		"check": "bun ../../scripts/stogas.ts check",
 		"clean": "bun ../../scripts/stogas.ts clean api",
-		"deploy:production": "bun ../../scripts/stogas.ts deploy production api",
+		"deploy:prod": "bun ../../scripts/stogas.ts deploy prod api",
 		"deploy:staging": "bun ../../scripts/stogas.ts deploy staging api",
 		"dev": "bun ../../scripts/stogas.ts dev api",
 		"pull:origin": "git pull origin main",
