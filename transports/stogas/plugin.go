@@ -436,6 +436,8 @@ func holdErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
 		errorType = "permission_denied"
 	case 409:
 		errorType = "invalid_request_error"
+	case 429:
+		errorType = "rate_limit_error"
 	case 503:
 		errorType = "gateway_error"
 	}

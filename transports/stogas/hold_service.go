@@ -46,6 +46,7 @@ var (
 	ErrHoldParamsMismatch  = errors.New("Hold already exists with different parameters")
 	ErrInsufficientBalance = errors.New("Insufficient balance")
 	ErrAPIKeySpendLimit    = errors.New("API key spend limit exceeded")
+	ErrAPIKeyRateLimit     = errors.New("API key rate limit exceeded")
 	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
 	ErrGatewayUnavailable  = errors.New("Gateway billing database unavailable")
 	ErrHoldNotFound        = errors.New("Hold not found")
@@ -253,6 +254,8 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 		return nil, &holdError{err: ErrAPIKeyExpired, statusCode: 403}
 	case "key_spend_limit":
 		return nil, &holdError{err: ErrAPIKeySpendLimit, statusCode: 402}
+	case "key_rate_limited":
+		return nil, &holdError{err: ErrAPIKeyRateLimit, statusCode: 429}
 	case "api_key_limit":
 		return nil, &holdError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
