@@ -88,15 +88,6 @@ from stogas.release_gateway_hold(
 );
 `
 
-const markOutboxSentQuery = `
-update gateway_request_outbox
-set status = 'sent',
-    "updatedAt" = now()
-where request_id = $1::uuid
-  and event_type = 'settle'
-  and status = 'pending';
-`
-
 type authorizeRow struct {
 	Result           string
 	HoldID           *string
@@ -272,10 +263,7 @@ func (s *HoldService) FinalizePlaceholderHold(ctx context.Context, authorization
 		return nil
 	}
 
-	metricsJSON := event.Metrics
-	if metricsJSON == "" {
-		metricsJSON = "{}"
-	}
+	metricsJSON := metricsJSONString(event.Metrics)
 	paramsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey)
 	actualCost := event.TotalCostUSDAtoms
 	if actualCost == "" {
@@ -293,7 +281,6 @@ func (s *HoldService) FinalizePlaceholderHold(ctx context.Context, authorization
 		return nil
 	}
 
-	s.publishCommittedLog(authorization, event)
 	return nil
 }
 
@@ -333,7 +320,7 @@ func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthori
 		return &holdError{err: ErrHoldNotFound, statusCode: 404}
 	case "params_mismatch":
 		return &holdError{err: ErrHoldCompleted, statusCode: 409}
-	case "invalid_amount", "invalid_payload":
+	case "invalid_amount", "invalid_payload", "payload_mismatch":
 		return &holdError{err: errors.New("Invalid settlement payload"), statusCode: 400}
 	default:
 		return fmt.Errorf("unknown settlement result: %s", row.Result)
@@ -347,7 +334,6 @@ func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash s
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
 		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, metricsJSON, payload); err == nil {
-			s.publishCommittedLog(authorization, event)
 			return
 		} else {
 			lastErr = err
@@ -406,34 +392,14 @@ func settlementStatus(authorization *HoldAuthorization, actualCost string) strin
 }
 
 func encodeGatewayRequestEvent(event GatewayRequestEvent) (string, error) {
-	if event.Metrics == "" {
-		event.Metrics = "{}"
+	if event.Metrics == nil {
+		event.Metrics = map[string]any{}
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
 	}
 	return string(encoded), nil
-}
-
-func (s *HoldService) publishCommittedLog(authorization *HoldAuthorization, event GatewayRequestEvent) {
-	if s.tinybird == nil || authorization == nil {
-		return
-	}
-	go func() {
-		appendCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := s.tinybird.AppendGatewayRequest(appendCtx, event); err != nil {
-			fmt.Printf("stogas tinybird append failed: request_id=%s err=%v\n", authorization.RequestID, err)
-			return
-		}
-
-		markCtx, markCancel := context.WithTimeout(context.Background(), settleTimeout)
-		defer markCancel()
-		if _, err := s.pool.Exec(markCtx, markOutboxSentQuery, authorization.RequestID); err != nil {
-			fmt.Printf("stogas outbox mark sent failed: request_id=%s err=%v\n", authorization.RequestID, err)
-		}
-	}()
 }
 
 func (s *HoldService) publishUncommittedFallback(authorization *HoldAuthorization, event GatewayRequestEvent, err error) {
@@ -455,14 +421,31 @@ func (s *HoldService) publishUncommittedFallback(authorization *HoldAuthorizatio
 func provisionalBillingEvent(event GatewayRequestEvent) GatewayRequestEvent {
 	event.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	event.StogasBillingStatus = "not_settled"
-	event.StogasBillingRecordStatus = "provisional"
-	if event.UpstreamStatus == "" {
-		event.UpstreamStatus = "unknown"
+	if len(event.ProviderAttempts) == 0 {
+		event.ProviderAttempts = []ProviderAttempt{{
+			Provider:       "",
+			Status:         "unknown",
+			StatusCode:     nil,
+			LatencyMS:      0,
+			ProviderTTFBMS: nil,
+			IsBYOK:         false,
+		}}
 	}
-	if event.Metrics == "" {
-		event.Metrics = "{}"
+	if event.Metrics == nil {
+		event.Metrics = map[string]any{}
 	}
 	return event
+}
+
+func metricsJSONString(metrics map[string]any) string {
+	if len(metrics) == 0 {
+		return "{}"
+	}
+	encoded, err := json.Marshal(metrics)
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
 }
 
 func ErrorStatus(err error) int {

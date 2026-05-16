@@ -49,11 +49,9 @@ func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		t.Fatalf("payload is not valid JSON: %v", err)
 	}
-	if decoded["metrics"] != "{}" {
-		t.Fatalf("metrics = %v, want {}", decoded["metrics"])
-	}
-	if _, ok := decoded["postgres_financial_state_committed"]; ok {
-		t.Fatalf("payload contains deprecated postgres_financial_state_committed: %s", payload)
+	metrics, ok := decoded["metrics"].(map[string]any)
+	if !ok || len(metrics) != 0 {
+		t.Fatalf("metrics = %v, want empty object", decoded["metrics"])
 	}
 }
 
@@ -70,14 +68,11 @@ func TestProvisionalBillingEvent(t *testing.T) {
 	if event.StogasBillingStatus != "not_settled" {
 		t.Fatalf("billing status = %q, want not_settled", event.StogasBillingStatus)
 	}
-	if event.StogasBillingRecordStatus != "provisional" {
-		t.Fatalf("billing record status = %q, want provisional", event.StogasBillingRecordStatus)
+	if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "unknown" {
+		t.Fatalf("provider attempts = %#v, want one unknown attempt", event.ProviderAttempts)
 	}
-	if event.UpstreamStatus != "unknown" {
-		t.Fatalf("upstream status = %q, want unknown", event.UpstreamStatus)
-	}
-	if event.Metrics != "{}" {
-		t.Fatalf("metrics = %q, want {}", event.Metrics)
+	if len(event.Metrics) != 0 {
+		t.Fatalf("metrics = %#v, want empty object", event.Metrics)
 	}
 	if event.CreatedAt == "" {
 		t.Fatal("createdAt should be refreshed for provisional fallback logs")

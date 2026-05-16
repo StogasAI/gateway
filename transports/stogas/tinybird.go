@@ -19,27 +19,30 @@ type TinybirdClient struct {
 	token  string
 }
 
+type ProviderAttempt struct {
+	Provider       string  `json:"provider"`
+	Status         string  `json:"status"`
+	StatusCode     *int    `json:"status_code"`
+	LatencyMS      uint32  `json:"latency_ms"`
+	ProviderTTFBMS *uint32 `json:"provider_ttfb_ms"`
+	IsBYOK         bool    `json:"is_byok"`
+}
+
 type GatewayRequestEvent struct {
-	RequestID                    string `json:"request_id"`
-	CreatedAt                    string `json:"created_at"`
-	OrganizationID               string `json:"organization_id"`
-	WorkspaceID                  string `json:"workspace_id"`
-	StogasAPIKeyID               string `json:"stogas_api_key_id"`
-	RequestType                  string `json:"request_type"`
-	UpstreamProvider             string `json:"upstream_provider"`
-	Model                        string `json:"model"`
-	StogasStatus                 string `json:"stogas_status"`
-	UpstreamStatus               string `json:"upstream_status"`
-	StogasBillingStatus          string `json:"stogas_billing_status"`
-	StogasBillingRecordStatus    string `json:"stogas_billing_record_status"`
-	UpstreamProviderFinishReason string `json:"upstream_provider_finish_reason"`
-	TotalTimeMS                  uint32 `json:"total_time_ms"`
-	UpstreamProviderTimeMS       uint32 `json:"upstream_provider_time_ms"`
-	TTFBMS                       uint32 `json:"ttfb_ms"`
-	UpstreamProviderTTFBMS       uint32 `json:"upstream_provider_ttfb_ms"`
-	UpstreamProviderRequestID    string `json:"upstream_provider_request_id"`
-	TotalCostUSDAtoms            string `json:"total_cost_usd_atoms"`
-	Metrics                      string `json:"metrics"`
+	RequestID                    string            `json:"request_id"`
+	CreatedAt                    string            `json:"created_at"`
+	StogasAPIKeyID               string            `json:"stogas_api_key_id"`
+	RequestType                  string            `json:"request_type"`
+	ProviderAttempts             []ProviderAttempt `json:"provider_attempts"`
+	StogasProcessingSuccess      bool              `json:"stogas_processing_success"`
+	StogasBillingStatus          string            `json:"stogas_billing_status"`
+	UpstreamProviderFinishReason string            `json:"upstream_provider_finish_reason"`
+	ProviderRequestID            string            `json:"provider_request_id"`
+	TotalTimeMS                  uint32            `json:"total_time_ms"`
+	UpstreamProviderTimeMS       uint32            `json:"upstream_provider_time_ms"`
+	TTFBMS                       uint32            `json:"ttfb_ms"`
+	TotalCostUSDAtoms            string            `json:"total_cost_usd_atoms"`
+	Metrics                      map[string]any    `json:"metrics"`
 }
 
 func NewTinybirdClient(host string, token string) *TinybirdClient {
@@ -71,6 +74,7 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Gateway
 	}
 	query := endpoint.Query()
 	query.Set("name", tinybirdGatewayRequestsDatasource)
+	query.Set("wait", "true")
 	endpoint.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))

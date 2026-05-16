@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -133,33 +132,37 @@ func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *HoldAuthori
 
 	requestType, _ := ctx.Value(requestTypeContextKey).(string)
 	model, _ := ctx.Value(requestModelContextKey).(string)
-	stogasStatus := "success"
-	if bifrostErr != nil {
-		stogasStatus = "error"
-	}
+	upstreamStatus := normalizeUpstreamStatus(bifrostErr)
+	statusCode := providerStatusCode(bifrostErr)
 
 	return GatewayRequestEvent{
 		RequestID:                    authorization.RequestID,
 		CreatedAt:                    time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		OrganizationID:               authorization.UserID,
-		WorkspaceID:                  authorization.UserID,
 		StogasAPIKeyID:               authorization.KeyID,
 		RequestType:                  normalizeRequestType(requestType),
-		UpstreamProvider:             authorization.ProviderKey,
-		Model:                        model,
-		StogasStatus:                 stogasStatus,
-		UpstreamStatus:               normalizeUpstreamStatus(bifrostErr),
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: upstreamStatus, StatusCode: statusCode, LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
+		StogasProcessingSuccess:      true,
 		StogasBillingStatus:          settlementStatus(authorization, placeholderChargeUsdAtoms),
-		StogasBillingRecordStatus:    "committed",
 		UpstreamProviderFinishReason: finishReason(resp),
+		ProviderRequestID:            upstreamRequestID(resp),
 		TotalTimeMS:                  totalTimeMS,
 		UpstreamProviderTimeMS:       upstreamTimeMS,
 		TTFBMS:                       0,
-		UpstreamProviderTTFBMS:       0,
-		UpstreamProviderRequestID:    upstreamRequestID(resp),
 		TotalCostUSDAtoms:            placeholderChargeUsdAtoms,
-		Metrics:                      metricsJSONString(metrics),
+		Metrics:                      metricsObject(model, metrics),
 	}
+}
+
+func providerStatusCode(bifrostErr *schemas.BifrostError) *int {
+	if bifrostErr == nil {
+		status := 200
+		return &status
+	}
+	if bifrostErr.StatusCode == nil {
+		return nil
+	}
+	status := *bifrostErr.StatusCode
+	return &status
 }
 
 func normalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
@@ -236,15 +239,38 @@ func normalizeRequestType(requestType string) string {
 	}
 }
 
-func metricsJSONString(metrics map[string]any) string {
-	if len(metrics) == 0 {
-		return "{}"
+func metricsObject(model string, usage map[string]any) map[string]any {
+	tokens := map[string]any{
+		"prompt":     numberMetric(usage, "promptTokens"),
+		"completion": numberMetric(usage, "completionTokens"),
+		"reasoning":  nil,
+		"cached":     nil,
 	}
-	encoded, err := json.Marshal(metrics)
-	if err != nil {
-		return "{}"
+	return map[string]any{
+		"model":  model,
+		"tokens": tokens,
 	}
-	return string(encoded)
+}
+
+func numberMetric(metrics map[string]any, key string) any {
+	value, ok := metrics[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return typed
+	case uint:
+		return typed
+	case uint64:
+		return typed
+	case float64:
+		return typed
+	default:
+		return 0
+	}
 }
 
 func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPIKey string, requestID string, provider string, model string, authorizeErr error) (*HoldAuthorization, error) {
