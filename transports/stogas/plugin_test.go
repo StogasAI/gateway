@@ -124,14 +124,11 @@ func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
 		t.Fatalf("expected one finalization event, got %#v", authorizer.finalEvents)
 	}
 	event := authorizer.finalEvents[0]
-	if event.StogasStatus != "error" || event.UpstreamStatus != "provider_error" {
-		t.Fatalf("expected error statuses, got %#v", event)
+	if !event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "provider_error" {
+		t.Fatalf("expected processed provider error attempt, got %#v", event)
 	}
 	if event.StogasBillingStatus != "complete" {
 		t.Fatalf("expected placeholder billing status complete, got %q", event.StogasBillingStatus)
-	}
-	if event.StogasBillingRecordStatus != "committed" {
-		t.Fatalf("expected committed billing record status, got %q", event.StogasBillingRecordStatus)
 	}
 	if event.RequestType != "chat_completion_request" {
 		t.Fatalf("expected normalized request type, got %q", event.RequestType)
