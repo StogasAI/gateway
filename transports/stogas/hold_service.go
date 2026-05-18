@@ -94,6 +94,7 @@ type authorizeRow struct {
 	UserID           *string
 	KeyID            *string
 	AuthorizedAmount *string
+	CreatedAt        *time.Time
 	ExpiresAt        *time.Time
 	AvailableAfter   *string
 }
@@ -114,6 +115,7 @@ type releaseRow struct {
 type HoldAuthorization struct {
 	AuthorizedAmount *big.Int
 	AvailableAfter   *big.Int
+	CreatedAt        time.Time
 	ExpiresAt        time.Time
 	HoldID           string
 	KeyID            string
@@ -124,9 +126,13 @@ type HoldAuthorization struct {
 }
 
 type HoldService struct {
-	pool        *pgxpool.Pool
-	tinybird    *TinybirdClient
-	tokenPepper string
+	pool              *pgxpool.Pool
+	retryInitialDelay time.Duration
+	retryMaxDelay     time.Duration
+	retryWindow       time.Duration
+	settleFunc        func(context.Context, *HoldAuthorization, string, string, string, string) error
+	tinybird          *TinybirdClient
+	tokenPepper       string
 }
 
 type holdError struct {
@@ -222,7 +228,7 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
 	defer cancel()
 	err = s.pool.QueryRow(queryCtx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, placeholderChargeUsdAtoms, expiresAt, paramsHash).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.AuthorizedAmount, &row.ExpiresAt, &row.AvailableAfter,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
 	)
 	if err != nil {
 		return nil, &holdError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
@@ -250,7 +256,7 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	case "api_key_limit":
 		return nil, &holdError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
-		return &HoldAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID)}, nil
+		return &HoldAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID)}, nil
 	case "invalid_amount":
 		return nil, &holdError{err: errors.New("Invalid authorization amount"), statusCode: 400}
 	default:
@@ -276,7 +282,6 @@ func (s *HoldService) FinalizePlaceholderHold(ctx context.Context, authorization
 	}
 
 	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(metricsJSON), payload); err != nil {
-		fmt.Printf("stogas billing settlement failed; retrying asynchronously: request_id=%s err=%v\n", authorization.RequestID, err)
 		go s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event)
 		return nil
 	}
@@ -293,6 +298,10 @@ func (s *HoldService) ReleaseHold(ctx context.Context, authorization *HoldAuthor
 }
 
 func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string) error {
+	if s.settleFunc != nil {
+		return s.settleFunc(ctx, authorization, paramsHash, actualCost, metricsJSON, payload)
+	}
+
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
 	defer cancel()
 
@@ -328,8 +337,9 @@ func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthori
 }
 
 func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, event GatewayRequestEvent) {
-	deadline := time.Now().Add(settleRetryWindow)
-	delay := settleRetryInitialDelay
+	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
+	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
+	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
@@ -338,10 +348,10 @@ func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash s
 		} else {
 			lastErr = err
 		}
-		if delay < settleRetryMaxDelay {
+		if delay < maxDelay {
 			delay *= 2
-			if delay > settleRetryMaxDelay {
-				delay = settleRetryMaxDelay
+			if delay > maxDelay {
+				delay = maxDelay
 			}
 		}
 	}
@@ -350,6 +360,13 @@ func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash s
 		lastErr = errors.New("postgres settlement did not commit after retry window")
 	}
 	s.publishUncommittedFallback(authorization, event, lastErr)
+}
+
+func durationOrDefault(value time.Duration, fallback time.Duration) time.Duration {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func (s *HoldService) releaseOnce(ctx context.Context, authorization *HoldAuthorization, reason string) error {
@@ -402,39 +419,16 @@ func encodeGatewayRequestEvent(event GatewayRequestEvent) (string, error) {
 	return string(encoded), nil
 }
 
-func (s *HoldService) publishUncommittedFallback(authorization *HoldAuthorization, event GatewayRequestEvent, err error) {
+func (s *HoldService) publishUncommittedFallback(authorization *HoldAuthorization, event GatewayRequestEvent, _ error) {
 	if authorization == nil {
 		return
 	}
-	event = provisionalBillingEvent(event)
 	if s.tinybird == nil {
-		fmt.Printf("stogas tinybird fallback skipped: request_id=%s err=%v\n", authorization.RequestID, err)
 		return
 	}
 	appendCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if appendErr := s.tinybird.AppendGatewayRequest(appendCtx, event); appendErr != nil {
-		fmt.Printf("stogas tinybird fallback append failed: request_id=%s settle_err=%v append_err=%v\n", authorization.RequestID, err, appendErr)
-	}
-}
-
-func provisionalBillingEvent(event GatewayRequestEvent) GatewayRequestEvent {
-	event.CreatedAt = time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	event.StogasBillingStatus = "not_settled"
-	if len(event.ProviderAttempts) == 0 {
-		event.ProviderAttempts = []ProviderAttempt{{
-			Provider:       "",
-			Status:         "unknown",
-			StatusCode:     nil,
-			LatencyMS:      0,
-			ProviderTTFBMS: nil,
-			IsBYOK:         false,
-		}}
-	}
-	if event.Metrics == nil {
-		event.Metrics = map[string]any{}
-	}
-	return event
+	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
 }
 
 func metricsJSONString(metrics map[string]any) string {

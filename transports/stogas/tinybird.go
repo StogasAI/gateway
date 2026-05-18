@@ -62,7 +62,7 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Gateway
 	if c == nil {
 		return nil
 	}
-	body, err := json.Marshal(event)
+	body, err := json.Marshal(tinybirdGatewayRequestEvent(event))
 	if err != nil {
 		return fmt.Errorf("marshal tinybird event: %w", err)
 	}
@@ -93,4 +93,57 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Gateway
 		return fmt.Errorf("append tinybird event: status %d", res.StatusCode)
 	}
 	return nil
+}
+
+type tinybirdGatewayRequestEventPayload struct {
+	RequestID                    string `json:"request_id"`
+	CreatedAt                    string `json:"created_at"`
+	StogasAPIKeyID               string `json:"stogas_api_key_id"`
+	RequestType                  string `json:"request_type"`
+	ProviderAttempts             string `json:"provider_attempts"`
+	StogasProcessingSuccess      uint8  `json:"stogas_processing_success"`
+	StogasBillingStatus          string `json:"stogas_billing_status"`
+	UpstreamProviderFinishReason string `json:"upstream_provider_finish_reason"`
+	ProviderRequestID            string `json:"provider_request_id"`
+	TotalTimeMS                  uint32 `json:"total_time_ms"`
+	UpstreamProviderTimeMS       uint32 `json:"upstream_provider_time_ms"`
+	TTFBMS                       uint32 `json:"ttfb_ms"`
+	TotalCostUSDAtoms            string `json:"total_cost_usd_atoms"`
+	Metrics                      string `json:"metrics"`
+}
+
+func tinybirdGatewayRequestEvent(event GatewayRequestEvent) tinybirdGatewayRequestEventPayload {
+	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
+	metricsJSON := mustJSONString(event.Metrics, "{}")
+	processed := uint8(0)
+	if event.StogasProcessingSuccess {
+		processed = 1
+	}
+	return tinybirdGatewayRequestEventPayload{
+		CreatedAt:                    event.CreatedAt,
+		Metrics:                      metricsJSON,
+		ProviderAttempts:             attemptsJSON,
+		ProviderRequestID:            event.ProviderRequestID,
+		RequestID:                    event.RequestID,
+		RequestType:                  event.RequestType,
+		StogasAPIKeyID:               event.StogasAPIKeyID,
+		StogasBillingStatus:          event.StogasBillingStatus,
+		StogasProcessingSuccess:      processed,
+		TotalCostUSDAtoms:            event.TotalCostUSDAtoms,
+		TotalTimeMS:                  event.TotalTimeMS,
+		TTFBMS:                       event.TTFBMS,
+		UpstreamProviderFinishReason: event.UpstreamProviderFinishReason,
+		UpstreamProviderTimeMS:       event.UpstreamProviderTimeMS,
+	}
+}
+
+func mustJSONString(value any, fallback string) string {
+	if value == nil {
+		return fallback
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fallback
+	}
+	return string(encoded)
 }
