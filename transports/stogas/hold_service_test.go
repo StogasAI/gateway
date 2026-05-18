@@ -1,9 +1,14 @@
 package stogas
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestSettlementStatuses(t *testing.T) {
@@ -55,27 +60,118 @@ func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
 	}
 }
 
-func TestProvisionalBillingEvent(t *testing.T) {
-	event := provisionalBillingEvent(GatewayRequestEvent{
-		RequestID:           "request",
-		StogasStatus:        "success",
-		StogasBillingStatus: "complete",
+func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
+	status := 200
+	event := tinybirdGatewayRequestEvent(GatewayRequestEvent{
+		Metrics: map[string]any{
+			"model":  "gpt-4o-mini",
+			"tokens": map[string]any{"prompt": 1, "completion": 2},
+		},
+		ProviderAttempts: []ProviderAttempt{{
+			IsBYOK:     false,
+			LatencyMS:  12,
+			Provider:   "openai",
+			Status:     "success",
+			StatusCode: &status,
+		}},
+		StogasProcessingSuccess: true,
 	})
 
-	if event.StogasStatus != "success" {
-		t.Fatalf("stogas status should preserve request outcome, got %q", event.StogasStatus)
+	if event.StogasProcessingSuccess != 1 {
+		t.Fatalf("stogas_processing_success = %d, want 1", event.StogasProcessingSuccess)
 	}
-	if event.StogasBillingStatus != "not_settled" {
-		t.Fatalf("billing status = %q, want not_settled", event.StogasBillingStatus)
+	var attempts []ProviderAttempt
+	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
+		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
-	if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "unknown" {
-		t.Fatalf("provider attempts = %#v, want one unknown attempt", event.ProviderAttempts)
+	var metrics map[string]any
+	if err := json.Unmarshal([]byte(event.Metrics), &metrics); err != nil || metrics["model"] != "gpt-4o-mini" {
+		t.Fatalf("metrics = %q, err=%v", event.Metrics, err)
 	}
-	if len(event.Metrics) != 0 {
-		t.Fatalf("metrics = %#v, want empty object", event.Metrics)
+}
+
+func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
+	var captured tinybirdGatewayRequestEventPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("wait"); got != "true" {
+			t.Fatalf("wait query = %q, want true", got)
+		}
+		if got := r.Header.Get("authorization"); got != "Bearer gateway-requests-token" {
+			t.Fatalf("authorization header = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("failed to decode Tinybird payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	service := &HoldService{tinybird: NewTinybirdClient(server.URL, "gateway-requests-token")}
+	service.publishUncommittedFallback(
+		&HoldAuthorization{RequestID: "request-1"},
+		GatewayRequestEvent{
+			RequestID:               "request-1",
+			StogasBillingStatus:     "complete",
+			StogasProcessingSuccess: true,
+			TotalCostUSDAtoms:       placeholderChargeUsdAtoms,
+		},
+		nil,
+	)
+
+	if captured.RequestID != "request-1" {
+		t.Fatalf("request_id = %q, want request-1", captured.RequestID)
 	}
-	if event.CreatedAt == "" {
-		t.Fatal("createdAt should be refreshed for provisional fallback logs")
+	if captured.StogasBillingStatus != "complete" {
+		t.Fatalf("stogas_billing_status = %q, want final status complete", captured.StogasBillingStatus)
+	}
+	if captured.StogasProcessingSuccess != 1 {
+		t.Fatalf("stogas_processing_success = %d, want 1", captured.StogasProcessingSuccess)
+	}
+}
+
+func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
+	var captured tinybirdGatewayRequestEventPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("failed to decode Tinybird payload: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	attempts := 0
+	service := &HoldService{
+		retryInitialDelay: time.Millisecond,
+		retryMaxDelay:     time.Millisecond,
+		retryWindow:       5 * time.Millisecond,
+		settleFunc: func(context.Context, *HoldAuthorization, string, string, string, string) error {
+			attempts++
+			return errors.New("simulated postgres outage")
+		},
+		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
+	}
+	service.retrySettle(
+		&HoldAuthorization{RequestID: "request-1"},
+		"params",
+		placeholderChargeUsdAtoms,
+		"{}",
+		`{"request_id":"request-1"}`,
+		GatewayRequestEvent{
+			RequestID:               "request-1",
+			StogasBillingStatus:     "complete",
+			StogasProcessingSuccess: true,
+			TotalCostUSDAtoms:       placeholderChargeUsdAtoms,
+		},
+	)
+
+	if attempts == 0 {
+		t.Fatal("expected settlement retry attempts")
+	}
+	if captured.RequestID != "request-1" {
+		t.Fatalf("fallback request_id = %q, want request-1", captured.RequestID)
+	}
+	if captured.StogasBillingStatus != "complete" {
+		t.Fatalf("fallback status = %q, want final billing status", captured.StogasBillingStatus)
 	}
 }
 

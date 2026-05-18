@@ -67,8 +67,7 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 	}
 
 	switch req.RequestType {
-	case schemas.TextCompletionRequest, schemas.TextCompletionStreamRequest,
-		schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest,
+	case schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest,
 		schemas.ResponsesRequest, schemas.ResponsesStreamRequest:
 	default:
 		return req, errorShortCircuit(400, "invalid_request_error", fmt.Sprintf("Unsupported request type: %s", req.RequestType)), nil
@@ -124,6 +123,10 @@ func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *HoldAuthori
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
+	createdAt := startedAt
+	if !authorization.CreatedAt.IsZero() {
+		createdAt = authorization.CreatedAt
+	}
 	totalTimeMS := uint32Duration(time.Since(startedAt))
 	upstreamTimeMS := totalTimeMS
 	if extra := responseExtraFields(resp); extra != nil && extra.Latency > 0 {
@@ -137,7 +140,7 @@ func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *HoldAuthori
 
 	return GatewayRequestEvent{
 		RequestID:                    authorization.RequestID,
-		CreatedAt:                    time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		CreatedAt:                    createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		StogasAPIKeyID:               authorization.KeyID,
 		RequestType:                  normalizeRequestType(requestType),
 		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: upstreamStatus, StatusCode: statusCode, LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
@@ -228,8 +231,6 @@ func errorText(bifrostErr *schemas.BifrostError) string {
 
 func normalizeRequestType(requestType string) string {
 	switch requestType {
-	case string(schemas.TextCompletionRequest):
-		return "text_completion_request"
 	case string(schemas.ChatCompletionRequest):
 		return "chat_completion_request"
 	case string(schemas.ResponsesRequest):

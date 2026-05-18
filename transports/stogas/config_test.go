@@ -56,6 +56,28 @@ func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
+	t.Setenv("INFISICAL_SKIP", "true")
+	t.Setenv("AUTH_SECRET", "01234567890123456789012345678901")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
+	t.Setenv("DATABASE_SCHEMA", "public")
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("TB_HOST_URL", "https://api.tinybird.co")
+	t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", "gateway-requests-rw-token")
+	t.Setenv("TB_APPEND_ONLY_GATEWAY_REQUESTS", "stale-append-token")
+
+	config, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+	if config.TinybirdHost != "https://api.tinybird.co" {
+		t.Fatalf("TinybirdHost = %s, want Tinybird host", config.TinybirdHost)
+	}
+	if config.TinybirdToken != "gateway-requests-rw-token" {
+		t.Fatalf("TinybirdToken = %s, want gateway requests token", config.TinybirdToken)
+	}
+}
+
 func TestLoadFromEnvRejectsInvalidDatabasePool(t *testing.T) {
 	t.Setenv("INFISICAL_SKIP", "true")
 	t.Setenv("AUTH_SECRET", "01234567890123456789012345678901")

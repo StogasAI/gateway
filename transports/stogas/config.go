@@ -67,7 +67,7 @@ func LoadFromEnv() (Config, error) {
 		OpenAIBaseURL:     strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:              defaultPort,
 		TinybirdHost:      strings.TrimSpace(os.Getenv("TB_HOST_URL")),
-		TinybirdToken:     strings.TrimSpace(os.Getenv("TB_APPEND_ONLY_GATEWAY_REQUESTS")),
+		TinybirdToken:     strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
 	}
 
 	if err := config.Validate(); err != nil {
@@ -108,7 +108,7 @@ func loadInfisicalRuntimeSecrets() {
 	for _, secretName := range required {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
 	}
-	for _, secretName := range []string{"TB_APPEND_ONLY_GATEWAY_REQUESTS", "TB_HOST_URL"} {
+	for _, secretName := range []string{"TB_GATEWAY_REQUESTS_TOKEN", "TB_HOST_URL"} {
 		resolveInfisicalSecret(client, projectID, "/gateway/tinybird", secretName, false)
 	}
 }
