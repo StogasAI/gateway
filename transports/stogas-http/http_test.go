@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -31,6 +32,13 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	}
 	if _, err := uuid.Parse(requestID); err != nil {
 		t.Fatalf("expected UUID request ID, got %q: %v", requestID, err)
+	}
+	deadline, ok := bifrostCtx.Deadline()
+	if !ok {
+		t.Fatal("expected gateway request lifetime deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > stogas.GatewayRequestLifetime {
+		t.Fatalf("request lifetime remaining = %s, want within %s", remaining, stogas.GatewayRequestLifetime)
 	}
 }
 
