@@ -12,6 +12,7 @@ import (
 )
 
 const tinybirdGatewayRequestsDatasource = "gateway_requests"
+const tinybirdAppendTimeout = 10 * time.Second
 
 type TinybirdClient struct {
 	client *http.Client
@@ -45,6 +46,11 @@ type GatewayRequestEvent struct {
 	Metrics                      map[string]any    `json:"metrics"`
 }
 
+type tinybirdEventsResponse struct {
+	QuarantinedRows int `json:"quarantined_rows"`
+	SuccessfulRows  int `json:"successful_rows"`
+}
+
 func NewTinybirdClient(host string, token string) *TinybirdClient {
 	host = strings.TrimRight(strings.TrimSpace(host), "/")
 	token = strings.TrimSpace(token)
@@ -52,7 +58,7 @@ func NewTinybirdClient(host string, token string) *TinybirdClient {
 		return nil
 	}
 	return &TinybirdClient{
-		client: &http.Client{Timeout: 2 * time.Second},
+		client: &http.Client{Timeout: tinybirdAppendTimeout},
 		host:   host,
 		token:  token,
 	}
@@ -89,8 +95,15 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Gateway
 		return fmt.Errorf("append tinybird event: %w", err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
+	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("append tinybird event: status %d", res.StatusCode)
+	}
+	result := tinybirdEventsResponse{}
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode tinybird event acknowledgement: %w", err)
+	}
+	if result.SuccessfulRows != 1 || result.QuarantinedRows != 0 {
+		return fmt.Errorf("append tinybird event not committed: successful_rows=%d quarantined_rows=%d", result.SuccessfulRows, result.QuarantinedRows)
 	}
 	return nil
 }

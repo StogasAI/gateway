@@ -34,7 +34,11 @@ const (
 	settleRetryWindow         = 90 * time.Second
 	settleRetryInitialDelay   = 250 * time.Millisecond
 	settleRetryMaxDelay       = 5 * time.Second
-	defaultHoldDuration       = 30 * time.Minute
+	holdSettlementExpiryBuffer = 10 * time.Minute
+
+	// GatewayRequestLifetime bounds direct inference streams so reconciliation never races a live request.
+	GatewayRequestLifetime = 60 * time.Minute
+	defaultHoldDuration    = GatewayRequestLifetime + holdSettlementExpiryBuffer
 )
 
 var (
@@ -69,6 +73,20 @@ from stogas.authorize_gateway_hold(
 const settleHoldQuery = `
 select *
 from stogas.settle_gateway_hold(
+  $1::uuid,
+  $2::text,
+  $3::text,
+  $4::text,
+  $5::text,
+  $6::numeric,
+  $7::jsonb,
+  $8::json
+);
+`
+
+const settleHoldWithOutboxQuery = `
+select *
+from stogas.settle_gateway_hold_with_outbox(
   $1::uuid,
   $2::text,
   $3::text,
@@ -130,7 +148,7 @@ type HoldService struct {
 	retryInitialDelay time.Duration
 	retryMaxDelay     time.Duration
 	retryWindow       time.Duration
-	settleFunc        func(context.Context, *HoldAuthorization, string, string, string, string) error
+	settleFunc        func(context.Context, *HoldAuthorization, string, string, string, string, bool) error
 	tinybird          *TinybirdClient
 	tokenPepper       string
 }
@@ -142,6 +160,15 @@ type holdError struct {
 
 func (e *holdError) Error() string { return e.err.Error() }
 func (e *holdError) Unwrap() error { return e.err }
+
+type settleResultError struct {
+	err        error
+	result     string
+	statusCode int
+}
+
+func (e *settleResultError) Error() string { return e.err.Error() }
+func (e *settleResultError) Unwrap() error { return e.err }
 
 func NewHoldService(ctx context.Context, databaseURL string, databaseSchema string, authSecret string, databasePool DatabasePoolConfig, tinybird *TinybirdClient) (*HoldService, error) {
 	if err := databasePool.Validate(); err != nil {
@@ -281,8 +308,13 @@ func (s *HoldService) FinalizePlaceholderHold(ctx context.Context, authorization
 		return err
 	}
 
-	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(metricsJSON), payload); err != nil {
-		go s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event)
+	writeOutbox := true
+	if s.tinybird != nil {
+		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
+	}
+
+	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(metricsJSON), payload, writeOutbox); err != nil {
+		go s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event, writeOutbox)
 		return nil
 	}
 
@@ -297,18 +329,22 @@ func (s *HoldService) ReleaseHold(ctx context.Context, authorization *HoldAuthor
 	return s.releaseOnce(ctx, authorization, "provider_error")
 }
 
-func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string) error {
+func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, paramsHash, actualCost, metricsJSON, payload)
+		return s.settleFunc(ctx, authorization, paramsHash, actualCost, metricsJSON, payload, writeOutbox)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
 	defer cancel()
 
 	row := settleRow{}
+	query := settleHoldQuery
+	if writeOutbox {
+		query = settleHoldWithOutboxQuery
+	}
 	err := s.pool.QueryRow(
 		queryCtx,
-		settleHoldQuery,
+		query,
 		authorization.RequestID,
 		authorization.KeyID,
 		authorization.ProviderKey,
@@ -326,26 +362,29 @@ func (s *HoldService) settleOnce(ctx context.Context, authorization *HoldAuthori
 	case "complete", "over_reserved", "under_reserved", "negative_balance", "already_settled":
 		return nil
 	case "hold_not_found":
-		return &holdError{err: ErrHoldNotFound, statusCode: 404}
+		return &settleResultError{err: ErrHoldNotFound, result: row.Result, statusCode: 404}
 	case "params_mismatch":
-		return &holdError{err: ErrHoldCompleted, statusCode: 409}
+		return &settleResultError{err: ErrHoldCompleted, result: row.Result, statusCode: 409}
 	case "invalid_amount", "invalid_payload", "payload_mismatch":
-		return &holdError{err: errors.New("Invalid settlement payload"), statusCode: 400}
+		return &settleResultError{err: errors.New("Invalid settlement payload"), result: row.Result, statusCode: 400}
 	default:
 		return fmt.Errorf("unknown settlement result: %s", row.Result)
 	}
 }
 
-func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, event GatewayRequestEvent) {
+func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, event GatewayRequestEvent, writeOutbox bool) {
 	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
-		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, metricsJSON, payload); err == nil {
+		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, metricsJSON, payload, writeOutbox); err == nil {
 			return
 		} else {
+			if isPermanentSettleError(err) {
+				return
+			}
 			lastErr = err
 		}
 		if delay < maxDelay {
@@ -359,7 +398,14 @@ func (s *HoldService) retrySettle(authorization *HoldAuthorization, paramsHash s
 	if lastErr == nil {
 		lastErr = errors.New("postgres settlement did not commit after retry window")
 	}
-	s.publishUncommittedFallback(authorization, event, lastErr)
+	if writeOutbox {
+		s.publishUncommittedFallback(authorization, event, lastErr)
+	}
+}
+
+func isPermanentSettleError(err error) bool {
+	var typed *settleResultError
+	return errors.As(err, &typed)
 }
 
 func durationOrDefault(value time.Duration, fallback time.Duration) time.Duration {
@@ -426,7 +472,7 @@ func (s *HoldService) publishUncommittedFallback(authorization *HoldAuthorizatio
 	if s.tinybird == nil {
 		return
 	}
-	appendCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	appendCtx, cancel := context.WithTimeout(context.Background(), tinybirdAppendTimeout)
 	defer cancel()
 	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
 }
@@ -446,6 +492,10 @@ func ErrorStatus(err error) int {
 	var typed *holdError
 	if errors.As(err, &typed) {
 		return typed.statusCode
+	}
+	var settleErr *settleResultError
+	if errors.As(err, &settleErr) {
+		return settleErr.statusCode
 	}
 	return 500
 }
