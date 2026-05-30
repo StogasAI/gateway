@@ -2,6 +2,10 @@ package stogas
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -10,7 +14,83 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func TestParseSignedAPIKey(t *testing.T) {
+	secret := "test-token-pepper"
+	keyID := "019de515-eabf-7c0e-89bd-400629a79580"
+	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
+	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
+	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, signedAPIKeyExternal, "")
+
+	claims, err := parseSignedAPIKey(rawKey, secret)
+	if err != nil {
+		t.Fatalf("parseSignedAPIKey returned error: %v", err)
+	}
+	if claims.KeyID != keyID || claims.OrganizationID != organizationID || claims.WorkspaceID != workspaceID || claims.ResponsibleID != userID {
+		t.Fatalf("claims = %#v", claims)
+	}
+	if claims.KeyType != signedAPIKeyExternal || claims.ProvisioningID != nil {
+		t.Fatalf("key type/provisioning = %#v", claims)
+	}
+	if claims.KeyVersion != 1 {
+		t.Fatalf("KeyVersion = %d, want 1", claims.KeyVersion)
+	}
+
+	tamperedIndex := len(signedAPIKeyPrefix) + 10
+	tamperedChar := byte('A')
+	if rawKey[tamperedIndex] == tamperedChar {
+		tamperedChar = 'B'
+	}
+	tamperedKey := rawKey[:tamperedIndex] + string(tamperedChar) + rawKey[tamperedIndex+1:]
+	if _, err := parseSignedAPIKey(tamperedKey, secret); err == nil {
+		t.Fatal("parseSignedAPIKey accepted a tampered key")
+	}
+}
+
+func TestParseProvisionedSignedAPIKey(t *testing.T) {
+	secret := "test-token-pepper"
+	keyID := "019de515-eabf-7c0e-89bd-400629a79580"
+	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
+	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
+	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
+	provisioningID := "019de516-c9ac-79cf-b701-4cf1b21f0a8c"
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, signedAPIKeyProvisioned, provisioningID)
+
+	claims, err := parseSignedAPIKey(rawKey, secret)
+	if err != nil {
+		t.Fatalf("parseSignedAPIKey returned error: %v", err)
+	}
+	if claims.KeyType != signedAPIKeyProvisioned || claims.ProvisioningID == nil || *claims.ProvisioningID != provisioningID {
+		t.Fatalf("claims = %#v", claims)
+	}
+}
+
+func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, keyType byte, provisioningID string) string {
+	t.Helper()
+	payload := make([]byte, signedAPIKeyPayloadBytes)
+	binary.BigEndian.PutUint32(payload[0:4], 1)
+	keyUUID := uuid.MustParse(keyID)
+	organizationUUID := uuid.MustParse(organizationID)
+	workspaceUUID := uuid.MustParse(workspaceID)
+	userUUID := uuid.MustParse(userID)
+	copy(payload[4:20], keyUUID[:])
+	copy(payload[20:36], organizationUUID[:])
+	copy(payload[36:52], workspaceUUID[:])
+	copy(payload[52:68], userUUID[:])
+	payload[68] = keyType
+	if provisioningID != "" {
+		provisioningUUID := uuid.MustParse(provisioningID)
+		copy(payload[69:85], provisioningUUID[:])
+	}
+	hasher := hmac.New(sha256.New, []byte(secret))
+	_, _ = hasher.Write(payload)
+	body := append(payload, hasher.Sum(nil)[:signedAPIKeyMACBytes]...)
+	return signedAPIKeyPrefix + base64.RawURLEncoding.EncodeToString(body)
+}
 
 func TestSettlementStatuses(t *testing.T) {
 	tests := []struct {
