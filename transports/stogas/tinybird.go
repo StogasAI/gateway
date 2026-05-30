@@ -33,6 +33,9 @@ type GatewayRequestEvent struct {
 	RequestID                    string            `json:"request_id"`
 	CreatedAt                    string            `json:"created_at"`
 	StogasAPIKeyID               string            `json:"stogas_api_key_id"`
+	StogasUserID                 string            `json:"stogas_user_id"`
+	StogasOrganizationID         string            `json:"stogas_organization_id"`
+	StogasWorkspaceID            string            `json:"stogas_workspace_id"`
 	RequestType                  string            `json:"request_type"`
 	ProviderAttempts             []ProviderAttempt `json:"provider_attempts"`
 	StogasProcessingSuccess      bool              `json:"stogas_processing_success"`
@@ -112,6 +115,9 @@ type tinybirdGatewayRequestEventPayload struct {
 	RequestID                    string `json:"request_id"`
 	CreatedAt                    string `json:"created_at"`
 	StogasAPIKeyID               string `json:"stogas_api_key_id"`
+	StogasUserID                 string `json:"stogas_user_id"`
+	StogasOrganizationID         string `json:"stogas_organization_id"`
+	StogasWorkspaceID            string `json:"stogas_workspace_id"`
 	RequestType                  string `json:"request_type"`
 	ProviderAttempts             string `json:"provider_attempts"`
 	StogasProcessingSuccess      uint8  `json:"stogas_processing_success"`
@@ -141,7 +147,10 @@ func tinybirdGatewayRequestEvent(event GatewayRequestEvent) tinybirdGatewayReque
 		RequestType:                  event.RequestType,
 		StogasAPIKeyID:               event.StogasAPIKeyID,
 		StogasBillingStatus:          event.StogasBillingStatus,
+		StogasOrganizationID:         event.StogasOrganizationID,
 		StogasProcessingSuccess:      processed,
+		StogasUserID:                 event.StogasUserID,
+		StogasWorkspaceID:            event.StogasWorkspaceID,
 		TotalCostUSDAtoms:            event.TotalCostUSDAtoms,
 		TotalTimeMS:                  event.TotalTimeMS,
 		TTFBMS:                       event.TTFBMS,

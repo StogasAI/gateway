@@ -5,12 +5,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,19 +24,26 @@ import (
 
 const (
 	tokenPepperInfo           = "stogas:token:pepper"
+	signedAPIKeyPrefix        = "sk_stogas_v1_"
+	signedAPIKeyPayloadBytes  = 85
+	signedAPIKeyMACBytes      = 24
+	signedAPIKeyBodyBytes     = signedAPIKeyPayloadBytes + signedAPIKeyMACBytes
+	signedAPIKeyPersonal      = byte(1)
+	signedAPIKeyExternal      = byte(2)
+	signedAPIKeyProvisioned   = byte(3)
 	placeholderChargeUsdAtoms = "4000000000" // 4 nanoUSD at 18-decimal USD atom precision.
 
-	poolHealthCheckPeriod     = 30 * time.Second
-	poolMaxConnIdleTime       = 5 * time.Minute
-	poolMaxConnLifetime       = 30 * time.Minute
-	poolMaxConnLifetimeJitter = 5 * time.Minute
-	poolWarmupTimeout         = 5 * time.Second
-	poolWarmupPerConnTimeout  = 2 * time.Second
-	authorizeTimeout          = 1500 * time.Millisecond
-	settleTimeout             = 2 * time.Second
-	settleRetryWindow         = 90 * time.Second
-	settleRetryInitialDelay   = 250 * time.Millisecond
-	settleRetryMaxDelay       = 5 * time.Second
+	poolHealthCheckPeriod      = 30 * time.Second
+	poolMaxConnIdleTime        = 5 * time.Minute
+	poolMaxConnLifetime        = 30 * time.Minute
+	poolMaxConnLifetimeJitter  = 5 * time.Minute
+	poolWarmupTimeout          = 5 * time.Second
+	poolWarmupPerConnTimeout   = 2 * time.Second
+	authorizeTimeout           = 1500 * time.Millisecond
+	settleTimeout              = 2 * time.Second
+	settleRetryWindow          = 90 * time.Second
+	settleRetryInitialDelay    = 250 * time.Millisecond
+	settleRetryMaxDelay        = 5 * time.Second
 	holdSettlementExpiryBuffer = 10 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference streams so reconciliation never races a live request.
@@ -58,7 +68,7 @@ var (
 
 const authorizeHoldQuery = `
 select *
-from stogas.authorize_gateway_hold(
+from authorize_gateway_hold(
   $1::text,
   $2::uuid,
   $3::uuid,
@@ -72,7 +82,7 @@ from stogas.authorize_gateway_hold(
 
 const settleHoldQuery = `
 select *
-from stogas.settle_gateway_hold(
+from settle_gateway_hold(
   $1::uuid,
   $2::text,
   $3::text,
@@ -86,7 +96,7 @@ from stogas.settle_gateway_hold(
 
 const settleHoldWithOutboxQuery = `
 select *
-from stogas.settle_gateway_hold_with_outbox(
+from settle_gateway_hold_with_outbox(
   $1::uuid,
   $2::text,
   $3::text,
@@ -100,7 +110,7 @@ from stogas.settle_gateway_hold_with_outbox(
 
 const releaseHoldQuery = `
 select *
-from stogas.release_gateway_hold(
+from release_gateway_hold(
   $1::uuid,
   $2::text
 );
@@ -111,6 +121,8 @@ type authorizeRow struct {
 	HoldID           *string
 	UserID           *string
 	KeyID            *string
+	OrganizationID   *string
+	WorkspaceID      *string
 	AuthorizedAmount *string
 	CreatedAt        *time.Time
 	ExpiresAt        *time.Time
@@ -137,10 +149,12 @@ type HoldAuthorization struct {
 	ExpiresAt        time.Time
 	HoldID           string
 	KeyID            string
+	OrganizationID   string
 	ProductKey       string
 	ProviderKey      string
 	RequestID        string
 	UserID           string
+	WorkspaceID      string
 }
 
 type HoldService struct {
@@ -243,6 +257,10 @@ func (s *HoldService) Close() {
 }
 
 func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error) {
+	if _, err := parseSignedAPIKey(rawAPIKey, s.tokenPepper); err != nil {
+		return nil, &holdError{err: ErrInvalidAPIKey, statusCode: 401}
+	}
+
 	apiKeyHash := createTokenHash(rawAPIKey, s.tokenPepper)
 	expiresAt := time.Now().UTC().Add(defaultHoldDuration)
 	holdID, err := newUUIDV7String()
@@ -255,7 +273,7 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
 	defer cancel()
 	err = s.pool.QueryRow(queryCtx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, placeholderChargeUsdAtoms, expiresAt, paramsHash).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
 	)
 	if err != nil {
 		return nil, &holdError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
@@ -283,7 +301,7 @@ func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey st
 	case "api_key_limit":
 		return nil, &holdError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
-		return &HoldAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID)}, nil
+		return &HoldAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), OrganizationID: derefString(row.OrganizationID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID), WorkspaceID: derefString(row.WorkspaceID)}, nil
 	case "invalid_amount":
 		return nil, &holdError{err: errors.New("Invalid authorization amount"), statusCode: 400}
 	default:
@@ -507,6 +525,82 @@ func deriveTokenPepper(authSecret string) (string, error) {
 		return "", fmt.Errorf("derive token pepper: %w", err)
 	}
 	return hex.EncodeToString(derived), nil
+}
+
+type signedAPIKeyClaims struct {
+	KeyID          string
+	KeyType        byte
+	KeyVersion     uint32
+	OrganizationID string
+	ProvisioningID *string
+	ResponsibleID  string
+	WorkspaceID    string
+}
+
+func parseSignedAPIKey(rawKey string, tokenPepper string) (*signedAPIKeyClaims, error) {
+	if !strings.HasPrefix(rawKey, signedAPIKeyPrefix) {
+		return nil, ErrInvalidAPIKey
+	}
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, signedAPIKeyPrefix))
+	if err != nil || len(body) != signedAPIKeyBodyBytes {
+		return nil, ErrInvalidAPIKey
+	}
+
+	payload := body[:signedAPIKeyPayloadBytes]
+	actualMAC := body[signedAPIKeyPayloadBytes:]
+	hasher := hmac.New(sha256.New, []byte(tokenPepper))
+	_, _ = hasher.Write(payload)
+	expectedMAC := hasher.Sum(nil)[:signedAPIKeyMACBytes]
+	if !hmac.Equal(actualMAC, expectedMAC) {
+		return nil, ErrInvalidAPIKey
+	}
+
+	keyID, err := uuid.FromBytes(payload[4:20])
+	if err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	organizationID, err := uuid.FromBytes(payload[20:36])
+	if err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	workspaceID, err := uuid.FromBytes(payload[36:52])
+	if err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	responsibleID, err := uuid.FromBytes(payload[52:68])
+	if err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	keyType := payload[68]
+	provisioningID, err := uuid.FromBytes(payload[69:85])
+	if err != nil {
+		return nil, ErrInvalidAPIKey
+	}
+	var provisioningIDString *string
+	switch keyType {
+	case signedAPIKeyPersonal, signedAPIKeyExternal:
+		if provisioningID != uuid.Nil {
+			return nil, ErrInvalidAPIKey
+		}
+	case signedAPIKeyProvisioned:
+		if provisioningID == uuid.Nil {
+			return nil, ErrInvalidAPIKey
+		}
+		value := provisioningID.String()
+		provisioningIDString = &value
+	default:
+		return nil, ErrInvalidAPIKey
+	}
+
+	return &signedAPIKeyClaims{
+		KeyID:          keyID.String(),
+		KeyType:        keyType,
+		KeyVersion:     binary.BigEndian.Uint32(payload[0:4]),
+		OrganizationID: organizationID.String(),
+		ProvisioningID: provisioningIDString,
+		ResponsibleID:  responsibleID.String(),
+		WorkspaceID:    workspaceID.String(),
+	}, nil
 }
 
 func createTokenHash(token string, tokenPepper string) string {
