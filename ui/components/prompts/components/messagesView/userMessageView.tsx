@@ -1,11 +1,25 @@
-import { Textarea } from "@/components/ui/textarea";
-import { Message, SerializedMessage, type MessageContent } from "@/lib/message";
-import { FileIcon, Mic, Paperclip, PencilIcon, XIcon } from "lucide-react";
+import { CodeEditor } from "@/components/ui/codeEditor";
+import { RichTextarea } from "@/components/ui/custom/richTextarea";
 import { Markdown } from "@/components/ui/markdown";
-import { useCallback, useEffect, useRef, useState } from "react";
-import MessageRoleSwitcher from "./messageRoleSwitcher";
+import { Message, SerializedMessage, type MessageContent } from "@/lib/message";
+import { JINJA_VAR_HIGHLIGHT_PATTERNS, JINJA_VAR_REGEX } from "@/lib/message/constant";
+import { isJson } from "@/lib/utils/validation";
+import { Paperclip, PencilIcon, XIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileToAttachment } from "../../utils/attachment";
+import { AttachmentDisplay } from "./attachmentViews";
+import MessageRoleSwitcher from "./messageRoleSwitcher";
 
+/**
+ * Render an interactive user message block that supports viewing and editing content, role switching, file attachments (via picker or drag-and-drop), and special handling for JSON and Jinja-variable content.
+ *
+ * @param message - The message model to render and edit; its updates are emitted via `onChange`.
+ * @param disabled - When true, disables editing and attachment interactions.
+ * @param supportsVision - When true, enables attaching files (images, audio, documents) and drag-and-drop attachments.
+ * @param onChange - Called with the message's serialized form whenever the message is modified (content, role, or attachments).
+ * @param onRemove - Optional callback invoked when the message's delete action is triggered.
+ * @returns The JSX element that renders the user message view and its interactive controls.
+ */
 export function UserMessageView({
 	message,
 	disabled,
@@ -24,10 +38,40 @@ export function UserMessageView({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const messageRef = useRef(message);
 	messageRef.current = message;
+	const pendingCursorRef = useRef<number | null>(null);
 	const content = message.content;
 	const isEmpty = !content;
 	const messageAttachments = message.attachments;
 	const canAttach = supportsVision && !disabled;
+	const hasVariables = JINJA_VAR_REGEX.test(content);
+	JINJA_VAR_REGEX.lastIndex = 0;
+	const jsonBufferRef = useRef<string | null>(null);
+	const contentIsJson = useMemo(() => !isEmpty && isJson(content), [content, isEmpty]);
+	const formattedJson = useMemo(() => {
+		if (!contentIsJson) return "";
+		try {
+			return JSON.stringify(JSON.parse(content), null, 2);
+		} catch {
+			return content;
+		}
+	}, [content, contentIsJson]);
+
+	const applyPendingJsonBuffer = (msg: Message): Message => {
+		if (jsonBufferRef.current !== null) {
+			const clone = msg.clone();
+			clone.content = jsonBufferRef.current;
+			jsonBufferRef.current = null;
+			return clone;
+		}
+		return msg;
+	};
+
+	const flushJsonBuffer = () => {
+		const updated = applyPendingJsonBuffer(messageRef.current);
+		if (updated !== messageRef.current) {
+			onChange(updated.serialized);
+		}
+	};
 
 	useEffect(() => {
 		const handleClick = (e: MouseEvent) => {
@@ -40,14 +84,15 @@ export function UserMessageView({
 	}, []);
 
 	const handleRoleChange = (role: string) => {
-		const clone = message.clone();
+		const latest = applyPendingJsonBuffer(messageRef.current);
+		const clone = latest.clone();
 		clone.role = role as any;
 		onChange(clone.serialized);
 	};
 
 	const addAttachments = useCallback(
 		(newAttachments: MessageContent[]) => {
-			const latest = messageRef.current;
+			const latest = applyPendingJsonBuffer(messageRef.current);
 			const clone = latest.clone();
 			clone.attachments = [...latest.attachments, ...newAttachments];
 			onChange(clone.serialized);
@@ -57,8 +102,9 @@ export function UserMessageView({
 
 	const handleRemoveAttachment = useCallback(
 		(index: number) => {
-			const clone = message.clone();
-			clone.attachments = message.attachments.filter((_, i) => i !== index);
+			const latest = applyPendingJsonBuffer(messageRef.current);
+			const clone = latest.clone();
+			clone.attachments = latest.attachments.filter((_, i) => i !== index);
 			onChange(clone.serialized);
 		},
 		[message, onChange],
@@ -120,9 +166,27 @@ export function UserMessageView({
 		[addAttachments],
 	);
 
+	const handleReadOnlyClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+		if (disabled) return;
+		const target = e.target as HTMLTextAreaElement;
+		pendingCursorRef.current = target.selectionStart ?? 0;
+		setEditMode(true);
+	};
+
+	const handleEditFocus = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+		const pos = pendingCursorRef.current;
+		pendingCursorRef.current = null;
+		const target = e.target;
+		requestAnimationFrame(() => {
+			const cursorPos = pos ?? target.value.length;
+			target.selectionStart = cursorPos;
+			target.selectionEnd = cursorPos;
+		});
+	};
+
 	return (
 		<div
-			className="group relative hover:border-border focus-within:border-border rounded-lg border border-transparent px-3 py-2 transition-colors"
+			className="group hover:border-border focus-within:border-border relative rounded-sm border border-transparent px-3 py-2 transition-colors"
 			ref={containerRef}
 			{...(canAttach
 				? {
@@ -134,7 +198,7 @@ export function UserMessageView({
 				: {})}
 		>
 			{canAttach && isDragging && (
-				<div className="bg-background/80 border-primary absolute inset-0 z-50 flex items-center justify-center rounded-lg border-2 border-dashed backdrop-blur-sm">
+				<div className="bg-background/80 border-primary absolute inset-0 z-50 flex items-center justify-center rounded-sm border-2 border-dashed backdrop-blur-sm">
 					<div className="text-primary flex flex-col items-center gap-1">
 						<Paperclip className="h-5 w-5" />
 						<span className="text-xs font-medium">Drop files to attach</span>
@@ -143,7 +207,7 @@ export function UserMessageView({
 			)}
 			<div className="mb-1 flex items-center">
 				<MessageRoleSwitcher role={message.role ?? ""} disabled={disabled} onRoleChange={handleRoleChange} />
-				<div className="ml-auto flex items-center gap-0.5 h-5">
+				<div className="ml-auto flex h-5 items-center gap-0.5">
 					{canAttach && (
 						<>
 							<input
@@ -154,19 +218,37 @@ export function UserMessageView({
 								className="hidden"
 								onChange={handleFileSelect}
 							/>
-							<button type="button" aria-label="Attach file" onClick={() => fileInputRef.current?.click()} className="rounded-sm p-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-muted focus:bg-muted focus:opacity-100">
-								<Paperclip className="text-muted-foreground hover:text-foreground h-3.5 w-3.5 shrink-0 cursor-pointer" />
+							<button
+								type="button"
+								aria-label="Attach file"
+								data-testid="user-msg-attach"
+								onClick={() => fileInputRef.current?.click()}
+								className="hover:bg-muted focus:bg-muted rounded-sm p-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+							>
+								<Paperclip className="text-muted-foreground hover:text-foreground size-3 shrink-0 cursor-pointer" />
 							</button>
 						</>
 					)}
 					{!disabled && (
-						<button type="button" aria-label="Edit message" onClick={() => setEditMode(true)} className="rounded-sm p-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-muted focus:bg-muted focus:opacity-100">
-							<PencilIcon className="text-muted-foreground hover:text-foreground h-3.5 w-3.5 shrink-0 cursor-pointer" />
+						<button
+							type="button"
+							aria-label="Edit message"
+							data-testid="user-msg-edit"
+							onClick={() => setEditMode(true)}
+							className="hover:bg-muted focus:bg-muted rounded-sm p-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+						>
+							<PencilIcon className="text-muted-foreground hover:text-foreground size-3 shrink-0 cursor-pointer" />
 						</button>
 					)}
 					{!disabled && onRemove && (
-						<button type="button" aria-label="Delete message" onClick={onRemove} className="rounded-sm p-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-muted focus:bg-muted focus:opacity-100">
-							<XIcon className="text-muted-foreground hover:text-foreground h-4 w-4 shrink-0 cursor-pointer" />
+						<button
+							type="button"
+							aria-label="Delete message"
+							data-testid="user-msg-delete"
+							onClick={onRemove}
+							className="hover:bg-muted focus:bg-muted rounded-sm p-1 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 focus:opacity-100"
+						>
+							<XIcon className="text-muted-foreground hover:text-foreground size-3 shrink-0 cursor-pointer" />
 						</button>
 					)}
 				</div>
@@ -174,106 +256,68 @@ export function UserMessageView({
 
 			<div>
 				{editMode ? (
-					<Textarea
+					<RichTextarea
 						autoFocus
 						value={content}
-						className="text-muted-foreground dark:bg-transparent min-h-[20px] resize-none rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+						className="text-muted-foreground min-h-[20px] resize-none rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:bg-transparent"
+						textAreaClassName="rounded-none p-0 border-none"
 						disabled={disabled}
 						onChange={(e) => {
 							const clone = message.clone();
 							clone.content = e.target.value;
 							onChange(clone.serialized);
 						}}
+						onFocus={handleEditFocus}
 						onBlur={() => {
 							if (content.trim().length > 0) setEditMode(false);
 						}}
+						highlightPatterns={JINJA_VAR_HIGHLIGHT_PATTERNS}
 					/>
 				) : isEmpty && messageAttachments.length === 0 ? (
 					<div className="text-muted-foreground min-h-[20px] text-sm italic">Enter user message...</div>
+				) : contentIsJson ? (
+					<CodeEditor
+						wrap
+						code={formattedJson}
+						lang="json"
+						readonly={disabled}
+						autoResize
+						maxHeight={400}
+						onChange={(value) => {
+							jsonBufferRef.current = value ?? "";
+						}}
+						options={{
+							showIndentLines: false,
+							disableHover: true,
+						}}
+						onBlur={flushJsonBuffer}
+					/>
+				) : hasVariables ? (
+					<RichTextarea
+						readOnly
+						value={content}
+						className="text-muted-foreground min-h-[20px] resize-none rounded-none border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:bg-transparent"
+						textAreaClassName="rounded-none p-0 border-none cursor-text"
+						onClick={handleReadOnlyClick}
+						highlightPatterns={JINJA_VAR_HIGHLIGHT_PATTERNS}
+					/>
 				) : (
-					<Markdown content={content} className="text-muted-foreground" />
+					<div
+						className={!disabled ? "cursor-text" : undefined}
+						onClick={(e) => {
+							if (disabled || editMode) return;
+							if ((e.target as HTMLElement).closest("button, a, [role='button']")) return;
+							setEditMode(true);
+						}}
+					>
+						<Markdown content={content} className="text-muted-foreground" />
+					</div>
 				)}
 			</div>
 
 			{messageAttachments.length > 0 && (
 				<AttachmentDisplay attachments={messageAttachments} editable={canAttach} onRemoveAttachment={handleRemoveAttachment} />
 			)}
-		</div>
-	);
-}
-
-function AttachmentDisplay({
-	attachments,
-	editable,
-	onRemoveAttachment,
-}: {
-	attachments: MessageContent[];
-	editable?: boolean;
-	onRemoveAttachment?: (index: number) => void;
-}) {
-	if (attachments.length === 0) return null;
-
-	return (
-		<div className="mt-2 flex flex-wrap gap-2">
-			{attachments.map((att, i) => {
-				if (att.type === "image_url" && att.image_url?.url) {
-					return (
-						<div key={i} className="group/att relative">
-							{/* eslint-disable-next-line @next/next/no-img-element */}
-							<img src={att.image_url.url} alt="attached image" className="max-h-48 max-w-xs rounded-md border object-contain" />
-							{editable && onRemoveAttachment && (
-								<button
-									onClick={() => onRemoveAttachment(i)}
-									className="bg-background/80 text-muted-foreground hover:bg-destructive/20 hover:text-destructive absolute -top-1.5 -right-1.5 rounded-full border p-0.5 opacity-0 transition-opacity group-hover/att:opacity-100"
-								>
-									<XIcon className="h-3 w-3" />
-								</button>
-							)}
-						</div>
-					);
-				}
-
-				if (att.type === "input_audio") {
-					const format = att.input_audio?.format || "wav";
-					const dataUrl = `data:audio/${format};base64,${att.input_audio?.data || ""}`;
-					return (
-						<div key={i} className="group/att bg-muted/30 relative flex items-center gap-2 rounded-md border px-3 py-2">
-							<Mic className="text-muted-foreground h-4 w-4" />
-							<audio controls className="h-8 max-w-[200px]">
-								<source src={dataUrl} type={`audio/${format}`} />
-							</audio>
-							{editable && onRemoveAttachment && (
-								<button
-									onClick={() => onRemoveAttachment(i)}
-									className="bg-background/80 text-muted-foreground hover:bg-destructive/20 hover:text-destructive absolute -top-1.5 -right-1.5 rounded-full border p-0.5 opacity-0 transition-opacity group-hover/att:opacity-100"
-								>
-									<XIcon className="h-3 w-3" />
-								</button>
-							)}
-						</div>
-					);
-				}
-
-				if (att.type === "file") {
-					return (
-						<div key={i} className="group/att bg-muted/30 text-muted-foreground relative flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm">
-							<FileIcon className="h-4 w-4 shrink-0" />
-							<span className="max-w-[200px] truncate">{att.file?.filename || "File"}</span>
-							{att.file?.file_type && <span className="text-xs opacity-60">{att.file.file_type}</span>}
-							{editable && onRemoveAttachment && (
-								<button
-									onClick={() => onRemoveAttachment(i)}
-									className="bg-background/80 text-muted-foreground hover:bg-destructive/20 hover:text-destructive absolute -top-1.5 -right-1.5 rounded-full border p-0.5 opacity-0 transition-opacity group-hover/att:opacity-100"
-								>
-									<XIcon className="h-3 w-3" />
-								</button>
-							)}
-						</div>
-					);
-				}
-
-				return null;
-			})}
 		</div>
 	);
 }

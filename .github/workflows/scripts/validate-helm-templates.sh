@@ -54,7 +54,7 @@ test_template() {
 
 # 1. Storage Combinations (9 tests)
 echo ""
-echo -e "${CYAN}📦 1/5 - Testing Storage Combinations (9 tests)...${NC}"
+echo -e "${CYAN}📦 1/6 - Testing Storage Combinations (9 tests)...${NC}"
 echo "---------------------------------------------------"
 
 # config=no, logs=no
@@ -126,7 +126,7 @@ test_template "config=postgres, logs=postgres" \
 
 # 2. Vector Store Combinations (6 tests)
 echo ""
-echo -e "${CYAN}🗄️  2/5 - Testing Vector Store Combinations (6 tests)...${NC}"
+echo -e "${CYAN}🗄️  2/6 - Testing Vector Store Combinations (6 tests)...${NC}"
 echo "--------------------------------------------------------"
 
 # Weaviate
@@ -175,7 +175,7 @@ test_template "sqlite + qdrant" \
 
 # 3. Special Configurations (7 tests)
 echo ""
-echo -e "${CYAN}⚙️  3/5 - Testing Special Configurations (7 tests)...${NC}"
+echo -e "${CYAN}⚙️  3/6 - Testing Special Configurations (7 tests)...${NC}"
 echo "-----------------------------------------------------"
 
 # semantic cache: direct mode (dimension: 1, no provider/keys)
@@ -251,7 +251,7 @@ test_template "production-like config" \
 
 # 4. New Property Rendering (Gap 1-8 tests)
 echo ""
-echo -e "${CYAN}🆕 4/5 - Testing New Property Rendering (Gap 1-8)...${NC}"
+echo -e "${CYAN}🆕 4/6 - Testing New Property Rendering (Gap 1-8)...${NC}"
 echo "-----------------------------------------------------"
 
 # Gap 1+2: Client new properties
@@ -270,7 +270,7 @@ test_template "client: new properties (Gap 1+2)" \
 test_template "otel: headers + tls_ca_cert + insecure (Gap 3)" \
   --set bifrost.plugins.otel.enabled=true \
   --set bifrost.plugins.otel.config.collector_url=otel:4317 \
-  --set bifrost.plugins.otel.config.trace_type=otel \
+  --set bifrost.plugins.otel.config.trace_type=genai_extension \
   --set bifrost.plugins.otel.config.protocol=grpc \
   --set 'bifrost.plugins.otel.config.headers.Authorization=Bearer token' \
   --set bifrost.plugins.otel.config.tls_ca_cert=/certs/ca.pem \
@@ -317,7 +317,7 @@ test_template "combined: all new Gap 1-8 fields" \
   --set bifrost.client.hideDeletedVirtualKeysInFilters=true \
   --set bifrost.plugins.otel.enabled=true \
   --set bifrost.plugins.otel.config.collector_url=otel:4317 \
-  --set bifrost.plugins.otel.config.trace_type=otel \
+  --set bifrost.plugins.otel.config.trace_type=genai_extension \
   --set bifrost.plugins.otel.config.protocol=grpc \
   --set bifrost.plugins.otel.config.insecure=true \
   --set bifrost.plugins.governance.enabled=true \
@@ -332,7 +332,7 @@ test_template "combined: all new Gap 1-8 fields" \
 
 # 5. Plugin Name Validation
 echo ""
-echo -e "${CYAN}🔌 5/5 - Validating Plugin Names Match Go Registry...${NC}"
+echo -e "${CYAN}🔌 5/6 - Validating Plugin Names Match Go Registry...${NC}"
 echo "------------------------------------------------------"
 
 # Verify semantic cache plugin renders with correct name ("semantic_cache", not "semantic_cache")
@@ -352,6 +352,63 @@ if helm template bifrost ./helm-charts/bifrost \
     report_result "$test_name" 0
   else
     report_result "$test_name" 1
+  fi
+else
+  report_result "$test_name" 1
+  echo -e "${YELLOW}  Error output:${NC}"
+  head -10 /tmp/helm-template-output.yaml | sed 's/^/    /'
+fi
+
+# 6. Custom Plugin Placement and Order Rendering
+echo ""
+echo -e "${CYAN}🔧 6/6 - Validating Custom Plugin placement and order Rendering...${NC}"
+echo "-------------------------------------------------------------------"
+
+# Test custom plugin renders successfully with placement and order
+test_template "custom plugin with placement and order" \
+  --set 'bifrost.plugins.custom[0].name=my-plugin' \
+  --set 'bifrost.plugins.custom[0].enabled=true' \
+  --set 'bifrost.plugins.custom[0].path=/plugins/my-plugin.so' \
+  --set 'bifrost.plugins.custom[0].placement=pre_builtin' \
+  --set 'bifrost.plugins.custom[0].order=2'
+
+# Verify placement appears in rendered output
+test_name="custom plugin rendered JSON contains placement field"
+if helm template bifrost ./helm-charts/bifrost \
+  --set image.tag=v1.0.0 \
+  --set 'bifrost.plugins.custom[0].name=my-plugin' \
+  --set 'bifrost.plugins.custom[0].enabled=true' \
+  --set 'bifrost.plugins.custom[0].path=/plugins/my-plugin.so' \
+  --set 'bifrost.plugins.custom[0].placement=pre_builtin' \
+  --set 'bifrost.plugins.custom[0].order=2' \
+  > /tmp/helm-template-output.yaml 2>&1; then
+  if grep -Eq '"placement"[[:space:]]*:[[:space:]]*"pre_builtin"' /tmp/helm-template-output.yaml; then
+    report_result "$test_name" 0
+  else
+    report_result "$test_name" 1
+    echo -e "${YELLOW}  placement field not found in rendered output${NC}"
+  fi
+else
+  report_result "$test_name" 1
+  echo -e "${YELLOW}  Error output:${NC}"
+  head -10 /tmp/helm-template-output.yaml | sed 's/^/    /'
+fi
+
+# Verify order appears in rendered output
+test_name="custom plugin rendered JSON contains order field"
+if helm template bifrost ./helm-charts/bifrost \
+  --set image.tag=v1.0.0 \
+  --set 'bifrost.plugins.custom[0].name=my-plugin' \
+  --set 'bifrost.plugins.custom[0].enabled=true' \
+  --set 'bifrost.plugins.custom[0].path=/plugins/my-plugin.so' \
+  --set 'bifrost.plugins.custom[0].placement=pre_builtin' \
+  --set 'bifrost.plugins.custom[0].order=2' \
+  > /tmp/helm-template-output.yaml 2>&1; then
+  if grep -Eq '"order"[[:space:]]*:[[:space:]]*2' /tmp/helm-template-output.yaml; then
+    report_result "$test_name" 0
+  else
+    report_result "$test_name" 1
+    echo -e "${YELLOW}  order field not found in rendered output${NC}"
   fi
 else
   report_result "$test_name" 1

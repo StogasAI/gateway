@@ -275,9 +275,9 @@ func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 		Model:   "gpt-5",
 		Choices: []schemas.BifrostResponseChoice{},
 		ExtraFields: schemas.BifrostResponseExtraFields{
-			Provider:       schemas.OpenAI,
-			ModelRequested: "gpt-5",
-			Latency:        12,
+			Provider:               schemas.OpenAI,
+			OriginalModelRequested: "gpt-5",
+			Latency:                12,
 		},
 	}
 
@@ -309,10 +309,10 @@ func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
 		Model:   "gpt-5",
 		Choices: []schemas.BifrostResponseChoice{},
 		ExtraFields: schemas.BifrostResponseExtraFields{
-			Provider:        schemas.OpenAI,
-			ModelRequested:  "openai/gpt-5",
-			ModelDeployment: "gpt-5",
-			Latency:         12,
+			Provider:               schemas.OpenAI,
+			OriginalModelRequested: "openai/gpt-5",
+			ResolvedModelUsed:      "gpt-5",
+			Latency:                12,
 		},
 	}
 

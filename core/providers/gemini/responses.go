@@ -1,13 +1,14 @@
 package gemini
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -21,8 +22,9 @@ func (request *GeminiGenerationRequest) ToBifrostResponsesRequest(ctx *schemas.B
 
 	// Create the BifrostResponsesRequest
 	bifrostReq := &schemas.BifrostResponsesRequest{
-		Provider: provider,
-		Model:    model,
+		Provider:  provider,
+		Model:     model,
+		Fallbacks: schemas.ParseFallbacks(request.Fallbacks),
 	}
 
 	params := request.convertGenerationConfigToResponsesParameters()
@@ -60,6 +62,11 @@ func (request *GeminiGenerationRequest) ToBifrostResponsesRequest(ctx *schemas.B
 		params.ExtraParams["safety_settings"] = request.SafetySettings
 	}
 
+	if request.ServiceTier != "" {
+		mapped := mapGeminiServiceTierToBifrost(request.ServiceTier)
+		params.ServiceTier = &mapped
+	}
+
 	if request.CachedContent != "" {
 		params.ExtraParams["cached_content"] = request.CachedContent
 	}
@@ -67,13 +74,14 @@ func (request *GeminiGenerationRequest) ToBifrostResponsesRequest(ctx *schemas.B
 	bifrostReq.Params = params
 
 	return bifrostReq
-
 }
 
-func ToGeminiResponsesRequest(bifrostReq *schemas.BifrostResponsesRequest) *GeminiGenerationRequest {
+func ToGeminiResponsesRequest(bifrostReq *schemas.BifrostResponsesRequest) (*GeminiGenerationRequest, error) {
 	if bifrostReq == nil {
-		return nil
+		return nil, nil
 	}
+
+	bifrostReq.Model = NormalizeModelName(bifrostReq.Model)
 
 	// Create the base Gemini generation request
 	geminiReq := &GeminiGenerationRequest{
@@ -82,16 +90,27 @@ func ToGeminiResponsesRequest(bifrostReq *schemas.BifrostResponsesRequest) *Gemi
 
 	// Convert parameters to generation config
 	if bifrostReq.Params != nil {
-		geminiReq.GenerationConfig = geminiReq.convertParamsToGenerationConfigResponses(bifrostReq.Params)
+		var err error
+		geminiReq.GenerationConfig, err = geminiReq.convertParamsToGenerationConfigResponses(bifrostReq.Params)
+		if err != nil {
+			return nil, err
+		}
 		geminiReq.ExtraParams = bifrostReq.Params.ExtraParams
 		// Handle tool-related parameters
 		if len(bifrostReq.Params.Tools) > 0 {
-			geminiReq.Tools = convertResponsesToolsToGemini(bifrostReq.Params.Tools)
+			geminiReq.Tools, err = convertResponsesToolsToGemini(bifrostReq.Params.Tools)
+			if err != nil {
+				return nil, err
+			}
 
 			// Convert tool choice if present
 			if bifrostReq.Params.ToolChoice != nil {
 				geminiReq.ToolConfig = convertResponsesToolChoiceToGemini(bifrostReq.Params.ToolChoice)
 			}
+		}
+
+		if bifrostReq.Params.ServiceTier != nil {
+			geminiReq.ServiceTier = mapBifrostServiceTierToGemini(*bifrostReq.Params.ServiceTier)
 		}
 	}
 
@@ -99,7 +118,7 @@ func ToGeminiResponsesRequest(bifrostReq *schemas.BifrostResponsesRequest) *Gemi
 	if bifrostReq.Input != nil {
 		contents, systemInstruction, err := convertResponsesMessagesToGeminiContents(bifrostReq.Input)
 		if err != nil {
-			return nil
+			return nil, err
 		}
 		geminiReq.Contents = contents
 
@@ -134,7 +153,7 @@ func ToGeminiResponsesRequest(bifrostReq *schemas.BifrostResponsesRequest) *Gemi
 		}
 	}
 
-	return geminiReq
+	return geminiReq, nil
 }
 
 // ToResponsesBifrostResponsesResponse converts a Gemini GenerateContentResponse to a BifrostResponsesResponse
@@ -153,8 +172,41 @@ func (response *GenerateContentResponse) ToResponsesBifrostResponsesResponse() *
 	// Convert usage information
 	bifrostResp.Usage = ConvertGeminiUsageMetadataToResponsesUsage(response.UsageMetadata)
 
+	if response.UsageMetadata != nil {
+		if t := mapGeminiTrafficTypeToBifrost(response.UsageMetadata.TrafficType); t != nil {
+			bifrostResp.ServiceTier = t
+		} else if response.UsageMetadata.ServiceTier != "" {
+			tier := mapGeminiServiceTierToBifrost(response.UsageMetadata.ServiceTier)
+			bifrostResp.ServiceTier = &tier
+		}
+	}
+
 	// Convert candidates to Responses output messages
 	if len(response.Candidates) > 0 {
+		candidate := response.Candidates[0]
+
+		// Persist finish reason as Bifrost canonical stop_reason
+		if candidate.FinishReason != "" && candidate.FinishReason != FinishReasonUnspecified {
+			stopReason := ConvertGeminiFinishReasonToBifrost(candidate.FinishReason)
+			bifrostResp.StopReason = &stopReason
+
+			if isErrorFinishReason(candidate.FinishReason) {
+				failedStatus := "failed"
+				bifrostResp.Status = &failedStatus
+
+				errMsg := candidate.FinishMessage
+				if errMsg == "" {
+					errMsg = string(candidate.FinishReason)
+				}
+				bifrostResp.Error = &schemas.ResponsesResponseError{
+					Code:    stopReason,
+					Message: errMsg,
+				}
+
+				return bifrostResp
+			}
+		}
+
 		outputMessages := convertGeminiCandidatesToResponsesOutput(response.Candidates)
 		if len(outputMessages) > 0 {
 			bifrostResp.Output = outputMessages
@@ -270,60 +322,66 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 
 			// Handle tool calls (function calls)
 			if msg.Type != nil && *msg.Type == schemas.ResponsesMessageTypeFunctionCall && msg.ResponsesToolMessage != nil {
-				argsMap := make(map[string]any)
+				argsRaw := json.RawMessage("{}")
 				if msg.ResponsesToolMessage.Arguments != nil {
-					if err := sonic.Unmarshal([]byte(*msg.ResponsesToolMessage.Arguments), &argsMap); err == nil {
-						functionCall := &FunctionCall{
-							Args: argsMap,
-						}
-						if msg.ResponsesToolMessage.Name != nil {
-							functionCall.Name = *msg.ResponsesToolMessage.Name
-						}
-
-						// Extract thought signature from CallID if present
-						var thoughtSignature []byte
-						if msg.ResponsesToolMessage.CallID != nil {
-							callID := *msg.ResponsesToolMessage.CallID
-							// Check if the ID contains a thought signature (format: "ToolName_ts_base64signature")
-							if strings.Contains(callID, thoughtSignatureSeparator) {
-								parts := strings.SplitN(callID, thoughtSignatureSeparator, 2)
-								if len(parts) == 2 {
-									// Try to decode the signature part
-									if decodedSig, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-										thoughtSignature = decodedSig
-									}
-								}
-							}
-							functionCall.ID = callID
-						}
-
-						part := &Part{
-							FunctionCall: functionCall,
-						}
-
-						// Use thought signature from CallID if we extracted one
-						if len(thoughtSignature) > 0 {
-							part.ThoughtSignature = thoughtSignature
-						} else {
-							// Otherwise, look ahead to see if the next message is a reasoning message with encrypted content
-							// (thought signature for this function call)
-							if i+1 < len(bifrostResp.Output) {
-								nextMsg := bifrostResp.Output[i+1]
-								if nextMsg.Type != nil && *nextMsg.Type == schemas.ResponsesMessageTypeReasoning &&
-									nextMsg.ResponsesReasoning != nil && nextMsg.ResponsesReasoning.EncryptedContent != nil {
-									decodedSig, err := base64.StdEncoding.DecodeString(*nextMsg.ResponsesReasoning.EncryptedContent)
-									if err == nil {
-										part.ThoughtSignature = decodedSig
-										// Mark this reasoning message as consumed
-										consumedIndices[i+1] = true
-									}
-								}
-							}
-						}
-
-						currentParts = append(currentParts, part)
+					rawArgs := strings.TrimSpace(*msg.ResponsesToolMessage.Arguments)
+					if rawArgs == "" {
+						rawArgs = "{}"
+					}
+					var buf bytes.Buffer
+					if err := json.Compact(&buf, []byte(rawArgs)); err == nil {
+						argsRaw = buf.Bytes()
 					}
 				}
+				functionCall := &FunctionCall{
+					Args: argsRaw,
+				}
+				if msg.ResponsesToolMessage.Name != nil {
+					functionCall.Name = *msg.ResponsesToolMessage.Name
+				}
+
+				// Extract thought signature from CallID if present
+				var thoughtSignature []byte
+				if msg.ResponsesToolMessage.CallID != nil {
+					callID := *msg.ResponsesToolMessage.CallID
+					// Check if the ID contains a thought signature (format: "ToolName_ts_base64signature")
+					if strings.Contains(callID, thoughtSignatureSeparator) {
+						parts := strings.SplitN(callID, thoughtSignatureSeparator, 2)
+						if len(parts) == 2 {
+							// Try to decode the signature part
+							if decodedSig, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+								thoughtSignature = decodedSig
+							}
+						}
+					}
+					functionCall.ID = callID
+				}
+
+				part := &Part{
+					FunctionCall: functionCall,
+				}
+
+				// Use thought signature from CallID if we extracted one
+				if len(thoughtSignature) > 0 {
+					part.ThoughtSignature = thoughtSignature
+				} else {
+					// Otherwise, look ahead to see if the next message is a reasoning message with encrypted content
+					// (thought signature for this function call)
+					if i+1 < len(bifrostResp.Output) {
+						nextMsg := bifrostResp.Output[i+1]
+						if nextMsg.Type != nil && *nextMsg.Type == schemas.ResponsesMessageTypeReasoning &&
+							nextMsg.ResponsesReasoning != nil && nextMsg.ResponsesReasoning.EncryptedContent != nil {
+							decodedSig, err := base64.StdEncoding.DecodeString(*nextMsg.ResponsesReasoning.EncryptedContent)
+							if err == nil {
+								part.ThoughtSignature = decodedSig
+								// Mark this reasoning message as consumed
+								consumedIndices[i+1] = true
+							}
+						}
+					}
+				}
+
+				currentParts = append(currentParts, part)
 			}
 
 			// Handle function responses (function call outputs)
@@ -331,7 +389,12 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 				responseMap := make(map[string]any)
 
 				if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr != nil {
-					responseMap["output"] = *msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr
+					output := *msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr
+					if json.Valid([]byte(output)) {
+						responseMap["output"] = json.RawMessage(output)
+					} else {
+						responseMap["output"] = output
+					}
 				}
 				funcName := ""
 				if msg.ResponsesToolMessage.Name != nil && strings.TrimSpace(*msg.ResponsesToolMessage.Name) != "" {
@@ -340,9 +403,10 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 					funcName = *msg.ResponsesToolMessage.CallID
 				}
 
+				responseBytes, _ := providerUtils.MarshalSorted(responseMap)
 				functionResponse := &FunctionResponse{
 					Name:     funcName,
-					Response: responseMap,
+					Response: json.RawMessage(responseBytes),
 				}
 				if msg.ResponsesToolMessage.CallID != nil {
 					functionResponse.ID = *msg.ResponsesToolMessage.CallID
@@ -392,8 +456,10 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 				},
 			}
 
-			// Determine finish reason based on incomplete details
-			if bifrostResp.IncompleteDetails != nil {
+			// Determine finish reason: prefer StopReason (Bifrost canonical), fall back to IncompleteDetails
+			if bifrostResp.StopReason != nil {
+				candidate.FinishReason = ConvertBifrostFinishReasonToGemini(*bifrostResp.StopReason)
+			} else if bifrostResp.IncompleteDetails != nil {
 				switch bifrostResp.IncompleteDetails.Reason {
 				case "max_tokens":
 					candidate.FinishReason = FinishReasonMaxTokens
@@ -420,6 +486,16 @@ func ToGeminiResponsesResponse(bifrostResp *schemas.BifrostResponsesResponse) *G
 	// Convert usage metadata
 	if bifrostResp.Usage != nil {
 		geminiResp.UsageMetadata = ConvertBifrostResponsesUsageToGeminiUsageMetadata(bifrostResp.Usage)
+	}
+	if bifrostResp.ServiceTier != nil {
+		if geminiResp.UsageMetadata == nil {
+			geminiResp.UsageMetadata = &GenerateContentResponseUsageMetadata{}
+		}
+		if bifrostResp.ExtraFields.Provider == schemas.Vertex {
+			geminiResp.UsageMetadata.TrafficType = mapBifrostServiceTierToVertexTrafficType(*bifrostResp.ServiceTier)
+		} else {
+			geminiResp.UsageMetadata.ServiceTier = mapBifrostServiceTierToGemini(*bifrostResp.ServiceTier)
+		}
 	}
 
 	return geminiResp
@@ -579,45 +655,46 @@ func ToGeminiResponsesStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 			if rawArgs == "" {
 				rawArgs = "{}"
 			}
-			argsMap := make(map[string]any)
-			if err := sonic.Unmarshal([]byte(rawArgs), &argsMap); err == nil {
-				functionCall := &FunctionCall{
-					Name: "",
-					Args: argsMap,
-				}
-				if name != nil {
-					functionCall.Name = *name
-				}
-
-				var thoughtSig string
-				if callID != nil {
-					// Extract thought signature from CallID if present
-					if strings.Contains(*callID, thoughtSignatureSeparator) {
-						parts := strings.SplitN(*callID, thoughtSignatureSeparator, 2)
-						if len(parts) == 2 {
-							thoughtSig = parts[1]
-						}
-					}
-					functionCall.ID = *callID
-				}
-				functionCallPart := &Part{
-					FunctionCall: functionCall,
-				}
-				if thoughtSig != "" {
-					if decodedSig, err := base64.RawURLEncoding.DecodeString(thoughtSig); err == nil {
-						functionCallPart.ThoughtSignature = decodedSig
-					}
-				}
-				candidate.Content.Parts = append(candidate.Content.Parts, functionCallPart)
+			var argsRaw json.RawMessage
+			var buf bytes.Buffer
+			if err := json.Compact(&buf, []byte(rawArgs)); err == nil {
+				argsRaw = buf.Bytes()
+			} else {
+				argsRaw = json.RawMessage("{}")
 			}
+			functionCall := &FunctionCall{
+				Name: "",
+				Args: argsRaw,
+			}
+			if name != nil {
+				functionCall.Name = *name
+			}
+
+			var thoughtSig string
+			if callID != nil {
+				// Extract thought signature from CallID if present
+				if strings.Contains(*callID, thoughtSignatureSeparator) {
+					parts := strings.SplitN(*callID, thoughtSignatureSeparator, 2)
+					if len(parts) == 2 {
+						thoughtSig = parts[1]
+					}
+				}
+				functionCall.ID = *callID
+			}
+			functionCallPart := &Part{
+				FunctionCall: functionCall,
+			}
+			if thoughtSig != "" {
+				if decodedSig, err := base64.RawURLEncoding.DecodeString(thoughtSig); err == nil {
+					functionCallPart.ThoughtSignature = decodedSig
+				}
+			}
+			candidate.Content.Parts = append(candidate.Content.Parts, functionCallPart)
 		}
 
 	case schemas.ResponsesStreamResponseTypeOutputTextDone:
-		if bifrostResp.Text != nil && *bifrostResp.Text != "" {
-			candidate.Content.Parts = append(candidate.Content.Parts, &Part{
-				Text: *bifrostResp.Text,
-			})
-		}
+		// Text was already streamed via OutputTextDelta chunks, skip to avoid duplication
+		return nil
 
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone:
@@ -673,9 +750,23 @@ func ToGeminiResponsesStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 			if bifrostResp.Response.Usage != nil {
 				streamResp.UsageMetadata = ConvertBifrostResponsesUsageToGeminiUsageMetadata(bifrostResp.Response.Usage)
 			}
+			if bifrostResp.Response.ServiceTier != nil {
+				if streamResp.UsageMetadata == nil {
+					streamResp.UsageMetadata = &GenerateContentResponseUsageMetadata{}
+				}
+				if bifrostResp.Response.ExtraFields.Provider == schemas.Vertex {
+					streamResp.UsageMetadata.TrafficType = mapBifrostServiceTierToVertexTrafficType(*bifrostResp.Response.ServiceTier)
+				} else {
+					streamResp.UsageMetadata.ServiceTier = mapBifrostServiceTierToGemini(*bifrostResp.Response.ServiceTier)
+				}
+			}
 
-			// Set finish reason
-			candidate.FinishReason = FinishReasonStop
+			// Derive finish reason from StopReason when present
+			if bifrostResp.Response.StopReason != nil {
+				candidate.FinishReason = ConvertBifrostFinishReasonToGemini(*bifrostResp.Response.StopReason)
+			} else {
+				candidate.FinishReason = FinishReasonStop
+			}
 
 			// Attach grounding metadata if we buffered web search data
 			if state.HasWebSearch && state.WebSearchCall != nil {
@@ -1217,10 +1308,8 @@ func processGeminiFunctionCallPart(part *Part, state *GeminiResponsesStreamState
 
 	// Convert args to JSON string
 	argsJSON := ""
-	if part.FunctionCall.Args != nil {
-		if argsBytes, err := sonic.Marshal(part.FunctionCall.Args); err == nil {
-			argsJSON = string(argsBytes)
-		}
+	if len(part.FunctionCall.Args) > 0 {
+		argsJSON = string(part.FunctionCall.Args)
 	}
 	state.ToolArgumentBuffers[outputIndex] = argsJSON
 
@@ -1562,10 +1651,11 @@ func closeGeminiTextItem(state *GeminiResponsesStreamState, sequenceNumber int) 
 		LogProbs:       []schemas.ResponsesOutputMessageContentTextLogProb{},
 	})
 
-	// Emit content_part.done
+	// Emit content_part.done with accumulated text
+	partText := fullText
 	part := &schemas.ResponsesMessageContentBlock{
 		Type: schemas.ResponsesOutputMessageContentTypeText,
-		Text: schemas.Ptr(""),
+		Text: &partText,
 		ResponsesOutputMessageContentText: &schemas.ResponsesOutputMessageContentText{
 			LogProbs:    []schemas.ResponsesOutputMessageContentTextLogProb{},
 			Annotations: []schemas.ResponsesOutputMessageContentTextAnnotation{},
@@ -1580,13 +1670,23 @@ func closeGeminiTextItem(state *GeminiResponsesStreamState, sequenceNumber int) 
 		Part:           part,
 	})
 
-	// Emit output_item.done
+	// Emit output_item.done with content blocks
+	itemText := fullText
 	doneItem := &schemas.ResponsesMessage{
 		Type:   schemas.Ptr(schemas.ResponsesMessageTypeMessage),
 		Role:   schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
 		Status: schemas.Ptr("completed"),
 		Content: &schemas.ResponsesMessageContent{
-			ContentBlocks: []schemas.ResponsesMessageContentBlock{},
+			ContentBlocks: []schemas.ResponsesMessageContentBlock{
+				{
+					Type: schemas.ResponsesOutputMessageContentTypeText,
+					Text: &itemText,
+					ResponsesOutputMessageContentText: &schemas.ResponsesOutputMessageContentText{
+						Annotations: []schemas.ResponsesOutputMessageContentTextAnnotation{},
+						LogProbs:    []schemas.ResponsesOutputMessageContentTextLogProb{},
+					},
+				},
+			},
 		},
 	}
 	if itemID != "" {
@@ -1760,6 +1860,14 @@ func closeGeminiOpenItems(state *GeminiResponsesStreamState, groundingMetadata *
 		CreatedAt: state.CreatedAt,
 		Usage:     bifrostUsage,
 	}
+	if usage != nil {
+		if t := mapGeminiTrafficTypeToBifrost(usage.TrafficType); t != nil {
+			completedResp.ServiceTier = t
+		} else if usage.ServiceTier != "" {
+			tier := mapGeminiServiceTierToBifrost(usage.ServiceTier)
+			completedResp.ServiceTier = &tier
+		}
+	}
 	if state.Model != nil {
 		completedResp.Model = *state.Model
 	}
@@ -1858,10 +1966,8 @@ func convertGeminiContentsToResponsesMessages(contents []Content) []schemas.Resp
 			case part.FunctionCall != nil:
 				// Function call message
 				argsJSON := "{}"
-				if part.FunctionCall.Args != nil {
-					if argsBytes, err := sonic.Marshal(part.FunctionCall.Args); err == nil {
-						argsJSON = string(argsBytes)
-					}
+				if len(part.FunctionCall.Args) > 0 {
+					argsJSON = string(part.FunctionCall.Args)
 				}
 
 				callID := part.FunctionCall.ID
@@ -1909,13 +2015,13 @@ func convertGeminiContentsToResponsesMessages(contents []Content) []schemas.Resp
 					}
 				}
 
-				// Convert response map to string
+				// Convert response to string — extract output field if present
 				responseStr := ""
 				if part.FunctionResponse.Response != nil {
-					if output, ok := part.FunctionResponse.Response["output"].(string); ok {
-						responseStr = output
-					} else if responseBytes, err := sonic.Marshal(part.FunctionResponse.Response); err == nil {
-						responseStr = string(responseBytes)
+					if r := providerUtils.GetJSONField(part.FunctionResponse.Response, "output"); r.Exists() {
+						responseStr = r.String()
+					} else {
+						responseStr = string(part.FunctionResponse.Response)
 					}
 				}
 
@@ -2145,6 +2251,16 @@ func convertGeminiToolsToResponsesTools(tools []Tool) []schemas.ResponsesTool {
 				if fn.Parameters != nil {
 					params := convertSchemaToFunctionParameters(fn.Parameters)
 					responsesTool.ResponsesToolFunction.Parameters = &params
+				} else if fn.ParametersJSONSchema != nil {
+					raw, err := providerUtils.MarshalSorted(fn.ParametersJSONSchema)
+					if err != nil {
+						continue
+					}
+					var params schemas.ToolFunctionParameters
+					if err := json.Unmarshal(raw, &params); err != nil {
+						continue
+					}
+					responsesTool.ResponsesToolFunction.Parameters = &params
 				}
 				responsesTools = append(responsesTools, responsesTool)
 			}
@@ -2166,6 +2282,8 @@ func convertGeminiToolConfigToToolChoice(toolConfig *ToolConfig) *schemas.Respon
 	switch toolConfig.FunctionCallingConfig.Mode {
 	case FunctionCallingConfigModeAuto:
 		toolChoice.Mode = schemas.Ptr("auto")
+	case FunctionCallingConfigModeAny:
+		toolChoice.Mode = schemas.Ptr("required")
 	case FunctionCallingConfigModeNone:
 		toolChoice.Mode = schemas.Ptr("none")
 	default:
@@ -2248,10 +2366,8 @@ func convertGeminiCandidatesToResponsesOutput(candidates []*Candidate) []schemas
 				// Function call message
 				// Convert Args to JSON string if it's not already a string
 				argumentsStr := ""
-				if part.FunctionCall.Args != nil {
-					if argsBytes, err := sonic.Marshal(part.FunctionCall.Args); err == nil {
-						argumentsStr = string(argsBytes)
-					}
+				if len(part.FunctionCall.Args) > 0 {
+					argumentsStr = string(part.FunctionCall.Args)
 				}
 
 				callID := part.FunctionCall.ID
@@ -2449,8 +2565,7 @@ func convertGeminiCandidatesToResponsesOutput(candidates []*Candidate) []schemas
 				},
 			}
 			if len(candidate.GroundingMetadata.WebSearchQueries) > 0 {
-				webSearchmessage.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction.Query =
-					schemas.Ptr(candidate.GroundingMetadata.WebSearchQueries[0])
+				webSearchmessage.ResponsesToolMessage.Action.ResponsesWebSearchToolCallAction.Query = schemas.Ptr(candidate.GroundingMetadata.WebSearchQueries[0])
 			}
 
 			sources := []schemas.ResponsesWebSearchToolCallActionSearchSource{}
@@ -2630,7 +2745,7 @@ func reconstructSchemaFromJSONSchema(jsonSchema *schemas.ResponsesTextConfigForm
 }
 
 // convertParamsToGenerationConfigResponses converts ChatParameters to GenerationConfig for Responses
-func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(params *schemas.ResponsesParameters) GenerationConfig {
+func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(params *schemas.ResponsesParameters) (GenerationConfig, error) {
 	config := GenerationConfig{}
 
 	if params.Temperature != nil {
@@ -2647,13 +2762,6 @@ func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(param
 		config.ThinkingConfig = &GenerationConfigThinkingConfig{
 			IncludeThoughts: true,
 		}
-
-		// Get max tokens for conversions
-		maxTokens := DefaultCompletionMaxTokens
-		if config.MaxOutputTokens > 0 {
-			maxTokens = int(config.MaxOutputTokens)
-		}
-		minBudget := DefaultReasoningMinBudget
 
 		hasMaxTokens := params.Reasoning.MaxTokens != nil
 		hasEffort := params.Reasoning.Effort != nil
@@ -2677,6 +2785,9 @@ func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(param
 			case DynamicReasoningBudget: // Special case: -1 means dynamic budget
 				config.ThinkingConfig.ThinkingBudget = schemas.Ptr(int32(DynamicReasoningBudget))
 			default:
+				if err := validateThinkingBudget(r.Model, budget); err != nil {
+					return config, err
+				}
 				config.ThinkingConfig.ThinkingBudget = schemas.Ptr(int32(budget))
 			}
 		} else if hasEffort {
@@ -2685,11 +2796,16 @@ func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(param
 				// Gemini 3.0+ - use thinkingLevel (more native)
 				config.ThinkingConfig.ThinkingLevel = schemas.Ptr(effortToThinkingLevel(*params.Reasoning.Effort, r.Model))
 			} else {
+				maxTokens := providerUtils.GetMaxOutputTokensOrDefault(r.Model, DefaultCompletionMaxTokens)
+				if config.MaxOutputTokens > 0 {
+					maxTokens = int(config.MaxOutputTokens)
+				}
+				budgetRange := getThinkingBudgetRange(r.Model, maxTokens)
 				// Gemini < 3.0 - must convert effort to budget
 				budgetTokens, err := providerUtils.GetBudgetTokensFromReasoningEffort(
 					*params.Reasoning.Effort,
-					minBudget,
-					maxTokens,
+					budgetRange.Min,
+					budgetRange.Max,
 				)
 				if err == nil {
 					config.ThinkingConfig.ThinkingBudget = schemas.Ptr(int32(budgetTokens))
@@ -2729,11 +2845,11 @@ func (r *GeminiGenerationRequest) convertParamsToGenerationConfigResponses(param
 
 	}
 
-	return config
+	return config, nil
 }
 
 // convertResponsesToolsToGemini converts Responses tools to Gemini tools
-func convertResponsesToolsToGemini(tools []schemas.ResponsesTool) []Tool {
+func convertResponsesToolsToGemini(tools []schemas.ResponsesTool) ([]Tool, error) {
 	geminiTool := Tool{}
 
 	hasWebSearchTool := false
@@ -2759,12 +2875,13 @@ func convertResponsesToolsToGemini(tools []schemas.ResponsesTool) []Tool {
 							}
 							return ""
 						}(),
-						Parameters: func() *Schema {
-							if tool.ResponsesToolFunction.Parameters != nil {
-								return convertFunctionParametersToSchema(*tool.ResponsesToolFunction.Parameters)
-							}
-							return nil
-						}(),
+					}
+					if tool.ResponsesToolFunction.Parameters != nil {
+						raw, err := providerUtils.MarshalSorted(tool.ResponsesToolFunction.Parameters)
+						if err != nil {
+							return []Tool{}, fmt.Errorf("marshal tool %q parameters: %w", *tool.Name, err)
+						}
+						funcDecl.ParametersJSONSchema = json.RawMessage(raw)
 					}
 					geminiTool.FunctionDeclarations = append(geminiTool.FunctionDeclarations, funcDecl)
 				}
@@ -2787,9 +2904,9 @@ func convertResponsesToolsToGemini(tools []schemas.ResponsesTool) []Tool {
 	}
 
 	if len(geminiTool.FunctionDeclarations) > 0 || geminiTool.GoogleSearch != nil {
-		return []Tool{geminiTool}
+		return []Tool{geminiTool}, nil
 	}
-	return []Tool{}
+	return []Tool{}, nil
 }
 
 // convertResponsesToolChoiceToGemini converts Responses tool choice to Gemini tool config
@@ -2812,8 +2929,21 @@ func convertResponsesToolChoiceToGemini(toolChoice *schemas.ResponsesToolChoice)
 		}
 
 		if ext.Name != nil {
-			funcConfig.Mode = FunctionCallingConfigModeAny
+			if ext.Mode == nil {
+				funcConfig.Mode = FunctionCallingConfigModeAny
+			}
 			funcConfig.AllowedFunctionNames = []string{*ext.Name}
+		}
+
+		if len(ext.Tools) > 0 {
+			if ext.Mode == nil {
+				funcConfig.Mode = FunctionCallingConfigModeAny
+			}
+			for _, tool := range ext.Tools {
+				if tool.Name != nil {
+					funcConfig.AllowedFunctionNames = append(funcConfig.AllowedFunctionNames, *tool.Name)
+				}
+			}
 		}
 
 		config.FunctionCallingConfig = funcConfig
@@ -2839,8 +2969,48 @@ func convertResponsesToolChoiceToGemini(toolChoice *schemas.ResponsesToolChoice)
 
 // convertResponsesMessagesToGeminiContents converts Responses messages to Gemini contents
 func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessage) ([]Content, *Content, error) {
+	// if only system / developer message is there, convert it to user message (since openai allows it)
+	if len(messages) == 1 && messages[0].Role != nil && (*messages[0].Role == schemas.ResponsesInputMessageRoleSystem || *messages[0].Role == schemas.ResponsesInputMessageRoleDeveloper) {
+		content := Content{Role: "user"}
+		if messages[0].Content != nil {
+			if messages[0].Content.ContentStr != nil && *messages[0].Content.ContentStr != "" {
+				content.Parts = append(content.Parts, &Part{
+					Text: *messages[0].Content.ContentStr,
+				})
+			}
+			if messages[0].Content.ContentBlocks != nil {
+				for _, block := range messages[0].Content.ContentBlocks {
+					part, err := convertContentBlockToGeminiPart(block)
+					if err != nil {
+						return nil, nil, fmt.Errorf("failed to convert system message content block: %w", err)
+					}
+					if part != nil {
+						content.Parts = append(content.Parts, part)
+					}
+				}
+			}
+		}
+		if len(content.Parts) > 0 {
+			return []Content{content}, nil, nil
+		}
+	}
+
 	var contents []Content
 	var systemInstruction *Content
+
+	// Build a map from callID → function name by scanning function_call messages.
+	callIDToName := make(map[string]string)
+	for i := range messages {
+		m := &messages[i]
+		if m.Type != nil && *m.Type == schemas.ResponsesMessageTypeFunctionCall &&
+			m.ResponsesToolMessage != nil &&
+			m.ResponsesToolMessage.CallID != nil &&
+			m.ResponsesToolMessage.Name != nil {
+			if name := strings.TrimSpace(*m.ResponsesToolMessage.Name); name != "" {
+				callIDToName[*m.ResponsesToolMessage.CallID] = name
+			}
+		}
+	}
 
 	// Track consecutive function call output messages to group them for parallel function calling
 	// According to Gemini docs, all function responses must be in a single message
@@ -2853,7 +3023,7 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 		}
 
 		// Handle system messages separately
-		if msg.Role != nil && *msg.Role == schemas.ResponsesInputMessageRoleSystem {
+		if msg.Role != nil && (*msg.Role == schemas.ResponsesInputMessageRoleSystem || *msg.Role == schemas.ResponsesInputMessageRoleDeveloper) {
 			if systemInstruction == nil {
 				systemInstruction = &Content{}
 			}
@@ -2889,7 +3059,7 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 		if len(pendingFunctionResponseParts) > 0 && !isFunctionOutput {
 			contents = append(contents, Content{
 				Parts: pendingFunctionResponseParts,
-				Role:  "model", // Function responses use "model" role in Gemini
+				Role:  "user", // Function responses use "user" role in Gemini
 			})
 			pendingFunctionResponseParts = nil
 		}
@@ -2916,18 +3086,27 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 			case schemas.ResponsesMessageTypeFunctionCall:
 				// Convert function call to Gemini FunctionCall
 				if msg.ResponsesToolMessage.Name != nil {
-					argsMap := map[string]any{}
+					var argsRaw json.RawMessage
 					if msg.ResponsesToolMessage.Arguments != nil {
-						if err := sonic.Unmarshal([]byte(*msg.ResponsesToolMessage.Arguments), &argsMap); err != nil {
+						rawArgs := strings.TrimSpace(*msg.ResponsesToolMessage.Arguments)
+						if rawArgs == "" {
+							rawArgs = "{}"
+						}
+						var buf bytes.Buffer
+						if err := json.Compact(&buf, []byte(rawArgs)); err != nil {
 							return nil, nil, fmt.Errorf("failed to decode function call arguments: %w", err)
 						}
+						argsRaw = buf.Bytes()
+					}
+					if argsRaw == nil {
+						argsRaw = json.RawMessage("{}")
 					}
 
 					var thoughtSig string
 					part := &Part{
 						FunctionCall: &FunctionCall{
 							Name: *msg.ResponsesToolMessage.Name,
-							Args: argsMap,
+							Args: argsRaw,
 						},
 					}
 					if msg.ResponsesToolMessage.CallID != nil {
@@ -2974,24 +3153,61 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 
 					// Extract output from ResponsesToolMessage.Output
 					if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr != nil {
-						responseMap["output"] = *msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr
+						output := *msg.ResponsesToolMessage.Output.ResponsesToolCallOutputStr
+						if json.Valid([]byte(output)) {
+							responseMap["output"] = json.RawMessage(output)
+						} else {
+							responseMap["output"] = output
+						}
+					} else if msg.ResponsesToolMessage.Output != nil && msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks != nil {
+						// Handle structured output blocks (e.g. from Anthropic Responses API format
+						// where output is an array of content blocks like [{"type":"input_text","text":"..."}])
+						var textParts []string
+						for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
+							if block.Text != nil && *block.Text != "" {
+								textParts = append(textParts, *block.Text)
+							}
+						}
+						if len(textParts) > 0 {
+							combined := strings.Join(textParts, "\n")
+							if json.Valid([]byte(combined)) {
+								responseMap["output"] = json.RawMessage(combined)
+							} else {
+								responseMap["output"] = combined
+							}
+						} else {
+							// Fallback for non-text blocks (e.g. images, files): marshal the raw blocks
+							// so responseMap["output"] is never left empty when blocks are present
+							rawBlocks, err := providerUtils.MarshalSorted(msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks)
+							if err == nil && len(rawBlocks) > 0 {
+								responseMap["output"] = json.RawMessage(rawBlocks)
+							}
+						}
 					} else if msg.Content != nil && msg.Content.ContentStr != nil {
 						// Fallback to Content.ContentStr for backward compatibility
-						responseMap["output"] = *msg.Content.ContentStr
+						output := *msg.Content.ContentStr
+						if json.Valid([]byte(output)) {
+							responseMap["output"] = json.RawMessage(output)
+						} else {
+							responseMap["output"] = output
+						}
 					}
 
-					// Prefer the declared tool name; fallback to CallID if the name is absent
+					// Prefer the declared tool name; fallback to callIDToName lookup, then raw CallID
 					funcName := ""
 					if msg.ResponsesToolMessage.Name != nil && strings.TrimSpace(*msg.ResponsesToolMessage.Name) != "" {
 						funcName = *msg.ResponsesToolMessage.Name
+					} else if name, ok := callIDToName[*msg.ResponsesToolMessage.CallID]; ok && strings.TrimSpace(name) != "" {
+						funcName = name
 					} else {
 						funcName = *msg.ResponsesToolMessage.CallID
 					}
 
+					responseBytes, _ := providerUtils.MarshalSorted(responseMap)
 					part := &Part{
 						FunctionResponse: &FunctionResponse{
 							Name:     funcName,
-							Response: responseMap,
+							Response: json.RawMessage(responseBytes),
 							ID:       *msg.ResponsesToolMessage.CallID,
 						},
 					}
@@ -3001,7 +3217,7 @@ func convertResponsesMessagesToGeminiContents(messages []schemas.ResponsesMessag
 					if i == len(messages)-1 && len(pendingFunctionResponseParts) > 0 {
 						contents = append(contents, Content{
 							Parts: pendingFunctionResponseParts,
-							Role:  "model",
+							Role:  "user",
 						})
 						pendingFunctionResponseParts = nil
 					}

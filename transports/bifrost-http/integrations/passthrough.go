@@ -27,12 +27,32 @@ func NewPassthroughRouter(
 	}
 }
 
+// NewAnthropicPassthroughRouter creates a passthrough router for /anthropic_passthrough.
+func NewAnthropicPassthroughRouter(client *bifrost.Bifrost, handlerStore lib.HandlerStore, logger schemas.Logger) *PassthroughRouter {
+	return NewPassthroughRouter(client, handlerStore, logger, &PassthroughConfig{
+		Provider: schemas.Anthropic,
+		StripPrefix: []string{
+			"/anthropic_passthrough",
+		},
+	})
+}
+
 // NewOpenAIPassthroughRouter creates a passthrough router for /openai_passthrough.
 func NewOpenAIPassthroughRouter(client *bifrost.Bifrost, handlerStore lib.HandlerStore, logger schemas.Logger) *PassthroughRouter {
 	return NewPassthroughRouter(client, handlerStore, logger, &PassthroughConfig{
 		Provider: schemas.OpenAI,
 		StripPrefix: []string{
 			"/openai_passthrough",
+		},
+	})
+}
+
+// NewAzurePassthroughRouter creates a passthrough router for /azure_passthrough.
+func NewAzurePassthroughRouter(client *bifrost.Bifrost, handlerStore lib.HandlerStore, logger schemas.Logger) *PassthroughRouter {
+	return NewPassthroughRouter(client, handlerStore, logger, &PassthroughConfig{
+		Provider: schemas.Azure,
+		StripPrefix: []string{
+			"/azure_passthrough",
 		},
 	})
 }

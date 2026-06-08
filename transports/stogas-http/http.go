@@ -613,7 +613,7 @@ func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload an
 }
 
 func (s *Server) forwardProviderHeaders(ctx *fasthttp.RequestCtx, extra schemas.BifrostResponseExtraFields) {
-	headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.ModelRequested, extra.ProviderResponseHeaders)
+	headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.OriginalModelRequested, extra.ProviderResponseHeaders)
 	for key, value := range safeProviderResponseHeaders(headers) {
 		ctx.Response.Header.Set(key, value)
 	}

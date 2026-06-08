@@ -79,6 +79,7 @@ func newAccount(config Config) *account {
 			ID:      openAIProviderKeyID,
 			Name:    openAIProviderKeyID,
 			Value:   *schemas.NewEnvVar(config.OpenAIAPIKey),
+			Models:  schemas.WhiteList{"*"},
 			Weight:  1,
 			Enabled: schemas.Ptr(true),
 		},
