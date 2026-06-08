@@ -68,11 +68,11 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["provider"] && extra.Provider != "" {
 		metadata["provider"] = extra.Provider
 	}
-	if fields["model_requested"] && extra.ModelRequested != "" {
-		metadata["model_requested"] = extra.ModelRequested
+	if fields["model_requested"] && extra.OriginalModelRequested != "" {
+		metadata["model_requested"] = extra.OriginalModelRequested
 	}
-	if fields["model_deployment"] && extra.ModelDeployment != "" {
-		metadata["model_deployment"] = extra.ModelDeployment
+	if fields["model_deployment"] && extra.ResolvedModelUsed != "" {
+		metadata["model_deployment"] = extra.ResolvedModelUsed
 	}
 	if fields["latency"] {
 		metadata["latency"] = extra.Latency
@@ -83,7 +83,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["raw_response"] && extra.RawResponse != nil {
 		metadata["raw_response"] = extra.RawResponse
 	}
-	if headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.ModelRequested, extra.ProviderResponseHeaders); fields["provider_response_headers"] && len(headers) > 0 {
+	if headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.OriginalModelRequested, extra.ProviderResponseHeaders); fields["provider_response_headers"] && len(headers) > 0 {
 		metadata["provider_response_headers"] = headers
 	}
 
@@ -108,11 +108,11 @@ func (a *streamMetadataAccumulator) add(extra schemas.BifrostResponseExtraFields
 	if extra.Provider != "" {
 		a.extra.Provider = extra.Provider
 	}
-	if extra.ModelRequested != "" {
-		a.extra.ModelRequested = extra.ModelRequested
+	if extra.OriginalModelRequested != "" {
+		a.extra.OriginalModelRequested = extra.OriginalModelRequested
 	}
-	if extra.ModelDeployment != "" {
-		a.extra.ModelDeployment = extra.ModelDeployment
+	if extra.ResolvedModelUsed != "" {
+		a.extra.ResolvedModelUsed = extra.ResolvedModelUsed
 	}
 	if extra.Latency != 0 {
 		a.extra.Latency = extra.Latency

@@ -27,19 +27,16 @@ func isUniqueConstraintError(err error) bool {
 // GetFolders gets all folders
 func (s *RDBConfigStore) GetFolders(ctx context.Context) ([]tables.TableFolder, error) {
 	var folders []tables.TableFolder
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Order("created_at DESC").
 		Find(&folders).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []tables.TableFolder{}, nil
-		}
 		return nil, err
 	}
 
 	// Get prompts count for each folder
 	for i := range folders {
 		var count int64
-		if err := s.db.WithContext(ctx).Model(&tables.TablePrompt{}).Where("folder_id = ?", folders[i].ID).Count(&count).Error; err != nil {
+		if err := s.DB().WithContext(ctx).Model(&tables.TablePrompt{}).Where("folder_id = ?", folders[i].ID).Count(&count).Error; err != nil {
 			return nil, err
 		}
 		folders[i].PromptsCount = int(count)
@@ -51,7 +48,7 @@ func (s *RDBConfigStore) GetFolders(ctx context.Context) ([]tables.TableFolder, 
 // GetFolderByID gets a folder by ID
 func (s *RDBConfigStore) GetFolderByID(ctx context.Context, id string) (*tables.TableFolder, error) {
 	var folder tables.TableFolder
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		First(&folder, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
@@ -63,12 +60,12 @@ func (s *RDBConfigStore) GetFolderByID(ctx context.Context, id string) (*tables.
 
 // CreateFolder creates a new folder
 func (s *RDBConfigStore) CreateFolder(ctx context.Context, folder *tables.TableFolder) error {
-	return s.db.WithContext(ctx).Create(folder).Error
+	return s.DB().WithContext(ctx).Create(folder).Error
 }
 
 // UpdateFolder updates a folder
 func (s *RDBConfigStore) UpdateFolder(ctx context.Context, folder *tables.TableFolder) error {
-	res := s.db.WithContext(ctx).Where("id = ?", folder.ID).Save(folder)
+	res := s.DB().WithContext(ctx).Where("id = ?", folder.ID).Save(folder)
 	if res.Error != nil {
 		return res.Error
 	}
@@ -78,26 +75,70 @@ func (s *RDBConfigStore) UpdateFolder(ctx context.Context, folder *tables.TableF
 	return nil
 }
 
-// DeleteFolder deletes a folder (child prompts, versions, sessions and messages are cascade-deleted by the DB)
+// DeleteFolder deletes a folder and all its child prompts (with their versions, sessions, and messages).
+// PostgreSQL uses native ON DELETE CASCADE; SQLite requires manual cascade because it cannot
+// alter foreign key constraints after table creation.
 func (s *RDBConfigStore) DeleteFolder(ctx context.Context, id string) error {
-	result := s.db.WithContext(ctx).Delete(&tables.TableFolder{}, "id = ?", id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Check folder exists
+		var folder tables.TableFolder
+		if err := tx.First(&folder, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		// PostgreSQL: ON DELETE CASCADE handles all child deletions
+		if s.DB().Dialector.Name() == "postgres" {
+			return tx.Delete(&folder).Error
+		}
+
+		// SQLite: manual cascade deletion
+		var promptIDs []string
+		if err := tx.Model(&tables.TablePrompt{}).Where("folder_id = ?", id).Pluck("id", &promptIDs).Error; err != nil {
+			return err
+		}
+
+		if len(promptIDs) > 0 {
+			// Delete version messages
+			if err := tx.Where("prompt_id IN ?", promptIDs).Delete(&tables.TablePromptVersionMessage{}).Error; err != nil {
+				return err
+			}
+			// Delete versions
+			if err := tx.Where("prompt_id IN ?", promptIDs).Delete(&tables.TablePromptVersion{}).Error; err != nil {
+				return err
+			}
+			// Delete session messages
+			if err := tx.Where("prompt_id IN ?", promptIDs).Delete(&tables.TablePromptSessionMessage{}).Error; err != nil {
+				return err
+			}
+			// Delete sessions
+			if err := tx.Where("prompt_id IN ?", promptIDs).Delete(&tables.TablePromptSession{}).Error; err != nil {
+				return err
+			}
+			// Delete prompts
+			if err := tx.Where("folder_id = ?", id).Delete(&tables.TablePrompt{}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Delete the folder
+		return tx.Delete(&folder).Error
+	})
 }
 
 // ============================================================================
 // Prompt Repository - Prompts
 // ============================================================================
 
-// GetPrompts gets all prompts, optionally filtered by folder ID
+// GetPrompts gets all prompts, optionally filtered by folder ID.
+//
+// When ctx carries a QueryScope, the query is narrowed to prompts the
+// caller is allowed to see.
 func (s *RDBConfigStore) GetPrompts(ctx context.Context, folderID *string) ([]tables.TablePrompt, error) {
 	var prompts []tables.TablePrompt
-	query := s.db.WithContext(ctx).
+	query := s.ScopedDB(ctx).
 		Preload("Folder").
 		Order("created_at DESC")
 
@@ -106,16 +147,13 @@ func (s *RDBConfigStore) GetPrompts(ctx context.Context, folderID *string) ([]ta
 	}
 
 	if err := query.Find(&prompts).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []tables.TablePrompt{}, nil
-		}
 		return nil, err
 	}
 
 	// Get latest version for each prompt
 	for i := range prompts {
 		var latestVersion tables.TablePromptVersion
-		if err := s.db.WithContext(ctx).
+		if err := s.DB().WithContext(ctx).
 			Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 			Where("prompt_id = ? AND is_latest = ?", prompts[i].ID, true).
 			First(&latestVersion).Error; err != nil {
@@ -130,12 +168,15 @@ func (s *RDBConfigStore) GetPrompts(ctx context.Context, folderID *string) ([]ta
 	return prompts, nil
 }
 
-// GetPromptByID gets a prompt by ID with latest version
+// GetPromptByID gets a prompt by ID with latest version.
+//
+// When ctx carries a QueryScope, a prompt that exists but falls
+// outside the scope returns ErrNotFound so URL guessing cannot
+// distinguish "hidden" from "absent".
 func (s *RDBConfigStore) GetPromptByID(ctx context.Context, id string) (*tables.TablePrompt, error) {
 	var prompt tables.TablePrompt
-	if err := s.db.WithContext(ctx).
-		Preload("Folder").
-		First(&prompt, "id = ?", id).Error; err != nil {
+	q := s.ScopedDB(ctx).Preload("Folder")
+	if err := q.First(&prompt, "prompts.id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
@@ -144,7 +185,7 @@ func (s *RDBConfigStore) GetPromptByID(ctx context.Context, id string) (*tables.
 
 	// Get latest version
 	var latestVersion tables.TablePromptVersion
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Where("prompt_id = ? AND is_latest = ?", prompt.ID, true).
 		First(&latestVersion).Error; err != nil {
@@ -158,15 +199,21 @@ func (s *RDBConfigStore) GetPromptByID(ctx context.Context, id string) (*tables.
 	return &prompt, nil
 }
 
-// CreatePrompt creates a new prompt
-func (s *RDBConfigStore) CreatePrompt(ctx context.Context, prompt *tables.TablePrompt) error {
-	return s.db.WithContext(ctx).Create(prompt).Error
+// CreatePrompt creates a new prompt. The optional tx allows callers to
+// chain the insert with follow-up writes in a single transaction (used
+// by the enterprise wrapper to atomically stamp ownership columns).
+func (s *RDBConfigStore) CreatePrompt(ctx context.Context, prompt *tables.TablePrompt, tx ...*gorm.DB) error {
+	db := s.DB()
+	if len(tx) > 0 && tx[0] != nil {
+		db = tx[0]
+	}
+	return db.WithContext(ctx).Create(prompt).Error
 }
 
 // UpdatePrompt updates a prompt
 func (s *RDBConfigStore) UpdatePrompt(ctx context.Context, prompt *tables.TablePrompt) error {
 	// Use Select to explicitly include FolderID so GORM writes NULL when it's nil
-	res := s.db.WithContext(ctx).
+	res := s.DB().WithContext(ctx).
 		Model(prompt).
 		Where("id = ?", prompt.ID).
 		Select("Name", "FolderID", "UpdatedAt").
@@ -180,33 +227,66 @@ func (s *RDBConfigStore) UpdatePrompt(ctx context.Context, prompt *tables.TableP
 	return nil
 }
 
-// DeletePrompt deletes a prompt (child versions, sessions and messages are cascade-deleted by the DB)
+// DeletePrompt deletes a prompt and all its child versions, sessions, and messages.
+// PostgreSQL uses native ON DELETE CASCADE; SQLite requires manual cascade because it cannot
+// alter foreign key constraints after table creation.
 func (s *RDBConfigStore) DeletePrompt(ctx context.Context, id string) error {
-	result := s.db.WithContext(ctx).Delete(&tables.TablePrompt{}, "id = ?", id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Check prompt exists
+		var prompt tables.TablePrompt
+		if err := tx.First(&prompt, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		// PostgreSQL: ON DELETE CASCADE handles all child deletions
+		if s.DB().Dialector.Name() == "postgres" {
+			return tx.Delete(&prompt).Error
+		}
+
+		// SQLite: manual cascade deletion
+		if err := tx.Where("prompt_id = ?", id).Delete(&tables.TablePromptVersionMessage{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("prompt_id = ?", id).Delete(&tables.TablePromptVersion{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("prompt_id = ?", id).Delete(&tables.TablePromptSessionMessage{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("prompt_id = ?", id).Delete(&tables.TablePromptSession{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&prompt).Error
+	})
 }
 
 // ============================================================================
 // Prompt Repository - Versions
 // ============================================================================
 
+// GetAllPromptVersions returns every version across all prompts in a single query.
+func (s *RDBConfigStore) GetAllPromptVersions(ctx context.Context) ([]tables.TablePromptVersion, error) {
+	var versions []tables.TablePromptVersion
+	if err := s.DB().WithContext(ctx).
+		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
+		Order("prompt_id ASC, version_number DESC").
+		Find(&versions).Error; err != nil {
+		return nil, err
+	}
+	return versions, nil
+}
+
 // GetPromptVersions gets all versions for a prompt
 func (s *RDBConfigStore) GetPromptVersions(ctx context.Context, promptID string) ([]tables.TablePromptVersion, error) {
 	var versions []tables.TablePromptVersion
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Where("prompt_id = ?", promptID).
 		Order("version_number DESC").
 		Find(&versions).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []tables.TablePromptVersion{}, nil
-		}
 		return nil, err
 	}
 	return versions, nil
@@ -215,7 +295,7 @@ func (s *RDBConfigStore) GetPromptVersions(ctx context.Context, promptID string)
 // GetPromptVersionByID gets a version by ID
 func (s *RDBConfigStore) GetPromptVersionByID(ctx context.Context, id uint) (*tables.TablePromptVersion, error) {
 	var version tables.TablePromptVersion
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Preload("Prompt").
 		First(&version, "id = ?", id).Error; err != nil {
@@ -230,7 +310,7 @@ func (s *RDBConfigStore) GetPromptVersionByID(ctx context.Context, id uint) (*ta
 // GetLatestPromptVersion gets the latest version for a prompt
 func (s *RDBConfigStore) GetLatestPromptVersion(ctx context.Context, promptID string) (*tables.TablePromptVersion, error) {
 	var version tables.TablePromptVersion
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Where("prompt_id = ? AND is_latest = ?", promptID, true).
 		First(&version).Error; err != nil {
@@ -247,7 +327,7 @@ func (s *RDBConfigStore) GetLatestPromptVersion(ctx context.Context, promptID st
 func (s *RDBConfigStore) CreatePromptVersion(ctx context.Context, version *tables.TablePromptVersion) error {
 	const maxRetries = 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			// Get the next version number
 			var maxVersionNumber int
 			if err := tx.Model(&tables.TablePromptVersion{}).
@@ -293,9 +373,10 @@ func (s *RDBConfigStore) CreatePromptVersion(ctx context.Context, version *table
 	return fmt.Errorf("failed to create prompt version after %d retries due to concurrent version_number conflict", maxRetries)
 }
 
-// DeletePromptVersion deletes a version
+// DeletePromptVersion deletes a version and promotes the previous version to latest if needed.
+// PostgreSQL uses native ON DELETE CASCADE for messages; SQLite requires manual cascade.
 func (s *RDBConfigStore) DeletePromptVersion(ctx context.Context, id uint) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Get the version to check if it's latest
 		var version tables.TablePromptVersion
 		if err := tx.First(&version, "id = ?", id).Error; err != nil {
@@ -305,7 +386,14 @@ func (s *RDBConfigStore) DeletePromptVersion(ctx context.Context, id uint) error
 			return err
 		}
 
-		// Delete version (messages are cascade-deleted by the DB)
+		// SQLite: manually delete version messages (PostgreSQL CASCADE handles this)
+		if s.DB().Dialector.Name() != "postgres" {
+			if err := tx.Where("version_id = ?", id).Delete(&tables.TablePromptVersionMessage{}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Delete the version
 		if err := tx.Delete(&tables.TablePromptVersion{}, "id = ?", id).Error; err != nil {
 			return err
 		}
@@ -337,15 +425,12 @@ func (s *RDBConfigStore) DeletePromptVersion(ctx context.Context, id uint) error
 // GetPromptSessions gets all sessions for a prompt
 func (s *RDBConfigStore) GetPromptSessions(ctx context.Context, promptID string) ([]tables.TablePromptSession, error) {
 	var sessions []tables.TablePromptSession
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Preload("Version").
 		Where("prompt_id = ?", promptID).
 		Order("created_at DESC").
 		Find(&sessions).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return []tables.TablePromptSession{}, nil
-		}
 		return nil, err
 	}
 	return sessions, nil
@@ -354,7 +439,7 @@ func (s *RDBConfigStore) GetPromptSessions(ctx context.Context, promptID string)
 // GetPromptSessionByID gets a session by ID
 func (s *RDBConfigStore) GetPromptSessionByID(ctx context.Context, id uint) (*tables.TablePromptSession, error) {
 	var session tables.TablePromptSession
-	if err := s.db.WithContext(ctx).
+	if err := s.DB().WithContext(ctx).
 		Preload("Messages", func(db *gorm.DB) *gorm.DB { return db.Order("order_index ASC") }).
 		Preload("Prompt").
 		Preload("Version").
@@ -369,7 +454,7 @@ func (s *RDBConfigStore) GetPromptSessionByID(ctx context.Context, id uint) (*ta
 
 // CreatePromptSession creates a new session
 func (s *RDBConfigStore) CreatePromptSession(ctx context.Context, session *tables.TablePromptSession) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Verify version belongs to the same prompt if set
 		if session.VersionID != nil {
 			var version tables.TablePromptVersion
@@ -411,7 +496,7 @@ func (s *RDBConfigStore) CreatePromptSession(ctx context.Context, session *table
 
 // UpdatePromptSession updates a session and its messages
 func (s *RDBConfigStore) UpdatePromptSession(ctx context.Context, session *tables.TablePromptSession) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Verify version belongs to the same prompt if set
 		if session.VersionID != nil {
 			var version tables.TablePromptVersion
@@ -457,7 +542,7 @@ func (s *RDBConfigStore) UpdatePromptSession(ctx context.Context, session *table
 
 // RenamePromptSession updates only the name of a session
 func (s *RDBConfigStore) RenamePromptSession(ctx context.Context, id uint, name string) error {
-	result := s.db.WithContext(ctx).Model(&tables.TablePromptSession{}).Where("id = ?", id).Update("name", name)
+	result := s.DB().WithContext(ctx).Model(&tables.TablePromptSession{}).Where("id = ?", id).Update("name", name)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -467,14 +552,28 @@ func (s *RDBConfigStore) RenamePromptSession(ctx context.Context, id uint, name 
 	return nil
 }
 
-// DeletePromptSession deletes a session (messages are cascade-deleted by the DB)
+// DeletePromptSession deletes a session and its messages.
+// PostgreSQL uses native ON DELETE CASCADE for messages; SQLite requires manual cascade.
 func (s *RDBConfigStore) DeletePromptSession(ctx context.Context, id uint) error {
-	result := s.db.WithContext(ctx).Delete(&tables.TablePromptSession{}, "id = ?", id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var session tables.TablePromptSession
+		if err := tx.First(&session, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		// PostgreSQL: ON DELETE CASCADE handles message deletion
+		if s.DB().Dialector.Name() == "postgres" {
+			return tx.Delete(&session).Error
+		}
+
+		// SQLite: manually delete messages first
+		if err := tx.Where("session_id = ?", id).Delete(&tables.TablePromptSessionMessage{}).Error; err != nil {
+			return err
+		}
+
+		return tx.Delete(&session).Error
+	})
 }

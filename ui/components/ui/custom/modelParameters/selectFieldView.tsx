@@ -1,4 +1,3 @@
-
 import ParameterFieldView from "./paramFieldView";
 import { Parameter } from "./types";
 import { cn } from "@/lib/utils";
@@ -58,6 +57,7 @@ export default function SelectFieldView(props: Props) {
 					onValueChange={(vals) => props.onChange(field.accesorKey ? { [field.accesorKey]: vals } : vals)}
 					disabled={props.disabled}
 					placeholder={`Add ${field.label}`}
+					className="h-8"
 				/>
 			) : (
 				<ComboboxSelect
@@ -67,6 +67,7 @@ export default function SelectFieldView(props: Props) {
 					disabled={props.disabled}
 					placeholder="Select"
 					disableSearch
+					className="h-8"
 				/>
 			)}
 

@@ -1,10 +1,10 @@
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { Trash } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Parameter } from "./types";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import FieldLabel from "./fieldLabel";
+import { Parameter } from "./types";
 
 interface Props {
 	field: Parameter;
@@ -70,7 +70,7 @@ export default function TextArrayFieldView(props: Props) {
 			<Button
 				variant={"link"}
 				disabled={invalid || props.disabled}
-				className="h-auto px-0"
+				className="h-auto px-0 py-0"
 				onClick={() => {
 					if (invalid) return;
 					setShouldFocus(true);
@@ -98,7 +98,7 @@ const StringInput = (props: {
 		<div className="relative w-full gap-1">
 			<Input
 				tabIndex={10}
-				className="ml-auto h-[35px] w-full"
+				className="ml-auto h-8 w-full"
 				value={props.value}
 				placeholder=""
 				disabled={props.disabled}
