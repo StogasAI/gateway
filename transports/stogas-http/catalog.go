@@ -20,11 +20,21 @@ const (
 // The HTTP layer owns mechanistic enforcement at the transport boundary, such as
 // stripping invalid or dangerous wire-level headers immediately before mutating
 // the response.
-//
-// Until the real catalog lands, keep semantic policy intentionally narrow.
+type catalogModelDeployment struct {
+	model                string
+	impliedServiceTier   *schemas.BifrostServiceTier
+	allowedServiceTier   *schemas.BifrostServiceTier
+}
+
+var (
+	catalogDefaultServiceTier  = schemas.BifrostServiceTierDefault
+	catalogFlexServiceTier     = schemas.BifrostServiceTierFlex
+	catalogPriorityServiceTier = schemas.BifrostServiceTierPriority
+)
 
 func resolveCatalogModel(provider schemas.ModelProvider, model string) bool {
-	return provider == schemas.OpenAI && strings.TrimSpace(model) != ""
+	_, ok := catalogModelDeploymentFor(provider, model)
+	return ok
 }
 
 func filterCatalogExtraParams(provider schemas.ModelProvider, model string, route stogasRoute, params map[string]interface{}) map[string]interface{} {
@@ -81,4 +91,47 @@ func catalogAllowsProviderResponseHeader(provider schemas.ModelProvider, model s
 
 func catalogSupportsInFlightStreamCancel(provider schemas.ModelProvider, model string) bool {
 	return false
+}
+
+func catalogModelDeploymentFor(provider schemas.ModelProvider, model string) (catalogModelDeployment, bool) {
+	if provider != schemas.OpenAI {
+		return catalogModelDeployment{}, false
+	}
+
+	switch strings.TrimSpace(model) {
+	case "gpt-5.5", "gpt-5.5-latest", "gpt-5.5-2026-04-23":
+		return catalogModelDeployment{
+			model:              "gpt-5.5",
+			allowedServiceTier: &catalogDefaultServiceTier,
+		}, true
+	case "gpt-5.5-flex":
+		return catalogModelDeployment{
+			model:              "gpt-5.5",
+			impliedServiceTier: &catalogFlexServiceTier,
+			allowedServiceTier: &catalogFlexServiceTier,
+		}, true
+	case "gpt-5.5-priority":
+		return catalogModelDeployment{
+			model:              "gpt-5.5",
+			impliedServiceTier: &catalogPriorityServiceTier,
+			allowedServiceTier: &catalogPriorityServiceTier,
+		}, true
+	default:
+		return catalogModelDeployment{}, false
+	}
+}
+
+func applyCatalogModelDeployment(model *string, serviceTier **schemas.BifrostServiceTier, deployment catalogModelDeployment) bool {
+	if model == nil {
+		return false
+	}
+
+	if deployment.allowedServiceTier != nil && *serviceTier != nil && **serviceTier != *deployment.allowedServiceTier {
+		return false
+	}
+	if deployment.impliedServiceTier != nil && *serviceTier == nil {
+		*serviceTier = deployment.impliedServiceTier
+	}
+	*model = deployment.model
+	return true
 }

@@ -1,9 +1,9 @@
 package stogashttp
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -39,61 +39,73 @@ var textParamsKnownFields = map[string]bool{
 }
 
 var chatParamsKnownFields = map[string]bool{
-	"model":                 true,
-	"messages":              true,
-	"fallbacks":             true,
-	"stream":                true,
-	"frequency_penalty":     true,
-	"logit_bias":            true,
-	"logprobs":              true,
-	"max_tokens":            true,
-	"max_completion_tokens": true,
-	"metadata":              true,
-	"modalities":            true,
-	"parallel_tool_calls":   true,
-	"presence_penalty":      true,
-	"prompt_cache_key":      true,
-	"reasoning":             true,
-	"response_format":       true,
-	"safety_identifier":     true,
-	"service_tier":          true,
-	"stream_options":        true,
-	"store":                 true,
-	"temperature":           true,
-	"tool_choice":           true,
-	"tools":                 true,
-	"truncation":            true,
-	"user":                  true,
-	"verbosity":             true,
+	"model":                  true,
+	"messages":               true,
+	"fallbacks":              true,
+	"stream":                 true,
+	"frequency_penalty":      true,
+	"logit_bias":             true,
+	"logprobs":               true,
+	"max_tokens":             true,
+	"max_completion_tokens":  true,
+	"metadata":               true,
+	"modalities":             true,
+	"parallel_tool_calls":    true,
+	"prediction":             true,
+	"presence_penalty":       true,
+	"prompt_cache_key":       true,
+	"prompt_cache_retention": true,
+	"reasoning":              true,
+	"reasoning_display":      true,
+	"response_format":        true,
+	"safety_identifier":      true,
+	"seed":                   true,
+	"service_tier":           true,
+	"stream_options":         true,
+	"stop":                   true,
+	"store":                  true,
+	"temperature":            true,
+	"tool_choice":            true,
+	"tools":                  true,
+	"top_logprobs":           true,
+	"user":                   true,
+	"verbosity":              true,
+	"web_search_options":     true,
+	"reasoning_effort":       true,
+	"reasoning_max_tokens":   true,
 }
 
 var responsesParamsKnownFields = map[string]bool{
-	"model":                true,
-	"input":                true,
-	"fallbacks":            true,
-	"stream":               true,
-	"background":           true,
-	"conversation":         true,
-	"include":              true,
-	"instructions":         true,
-	"max_output_tokens":    true,
-	"max_tool_calls":       true,
-	"metadata":             true,
-	"parallel_tool_calls":  true,
-	"previous_response_id": true,
-	"prompt_cache_key":     true,
-	"reasoning":            true,
-	"safety_identifier":    true,
-	"service_tier":         true,
-	"stream_options":       true,
-	"store":                true,
-	"temperature":          true,
-	"text":                 true,
-	"top_logprobs":         true,
-	"top_p":                true,
-	"tool_choice":          true,
-	"tools":                true,
-	"truncation":           true,
+	"model":                  true,
+	"input":                  true,
+	"fallbacks":              true,
+	"stream":                 true,
+	"background":             true,
+	"conversation":           true,
+	"frequency_penalty":      true,
+	"include":                true,
+	"instructions":           true,
+	"max_output_tokens":      true,
+	"max_tool_calls":         true,
+	"metadata":               true,
+	"parallel_tool_calls":    true,
+	"presence_penalty":       true,
+	"previous_response_id":   true,
+	"prompt_cache_key":       true,
+	"prompt_cache_retention": true,
+	"reasoning":              true,
+	"safety_identifier":      true,
+	"service_tier":           true,
+	"stream_options":         true,
+	"store":                  true,
+	"temperature":            true,
+	"text":                   true,
+	"top_logprobs":           true,
+	"top_p":                  true,
+	"tool_choice":            true,
+	"tools":                  true,
+	"truncation":             true,
+	"user":                   true,
 }
 
 func (s *Server) health(ctx *fasthttp.RequestCtx) {
@@ -103,6 +115,11 @@ func (s *Server) health(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) textCompletion(ctx *fasthttp.RequestCtx) {
+	rawAPIKey, ok := s.requireInferenceEnvelope(ctx)
+	if !ok {
+		return
+	}
+
 	var request openaiprovider.OpenAITextCompletionRequest
 	if err := sonic.Unmarshal(ctx.Request.Body(), &request); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
@@ -111,15 +128,16 @@ func (s *Server) textCompletion(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	provider, model := schemas.ParseModelString(request.Model, schemas.OpenAI)
+	deployment, ok := catalogModelDeploymentFor(provider, model)
+	if !ok {
+		s.writeCatalogModelError(ctx)
+		return
+	}
+	request.Model = deployment.model
 	if err := setExtraParams(ctx.Request.Body(), textParamsKnownFields, &request, provider, model, stogasRoute("text")); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Invalid JSON body", "type": "invalid_request_error"},
 		})
-		return
-	}
-
-	rawAPIKey, ok := s.requireAPIKey(ctx)
-	if !ok {
 		return
 	}
 
@@ -178,6 +196,11 @@ func (s *Server) textCompletion(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) chatCompletion(ctx *fasthttp.RequestCtx) {
+	rawAPIKey, ok := s.requireInferenceEnvelope(ctx)
+	if !ok {
+		return
+	}
+
 	var request openaiprovider.OpenAIChatRequest
 	if err := sonic.Unmarshal(ctx.Request.Body(), &request); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
@@ -186,6 +209,11 @@ func (s *Server) chatCompletion(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	provider, model := schemas.ParseModelString(request.Model, schemas.OpenAI)
+	deployment, ok := catalogModelDeploymentFor(provider, model)
+	if !ok || !applyCatalogModelDeployment(&request.Model, &request.ChatParameters.ServiceTier, deployment) {
+		s.writeCatalogModelError(ctx)
+		return
+	}
 	if err := setExtraParams(ctx.Request.Body(), chatParamsKnownFields, &request, provider, model, stogasRouteChat); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Invalid JSON body", "type": "invalid_request_error"},
@@ -193,11 +221,6 @@ func (s *Server) chatCompletion(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	mapLegacyChatMaxTokens(&request)
-
-	rawAPIKey, ok := s.requireAPIKey(ctx)
-	if !ok {
-		return
-	}
 
 	requestType := schemas.ChatCompletionRequest
 	if request.IsStreamingRequested() {
@@ -254,6 +277,11 @@ func (s *Server) chatCompletion(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) responses(ctx *fasthttp.RequestCtx) {
+	rawAPIKey, ok := s.requireInferenceEnvelope(ctx)
+	if !ok {
+		return
+	}
+
 	var request openaiprovider.OpenAIResponsesRequest
 	if err := sonic.Unmarshal(ctx.Request.Body(), &request); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
@@ -262,15 +290,15 @@ func (s *Server) responses(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	provider, model := schemas.ParseModelString(request.Model, schemas.OpenAI)
+	deployment, ok := catalogModelDeploymentFor(provider, model)
+	if !ok || !applyCatalogModelDeployment(&request.Model, &request.ResponsesParameters.ServiceTier, deployment) {
+		s.writeCatalogModelError(ctx)
+		return
+	}
 	if err := setExtraParams(ctx.Request.Body(), responsesParamsKnownFields, &request, provider, model, stogasRouteResponses); err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Invalid JSON body", "type": "invalid_request_error"},
 		})
-		return
-	}
-
-	rawAPIKey, ok := s.requireAPIKey(ctx)
-	if !ok {
 		return
 	}
 
@@ -333,11 +361,37 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 	ctx.SetContentType("text/event-stream")
 	ctx.Response.Header.Set("Cache-Control", "no-cache")
 	ctx.Response.Header.Set("Connection", "keep-alive")
-	ctx.Response.SetBodyStreamWriter(func(w *bufio.Writer) {
+	reader := newSSEStreamReader()
+	ctx.Response.SetBodyStream(reader, -1)
+
+	go func() {
+		defer reader.done()
 		defer cancel()
-		defer w.Flush()
+
 		metadata := newStreamMetadataAccumulator(bifrostCtx)
-		for chunk := range stream {
+
+		for {
+			var chunk *schemas.BifrostStreamChunk
+			select {
+			case <-reader.closed():
+				return
+			case next, ok := <-stream:
+				if !ok {
+					if meta := metadata.metadata(bifrostCtx); len(meta) > 0 && !rawResponsePassthrough(bifrostCtx) {
+						encoded, err := marshalPayload(meta)
+						if err != nil || !reader.sendEvent("stogas.meta", encoded) {
+							return
+						}
+					}
+
+					if sendDone {
+						_ = reader.sendDone()
+					}
+					return
+				}
+				chunk = next
+			}
+
 			if chunk == nil {
 				continue
 			}
@@ -348,10 +402,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				if err != nil {
 					return
 				}
-				if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
-					return
-				}
-				_ = w.Flush()
+				_ = reader.sendEvent("", encoded)
 				return
 			}
 
@@ -385,36 +436,22 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				return
 			}
 
-			if includeEventName && eventName != "" {
-				if _, err := fmt.Fprintf(w, "event: %s\n", eventName); err != nil {
-					return
-				}
-			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", encoded); err != nil {
-				return
-			}
-			if err := w.Flush(); err != nil {
+			if !reader.sendEvent(streamEventName(includeEventName, eventName), encoded) {
 				return
 			}
 		}
+	}()
 
-		if meta := metadata.metadata(bifrostCtx); len(meta) > 0 && !rawResponsePassthrough(bifrostCtx) {
-			encoded, err := marshalPayload(meta)
-			if err != nil {
-				return
-			}
-			if _, err := fmt.Fprintf(w, "event: stogas.meta\ndata: %s\n\n", encoded); err != nil {
-				return
-			}
-		}
-
-		if sendDone {
-			_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
-		}
-	})
 	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string); ok {
 		s.forwardProviderHeaders(ctx, schemas.BifrostResponseExtraFields{ProviderResponseHeaders: headers})
 	}
+}
+
+func streamEventName(include bool, eventName string) string {
+	if include {
+		return eventName
+	}
+	return ""
 }
 
 func setExtraParams(body []byte, knownFields map[string]bool, req requestWithSettableExtraParams, provider schemas.ModelProvider, model string, route stogasRoute) error {
@@ -590,6 +627,48 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (string, bool) {
 	return "", false
 }
 
+func (s *Server) requireInferenceEnvelope(ctx *fasthttp.RequestCtx) (string, bool) {
+	rawAPIKey, ok := s.requireInferenceHeaders(ctx)
+	if !ok {
+		return "", false
+	}
+	if len(ctx.Request.Body()) == 0 {
+		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "Request body is required", "type": "invalid_request_error"},
+		})
+		return "", false
+	}
+	return rawAPIKey, true
+}
+
+func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (string, bool) {
+	rawAPIKey, ok := s.requireAPIKey(ctx)
+	if !ok {
+		return "", false
+	}
+	if s.runtime != nil {
+		if err := s.runtime.ValidateAPIKeyFormat(rawAPIKey); err != nil {
+			s.writeError(ctx, fasthttp.StatusUnauthorized, map[string]any{
+				"error": map[string]any{"message": "Invalid API key", "type": "authentication_error"},
+			})
+			return "", false
+		}
+	}
+	if !isJSONContentType(ctx.Request.Header.ContentType()) {
+		s.writeError(ctx, fasthttp.StatusUnsupportedMediaType, map[string]any{
+			"error": map[string]any{"message": "Content-Type must be application/json", "type": "invalid_request_error"},
+		})
+		return "", false
+	}
+	return rawAPIKey, true
+}
+
+func isJSONContentType(raw []byte) bool {
+	contentType := strings.ToLower(strings.TrimSpace(string(raw)))
+	mediaType, _, _ := strings.Cut(contentType, ";")
+	return strings.TrimSpace(mediaType) == "application/json"
+}
+
 func marshalPayload(payload any) ([]byte, error) {
 	switch typed := payload.(type) {
 	case []byte:
@@ -610,6 +689,12 @@ func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload an
 		return
 	}
 	_, _ = ctx.Write(data)
+}
+
+func (s *Server) writeCatalogModelError(ctx *fasthttp.RequestCtx) {
+	s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+		"error": map[string]any{"message": "Model is not available", "type": "invalid_request_error"},
+	})
 }
 
 func (s *Server) forwardProviderHeaders(ctx *fasthttp.RequestCtx, extra schemas.BifrostResponseExtraFields) {
@@ -733,8 +818,20 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 			next(ctx)
 			return
 		}
+		if isInferencePath(ctx.Path()) {
+			if _, ok := s.requireInferenceHeaders(ctx); !ok {
+				return
+			}
+		}
 
-		body, err := ctx.Request.BodyUncompressed()
+		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
+		body, err := ctx.Request.BodyUncompressedWithLimit(maxRequestBodyBytes)
+		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
+			s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
+				"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
+			})
+			return
+		}
 		if err != nil {
 			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 				"error": map[string]any{"message": fmt.Sprintf("Invalid compressed request body: %v", err), "type": "invalid_request_error"},
@@ -742,7 +839,6 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 			return
 		}
 
-		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
 		if len(body) > maxRequestBodyBytes {
 			s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
 				"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
@@ -754,6 +850,15 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 		ctx.Request.Header.Del(fasthttp.HeaderContentEncoding)
 		ctx.Request.Header.Del(fasthttp.HeaderContentLength)
 		next(ctx)
+	}
+}
+
+func isInferencePath(path []byte) bool {
+	switch string(path) {
+	case "/v1/chat/completions", "/v1/responses":
+		return true
+	default:
+		return false
 	}
 }
 

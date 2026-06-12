@@ -47,6 +47,13 @@ func (r *Runtime) Client() *bifrost.Bifrost {
 	return r.client
 }
 
+func (r *Runtime) ValidateAPIKeyFormat(rawAPIKey string) error {
+	if r == nil || r.holds == nil {
+		return ErrInvalidAPIKey
+	}
+	return r.holds.ValidateAPIKeyFormat(rawAPIKey)
+}
+
 func (r *Runtime) Close() {
 	if r == nil {
 		return

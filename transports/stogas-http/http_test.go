@@ -3,7 +3,11 @@ package stogashttp
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,6 +98,142 @@ func TestRequestDecompressionEnforcesDecompressedSize(t *testing.T) {
 
 	if ctx.Response.StatusCode() != fasthttp.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequestDecompressionChecksAPIKeyBeforeCompressedBody(t *testing.T) {
+	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/v1/chat/completions")
+	ctx.Request.Header.Set("Content-Encoding", "gzip")
+	ctx.Request.Header.Set("Content-Type", "text/plain")
+	ctx.Request.SetBodyString("not gzip")
+
+	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+		t.Fatal("next handler should not be called")
+	})(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
+		t.Fatalf("expected 401 before decompression, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequestDecompressionChecksContentTypeBeforeCompressedBody(t *testing.T) {
+	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/v1/responses")
+	ctx.Request.Header.Set("Authorization", "Bearer test-key")
+	ctx.Request.Header.Set("Content-Encoding", "gzip")
+	ctx.Request.Header.Set("Content-Type", "text/plain")
+	ctx.Request.SetBodyString("not gzip")
+
+	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+		t.Fatal("next handler should not be called")
+	})(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415 before decompression, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyPolicy(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.Set("Content-Type", "text/plain")
+	ctx.Request.SetBodyString("{}")
+
+	if _, ok := server.requireInferenceEnvelope(ctx); ok {
+		t.Fatal("expected missing API key to fail")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
+		t.Fatalf("expected auth to be checked before content type, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequireInferenceEnvelopeRejectsNonJSONContentType(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.Set("Authorization", "Bearer test-key")
+	ctx.Request.Header.Set("Content-Type", "text/plain")
+	ctx.Request.SetBodyString("{}")
+
+	if _, ok := server.requireInferenceEnvelope(ctx); ok {
+		t.Fatal("expected unsupported content type to fail")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequireInferenceEnvelopeAcceptsJSONContentTypeWithParameters(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.Set("Authorization", "Bearer test-key")
+	ctx.Request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	ctx.Request.SetBodyString("{}")
+
+	if _, ok := server.requireInferenceEnvelope(ctx); !ok {
+		t.Fatalf("expected JSON envelope to pass, got status %d body %s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+}
+
+func TestRequireInferenceEnvelopeRejectsEmptyBody(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.Set("Authorization", "Bearer test-key")
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	if _, ok := server.requireInferenceEnvelope(ctx); ok {
+		t.Fatal("expected empty body to fail")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestCatalogModelDeploymentNormalizesLatestAlias(t *testing.T) {
+	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-latest")
+	if !ok {
+		t.Fatal("expected latest alias to resolve")
+	}
+	model := "gpt-5.5-latest"
+	var tier *schemas.BifrostServiceTier
+	if !applyCatalogModelDeployment(&model, &tier, deployment) {
+		t.Fatal("expected default deployment to apply")
+	}
+	if model != "gpt-5.5" {
+		t.Fatalf("expected provider model gpt-5.5, got %q", model)
+	}
+}
+
+func TestCatalogModelDeploymentImpliesFlexTier(t *testing.T) {
+	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-flex")
+	if !ok {
+		t.Fatal("expected flex deployment to resolve")
+	}
+	model := "gpt-5.5-flex"
+	var tier *schemas.BifrostServiceTier
+	if !applyCatalogModelDeployment(&model, &tier, deployment) {
+		t.Fatal("expected flex deployment to apply")
+	}
+	if model != "gpt-5.5" {
+		t.Fatalf("expected provider model gpt-5.5, got %q", model)
+	}
+	if tier == nil || *tier != schemas.BifrostServiceTierFlex {
+		t.Fatalf("expected implied flex service tier, got %#v", tier)
+	}
+}
+
+func TestCatalogModelDeploymentRejectsTierConflict(t *testing.T) {
+	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-flex")
+	if !ok {
+		t.Fatal("expected flex deployment to resolve")
+	}
+	model := "gpt-5.5-flex"
+	tier := schemas.BifrostServiceTierPriority
+	tierPtr := &tier
+	if applyCatalogModelDeployment(&model, &tierPtr, deployment) {
+		t.Fatal("expected conflicting service tier to fail")
 	}
 }
 
@@ -359,6 +499,134 @@ func TestServerDisablesStreamRequestBody(t *testing.T) {
 	if server.server.StreamRequestBody {
 		t.Fatal("Stogas HTTP server should not stream request bodies")
 	}
+}
+
+func TestWriteSSEStreamUsesManagedDirectReader(t *testing.T) {
+	source, err := os.ReadFile("http.go")
+	if err != nil {
+		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
+	}
+	text := string(source)
+
+	forbidden := []string{"SetBodyStreamWriter", ".Hijack(", "fasthttputil.NewPipeConns", "fasthttp.NewStreamReader"}
+	for _, token := range forbidden {
+		if strings.Contains(text, token) {
+			t.Fatalf("Stogas SSE streaming must not use %s", token)
+		}
+	}
+	if !strings.Contains(text, "newSSEStreamReader()") || !strings.Contains(text, "SetBodyStream(reader, -1)") {
+		t.Fatal("Stogas SSE streaming must use the local SSE stream reader with fasthttp SetBodyStream")
+	}
+}
+
+func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	stream := make(chan *schemas.BifrostStreamChunk)
+
+	server.writeSSEStream(ctx, bifrostCtx, stream, true, false, cancel)
+	defer ctx.Response.CloseBodyStream()
+
+	if !ctx.Response.IsBodyStream() {
+		t.Fatal("expected SSE response to use fasthttp body streaming")
+	}
+
+	go func() {
+		stream <- &schemas.BifrostStreamChunk{
+			BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID:      "chatcmpl_stream_test",
+				Object:  "chat.completion.chunk",
+				Model:   "gpt-4o-mini",
+				Choices: []schemas.BifrostResponseChoice{},
+			},
+		}
+		close(stream)
+	}()
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	payload := requireSSEDataPayload(t, body, "chatcmpl_stream_test")
+	if payload["object"] != "chat.completion.chunk" {
+		t.Fatalf("expected streamed chat chunk object, got %v in %q", payload["object"], body)
+	}
+	if !strings.Contains(body, "data: [DONE]\n\n") {
+		t.Fatalf("expected OpenAI done marker, got %q", body)
+	}
+}
+
+func TestWriteSSEStreamCancelsOnBodyStreamClose(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer bifrostCancel()
+	stream := make(chan *schemas.BifrostStreamChunk)
+	cancelled := make(chan struct{})
+	var once sync.Once
+
+	server.writeSSEStream(ctx, bifrostCtx, stream, true, false, func() {
+		once.Do(func() { close(cancelled) })
+	})
+
+	closer, ok := ctx.Response.BodyStream().(io.Closer)
+	if !ok {
+		t.Fatal("expected response body stream to be closeable")
+	}
+	if err := closer.Close(); err != nil {
+		t.Fatalf("closing body stream failed: %v", err)
+	}
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("expected body stream close to cancel upstream stream promptly")
+	}
+}
+
+func readResponseBodyStream(t *testing.T, reader io.Reader) string {
+	t.Helper()
+
+	type result struct {
+		body []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		body, err := io.ReadAll(reader)
+		done <- result{body: body, err: err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatalf("failed to read response body stream: %v", result.err)
+		}
+		return string(result.body)
+	case <-time.After(time.Second):
+		t.Fatal("timed out reading response body stream")
+		return ""
+	}
+}
+
+func requireSSEDataPayload(t *testing.T, body string, id string) map[string]any {
+	t.Helper()
+
+	for _, frame := range strings.Split(body, "\n\n") {
+		data, ok := strings.CutPrefix(strings.TrimSpace(frame), "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			t.Fatalf("failed to parse SSE JSON frame %q: %v", frame, err)
+		}
+		if payload["id"] == id {
+			return payload
+		}
+	}
+
+	t.Fatalf("expected SSE data frame with id %q, got %q", id, body)
+	return nil
 }
 
 func gzipBody(t *testing.T, body string) []byte {
