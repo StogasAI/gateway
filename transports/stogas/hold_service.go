@@ -256,8 +256,18 @@ func (s *HoldService) Close() {
 	}
 }
 
-func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error) {
+func (s *HoldService) ValidateAPIKeyFormat(rawAPIKey string) error {
+	if s == nil {
+		return ErrInvalidAPIKey
+	}
 	if _, err := parseSignedAPIKey(rawAPIKey, s.tokenPepper); err != nil {
+		return ErrInvalidAPIKey
+	}
+	return nil
+}
+
+func (s *HoldService) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error) {
+	if err := s.ValidateAPIKeyFormat(rawAPIKey); err != nil {
 		return nil, &holdError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
 
