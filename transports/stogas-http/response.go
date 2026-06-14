@@ -3,13 +3,10 @@ package stogashttp
 import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 func publicResponsePayload(ctx *schemas.BifrostContext, raw any, value any, extra schemas.BifrostResponseExtraFields) any {
-	if rawResponsePassthrough(ctx) && raw != nil {
-		return raw
-	}
-
 	payload := sanitizeBifrostPayload(value)
 	metadata := stogasMetadata(ctx, extra)
 	if len(metadata) == 0 {
@@ -83,7 +80,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["raw_response"] && extra.RawResponse != nil {
 		metadata["raw_response"] = extra.RawResponse
 	}
-	if headers := filterCatalogProviderResponseHeaders(extra.Provider, extra.OriginalModelRequested, extra.ProviderResponseHeaders); fields["provider_response_headers"] && len(headers) > 0 {
+	if headers := catalog.FilterProviderResponseHeaders(extra.Provider, extra.OriginalModelRequested, extra.ProviderResponseHeaders); fields["provider_response_headers"] && len(headers) > 0 {
 		metadata["provider_response_headers"] = headers
 	}
 

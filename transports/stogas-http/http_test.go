@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
 
@@ -21,7 +22,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, cancel, err := newRequestContext(ctx, schemas.ChatCompletionRequest)
+	bifrostCtx, cancel, err := newRequestContext(ctx, testResolution())
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -44,6 +45,24 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	if remaining := time.Until(deadline); remaining <= 0 || remaining > stogas.GatewayRequestLifetime {
 		t.Fatalf("request lifetime remaining = %s, want within %s", remaining, stogas.GatewayRequestLifetime)
 	}
+}
+
+func testResolution() *catalog.ResolvedRequest {
+	return &catalog.ResolvedRequest{
+		Route:       catalog.RouteChat,
+		RequestType: schemas.ChatCompletionRequest,
+		Provider:    schemas.OpenAI,
+		Model:       "gpt-5.5",
+	}
+}
+
+func mustCatalogPath(t *testing.T, route catalog.Route) string {
+	t.Helper()
+	path, ok := catalog.PathForRoute(route)
+	if !ok {
+		t.Fatalf("missing catalog path for route %s", route)
+	}
+	return path
 }
 
 func TestRequestDecompressionGzip(t *testing.T) {
@@ -139,6 +158,7 @@ func TestRequestDecompressionChecksContentTypeBeforeCompressedBody(t *testing.T)
 func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyPolicy(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
 	ctx.Request.Header.Set("Content-Type", "text/plain")
 	ctx.Request.SetBodyString("{}")
 
@@ -153,6 +173,7 @@ func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyPolicy(t *testing.T) {
 func TestRequireInferenceEnvelopeRejectsNonJSONContentType(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
 	ctx.Request.Header.Set("Authorization", "Bearer test-key")
 	ctx.Request.Header.Set("Content-Type", "text/plain")
 	ctx.Request.SetBodyString("{}")
@@ -168,6 +189,7 @@ func TestRequireInferenceEnvelopeRejectsNonJSONContentType(t *testing.T) {
 func TestRequireInferenceEnvelopeAcceptsJSONContentTypeWithParameters(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
 	ctx.Request.Header.Set("Authorization", "Bearer test-key")
 	ctx.Request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	ctx.Request.SetBodyString("{}")
@@ -180,6 +202,7 @@ func TestRequireInferenceEnvelopeAcceptsJSONContentTypeWithParameters(t *testing
 func TestRequireInferenceEnvelopeRejectsEmptyBody(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
 	ctx.Request.Header.Set("Authorization", "Bearer test-key")
 	ctx.Request.Header.Set("Content-Type", "application/json")
 
@@ -188,52 +211,6 @@ func TestRequireInferenceEnvelopeRejectsEmptyBody(t *testing.T) {
 	}
 	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", ctx.Response.StatusCode())
-	}
-}
-
-func TestCatalogModelDeploymentNormalizesLatestAlias(t *testing.T) {
-	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-latest")
-	if !ok {
-		t.Fatal("expected latest alias to resolve")
-	}
-	model := "gpt-5.5-latest"
-	var tier *schemas.BifrostServiceTier
-	if !applyCatalogModelDeployment(&model, &tier, deployment) {
-		t.Fatal("expected default deployment to apply")
-	}
-	if model != "gpt-5.5" {
-		t.Fatalf("expected provider model gpt-5.5, got %q", model)
-	}
-}
-
-func TestCatalogModelDeploymentImpliesFlexTier(t *testing.T) {
-	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-flex")
-	if !ok {
-		t.Fatal("expected flex deployment to resolve")
-	}
-	model := "gpt-5.5-flex"
-	var tier *schemas.BifrostServiceTier
-	if !applyCatalogModelDeployment(&model, &tier, deployment) {
-		t.Fatal("expected flex deployment to apply")
-	}
-	if model != "gpt-5.5" {
-		t.Fatalf("expected provider model gpt-5.5, got %q", model)
-	}
-	if tier == nil || *tier != schemas.BifrostServiceTierFlex {
-		t.Fatalf("expected implied flex service tier, got %#v", tier)
-	}
-}
-
-func TestCatalogModelDeploymentRejectsTierConflict(t *testing.T) {
-	deployment, ok := catalogModelDeploymentFor(schemas.OpenAI, "gpt-5.5-flex")
-	if !ok {
-		t.Fatal("expected flex deployment to resolve")
-	}
-	model := "gpt-5.5-flex"
-	tier := schemas.BifrostServiceTierPriority
-	tierPtr := &tier
-	if applyCatalogModelDeployment(&model, &tierPtr, deployment) {
-		t.Fatal("expected conflicting service tier to fail")
 	}
 }
 
@@ -340,12 +317,15 @@ func TestCorsAllowsAnyOrigin(t *testing.T) {
 	if got := string(ctx.Response.Header.Peek("Access-Control-Allow-Origin")); got != "*" {
 		t.Fatalf("expected wildcard CORS origin, got %q", got)
 	}
-	if got := string(ctx.Response.Header.Peek("Access-Control-Allow-Headers")); got != "authorization,content-type" {
-		t.Fatalf("expected requested headers to be allowed, got %q", got)
+	allowedHeaders := string(ctx.Response.Header.Peek("Access-Control-Allow-Headers"))
+	for _, expected := range []string{"authorization", "content-type", "api-key", "x-api-key", "x-goog-api-key"} {
+		if !strings.Contains(strings.ToLower(allowedHeaders), expected) {
+			t.Fatalf("expected CORS headers to include %q, got %q", expected, allowedHeaders)
+		}
 	}
 }
 
-func TestAPIKeyTokenAcceptsGatewayAuthAliases(t *testing.T) {
+func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 	tests := []struct {
 		name    string
 		headers map[string]string
@@ -398,7 +378,7 @@ func TestAPIKeyTokenAcceptsGatewayAuthAliases(t *testing.T) {
 				ctx.Request.Header.Set(key, value)
 			}
 
-			if got := apiKeyToken(ctx); got != tt.want {
+			if got := apiKeyToken(ctx, catalog.RouteChat); got != tt.want {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
@@ -476,19 +456,23 @@ func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
 	}
 }
 
-func TestPublicResponsePayloadRawPassthrough(t *testing.T) {
+func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
-	bifrostCtx.SetValue(stogasRawResponsePassthroughKey, true)
+	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"raw_response": true})
 
 	raw := map[string]any{"id": "raw_provider_response"}
-	payload := publicResponsePayload(bifrostCtx, raw, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{})
+	payload := publicResponsePayload(bifrostCtx, raw, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawResponse: raw})
 	object, ok := payload.(map[string]any)
 	if !ok {
 		t.Fatalf("expected raw object, got %T", payload)
 	}
-	if object["id"] != "raw_provider_response" {
-		t.Fatalf("expected raw response passthrough, got %#v", object)
+	if object["id"] != "bifrost_response" {
+		t.Fatalf("expected normalized response to remain primary, got %#v", object)
+	}
+	metadata, ok := object["stogas"].(map[string]any)
+	if !ok || metadata["raw_response"] == nil {
+		t.Fatalf("expected raw response metadata, got %#v", object)
 	}
 }
 

@@ -8,21 +8,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
 
 type stogasContextKey string
 
 const (
-	stogasRawResponsePassthroughKey stogasContextKey = "stogas.raw_response_passthrough"
-	stogasReturnExtraFieldsKey      stogasContextKey = "stogas.return_extra_fields"
+	stogasReturnExtraFieldsKey stogasContextKey = "stogas.return_extra_fields"
 
 	stogasHeaderReturnExtraFields = "X-Stogas-Return-Extra-Fields"
-	stogasHeaderReturnRawRequest  = "X-Stogas-Return-Raw-Request"
-	stogasHeaderReturnRawResponse = "X-Stogas-Return-Raw-Response"
 )
 
-func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType) (*schemas.BifrostContext, context.CancelFunc, error) {
+func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest) (*schemas.BifrostContext, context.CancelFunc, error) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
 		stogas.GatewayRequestLifetime,
@@ -34,35 +32,14 @@ func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType
 	}
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID.String())
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
-	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, requestType)
+	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestHeaders, requestHeaders(ctx))
-
-	returnRawRequest, err := boolHeader(ctx, stogasHeaderReturnRawRequest)
-	if err != nil {
-		cancel()
-		return nil, nil, err
-	}
-	if returnRawRequest {
-		bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawRequest, true)
-	}
-
-	returnRawResponse, err := boolHeader(ctx, stogasHeaderReturnRawResponse)
-	if err != nil {
-		cancel()
-		return nil, nil, err
-	}
-	if returnRawResponse {
-		bifrostCtx.SetValue(stogasRawResponsePassthroughKey, true)
-		bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
-	}
+	stogas.SetCatalogResolution(bifrostCtx, resolution)
 
 	extraFields, err := extraFieldsHeader(ctx)
 	if err != nil {
 		cancel()
 		return nil, nil, err
-	}
-	if returnRawRequest {
-		extraFields["raw_request"] = true
 	}
 	if len(extraFields) > 0 {
 		bifrostCtx.SetValue(stogasReturnExtraFieldsKey, extraFields)
@@ -74,7 +51,7 @@ func newRequestContext(ctx *fasthttp.RequestCtx, requestType schemas.RequestType
 		}
 	}
 
-	if extraHeaders := allowedUpstreamRequestHeaders(ctx); len(extraHeaders) > 0 {
+	if extraHeaders := allowedUpstreamRequestHeaders(ctx, resolution.Provider, resolution.Model, resolution.Route); len(extraHeaders) > 0 {
 		bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, extraHeaders)
 	}
 
@@ -92,21 +69,6 @@ func requestHeaders(ctx *fasthttp.RequestCtx) map[string]string {
 		headers[name] = string(value)
 	})
 	return headers
-}
-
-func boolHeader(ctx *fasthttp.RequestCtx, name string) (bool, error) {
-	raw := strings.TrimSpace(string(ctx.Request.Header.Peek(name)))
-	if raw == "" {
-		return false, nil
-	}
-	switch strings.ToLower(raw) {
-	case "true", "1", "yes":
-		return true, nil
-	case "false", "0", "no":
-		return false, nil
-	default:
-		return false, fmt.Errorf("%s must be true or false", name)
-	}
 }
 
 func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {
@@ -128,12 +90,15 @@ func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {
 	return fields, nil
 }
 
-func allowedUpstreamRequestHeaders(ctx *fasthttp.RequestCtx) map[string][]string {
-	provider, model := schemas.OpenAI, ""
+func allowsStogasResponseField(name string) bool {
+	return catalog.AllowsResponseMetadataField(name)
+}
+
+func allowedUpstreamRequestHeaders(ctx *fasthttp.RequestCtx, provider schemas.ModelProvider, model string, route catalog.Route) map[string][]string {
 	allowed := make(map[string][]string)
 	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {
 		name := string(key)
-		if !catalogAllowsUpstreamRequestHeader(provider, model, name) {
+		if !catalog.AllowsUpstreamRequestHeader(provider, model, route, name) {
 			return
 		}
 		allowed[name] = append(allowed[name], string(value))
@@ -142,12 +107,4 @@ func allowedUpstreamRequestHeaders(ctx *fasthttp.RequestCtx) map[string][]string
 		return nil
 	}
 	return allowed
-}
-
-func rawResponsePassthrough(ctx *schemas.BifrostContext) bool {
-	if ctx == nil {
-		return false
-	}
-	value, _ := ctx.Value(stogasRawResponsePassthroughKey).(bool)
-	return value
 }

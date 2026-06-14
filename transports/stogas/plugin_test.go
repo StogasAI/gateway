@@ -6,17 +6,19 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-type fakeHoldAuthorizer struct {
+type fakeBillingAuthorizer struct {
 	attempts    []string
 	finalEvents []GatewayRequestEvent
-	results     []*HoldAuthorization
+	results     []*BillingAuthorization
 	errors      []error
 	callCount   int
 }
 
-func (f *fakeHoldAuthorizer) AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*BillingAuthorization, error) {
 	f.attempts = append(f.attempts, requestID)
 	idx := f.callCount
 	f.callCount++
@@ -29,30 +31,26 @@ func (f *fakeHoldAuthorizer) AuthorizePlaceholderHold(ctx context.Context, rawAP
 	return nil, nil
 }
 
-func (f *fakeHoldAuthorizer) FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, event GatewayRequestEvent) error {
+func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *BillingAuthorization, event GatewayRequestEvent) error {
 	f.finalEvents = append(f.finalEvents, event)
-	return nil
-}
-
-func (f *fakeHoldAuthorizer) ReleaseHold(ctx context.Context, authorization *HoldAuthorization) error {
 	return nil
 }
 
 func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expected := &HoldAuthorization{HoldID: "hold-1"}
-	authorizer := &fakeHoldAuthorizer{
-		results: []*HoldAuthorization{nil, expected},
+	expected := &BillingAuthorization{HoldID: "hold-1"}
+	authorizer := &fakeBillingAuthorizer{
+		results: []*BillingAuthorization{nil, expected},
 		errors: []error{
-			&holdError{err: ErrRequestAlreadyUsed, statusCode: 409},
+			&billingError{err: ErrRequestAlreadyUsed, statusCode: 409},
 			nil,
 		},
 	}
-	plugin := &Plugin{holds: authorizer}
+	plugin := &Plugin{billing: authorizer}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := plugin.authorizeWithFreshRequestID(ctx, "sk-user", initialRequestID, "openai", "gpt-5", authorizer.errors[0])
+	authorization, err := plugin.authorizeWithFreshRequestID(ctx, "sk-user", initialRequestID, catalog.HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}, authorizer.errors[0])
 	if err != nil {
 		t.Fatalf("authorizeWithFreshRequestID returned error: %v", err)
 	}
@@ -76,12 +74,12 @@ func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 
 func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.T) {
 	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expectedErr := &holdError{err: ErrInvalidAPIKey, statusCode: 401}
-	plugin := &Plugin{holds: &fakeHoldAuthorizer{}}
+	expectedErr := &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+	plugin := &Plugin{billing: &fakeBillingAuthorizer{}}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := plugin.authorizeWithFreshRequestID(ctx, "sk-user", initialRequestID, "openai", "gpt-5", expectedErr)
+	authorization, err := plugin.authorizeWithFreshRequestID(ctx, "sk-user", initialRequestID, catalog.HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}, expectedErr)
 	if authorization != nil {
 		t.Fatalf("expected no authorization for non-conflict error")
 	}
@@ -95,8 +93,8 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 }
 
 func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
-	authorization := &HoldAuthorization{
-		AuthorizedAmount: mustBigInt(t, placeholderChargeUsdAtoms),
+	authorization := &BillingAuthorization{
+		AuthorizedAmount: mustBigInt(t, "5000"),
 		AvailableAfter:   mustBigInt(t, "10000000000"),
 		KeyID:            "key-1",
 		ProductKey:       "gpt-4o-mini",
@@ -104,10 +102,10 @@ func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
 		RequestID:        "request-1",
 		UserID:           "user-1",
 	}
-	authorizer := &fakeHoldAuthorizer{}
-	plugin := &Plugin{holds: authorizer}
+	authorizer := &fakeBillingAuthorizer{}
+	plugin := &Plugin{billing: authorizer}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	setHoldAuthorization(ctx, authorization)
+	setBillingAuthorization(ctx, authorization)
 	ctx.SetValue(requestTypeContextKey, string(schemas.ChatCompletionRequest))
 	ctx.SetValue(requestModelContextKey, "gpt-4o-mini")
 	status := 502
@@ -127,11 +125,58 @@ func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
 	if !event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "provider_error" {
 		t.Fatalf("expected processed provider error attempt, got %#v", event)
 	}
-	if event.StogasBillingStatus != "complete" {
-		t.Fatalf("expected placeholder billing status complete, got %q", event.StogasBillingStatus)
+	if event.StogasBillingStatus != "over_reserved" {
+		t.Fatalf("expected insured zero-cost provider error to return the hold, got %q", event.StogasBillingStatus)
+	}
+	if event.TotalCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+		t.Fatalf("expected insured provider error to settle at zero, got %s", event.TotalCostUSDAtoms)
 	}
 	if event.RequestType != "chat_completion_request" {
 		t.Fatalf("expected normalized request type, got %q", event.RequestType)
+	}
+}
+
+func TestPostLLMHookDoesNotInsureClientCausedProviderErrors(t *testing.T) {
+	authorization := &BillingAuthorization{
+		AuthorizedAmount: mustBigInt(t, "5000"),
+		AvailableAfter:   mustBigInt(t, "10000000000"),
+		KeyID:            "key-1",
+		ProductKey:       "gpt-4o-mini",
+		ProviderKey:      "openai",
+		RequestID:        "request-1",
+		UserID:           "user-1",
+	}
+	authorizer := &fakeBillingAuthorizer{}
+	plugin := &Plugin{billing: authorizer}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	setBillingAuthorization(ctx, authorization)
+	ctx.SetValue(requestTypeContextKey, string(schemas.ChatCompletionRequest))
+	ctx.SetValue(requestModelContextKey, "gpt-4o-mini")
+	status := 400
+	bifrostErr := &schemas.BifrostError{
+		StatusCode: &status,
+		Error:      &schemas.ErrorField{Message: "Unsupported parameter: tool_choice", Type: schemas.Ptr("invalid_request_error")},
+	}
+
+	_, returnedErr, err := plugin.PostLLMHook(ctx, nil, bifrostErr)
+	if err != nil {
+		t.Fatalf("PostLLMHook returned plugin error: %v", err)
+	}
+	if returnedErr != bifrostErr {
+		t.Fatalf("expected original provider error to be preserved")
+	}
+	if len(authorizer.finalEvents) != 1 {
+		t.Fatalf("expected one finalization event, got %#v", authorizer.finalEvents)
+	}
+	event := authorizer.finalEvents[0]
+	if event.ProviderAttempts[0].Status != "invalid_request" {
+		t.Fatalf("expected invalid_request provider attempt, got %#v", event.ProviderAttempts[0])
+	}
+	if event.TotalCostUSDAtoms != "5000" {
+		t.Fatalf("expected client-caused upstream error to settle authorized hold, got %s", event.TotalCostUSDAtoms)
+	}
+	if event.StogasBillingStatus != "complete" {
+		t.Fatalf("expected exact hold capture status, got %s", event.StogasBillingStatus)
 	}
 }
 
@@ -139,30 +184,97 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode int
+		errorType  string
+		errorCode  string
 		message    string
 		want       string
 	}{
 		{name: "success", want: "success"},
-		{name: "rate limited", statusCode: 429, want: "rate_limited"},
-		{name: "over budget", statusCode: 402, want: "over_budget"},
-		{name: "invalid request", statusCode: 400, want: "invalid_request"},
+		{name: "bad request", statusCode: 400, errorType: "invalid_request_error", want: "invalid_request"},
+		{name: "authentication", statusCode: 401, errorType: "authentication_error", want: "provider_error"},
+		{name: "permission denied", statusCode: 403, errorType: "permission_error", want: "provider_error"},
+		{name: "not found", statusCode: 404, errorType: "not_found_error", want: "invalid_request"},
+		{name: "conflict", statusCode: 409, errorType: "conflict_error", want: "invalid_request"},
+		{name: "unprocessable entity", statusCode: 422, errorType: "invalid_request_error", want: "invalid_request"},
+		{name: "quota", statusCode: 429, errorCode: "insufficient_quota", want: "over_budget"},
+		{name: "rate limited", statusCode: 429, errorType: "rate_limit_error", want: "rate_limited"},
+		{name: "network timeout", statusCode: 408, message: "request timeout", want: "network_error"},
+		{name: "internal server error", statusCode: 500, errorType: "server_error", want: "provider_error"},
+		{name: "bad gateway", statusCode: 502, want: "provider_error"},
+		{name: "overloaded", statusCode: 503, message: "The engine is currently overloaded", want: "provider_error"},
+		{name: "slow down", statusCode: 503, message: "Slow Down", want: "rate_limited"},
+		{name: "gateway timeout", statusCode: 504, want: "network_error"},
+		{name: "connection error text", message: "connection reset by peer", want: "network_error"},
 		{name: "content filter", statusCode: 400, message: "blocked by content filter", want: "content_filter"},
-		{name: "network timeout", statusCode: 504, want: "network_error"},
-		{name: "provider error", statusCode: 500, want: "provider_error"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var err *schemas.BifrostError
-			if tt.statusCode != 0 || tt.message != "" {
+			if tt.statusCode != 0 || tt.message != "" || tt.errorType != "" || tt.errorCode != "" {
 				statusCode := tt.statusCode
+				if statusCode == 0 {
+					statusCode = 500
+				}
+				errorField := &schemas.ErrorField{Message: tt.message}
+				if tt.errorType != "" {
+					errorField.Type = schemas.Ptr(tt.errorType)
+				}
+				if tt.errorCode != "" {
+					errorField.Code = schemas.Ptr(tt.errorCode)
+				}
 				err = &schemas.BifrostError{
 					StatusCode: &statusCode,
-					Error:      &schemas.ErrorField{Message: tt.message},
+					Error:      errorField,
 				}
 			}
 			if got := normalizeUpstreamStatus(err); got != tt.want {
 				t.Fatalf("normalizeUpstreamStatus = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProviderErrorInsurancePolicyCoversOpenAIErrorClasses(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		errorType  string
+		errorCode  string
+		message    string
+		insured    bool
+	}{
+		{name: "BadRequestError", statusCode: 400, errorType: "invalid_request_error", insured: false},
+		{name: "AuthenticationError", statusCode: 401, errorType: "authentication_error", insured: true},
+		{name: "PermissionDeniedError", statusCode: 403, errorType: "permission_error", insured: true},
+		{name: "NotFoundError", statusCode: 404, errorType: "not_found_error", insured: false},
+		{name: "ConflictError", statusCode: 409, errorType: "conflict_error", insured: false},
+		{name: "UnprocessableEntityError", statusCode: 422, errorType: "invalid_request_error", insured: false},
+		{name: "RateLimitError", statusCode: 429, errorType: "rate_limit_error", insured: true},
+		{name: "insufficient quota", statusCode: 429, errorCode: "insufficient_quota", insured: true},
+		{name: "APIConnectionError", statusCode: 500, message: "connection reset by peer", insured: true},
+		{name: "APITimeoutError", statusCode: 504, message: "request timed out", insured: true},
+		{name: "InternalServerError", statusCode: 500, errorType: "server_error", insured: true},
+		{name: "overloaded", statusCode: 503, message: "The engine is currently overloaded", insured: true},
+		{name: "slow down", statusCode: 503, message: "Slow Down", insured: true},
+		{name: "content policy", statusCode: 400, message: "blocked by content policy", insured: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errorField := &schemas.ErrorField{Message: tt.message}
+			if tt.errorType != "" {
+				errorField.Type = schemas.Ptr(tt.errorType)
+			}
+			if tt.errorCode != "" {
+				errorField.Code = schemas.Ptr(tt.errorCode)
+			}
+			err := &schemas.BifrostError{
+				StatusCode: &tt.statusCode,
+				Error:      errorField,
+			}
+			if got := providerErrorIsInsured(err); got != tt.insured {
+				t.Fatalf("providerErrorIsInsured = %v, want %v; normalized=%s", got, tt.insured, normalizeUpstreamStatus(err))
 			}
 		})
 	}
