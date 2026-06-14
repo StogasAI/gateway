@@ -5,13 +5,16 @@ import (
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/apikey"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const openAIProviderKeyID = "stogas-openai"
 
 type Runtime struct {
-	client *bifrost.Bifrost
-	holds  *HoldService
+	client  *bifrost.Bifrost
+	billing *BillingService
+	cancel  context.CancelFunc
 }
 
 func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Runtime, error) {
@@ -19,25 +22,37 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		return nil, err
 	}
 
-	tinybird := NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
-	holds, err := NewHoldService(ctx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
-	if err != nil {
+	runtimeCtx, cancel := context.WithCancel(ctx)
+	if err := catalog.StartRefresh(runtimeCtx, catalog.Source{
+		Path:            config.CatalogPath,
+		RefreshInterval: config.CatalogRefresh,
+		URL:             config.CatalogURL,
+	}); err != nil {
+		cancel()
 		return nil, err
 	}
 
-	client, err := bifrost.Init(ctx, schemas.BifrostConfig{
+	tinybird := NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
+	billing, err := NewBillingService(runtimeCtx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	client, err := bifrost.Init(runtimeCtx, schemas.BifrostConfig{
 		Account:         newAccount(config),
 		InitialPoolSize: schemas.DefaultInitialPoolSize,
-		LLMPlugins:      []schemas.LLMPlugin{NewPlugin(holds)},
+		LLMPlugins:      []schemas.LLMPlugin{NewPlugin(billing)},
 		Logger:          logger,
 		Tracer:          schemas.DefaultTracer(),
 	})
 	if err != nil {
-		holds.Close()
+		billing.Close()
+		cancel()
 		return nil, err
 	}
 
-	return &Runtime{client: client, holds: holds}, nil
+	return &Runtime{client: client, billing: billing, cancel: cancel}, nil
 }
 
 func (r *Runtime) Client() *bifrost.Bifrost {
@@ -48,10 +63,15 @@ func (r *Runtime) Client() *bifrost.Bifrost {
 }
 
 func (r *Runtime) ValidateAPIKeyFormat(rawAPIKey string) error {
-	if r == nil || r.holds == nil {
-		return ErrInvalidAPIKey
+	_, err := r.ParseAPIKey(rawAPIKey)
+	return err
+}
+
+func (r *Runtime) ParseAPIKey(rawAPIKey string) (*apikey.Claims, error) {
+	if r == nil || r.billing == nil {
+		return nil, ErrInvalidAPIKey
 	}
-	return r.holds.ValidateAPIKeyFormat(rawAPIKey)
+	return r.billing.ParseAPIKey(rawAPIKey)
 }
 
 func (r *Runtime) Close() {
@@ -61,8 +81,11 @@ func (r *Runtime) Close() {
 	if r.client != nil {
 		r.client.Shutdown()
 	}
-	if r.holds != nil {
-		r.holds.Close()
+	if r.billing != nil {
+		r.billing.Close()
+	}
+	if r.cancel != nil {
+		r.cancel()
 	}
 }
 

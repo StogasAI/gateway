@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/apikey"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const Name = "stogas"
@@ -17,27 +18,27 @@ const maxAuthorizeRequestIDAttempts = 3
 type contextKey string
 
 const (
-	apiKeyContextKey        contextKey = "stogas.api_key"
-	holdContextKey          contextKey = "stogas.hold"
-	holdFinalizedContextKey contextKey = "stogas.hold_finalized"
-	holdReleasedContextKey  contextKey = "stogas.hold_released"
-	requestModelContextKey  contextKey = "stogas.request_model"
-	requestStartContextKey  contextKey = "stogas.request_start"
-	requestTypeContextKey   contextKey = "stogas.request_type"
+	apiKeyContextKey            contextKey = "stogas.api_key"
+	apiKeyClaimsContextKey      contextKey = "stogas.api_key_claims"
+	billingContextKey           contextKey = "stogas.billing_authorization"
+	billingFinalizedContextKey  contextKey = "stogas.billing_finalized"
+	catalogResolutionContextKey contextKey = "stogas.catalog_resolution"
+	requestModelContextKey      contextKey = "stogas.request_model"
+	requestStartContextKey      contextKey = "stogas.request_start"
+	requestTypeContextKey       contextKey = "stogas.request_type"
 )
 
 type Plugin struct {
-	holds holdAuthorizer
+	billing billingAuthorizer
 }
 
-type holdAuthorizer interface {
-	AuthorizePlaceholderHold(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string) (*HoldAuthorization, error)
-	FinalizePlaceholderHold(ctx context.Context, authorization *HoldAuthorization, event GatewayRequestEvent) error
-	ReleaseHold(ctx context.Context, authorization *HoldAuthorization) error
+type billingAuthorizer interface {
+	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*BillingAuthorization, error)
+	FinalizeRequest(ctx context.Context, authorization *BillingAuthorization, event GatewayRequestEvent) error
 }
 
-func NewPlugin(holds *HoldService) *Plugin {
-	return &Plugin{holds: holds}
+func NewPlugin(billing *BillingService) *Plugin {
+	return &Plugin{billing: billing}
 }
 
 func (p *Plugin) GetName() string {
@@ -53,25 +54,18 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 		return req, errorShortCircuit(400, "invalid_request_error", "Request is required"), nil
 	}
 
-	provider, model, fallbacks := req.GetRequestFields()
-	ctx.SetValue(requestStartContextKey, time.Now().UTC())
-	ctx.SetValue(requestTypeContextKey, string(req.RequestType))
-	ctx.SetValue(requestModelContextKey, model)
-	if !resolveCatalogModel(provider, model) {
-		return req, errorShortCircuit(400, "invalid_request_error", "Model is not available"), nil
-	}
-	for _, fallback := range fallbacks {
-		if !resolveCatalogModel(fallback.Provider, fallback.Model) {
-			return req, errorShortCircuit(400, "invalid_request_error", "Fallback model is not available"), nil
+	resolution := catalogResolution(ctx)
+	if resolution == nil {
+		var err error
+		resolution, err = catalog.CheckBifrostRequest(req.RequestType, req)
+		if err != nil {
+			return req, catalogErrorShortCircuit(err), nil
 		}
 	}
-
-	switch req.RequestType {
-	case schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest,
-		schemas.ResponsesRequest, schemas.ResponsesStreamRequest:
-	default:
-		return req, errorShortCircuit(400, "invalid_request_error", fmt.Sprintf("Unsupported request type: %s", req.RequestType)), nil
-	}
+	ctx.SetValue(requestStartContextKey, time.Now().UTC())
+	ctx.SetValue(requestTypeContextKey, string(req.RequestType))
+	ctx.SetValue(requestModelContextKey, resolution.Model)
+	ctx.SetValue(catalogResolutionContextKey, resolution)
 
 	rawAPIKey, ok := APIKey(ctx)
 	if !ok {
@@ -83,25 +77,25 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 		return req, errorShortCircuit(500, "internal_error", "Missing request ID"), nil
 	}
 
-	authorization, err := p.holds.AuthorizePlaceholderHold(ctx, rawAPIKey, requestID, string(provider), model)
+	authorization, err := p.billing.AuthorizeRequest(ctx, rawAPIKey, requestID, resolution.Hold.ProviderKey, resolution.Hold.ProductKey, resolution.Hold.MaxUSDAtoms)
 	if err != nil {
-		authorization, err = p.authorizeWithFreshRequestID(ctx, rawAPIKey, requestID, string(provider), model, err)
+		authorization, err = p.authorizeWithFreshRequestID(ctx, rawAPIKey, requestID, resolution.Hold, err)
 	}
 	if err != nil {
-		return req, holdErrorShortCircuit(err), nil
+		return req, billingErrorShortCircuit(err), nil
 	}
 
-	setHoldAuthorization(ctx, authorization)
+	setBillingAuthorization(ctx, authorization)
 	return req, nil, nil
 }
 
 func (p *Plugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError, error) {
-	authorization, ok := holdAuthorization(ctx)
+	authorization, ok := billingAuthorization(ctx)
 	if !ok {
 		return resp, bifrostErr, nil
 	}
 
-	if contextBool(ctx, holdFinalizedContextKey) || contextBool(ctx, holdReleasedContextKey) {
+	if contextBool(ctx, billingFinalizedContextKey) {
 		return resp, bifrostErr, nil
 	}
 
@@ -109,175 +103,54 @@ func (p *Plugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostR
 		return resp, bifrostErr, nil
 	}
 
-	ctx.SetValue(holdFinalizedContextKey, true)
+	ctx.SetValue(billingFinalizedContextKey, true)
 	metrics := usageMetrics(resp)
-	event := gatewayRequestEvent(ctx, authorization, resp, bifrostErr, metrics)
-	if err := p.holds.FinalizePlaceholderHold(context.WithoutCancel(ctx), authorization, event); err != nil {
+	actualCost := finalSettlementCost(ctx, authorization, resp, bifrostErr)
+	event := gatewayRequestEvent(ctx, authorization, resp, bifrostErr, metrics, actualCost)
+	if err := p.billing.FinalizeRequest(context.WithoutCancel(ctx), authorization, event); err != nil {
 		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", authorization.RequestID, err)
 	}
 	return resp, bifrostErr, nil
 }
 
-func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *HoldAuthorization, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError, metrics map[string]any) GatewayRequestEvent {
-	startedAt, _ := ctx.Value(requestStartContextKey).(time.Time)
-	if startedAt.IsZero() {
-		startedAt = time.Now().UTC()
+func finalSettlementCost(ctx *schemas.BifrostContext, authorization *BillingAuthorization, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) string {
+	if usage := llmUsage(resp); usage != nil {
+		return catalog.SettlementCost(catalogResolution(ctx), usage)
 	}
-	createdAt := startedAt
-	if !authorization.CreatedAt.IsZero() {
-		createdAt = authorization.CreatedAt
+	if bifrostErr == nil || providerErrorIsInsured(bifrostErr) {
+		return "0"
 	}
-	totalTimeMS := uint32Duration(time.Since(startedAt))
-	upstreamTimeMS := totalTimeMS
-	if extra := responseExtraFields(resp); extra != nil && extra.Latency > 0 {
-		upstreamTimeMS = uint32FromInt64(extra.Latency)
+	if authorization != nil && authorization.AuthorizedAmount != nil {
+		return authorization.AuthorizedAmount.String()
 	}
+	return "0"
+}
 
-	requestType, _ := ctx.Value(requestTypeContextKey).(string)
-	model, _ := ctx.Value(requestModelContextKey).(string)
-	upstreamStatus := normalizeUpstreamStatus(bifrostErr)
-	statusCode := providerStatusCode(bifrostErr)
-
-	return GatewayRequestEvent{
-		RequestID:                    authorization.RequestID,
-		CreatedAt:                    createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		StogasAPIKeyID:               authorization.KeyID,
-		StogasUserID:                 authorization.UserID,
-		StogasOrganizationID:         authorization.OrganizationID,
-		StogasWorkspaceID:            authorization.WorkspaceID,
-		RequestType:                  normalizeRequestType(requestType),
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: upstreamStatus, StatusCode: statusCode, LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
-		StogasProcessingSuccess:      true,
-		StogasBillingStatus:          settlementStatus(authorization, placeholderChargeUsdAtoms),
-		UpstreamProviderFinishReason: finishReason(resp),
-		ProviderRequestID:            upstreamRequestID(resp),
-		TotalTimeMS:                  totalTimeMS,
-		UpstreamProviderTimeMS:       upstreamTimeMS,
-		TTFBMS:                       0,
-		TotalCostUSDAtoms:            placeholderChargeUsdAtoms,
-		Metrics:                      metricsObject(model, metrics),
+func providerErrorIsInsured(bifrostErr *schemas.BifrostError) bool {
+	switch normalizeUpstreamStatus(bifrostErr) {
+	case "network_error", "provider_error", "rate_limited", "over_budget":
+		return true
+	default:
+		return false
 	}
 }
 
-func providerStatusCode(bifrostErr *schemas.BifrostError) *int {
-	if bifrostErr == nil {
-		status := 200
-		return &status
-	}
-	if bifrostErr.StatusCode == nil {
+func catalogResolution(ctx *schemas.BifrostContext) *catalog.ResolvedRequest {
+	if ctx == nil {
 		return nil
 	}
-	status := *bifrostErr.StatusCode
-	return &status
+	resolution, _ := ctx.Value(catalogResolutionContextKey).(*catalog.ResolvedRequest)
+	return resolution
 }
 
-func normalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
-	if bifrostErr == nil {
-		return "success"
+func SetCatalogResolution(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest) {
+	if ctx == nil || resolution == nil {
+		return
 	}
-
-	statusCode := 0
-	if bifrostErr.StatusCode != nil {
-		statusCode = *bifrostErr.StatusCode
-	}
-	text := strings.ToLower(errorText(bifrostErr))
-
-	switch {
-	case strings.Contains(text, "content_filter") ||
-		strings.Contains(text, "content filter") ||
-		strings.Contains(text, "safety") ||
-		strings.Contains(text, "policy"):
-		return "content_filter"
-	case statusCode == 429 || strings.Contains(text, "rate limit") || strings.Contains(text, "rate_limit"):
-		return "rate_limited"
-	case statusCode == 402 ||
-		strings.Contains(text, "budget") ||
-		strings.Contains(text, "quota") ||
-		strings.Contains(text, "insufficient_quota"):
-		return "over_budget"
-	case statusCode == 400 || statusCode == 404 || statusCode == 422:
-		return "invalid_request"
-	case statusCode == 408 || statusCode == 504 ||
-		strings.Contains(text, "timeout") ||
-		strings.Contains(text, "timed out") ||
-		strings.Contains(text, "connection") ||
-		strings.Contains(text, "network") ||
-		strings.Contains(text, "eof"):
-		return "network_error"
-	default:
-		return "provider_error"
-	}
+	ctx.SetValue(catalogResolutionContextKey, resolution)
 }
 
-func errorText(bifrostErr *schemas.BifrostError) string {
-	if bifrostErr == nil {
-		return ""
-	}
-	parts := []string{}
-	if bifrostErr.Type != nil {
-		parts = append(parts, *bifrostErr.Type)
-	}
-	if bifrostErr.Error != nil {
-		if bifrostErr.Error.Type != nil {
-			parts = append(parts, *bifrostErr.Error.Type)
-		}
-		if bifrostErr.Error.Code != nil {
-			parts = append(parts, *bifrostErr.Error.Code)
-		}
-		parts = append(parts, bifrostErr.Error.Message)
-		if bifrostErr.Error.Error != nil {
-			parts = append(parts, bifrostErr.Error.Error.Error())
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-func normalizeRequestType(requestType string) string {
-	switch requestType {
-	case string(schemas.ChatCompletionRequest):
-		return "chat_completion_request"
-	case string(schemas.ResponsesRequest):
-		return "responses_request"
-	default:
-		return requestType
-	}
-}
-
-func metricsObject(model string, usage map[string]any) map[string]any {
-	tokens := map[string]any{
-		"prompt":     numberMetric(usage, "promptTokens"),
-		"completion": numberMetric(usage, "completionTokens"),
-		"reasoning":  nil,
-		"cached":     nil,
-	}
-	return map[string]any{
-		"model":  model,
-		"tokens": tokens,
-	}
-}
-
-func numberMetric(metrics map[string]any, key string) any {
-	value, ok := metrics[key]
-	if !ok {
-		return 0
-	}
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return typed
-	case uint:
-		return typed
-	case uint64:
-		return typed
-	case float64:
-		return typed
-	default:
-		return 0
-	}
-}
-
-func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPIKey string, requestID string, provider string, model string, authorizeErr error) (*HoldAuthorization, error) {
+func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPIKey string, requestID string, hold catalog.HoldEstimate, authorizeErr error) (*BillingAuthorization, error) {
 	if ErrorStatus(authorizeErr) != 409 {
 		return nil, authorizeErr
 	}
@@ -290,7 +163,7 @@ func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPI
 		requestID = nextRequestID
 		ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 
-		authorization, err := p.holds.AuthorizePlaceholderHold(ctx, rawAPIKey, requestID, provider, model)
+		authorization, err := p.billing.AuthorizeRequest(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms)
 		if err == nil {
 			return authorization, nil
 		}
@@ -303,11 +176,14 @@ func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPI
 	return nil, authorizeErr
 }
 
-func SetAPIKey(ctx *schemas.BifrostContext, apiKey string) {
+func SetAPIKey(ctx *schemas.BifrostContext, apiKey string, claims *apikey.Claims) {
 	if ctx == nil {
 		return
 	}
 	ctx.SetValue(apiKeyContextKey, apiKey)
+	if claims != nil {
+		ctx.SetValue(apiKeyClaimsContextKey, claims)
+	}
 }
 
 func APIKey(ctx *schemas.BifrostContext) (string, bool) {
@@ -318,19 +194,27 @@ func APIKey(ctx *schemas.BifrostContext) (string, bool) {
 	return apiKey, ok && apiKey != ""
 }
 
-func holdAuthorization(ctx *schemas.BifrostContext) (*HoldAuthorization, bool) {
+func APIKeyClaims(ctx *schemas.BifrostContext) (*apikey.Claims, bool) {
 	if ctx == nil {
 		return nil, false
 	}
-	authorization, ok := ctx.Value(holdContextKey).(*HoldAuthorization)
+	claims, ok := ctx.Value(apiKeyClaimsContextKey).(*apikey.Claims)
+	return claims, ok && claims != nil
+}
+
+func billingAuthorization(ctx *schemas.BifrostContext) (*BillingAuthorization, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	authorization, ok := ctx.Value(billingContextKey).(*BillingAuthorization)
 	return authorization, ok && authorization != nil
 }
 
-func setHoldAuthorization(ctx *schemas.BifrostContext, authorization *HoldAuthorization) {
+func setBillingAuthorization(ctx *schemas.BifrostContext, authorization *BillingAuthorization) {
 	if ctx == nil || authorization == nil {
 		return
 	}
-	ctx.SetValue(holdContextKey, authorization)
+	ctx.SetValue(billingContextKey, authorization)
 }
 
 func contextBool(ctx *schemas.BifrostContext, key any) bool {
@@ -345,104 +229,6 @@ func isStreamingContext(ctx *schemas.BifrostContext) bool {
 	return ctx != nil && ctx.Value(schemas.BifrostContextKeyStreamStartTime) != nil
 }
 
-func usageMetrics(resp *schemas.BifrostResponse) map[string]any {
-	metrics := map[string]any{}
-	usage := llmUsage(resp)
-	if usage == nil {
-		return metrics
-	}
-	metrics["promptTokens"] = usage.PromptTokens
-	metrics["completionTokens"] = usage.CompletionTokens
-	metrics["totalTokens"] = usage.TotalTokens
-	return metrics
-}
-
-func llmUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
-	if resp == nil {
-		return nil
-	}
-	if resp.ChatResponse != nil {
-		return resp.ChatResponse.Usage
-	}
-	if resp.TextCompletionResponse != nil {
-		return resp.TextCompletionResponse.Usage
-	}
-	if resp.ResponsesResponse != nil && resp.ResponsesResponse.Usage != nil {
-		return resp.ResponsesResponse.Usage.ToBifrostLLMUsage()
-	}
-	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.Usage != nil {
-		return resp.ResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage()
-	}
-	return nil
-}
-
-func responseExtraFields(resp *schemas.BifrostResponse) *schemas.BifrostResponseExtraFields {
-	if resp == nil {
-		return nil
-	}
-	return resp.GetExtraFields()
-}
-
-func finishReason(resp *schemas.BifrostResponse) string {
-	if resp == nil {
-		return ""
-	}
-	choices := []schemas.BifrostResponseChoice{}
-	if resp.ChatResponse != nil {
-		choices = resp.ChatResponse.Choices
-	} else if resp.TextCompletionResponse != nil {
-		choices = resp.TextCompletionResponse.Choices
-	}
-	for _, choice := range choices {
-		if choice.FinishReason != nil {
-			return *choice.FinishReason
-		}
-	}
-	if resp.ResponsesResponse != nil && resp.ResponsesResponse.StopReason != nil {
-		return *resp.ResponsesResponse.StopReason
-	}
-	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.StopReason != nil {
-		return *resp.ResponsesStreamResponse.Response.StopReason
-	}
-	return ""
-}
-
-func upstreamRequestID(resp *schemas.BifrostResponse) string {
-	if resp == nil {
-		return ""
-	}
-	if resp.ChatResponse != nil {
-		return resp.ChatResponse.ID
-	}
-	if resp.TextCompletionResponse != nil {
-		return resp.TextCompletionResponse.ID
-	}
-	if resp.ResponsesResponse != nil && resp.ResponsesResponse.ID != nil {
-		return *resp.ResponsesResponse.ID
-	}
-	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.ID != nil {
-		return *resp.ResponsesStreamResponse.Response.ID
-	}
-	return ""
-}
-
-func uint32Duration(value time.Duration) uint32 {
-	if value <= 0 {
-		return 0
-	}
-	return uint32FromInt64(value.Milliseconds())
-}
-
-func uint32FromInt64(value int64) uint32 {
-	if value <= 0 {
-		return 0
-	}
-	if value > int64(^uint32(0)) {
-		return ^uint32(0)
-	}
-	return uint32(value)
-}
-
 func errorShortCircuit(statusCode int, errorType string, message string) *schemas.LLMPluginShortCircuit {
 	status := statusCode
 	return &schemas.LLMPluginShortCircuit{
@@ -454,7 +240,12 @@ func errorShortCircuit(statusCode int, errorType string, message string) *schema
 	}
 }
 
-func holdErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
+func catalogErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
+	apiErr := catalog.PublicError(err)
+	return errorShortCircuit(apiErr.StatusCode, apiErr.Type, apiErr.Message)
+}
+
+func billingErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
 	statusCode := ErrorStatus(err)
 	errorType := "internal_error"
 	switch statusCode {

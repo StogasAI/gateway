@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	infisical "github.com/infisical/go-sdk"
 
@@ -33,6 +34,9 @@ type DatabasePoolConfig struct {
 
 type Config struct {
 	AuthSecret        string
+	CatalogPath       string
+	CatalogRefresh    time.Duration
+	CatalogURL        string
 	DatabasePool      DatabasePoolConfig
 	DatabaseSchema    string
 	DatabaseURL       string
@@ -56,6 +60,9 @@ func LoadFromEnv() (Config, error) {
 
 	config := Config{
 		AuthSecret:        strings.TrimSpace(os.Getenv("AUTH_SECRET")),
+		CatalogPath:       strings.TrimSpace(os.Getenv("STOGAS_CATALOG_PATH")),
+		CatalogRefresh:    envDurationSeconds("STOGAS_CATALOG_REFRESH_SECONDS", 300),
+		CatalogURL:        strings.TrimSpace(os.Getenv("STOGAS_CATALOG_URL")),
 		DatabasePool:      databasePool,
 		DatabaseSchema:    strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
 		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
@@ -155,6 +162,9 @@ func (c Config) Validate() error {
 	if err := c.DatabasePool.Validate(); err != nil {
 		return err
 	}
+	if c.CatalogRefresh <= 0 {
+		return fmt.Errorf("STOGAS_CATALOG_REFRESH_SECONDS must be positive")
+	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
@@ -248,6 +258,18 @@ func envInt32(name string, defaultValue int32) (int32, error) {
 		return 0, fmt.Errorf("%s must be a 32-bit integer", name)
 	}
 	return int32(value), nil
+}
+
+func envDurationSeconds(name string, defaultValue int64) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return time.Duration(defaultValue) * time.Second
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return time.Duration(value) * time.Second
 }
 
 func (c DatabasePoolConfig) Validate() error {

@@ -11,6 +11,7 @@ import (
 	"github.com/fasthttp/router"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
 
@@ -37,16 +38,20 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		logger:  logger,
 		runtime: runtime,
 	}
-	s.routes()
+	if err := s.routes(); err != nil {
+		runtime.Close()
+		return nil, err
+	}
 	return s, nil
 }
 
-func (s *Server) routes() {
+func (s *Server) routes() error {
 	r := router.New()
 
 	r.GET("/health", s.health)
-	r.POST("/v1/chat/completions", s.chatCompletion)
-	r.POST("/v1/responses", s.responses)
+	for _, path := range catalog.InferencePaths() {
+		r.POST(path, s.inference)
+	}
 	r.NotFound = s.notFound
 
 	s.router = r
@@ -57,6 +62,7 @@ func (s *Server) routes() {
 		ReadBufferSize:        64 * 1024,
 		StreamRequestBody:     false,
 	}
+	return nil
 }
 
 func (s *Server) Start() error {
