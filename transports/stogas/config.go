@@ -34,7 +34,7 @@ type DatabasePoolConfig struct {
 
 type Config struct {
 	AuthSecret        string
-	CatalogPath       string
+	CatalogBundlePath string
 	CatalogRefresh    time.Duration
 	CatalogURL        string
 	DatabasePool      DatabasePoolConfig
@@ -60,7 +60,7 @@ func LoadFromEnv() (Config, error) {
 
 	config := Config{
 		AuthSecret:        strings.TrimSpace(os.Getenv("AUTH_SECRET")),
-		CatalogPath:       strings.TrimSpace(os.Getenv("STOGAS_CATALOG_PATH")),
+		CatalogBundlePath: strings.TrimSpace(os.Getenv("STOGAS_CATALOG_BUNDLE_PATH")),
 		CatalogRefresh:    envDurationSeconds("STOGAS_CATALOG_REFRESH_SECONDS", 300),
 		CatalogURL:        strings.TrimSpace(os.Getenv("STOGAS_CATALOG_URL")),
 		DatabasePool:      databasePool,

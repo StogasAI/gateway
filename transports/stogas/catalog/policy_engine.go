@@ -9,7 +9,10 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-const schemaParameterRefPrefix = "parameters."
+const (
+	schemaHeaderRefPrefix    = "schema.headers."
+	schemaParameterRefPrefix = "schema.parameters."
+)
 
 func effectiveParameterPolicies(schema compiledStogasEndpointSchema, routeNode compiledProviderEndpoint, deployment Deployment) map[string]compiledParameter {
 	policies := make(map[string]compiledParameter, len(schema.Parameters)+len(routeNode.ParameterPolicies)+len(deployment.ParameterPolicies))
@@ -23,7 +26,7 @@ func effectiveParameterPolicies(schema compiledStogasEndpointSchema, routeNode c
 
 func mergeParameterPolicies(base map[string]compiledParameter, patches map[string]compiledParameter) {
 	for name, patch := range patches {
-		if parameterCompileAction(patch) == "delete" {
+		if parameterAttributeAction(patch) == "delete" {
 			delete(base, name)
 			continue
 		}
@@ -32,11 +35,20 @@ func mergeParameterPolicies(base map[string]compiledParameter, patches map[strin
 }
 
 func mergeParameterPolicy(base compiledParameter, patch compiledParameter) compiledParameter {
-	if directives := parameterDirectives(patch); len(directives) > 0 {
-		base.Rules.Gateway.Directives = append(base.Rules.Gateway.Directives, directives...)
+	if rejects := patch.Reject; len(rejects) > 0 {
+		base.Reject = append(base.Reject, rejects...)
 	}
-	if patch.Rules.Gateway.Canonical != "" {
-		base.Rules.Gateway.Canonical = patch.Rules.Gateway.Canonical
+	if patch.Alias != "" {
+		base.Alias = patch.Alias
+	}
+	if patch.ImplyValue != nil {
+		base.ImplyValue = patch.ImplyValue
+	}
+	if patch.RejectConflict {
+		base.RejectConflict = true
+	}
+	if patch.RejectUnsupported != "" {
+		base.RejectUnsupported = patch.RejectUnsupported
 	}
 	if len(patch.Values) > 0 {
 		base.Values = patch.Values
@@ -63,7 +75,7 @@ func validateRequestParameterRules(body []byte, routeNode compiledProviderEndpoi
 			}
 			continue
 		}
-		if err := validateUnsupportedDirectives(name, policy, deployment); err != nil {
+		if err := validateUnsupportedRule(name, policy, deployment); err != nil {
 			return err
 		}
 		if err := validateInvalidParameterRules(name, raw, policy); err != nil {
@@ -91,21 +103,19 @@ func routeHasParameter(routeNode compiledProviderEndpoint, name string) bool {
 	return false
 }
 
-func validateUnsupportedDirectives(name string, policy compiledParameter, deployment Deployment) error {
-	for _, directive := range parameterDirectives(policy) {
-		if directive.Op != "rejectUnsupported" {
-			continue
-		}
-		if !supportedCapability(directive.Source, deployment) {
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is not supported by the resolved model"}
-		}
+func validateUnsupportedRule(name string, policy compiledParameter, deployment Deployment) error {
+	if policy.RejectUnsupported == "" {
+		return nil
+	}
+	if !supportedCapability(policy.RejectUnsupported, deployment) {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is not supported by the resolved model"}
 	}
 	return nil
 }
 
 func supportedCapability(source string, deployment Deployment) bool {
 	switch source {
-	case "model.reasoningSupported", "deployment.reasoningSupported":
+	case "model.reasoning", "deployment.reasoning":
 		return deployment.ReasoningSupported
 	default:
 		return true
@@ -169,65 +179,50 @@ func singleServiceTierValue(values []string) (schemas.BifrostServiceTier, bool) 
 }
 
 func parameterAlias(policy compiledParameter) (string, bool) {
-	for _, directive := range parameterDirectives(policy) {
-		if directive.Op == "alias" {
-			return schemaParameterTarget(directive)
-		}
-	}
-	return "", false
+	return schemaFieldTarget(policy.Alias, schemaParameterRefPrefix)
+}
+
+func headerAlias(policy compiledParameter) (string, bool) {
+	return schemaFieldTarget(policy.Alias, schemaHeaderRefPrefix)
 }
 
 func parameterImpliedValue(policy compiledParameter) (string, bool) {
-	for _, directive := range parameterDirectives(policy) {
-		if directive.Op == "implyValue" {
-			return stringDirectiveValue(directive)
-		}
-	}
-	return "", false
+	return stringRuleValue(policy.ImplyValue)
 }
 
 func parameterRejectsConflict(policy compiledParameter) bool {
-	for _, directive := range parameterDirectives(policy) {
-		if directive.Op == "rejectConflict" {
-			return true
-		}
+	return policy.RejectConflict
+}
+
+func parameterAttributeAction(policy compiledParameter) string {
+	switch {
+	case policy.DeleteAttribute:
+		return "delete"
+	case policy.OverrideAttribute:
+		return "override"
+	default:
+		return ""
 	}
-	return false
 }
 
-func parameterCompileAction(policy compiledParameter) string {
-	return policy.Rules.Compile.Action
+func parameterRejectRules(policy compiledParameter) []compiledRejectRule {
+	return policy.Reject
 }
 
-func parameterDirectives(policy compiledParameter) []compiledGatewayDirective {
-	return policy.Rules.Gateway.Directives
-}
-
-func parameterRejectDirectives(policy compiledParameter) []compiledGatewayDirective {
-	directives := parameterDirectives(policy)
-	rejects := make([]compiledGatewayDirective, 0, len(directives))
-	for _, directive := range directives {
-		if directive.Op == "reject" {
-			rejects = append(rejects, directive)
-		}
-	}
-	return rejects
-}
-
-func stringDirectiveValue(directive compiledGatewayDirective) (string, bool) {
-	value, ok := directive.Value.(string)
+func stringRuleValue(raw any) (string, bool) {
+	value, ok := raw.(string)
 	if !ok || strings.TrimSpace(value) == "" {
 		return "", false
 	}
 	return value, true
 }
 
-func schemaParameterTarget(directive compiledGatewayDirective) (string, bool) {
-	target := strings.TrimSpace(directive.Target)
-	if !strings.HasPrefix(target, schemaParameterRefPrefix) {
+func schemaFieldTarget(raw string, prefix string) (string, bool) {
+	target := strings.TrimSpace(raw)
+	if !strings.HasPrefix(target, prefix) {
 		return "", false
 	}
-	name := strings.TrimPrefix(target, schemaParameterRefPrefix)
+	name := strings.TrimPrefix(target, prefix)
 	if name == "" {
 		return "", false
 	}
