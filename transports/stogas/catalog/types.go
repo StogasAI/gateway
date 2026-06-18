@@ -35,41 +35,43 @@ type Deployment struct {
 	ParameterPolicies   map[string]compiledParameter
 }
 
-type Pricing map[string]PricingMeter
+type Pricing map[string]map[string]string
 
-type PricingMeter struct {
-	Rates map[string]string `json:"rates"`
-}
-
-type AttributeStringList struct {
-	Value []string       `json:"value"`
-	Rules AttributeRules `json:"rules"`
-}
-
-type AttributeRules struct {
-	Compile CompileRules `json:"compile"`
-}
-
-type CompileRules struct {
-	Action string `json:"action"`
+type SlugProjection struct {
+	ExpandAttributeWithEnumeratedPrefixes  [][]string `json:"expandAttributeWithEnumeratedPrefixes"`
+	ExpandAttributeWithEnumeratedSuffixes  []string   `json:"expandAttributeWithEnumeratedSuffixes"`
+	From                                   string     `json:"from"`
+	IncludeReferencedSlugs                 bool       `json:"includeReferencedSlugs"`
+	Value                                  []string   `json:"value"`
 }
 
 type snapshot struct {
-	graph                  compiledGraph
-	modelAliases           map[string]string
-	responseMetadataFields map[string]struct{}
+	graph                    compiledGraph
+	providerNativeModelSlugs map[string]string
+	responseMetadataFields   map[string]struct{}
 }
 
 type compiledCatalog struct {
-	Graph compiledGraph `json:"graph"`
+	Graph   compiledGraph   `json:"graph"`
+	Indexes compiledIndexes `json:"indexes"`
+}
+
+type compiledIndexes struct {
+	ProviderNativeModelSlugs map[string]string `json:"provider_native_model_slugs"`
 }
 
 type compiledGraph struct {
+	Authors           map[string]compiledAuthor           `json:"authors"`
 	Deployments       map[string]compiledDeployment       `json:"deployments"`
 	Models            map[string]compiledModel            `json:"models"`
 	ProviderEndpoints map[string]compiledProviderEndpoint `json:"providerEndpoints"`
+	Providers         map[string]compiledProvider         `json:"providers"`
 	StogasEndpoints   map[string]compiledStogasEndpoint   `json:"stogasEndpoints"`
 	Stogas            compiledStogas                      `json:"stogas"`
+}
+
+type compiledAuthor struct {
+	AuthorSlugs []string `json:"authorSlugs"`
 }
 
 type compiledStogas struct {
@@ -77,32 +79,40 @@ type compiledStogas struct {
 }
 
 type compiledDeployment struct {
-	AliasSlugs          AttributeStringList          `json:"aliasSlugs"`
-	ContextWindowTokens int                          `json:"contextWindowTokens"`
-	MaxOutputTokens     int                          `json:"maxOutputTokens"`
-	ProviderID          string                       `json:"providerId"`
-	ModelID             string                       `json:"modelId"`
-	ServiceTier         string                       `json:"serviceTier"`
-	Schema              compiledSchemaPatch          `json:"schema"`
-	ParameterPolicies   map[string]compiledParameter `json:"-"`
-	Pricing             Pricing                      `json:"pricing"`
+	ConcreteSlugs       SlugProjection              `json:"concreteSlugs"`
+	ModelSlugs          SlugProjection              `json:"modelSlugs"`
+	ContextWindowTokens  int                         `json:"contextWindowTokens"`
+	MaxOutputTokens      int                         `json:"maxOutputTokens"`
+	ProviderID           string                      `json:"providerId"`
+	ProviderEndpointIDs  []string                    `json:"providerEndpointIds"`
+	ModelID              string                      `json:"modelId"`
+	ServiceTier          string                      `json:"serviceTier"`
+	Schema               compiledSchemaPatch         `json:"schema"`
+	ParameterPolicies    map[string]compiledParameter `json:"-"`
+	Pricing              Pricing                     `json:"pricing"`
 }
 
 type compiledModel struct {
-	AliasSlugs          []string `json:"aliasSlugs"`
-	CanonicalSlug       string   `json:"canonicalSlug"`
+	ModelSlugs          []string `json:"modelSlugs"`
+	AuthorID            string   `json:"authorId"`
 	ContextWindowTokens int      `json:"contextWindowTokens"`
 	MaxOutputTokens     int      `json:"maxOutputTokens"`
-	ReasoningSupport    bool     `json:"reasoningSupported"`
+	ReasoningSupport    bool     `json:"reasoning"`
 }
 
 type compiledProviderEndpoint struct {
+	ID                string                       `json:"-"`
 	DeploymentIDs     []string                     `json:"deploymentIds"`
 	ProviderID        string                       `json:"providerId"`
 	Schema            compiledSchemaPatch          `json:"schema"`
 	ParameterPolicies map[string]compiledParameter `json:"-"`
 	Pricing           Pricing                      `json:"pricing"`
 	StogasEndpointID  string                       `json:"stogasEndpointId"`
+}
+
+type compiledProvider struct {
+	ProviderSlugs []string `json:"providerSlugs"`
+	Pricing       Pricing  `json:"pricing"`
 }
 
 type compiledStogasEndpoint struct {
@@ -121,33 +131,25 @@ type compiledSchemaPatch struct {
 }
 
 type compiledParameter struct {
-	Rules  compiledParameterRules `json:"rules"`
-	Values []string               `json:"values"`
-	Min    *float64               `json:"min"`
-	Max    *float64               `json:"max"`
+	Alias             string               `json:"alias"`
+	DeleteAttribute   bool                 `json:"deleteAttribute"`
+	ImplyValue        any                  `json:"implyValue"`
+	Max               *float64             `json:"max"`
+	Min               *float64             `json:"min"`
+	OverrideAttribute bool                 `json:"overrideAttribute"`
+	Reject            []compiledRejectRule `json:"reject"`
+	RejectConflict    bool                 `json:"rejectConflict"`
+	RejectUnsupported string               `json:"rejectUnsupported"`
+	Values            []string             `json:"values"`
 }
 
-type compiledParameterRules struct {
-	Compile CompileRules                  `json:"compile"`
-	Gateway compiledParameterGatewayRules `json:"gateway"`
-}
-
-type compiledParameterGatewayRules struct {
-	Directives []compiledGatewayDirective `json:"directives"`
-	Canonical  string                     `json:"canonical"`
-}
-
-type compiledGatewayDirective struct {
+type compiledRejectRule struct {
 	AllowedKeys  []string `json:"allowedKeys"`
 	Exists       bool     `json:"exists"`
 	Missing      bool     `json:"missing"`
-	Op           string   `json:"op"`
 	Path         string   `json:"path"`
 	Prefixes     []string `json:"prefixes"`
 	RequiredKeys []string `json:"requiredKeys"`
-	Source       string   `json:"source"`
-	Target       string   `json:"target"`
-	Value        any      `json:"value"`
 	Values       []any    `json:"values"`
 	ValuesExcept []any    `json:"valuesExcept"`
 }

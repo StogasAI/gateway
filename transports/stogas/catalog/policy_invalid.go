@@ -21,11 +21,11 @@ type invalidPathSegment struct {
 }
 
 func validateInvalidParameterRules(name string, raw json.RawMessage, policy compiledParameter) error {
-	rejectDirectives := parameterRejectDirectives(policy)
-	if len(rejectDirectives) == 0 {
+	rejectRules := parameterRejectRules(policy)
+	if len(rejectRules) == 0 {
 		return nil
 	}
-	for _, rule := range rejectDirectives {
+	for _, rule := range rejectRules {
 		invalid, err := invalidRequestValue(raw, rule)
 		if err != nil {
 			return ErrInvalidJSON
@@ -40,7 +40,7 @@ func validateInvalidParameterRules(name string, raw json.RawMessage, policy comp
 	return nil
 }
 
-func invalidRequestValue(raw json.RawMessage, rule compiledGatewayDirective) (bool, error) {
+func invalidRequestValue(raw json.RawMessage, rule compiledRejectRule) (bool, error) {
 	targets, err := invalidPathTargets(raw, rule.Path)
 	if err != nil {
 		return false, err
@@ -152,7 +152,7 @@ func expandInvalidPathTarget(target invalidPathTarget, segment invalidPathSegmen
 	return []invalidPathTarget{{raw: value}}, nil
 }
 
-func invalidTargetValue(target invalidPathTarget, rule compiledGatewayDirective) (bool, error) {
+func invalidTargetValue(target invalidPathTarget, rule compiledRejectRule) (bool, error) {
 	if target.missing {
 		return rule.Missing || len(rule.RequiredKeys) > 0 || len(rule.ValuesExcept) > 0, nil
 	}
@@ -178,7 +178,7 @@ func invalidTargetValue(target invalidPathTarget, rule compiledGatewayDirective)
 	return false, nil
 }
 
-func invalidObjectShape(object map[string]json.RawMessage, rule compiledGatewayDirective) bool {
+func invalidObjectShape(object map[string]json.RawMessage, rule compiledRejectRule) bool {
 	if len(rule.RequiredKeys) > 0 {
 		for _, key := range rule.RequiredKeys {
 			if _, ok := object[key]; !ok {
@@ -205,7 +205,7 @@ func rawString(raw json.RawMessage) (string, bool) {
 	return strings.ToLower(strings.TrimSpace(value)), true
 }
 
-func invalidStringValue(value string, rule compiledGatewayDirective) bool {
+func invalidStringValue(value string, rule compiledRejectRule) bool {
 	if value == "" {
 		return false
 	}

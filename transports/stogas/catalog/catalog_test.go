@@ -1,6 +1,10 @@
 package catalog
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -29,11 +33,17 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if !nanoDeployment.ReasoningSupported {
 		t.Fatalf("expected gpt-5-nano reasoning support")
 	}
-	if nanoDeployment.ContextWindowTokens != 400000 || nanoDeployment.MaxOutputTokens != 128000 {
+	if nanoDeployment.ContextWindowTokens != 272000 || nanoDeployment.MaxOutputTokens != 128000 {
 		t.Fatalf("expected gpt-5-nano limits, got context=%d output=%d", nanoDeployment.ContextWindowTokens, nanoDeployment.MaxOutputTokens)
 	}
-	if nanoDeployment.Pricing[meterInputTokens].Rates[ratePerMillionShortContext] != "50000000000000000" {
+	if nanoDeployment.Pricing[meterInputTokens][ratePerMillionTokens] != "50000000000000000" {
 		t.Fatalf("expected gpt-5-nano input pricing, got %#v", nanoDeployment.Pricing[meterInputTokens])
+	}
+	if nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls][ratePerThousandCalls] != "10000000000000000000" {
+		t.Fatalf("expected provider-level web search call pricing, got %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
+	}
+	if nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls][ratePerThousandCalls] != "10000000000000000000" {
+		t.Fatalf("expected provider-level reasoning preview call pricing, got %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls])
 	}
 
 	nanoFlexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-flex-latest", RouteChat)
@@ -46,8 +56,11 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if nanoFlexDeployment.ImpliedServiceTier == nil || *nanoFlexDeployment.ImpliedServiceTier != schemas.BifrostServiceTier("flex") {
 		t.Fatalf("expected implied gpt-5-nano flex tier, got %#v", nanoFlexDeployment.ImpliedServiceTier)
 	}
-	if nanoFlexDeployment.Pricing[meterInputTokens].Rates[ratePerMillionShortContext] != "25000000000000000" {
+	if nanoFlexDeployment.Pricing[meterInputTokens][ratePerMillionTokens] != "25000000000000000" {
 		t.Fatalf("expected gpt-5-nano flex input pricing, got %#v", nanoFlexDeployment.Pricing[meterInputTokens])
+	}
+	if nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls][ratePerThousandCalls] != "10000000000000000000" {
+		t.Fatalf("expected provider-level web search pricing on flex deployment, got %#v", nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
 	}
 
 	nanoPriorityDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-priority-latest", RouteResponses)
@@ -60,8 +73,27 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if nanoPriorityDeployment.ImpliedServiceTier == nil || *nanoPriorityDeployment.ImpliedServiceTier != schemas.BifrostServiceTier("priority") {
 		t.Fatalf("expected implied gpt-5-nano priority tier, got %#v", nanoPriorityDeployment.ImpliedServiceTier)
 	}
-	if nanoPriorityDeployment.Pricing[meterOutputTokens].Rates[ratePerMillionShortContext] != "1000000000000000000" {
+	if nanoPriorityDeployment.Pricing[meterInputTokens][ratePerMillionTokens] != "2500000000000000000" {
+		t.Fatalf("expected gpt-5-nano priority input pricing, got %#v", nanoPriorityDeployment.Pricing[meterInputTokens])
+	}
+	if nanoPriorityDeployment.Pricing[meterOutputTokens][ratePerMillionTokens] != "400000000000000000" {
 		t.Fatalf("expected gpt-5-nano priority output pricing, got %#v", nanoPriorityDeployment.Pricing[meterOutputTokens])
+	}
+
+	nanoSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-2025-08-07", RouteResponses)
+	if !ok {
+		t.Fatalf("expected dated gpt-5-nano alias to resolve")
+	}
+	if nanoSnapshotDeployment.Model != "gpt-5-nano-2025-08-07" {
+		t.Fatalf("expected dated gpt-5-nano provider model passthrough, got %q", nanoSnapshotDeployment.Model)
+	}
+
+	nanoFlexSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-2025-08-07-flex", RouteResponses)
+	if !ok {
+		t.Fatalf("expected dated gpt-5-nano flex alias to resolve")
+	}
+	if nanoFlexSnapshotDeployment.Model != "gpt-5-nano" {
+		t.Fatalf("expected dated flex alias to normalize to provider model gpt-5-nano, got %q", nanoFlexSnapshotDeployment.Model)
 	}
 
 	deployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5-latest", RouteResponses)
@@ -76,6 +108,70 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	}
 	if deployment.ImpliedServiceTier != nil {
 		t.Fatalf("default deployment should not imply service tier")
+	}
+
+	providerPrefixedDeployment, ok := DeploymentForRoute(schemas.OpenAI, "open-ai/gpt-5.5", RouteResponses)
+	if !ok {
+		t.Fatalf("expected provider-prefixed model alias to resolve")
+	}
+	if providerPrefixedDeployment.ID != "gpt-5.5" || providerPrefixedDeployment.Model != "gpt-5.5" {
+		t.Fatalf("expected open-ai/gpt-5.5 to resolve default deployment, got %#v", providerPrefixedDeployment)
+	}
+
+	standardSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5-2026-04-23-standard", RouteResponses)
+	if !ok {
+		t.Fatalf("expected dated gpt-5.5 standard alias to resolve")
+	}
+	if standardSnapshotDeployment.Model != "gpt-5.5" {
+		t.Fatalf("expected dated standard alias to normalize to provider model gpt-5.5, got %q", standardSnapshotDeployment.Model)
+	}
+
+	providerPrefixedFlexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "open-ai/gpt-5.5-flex", RouteResponses)
+	if !ok {
+		t.Fatalf("expected provider-prefixed flex alias to resolve")
+	}
+	if providerPrefixedFlexDeployment.ID != "gpt-5.5-flex" || providerPrefixedFlexDeployment.Model != "gpt-5.5" {
+		t.Fatalf("expected open-ai/gpt-5.5-flex to resolve flex deployment, got %#v", providerPrefixedFlexDeployment)
+	}
+
+	authorProviderPrefixedDeployment, ok := DeploymentForRoute(schemas.OpenAI, "openai/open-ai/gpt-5.5", RouteResponses)
+	if !ok {
+		t.Fatalf("expected author/provider-prefixed model alias to resolve")
+	}
+	if authorProviderPrefixedDeployment.ID != "gpt-5.5" || authorProviderPrefixedDeployment.Model != "gpt-5.5" {
+		t.Fatalf("expected openai/open-ai/gpt-5.5 to resolve default deployment, got %#v", authorProviderPrefixedDeployment)
+	}
+
+	authorProviderPrefixedFlexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "open-ai/openai/gpt-5.5-flex", RouteResponses)
+	if !ok {
+		t.Fatalf("expected author/provider-prefixed flex alias to resolve")
+	}
+	if authorProviderPrefixedFlexDeployment.ID != "gpt-5.5-flex" || authorProviderPrefixedFlexDeployment.Model != "gpt-5.5" {
+		t.Fatalf("expected open-ai/openai/gpt-5.5-flex to resolve flex deployment, got %#v", authorProviderPrefixedFlexDeployment)
+	}
+
+	searchSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-4o-search-preview-2025-03-11", RouteChat)
+	if !ok {
+		t.Fatalf("expected dated gpt-4o search preview alias to resolve")
+	}
+	if searchSnapshotDeployment.Model != "gpt-4o-search-preview-2025-03-11" {
+		t.Fatalf("expected dated provider model passthrough, got %q", searchSnapshotDeployment.Model)
+	}
+
+	miniSearchSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-4o-mini-search-preview-2025-03-11", RouteChat)
+	if !ok {
+		t.Fatalf("expected dated gpt-4o mini search preview alias to resolve")
+	}
+	if miniSearchSnapshotDeployment.Model != "gpt-4o-mini-search-preview-2025-03-11" {
+		t.Fatalf("expected dated provider model passthrough, got %q", miniSearchSnapshotDeployment.Model)
+	}
+
+	searchAPISnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-search-api-2025-10-14", RouteChat)
+	if !ok {
+		t.Fatalf("expected dated gpt-5 search-api alias to resolve")
+	}
+	if searchAPISnapshotDeployment.Model != "gpt-5-search-api-2025-10-14" {
+		t.Fatalf("expected dated gpt-5 search-api provider model passthrough, got %q", searchAPISnapshotDeployment.Model)
 	}
 
 	flexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5-flex", RouteChat)
@@ -201,8 +297,8 @@ func TestOpenAIWebSearchFixedContentTokenRule(t *testing.T) {
 	}
 	if got := openAIResponsesWebSearchCallMeter(
 		Deployment{Pricing: Pricing{
-			meterOpenAIResponsesWebSearchCalls:        PricingMeter{Rates: map[string]string{ratePerThousandCalls: "100"}},
-			meterOpenAIResponsesWebSearchPreviewCalls: PricingMeter{Rates: map[string]string{ratePerThousandCalls: "250"}},
+			meterOpenAIResponsesWebSearchCalls:        {ratePerThousandCalls: "100"},
+			meterOpenAIResponsesWebSearchPreviewCalls: {ratePerThousandCalls: "250"},
 		}},
 		requestPricingContext{Route: RouteResponses, ToolTypes: []string{"web_search", "web_search_preview_2026_01_01"}},
 	); got != meterOpenAIResponsesWebSearchPreviewCalls {
@@ -256,6 +352,51 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	}
 	if resolution.Hold.Meters[2].Quantity != "1" {
 		t.Fatalf("expected one guaranteed search call, got %#v", resolution.Hold.Meters[2])
+	}
+	if resolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextLowCalls {
+		t.Fatalf("expected 4o search low-context meter, got %#v", resolution.Hold.Meters)
+	}
+	if resolution.Hold.Meters[2].AmountUSDAtoms != "30000000000000000" {
+		t.Fatalf("expected 4o low-context query cost, got %#v", resolution.Hold.Meters[2])
+	}
+
+	searchDefaultResolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{},"max_completion_tokens":100}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	if len(searchDefaultResolution.Hold.Meters) != 3 || searchDefaultResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextMediumCalls {
+		t.Fatalf("expected 4o search default medium-context meter, got %#v", searchDefaultResolution.Hold.Meters)
+	}
+
+	miniLowResolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-4o-mini-search-preview","messages":[],"web_search_options":{"search_context_size":"low"},"max_completion_tokens":100}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	if len(miniLowResolution.Hold.Meters) != 3 || miniLowResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextLowCalls {
+		t.Fatalf("expected mini search low-context meter, got %#v", miniLowResolution.Hold.Meters)
+	}
+	if miniLowResolution.Hold.Meters[2].AmountUSDAtoms != "25000000000000000" {
+		t.Fatalf("expected mini low-context query cost, got %#v", miniLowResolution.Hold.Meters[2])
+	}
+
+	miniDefaultResolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-4o-mini-search-preview","messages":[],"web_search_options":{},"max_completion_tokens":100}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	if len(miniDefaultResolution.Hold.Meters) != 3 || miniDefaultResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextMediumCalls {
+		t.Fatalf("expected mini search default medium-context meter, got %#v", miniDefaultResolution.Hold.Meters)
 	}
 }
 
@@ -542,9 +683,22 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 
 func loadTestCatalog(t *testing.T) {
 	t.Helper()
-	snap, err := loadSnapshot(Source{Path: "../../../../catalog/compiled/catalog.json.gz"})
+	data, err := os.ReadFile("../../../../catalog/compiled/catalog.json.gz")
 	if err != nil {
-		t.Fatalf("load compiled catalog: %v", err)
+		t.Fatalf("read compiled catalog fixture: %v", err)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("open compiled catalog fixture: %v", err)
+	}
+	defer reader.Close()
+	decoded, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("decompress compiled catalog fixture: %v", err)
+	}
+	snap, err := snapshotFromCatalogBytes(decoded)
+	if err != nil {
+		t.Fatalf("parse compiled catalog fixture: %v", err)
 	}
 	active.Store(snap)
 }

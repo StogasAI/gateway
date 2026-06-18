@@ -86,6 +86,7 @@ func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostReq
 	}
 
 	setBillingAuthorization(ctx, authorization)
+	SeedBifrostModelParams(resolution)
 	return req, nil, nil
 }
 

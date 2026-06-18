@@ -85,8 +85,9 @@ type PolicyNode struct {
 }
 
 type requestPricingContext struct {
-	Route     Route
-	ToolTypes []string
+	Route             Route
+	SearchContextSize string
+	ToolTypes         []string
 }
 
 type requestWithSettableExtraParams interface {
@@ -309,13 +310,20 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 	if err := sonic.Unmarshal(body, &rawData); err != nil {
 		return requestPricingContext{Route: route}
 	}
+	searchContextSize := ""
+	if rawOptions, ok := rawData["web_search_options"]; ok {
+		var options map[string]json.RawMessage
+		if err := sonic.Unmarshal(rawOptions, &options); err == nil {
+			searchContextSize = rawStringField(options, "search_context_size")
+		}
+	}
 	rawTools, ok := rawData["tools"]
 	if !ok {
-		return requestPricingContext{Route: route}
+		return requestPricingContext{Route: route, SearchContextSize: searchContextSize}
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(rawTools, &tools); err != nil {
-		return requestPricingContext{Route: route}
+		return requestPricingContext{Route: route, SearchContextSize: searchContextSize}
 	}
 	toolTypes := make([]string, 0, len(tools))
 	for _, tool := range tools {
@@ -324,7 +332,7 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 			toolTypes = append(toolTypes, toolType)
 		}
 	}
-	return requestPricingContext{Route: route, ToolTypes: toolTypes}
+	return requestPricingContext{Route: route, SearchContextSize: searchContextSize, ToolTypes: toolTypes}
 }
 
 func effectiveOutputTokenLimit(requested *int, max int, policy compiledParameter) (int, error) {

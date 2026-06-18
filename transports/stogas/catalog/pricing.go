@@ -12,9 +12,10 @@ const (
 	meterCachedInputTokens = "cached_input_tokens"
 	meterOutputTokens      = "output_tokens"
 
-	ratePerMillionShortContext = "per_mill_short_context_lte_272k"
-	ratePerMillionLongContext  = "per_mill_long_context_gt_272k"
-	ratePerThousandCalls       = "per_1k_calls"
+	ratePerMillionTokens         = "per_mill_tokens"
+	ratePerMillionContextLTE272K = "per_mill_context_lte_272k"
+	ratePerMillionContextGT272K  = "per_mill_context_gt_272k"
+	ratePerThousandCalls         = "per_1k_calls"
 
 	longContextThresholdTokens = 272000
 	millionTokens              = 1000000
@@ -97,6 +98,10 @@ func appendMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, q
 }
 
 func appendCallMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool) []MeterEstimate {
+	return appendCallMeterCostWithRate(meters, pricing, meterKey, ratePerThousandCalls, quantity, holdRequired)
+}
+
+func appendCallMeterCostWithRate(meters []MeterEstimate, pricing Pricing, meterKey string, rateKey string, quantity int, holdRequired bool) []MeterEstimate {
 	if quantity <= 0 {
 		return meters
 	}
@@ -104,7 +109,7 @@ func appendCallMeterCost(meters []MeterEstimate, pricing Pricing, meterKey strin
 	if !ok {
 		return meters
 	}
-	rateAtoms, ok := parseRate(meter.Rates[ratePerThousandCalls])
+	rateAtoms, ok := parseRate(meter[rateKey])
 	if !ok {
 		return meters
 	}
@@ -114,7 +119,7 @@ func appendCallMeterCost(meters []MeterEstimate, pricing Pricing, meterKey strin
 	}
 	return append(meters, MeterEstimate{
 		MeterKey:       meterKey,
-		RateKey:        ratePerThousandCalls,
+		RateKey:        rateKey,
 		Quantity:       big.NewInt(int64(quantity)).String(),
 		AmountUSDAtoms: amount.String(),
 		HoldRequired:   holdRequired,
@@ -126,16 +131,19 @@ func pricingRate(pricing Pricing, meterKey string, useHighest bool) (string, *bi
 		return "", nil, false
 	}
 	meter, ok := pricing[meterKey]
-	if !ok || len(meter.Rates) == 0 {
+	if !ok || len(meter) == 0 {
 		return "", nil, false
 	}
 	if useHighest {
-		return highestRate(meter.Rates)
+		return highestRate(meter)
 	}
-	if rate, ok := parseRate(meter.Rates[ratePerMillionShortContext]); ok {
-		return ratePerMillionShortContext, rate, true
+	if rate, ok := parseRate(meter[ratePerMillionTokens]); ok {
+		return ratePerMillionTokens, rate, true
 	}
-	return highestRate(meter.Rates)
+	if rate, ok := parseRate(meter[ratePerMillionContextLTE272K]); ok {
+		return ratePerMillionContextLTE272K, rate, true
+	}
+	return highestRate(meter)
 }
 
 func highestRate(rates map[string]string) (string, *big.Int, bool) {

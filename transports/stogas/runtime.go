@@ -24,7 +24,7 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	if err := catalog.StartRefresh(runtimeCtx, catalog.Source{
-		Path:            config.CatalogPath,
+		Path:            config.CatalogBundlePath,
 		RefreshInterval: config.CatalogRefresh,
 		URL:             config.CatalogURL,
 	}); err != nil {

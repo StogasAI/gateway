@@ -75,7 +75,7 @@ func DeploymentForRoute(provider schemas.ModelProvider, model string, route Rout
 	return Deployment{
 		ID:                  deploymentID,
 		ModelID:             deployment.ModelID,
-		Model:               providerModelSlug(deploymentID, modelNode),
+		Model:               providerModelSlug(deploymentID, model, modelNode),
 		ContextWindowTokens: effectiveContextWindowTokens(deployment, modelNode),
 		ImpliedServiceTier:  impliedTier,
 		AllowedServiceTier:  allowedTier,
@@ -190,8 +190,8 @@ func AuthHeaderNames(route Route) []string {
 
 	names := []string{}
 	for name, policy := range schemaNode.Schema.Headers {
-		canonical := strings.ToLower(strings.TrimSpace(policy.Rules.Gateway.Canonical))
-		if name == canonicalAuthHeader || canonical == canonicalAuthHeader {
+		alias, hasAlias := headerAlias(policy)
+		if name == canonicalAuthHeader || (hasAlias && strings.EqualFold(alias, canonicalAuthHeader)) {
 			names = append(names, name)
 		}
 	}
@@ -315,27 +315,7 @@ func (s *snapshot) deploymentIDFor(route compiledProviderEndpoint, requestedMode
 	if requested == "" {
 		return ""
 	}
-	if _, ok := s.graph.Deployments[requested]; ok && routeHasDeployment(route, requested) {
-		return requested
-	}
-	for deploymentID, deployment := range s.graph.Deployments {
-		if !routeHasDeployment(route, deploymentID) {
-			continue
-		}
-		for _, alias := range deployment.AliasSlugs.Value {
-			if alias == requested {
-				return deploymentID
-			}
-		}
-	}
-	modelID := s.modelAliases[requested]
-	for _, deploymentID := range route.DeploymentIDs {
-		deployment := s.graph.Deployments[deploymentID]
-		if deployment.ModelID == modelID {
-			return deploymentID
-		}
-	}
-	return ""
+	return s.providerNativeModelSlugs[route.ID+":"+requested]
 }
 
 func (s *snapshot) allowsParam(route compiledProviderEndpoint, name string) bool {
@@ -348,32 +328,73 @@ func (s *snapshot) allowsParam(route compiledProviderEndpoint, name string) bool
 	return ok
 }
 
-func routeHasDeployment(route compiledProviderEndpoint, deploymentID string) bool {
-	for _, id := range route.DeploymentIDs {
-		if id == deploymentID {
+func providerModelSlug(deploymentID string, requestedModel string, model compiledModel) string {
+	requested := leafSlug(strings.TrimSpace(requestedModel))
+	if isDatedProviderModelAlias(requested, model) {
+		return requested
+	}
+	for _, slug := range model.ModelSlugs {
+		if slug == deploymentID {
+			return slug
+		}
+	}
+	for _, suffix := range []string{"-standard", "-flex", "-priority"} {
+		base := strings.TrimSuffix(deploymentID, suffix)
+		if base != deploymentID {
+			for _, slug := range model.ModelSlugs {
+				if slug == base {
+					return slug
+				}
+			}
+		}
+	}
+	return primaryModelSlug(model)
+}
+
+func isDatedProviderModelAlias(requested string, model compiledModel) bool {
+	if !hasDateSuffix(requested) {
+		return false
+	}
+	for _, slug := range model.ModelSlugs {
+		if requested == slug {
 			return true
 		}
 	}
 	return false
 }
 
-func providerModelSlug(deploymentID string, model compiledModel) string {
-	for _, alias := range model.AliasSlugs {
-		if alias == deploymentID {
-			return alias
-		}
+func leafSlug(value string) string {
+	if idx := strings.LastIndex(value, "/"); idx >= 0 {
+		return value[idx+1:]
 	}
-	for _, suffix := range []string{"-flex", "-priority"} {
-		base := strings.TrimSuffix(deploymentID, suffix)
-		if base != deploymentID {
-			for _, alias := range model.AliasSlugs {
-				if alias == base {
-					return alias
-				}
+	return value
+}
+
+func primaryModelSlug(model compiledModel) string {
+	if len(model.ModelSlugs) == 0 {
+		return ""
+	}
+	return model.ModelSlugs[0]
+}
+
+func hasDateSuffix(value string) bool {
+	if len(value) < len("2006-01-02") {
+		return false
+	}
+	suffix := value[len(value)-len("2006-01-02"):]
+	for i, char := range suffix {
+		switch i {
+		case 4, 7:
+			if char != '-' {
+				return false
+			}
+		default:
+			if char < '0' || char > '9' {
+				return false
 			}
 		}
 	}
-	return model.CanonicalSlug
+	return true
 }
 
 func effectiveContextWindowTokens(deployment compiledDeployment, model compiledModel) int {
