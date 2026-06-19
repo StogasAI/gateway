@@ -1,0 +1,23 @@
+---
+models:
+  authorId: openai
+  name: GPT-4o mini Search Preview
+  aliasNames: []
+  modelSlugs:
+    [
+      gpt-4o-mini-search-preview-2025-03-11,
+      gpt-4o-mini-search-preview,
+      gpt-4o-mini-search-preview-latest
+    ]
+  family: GPT
+  series: GPT-4o mini
+  snapshot: 2025-03-11
+  flavors: [search, preview]
+  reasoning: false
+  contextWindowTokens: 128000
+  maxOutputTokens: 16384
+  inputModalities: [text, image]
+  outputModalities: [text]
+  tokenizer: unknown
+  releaseDate: 2025-03-11
+  knowledgeCutoff: 2023-10-01

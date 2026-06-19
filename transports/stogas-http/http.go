@@ -15,6 +15,40 @@ func (s *Server) health(ctx *fasthttp.RequestCtx) {
 	_, _ = ctx.WriteString(`{"ok":true}`)
 }
 
+func (s *Server) catalogHealth(ctx *fasthttp.RequestCtx) {
+	payload, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
+		return
+	}
+	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
+		"ok":          true,
+		"hash":        payload.Hash,
+		"schema":      payload.Schema,
+		"models":      len(payload.Graph.Models),
+		"deployments": len(payload.Graph.Deployments),
+		"providers":   len(payload.Graph.Providers),
+	})
+}
+
+func (s *Server) catalog(ctx *fasthttp.RequestCtx) {
+	payload, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
+		return
+	}
+	s.writeJSON(ctx, fasthttp.StatusOK, payload)
+}
+
+func (s *Server) models(ctx *fasthttp.RequestCtx) {
+	payload, ok := catalog.PublicModelsPayload()
+	if !ok {
+		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
+		return
+	}
+	s.writeJSON(ctx, fasthttp.StatusOK, payload)
+}
+
 func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	credential, ok := s.requireInferenceEnvelope(ctx)
 	if !ok {

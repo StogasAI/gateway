@@ -1,0 +1,23 @@
+---
+deployments:
+  modelSlugs:
+    expandAttributeWithEnumeratedSuffixes: [standard]
+  concreteSlugs:
+    expandAttributeWithEnumeratedPrefixes:
+      - [modelSlugs]
+      - [providerSlugs, modelSlugs]
+      - [authorSlugs, providerSlugs, modelSlugs]
+  providerId: openai
+  parentProviderEndpointNodes: [openai-chat-completions, openai-responses]
+  modelId: gpt-5.5-2026-04-23
+  serviceTier: default
+  pricing:
+    input_tokens:
+      per_mill_context_lte_272k: '5000000000000000000'
+      per_mill_context_gt_272k: '10000000000000000000'
+    cached_input_tokens:
+      per_mill_context_lte_272k: '500000000000000000'
+      per_mill_context_gt_272k: '1000000000000000000'
+    output_tokens:
+      per_mill_context_lte_272k: '30000000000000000000'
+      per_mill_context_gt_272k: '45000000000000000000'

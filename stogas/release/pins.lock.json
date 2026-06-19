@@ -1,0 +1,124 @@
+{
+  "schema": "stogas.gateway.release.pins.v1",
+  "guix": {
+    "bootstrapBinary": {
+      "version": "1.5.0",
+      "url": "https://ftp.gnu.org/gnu/guix/guix-binary-1.5.0.x86_64-linux.tar.xz",
+      "sha256": "aa41025489c5061543e9c48873eaa829b900b2da75d40f9648913622f5f47817"
+    },
+    "channel": {
+      "name": "guix",
+      "url": "https://git.guix.gnu.org/guix.git",
+      "branch": "master",
+      "commit": "d1e9e23fd441fce828fa74616271b00b90853cee",
+      "introductionCommit": "9edb3f66fd807b096b48283debdcddccfea34bad",
+      "introductionOpenpgpFingerprint": "BBB0 2DDF 2CEA F6A8 0D1D  E643 A2A0 6DF2 A33A 54FA"
+    }
+  },
+  "githubActions": {
+    "actions/checkout": {
+      "tag": "v4.2.2",
+      "commit": "11bd71901bbe5b1630ceea73d27597364c9af683",
+      "sourceSha256": "d208694f0c6bafcc85c43bf998637d17c10ff2a09d807325ed8f31a1d86e299d"
+    },
+    "actions/setup-go": {
+      "tag": "v5.5.0",
+      "commit": "d35c59abb061a4a6fb18e82ac0862c26744d6ab5",
+      "sourceSha256": "a5716b6817d01de2aa13fe4a38b64d1e9db6864bf0f3ed5edd63407e8ac00c67"
+    },
+    "actions/attest": {
+      "tag": "v4.0.0",
+      "commit": "c32b4b8b198b65d0bd9d63490e847ff7b53989d4",
+      "sourceSha256": "37935650def6c6b6a3c4e558720ed192a1daea9041a49a82bd1f5a3fb02d181c"
+    }
+  },
+  "releaseSources": {
+    "linux": {
+      "version": "6.18.35-gnu",
+      "guixPackage": "stogas-linux-6.18",
+      "baseGuixPackage": "linux-libre@6.18.35",
+      "requiredBuiltIns": [
+        "ACPI",
+        "AMD_MEM_ENCRYPT",
+        "BINFMT_ELF",
+        "BLK_DEV_INITRD",
+        "CONFIGFS_FS",
+        "CPU_SUP_AMD",
+        "DEVTMPFS",
+        "DEVTMPFS_MOUNT",
+        "DMI",
+        "EARLY_PRINTK",
+        "EFI",
+        "EFI_COCO_SECRET",
+        "EFI_SECRET",
+        "EFI_STUB",
+        "ELF_CORE",
+        "INET",
+        "IPV6",
+        "IP_PNP",
+        "IP_PNP_DHCP",
+        "NET",
+        "NETDEVICES",
+        "PACKET",
+        "PCI",
+        "PCI_DIRECT",
+        "PCI_MSI",
+        "PCI_MMCONFIG",
+        "PROC_FS",
+        "RD_ZSTD",
+        "SECURITYFS",
+        "SERIAL_8250",
+        "SERIAL_8250_CONSOLE",
+        "SERIAL_8250_PCI",
+        "SEV_GUEST",
+        "SYSFS",
+        "TMPFS",
+        "TSM_GUEST",
+        "TSM_REPORTS",
+        "TTY",
+        "UNIX",
+        "VIRT_DRIVERS",
+        "VIRTIO",
+        "VIRTIO_CONSOLE",
+        "VIRTIO_MENU",
+        "VIRTIO_NET",
+        "VIRTIO_PCI",
+        "VIRTIO_PCI_LEGACY",
+        "VIRTIO_VSOCKETS_COMMON",
+        "VIRTIO_VSOCKETS"
+      ]
+    },
+    "go": {
+      "version": "1.26.4",
+      "guixPackage": "go-1.26",
+      "guixSourceBase32": "143qz6hikkh08gfm9md7r1na8mj404a27a4cidq3zkj6qc54jrm1"
+    },
+    "systemdUkify": {
+      "version": "260",
+      "tag": "v260",
+      "commit": "55393e3cecf6f2b274c379c39d2375a136474e8e",
+      "url": "https://github.com/systemd/systemd/archive/55393e3cecf6f2b274c379c39d2375a136474e8e.tar.gz",
+      "sha256": "fc38bcef1012e0fb0bee661a961628e0bf0dc86ffb69c4178d060f253a983bb8"
+    },
+    "edk2": {
+      "tag": "edk2-stable202605",
+      "commit": "b03a21a63e3bd001f52c527e5a57feddb53a690b",
+      "url": "https://github.com/tianocore/edk2",
+      "recursiveGitBase32": "0mpfs9vd9fy6103k83jwd58xcy1j908m6b27bclxmbrc9vim9l8n",
+      "target": "OvmfPkg/AmdSev/AmdSevX64.dsc"
+    },
+    "virtFirmwareRs": {
+      "version": "26.4",
+      "tag": "v26.4",
+      "commit": "e01dffc463934547a42506df656becd9061926f7",
+      "url": "https://gitlab.com/kraxel/virt-firmware-rs/-/archive/e01dffc463934547a42506df656becd9061926f7/virt-firmware-rs-e01dffc463934547a42506df656becd9061926f7.tar.gz",
+      "sha256": "f0d242cb0952724f3147ab5c51f6135ef1fdc4b6b634f92acd4f68240f86ea25"
+    },
+    "svsmIgvmMeasure": {
+      "tag": "v2026.05-devel",
+      "commit": "8850f7bd766e0b592d01efb67c615a9d8f171269",
+      "url": "https://github.com/coconut-svsm/svsm/archive/8850f7bd766e0b592d01efb67c615a9d8f171269.tar.gz",
+      "sha256": "301e0f90615c1d01cf6ca21c0fc3aee477af649b07b82b7a1be402c2d79b960e"
+    }
+  }
+}

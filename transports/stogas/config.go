@@ -34,9 +34,6 @@ type DatabasePoolConfig struct {
 
 type Config struct {
 	AuthSecret        string
-	CatalogBundlePath string
-	CatalogRefresh    time.Duration
-	CatalogURL        string
 	DatabasePool      DatabasePoolConfig
 	DatabaseSchema    string
 	DatabaseURL       string
@@ -60,9 +57,6 @@ func LoadFromEnv() (Config, error) {
 
 	config := Config{
 		AuthSecret:        strings.TrimSpace(os.Getenv("AUTH_SECRET")),
-		CatalogBundlePath: strings.TrimSpace(os.Getenv("STOGAS_CATALOG_BUNDLE_PATH")),
-		CatalogRefresh:    envDurationSeconds("STOGAS_CATALOG_REFRESH_SECONDS", 300),
-		CatalogURL:        strings.TrimSpace(os.Getenv("STOGAS_CATALOG_URL")),
 		DatabasePool:      databasePool,
 		DatabaseSchema:    strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
 		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
@@ -161,9 +155,6 @@ func (c Config) Validate() error {
 	}
 	if err := c.DatabasePool.Validate(); err != nil {
 		return err
-	}
-	if c.CatalogRefresh <= 0 {
-		return fmt.Errorf("STOGAS_CATALOG_REFRESH_SECONDS must be positive")
 	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")

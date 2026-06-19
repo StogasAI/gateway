@@ -49,6 +49,9 @@ func (s *Server) routes() error {
 	r := router.New()
 
 	r.GET("/health", s.health)
+	r.GET("/health/catalog", s.catalogHealth)
+	r.GET("/v1/catalog", s.catalog)
+	r.GET("/v1/models", s.models)
 	for _, path := range catalog.InferencePaths() {
 		r.POST(path, s.inference)
 	}

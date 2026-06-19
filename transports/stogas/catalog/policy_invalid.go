@@ -40,6 +40,43 @@ func validateInvalidParameterRules(name string, raw json.RawMessage, policy comp
 	return nil
 }
 
+func validateParameterValue(name string, raw json.RawMessage, policy compiledParameter) error {
+	if len(policy.Values) == 0 {
+		return nil
+	}
+	value, ok := scalarPolicyValue(raw)
+	if !ok || !stringSet(policy.Values)[value] {
+		return APIError{
+			StatusCode: http.StatusBadRequest,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    name + " must be one of: " + strings.Join(policy.Values, ", "),
+		}
+	}
+	return nil
+}
+
+func scalarPolicyValue(raw json.RawMessage) (string, bool) {
+	var value string
+	if err := sonic.Unmarshal(raw, &value); err == nil {
+		return value, true
+	}
+	var scalar any
+	if err := sonic.Unmarshal(raw, &scalar); err != nil {
+		return "", false
+	}
+	switch typed := scalar.(type) {
+	case bool:
+		if typed {
+			return "true", true
+		}
+		return "false", true
+	case float64:
+		return fmt.Sprintf("%v", typed), true
+	default:
+		return "", false
+	}
+}
+
 func invalidRequestValue(raw json.RawMessage, rule compiledRejectRule) (bool, error) {
 	targets, err := invalidPathTargets(raw, rule.Path)
 	if err != nil {

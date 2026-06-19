@@ -1,0 +1,41 @@
+---
+providers:
+  name: OpenAI
+  providerSlugs: [openai, open-ai]
+  cancellationSupported: false
+  streamingSupported: true
+  streamCancellationSupported: false
+  functionCallingSupported: true
+  promptCachingSupported: true
+  systemMessagesSupported: true
+  toolChoiceSupported: true
+  webSearchSupported: true
+  countTokensEndpoints: []
+  moderated: true
+  usesPseudoanonymousUserId: true
+  dataRetentionDaysClaimed: 30
+  dataStorageRegionPinnedByDefaultClaimed: false
+  dataUsedForTrainingClaimed: false
+  dataSoldClaimed: false
+  dataSharedForCrossContextBehavioralAdsClaimed: false
+  headquarteredLocationId: us-ca-san-francisco
+  datacenterLocationIds:
+    - us
+    - eu-eea-ch
+    - au
+    - ca
+    - jp
+    - in
+    - sg
+    - kr
+    - gb
+    - ae
+  # Responses web-search tools are provider-native and shared across Responses deployments.
+  # Non-reasoning Responses deployments must override web_search_preview to 25 USD/1k calls;
+  # reasoning architecture, not requested reasoning effort, controls that pricing tier.
+  # Tool names may include dated suffixes; Go pricing intentionally matches by prefix.
+  pricing:
+    openai_responses_web_search_calls:
+      per_1k_calls: '10000000000000000000'
+    openai_responses_web_search_preview_calls:
+      per_1k_calls: '10000000000000000000'

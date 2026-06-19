@@ -1,0 +1,16 @@
+---
+providerEndpoints:
+  providerId: openai
+  stogasEndpointId: stogas-responses
+  endpoint: https://api.openai.com/v1/responses
+  regionId: multi-region
+  regionalStorageClaimed: false
+  regionalProcessingClaimed: false
+  fallbackBehavior: none
+  e2ee: unknown
+  gdpr: 'not region-pinned'
+  class: responses
+  policyProfiles:
+    - openai.responses.output_tokens.min_16
+    - openai.responses.text_only_mvp
+    - openai.responses.no_unbilled_hosted_tools

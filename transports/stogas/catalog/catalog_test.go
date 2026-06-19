@@ -1,10 +1,6 @@
 package catalog
 
 import (
-	"bytes"
-	"compress/gzip"
-	"io"
-	"os"
 	"strings"
 	"testing"
 
@@ -103,8 +99,11 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if deployment.Model != "gpt-5.5" {
 		t.Fatalf("expected provider model gpt-5.5, got %q", deployment.Model)
 	}
-	if deployment.AllowedServiceTier == nil || *deployment.AllowedServiceTier != schemas.BifrostServiceTier("default") {
-		t.Fatalf("expected default service tier policy, got %#v", deployment.AllowedServiceTier)
+	if deployment.ServiceTier != "default" {
+		t.Fatalf("expected default deployment service tier fact, got %q", deployment.ServiceTier)
+	}
+	if _, ok := deployment.ParameterPolicies["service_tier"]; ok {
+		t.Fatalf("default deployment service_tier should be enforced by Go runtime policy, not compiled schema policy")
 	}
 	if deployment.ImpliedServiceTier != nil {
 		t.Fatalf("default deployment should not imply service tier")
@@ -536,6 +535,27 @@ func TestGPT5NanoSchemaPolicy(t *testing.T) {
 		t.Fatalf("expected implied gpt-5-nano flex service tier, got %#v", flexResolution.chat)
 	}
 
+	defaultResolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
+	})
+	if err != nil {
+		t.Fatalf("expected gpt-5-nano default request with auto service tier to resolve: %v", err)
+	}
+	if defaultResolution.Deployment.ID != "gpt-5-nano" || defaultResolution.chat == nil || defaultResolution.chat.ChatParameters.ServiceTier == nil || *defaultResolution.chat.ChatParameters.ServiceTier != schemas.BifrostServiceTierAuto {
+		t.Fatalf("unexpected gpt-5-nano auto service tier resolution: %#v", defaultResolution)
+	}
+
+	_, err = ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"priority","max_completion_tokens":16}`),
+	})
+	if err == nil {
+		t.Fatalf("expected priority service tier to be rejected for default gpt-5-nano deployment")
+	}
+
 	_, err = ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -683,20 +703,7 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 
 func loadTestCatalog(t *testing.T) {
 	t.Helper()
-	data, err := os.ReadFile("../../../../catalog/compiled/catalog.json.gz")
-	if err != nil {
-		t.Fatalf("read compiled catalog fixture: %v", err)
-	}
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("open compiled catalog fixture: %v", err)
-	}
-	defer reader.Close()
-	decoded, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("decompress compiled catalog fixture: %v", err)
-	}
-	snap, err := snapshotFromCatalogBytes(decoded)
+	snap, err := snapshotFromCatalogBytes(embeddedCatalogJSON)
 	if err != nil {
 		t.Fatalf("parse compiled catalog fixture: %v", err)
 	}

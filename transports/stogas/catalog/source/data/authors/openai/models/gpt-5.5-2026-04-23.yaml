@@ -1,0 +1,17 @@
+models:
+  authorId: openai
+  name: GPT-5.5
+  aliasNames: []
+  modelSlugs: [gpt-5.5-2026-04-23, gpt-5.5, gpt-5.5-latest]
+  family: GPT
+  series: GPT-5
+  snapshot: 2026-04-23
+  flavors: [unknown]
+  reasoning: true
+  contextWindowTokens: 1050000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  tokenizer: unknown
+  releaseDate: 2026-04-23
+  knowledgeCutoff: 2025-12-01

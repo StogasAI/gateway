@@ -6,7 +6,6 @@ import (
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/apikey"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const openAIProviderKeyID = "stogas-openai"
@@ -23,15 +22,6 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	}
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
-	if err := catalog.StartRefresh(runtimeCtx, catalog.Source{
-		Path:            config.CatalogBundlePath,
-		RefreshInterval: config.CatalogRefresh,
-		URL:             config.CatalogURL,
-	}); err != nil {
-		cancel()
-		return nil, err
-	}
-
 	tinybird := NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
 	billing, err := NewBillingService(runtimeCtx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
 	if err != nil {

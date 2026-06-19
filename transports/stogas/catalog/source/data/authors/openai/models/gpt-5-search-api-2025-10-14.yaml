@@ -1,0 +1,18 @@
+---
+models:
+  authorId: openai
+  name: GPT-5 Search API
+  aliasNames: []
+  modelSlugs: [gpt-5-search-api-2025-10-14, gpt-5-search-api, gpt-5-search-api-latest]
+  family: GPT
+  series: GPT-5
+  snapshot: 2025-10-14
+  flavors: [search]
+  reasoning: false
+  contextWindowTokens: 272000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  tokenizer: unknown
+  releaseDate: 2025-10-14
+  knowledgeCutoff: null
