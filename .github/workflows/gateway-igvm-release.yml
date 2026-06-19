@@ -1,0 +1,72 @@
+name: Gateway IGVM Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable vX.Y.Z gateway release tag
+        required: true
+        type: string
+
+concurrency:
+  group: gateway-igvm-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  attestations: write
+  artifact-metadata: write
+  contents: write
+  id-token: write
+
+jobs:
+  draft:
+    name: Build Draft IGVM Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Validate tag
+        run: '[[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+
+      - name: Verify release pins
+        run: node stogas/release/scripts/verify-pins.mjs --network
+
+      - name: Install pinned Guix bootstrap
+        run: stogas/release/scripts/install-guix-bootstrap.sh
+
+      - name: Build IGVM in pinned Guix environment
+        run: stogas/release/scripts/build-release.sh "${{ inputs.tag }}" dist/gateway/${{ inputs.tag }}
+
+      - name: Generate GitHub attestation
+        id: attest
+        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
+        with:
+          subject-path: dist/gateway/${{ inputs.tag }}/gateway.igvm
+
+      - name: Collect attestation evidence
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ inputs.tag }}/github-attestation.jsonl"
+
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ASSETS=(
+            "dist/gateway/${{ inputs.tag }}/gateway.igvm"
+            "dist/gateway/${{ inputs.tag }}/gateway.efi"
+            "dist/gateway/${{ inputs.tag }}/launch-measurement.txt"
+            "dist/gateway/${{ inputs.tag }}/release-manifest.json"
+            "dist/gateway/${{ inputs.tag }}/SHA256SUMS"
+            "dist/gateway/${{ inputs.tag }}/github-attestation.jsonl"
+          )
+          if gh release view "${{ inputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ inputs.tag }}" "${ASSETS[@]}" --clobber
+            gh release edit "${{ inputs.tag }}" --draft=true --target "${{ github.sha }}"
+          else
+            gh release create "${{ inputs.tag }}" "${ASSETS[@]}" --draft --target "${{ github.sha }}" --title "Gateway ${{ inputs.tag }}"
+          fi

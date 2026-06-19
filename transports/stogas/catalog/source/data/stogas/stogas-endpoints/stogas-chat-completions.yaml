@@ -1,0 +1,171 @@
+---
+stogasEndpoints:
+  schema:
+    path: /v1/chat/completions
+    method: POST
+    headers:
+      authorization:
+        required: true
+        type: string
+        schema: { type: string }
+      api-key:
+        required: false
+        type: string
+        schema: { type: string }
+        alias: schema.headers.authorization
+      x-api-key:
+        required: false
+        type: string
+        schema: { type: string }
+        alias: schema.headers.authorization
+      x-goog-api-key:
+        required: false
+        type: string
+        schema: { type: string }
+        alias: schema.headers.authorization
+      content-type:
+        required: true
+        type: string
+        values: [application/json]
+        schema:
+          type: string
+          enum: [application/json]
+      accept:
+        required: false
+        type: string
+        values: [application/json, text/event-stream]
+        schema:
+          type: string
+          enum: [application/json, text/event-stream]
+      x-stogas-return-extra-fields:
+        required: false
+        type: string
+        schema: { type: string }
+    parameters:
+      model:
+        required: true
+        type: string
+      messages:
+        required: true
+        type: array
+      audio:
+        required: false
+        type: object
+      stream:
+        required: false
+        type: boolean
+      frequency_penalty:
+        required: false
+        type: number
+        min: -2
+        max: 2
+      logit_bias:
+        required: false
+        type: object
+      logprobs:
+        required: false
+        type: boolean
+      max_tokens:
+        required: false
+        type: integer
+        min: 1
+        alias: schema.parameters.max_completion_tokens
+      max_completion_tokens:
+        required: false
+        type: integer
+        min: 1
+      metadata:
+        required: false
+        type: object
+      modalities:
+        required: false
+        type: array
+      parallel_tool_calls:
+        required: false
+        type: boolean
+      prediction:
+        required: false
+        type: object
+      presence_penalty:
+        required: false
+        type: number
+        min: -2
+        max: 2
+      prompt_cache_key:
+        required: false
+        type: string
+      prompt_cache_retention:
+        required: false
+        type: string
+        values: [in-memory, 24h]
+      reasoning:
+        required: false
+        type: object
+        rejectUnsupported: model.reasoning
+      reasoning_effort:
+        required: false
+        type: string
+        values: [none, minimal, low, medium, high]
+        alias: schema.parameters.reasoning.effort
+        rejectUnsupported: model.reasoning
+      reasoning_max_tokens:
+        required: false
+        type: integer
+        min: 1
+        alias: schema.parameters.reasoning.max_tokens
+        rejectUnsupported: model.reasoning
+      response_format:
+        required: false
+        type: object
+      safety_identifier:
+        required: false
+        type: string
+      seed:
+        required: false
+        type: integer
+      service_tier:
+        required: false
+        type: string
+        values: [auto, default, flex, priority]
+      stream_options:
+        required: false
+        type: object
+      stop:
+        required: false
+        type: array
+      store:
+        required: false
+        type: boolean
+      temperature:
+        required: false
+        type: number
+        min: 0
+        max: 2
+      tool_choice:
+        required: false
+        type: union
+      tools:
+        required: false
+        type: array
+      top_logprobs:
+        required: false
+        type: integer
+        min: 0
+      top_p:
+        required: false
+        type: number
+        min: 0
+        max: 1
+      user:
+        required: false
+        type: string
+      verbosity:
+        required: false
+        type: string
+        values: [low, medium, high]
+      reasoning_display:
+        required: false
+        type: string
+        values: [summarized, omitted]
+        alias: schema.parameters.reasoning.display
+        rejectUnsupported: model.reasoning

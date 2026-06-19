@@ -1,0 +1,15 @@
+{
+	"compilerOptions": {
+		"allowSyntheticDefaultImports": true,
+		"isolatedModules": true,
+		"lib": ["ES2024", "DOM", "DOM.Iterable"],
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"noEmit": true,
+		"strict": true,
+		"target": "ES2022",
+		"types": ["svelte", "vite/client", "node"],
+		"useDefineForClassFields": true
+	},
+	"include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"]
+}

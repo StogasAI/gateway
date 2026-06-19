@@ -1,0 +1,115 @@
+locations:
+  nodes:
+    earth:
+      name: Earth
+      kind: world
+      parentId: null
+    multi-region:
+      name: Multi-region
+      kind: multi_region
+      parentId: earth
+      domainPrefix: api
+    americas:
+      name: Americas
+      kind: continent
+      parentId: earth
+    north-america:
+      name: North America
+      kind: macro_region
+      parentId: americas
+    us:
+      name: United States
+      kind: country
+      parentId: north-america
+      isoCode: US
+      domainPrefix: us
+    us-ca:
+      name: California
+      kind: state
+      parentId: us
+      isoCode: US-CA
+    us-ca-san-francisco:
+      name: San Francisco
+      kind: city
+      parentId: us-ca
+    ca:
+      name: Canada
+      kind: country
+      parentId: north-america
+      isoCode: CA
+      domainPrefix: ca
+    europe:
+      name: Europe
+      kind: continent
+      parentId: earth
+    eu-eea-ch:
+      name: Europe EEA + Switzerland
+      kind: economic_region
+      parentId: europe
+      domainPrefix: eu
+    gb:
+      name: United Kingdom
+      kind: country
+      parentId: europe
+      isoCode: GB
+      domainPrefix: gb
+    asia:
+      name: Asia
+      kind: continent
+      parentId: earth
+    east-asia:
+      name: East Asia
+      kind: macro_region
+      parentId: asia
+    jp:
+      name: Japan
+      kind: country
+      parentId: east-asia
+      isoCode: JP
+      domainPrefix: jp
+    kr:
+      name: South Korea
+      kind: country
+      parentId: east-asia
+      isoCode: KR
+      domainPrefix: kr
+    south-asia:
+      name: South Asia
+      kind: macro_region
+      parentId: asia
+    in:
+      name: India
+      kind: country
+      parentId: south-asia
+      isoCode: IN
+      domainPrefix: in
+    southeast-asia:
+      name: Southeast Asia
+      kind: macro_region
+      parentId: asia
+    sg:
+      name: Singapore
+      kind: country
+      parentId: southeast-asia
+      isoCode: SG
+      domainPrefix: sg
+    middle-east:
+      name: Middle East
+      kind: macro_region
+      parentId: asia
+    ae:
+      name: United Arab Emirates
+      kind: country
+      parentId: middle-east
+      isoCode: AE
+      domainPrefix: ae
+    oceania:
+      name: Oceania
+      kind: continent
+      parentId: earth
+    au:
+      name: Australia
+      kind: country
+      parentId: oceania
+      isoCode: AU
+      domainPrefix: au

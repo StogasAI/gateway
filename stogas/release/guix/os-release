@@ -1,0 +1,5 @@
+ID=stogas-gateway
+NAME="Stogas Gateway"
+PRETTY_NAME="Stogas Gateway Confidential VM"
+VERSION_ID=0.0.1
+BUILD_ID=deterministic

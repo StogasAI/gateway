@@ -1,0 +1,42 @@
+name: PR Dependencies
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "**/vendor/**"
+      - ".github/workflows/pr-dependencies.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-vendor:
+    name: Verify Go Vendor State
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version-file: transports/go.mod
+          cache: true
+      - name: Verify release pins
+        run: node stogas/release/scripts/verify-pins.mjs
+      - name: Verify modules and vendor
+        working-directory: transports
+        env:
+          GOWORK: off
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go mod tidy
+          go mod download
+          go mod verify
+          go mod vendor
+          git diff --exit-code -- go.mod go.sum vendor

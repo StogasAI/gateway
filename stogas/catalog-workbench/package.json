@@ -1,0 +1,17 @@
+{
+	"name": "@stogas/gateway-catalog-workbench",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "vite --config vite.config.ts --host 127.0.0.1",
+		"typecheck": "tsc --noEmit -p tsconfig.json"
+	},
+	"devDependencies": {
+		"@sveltejs/vite-plugin-svelte": "7.1.2",
+		"@types/node": "24.10.1",
+		"@xyflow/svelte": "1.5.2",
+		"svelte": "5.55.5",
+		"typescript": "6.0.3",
+		"vite": "8.0.11"
+	}
+}

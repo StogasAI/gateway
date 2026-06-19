@@ -1,10 +1,8 @@
 package catalog
 
 import (
-	"context"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 )
@@ -12,37 +10,9 @@ import (
 var active atomic.Pointer[snapshot]
 
 func init() {
-	if snap, err := loadSnapshot(Source{}); err == nil {
+	if snap, err := loadSnapshot(); err == nil {
 		active.Store(snap)
 	}
-}
-
-func StartRefresh(ctx context.Context, source Source) error {
-	snap, err := loadSnapshot(source)
-	if err != nil {
-		return err
-	}
-	active.Store(snap)
-
-	interval := source.RefreshInterval
-	if interval <= 0 {
-		interval = defaultRefreshInterval
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if next, err := loadSnapshot(source); err == nil {
-					active.Store(next)
-				}
-			}
-		}
-	}()
-	return nil
 }
 
 func DeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
@@ -68,20 +38,18 @@ func DeploymentForRoute(provider schemas.ModelProvider, model string, route Rout
 		return Deployment{}, false
 	}
 
-	allowedTier, impliedTier, ok := serviceTierPolicy(deployment)
-	if !ok {
-		return Deployment{}, false
-	}
+	impliedTier := impliedServiceTierForDeployment(deployment)
 	return Deployment{
 		ID:                  deploymentID,
 		ModelID:             deployment.ModelID,
 		Model:               providerModelSlug(deploymentID, model, modelNode),
 		ContextWindowTokens: effectiveContextWindowTokens(deployment, modelNode),
 		ImpliedServiceTier:  impliedTier,
-		AllowedServiceTier:  allowedTier,
 		MaxOutputTokens:     effectiveMaxOutputTokens(deployment, modelNode),
 		Pricing:             deployment.Pricing,
+		ProfileIDs:          combinedProfileIDs(routeNode.PolicyProfiles, deployment.PolicyProfiles),
 		ReasoningSupported:  modelNode.ReasoningSupport,
+		ServiceTier:         deployment.ServiceTier,
 		ParameterPolicies:   deployment.ParameterPolicies,
 	}, true
 }

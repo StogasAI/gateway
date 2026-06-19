@@ -78,6 +78,9 @@ func validateRequestParameterRules(body []byte, routeNode compiledProviderEndpoi
 		if err := validateUnsupportedRule(name, policy, deployment); err != nil {
 			return err
 		}
+		if err := validateParameterValue(name, raw, policy); err != nil {
+			return err
+		}
 		if err := validateInvalidParameterRules(name, raw, policy); err != nil {
 			return err
 		}
@@ -137,45 +140,37 @@ func applyServiceTierPolicy(serviceTier **schemas.BifrostServiceTier, deployment
 	if serviceTier == nil {
 		return true
 	}
-	allowed := deployment.AllowedServiceTier
-	if value, ok := singleServiceTierValue(policy.Values); ok {
-		allowed = &value
-	}
-	if allowed != nil && *serviceTier != nil && **serviceTier != *allowed {
-		if deployment.AllowedServiceTier != nil || parameterRejectsConflict(policy) {
+	switch deployment.ServiceTier {
+	case "flex", "priority":
+		implied := schemas.BifrostServiceTier(deployment.ServiceTier)
+		if *serviceTier == nil {
+			*serviceTier = &implied
+			return true
+		}
+		return **serviceTier == implied
+	case "", "default", "standard":
+		if *serviceTier == nil {
+			return true
+		}
+		switch **serviceTier {
+		case schemas.BifrostServiceTierAuto, schemas.BifrostServiceTierDefault, "":
+			return true
+		default:
 			return false
 		}
+	default:
+		return false
 	}
-	if impliedRaw, ok := parameterImpliedValue(policy); ok && *serviceTier == nil {
-		implied := schemas.BifrostServiceTier(impliedRaw)
-		*serviceTier = &implied
-	}
-	return true
 }
 
-func serviceTierPolicy(deployment compiledDeployment) (*schemas.BifrostServiceTier, *schemas.BifrostServiceTier, bool) {
-	param := deployment.ParameterPolicies["service_tier"]
-	values := param.Values
-	if len(values) == 0 && deployment.ServiceTier != "" {
-		values = []string{deployment.ServiceTier}
+func impliedServiceTierForDeployment(deployment compiledDeployment) *schemas.BifrostServiceTier {
+	switch deployment.ServiceTier {
+	case "flex", "priority":
+		value := schemas.BifrostServiceTier(deployment.ServiceTier)
+		return &value
+	default:
+		return nil
 	}
-	allowed, ok := singleServiceTierValue(values)
-	if !ok {
-		return nil, nil, false
-	}
-	var implied *schemas.BifrostServiceTier
-	if impliedRaw, ok := parameterImpliedValue(param); ok {
-		value := schemas.BifrostServiceTier(impliedRaw)
-		implied = &value
-	}
-	return &allowed, implied, true
-}
-
-func singleServiceTierValue(values []string) (schemas.BifrostServiceTier, bool) {
-	if len(values) != 1 {
-		return "", false
-	}
-	return schemas.BifrostServiceTier(values[0]), true
 }
 
 func parameterAlias(policy compiledParameter) (string, bool) {
