@@ -6,8 +6,8 @@ on:
       - "**/*.go"
       - "**/go.mod"
       - "**/go.sum"
-      - "**/vendor/**"
       - ".github/workflows/pr-dependencies.yml"
+      - "stogas/release/**"
   workflow_dispatch:
 
 permissions:
@@ -22,21 +22,18 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
-        with:
-          go-version-file: transports/go.mod
-          cache: true
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
-      - name: Verify modules and vendor
-        working-directory: transports
-        env:
-          GOWORK: off
-          GOTOOLCHAIN: local
-        run: |
-          set -euo pipefail
-          go mod tidy
-          go mod download
-          go mod verify
-          go mod vendor
-          git diff --exit-code -- go.mod go.sum vendor
+      - name: Restore Stogas release vendor cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: stogas/release/vendor
+          key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
+          restore-keys: |
+            stogas-release-vendor-${{ runner.os }}-
+      - name: Install pinned Guix bootstrap
+        run: stogas/release/scripts/install-guix-bootstrap.sh
+      - name: Verify Go module hydration
+        run: stogas/release/scripts/hydrate-go-vendor.sh
+      - name: Verify module files did not change
+        run: git diff --exit-code -- transports/go.mod transports/go.sum

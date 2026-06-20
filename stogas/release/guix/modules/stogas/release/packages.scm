@@ -36,6 +36,9 @@
               name
               #:recursive? (or recursive? #f)))
 
+(define (patch-file path)
+  (release-file (string-append "patches/" path) path))
+
 (define %linux-6-18
   (specification->package "linux-libre@6.18.35"))
 
@@ -275,8 +278,9 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                (pkg "grub-efi")
                (pkg "mtools"))))))
 
-(define (rust-tool-package name version source vendor cargo-config lock build-command
-                           binaries synopsis)
+(define (rust-tool-package name version source source-directory vendor lock
+                           vendor-sha256 config-body build-command binaries
+                           synopsis)
   (package
     (name name)
     (version version)
@@ -291,27 +295,51 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
           (delete 'patch-usr-bin-file)
           (delete 'patch-source-shebangs)
           (delete 'patch-generated-file-shebangs)
-          (add-after 'unpack 'attach-vendored-dependencies
+          (add-after 'unpack 'detach-source-directory
+            (lambda _
+              (use-modules (ice-9 ftw))
+              (unless (string=? #$source-directory ".")
+                (let ((root (getcwd))
+                      (detached (string-append (getcwd)
+                                               "/../stogas-rust-tool-source")))
+                  (copy-recursively #$source-directory detached)
+                  (for-each
+                   (lambda (entry)
+                     (unless (member entry '("." ".."))
+                       (let ((path (string-append root "/" entry)))
+                         (if (file-is-directory? path)
+                             (delete-file-recursively path)
+                             (delete-file path)))))
+                   (scandir root))
+                  (for-each
+                   (lambda (entry)
+                     (unless (member entry '("." ".."))
+                       (let ((source (string-append detached "/" entry))
+                             (target (string-append root "/" entry)))
+                         (if (file-is-directory? source)
+                             (copy-recursively source target)
+                             (copy-file source target)))))
+                   (scandir detached))
+                  (delete-file-recursively detached)))))
+          (add-after 'detach-source-directory 'attach-vendored-dependencies
             (lambda _
               (copy-file #$lock "Cargo.lock")
               (mkdir-p ".cargo")
-              (copy-recursively #$cargo-config ".cargo")
+              (call-with-output-file ".cargo/config.toml"
+                (lambda (port)
+                  (display #$config-body port)))
               (copy-recursively #$vendor "vendor")))
-          (add-after 'attach-vendored-dependencies 'stogas-kvm-vmsa-last
+          (add-after 'attach-vendored-dependencies 'verify-vendored-dependencies
             (lambda _
-              (let ((builder "igvm-tools/src/builder.rs"))
-                (when (file-exists? builder)
-                  (substitute* builder
-                    (("directives\\.sort_by\\(Self::sort_pages\\);")
-                     "directives.sort_by(|a, b| {
-            let a_is_vmsa = matches!(a, IgvmDirectiveHeader::SnpVpContext { .. });
-            let b_is_vmsa = matches!(b, IgvmDirectiveHeader::SnpVpContext { .. });
-            match (a_is_vmsa, b_is_vmsa) {
-                (false, true) => Ordering::Less,
-                (true, false) => Ordering::Greater,
-                _ => Self::sort_pages(a, b),
-            }
-        });"))))))
+              (use-modules (ice-9 rdelim))
+              (invoke "bash" "-c"
+                      (string-append
+                       "cd vendor && find . -type f -print0 | LC_ALL=C sort -z"
+                       " | xargs -0 sha256sum | sha256sum"
+                       " | cut -d' ' -f1 > ../.vendor.sha256"))
+              (let ((actual (call-with-input-file ".vendor.sha256" read-line)))
+                (unless (string=? actual #$vendor-sha256)
+                  (error "Cargo vendor cache hash mismatch" actual #$vendor-sha256)))))
           (replace 'build
             (lambda _
               (setenv "CARGO_NET_OFFLINE" "true")
@@ -326,7 +354,7 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                    (install-file (string-append "target/release/" binary)
                                  bin))
                  '#$binaries)))))))
-    (native-inputs (map pkg '("rust")))
+    (native-inputs (map pkg '("bash-minimal" "coreutils" "findutils" "rust")))
     (synopsis synopsis)
     (description synopsis)
     (home-page "https://stogas.ai")
@@ -340,15 +368,27 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
      (method url-fetch)
      (uri "https://gitlab.com/kraxel/virt-firmware-rs/-/archive/e01dffc463934547a42506df656becd9061926f7/virt-firmware-rs-e01dffc463934547a42506df656becd9061926f7.tar.gz")
      (sha256
-      (base32 "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph")))
+      (base32 "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph"))
+     (patches
+      (list (patch-file "virt-firmware-rs-kvm-vmsa-last.patch"))))
+   "."
    (release-file "vendor/virt-firmware-rs/vendor"
                  "virt-firmware-rs-vendor"
                  #:recursive? #t)
-   (release-file "vendor/virt-firmware-rs/.cargo"
-                 "virt-firmware-rs-cargo-config"
-                 #:recursive? #t)
-   (release-file "vendor/virt-firmware-rs/Cargo.lock"
+   (release-file "locks/virt-firmware-rs.Cargo.lock"
                  "virt-firmware-rs-Cargo.lock")
+   "f255fd2e4b39db99e7c8127d4bcac6b0f06565aa2bd2f1c59669cee8280dd3a5"
+   "[source.crates-io]
+replace-with = \"vendored-sources\"
+
+[source.\"git+https://github.com/ardbiesheuvel/efiloader.git?rev=699b3142085c\"]
+git = \"https://github.com/ardbiesheuvel/efiloader.git\"
+rev = \"699b3142085c\"
+replace-with = \"vendored-sources\"
+
+[source.vendored-sources]
+directory = \"vendor\"
+"
    #~(invoke "cargo" "build" "--release" "--locked" "--offline"
              "-p" "virtfw-igvm-tools" "--bins")
    '("igvm-wrap" "igvm-update")
@@ -358,17 +398,26 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
   (rust-tool-package
    "stogas-igvmmeasure"
    "2026.05"
-   (release-file "vendor/igvmmeasure/source"
-                 "igvmmeasure-source"
-                 #:recursive? #t)
+   (origin
+     (method url-fetch)
+     (uri "https://github.com/coconut-svsm/svsm/archive/8850f7bd766e0b592d01efb67c615a9d8f171269.tar.gz")
+     (sha256
+      (base32 "03lnkgbw40p43dx2pf07kdjayxz4mv1hy752dk7h27awc680y7ih"))
+     (patches
+      (list (patch-file "svsm-igvmmeasure-standalone-cargo.patch"))))
+   "tools/igvmmeasure"
    (release-file "vendor/igvmmeasure/vendor"
                  "igvmmeasure-vendor"
                  #:recursive? #t)
-   (release-file "vendor/igvmmeasure/.cargo"
-                 "igvmmeasure-cargo-config"
-                 #:recursive? #t)
-   (release-file "vendor/igvmmeasure/Cargo.lock"
+   (release-file "locks/igvmmeasure.Cargo.lock"
                  "igvmmeasure-Cargo.lock")
+   "a8e661722a66994ceee5fb73be70acbefcfec0524e81e1c37dc3612527c8618d"
+   "[source.crates-io]
+replace-with = \"vendored-sources\"
+
+[source.vendored-sources]
+directory = \"vendor\"
+"
    #~(invoke "cargo" "build" "--release" "--locked" "--offline")
    '("igvmmeasure")
    "Pinned standalone SVSM igvmmeasure tool"))

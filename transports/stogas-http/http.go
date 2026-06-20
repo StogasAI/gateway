@@ -12,23 +12,7 @@ import (
 func (s *Server) health(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
-	_, _ = ctx.WriteString(`{"ok":true}`)
-}
-
-func (s *Server) catalogHealth(ctx *fasthttp.RequestCtx) {
-	payload, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
-		return
-	}
-	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
-		"ok":          true,
-		"hash":        payload.Hash,
-		"schema":      payload.Schema,
-		"models":      len(payload.Graph.Models),
-		"deployments": len(payload.Graph.Deployments),
-		"providers":   len(payload.Graph.Providers),
-	})
+	_, _ = ctx.WriteString(`{"ok":true,"catalogVersion":"` + catalog.PublicCatalogVersion + `"}`)
 }
 
 func (s *Server) catalog(ctx *fasthttp.RequestCtx) {

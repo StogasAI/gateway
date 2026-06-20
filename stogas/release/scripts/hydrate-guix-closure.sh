@@ -13,8 +13,17 @@ release_root="$repo_root/stogas/release"
 cache_root="${XDG_CACHE_HOME:-$HOME/.cache}"
 repo_cache_key="$(basename "$repo_root")"
 roots_dir="$cache_root/stogas-release/guix-roots/$repo_cache_key/$tag"
+
+if [ "${STOGAS_RELEASE_IGNORE_LOCAL_CACHE:-0}" = "1" ]; then
+  chmod -R u+w "$release_root/vendor" "$roots_dir" 2>/dev/null || true
+  rm -rf "$release_root/vendor" "$roots_dir"
+fi
+
 mkdir -p "$roots_dir"
 rm -f "$roots_dir/release"
+
+"$release_root/scripts/hydrate-go-vendor.sh"
+"$release_root/scripts/hydrate-rust-vendor.sh"
 
 export STOGAS_RELEASE_TAG="$tag"
 export STOGAS_RELEASE_ROOT="$release_root"
