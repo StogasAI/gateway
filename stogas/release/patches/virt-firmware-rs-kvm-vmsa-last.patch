@@ -1,0 +1,23 @@
+diff --git a/igvm-tools/src/builder.rs b/igvm-tools/src/builder.rs
+index 61e9fa7..aa1dd83 100644
+--- a/igvm-tools/src/builder.rs
++++ b/igvm-tools/src/builder.rs
+@@ -352,7 +352,17 @@ impl Builder {
+ 
+     pub fn finalize(&self) -> Result<IgvmFile, igvm::Error> {
+         let mut directives = self.directives.clone();
+-        directives.sort_by(Self::sort_pages);
++        directives.sort_by(|a, b| {
++            let a_is_vmsa = matches!(a, IgvmDirectiveHeader::SnpVpContext { .. });
++            let b_is_vmsa = matches!(b, IgvmDirectiveHeader::SnpVpContext { .. });
++
++            match (a_is_vmsa, b_is_vmsa) {
++                (false, true) => Ordering::Less,
++                (true, false) => Ordering::Greater,
++                _ => Self::sort_pages(a, b),
++            }
++        });
++
+         IgvmFile::new(
+             self.revision,
+             self.platforms.clone(),

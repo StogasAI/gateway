@@ -21,15 +21,15 @@
       "commit": "11bd71901bbe5b1630ceea73d27597364c9af683",
       "sourceSha256": "d208694f0c6bafcc85c43bf998637d17c10ff2a09d807325ed8f31a1d86e299d"
     },
-    "actions/setup-go": {
-      "tag": "v5.5.0",
-      "commit": "d35c59abb061a4a6fb18e82ac0862c26744d6ab5",
-      "sourceSha256": "a5716b6817d01de2aa13fe4a38b64d1e9db6864bf0f3ed5edd63407e8ac00c67"
-    },
     "actions/attest": {
       "tag": "v4.0.0",
       "commit": "c32b4b8b198b65d0bd9d63490e847ff7b53989d4",
       "sourceSha256": "37935650def6c6b6a3c4e558720ed192a1daea9041a49a82bd1f5a3fb02d181c"
+    },
+    "actions/cache": {
+      "tag": "v4.3.0",
+      "commit": "0057852bfaa89a56745cba8c7296529d2fc39830",
+      "sourceSha256": "be6686f05c5415b735c22b64f32e27de9c6fb98f9d25421efff087ac99089e39"
     }
   },
   "releaseSources": {
@@ -112,13 +112,31 @@
       "tag": "v26.4",
       "commit": "e01dffc463934547a42506df656becd9061926f7",
       "url": "https://gitlab.com/kraxel/virt-firmware-rs/-/archive/e01dffc463934547a42506df656becd9061926f7/virt-firmware-rs-e01dffc463934547a42506df656becd9061926f7.tar.gz",
-      "sha256": "f0d242cb0952724f3147ab5c51f6135ef1fdc4b6b634f92acd4f68240f86ea25"
+      "sha256": "f0d242cb0952724f3147ab5c51f6135ef1fdc4b6b634f92acd4f68240f86ea25",
+      "guixBase32": "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph",
+      "cargoVendorSha256": "f255fd2e4b39db99e7c8127d4bcac6b0f06565aa2bd2f1c59669cee8280dd3a5",
+      "cargoLockSha256": "c1809eed148768a8acc6699a3ca4ae69c69511a850e3d9282fcd3d8f662422c4",
+      "patches": [
+        {
+          "file": "virt-firmware-rs-kvm-vmsa-last.patch",
+          "sha256": "221daa69fe4b1aa639e8778fd912f60bbe869c9729d403e5e4c58f43c3ddfba6"
+        }
+      ]
     },
     "svsmIgvmMeasure": {
       "tag": "v2026.05-devel",
       "commit": "8850f7bd766e0b592d01efb67c615a9d8f171269",
       "url": "https://github.com/coconut-svsm/svsm/archive/8850f7bd766e0b592d01efb67c615a9d8f171269.tar.gz",
-      "sha256": "301e0f90615c1d01cf6ca21c0fc3aee477af649b07b82b7a1be402c2d79b960e"
+      "sha256": "301e0f90615c1d01cf6ca21c0fc3aee477af649b07b82b7a1be402c2d79b960e",
+      "guixBase32": "03lnkgbw40p43dx2pf07kdjayxz4mv1hy752dk7h27awc680y7ih",
+      "cargoVendorSha256": "a8e661722a66994ceee5fb73be70acbefcfec0524e81e1c37dc3612527c8618d",
+      "cargoLockSha256": "efb4453468196184faae871493709f25a584aaeda32c144dd0ffebe7f74e6b9c",
+      "patches": [
+        {
+          "file": "svsm-igvmmeasure-standalone-cargo.patch",
+          "sha256": "0836f588e50b5eb2bab17836ba87aebed53c662dba158b9c241450e924c88867"
+        }
+      ]
     }
   }
 }

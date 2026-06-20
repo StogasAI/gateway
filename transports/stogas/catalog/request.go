@@ -144,6 +144,8 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		if body == nil {
 			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid chat completion request"}
 		}
+		body.Provider = r.Provider
+		body.Model = r.Model
 		body.Fallbacks = nil
 		return &schemas.BifrostRequest{RequestType: r.RequestType, ChatRequest: body}, nil
 	case r.responses != nil:
@@ -151,6 +153,8 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		if body == nil {
 			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid responses request"}
 		}
+		body.Provider = r.Provider
+		body.Model = r.Model
 		body.Fallbacks = nil
 		return &schemas.BifrostRequest{RequestType: r.RequestType, ResponsesRequest: body}, nil
 	default:

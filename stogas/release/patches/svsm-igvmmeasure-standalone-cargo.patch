@@ -1,0 +1,30 @@
+diff --git a/tools/igvmmeasure/Cargo.toml b/tools/igvmmeasure/Cargo.toml
+index fbc0cb7..f2f8da2 100644
+--- a/tools/igvmmeasure/Cargo.toml
++++ b/tools/igvmmeasure/Cargo.toml
+@@ -1,17 +1,12 @@
+ [package]
+ name = "igvmmeasure"
+ version = "0.1.0"
+-edition.workspace = true
++edition = "2024"
+ 
+-# specify dependencies' target to avoid feature unification with SVSM
+-# see https://doc.rust-lang.org/cargo/reference/features.html#feature-unification
+-[target.'cfg(all(target_os = "linux"))'.dependencies]
+-clap = { workspace = true, default-features = true, features = ["derive"] }
+-sha2 = { workspace = true, default-features = true }
+-igvm.workspace = true
+-igvm_defs.workspace = true
+-p384.workspace = true
+-zerocopy.workspace = true
+-
+-[lints]
+-workspace = true
++[dependencies]
++clap = { version = "4.4.14", default-features = true, features = ["derive"] }
++sha2 = { version = "0.10.8", default-features = true }
++igvm = { version = "0.4.0", default-features = false }
++igvm_defs = { version = "0.4.0", default-features = false }
++p384 = { version = "0.13.0" }
++zerocopy = { version = "0.8.2", features = ["derive"] }

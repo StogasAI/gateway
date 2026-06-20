@@ -1,4 +1,0 @@
-# Ignore modular OpenAPI source files
-openapi/paths/
-openapi/schemas/
-openapi/openapi.yaml

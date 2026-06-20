@@ -1,20 +1,19 @@
 package catalog
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"time"
 )
 
+const PublicCatalogVersion = "stogas.gateway.catalog.v1"
+
 type PublicCatalog struct {
 	GeneratedAt    string                     `json:"generatedAt"`
 	Graph          compiledGraph              `json:"graph"`
-	Hash           string                     `json:"hash"`
 	Indexes        PublicIndexes              `json:"indexes"`
 	PolicyProfiles []PolicyProfileDescription `json:"policyProfiles"`
-	Schema         string                     `json:"schema"`
+	Version        string                     `json:"version"`
 }
 
 type PublicIndexes struct {
@@ -33,15 +32,6 @@ type OpenAIModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-func CatalogHash() string {
-	snap := active.Load()
-	if snap == nil {
-		return ""
-	}
-	sum := sha256.Sum256(snap.raw)
-	return hex.EncodeToString(sum[:])
-}
-
 func PublicCatalogPayload() (PublicCatalog, bool) {
 	snap := active.Load()
 	if snap == nil {
@@ -50,12 +40,11 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 	return PublicCatalog{
 		GeneratedAt: time.Unix(1, 0).UTC().Format(time.RFC3339),
 		Graph:       snap.graph,
-		Hash:        CatalogHash(),
 		Indexes: PublicIndexes{
 			ProviderNativeModelSlugs: snap.providerNativeModelSlugs,
 		},
 		PolicyProfiles: sortedProfileDescriptions(),
-		Schema:         "stogas.gateway.catalog.v1",
+		Version:        PublicCatalogVersion,
 	}, true
 }
 

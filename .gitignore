@@ -1,190 +1,59 @@
 .env
-.vscode
-.DS_Store
-.tool-versions
+.env.*
+.envrc
+*.env
 *_creds*
-**/venv/
-**/__pycache__/**
 private.*
-.venv
-bifrost-data
-test-coverage-local.sh
+.infisical
 
-# Enterprise
-ui/app/enterprise
-ui/components/enterprise
-
-# Temporary directories
-**/temp/
-/transports/ui
-/transports/bifrost-http/lib/ui
-/transports/bifrost-http/ui/
-transports/bifrost-http/logs/
-transports/bifrost-http/tmp/
-node_modules
-/dist
-**/dist
-**/tmp/
-/temp*/
-!examples/mcps/temperature/
-tmp/
-tmp-*
-.tmp
-private
-**/bin
-build/
-target/
-
-# Go workspaces (local only)
-go.work
-go.work.sum
-
-# Generated schema copy (created by go generate)
-transports/schema/config.schema.json
-
-# Sqlite DBs
-*.db
-*.db-shm
-*.db-wal
-transports/bifrost-http/v1.5.x
-
-# Test reports
-test-reports
-tests/e2e/api/newman-reports
-
-# AI Agent specific
-settings.local.json
+.vscode/
+.idea/
+.zed/
 .codex/
 .cursor/
-.claude/*
-!.claude/skills/
+settings.local.json
+*.swp
+*.swo
+*~
 
-# Python specific
-**/__pycache__/**
-**/venv/
-**/.venv/
-**/.pytest_cache/
-**/.coverage/
-**/.pytest_cache/
-
-
-# Nix specific
-.direnv
-.nix-store
-
-# MCP servers
-examples/mcps/**/bin/
-examples/mcps/http-no-ping-server/http-server
-examples/mcps/test-tools-server/dist/
-
-# Dependencies
-node_modules/
-
-# Test results
-test-results/
-playwright-report/
-blob-report/
-
-# Screenshots and videos
-screenshots/
-videos/
-
-# Coverage
-coverage/
-
-# Build output
-dist/
-
-
-# IDE
-.idea/
-.vscode/
-.zed/
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Debug logs
 *.log
-npm-debug.log*
-
-# Playwright
-playwright/.cache/
-
-# Terraform
-.terraform/
-.terraform.lock.hcl
-terraform.tfstate
-terraform.tfstate.backup
-*.tfvars
-!*.tfvars.example
-
-# Bifrost benchmarking
-bifrost-benchmarking
-bifrost-benchmarking.envrc
-
-# Stogas dev secrets
-.envrc
-
-# Tests
-:memory:
-
-# Generated test TLS certs (created by tests/docker-compose.yml redis-certs-init)
-tests/redis-certs/
-
-# dependencies
-ui/node_modules
-ui/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-ui/coverage
-
-# next.js
-ui/.next/
-ui/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+.tool-versions
 
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
+tmp/
+tmp-*
+**/tmp/
+dist/
+**/dist/
+build/
+target/
+coverage/
+test-results/
+playwright-report/
+blob-report/
+screenshots/
+videos/
 *.tsbuildinfo
-next-env.d.ts
 
-# auto-generated TanStack Router route tree
-ui/app/routeTree.gen.ts
+node_modules/
+.cache/
+.parcel-cache/
+.pytest_cache/
+**/__pycache__/
+**/venv/
+**/.venv/
+.direnv/
+.nix-store/
 
-.tanstack
-.next
-
-.infisical
-
-# e2e test artifacts
-examples/mcps/auth-demo-server/auth-demo-server
-examples/mcps/oauth-demo-server/oauth-demo-server
-
-# binaries
-tests/cmd/e2eseed/e2eseed
-tests/cmd/seedvks/seedvks
+go.work
+go.work.sum
+transports/vendor/
+stogas/release/vendor/
+*.db
+*.db-shm
+*.db-wal
+**/bin/

@@ -2,15 +2,14 @@
 	"name": "@stogas/api",
 	"private": true,
 	"scripts": {
-		"build": "bun ../../scripts/stogas.ts build api",
-		"check": "bun ../../scripts/stogas.ts check",
-		"clean": "bun ../../scripts/stogas.ts clean api",
-		"deploy:prod": "bun ../../scripts/stogas.ts deploy prod api",
-		"deploy:staging": "bun ../../scripts/stogas.ts deploy staging api",
-		"dev": "bun ../../scripts/stogas.ts dev api",
-		"pull:origin": "git pull origin main",
-		"pull:upstream": "git pull upstream main",
-		"preview": "bun ../../scripts/stogas.ts preview api"
+		"build": "bun run catalog:check && cd transports && GOWORK=off go build -o ../dist/stogas-gateway ./cmd/stogas-gateway",
+		"catalog:build": "node transports/stogas/catalog/source/scripts/build.mjs",
+		"catalog:check": "node transports/stogas/catalog/source/scripts/build.mjs --check",
+		"check": "bun run catalog:check && cd transports && GOWORK=off go test ./...",
+		"clean": "rm -rf dist tmp transports/vendor stogas/release/vendor transports/stogas/catalog/source/.tmp-catalog-build",
+		"dev": "cd transports && GOWORK=off go run ./cmd/stogas-gateway",
+		"release:build": "stogas/release/scripts/build-release.sh",
+		"release:verify-pins": "node stogas/release/scripts/verify-pins.mjs"
 	},
 	"version": "0.0.1"
 }

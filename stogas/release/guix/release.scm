@@ -40,21 +40,47 @@
        (+ (* major 1000000000000) (* minor 1000000) patch))
       (_ 0))))
 
+(define (runtime-source-path? file)
+  (or (string=? file "core")
+      (string-prefix? "core/" file)
+      (string=? file "transports")
+      (string-prefix? "transports/" file)))
+
+(define (gateway-relative-path file)
+  (let ((prefix (string-append %gateway-root "/")))
+    (if (string-prefix? prefix file)
+        (substring file (string-length prefix))
+        file)))
+
 (define (gateway-source)
   (local-file %gateway-root
               "stogas-gateway-source"
               #:recursive? #t
               #:select?
               (lambda (file stat)
-                (and (not (string-contains file "/.git/"))
-                     (not (string-suffix? "/.git" file))
-                     (not (string-contains file "/tmp/"))
-                     (not (string-prefix? "tmp/" file))
-                     (not (string-contains file "/dist/"))
-                     (not (string-contains file "/node_modules/"))))))
+                (let ((relative (gateway-relative-path file)))
+                  (and (runtime-source-path? relative)
+                       (not (string-contains relative "/.git/"))
+                       (not (string-suffix? "/.git" relative))
+                       (not (string-contains relative "/tmp/"))
+                       (not (string-prefix? "tmp/" relative))
+                       (not (string-contains relative "/dist/"))
+                       (not (string-contains relative "/node_modules/"))
+                       (not (string-contains relative "/transports/vendor/"))
+                       (not (string-suffix? "/transports/vendor" relative))
+                       (not (string-contains relative "/stogas/release/vendor/"))
+                       (not (string-suffix? "/stogas/release/vendor" relative)))))))
 
 (define (source-file path name)
   (local-file (string-append %release-root "/" path) name))
+
+(define (source-directory path name)
+  (local-file (string-append %release-root "/" path)
+              name
+              #:recursive? #t))
+
+(define %go-modcache
+  (source-directory "vendor/go-modcache" "stogas-go-modcache"))
 
 (package
   (name "stogas-gateway-igvm-release")
@@ -111,9 +137,15 @@
                        (substring line (string-length prefix))
                        (loop rest)))))))
 
-          (define (write-artifact-manifest out igvm efi measurement)
+          (define (copy-recursively/quiet source target)
+            (copy-recursively source target
+                              #:log (%make-void-port "w")))
+
+          (define (write-artifact-manifest out igvm efi measurement vendor-modules)
             (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
                    (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
+                   (go-mod (string-append #$source "/transports/go.mod"))
+                   (go-sum (string-append #$source "/transports/go.sum"))
                    (os-release #$(source-file "guix/os-release" "os-release"))
                    (kernel (string-append #$stogas-linux-6-18 "/bzImage"))
                    (stub (string-append #$stogas-systemd-uki-tools
@@ -136,6 +168,9 @@
                   (display "  },\n" port)
                   (display "  \"build\": {\n" port)
                   (format port "    \"cmdlineSha256\": ~a,\n" (json-string (sha256 cmdline)))
+                  (format port "    \"goModSha256\": ~a,\n" (json-string (sha256 go-mod)))
+                  (format port "    \"goSumSha256\": ~a,\n" (json-string (sha256 go-sum)))
+                  (format port "    \"goVendorModulesSha256\": ~a,\n" (json-string (sha256 vendor-modules)))
                   (format port "    \"goVersion\": ~a,\n"
                           (json-string (string-trim-right (command-output "go" "version"))))
                   (display "    \"guixChannelCommit\": \"d1e9e23fd441fce828fa74616271b00b90853cee\",\n" port)
@@ -169,6 +204,8 @@
           (define out #$output)
           (define source #$source)
           (define work (string-append (getcwd) "/work"))
+          (define build-source (string-append work "/source"))
+          (define go-modcache (string-append work "/go-modcache"))
           (define rootfs (string-append work "/rootfs"))
           (define initramfs (string-append work "/initramfs.cpio.zst"))
           (define efi (string-append out "/gateway.efi"))
@@ -190,6 +227,8 @@
           (setenv "GOWORK" "off")
           (setenv "CGO_ENABLED" "0")
           (setenv "HOME" work)
+          (setenv "GOMODCACHE" go-modcache)
+          (setenv "GOCACHE" (string-append work "/go-build-cache"))
           (setenv "PATH"
                   (string-append #$(file-append (pkg "bash-minimal") "/bin") ":"
                                  #$(file-append (pkg "coreutils") "/bin") ":"
@@ -205,10 +244,17 @@
                                  #$(file-append stogas-virt-firmware-rs-tools "/bin")))
 
           (mkdir-p out)
+          (mkdir-p work)
+          (copy-recursively/quiet source build-source)
+          (invoke "chmod" "-R" "u+w" build-source)
+          (copy-recursively/quiet #$%go-modcache go-modcache)
+          (invoke "chmod" "-R" "u+w" go-modcache)
           (mkdir-p rootfs)
-          (with-directory-excursion (string-append source "/transports")
-            (unless (file-exists? "vendor")
-              (error "Go vendor directory is required for offline release builds"))
+          (with-directory-excursion (string-append build-source "/transports")
+            (when (file-exists? "vendor")
+              (delete-file-recursively "vendor"))
+            (invoke "go" "mod" "verify")
+            (invoke "go" "mod" "vendor")
             (invoke "go" "build"
                     "-trimpath"
                     "-buildvcs=false"
@@ -256,7 +302,8 @@
            out
            igvm
            efi
-           (call-with-input-file measurement-path get-string-all))
+           (call-with-input-file measurement-path get-string-all)
+           (string-append build-source "/transports/vendor/modules.txt"))
           (call-with-output-file (string-append out "/SHA256SUMS")
             (lambda (port)
               (for-each

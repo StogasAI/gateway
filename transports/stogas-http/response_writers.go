@@ -60,9 +60,6 @@ func (s *Server) writeJSON(ctx *fasthttp.RequestCtx, statusCode int, payload any
 	}
 	ctx.SetStatusCode(statusCode)
 	ctx.SetContentType("application/json")
-	if hash := catalog.CatalogHash(); hash != "" {
-		ctx.Response.Header.Set("X-Stogas-Catalog-Hash", hash)
-	}
 	_, _ = ctx.Write(data)
 }
 

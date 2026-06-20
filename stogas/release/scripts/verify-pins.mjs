@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,7 +47,16 @@ function verifyLockShape() {
 	for (const [name, source] of Object.entries(pins.releaseSources)) {
 		if (source.commit) assertCommit(source.commit, `${name} commit`);
 		if (source.sha256) assertSha256(source.sha256, `${name} source hash`);
+		if (source.guixBase32) assertBase32(source.guixBase32, `${name} Guix base32 source hash`);
 		if (source.recursiveGitBase32) assertBase32(source.recursiveGitBase32, `${name} recursive Git hash`);
+		if (source.cargoVendorSha256) assertSha256(source.cargoVendorSha256, `${name} Cargo vendor hash`);
+		if (source.cargoLockSha256) assertSha256(source.cargoLockSha256, `${name} Cargo.lock hash`);
+		if (source.patches) {
+			for (const patch of source.patches) {
+				assert(typeof patch.file === 'string' && patch.file.endsWith('.patch'), `${name} patch file is invalid.`);
+				assertSha256(patch.sha256, `${name} patch hash`);
+			}
+		}
 	}
 	assert(pins.releaseSources.linux.version === '6.18.35-gnu', 'Linux release pin must be 6.18.35.');
 	assert(pins.releaseSources.linux.guixPackage === 'stogas-linux-6.18', 'Linux release package must be Stogas custom 6.18.');
@@ -91,7 +100,15 @@ function verifyWorkflows() {
 		}
 		assert(!source.includes('apt-get install -y guix'), `${basename(path)} installs unpinned Guix.`);
 		assert(!source.includes('guix shell'), `${basename(path)} must not use guix shell for release builds.`);
+		assert(!source.includes('/gnu/store'), `${basename(path)} must not cache or mutate /gnu/store.`);
+		assert(!source.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), `${basename(path)} must not skip guix build --check.`);
+		if (source.includes('actions/cache@')) {
+			assert(source.includes('path: stogas/release/vendor'), `${basename(path)} may only cache the Stogas release vendor cache.`);
+		}
 	}
+	const releaseWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'), 'utf8');
+	assert(releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must attach Sigstore trust evidence.');
+	assert(releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must upload Sigstore trust evidence.');
 }
 
 function verifyReleaseSources() {
@@ -100,27 +117,123 @@ function verifyReleaseSources() {
 	assert(releaseSource.includes('stogas-linux-6.18'), 'Release graph must use the Stogas kernel derivation.');
 	assert(releaseSource.includes('OvmfPkg/AmdSev/AmdSevX64.dsc'), 'Release graph must build AmdSevX64 OVMF.');
 	assert(releaseSource.includes(pins.releaseSources.edk2.recursiveGitBase32), 'edk2 recursive source hash is stale.');
+	assert(releaseSource.includes(pins.releaseSources.virtFirmwareRs.guixBase32), 'virt-firmware-rs source hash is stale.');
+	assert(releaseSource.includes(pins.releaseSources.virtFirmwareRs.cargoVendorSha256), 'virt-firmware-rs vendor hash is stale.');
+	assert(releaseSource.includes(pins.releaseSources.svsmIgvmMeasure.guixBase32), 'SVSM source hash is stale.');
+	assert(releaseSource.includes(pins.releaseSources.svsmIgvmMeasure.cargoVendorSha256), 'SVSM igvmmeasure vendor hash is stale.');
+	assert(releaseSource.includes('/stogas/release/vendor/'), 'Gateway source selector must exclude Rust vendor cache.');
+	assert(releaseSource.includes('/transports/vendor/'), 'Gateway source selector must exclude Go vendor cache.');
+	assert(releaseSource.includes('(define (runtime-source-path? file)'), 'Gateway source selector must be allowlisted.');
+	assert(releaseSource.includes('(define (gateway-relative-path file)'), 'Gateway source selector must normalize absolute local-file paths.');
+	assert(releaseSource.includes('(string-prefix? "core/" file)'), 'Gateway source selector must include core only by allowlist.');
+	assert(releaseSource.includes('(string-prefix? "transports/" file)'), 'Gateway source selector must include transports only by allowlist.');
+	assert(releaseSource.includes('vendor/go-modcache'), 'Release graph must consume the hydrated Go module cache.');
 	assert(!releaseSource.includes('linux-libre-6.12'), 'Release graph still references linux-libre-6.12.');
 	assert(!releaseSource.includes('ovmf-x86-64') || releaseSource.includes('(inherit ovmf-x86-64)'), 'Release graph must not use generic OVMF output.');
 	assert(!releaseSource.includes('go env -w'), 'Release graph must not mutate global Go environment.');
 	assert(!releaseSource.includes('--fallback'), 'Release graph must not allow Guix fallback builds.');
+	assert(releaseSource.includes('(setenv "GOPROXY" "off")'), 'Release graph must disable GOPROXY.');
+	assert(releaseSource.includes('(setenv "GOSUMDB" "off")'), 'Release graph must disable GOSUMDB.');
+	assert(releaseSource.includes('(setenv "GOTOOLCHAIN" "local")'), 'Release graph must use local Go toolchain only.');
+	assert(releaseSource.includes('(setenv "GOWORK" "off")'), 'Release graph must disable Go workspaces.');
+	assert(releaseSource.includes('(setenv "CGO_ENABLED" "0")'), 'Release graph must disable CGO.');
+	assert(releaseSource.includes('(invoke "go" "mod" "verify")'), 'Release graph must verify hydrated Go modules offline.');
+	assert(releaseSource.includes('(invoke "go" "mod" "vendor")'), 'Release graph must regenerate Go vendor inside the sandbox.');
+	assert(releaseSource.includes('"-mod=vendor"'), 'Release graph must compile from Go vendor only.');
 
 	const buildScript = readFileSync(resolve(releaseRoot, 'scripts/build-release.sh'), 'utf8');
 	const hydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-guix-closure.sh'), 'utf8');
+	const goHydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-go-vendor.sh'), 'utf8');
+	const rustHydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-rust-vendor.sh'), 'utf8');
 	assert(buildScript.includes('--no-substitutes'), 'Final release build must disable substitutes.');
 	assert(buildScript.includes("--substitute-urls=''"), 'Final release build must empty substitute URLs.');
 	assert(buildScript.includes('--no-offload'), 'Final release build must disable offload.');
+	assert(buildScript.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), 'Build script must gate local no-check builds explicitly.');
 	assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
 	assert(hydrateScript.includes('stogas-(gateway-igvm-release|linux-6\\.18'), 'Hydration allow-list must include only Stogas builds.');
+	assert(hydrateScript.includes('hydrate-go-vendor.sh'), 'Closure hydration must refresh Go vendor cache first.');
+	assert(hydrateScript.includes('hydrate-rust-vendor.sh'), 'Closure hydration must refresh Rust vendor cache first.');
+	assert(goHydrateScript.includes('go mod tidy'), 'Go hydration must tidy the module graph.');
+	assert(goHydrateScript.includes('go mod download'), 'Go hydration must download modules before verification.');
+	assert(goHydrateScript.includes('go mod verify'), 'Go hydration must verify downloaded modules.');
+	assert(goHydrateScript.includes('go mod vendor'), 'Go hydration must regenerate vendor from verified modules.');
+	assert(goHydrateScript.includes('go mod vendor -o "$STOGAS_GO_VENDOR"'), 'Go hydration must place the release-owned vendor cache under stogas/release/vendor.');
+	assert(goHydrateScript.includes('go_mod_before='), 'Go hydration must snapshot go.mod before hydration.');
+	assert(goHydrateScript.includes('go_sum_before='), 'Go hydration must snapshot go.sum before hydration.');
+	assert(goHydrateScript.includes('Go hydration changed transports/go.mod or transports/go.sum'), 'Go hydration must fail if tidy changes the ledger.');
+	assert(goHydrateScript.includes('sum.golang.org'), 'Go hydration must use the public Go checksum database.');
+	assert(goHydrateScript.includes('GOFLAGS=-modcacherw'), 'Go hydration must keep the ignored module cache removable.');
+	assert(goHydrateScript.includes('guix time-machine'), 'Go hydration must use Go from the pinned Guix channel.');
+	assert(goHydrateScript.includes('go@1.26'), 'Go hydration must use the pinned Guix Go package.');
+	assert(!goHydrateScript.includes('command -v go'), 'Go hydration must not depend on ambient native Go.');
+	assert(rustHydrateScript.includes('cargo vendor --locked'), 'Rust hydration must use locked Cargo vendoring.');
+	assert(rustHydrateScript.includes('guix time-machine'), 'Rust hydration must use Cargo from the pinned Guix channel.');
+	assert(!rustHydrateScript.includes('command -v cargo'), 'Rust hydration must not depend on ambient native Cargo.');
+	assert(rustHydrateScript.includes('sha256sum'), 'Rust hydration must verify source and cache hashes.');
 
 	for (const path of [
-		resolve(releaseRoot, 'vendor/virt-firmware-rs/Cargo.lock'),
-		resolve(releaseRoot, 'vendor/virt-firmware-rs/.cargo/config.toml'),
-		resolve(releaseRoot, 'vendor/igvmmeasure/Cargo.lock'),
-		resolve(releaseRoot, 'vendor/igvmmeasure/.cargo/config.toml')
+		resolve(releaseRoot, 'locks/virt-firmware-rs.Cargo.lock'),
+		resolve(releaseRoot, 'locks/igvmmeasure.Cargo.lock'),
+		resolve(releaseRoot, 'patches/virt-firmware-rs-kvm-vmsa-last.patch'),
+		resolve(releaseRoot, 'patches/svsm-igvmmeasure-standalone-cargo.patch')
 	]) {
 		readFileSync(path);
 	}
+
+	verifyFileHash(
+		resolve(releaseRoot, 'locks/virt-firmware-rs.Cargo.lock'),
+		pins.releaseSources.virtFirmwareRs.cargoLockSha256,
+		'virt-firmware-rs Cargo.lock'
+	);
+	verifyFileHash(
+		resolve(releaseRoot, 'locks/igvmmeasure.Cargo.lock'),
+		pins.releaseSources.svsmIgvmMeasure.cargoLockSha256,
+		'igvmmeasure Cargo.lock'
+	);
+	for (const [sourceName, source] of Object.entries(pins.releaseSources)) {
+		for (const patch of source.patches ?? []) {
+			verifyFileHash(resolve(releaseRoot, 'patches', patch.file), patch.sha256, `${sourceName} patch ${patch.file}`);
+			assert(releaseSource.includes(patch.file), `Release graph does not apply ${patch.file}.`);
+		}
+	}
+	const trackedVendor = execFileSync('git', ['-C', repoRoot, 'ls-files', '--cached', '--', 'stogas/release/vendor/**'], {
+		encoding: 'utf8'
+	})
+		.split('\n')
+		.filter(Boolean)
+		.filter((file) => existsSync(resolve(repoRoot, file)))
+		.join('\n');
+	assert(trackedVendor === '', 'stogas/release/vendor must remain an untracked local cache.');
+	const trackedGoVendor = execFileSync('git', ['-C', repoRoot, 'ls-files', '--cached', '--', 'transports/vendor/**'], {
+		encoding: 'utf8'
+	})
+		.split('\n')
+		.filter(Boolean)
+		.filter((file) => existsSync(resolve(repoRoot, file)))
+		.join('\n');
+	assert(trackedGoVendor === '', 'transports/vendor must remain an untracked local cache.');
+}
+
+function verifyGoAudit() {
+	const audit = readFileSync(resolve(releaseRoot, 'BUILD_AUDIT.md'), 'utf8');
+	readFileSync(resolve(repoRoot, 'transports/go.mod'));
+	readFileSync(resolve(repoRoot, 'transports/go.sum'));
+	assert(!audit.includes('apps/api/'), 'BUILD_AUDIT.md paths must be relative to the gateway repository root.');
+	assert(!audit.includes('| Module | Version |'), 'BUILD_AUDIT.md must not duplicate the Go module hash ledger.');
+	assert(!/sigstore|provenance|attestation/i.test(audit), 'BUILD_AUDIT.md must stay scoped to reproducible build inputs.');
+	assert(audit.includes('Pure-Source Go Hydration'), 'BUILD_AUDIT.md must document the Go hydration boundary.');
+	assert(audit.includes('sum.golang.org'), 'BUILD_AUDIT.md must document Go checksum database verification.');
+	assert(audit.includes('GOFLAGS=-modcacherw'), 'BUILD_AUDIT.md must document removable Go cache behavior.');
+	assert(audit.includes('go.sum'), 'BUILD_AUDIT.md must name go.sum as the Go dependency ledger.');
+	assert(audit.includes('GOPROXY=off'), 'BUILD_AUDIT.md must document offline Go release mode.');
+	assert(audit.includes('stogas/release/vendor/go-vendor'), 'BUILD_AUDIT.md must document the release-owned Go vendor cache.');
+	assert(audit.includes('transports/vendor/'), 'BUILD_AUDIT.md must document the untracked Go vendor cache.');
+	assert(audit.includes('--check'), 'BUILD_AUDIT.md must document release guix build --check.');
+}
+
+function verifyFileHash(path, expected, label) {
+	const actual = createHash('sha256').update(readFileSync(path)).digest('hex');
+	assert(actual === expected, `${label} hash mismatch.`);
 }
 
 async function verifyNetworkHashes() {
@@ -155,5 +268,6 @@ verifyLockShape();
 verifyChannelsFile();
 verifyWorkflows();
 verifyReleaseSources();
+verifyGoAudit();
 if (process.argv.includes('--network')) await verifyNetworkHashes();
 console.log('Release pins verified.');

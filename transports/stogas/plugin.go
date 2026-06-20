@@ -49,6 +49,10 @@ func (p *Plugin) Cleanup() error {
 	return nil
 }
 
+func (p *Plugin) PreRequestHook(_ *schemas.BifrostContext, _ *schemas.BifrostRequest) error {
+	return nil
+}
+
 func (p *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) (*schemas.BifrostRequest, *schemas.LLMPluginShortCircuit, error) {
 	if req == nil {
 		return req, errorShortCircuit(400, "invalid_request_error", "Request is required"), nil
