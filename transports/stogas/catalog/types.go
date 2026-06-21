@@ -1,6 +1,9 @@
 package catalog
 
-import "github.com/maximhq/bifrost/core/schemas"
+import (
+	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/providers"
+)
 
 type Route string
 
@@ -25,7 +28,7 @@ type Deployment struct {
 	ParameterPolicies   map[string]compiledParameter
 }
 
-type Pricing map[string]map[string]string
+type Pricing = providers.Pricing
 
 type SlugProjection struct {
 	ExpandAttributeWithEnumeratedPrefixes [][]string `json:"expandAttributeWithEnumeratedPrefixes"`
@@ -121,27 +124,5 @@ type compiledSchemaPatch struct {
 	Parameters map[string]compiledParameter `json:"parameters"`
 }
 
-type compiledParameter struct {
-	Alias             string               `json:"alias"`
-	DeleteAttribute   bool                 `json:"deleteAttribute"`
-	ImplyValue        any                  `json:"implyValue"`
-	Max               *float64             `json:"max"`
-	Min               *float64             `json:"min"`
-	OverrideAttribute bool                 `json:"overrideAttribute"`
-	Reject            []compiledRejectRule `json:"reject"`
-	RejectConflict    bool                 `json:"rejectConflict"`
-	RejectUnsupported string               `json:"rejectUnsupported"`
-	Type              string               `json:"type"`
-	Values            []string             `json:"values"`
-}
-
-type compiledRejectRule struct {
-	AllowedKeys  []string `json:"allowedKeys"`
-	Exists       bool     `json:"exists"`
-	Missing      bool     `json:"missing"`
-	Path         string   `json:"path"`
-	Prefixes     []string `json:"prefixes"`
-	RequiredKeys []string `json:"requiredKeys"`
-	Values       []any    `json:"values"`
-	ValuesExcept []any    `json:"valuesExcept"`
-}
+type compiledParameter = providers.Parameter
+type compiledRejectRule = providers.RejectRule

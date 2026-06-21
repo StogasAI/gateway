@@ -1,8 +1,9 @@
-package stogas
+package billing
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,8 +19,20 @@ const (
 	poolWarmupPerConnTimeout  = 2 * time.Second
 )
 
+type DatabasePoolConfig struct {
+	MaxConns      int32
+	MinConns      int32
+	MinIdleConns  int32
+	QueryExecMode string
+}
+
 type GatewayDB struct {
 	pool *pgxpool.Pool
+}
+
+func ValidateDatabaseSchema(databaseSchema string) error {
+	_, err := pgrollSearchPath(databaseSchema)
+	return err
 }
 
 func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string, databasePool DatabasePoolConfig) (*GatewayDB, error) {
@@ -87,6 +100,62 @@ func queryExecMode(mode string) pgx.QueryExecMode {
 		return pgx.QueryExecModeSimpleProtocol
 	default:
 		return pgx.QueryExecModeCacheStatement
+	}
+}
+
+func validatePgrollSchemaName(databaseSchema string) (string, error) {
+	schemaName := strings.TrimSpace(databaseSchema)
+	if schemaName == "" {
+		schemaName = "public"
+	}
+	for index, r := range schemaName {
+		if index == 0 {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' {
+				continue
+			}
+			return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
+	}
+	return schemaName, nil
+}
+
+func pgrollSearchPath(databaseSchema string) (string, error) {
+	schemaName, err := validatePgrollSchemaName(databaseSchema)
+	if err != nil {
+		return "", err
+	}
+	if schemaName == "public" {
+		return "public", nil
+	}
+	return schemaName + ",public", nil
+}
+
+func (c DatabasePoolConfig) Validate() error {
+	if c.MaxConns <= 0 {
+		return fmt.Errorf("STOGAS_DB_POOL_MAX_CONNS must be positive")
+	}
+	if c.MinConns < 0 {
+		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be non-negative")
+	}
+	if c.MinIdleConns < 0 {
+		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be non-negative")
+	}
+	if c.MinConns > c.MaxConns {
+		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
+	}
+	if c.MinIdleConns > c.MaxConns {
+		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
+	}
+
+	switch c.QueryExecMode {
+	case "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
+		return nil
+	default:
+		return fmt.Errorf("STOGAS_DB_QUERY_EXEC_MODE must be one of cache_statement, cache_describe, describe_exec, exec, simple_protocol")
 	}
 }
 

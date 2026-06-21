@@ -3,6 +3,7 @@ package stogas
 import (
 	"context"
 	"errors"
+	"math/big"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -10,15 +11,35 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
+type statusError struct {
+	err        error
+	statusCode int
+}
+
+func mustBigInt(t *testing.T, value string) *big.Int {
+	t.Helper()
+	parsed, ok := new(big.Int).SetString(value, 10)
+	if !ok {
+		t.Fatalf("invalid big int %q", value)
+	}
+	return parsed
+}
+
+func (e *statusError) Error() string { return e.err.Error() }
+func (e *statusError) Unwrap() error { return e.err }
+func (e *statusError) StatusCode() int {
+	return e.statusCode
+}
+
 type fakeBillingAuthorizer struct {
 	attempts    []string
-	finalEvents []GatewayRequestEvent
-	results     []*BillingAuthorization
+	finalEvents []billing.RequestEvent
+	results     []*billing.Authorization
 	errors      []error
 	callCount   int
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*BillingAuthorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*billing.Authorization, error) {
 	f.attempts = append(f.attempts, requestID)
 	idx := f.callCount
 	f.callCount++
@@ -31,18 +52,18 @@ func (f *fakeBillingAuthorizer) AuthorizeRequest(ctx context.Context, rawAPIKey 
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *BillingAuthorization, event GatewayRequestEvent) error {
+func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent) error {
 	f.finalEvents = append(f.finalEvents, event)
 	return nil
 }
 
 func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expected := &BillingAuthorization{HoldID: "hold-1"}
+	expected := &billing.Authorization{HoldID: "hold-1"}
 	authorizer := &fakeBillingAuthorizer{
-		results: []*BillingAuthorization{nil, expected},
+		results: []*billing.Authorization{nil, expected},
 		errors: []error{
-			&billingError{err: ErrRequestAlreadyUsed, statusCode: 409},
+			&statusError{err: billing.ErrRequestAlreadyUsed, statusCode: 409},
 			nil,
 		},
 	}
@@ -74,7 +95,7 @@ func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 
 func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.T) {
 	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expectedErr := &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+	expectedErr := &statusError{err: billing.ErrInvalidAPIKey, statusCode: 401}
 	plugin := &Plugin{billing: &fakeBillingAuthorizer{}}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
@@ -83,7 +104,7 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	if authorization != nil {
 		t.Fatalf("expected no authorization for non-conflict error")
 	}
-	if !errors.Is(err, ErrInvalidAPIKey) {
+	if !errors.Is(err, billing.ErrInvalidAPIKey) {
 		t.Fatalf("expected invalid API key error, got %v", err)
 	}
 	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
@@ -93,7 +114,7 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 }
 
 func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
-	authorization := &BillingAuthorization{
+	authorization := &billing.Authorization{
 		AuthorizedAmount: mustBigInt(t, "5000"),
 		AvailableAfter:   mustBigInt(t, "10000000000"),
 		KeyID:            "key-1",
@@ -137,7 +158,7 @@ func TestPostLLMHookFinalizesProviderErrors(t *testing.T) {
 }
 
 func TestPostLLMHookDoesNotInsureClientCausedProviderErrors(t *testing.T) {
-	authorization := &BillingAuthorization{
+	authorization := &billing.Authorization{
 		AuthorizedAmount: mustBigInt(t, "5000"),
 		AvailableAfter:   mustBigInt(t, "10000000000"),
 		KeyID:            "key-1",
@@ -228,7 +249,7 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 					Error:      errorField,
 				}
 			}
-			if got := normalizeUpstreamStatus(err); got != tt.want {
+			if got := billing.NormalizeUpstreamStatus(err); got != tt.want {
 				t.Fatalf("normalizeUpstreamStatus = %q, want %q", got, tt.want)
 			}
 		})
@@ -273,8 +294,8 @@ func TestProviderErrorInsurancePolicyCoversOpenAIErrorClasses(t *testing.T) {
 				StatusCode: &tt.statusCode,
 				Error:      errorField,
 			}
-			if got := providerErrorIsInsured(err); got != tt.insured {
-				t.Fatalf("providerErrorIsInsured = %v, want %v; normalized=%s", got, tt.insured, normalizeUpstreamStatus(err))
+			if got := billing.ProviderErrorIsInsured(err); got != tt.insured {
+				t.Fatalf("ProviderErrorIsInsured = %v, want %v; normalized=%s", got, tt.insured, billing.NormalizeUpstreamStatus(err))
 			}
 		})
 	}

@@ -9,28 +9,28 @@ import (
 	"github.com/bytedance/sonic"
 )
 
-type invalidPathTarget struct {
+type rejectPathTarget struct {
 	raw     json.RawMessage
 	missing bool
 }
 
-type invalidPathSegment struct {
+type rejectPathSegment struct {
 	field  string
 	filter bool
 	value  string
 }
 
-func validateInvalidParameterRules(name string, raw json.RawMessage, policy compiledParameter) error {
+func validateParameterRejectRules(name string, raw json.RawMessage, policy compiledParameter) error {
 	rejectRules := parameterRejectRules(policy)
 	if len(rejectRules) == 0 {
 		return nil
 	}
 	for _, rule := range rejectRules {
-		invalid, err := invalidRequestValue(raw, rule)
+		rejected, err := rejectsRequestValue(raw, rule)
 		if err != nil {
 			return ErrInvalidJSON
 		}
-		if invalid {
+		if rejected {
 			if name == "tools" {
 				return ErrUnsupportedTool
 			}
@@ -77,30 +77,30 @@ func scalarPolicyValue(raw json.RawMessage) (string, bool) {
 	}
 }
 
-func invalidRequestValue(raw json.RawMessage, rule compiledRejectRule) (bool, error) {
-	targets, err := invalidPathTargets(raw, rule.Path)
+func rejectsRequestValue(raw json.RawMessage, rule compiledRejectRule) (bool, error) {
+	targets, err := rejectPathTargets(raw, rule.Path)
 	if err != nil {
 		return false, err
 	}
 	for _, target := range targets {
-		invalid, err := invalidTargetValue(target, rule)
-		if err != nil || invalid {
-			return invalid, err
+		rejected, err := rejectTargetValue(target, rule)
+		if err != nil || rejected {
+			return rejected, err
 		}
 	}
 	return false, nil
 }
 
-func invalidPathTargets(raw json.RawMessage, path string) ([]invalidPathTarget, error) {
-	segments, err := parseInvalidPath(path)
+func rejectPathTargets(raw json.RawMessage, path string) ([]rejectPathTarget, error) {
+	segments, err := parseRejectPath(path)
 	if err != nil {
 		return nil, err
 	}
-	targets := []invalidPathTarget{{raw: raw}}
+	targets := []rejectPathTarget{{raw: raw}}
 	for _, segment := range segments {
-		next := make([]invalidPathTarget, 0, len(targets))
+		next := make([]rejectPathTarget, 0, len(targets))
 		for _, target := range targets {
-			expanded, err := expandInvalidPathTarget(target, segment)
+			expanded, err := expandRejectPathTarget(target, segment)
 			if err != nil {
 				return nil, err
 			}
@@ -111,7 +111,7 @@ func invalidPathTargets(raw json.RawMessage, path string) ([]invalidPathTarget, 
 	return targets, nil
 }
 
-func parseInvalidPath(path string) ([]invalidPathSegment, error) {
+func parseRejectPath(path string) ([]rejectPathSegment, error) {
 	if path == "$" {
 		return nil, nil
 	}
@@ -119,11 +119,11 @@ func parseInvalidPath(path string) ([]invalidPathSegment, error) {
 		return nil, fmt.Errorf("invalid catalog policy path %q", path)
 	}
 	rest := strings.TrimPrefix(path, "$")
-	segments := []invalidPathSegment{}
+	segments := []rejectPathSegment{}
 	for rest != "" {
 		switch {
 		case strings.HasPrefix(rest, "[]"):
-			segments = append(segments, invalidPathSegment{})
+			segments = append(segments, rejectPathSegment{})
 			rest = strings.TrimPrefix(rest, "[]")
 		case strings.HasPrefix(rest, "["):
 			end := strings.Index(rest, "]")
@@ -134,7 +134,7 @@ func parseInvalidPath(path string) ([]invalidPathSegment, error) {
 			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
 				return nil, fmt.Errorf("invalid catalog policy path %q", path)
 			}
-			segments = append(segments, invalidPathSegment{
+			segments = append(segments, rejectPathSegment{
 				field:  strings.TrimSpace(parts[0]),
 				filter: true,
 				value:  strings.ToLower(strings.TrimSpace(parts[1])),
@@ -144,10 +144,10 @@ func parseInvalidPath(path string) ([]invalidPathSegment, error) {
 			rest = strings.TrimPrefix(rest, ".")
 			end := strings.IndexAny(rest, ".[")
 			if end < 0 {
-				segments = append(segments, invalidPathSegment{field: rest})
+				segments = append(segments, rejectPathSegment{field: rest})
 				rest = ""
 			} else {
-				segments = append(segments, invalidPathSegment{field: rest[:end]})
+				segments = append(segments, rejectPathSegment{field: rest[:end]})
 				rest = rest[end:]
 			}
 		default:
@@ -157,18 +157,18 @@ func parseInvalidPath(path string) ([]invalidPathSegment, error) {
 	return segments, nil
 }
 
-func expandInvalidPathTarget(target invalidPathTarget, segment invalidPathSegment) ([]invalidPathTarget, error) {
+func expandRejectPathTarget(target rejectPathTarget, segment rejectPathSegment) ([]rejectPathTarget, error) {
 	if target.missing {
-		return []invalidPathTarget{target}, nil
+		return []rejectPathTarget{target}, nil
 	}
 	if segment.field == "" {
 		var values []json.RawMessage
 		if err := sonic.Unmarshal(target.raw, &values); err != nil {
 			return nil, nil
 		}
-		targets := make([]invalidPathTarget, 0, len(values))
+		targets := make([]rejectPathTarget, 0, len(values))
 		for _, value := range values {
-			targets = append(targets, invalidPathTarget{raw: value})
+			targets = append(targets, rejectPathTarget{raw: value})
 		}
 		return targets, nil
 	}
@@ -178,18 +178,18 @@ func expandInvalidPathTarget(target invalidPathTarget, segment invalidPathSegmen
 	}
 	if segment.filter {
 		if rawStringField(object, segment.field) == segment.value {
-			return []invalidPathTarget{target}, nil
+			return []rejectPathTarget{target}, nil
 		}
 		return nil, nil
 	}
 	value, ok := object[segment.field]
 	if !ok {
-		return []invalidPathTarget{{missing: true}}, nil
+		return []rejectPathTarget{{missing: true}}, nil
 	}
-	return []invalidPathTarget{{raw: value}}, nil
+	return []rejectPathTarget{{raw: value}}, nil
 }
 
-func invalidTargetValue(target invalidPathTarget, rule compiledRejectRule) (bool, error) {
+func rejectTargetValue(target rejectPathTarget, rule compiledRejectRule) (bool, error) {
 	if target.missing {
 		return rule.Missing || len(rule.RequiredKeys) > 0 || len(rule.ValuesExcept) > 0, nil
 	}
@@ -201,7 +201,7 @@ func invalidTargetValue(target invalidPathTarget, rule compiledRejectRule) (bool
 		if err := sonic.Unmarshal(target.raw, &object); err != nil {
 			return false, err
 		}
-		if invalidObjectShape(object, rule) {
+		if rejectsObjectShape(object, rule) {
 			return true, nil
 		}
 	}
@@ -210,12 +210,12 @@ func invalidTargetValue(target invalidPathTarget, rule compiledRejectRule) (bool
 		if !ok {
 			return true, nil
 		}
-		return invalidStringValue(value, rule), nil
+		return rejectsStringValue(value, rule), nil
 	}
 	return false, nil
 }
 
-func invalidObjectShape(object map[string]json.RawMessage, rule compiledRejectRule) bool {
+func rejectsObjectShape(object map[string]json.RawMessage, rule compiledRejectRule) bool {
 	if len(rule.RequiredKeys) > 0 {
 		for _, key := range rule.RequiredKeys {
 			if _, ok := object[key]; !ok {
@@ -242,7 +242,7 @@ func rawString(raw json.RawMessage) (string, bool) {
 	return strings.ToLower(strings.TrimSpace(value)), true
 }
 
-func invalidStringValue(value string, rule compiledRejectRule) bool {
+func rejectsStringValue(value string, rule compiledRejectRule) bool {
 	if value == "" {
 		return false
 	}

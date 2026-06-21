@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
@@ -42,8 +43,8 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	if !ok {
 		t.Fatal("expected gateway request lifetime deadline")
 	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > stogas.GatewayRequestLifetime {
-		t.Fatalf("request lifetime remaining = %s, want within %s", remaining, stogas.GatewayRequestLifetime)
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > billing.GatewayRequestLifetime {
+		t.Fatalf("request lifetime remaining = %s, want within %s", remaining, billing.GatewayRequestLifetime)
 	}
 }
 

@@ -1,4 +1,4 @@
-package stogas
+package billing
 
 import (
 	"context"
@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/maximhq/bifrost/transports/stogas/apikey"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 func TestParseSignedAPIKey(t *testing.T) {
@@ -26,29 +24,29 @@ func TestParseSignedAPIKey(t *testing.T) {
 	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
 	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apikey.TypeExternal, "", apikey.Version)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apiKeyTypeExternal, "", apiKeyVersion)
 
-	claims, err := apikey.ParseSigned(rawKey, secret)
+	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
 		t.Fatalf("parseSignedAPIKey returned error: %v", err)
 	}
 	if claims.KeyID != keyID || claims.OrganizationID != organizationID || claims.WorkspaceID != workspaceID || claims.ResponsibleID != userID {
 		t.Fatalf("claims = %#v", claims)
 	}
-	if claims.KeyType != apikey.TypeExternal || claims.ProvisioningID != nil {
+	if claims.KeyType != apiKeyTypeExternal || claims.ProvisioningID != nil {
 		t.Fatalf("key type/provisioning = %#v", claims)
 	}
 	if claims.KeyVersion != 1 {
 		t.Fatalf("KeyVersion = %d, want 1", claims.KeyVersion)
 	}
 
-	tamperedIndex := len(apikey.Prefix) + 10
+	tamperedIndex := len(apiKeyPrefix) + 10
 	tamperedChar := byte('A')
 	if rawKey[tamperedIndex] == tamperedChar {
 		tamperedChar = 'B'
 	}
 	tamperedKey := rawKey[:tamperedIndex] + string(tamperedChar) + rawKey[tamperedIndex+1:]
-	if _, err := apikey.ParseSigned(tamperedKey, secret); err == nil {
+	if _, err := parseSignedAPIKey(tamperedKey, secret); err == nil {
 		t.Fatal("parseSignedAPIKey accepted a tampered key")
 	}
 }
@@ -60,13 +58,13 @@ func TestParseProvisionedSignedAPIKey(t *testing.T) {
 	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
 	provisioningID := "019de516-c9ac-79cf-b701-4cf1b21f0a8c"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apikey.TypeProvisioned, provisioningID, apikey.Version)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apiKeyTypeProvisioned, provisioningID, apiKeyVersion)
 
-	claims, err := apikey.ParseSigned(rawKey, secret)
+	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
 		t.Fatalf("parseSignedAPIKey returned error: %v", err)
 	}
-	if claims.KeyType != apikey.TypeProvisioned || claims.ProvisioningID == nil || *claims.ProvisioningID != provisioningID {
+	if claims.KeyType != apiKeyTypeProvisioned || claims.ProvisioningID == nil || *claims.ProvisioningID != provisioningID {
 		t.Fatalf("claims = %#v", claims)
 	}
 }
@@ -80,19 +78,19 @@ func TestParseSignedAPIKeyRejectsWrongVersion(t *testing.T) {
 		"019de516-7df8-71d6-80e4-3c62090d4e94",
 		"019de516-9c1b-7061-a9f0-bbdcaa8946e5",
 		"019de516-b10f-786f-97f8-b95c71dfe1b6",
-		apikey.TypeExternal,
+		apiKeyTypeExternal,
 		"",
-		apikey.Version+1,
+		apiKeyVersion+1,
 	)
 
-	if _, err := apikey.ParseSigned(rawKey, secret); err == nil {
+	if _, err := parseSignedAPIKey(rawKey, secret); err == nil {
 		t.Fatal("expected version mismatch to be rejected")
 	}
 }
 
 func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, keyType byte, provisioningID string, version uint32) string {
 	t.Helper()
-	payload := make([]byte, apikey.PayloadBytes)
+	payload := make([]byte, apiKeyPayloadBytes)
 	binary.BigEndian.PutUint32(payload[0:4], version)
 	keyUUID := uuid.MustParse(keyID)
 	organizationUUID := uuid.MustParse(organizationID)
@@ -109,8 +107,8 @@ func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID 
 	}
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(payload)
-	body := append(payload, hasher.Sum(nil)[:apikey.MACBytes]...)
-	return apikey.Prefix + base64.RawURLEncoding.EncodeToString(body)
+	body := append(payload, hasher.Sum(nil)[:apiKeyMACBytes]...)
+	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(body)
 }
 
 func TestSettlementStatuses(t *testing.T) {
@@ -129,7 +127,7 @@ func TestSettlementStatuses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			authorization := &BillingAuthorization{
+			authorization := &Authorization{
 				AuthorizedAmount: mustBigInt(t, tt.authorized),
 				AvailableAfter:   mustBigInt(t, tt.availableAfter),
 				KeyID:            "key",
@@ -139,7 +137,7 @@ func TestSettlementStatuses(t *testing.T) {
 				UserID:           "user",
 			}
 
-			if got := billing.SettlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, tt.actual); got != tt.wantStatus {
+			if got := settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, tt.actual); got != tt.wantStatus {
 				t.Fatalf("settlementStatus = %s, want %s", got, tt.wantStatus)
 			}
 		})
@@ -147,7 +145,7 @@ func TestSettlementStatuses(t *testing.T) {
 }
 
 func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
-	payload, err := encodeGatewayRequestEvent(GatewayRequestEvent{RequestID: "request"})
+	payload, err := encodeGatewayRequestEvent(RequestEvent{RequestID: "request"})
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
 	}
@@ -164,7 +162,7 @@ func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
 
 func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
-	event := tinybirdGatewayRequestEvent(GatewayRequestEvent{
+	event := tinybirdGatewayRequestEvent(RequestEvent{
 		Metrics: map[string]any{
 			"model":  "gpt-4o-mini",
 			"tokens": map[string]any{"prompt": 1, "completion": 2},
@@ -208,14 +206,14 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := &BillingService{tinybird: NewTinybirdClient(server.URL, "gateway-requests-token")}
+	service := &Service{tinybird: NewTinybirdClient(server.URL, "gateway-requests-token")}
 	service.publishUncommittedFallback(
-		&BillingAuthorization{RequestID: "request-1"},
-		GatewayRequestEvent{
+		&Authorization{RequestID: "request-1"},
+		RequestEvent{
 			RequestID:               "request-1",
 			StogasBillingStatus:     "complete",
 			StogasProcessingSuccess: true,
-			TotalCostUSDAtoms:       billing.ZeroChargeUSDAtoms,
+			TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
 		},
 		nil,
 	)
@@ -242,27 +240,27 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 	defer server.Close()
 
 	attempts := 0
-	service := &BillingService{
+	service := &Service{
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *BillingAuthorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
 			attempts++
 			return errors.New("simulated postgres outage")
 		},
 		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
 	}
 	service.retrySettle(
-		&BillingAuthorization{RequestID: "request-1"},
+		&Authorization{RequestID: "request-1"},
 		"params",
-		billing.ZeroChargeUSDAtoms,
+		ZeroChargeUSDAtoms,
 		"{}",
 		`{"request_id":"request-1"}`,
-		GatewayRequestEvent{
+		RequestEvent{
 			RequestID:               "request-1",
 			StogasBillingStatus:     "complete",
 			StogasProcessingSuccess: true,
-			TotalCostUSDAtoms:       billing.ZeroChargeUSDAtoms,
+			TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
 		},
 		true,
 	)
@@ -372,8 +370,8 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 				tinybird = tt.tinybird(server)
 			}
 			var writeOutbox *bool
-			service := &BillingService{
-				settleFunc: func(_ context.Context, _ *BillingAuthorization, _ string, _ string, _ string, _ string, fallback bool) error {
+			service := &Service{
+				settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, _ string, _ string, fallback bool) error {
 					writeOutbox = &fallback
 					return nil
 				},
@@ -454,11 +452,11 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 	}))
 	defer server.Close()
 
-	service := &BillingService{
+	service := &Service{
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *BillingAuthorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
 			return errors.New("simulated postgres outage after tinybird commit")
 		},
 		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
@@ -466,7 +464,7 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 	service.retrySettle(
 		testAuthorization(),
 		"params",
-		billing.ZeroChargeUSDAtoms,
+		ZeroChargeUSDAtoms,
 		"{}",
 		`{"request_id":"request-1"}`,
 		testGatewayRequestEvent(),
@@ -487,11 +485,11 @@ func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend
 	defer server.Close()
 
 	attempts := 0
-	service := &BillingService{
+	service := &Service{
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *BillingAuthorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
 			attempts++
 			if attempts == 1 {
 				return errors.New("transient postgres failure")
@@ -522,11 +520,11 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 	}))
 	defer server.Close()
 
-	service := &BillingService{
+	service := &Service{
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *BillingAuthorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
 			return &settleResultError{
 				err:        errors.New("Invalid settlement payload"),
 				result:     "payload_mismatch",
@@ -538,7 +536,7 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 	service.retrySettle(
 		testAuthorization(),
 		"params",
-		billing.ZeroChargeUSDAtoms,
+		ZeroChargeUSDAtoms,
 		"{}",
 		`{"request_id":"request-1"}`,
 		testGatewayRequestEvent(),
@@ -550,9 +548,9 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 	}
 }
 
-func testAuthorization() *BillingAuthorization {
-	return &BillingAuthorization{
-		AuthorizedAmount: mustParseBigInt(billing.ZeroChargeUSDAtoms),
+func testAuthorization() *Authorization {
+	return &Authorization{
+		AuthorizedAmount: mustParseBigInt(ZeroChargeUSDAtoms),
 		AvailableAfter:   mustParseBigInt("100000000000"),
 		KeyID:            "key-1",
 		ProductKey:       "gpt-4o-mini",
@@ -562,15 +560,15 @@ func testAuthorization() *BillingAuthorization {
 	}
 }
 
-func testGatewayRequestEvent() GatewayRequestEvent {
-	return GatewayRequestEvent{
+func testGatewayRequestEvent() RequestEvent {
+	return RequestEvent{
 		CreatedAt:               time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		Metrics:                 map[string]any{},
 		RequestID:               "request-1",
 		StogasAPIKeyID:          "key-1",
 		StogasBillingStatus:     "complete",
 		StogasProcessingSuccess: true,
-		TotalCostUSDAtoms:       billing.ZeroChargeUSDAtoms,
+		TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
 	}
 }
 

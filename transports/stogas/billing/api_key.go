@@ -1,4 +1,4 @@
-package apikey
+package billing
 
 import (
 	"crypto/hmac"
@@ -17,22 +17,22 @@ import (
 )
 
 const (
-	TokenPepperInfo = "stogas:token:pepper"
+	apiKeyPepperInfo = "stogas:token:pepper"
 
-	Prefix       = "sk_stogas_v1_"
-	Version      = uint32(1)
-	PayloadBytes = 85
-	MACBytes     = 24
-	BodyBytes    = PayloadBytes + MACBytes
+	apiKeyPrefix       = "sk_stogas_v1_"
+	apiKeyVersion      = uint32(1)
+	apiKeyPayloadBytes = 85
+	apiKeyMACBytes     = 24
+	apiKeyBodyBytes    = apiKeyPayloadBytes + apiKeyMACBytes
 
-	TypePersonal    = byte(1)
-	TypeExternal    = byte(2)
-	TypeProvisioned = byte(3)
+	apiKeyTypePersonal    = byte(1)
+	apiKeyTypeExternal    = byte(2)
+	apiKeyTypeProvisioned = byte(3)
 )
 
-var ErrInvalid = errors.New("invalid API key")
+var errInvalidAPIKeyShape = errors.New("invalid API key")
 
-type Claims struct {
+type APIKeyClaims struct {
 	KeyID          string
 	KeyType        byte
 	KeyVersion     uint32
@@ -42,8 +42,8 @@ type Claims struct {
 	WorkspaceID    string
 }
 
-func DeriveTokenPepper(authSecret string) (string, error) {
-	reader := hkdf.New(sha256.New, []byte(authSecret), nil, []byte(TokenPepperInfo))
+func deriveTokenPepper(authSecret string) (string, error) {
+	reader := hkdf.New(sha256.New, []byte(authSecret), nil, []byte(apiKeyPepperInfo))
 	derived := make([]byte, 32)
 	if _, err := io.ReadFull(reader, derived); err != nil {
 		return "", fmt.Errorf("derive token pepper: %w", err)
@@ -51,75 +51,68 @@ func DeriveTokenPepper(authSecret string) (string, error) {
 	return hex.EncodeToString(derived), nil
 }
 
-func Validate(rawKey string, tokenPepper string) error {
-	if _, err := ParseSigned(rawKey, tokenPepper); err != nil {
-		return ErrInvalid
+func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error) {
+	if !strings.HasPrefix(rawKey, apiKeyPrefix) {
+		return nil, errInvalidAPIKeyShape
 	}
-	return nil
-}
-
-func ParseSigned(rawKey string, tokenPepper string) (*Claims, error) {
-	if !strings.HasPrefix(rawKey, Prefix) {
-		return nil, ErrInvalid
-	}
-	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, Prefix))
-	if err != nil || len(body) != BodyBytes {
-		return nil, ErrInvalid
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
+	if err != nil || len(body) != apiKeyBodyBytes {
+		return nil, errInvalidAPIKeyShape
 	}
 
-	payload := body[:PayloadBytes]
-	actualMAC := body[PayloadBytes:]
+	payload := body[:apiKeyPayloadBytes]
+	actualMAC := body[apiKeyPayloadBytes:]
 	hasher := hmac.New(sha256.New, []byte(tokenPepper))
 	_, _ = hasher.Write(payload)
-	expectedMAC := hasher.Sum(nil)[:MACBytes]
+	expectedMAC := hasher.Sum(nil)[:apiKeyMACBytes]
 	if !hmac.Equal(actualMAC, expectedMAC) {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 
 	keyVersion := binary.BigEndian.Uint32(payload[0:4])
-	if keyVersion != Version {
-		return nil, ErrInvalid
+	if keyVersion != apiKeyVersion {
+		return nil, errInvalidAPIKeyShape
 	}
 
 	keyID, err := uuid.FromBytes(payload[4:20])
 	if err != nil || keyID == uuid.Nil {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 	organizationID, err := uuid.FromBytes(payload[20:36])
 	if err != nil || organizationID == uuid.Nil {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 	workspaceID, err := uuid.FromBytes(payload[36:52])
 	if err != nil || workspaceID == uuid.Nil {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 	responsibleID, err := uuid.FromBytes(payload[52:68])
 	if err != nil || responsibleID == uuid.Nil {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 
 	keyType := payload[68]
 	provisioningID, err := uuid.FromBytes(payload[69:85])
 	if err != nil {
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 	var provisioningIDString *string
 	switch keyType {
-	case TypePersonal, TypeExternal:
+	case apiKeyTypePersonal, apiKeyTypeExternal:
 		if provisioningID != uuid.Nil {
-			return nil, ErrInvalid
+			return nil, errInvalidAPIKeyShape
 		}
-	case TypeProvisioned:
+	case apiKeyTypeProvisioned:
 		if provisioningID == uuid.Nil {
-			return nil, ErrInvalid
+			return nil, errInvalidAPIKeyShape
 		}
 		value := provisioningID.String()
 		provisioningIDString = &value
 	default:
-		return nil, ErrInvalid
+		return nil, errInvalidAPIKeyShape
 	}
 
-	return &Claims{
+	return &APIKeyClaims{
 		KeyID:          keyID.String(),
 		KeyType:        keyType,
 		KeyVersion:     keyVersion,
@@ -130,7 +123,7 @@ func ParseSigned(rawKey string, tokenPepper string) (*Claims, error) {
 	}, nil
 }
 
-func Hash(token string, tokenPepper string) string {
+func hashAPIKey(token string, tokenPepper string) string {
 	hasher := hmac.New(sha512.New, []byte(tokenPepper))
 	_, _ = hasher.Write([]byte(token))
 	return hex.EncodeToString(hasher.Sum(nil))

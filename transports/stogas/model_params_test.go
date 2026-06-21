@@ -6,6 +6,7 @@ import (
 
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
@@ -65,7 +66,7 @@ func TestPreLLMHookSeedsBifrostModelParams(t *testing.T) {
 	SetCatalogResolution(ctx, resolution)
 
 	plugin := &Plugin{billing: &fakeBillingAuthorizer{
-		results: []*BillingAuthorization{{HoldID: "hold-1"}},
+		results: []*billing.Authorization{{HoldID: "hold-1"}},
 	}}
 	req := &schemas.BifrostRequest{
 		RequestType: schemas.ChatCompletionRequest,

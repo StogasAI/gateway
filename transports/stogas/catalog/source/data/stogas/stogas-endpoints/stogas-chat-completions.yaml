@@ -147,6 +147,9 @@ stogasEndpoints:
       tools:
         required: false
         type: array
+      web_search_options:
+        required: false
+        type: object
       top_logprobs:
         required: false
         type: integer

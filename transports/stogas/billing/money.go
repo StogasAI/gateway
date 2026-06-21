@@ -8,7 +8,7 @@ import (
 
 const ZeroChargeUSDAtoms = "0"
 
-func CreateHoldParamsHash(providerKey string, productKey string) string {
+func createHoldParamsHash(providerKey string, productKey string) string {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(providerKey))
 	_, _ = hasher.Write([]byte{0})
@@ -16,10 +16,10 @@ func CreateHoldParamsHash(providerKey string, productKey string) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func SettlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actualCost string) string {
+func settlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actualCost string) string {
 	authorized := cloneOrZero(authorizedAmount)
 	available := cloneOrZero(availableAfter)
-	actual := parseMoneyOrZero(actualCost)
+	actual := parseMoneyOrZeroString(actualCost)
 	refund := new(big.Int).Sub(authorized, actual)
 	switch {
 	case refund.Sign() == 0:
@@ -41,7 +41,7 @@ func cloneOrZero(value *big.Int) *big.Int {
 	return new(big.Int).Set(value)
 }
 
-func parseMoneyOrZero(value string) *big.Int {
+func parseMoneyOrZeroString(value string) *big.Int {
 	if value == "" {
 		return big.NewInt(0)
 	}

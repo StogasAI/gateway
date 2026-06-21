@@ -1,4 +1,4 @@
-package stogas
+package billing
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ type ProviderAttempt struct {
 	IsBYOK         bool    `json:"is_byok"`
 }
 
-type GatewayRequestEvent struct {
+type RequestEvent struct {
 	RequestID                    string            `json:"request_id"`
 	CreatedAt                    string            `json:"created_at"`
 	StogasAPIKeyID               string            `json:"stogas_api_key_id"`
@@ -67,7 +67,7 @@ func NewTinybirdClient(host string, token string) *TinybirdClient {
 	}
 }
 
-func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event GatewayRequestEvent) error {
+func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event RequestEvent) error {
 	if c == nil {
 		return nil
 	}
@@ -131,7 +131,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	Metrics                      string `json:"metrics"`
 }
 
-func tinybirdGatewayRequestEvent(event GatewayRequestEvent) tinybirdGatewayRequestEventPayload {
+func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
 	metricsJSON := mustJSONString(event.Metrics, "{}")
 	processed := uint8(0)

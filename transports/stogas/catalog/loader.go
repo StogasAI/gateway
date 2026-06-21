@@ -30,22 +30,18 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 		route.DeploymentIDs = providerEndpointDeployments[id]
 		sortDeploymentIDs(route.DeploymentIDs, catalog.Graph.Deployments)
 		route.ParameterPolicies = cloneParameterPolicies(route.Schema.Parameters)
-		profileParameters, err := profileParameterPolicies(route.PolicyProfiles)
-		if err != nil {
+		if err := validatePolicyProfiles(route.PolicyProfiles); err != nil {
 			return nil, err
 		}
-		mergeParameterPolicies(route.ParameterPolicies, profileParameters)
 		catalog.Graph.ProviderEndpoints[id] = route
 	}
 	for id, deployment := range catalog.Graph.Deployments {
 		deployment.ParameterPolicies = cloneParameterPolicies(deployment.Schema.Parameters)
-		profileParameters, err := profileParameterPolicies(deployment.PolicyProfiles)
-		if err != nil {
+		if err := validatePolicyProfiles(deployment.PolicyProfiles); err != nil {
 			return nil, err
 		}
-		mergeParameterPolicies(deployment.ParameterPolicies, profileParameters)
-		if provider, ok := catalog.Graph.Providers[deployment.ProviderID]; ok {
-			deployment.Pricing = mergedPricing(provider.Pricing, deployment.Pricing)
+		if providerNode, ok := catalog.Graph.Providers[deployment.ProviderID]; ok {
+			deployment.Pricing = mergedPricing(providerNode.Pricing, deployment.Pricing)
 		}
 		catalog.Graph.Deployments[id] = deployment
 	}

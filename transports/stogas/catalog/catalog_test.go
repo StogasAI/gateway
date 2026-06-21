@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -335,6 +336,18 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 		t.Fatalf("expected reasoning to be rejected for non-reasoning search model")
 	}
 
+	gpt5SearchResolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-5-search-api","messages":[],"web_search_options":{"search_context_size":"high"},"max_completion_tokens":100}`),
+	})
+	if err != nil {
+		t.Fatalf("expected gpt-5 search API request to resolve: %v", err)
+	}
+	if len(gpt5SearchResolution.Hold.Meters) != 3 || gpt5SearchResolution.Hold.Meters[2].MeterKey != meterOpenAIChatCompletionSearchModelCalls {
+		t.Fatalf("expected gpt-5 search API call meter, got %#v", gpt5SearchResolution.Hold.Meters)
+	}
+
 	resolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -424,8 +437,14 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"code_interpreter"}]}`,
 		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"image_generation"}]}`,
 		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"computer-use-preview"}]}`,
+		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"computer_use_preview"}]}`,
+		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"mcp","server_label":"docs"}]}`,
 		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"web_search"}]}`,
 		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"web_search_preview_2026_01_01"}]}`,
+		`{"model":"gpt-5-search-api","messages":[],"tools":[{"type":"web_search"}],"web_search_options":{}}`,
+		`{"model":"gpt-4o-search-preview","messages":[],"tools":[{"type":"web_search_preview"}],"web_search_options":{}}`,
+		`{"model":"gpt-5.5","messages":[],"tools":{"type":"web_search"}}`,
+		`{"model":"gpt-5.5","messages":[],"tools":[{}]}`,
 	}
 	for _, body := range deniedChatToolRequests {
 		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)}); err == nil {
@@ -466,12 +485,34 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_interpreter-2026-01-01"}]}`,
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`,
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer-use-preview"}]}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`,
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer-use-preview-2026-01-01"}]}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"docs"}]}`,
+		`{"model":"gpt-5.5","input":"hi","tools":{"type":"web_search"}}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{}]}`,
 	}
 	for _, body := range deniedResponsesToolRequests {
 		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)}); err == nil {
 			t.Fatalf("expected responses tool request to be denied by policy: %s", body)
 		}
+	}
+
+	_, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","web_search_options":{"search_context_size":"low"}}`),
+	})
+	if err == nil {
+		t.Fatalf("expected Responses web_search_options to be rejected")
+	}
+
+	_, err = ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`),
+	})
+	if !errors.Is(err, ErrProviderContainersUnsupported) {
+		t.Fatalf("expected hosted shell container rejection, got %v", err)
 	}
 }
 
@@ -499,6 +540,8 @@ func TestMVPInputPolicyAllowsInlineFilesAndRejectsFileIDsAndMedia(t *testing.T) 
 	denied := []string{
 		`{"model":"gpt-5.5","input":[{"type":"input_file","file_id":"file_123"}]}`,
 		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`,
+		`{"model":"gpt-5.5","input":{"type":"input_file","file_id":"file_123"}}`,
+		`{"model":"gpt-5.5","input":{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}}`,
 		`{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`,
 		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/image.png"}]}]}`,
 		`{"model":"gpt-5.5","input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`,
