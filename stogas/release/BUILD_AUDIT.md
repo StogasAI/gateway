@@ -6,7 +6,7 @@ This directory defines the deterministic bare-metal SEV-SNP IGVM build. The rele
 
 - `stogas/release/guix/channels.scm` pins the Guix package universe at commit `d1e9e23fd441fce828fa74616271b00b90853cee`, authenticated from introduction commit `9edb3f66fd807b096b48283debdcddccfea34bad` and OpenPGP fingerprint `BBB0 2DDF 2CEA F6A8 0D1D  E643 A2A0 6DF2 A33A 54FA`.
 - `stogas/release/pins.lock.json` is the compact pin ledger for Guix bootstrap bytes, GitHub Actions pins, fixed upstream source hashes, Cargo lock hashes, Cargo vendor-cache hashes, and patch hashes.
-- `transports/go.mod` and `transports/go.sum` are the Go dependency ledger. `BUILD_AUDIT.md` intentionally does not duplicate every Go module hash.
+- `transports/go.mod`, `transports/go.sum`, `core/go.mod`, and `core/go.sum` are the Go dependency ledger. `BUILD_AUDIT.md` intentionally does not duplicate every Go module hash.
 - `stogas/release/locks/*.Cargo.lock` are the Rust dependency ledgers for the two Rust tool packages.
 - `stogas/release/patches/*.patch` are the only Stogas source modifications applied to third-party Rust/IGVM tooling.
 - `stogas/release/vendor/` is the local release cache root. It is ignored by Git and regenerated before release.
@@ -24,7 +24,7 @@ Files involved:
 | `stogas/release/scripts/hydrate-go-vendor.sh` | Uses Go from the pinned Guix channel to run `go mod tidy`, `go mod download`, `go mod verify`, and `go mod vendor` with a writable local module cache, then records the regenerated vendor source-tree hash. |
 | `stogas/release/scripts/hydrate-rust-vendor.sh` | Downloads pinned Rust tool sources, verifies SHA-256, applies audited patches, copies committed Cargo locks, and runs `cargo vendor --locked`. |
 | `stogas/release/scripts/hydrate-guix-closure.sh` | Runs Go/Rust hydration, hydrates the Guix closure, roots it against GC, then dry-runs the final no-substitutes build. |
-| `transports/go.mod`, `transports/go.sum` | Go module graph and checksum-log ledger. |
+| `transports/go.mod`, `transports/go.sum`, `core/go.mod`, `core/go.sum` | Go module graph and checksum-log ledger. |
 | `stogas/release/locks/*.Cargo.lock` | Rust crate graph ledgers. |
 | `stogas/release/patches/*.patch` | Auditable third-party source changes. |
 
@@ -71,11 +71,13 @@ The final build has no network substitute path and no offload path. Guix grafts 
 
 Release builds keep `guix build --check` enabled so Guix rebuilds the derivation and fails on nondeterministic output before publication. Local developer test builds may explicitly skip that second build for speed; the GitHub release workflow must never set that fast-path flag.
 
+The wrapper keeps an exact output allowlist and fails if the final release directory contains any file beyond the listed artifacts. Do not add release files unless they are required for verification, reproducibility audit, or IGVM smoke/debug.
+
 Release graph files:
 
 | File | Role |
 | --- | --- |
-| `stogas/release/guix/release.scm` | Builds the output directory containing `gateway.igvm`, `gateway.efi`, `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst`, `launch-measurement.txt`, `release-manifest.json`, `SHA256SUMS`, `pins.lock.json`, `igvm-inspect.txt`, `ukify-inspect.txt`, `kernel-config.txt`, and `build-inputs.sha256`; its gateway source input includes only `core/` and `transports/`. |
+| `stogas/release/guix/release.scm` | Builds the output directory containing `gateway.igvm`, `gateway.efi`, `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst`, `launch-measurement.txt`, `release-manifest.json`, `SHA256SUMS`, `pins.lock.json`, `igvmmeasure-check-kvm.txt`, `ukify-inspect.txt`, `kernel-config.txt`, and `build-inputs.sha256`; its gateway source input includes only `core/` and `transports/`. |
 | `stogas/release/guix/modules/stogas/release/packages.scm` | Defines Stogas-local Guix packages for the custom kernel, UKI tooling, OVMF, and IGVM measurement/update tools. |
 | `stogas/release/guix/cmdline.txt` | Fixed guest kernel command line. |
 | `stogas/release/guix/os-release` | Fixed UKI OS release metadata. |
@@ -92,7 +94,7 @@ Build flow by file:
 | Go hydration | `stogas/release/scripts/hydrate-go-vendor.sh` | Uses pinned Guix `go@1.26` to download modules, verify them against `go.sum`/`sum.golang.org`, write the audited vendor view to ignored `stogas/release/vendor/go-vendor`, and write ignored Go cache manifests including the vendor tree hash. |
 | Rust hydration | `stogas/release/scripts/hydrate-rust-vendor.sh` | Downloads pinned Rust tool sources, checks source hashes, applies audited patches, uses committed Cargo locks, vendors crates, and checks generated vendor-tree hashes. |
 | Guix package graph | `stogas/release/guix/modules/stogas/release/packages.scm` | Defines the Stogas-local Guix derivations for Linux 6.18.35, `ukify`/`linuxx64.efi.stub`, AmdSev OVMF, `igvm-wrap`, `igvm-update`, and `igvmmeasure`. |
-| Final Guix derivation | `stogas/release/guix/release.scm` | Defines the measured release output: copies gateway source without vendor caches, imports the hydrated Go module cache, sets offline Go mode with `GOPROXY=off`/`GOSUMDB=off`, checks `go.mod`/`go.sum` before and after vendoring, runs offline `go mod verify`, regenerates vendor inside the sandbox, checks the vendor source-tree hash, builds the Go `/init`, adds the pinned Guix `nss-certs` bundle at `/etc/ssl/certs/ca-certificates.crt`, creates the deterministic initramfs with single-threaded zstd, builds the UKI, wraps/injects the IGVM, measures it, and writes manifest, checksum, inspect, kernel image, kernel config, and build-input evidence. |
+| Final Guix derivation | `stogas/release/guix/release.scm` | Defines the measured release output: copies gateway source without vendor caches, imports the hydrated Go module cache, sets offline Go mode with `GOPROXY=off`/`GOSUMDB=off`, checks `go.mod`/`go.sum` before and after vendoring, runs offline `go mod verify`, regenerates vendor inside the sandbox, checks the vendor source-tree hash, builds the Go `/init`, adds the pinned Guix `nss-certs` bundle at `/etc/ssl/certs/ca-certificates.crt`, creates the deterministic initramfs with single-threaded zstd, builds the UKI, wraps/injects the IGVM, measures it with `igvmmeasure --check-kvm gateway.igvm measure`, and writes manifest, checksum, KVM measurement, UKI inspect, kernel image, kernel config, and build-input evidence. |
 | Fixed UKI inputs | `stogas/release/guix/cmdline.txt`, `stogas/release/guix/os-release` | Provide deterministic kernel command line and UKI OS metadata consumed by `release.scm`. |
 | PR workflow | `.github/workflows/pr-dependencies.yml` | Verifies release pins and Go dependency hydration on dependency/source changes without relying on committed vendor code. |
 | Draft release workflow | `.github/workflows/gateway-igvm-release.yml` | Runs from pushed `v*.*.*` tags, builds with read-only repository authority, then publishes draft release assets from a separate contents-write job after verifying the tag points at the checked-out commit. |

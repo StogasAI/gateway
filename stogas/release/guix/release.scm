@@ -176,10 +176,14 @@
 	                                           build-inputs-sha256)
             (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
                    (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
+                   (core-go-mod (string-append #$source "/core/go.mod"))
+                   (core-go-sum (string-append #$source "/core/go.sum"))
                    (go-mod (string-append #$source "/transports/go.mod"))
                    (go-sum (string-append #$source "/transports/go.sum"))
                    (os-release #$(source-file "guix/os-release" "os-release"))
                    (kernel (string-append #$stogas-linux-6-18 "/bzImage"))
+                   (igvmmeasure (string-append #$stogas-igvmmeasure
+                                               "/bin/igvmmeasure"))
                    (stub (string-append #$stogas-systemd-uki-tools
                                         "/lib/systemd/boot/efi/linuxx64.efi.stub"))
                    (ovmf (string-append #$stogas-edk2-amdsev-ovmf
@@ -208,6 +212,8 @@
 	                  (display "      \"umask\": \"022\"\n" port)
 	                  (display "    },\n" port)
 	                  (format port "    \"cmdlineSha256\": ~a,\n" (json-string (sha256 cmdline)))
+	                  (format port "    \"coreGoModSha256\": ~a,\n" (json-string (sha256 core-go-mod)))
+	                  (format port "    \"coreGoSumSha256\": ~a,\n" (json-string (sha256 core-go-sum)))
 	                  (format port "    \"goModSha256\": ~a,\n" (json-string (sha256 go-mod)))
 	                  (format port "    \"goSumSha256\": ~a,\n" (json-string (sha256 go-sum)))
 	                  (format port "    \"goVendorModulesSha256\": ~a,\n" (json-string (sha256 vendor-modules)))
@@ -256,6 +262,15 @@
 	                  (display "    }\n" port)
                   (display "  },\n" port)
                   (display "  \"sevSnp\": {\n" port)
+                  (display "    \"platform\": \"SEV_SNP\",\n" port)
+                  (display "    \"vmm\": \"qemu-kvm\",\n" port)
+                  (display "    \"measurementTool\": \"igvmmeasure\",\n" port)
+                  (format port "    \"measurementToolVersion\": ~a,\n"
+                          (json-string #$(package-version stogas-igvmmeasure)))
+                  (format port "    \"measurementToolSha256\": ~a,\n"
+                          (json-string (sha256 igvmmeasure)))
+                  (display "    \"measurementCommand\": \"igvmmeasure --check-kvm gateway.igvm measure\",\n" port)
+                  (display "    \"checkKvm\": true,\n" port)
                   (format port "    \"launchMeasurement\": ~a\n"
                           (json-string (string-trim-both measurement)))
                   (display "  }\n" port)
@@ -274,7 +289,8 @@
 	          (define release-kernel (string-append out "/gateway.kernel"))
 	          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
 	          (define measurement-path (string-append out "/launch-measurement.txt"))
-	          (define igvm-inspect (string-append out "/igvm-inspect.txt"))
+	          (define igvmmeasure-check-kvm
+	            (string-append out "/igvmmeasure-check-kvm.txt"))
 	          (define ukify-inspect (string-append out "/ukify-inspect.txt"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
 	          (define build-inputs-sha256 (string-append out "/build-inputs.sha256"))
@@ -334,6 +350,10 @@
 	             (cons "stogas/release/locks/virt-firmware-rs.Cargo.lock"
 	                   #$(source-file "locks/virt-firmware-rs.Cargo.lock"
 	                                  "virt-firmware-rs.Cargo.lock"))
+	             (cons "core/go.mod"
+	                   (string-append #$source "/core/go.mod"))
+	             (cons "core/go.sum"
+	                   (string-append #$source "/core/go.sum"))
 	             (cons "transports/go.mod"
 	                   (string-append #$source "/transports/go.mod"))
 	             (cons "transports/go.sum"
@@ -436,14 +456,15 @@
 	                  "--add-hash-sha256"
 	                  "--profile" "none"
 	                  "--output" igvm)
-	          (call-with-output-file igvm-inspect
+	          (call-with-output-file igvmmeasure-check-kvm
 	            (lambda (port)
 	              (display (command-output "igvmmeasure" "--check-kvm" igvm "measure")
 	                       port)))
 	          (call-with-output-file measurement-path
 	            (lambda (port)
 	              (display (launch-digest
-	                        (call-with-input-file igvm-inspect get-string-all))
+	                        (call-with-input-file igvmmeasure-check-kvm
+	                                              get-string-all))
 	                       port)
 	              (newline port)))
 	          (copy-file pins (string-append out "/pins.lock.json"))
@@ -474,7 +495,7 @@
 	                 "launch-measurement.txt"
 	                 "release-manifest.json"
 	                 "pins.lock.json"
-	                 "igvm-inspect.txt"
+	                 "igvmmeasure-check-kvm.txt"
 	                 "ukify-inspect.txt"
 	                 "kernel-config.txt"
 	                 "build-inputs.sha256"))))))))

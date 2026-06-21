@@ -44,13 +44,19 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: stogas/release/vendor
-          key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
+          key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
 
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
         run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
+
+      - name: Verify release checksums
+        run: |
+          set -euo pipefail
+          cd "dist/gateway/$GITHUB_REF_NAME"
+          sha256sum -c SHA256SUMS
 
       - name: Generate GitHub attestation
         id: attest
@@ -63,6 +69,37 @@ jobs:
 
       - name: Collect Sigstore trust evidence
         run: node stogas/release/scripts/fetch-sigstore-trust-bundle.mjs "dist/gateway/${{ github.ref_name }}/sigstore-trust-bundle.json"
+
+      - name: Verify release payload file set
+        run: |
+          set -euo pipefail
+          cd "dist/gateway/$GITHUB_REF_NAME"
+          expected_files=(
+            gateway.igvm
+            gateway.efi
+            gateway.init
+            gateway.kernel
+            gateway.initramfs.cpio.zst
+            launch-measurement.txt
+            release-manifest.json
+            pins.lock.json
+            SHA256SUMS
+            igvmmeasure-check-kvm.txt
+            ukify-inspect.txt
+            guix-describe.txt
+            guix-store-requisites.txt
+            kernel-config.txt
+            build-inputs.sha256
+            github-attestation.jsonl
+            sigstore-trust-bundle.json
+          )
+          actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
+          expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
+          if [ "$actual_files" != "$expected_file_list" ]; then
+            echo "release payload contains unexpected files" >&2
+            printf 'expected files:\n%s\nactual files:\n%s\n' "$expected_file_list" "$actual_files" >&2
+            exit 70
+          fi
 
       - name: Upload release payload for publish job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -99,6 +136,12 @@ jobs:
           name: gateway-release-${{ github.ref_name }}
           path: dist/gateway/${{ github.ref_name }}
 
+      - name: Verify downloaded release checksums
+        run: |
+          set -euo pipefail
+          cd "dist/gateway/$GITHUB_REF_NAME"
+          sha256sum -c SHA256SUMS
+
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,7 +160,7 @@ jobs:
             "dist/gateway/$tag/release-manifest.json"
             "dist/gateway/$tag/pins.lock.json"
             "dist/gateway/$tag/SHA256SUMS"
-            "dist/gateway/$tag/igvm-inspect.txt"
+            "dist/gateway/$tag/igvmmeasure-check-kvm.txt"
             "dist/gateway/$tag/ukify-inspect.txt"
             "dist/gateway/$tag/guix-describe.txt"
             "dist/gateway/$tag/guix-store-requisites.txt"

@@ -91,7 +91,6 @@
         "STACKPROTECTOR",
         "STACKPROTECTOR_STRONG",
         "STRICT_KERNEL_RWX",
-        "STRICT_MODULE_RWX",
         "SYSFS",
         "TMPFS",
         "TSM_GUEST",
