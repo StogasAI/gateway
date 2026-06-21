@@ -67,6 +67,23 @@ guix time-machine -C "$release_root/guix/channels.scm" -- describe > "$out_dir/g
 guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
 (
   cd "$out_dir"
+  expected_files=(
+    gateway.igvm
+    gateway.efi
+    gateway.init
+    gateway.kernel
+    gateway.initramfs.cpio.zst
+    launch-measurement.txt
+    release-manifest.json
+    pins.lock.json
+    igvmmeasure-check-kvm.txt
+    ukify-inspect.txt
+    guix-describe.txt
+    guix-store-requisites.txt
+    kernel-config.txt
+    build-inputs.sha256
+    SHA256SUMS
+  )
   sha256sum \
     gateway.igvm \
     gateway.efi \
@@ -76,11 +93,19 @@ guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
     launch-measurement.txt \
     release-manifest.json \
     pins.lock.json \
-    igvm-inspect.txt \
+    igvmmeasure-check-kvm.txt \
     ukify-inspect.txt \
     guix-describe.txt \
     guix-store-requisites.txt \
     kernel-config.txt \
     build-inputs.sha256 \
     > SHA256SUMS
+  actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
+  expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
+  if [ "$actual_files" != "$expected_file_list" ]; then
+    echo "release output contains unexpected files" >&2
+    printf 'expected files:\n%s\nactual files:\n%s\n' "$expected_file_list" "$actual_files" >&2
+    exit 70
+  fi
+  sha256sum -c SHA256SUMS
 )

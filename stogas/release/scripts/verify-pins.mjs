@@ -61,6 +61,10 @@ function verifyLockShape() {
 	assert(pins.releaseSources.linux.version === '6.18.35-gnu', 'Linux release pin must be 6.18.35.');
 	assert(pins.releaseSources.linux.guixPackage === 'stogas-linux-6.18', 'Linux release package must be Stogas custom 6.18.');
 	assert(
+		!pins.releaseSources.linux.requiredBuiltIns.includes('STRICT_MODULE_RWX'),
+		'Module RWX hardening must not be claimed while CONFIG_MODULES is disabled.'
+	);
+	assert(
 		pins.releaseSources.edk2.target === 'OvmfPkg/AmdSev/AmdSevX64.dsc',
 		'edk2 target must be AmdSevX64.'
 	);
@@ -125,21 +129,37 @@ function verifyWorkflows() {
 		assert(releaseWorkflow.includes('actions/upload-artifact@'), 'Build job must hand off release assets as a workflow artifact.');
 		assert(releaseWorkflow.includes('actions/download-artifact@'), 'Publish job must download build assets before release upload.');
 		assert(!releaseWorkflow.includes('restore-keys:'), 'Release workflow must not restore partial cache matches.');
+		assert(releaseWorkflow.includes("'transports/go.mod'"), 'Release cache key must include transports/go.mod.');
+		assert(releaseWorkflow.includes("'transports/go.sum'"), 'Release cache key must include transports/go.sum.');
+		assert(releaseWorkflow.includes("'core/go.mod'"), 'Release cache key must include core/go.mod.');
+		assert(releaseWorkflow.includes("'core/go.sum'"), 'Release cache key must include core/go.sum.');
+		assert(
+			releaseWorkflow.includes('cd "dist/gateway/$GITHUB_REF_NAME"') &&
+				releaseWorkflow.includes('sha256sum -c SHA256SUMS'),
+			'Release workflow must verify SHA256SUMS after build and artifact download.'
+		);
+		assert(releaseWorkflow.includes('Verify release payload file set'), 'Release workflow must verify the final payload file set.');
+		assert(releaseWorkflow.includes('release payload contains unexpected files'), 'Release workflow must fail on payload clutter files.');
 		assert(releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must attach Sigstore trust evidence.');
 		assert(releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must upload Sigstore trust evidence.');
 		assert(releaseWorkflow.includes('gateway.init'), 'Release workflow must upload the init binary evidence.');
 		assert(releaseWorkflow.includes('gateway.kernel'), 'Release workflow must upload the kernel image evidence.');
 		assert(releaseWorkflow.includes('gateway.initramfs.cpio.zst'), 'Release workflow must upload initramfs evidence.');
 		assert(!releaseWorkflow.includes('gateway.ca-certificates.crt'), 'Release workflow must not clutter draft releases with a standalone CA bundle asset.');
-		assert(releaseWorkflow.includes('igvm-inspect.txt'), 'Release workflow must upload IGVM inspection evidence.');
+		assert(releaseWorkflow.includes('igvmmeasure-check-kvm.txt'), 'Release workflow must upload KVM measurement evidence.');
+		assert(!releaseWorkflow.includes('igvm-inspect.txt'), 'Release workflow must not publish measurement output as IGVM inspection evidence.');
 		assert(releaseWorkflow.includes('ukify-inspect.txt'), 'Release workflow must upload UKI inspection evidence.');
 		assert(releaseWorkflow.includes('guix-describe.txt'), 'Release workflow must upload Guix channel evidence.');
 		assert(releaseWorkflow.includes('guix-store-requisites.txt'), 'Release workflow must upload Guix closure evidence.');
 		assert(releaseWorkflow.includes('kernel-config.txt'), 'Release workflow must upload kernel config evidence.');
 		assert(releaseWorkflow.includes('build-inputs.sha256'), 'Release workflow must upload build-input hash evidence.');
 
-		const prWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/pr-dependencies.yml'), 'utf8');
+	const prWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/pr-dependencies.yml'), 'utf8');
 		assert(prWorkflow.includes('govulncheck'), 'PR dependency workflow must run govulncheck outside the release derivation.');
+		assert(prWorkflow.includes("'transports/go.mod'"), 'PR release vendor cache key must include transports/go.mod.');
+		assert(prWorkflow.includes("'transports/go.sum'"), 'PR release vendor cache key must include transports/go.sum.');
+		assert(prWorkflow.includes("'core/go.mod'"), 'PR release vendor cache key must include core/go.mod.');
+		assert(prWorkflow.includes("'core/go.sum'"), 'PR release vendor cache key must include core/go.sum.');
 	}
 
 function verifyReleaseSources() {
@@ -168,9 +188,21 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('/etc/ssl/certs/ca-certificates.crt'), 'Release graph must install the guest CA bundle at the standard path.');
 		assert(releaseSource.includes('guestCaBundleSha256'), 'Release manifest must record the guest CA bundle hash.');
 		assert(releaseSource.includes('guix/nss-certs/ca-certificates.crt'), 'Build input hashes must include the Guix CA bundle.');
-		assert(releaseSource.includes('igvm-inspect.txt'), 'Release graph must emit IGVM inspection output.');
+		assert(releaseSource.includes('coreGoModSha256'), 'Release manifest must record core/go.mod hash.');
+		assert(releaseSource.includes('coreGoSumSha256'), 'Release manifest must record core/go.sum hash.');
+		assert(releaseSource.includes('(cons "core/go.mod"'), 'Build input hashes must include core/go.mod.');
+		assert(releaseSource.includes('(cons "core/go.sum"'), 'Build input hashes must include core/go.sum.');
+		assert(releaseSource.includes('igvmmeasure-check-kvm.txt'), 'Release graph must emit KVM measurement output.');
+		assert(!releaseSource.includes('igvm-inspect.txt'), 'Release graph must not publish measurement output as IGVM inspection output.');
 		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
 		assert(releaseSource.includes('kernel-config.txt'), 'Release graph must emit the kernel config.');
+		assert(releaseSource.includes('\\"platform\\": \\"SEV_SNP\\"'), 'Release manifest must record measured SNP platform.');
+		assert(releaseSource.includes('\\"vmm\\": \\"qemu-kvm\\"'), 'Release manifest must record measured VMM path.');
+		assert(releaseSource.includes('\\"measurementTool\\": \\"igvmmeasure\\"'), 'Release manifest must record measurement tool.');
+		assert(releaseSource.includes('measurementToolVersion'), 'Release manifest must record measurement tool version.');
+		assert(releaseSource.includes('measurementToolSha256'), 'Release manifest must record measurement tool hash.');
+		assert(releaseSource.includes('igvmmeasure --check-kvm gateway.igvm measure'), 'Release manifest must record measurement command.');
+		assert(releaseSource.includes('\\"checkKvm\\": true'), 'Release manifest must record KVM measurement mode.');
 		assert(!releaseSource.includes('linux-libre-6.12'), 'Release graph still references linux-libre-6.12.');
 		assert(!releaseSource.includes('ovmf-x86-64') || releaseSource.includes('(inherit ovmf-x86-64)'), 'Release graph must not use generic OVMF output.');
 	assert(!releaseSource.includes('go env -w'), 'Release graph must not mutate global Go environment.');
@@ -211,8 +243,13 @@ function verifyReleaseSources() {
 		assert(!buildScript.includes('--no-grafts'), 'Final release build must keep Guix grafts enabled.');
 		assert(buildScript.includes('guix-describe.txt'), 'Build script must add Guix describe evidence.');
 		assert(buildScript.includes('guix-store-requisites.txt'), 'Build script must add Guix store requisite evidence.');
+		assert(buildScript.includes('expected_files=('), 'Build script must keep a tight release output allow-list.');
+		assert(buildScript.includes('release output contains unexpected files'), 'Build script must fail on clutter files.');
+		assert(buildScript.includes('sha256sum -c SHA256SUMS'), 'Build script must verify generated release checksums.');
 		assert(buildScript.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), 'Build script must gate local no-check builds explicitly.');
 		assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
+		assert(!hydrateScript.includes('2>&1 || true'), 'Hydration dry run must fail closed on unexpected Guix errors.');
+		assert(hydrateScript.includes('cat "$dry_run" >&2'), 'Hydration dry-run failure must print Guix output.');
 		assert(!hydrateScript.includes('--no-grafts'), 'Hydration must keep Guix grafts enabled.');
 	assert(hydrateScript.includes('stogas-(gateway-igvm-release|linux-6\\.18'), 'Hydration allow-list must include only Stogas builds.');
 	assert(hydrateScript.includes('hydrate-go-vendor.sh'), 'Closure hydration must refresh Go vendor cache first.');

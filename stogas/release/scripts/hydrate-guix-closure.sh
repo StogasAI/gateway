@@ -46,13 +46,16 @@ common=(
 "${guix_tm[@]}" build "${common[@]}" --root="$roots_dir/release" >/dev/null
 
 dry_run="$roots_dir/no-substitutes-dry-run.txt"
-"${guix_tm[@]}" build \
+if ! "${guix_tm[@]}" build \
   "${common[@]}" \
   --dry-run \
   --no-substitutes \
   --substitute-urls='' \
   --no-offload \
-  >"$dry_run" 2>&1 || true
+  >"$dry_run" 2>&1; then
+  cat "$dry_run" >&2
+  exit 70
+fi
 
 if grep -Eiq 'gcc|glibc|binutils|rust-[0-9]|go-[0-9]|python-[0-9]|meson|ninja|bash-minimal|coreutils' "$dry_run"; then
   echo "Hydrated closure is incomplete; final no-substitutes build would compile toolchain inputs:" >&2
