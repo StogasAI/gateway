@@ -33,6 +33,8 @@ if [ "${STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK:-0}" = "1" ]; then
 fi
 
 export SOURCE_DATE_EPOCH=1
+export LC_ALL=C
+export TZ=UTC
 export STOGAS_RELEASE_TAG="$tag"
 export STOGAS_RELEASE_ROOT="$release_root"
 export STOGAS_RELEASE_COMMIT="$(git -C "$repo_root" rev-parse HEAD)"
@@ -47,7 +49,6 @@ result="$(
       --no-substitutes \
       --substitute-urls='' \
       --no-offload \
-      --no-grafts \
       --timeout=3600 \
       --max-silent-time=900 \
       "${check_args[@]}" \
@@ -55,6 +56,31 @@ result="$(
       | tail -n 1
 )"
 
-rm -rf "$out_dir"
+if [ -e "$out_dir" ]; then
+  chmod -R u+w "$out_dir"
+  rm -rf "$out_dir"
+fi
 mkdir -p "$out_dir"
 cp -a "$result"/. "$out_dir"/
+chmod -R u+w "$out_dir"
+guix time-machine -C "$release_root/guix/channels.scm" -- describe > "$out_dir/guix-describe.txt"
+guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
+(
+  cd "$out_dir"
+  sha256sum \
+    gateway.igvm \
+    gateway.efi \
+    gateway.init \
+    gateway.kernel \
+    gateway.initramfs.cpio.zst \
+    launch-measurement.txt \
+    release-manifest.json \
+    pins.lock.json \
+    igvm-inspect.txt \
+    ukify-inspect.txt \
+    guix-describe.txt \
+    guix-store-requisites.txt \
+    kernel-config.txt \
+    build-inputs.sha256 \
+    > SHA256SUMS
+)

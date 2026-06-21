@@ -98,18 +98,49 @@ function verifyWorkflows() {
 			assert(/^[a-f0-9]{40}$/.test(ref), `${basename(path)} has unpinned action ${name}@${ref}.`);
 			assert(allowedActions.get(name) === ref, `${basename(path)} uses unknown action pin ${name}@${ref}.`);
 		}
-		assert(!source.includes('apt-get install -y guix'), `${basename(path)} installs unpinned Guix.`);
-		assert(!source.includes('guix shell'), `${basename(path)} must not use guix shell for release builds.`);
-		assert(!source.includes('/gnu/store'), `${basename(path)} must not cache or mutate /gnu/store.`);
-		assert(!source.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), `${basename(path)} must not skip guix build --check.`);
+			assert(!source.includes('apt-get install -y guix'), `${basename(path)} installs unpinned Guix.`);
+			if (basename(path) === 'gateway-igvm-release.yml') {
+				assert(!source.includes('guix shell'), `${basename(path)} must not use guix shell for release builds.`);
+			}
+			assert(!source.includes('/gnu/store'), `${basename(path)} must not cache or mutate /gnu/store.`);
+			assert(!source.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), `${basename(path)} must not skip guix build --check.`);
 		if (source.includes('actions/cache@')) {
 			assert(source.includes('path: stogas/release/vendor'), `${basename(path)} may only cache the Stogas release vendor cache.`);
 		}
 	}
-	const releaseWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'), 'utf8');
-	assert(releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must attach Sigstore trust evidence.');
-	assert(releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must upload Sigstore trust evidence.');
-}
+		const releaseWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'), 'utf8');
+		assert(releaseWorkflow.includes('push:'), 'Release workflow must run from protected tag pushes.');
+		assert(releaseWorkflow.includes('tags:'), 'Release workflow must filter pushed tags.');
+		assert(releaseWorkflow.includes('"v*.*.*"'), 'Release workflow must match semver-like release tags.');
+		assert(!releaseWorkflow.includes('workflow_dispatch:'), 'Release workflow must not accept manual tag input.');
+		assert(!releaseWorkflow.includes('inputs.tag'), 'Release workflow must not use a manual tag input.');
+		assert(releaseWorkflow.includes('$GITHUB_REF_NAME'), 'Release workflow must use the pushed tag ref name.');
+		assert(releaseWorkflow.includes('release_commit="$(git rev-parse HEAD)"'), 'Release publishing must target the checked-out commit.');
+		assert(releaseWorkflow.includes('git rev-list -n1 "$tag"'), 'Release workflow must verify the tag points at HEAD.');
+		assert(!releaseWorkflow.includes('github.sha'), 'Release workflow must not target github.sha.');
+		assert(releaseWorkflow.includes('name: Build IGVM Release'), 'Release workflow must have a separate build job.');
+		assert(releaseWorkflow.includes('name: Publish Draft Release'), 'Release workflow must have a separate publish job.');
+		assert(releaseWorkflow.includes('contents: write'), 'Publish job must have contents: write.');
+		assert(releaseWorkflow.includes('id-token: write'), 'Build job must retain OIDC only for attestation.');
+		assert(releaseWorkflow.includes('actions/upload-artifact@'), 'Build job must hand off release assets as a workflow artifact.');
+		assert(releaseWorkflow.includes('actions/download-artifact@'), 'Publish job must download build assets before release upload.');
+		assert(!releaseWorkflow.includes('restore-keys:'), 'Release workflow must not restore partial cache matches.');
+		assert(releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must attach Sigstore trust evidence.');
+		assert(releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must upload Sigstore trust evidence.');
+		assert(releaseWorkflow.includes('gateway.init'), 'Release workflow must upload the init binary evidence.');
+		assert(releaseWorkflow.includes('gateway.kernel'), 'Release workflow must upload the kernel image evidence.');
+		assert(releaseWorkflow.includes('gateway.initramfs.cpio.zst'), 'Release workflow must upload initramfs evidence.');
+		assert(!releaseWorkflow.includes('gateway.ca-certificates.crt'), 'Release workflow must not clutter draft releases with a standalone CA bundle asset.');
+		assert(releaseWorkflow.includes('igvm-inspect.txt'), 'Release workflow must upload IGVM inspection evidence.');
+		assert(releaseWorkflow.includes('ukify-inspect.txt'), 'Release workflow must upload UKI inspection evidence.');
+		assert(releaseWorkflow.includes('guix-describe.txt'), 'Release workflow must upload Guix channel evidence.');
+		assert(releaseWorkflow.includes('guix-store-requisites.txt'), 'Release workflow must upload Guix closure evidence.');
+		assert(releaseWorkflow.includes('kernel-config.txt'), 'Release workflow must upload kernel config evidence.');
+		assert(releaseWorkflow.includes('build-inputs.sha256'), 'Release workflow must upload build-input hash evidence.');
+
+		const prWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/pr-dependencies.yml'), 'utf8');
+		assert(prWorkflow.includes('govulncheck'), 'PR dependency workflow must run govulncheck outside the release derivation.');
+	}
 
 function verifyReleaseSources() {
 	const releaseSource = releaseSchemePaths.map((path) => readFileSync(path, 'utf8')).join('\n');
@@ -127,9 +158,21 @@ function verifyReleaseSources() {
 	assert(releaseSource.includes('(define (gateway-relative-path file)'), 'Gateway source selector must normalize absolute local-file paths.');
 	assert(releaseSource.includes('(string-prefix? "core/" file)'), 'Gateway source selector must include core only by allowlist.');
 	assert(releaseSource.includes('(string-prefix? "transports/" file)'), 'Gateway source selector must include transports only by allowlist.');
-	assert(releaseSource.includes('vendor/go-modcache'), 'Release graph must consume the hydrated Go module cache.');
-	assert(!releaseSource.includes('linux-libre-6.12'), 'Release graph still references linux-libre-6.12.');
-	assert(!releaseSource.includes('ovmf-x86-64') || releaseSource.includes('(inherit ovmf-x86-64)'), 'Release graph must not use generic OVMF output.');
+		assert(releaseSource.includes('vendor/go-modcache'), 'Release graph must consume the hydrated Go module cache.');
+		assert(releaseSource.includes('build-inputs.sha256'), 'Release graph must emit build input hashes.');
+		assert(releaseSource.includes('gateway.init'), 'Release graph must emit the Go init binary.');
+		assert(releaseSource.includes('gateway.kernel'), 'Release graph must emit the kernel image.');
+		assert(releaseSource.includes('gateway.initramfs.cpio.zst'), 'Release graph must emit the compressed initramfs.');
+		assert(!releaseSource.includes('gateway.ca-certificates.crt'), 'Release graph must not emit a standalone CA bundle artifact.');
+		assert(releaseSource.includes('(pkg "nss-certs")'), 'Release graph must consume Guix nss-certs.');
+		assert(releaseSource.includes('/etc/ssl/certs/ca-certificates.crt'), 'Release graph must install the guest CA bundle at the standard path.');
+		assert(releaseSource.includes('guestCaBundleSha256'), 'Release manifest must record the guest CA bundle hash.');
+		assert(releaseSource.includes('guix/nss-certs/ca-certificates.crt'), 'Build input hashes must include the Guix CA bundle.');
+		assert(releaseSource.includes('igvm-inspect.txt'), 'Release graph must emit IGVM inspection output.');
+		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
+		assert(releaseSource.includes('kernel-config.txt'), 'Release graph must emit the kernel config.');
+		assert(!releaseSource.includes('linux-libre-6.12'), 'Release graph still references linux-libre-6.12.');
+		assert(!releaseSource.includes('ovmf-x86-64') || releaseSource.includes('(inherit ovmf-x86-64)'), 'Release graph must not use generic OVMF output.');
 	assert(!releaseSource.includes('go env -w'), 'Release graph must not mutate global Go environment.');
 	assert(!releaseSource.includes('--fallback'), 'Release graph must not allow Guix fallback builds.');
 	assert(releaseSource.includes('(setenv "GOPROXY" "off")'), 'Release graph must disable GOPROXY.');
@@ -137,28 +180,52 @@ function verifyReleaseSources() {
 	assert(releaseSource.includes('(setenv "GOTOOLCHAIN" "local")'), 'Release graph must use local Go toolchain only.');
 	assert(releaseSource.includes('(setenv "GOWORK" "off")'), 'Release graph must disable Go workspaces.');
 	assert(releaseSource.includes('(setenv "CGO_ENABLED" "0")'), 'Release graph must disable CGO.');
-	assert(releaseSource.includes('(invoke "go" "mod" "verify")'), 'Release graph must verify hydrated Go modules offline.');
-	assert(releaseSource.includes('(invoke "go" "mod" "vendor")'), 'Release graph must regenerate Go vendor inside the sandbox.');
-	assert(releaseSource.includes('"-mod=vendor"'), 'Release graph must compile from Go vendor only.');
+		assert(releaseSource.includes('(invoke "go" "mod" "verify")'), 'Release graph must verify hydrated Go modules offline.');
+		assert(releaseSource.includes('(invoke "go" "mod" "vendor")'), 'Release graph must regenerate Go vendor inside the sandbox.');
+		assert(releaseSource.includes('(invoke "sha256sum" "-c" "/tmp/go-before.sha256")'), 'Release graph must fail if offline vendoring mutates go.mod or go.sum.');
+		assert(releaseSource.includes('go-vendor.sha256'), 'Release graph must consume the hydrated Go vendor tree hash.');
+		assert(releaseSource.includes('Go vendor tree hash mismatch'), 'Release graph must fail if regenerated Go vendor tree differs.');
+		assert(releaseSource.includes('goVendorTreeSha256'), 'Release manifest must record the Go vendor tree hash.');
+		assert(releaseSource.includes('"-mod=vendor"'), 'Release graph must compile from Go vendor only.');
+		assert(releaseSource.includes('(setenv "LC_ALL" "C")'), 'Release graph must pin LC_ALL.');
+		assert(releaseSource.includes('(setenv "TZ" "UTC")'), 'Release graph must pin TZ.');
+		assert(releaseSource.includes('(umask #o022)'), 'Release graph must pin umask.');
+		assert(releaseSource.includes('zstd -19 -T1 --no-progress'), 'Release graph must use single-threaded zstd.');
+		assert(releaseSource.includes('"CONFIG_STACKPROTECTOR"') || releaseSource.includes('"STACKPROTECTOR"'), 'Kernel config must explicitly enable stack protector.');
+		assert(releaseSource.includes('"STACKPROTECTOR_STRONG"'), 'Kernel config must explicitly enable strong stack protector.');
+		assert(releaseSource.includes('"FORTIFY_SOURCE"'), 'Kernel config must explicitly enable fortify source.');
+		assert(releaseSource.includes('"HARDENED_USERCOPY"'), 'Kernel config must explicitly enable hardened usercopy.');
+		assert(releaseSource.includes('"STRICT_KERNEL_RWX"'), 'Kernel config must explicitly enable strict kernel RWX.');
+		assert(releaseSource.includes('"RANDOMIZE_BASE"'), 'Kernel config must explicitly enable KASLR.');
+		assert(releaseSource.includes('"SECCOMP_FILTER"'), 'Kernel config must explicitly enable seccomp filters.');
+		assert(releaseSource.includes('"PACKET"'), 'Kernel config must explicitly disable raw packet sockets.');
+		assert(releaseSource.includes('"VIRTIO_PCI_LEGACY"'), 'Kernel config must explicitly disable legacy virtio PCI.');
 
-	const buildScript = readFileSync(resolve(releaseRoot, 'scripts/build-release.sh'), 'utf8');
+		const buildScript = readFileSync(resolve(releaseRoot, 'scripts/build-release.sh'), 'utf8');
 	const hydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-guix-closure.sh'), 'utf8');
 	const goHydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-go-vendor.sh'), 'utf8');
 	const rustHydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-rust-vendor.sh'), 'utf8');
-	assert(buildScript.includes('--no-substitutes'), 'Final release build must disable substitutes.');
-	assert(buildScript.includes("--substitute-urls=''"), 'Final release build must empty substitute URLs.');
-	assert(buildScript.includes('--no-offload'), 'Final release build must disable offload.');
-	assert(buildScript.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), 'Build script must gate local no-check builds explicitly.');
-	assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
+		assert(buildScript.includes('--no-substitutes'), 'Final release build must disable substitutes.');
+		assert(buildScript.includes("--substitute-urls=''"), 'Final release build must empty substitute URLs.');
+		assert(buildScript.includes('--no-offload'), 'Final release build must disable offload.');
+		assert(!buildScript.includes('--no-grafts'), 'Final release build must keep Guix grafts enabled.');
+		assert(buildScript.includes('guix-describe.txt'), 'Build script must add Guix describe evidence.');
+		assert(buildScript.includes('guix-store-requisites.txt'), 'Build script must add Guix store requisite evidence.');
+		assert(buildScript.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), 'Build script must gate local no-check builds explicitly.');
+		assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
+		assert(!hydrateScript.includes('--no-grafts'), 'Hydration must keep Guix grafts enabled.');
 	assert(hydrateScript.includes('stogas-(gateway-igvm-release|linux-6\\.18'), 'Hydration allow-list must include only Stogas builds.');
 	assert(hydrateScript.includes('hydrate-go-vendor.sh'), 'Closure hydration must refresh Go vendor cache first.');
 	assert(hydrateScript.includes('hydrate-rust-vendor.sh'), 'Closure hydration must refresh Rust vendor cache first.');
 	assert(goHydrateScript.includes('go mod tidy'), 'Go hydration must tidy the module graph.');
 	assert(goHydrateScript.includes('go mod download'), 'Go hydration must download modules before verification.');
 	assert(goHydrateScript.includes('go mod verify'), 'Go hydration must verify downloaded modules.');
-	assert(goHydrateScript.includes('go mod vendor'), 'Go hydration must regenerate vendor from verified modules.');
-	assert(goHydrateScript.includes('go mod vendor -o "$STOGAS_GO_VENDOR"'), 'Go hydration must place the release-owned vendor cache under stogas/release/vendor.');
-	assert(goHydrateScript.includes('go_mod_before='), 'Go hydration must snapshot go.mod before hydration.');
+		assert(goHydrateScript.includes('go mod vendor'), 'Go hydration must regenerate vendor from verified modules.');
+		assert(goHydrateScript.includes('go mod vendor -o "$STOGAS_GO_VENDOR"'), 'Go hydration must place the release-owned vendor cache under stogas/release/vendor.');
+		assert(goHydrateScript.includes('vendorTreeSha256'), 'Go hydration must hash the regenerated vendor source tree.');
+		assert(goHydrateScript.includes('go-vendor.sha256'), 'Go hydration must write the vendor tree hash for the final derivation.');
+		assert(goHydrateScript.includes('Restored Go release cache failed verification'), 'Go hydration must purge and retry untrusted restored caches.');
+		assert(goHydrateScript.includes('go_mod_before='), 'Go hydration must snapshot go.mod before hydration.');
 	assert(goHydrateScript.includes('go_sum_before='), 'Go hydration must snapshot go.sum before hydration.');
 	assert(goHydrateScript.includes('Go hydration changed transports/go.mod or transports/go.sum'), 'Go hydration must fail if tidy changes the ledger.');
 	assert(goHydrateScript.includes('sum.golang.org'), 'Go hydration must use the public Go checksum database.');

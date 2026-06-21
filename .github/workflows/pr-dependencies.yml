@@ -35,5 +35,11 @@ jobs:
         run: stogas/release/scripts/install-guix-bootstrap.sh
       - name: Verify Go module hydration
         run: stogas/release/scripts/hydrate-go-vendor.sh
+      - name: Run Go vulnerability scan
+        run: |
+          set -euo pipefail
+          cd transports
+          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOWORK=off "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Verify module files did not change
         run: git diff --exit-code -- transports/go.mod transports/go.sum

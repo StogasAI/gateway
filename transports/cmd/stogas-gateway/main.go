@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"strings"
@@ -14,7 +15,10 @@ import (
 	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
 )
 
+const defaultGuestCaBundlePath = "/etc/ssl/certs/ca-certificates.crt"
+
 func main() {
+	setDefaultGuestCertFile()
 	_, _ = maxprocs.Set()
 
 	config, err := stogas.LoadFromEnv()
@@ -43,6 +47,21 @@ func main() {
 
 	if err := server.Start(); err != nil {
 		fatal(err.Error())
+	}
+}
+
+func setDefaultGuestCertFile() {
+	setDefaultGuestCertFileAt(defaultGuestCaBundlePath)
+}
+
+func setDefaultGuestCertFileAt(path string) {
+	if os.Getenv("SSL_CERT_FILE") != "" {
+		return
+	}
+	if _, err := os.Stat(path); err == nil {
+		_ = os.Setenv("SSL_CERT_FILE", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		_, _ = os.Stderr.WriteString("unable to inspect guest CA bundle: " + err.Error() + "\n")
 	}
 }
 

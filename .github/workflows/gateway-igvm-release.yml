@@ -1,37 +1,41 @@
 name: Gateway IGVM Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Immutable vX.Y.Z gateway release tag
-        required: true
-        type: string
+  push:
+    tags:
+      - "v*.*.*"
 
 concurrency:
-  group: gateway-igvm-release-${{ inputs.tag }}
+  group: gateway-igvm-release-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
-  attestations: write
-  artifact-metadata: write
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
-  draft:
-    name: Build Draft IGVM Release
+  build:
+    name: Build IGVM Release
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     steps:
       - name: Validate tag
-        run: '[[ "${{ inputs.tag }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
+        run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.ref_name }}
           persist-credentials: false
+
+      - name: Verify checked-out tag
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
 
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs --network
@@ -41,44 +45,90 @@ jobs:
         with:
           path: stogas/release/vendor
           key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
-          restore-keys: |
-            stogas-release-vendor-${{ runner.os }}-
 
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
-        run: stogas/release/scripts/build-release.sh "${{ inputs.tag }}" dist/gateway/${{ inputs.tag }}
+        run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
 
       - name: Generate GitHub attestation
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
         with:
-          subject-path: dist/gateway/${{ inputs.tag }}/gateway.igvm
+          subject-path: dist/gateway/${{ github.ref_name }}/gateway.igvm
 
       - name: Collect attestation evidence
-        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ inputs.tag }}/github-attestation.jsonl"
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
 
       - name: Collect Sigstore trust evidence
-        run: node stogas/release/scripts/fetch-sigstore-trust-bundle.mjs "dist/gateway/${{ inputs.tag }}/sigstore-trust-bundle.json"
+        run: node stogas/release/scripts/fetch-sigstore-trust-bundle.mjs "dist/gateway/${{ github.ref_name }}/sigstore-trust-bundle.json"
+
+      - name: Upload release payload for publish job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: gateway-release-${{ github.ref_name }}
+          path: dist/gateway/${{ github.ref_name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish Draft Release
+    runs-on: ubuntu-24.04
+    needs: build
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - name: Verify checked-out tag
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
+
+      - name: Download release payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: gateway-release-${{ github.ref_name }}
+          path: dist/gateway/${{ github.ref_name }}
 
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          release_commit="$(git rev-parse HEAD)"
+          test "$(git rev-list -n1 "$tag")" = "$release_commit"
           ASSETS=(
-            "dist/gateway/${{ inputs.tag }}/gateway.igvm"
-            "dist/gateway/${{ inputs.tag }}/gateway.efi"
-            "dist/gateway/${{ inputs.tag }}/launch-measurement.txt"
-            "dist/gateway/${{ inputs.tag }}/release-manifest.json"
-            "dist/gateway/${{ inputs.tag }}/SHA256SUMS"
-            "dist/gateway/${{ inputs.tag }}/github-attestation.jsonl"
-            "dist/gateway/${{ inputs.tag }}/sigstore-trust-bundle.json"
+            "dist/gateway/$tag/gateway.igvm"
+            "dist/gateway/$tag/gateway.efi"
+            "dist/gateway/$tag/gateway.init"
+            "dist/gateway/$tag/gateway.kernel"
+            "dist/gateway/$tag/gateway.initramfs.cpio.zst"
+            "dist/gateway/$tag/launch-measurement.txt"
+            "dist/gateway/$tag/release-manifest.json"
+            "dist/gateway/$tag/pins.lock.json"
+            "dist/gateway/$tag/SHA256SUMS"
+            "dist/gateway/$tag/igvm-inspect.txt"
+            "dist/gateway/$tag/ukify-inspect.txt"
+            "dist/gateway/$tag/guix-describe.txt"
+            "dist/gateway/$tag/guix-store-requisites.txt"
+            "dist/gateway/$tag/kernel-config.txt"
+            "dist/gateway/$tag/build-inputs.sha256"
+            "dist/gateway/$tag/github-attestation.jsonl"
+            "dist/gateway/$tag/sigstore-trust-bundle.json"
           )
-          if gh release view "${{ inputs.tag }}" >/dev/null 2>&1; then
-            gh release upload "${{ inputs.tag }}" "${ASSETS[@]}" --clobber
-            gh release edit "${{ inputs.tag }}" --draft=true --target "${{ github.sha }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${ASSETS[@]}" --clobber
+            gh release edit "$tag" --draft=true --target "$release_commit"
           else
-            gh release create "${{ inputs.tag }}" "${ASSETS[@]}" --draft --target "${{ github.sha }}" --title "Gateway ${{ inputs.tag }}"
+            gh release create "$tag" "${ASSETS[@]}" --draft --verify-tag --target "$release_commit" --title "Gateway $tag"
           fi

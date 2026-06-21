@@ -38,7 +38,6 @@ guix_tm=(
 
 common=(
   -L "$release_root/guix/modules"
-  --no-grafts
   --timeout=3600
   --max-silent-time=900
   -f "$release_root/guix/release.scm"

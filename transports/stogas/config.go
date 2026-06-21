@@ -33,19 +33,20 @@ type DatabasePoolConfig struct {
 }
 
 type Config struct {
-	AuthSecret        string
-	DatabasePool      DatabasePoolConfig
-	DatabaseSchema    string
-	DatabaseURL       string
-	Host              string
-	LogLevel          string
-	LogOutputStyle    string
-	MaxRequestBodyMiB int
-	OpenAIAPIKey      string
-	OpenAIBaseURL     string
-	Port              string
-	TinybirdHost      string
-	TinybirdToken     string
+	AllowPrivateProviderNetwork bool
+	AuthSecret                  string
+	DatabasePool                DatabasePoolConfig
+	DatabaseSchema              string
+	DatabaseURL                 string
+	Host                        string
+	LogLevel                    string
+	LogOutputStyle              string
+	MaxRequestBodyMiB           int
+	OpenAIAPIKey                string
+	OpenAIBaseURL               string
+	Port                        string
+	TinybirdHost                string
+	TinybirdToken               string
 }
 
 func LoadFromEnv() (Config, error) {
@@ -56,19 +57,20 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	config := Config{
-		AuthSecret:        strings.TrimSpace(os.Getenv("AUTH_SECRET")),
-		DatabasePool:      databasePool,
-		DatabaseSchema:    strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
-		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		Host:              defaultHost,
-		LogLevel:          string(schemas.LogLevelInfo),
-		LogOutputStyle:    string(schemas.LoggerOutputTypeJSON),
-		MaxRequestBodyMiB: defaultMaxRequestBodyMiB,
-		OpenAIAPIKey:      strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
-		OpenAIBaseURL:     strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
-		Port:              defaultPort,
-		TinybirdHost:      strings.TrimSpace(os.Getenv("TB_HOST_URL")),
-		TinybirdToken:     strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
+		AllowPrivateProviderNetwork: os.Getenv("STOGAS_ALLOW_PRIVATE_PROVIDER_NETWORK") == "true",
+		AuthSecret:                  strings.TrimSpace(os.Getenv("AUTH_SECRET")),
+		DatabasePool:                databasePool,
+		DatabaseSchema:              strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
+		DatabaseURL:                 strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		Host:                        defaultHost,
+		LogLevel:                    string(schemas.LogLevelInfo),
+		LogOutputStyle:              string(schemas.LoggerOutputTypeJSON),
+		MaxRequestBodyMiB:           defaultMaxRequestBodyMiB,
+		OpenAIAPIKey:                strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		OpenAIBaseURL:               strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
+		Port:                        defaultPort,
+		TinybirdHost:                strings.TrimSpace(os.Getenv("TB_HOST_URL")),
+		TinybirdToken:               strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
 	}
 
 	if err := config.Validate(); err != nil {
