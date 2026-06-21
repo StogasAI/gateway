@@ -11,6 +11,7 @@ import (
 	infisical "github.com/infisical/go-sdk"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 const (
@@ -25,17 +26,10 @@ const (
 	defaultDatabaseQueryExecMode          = "cache_statement"
 )
 
-type DatabasePoolConfig struct {
-	MaxConns      int32
-	MinConns      int32
-	MinIdleConns  int32
-	QueryExecMode string
-}
-
 type Config struct {
 	AllowPrivateProviderNetwork bool
 	AuthSecret                  string
-	DatabasePool                DatabasePoolConfig
+	DatabasePool                billing.DatabasePoolConfig
 	DatabaseSchema              string
 	DatabaseURL                 string
 	Host                        string
@@ -164,7 +158,7 @@ func (c Config) Validate() error {
 	if c.DatabaseSchema == "" {
 		return fmt.Errorf("DATABASE_SCHEMA is required")
 	}
-	if _, err := pgrollSearchPath(c.DatabaseSchema); err != nil {
+	if err := billing.ValidateDatabaseSchema(c.DatabaseSchema); err != nil {
 		return err
 	}
 	if c.OpenAIAPIKey == "" {
@@ -182,49 +176,18 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func validatePgrollSchemaName(databaseSchema string) (string, error) {
-	schemaName := strings.TrimSpace(databaseSchema)
-	if schemaName == "" {
-		schemaName = "public"
-	}
-	for index, r := range schemaName {
-		if index == 0 {
-			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' {
-				continue
-			}
-			return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
-		}
-		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
-			continue
-		}
-		return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
-	}
-	return schemaName, nil
-}
-
-func pgrollSearchPath(databaseSchema string) (string, error) {
-	schemaName, err := validatePgrollSchemaName(databaseSchema)
-	if err != nil {
-		return "", err
-	}
-	if schemaName == "public" {
-		return "public", nil
-	}
-	return schemaName + ",public", nil
-}
-
-func loadDatabasePoolConfig() (DatabasePoolConfig, error) {
+func loadDatabasePoolConfig() (billing.DatabasePoolConfig, error) {
 	maxConns, err := envInt32("STOGAS_DB_POOL_MAX_CONNS", defaultDatabasePoolMaxConns)
 	if err != nil {
-		return DatabasePoolConfig{}, err
+		return billing.DatabasePoolConfig{}, err
 	}
 	minConns, err := envInt32("STOGAS_DB_POOL_MIN_CONNS", defaultDatabasePoolMinConns)
 	if err != nil {
-		return DatabasePoolConfig{}, err
+		return billing.DatabasePoolConfig{}, err
 	}
 	minIdleConns, err := envInt32("STOGAS_DB_POOL_MIN_IDLE_CONNS", defaultDatabasePoolMinIdleConns)
 	if err != nil {
-		return DatabasePoolConfig{}, err
+		return billing.DatabasePoolConfig{}, err
 	}
 
 	queryExecMode := strings.TrimSpace(os.Getenv("STOGAS_DB_QUERY_EXEC_MODE"))
@@ -232,7 +195,7 @@ func loadDatabasePoolConfig() (DatabasePoolConfig, error) {
 		queryExecMode = defaultDatabaseQueryExecMode
 	}
 
-	return DatabasePoolConfig{
+	return billing.DatabasePoolConfig{
 		MaxConns:      maxConns,
 		MinConns:      minConns,
 		MinIdleConns:  minIdleConns,
@@ -263,29 +226,4 @@ func envDurationSeconds(name string, defaultValue int64) time.Duration {
 		return 0
 	}
 	return time.Duration(value) * time.Second
-}
-
-func (c DatabasePoolConfig) Validate() error {
-	if c.MaxConns <= 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MAX_CONNS must be positive")
-	}
-	if c.MinConns < 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be non-negative")
-	}
-	if c.MinIdleConns < 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be non-negative")
-	}
-	if c.MinConns > c.MaxConns {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
-	}
-	if c.MinIdleConns > c.MaxConns {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
-	}
-
-	switch c.QueryExecMode {
-	case "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
-		return nil
-	default:
-		return fmt.Errorf("STOGAS_DB_QUERY_EXEC_MODE must be one of cache_statement, cache_describe, describe_exec, exec, simple_protocol")
-	}
 }

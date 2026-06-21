@@ -1,15 +1,29 @@
-package stogas
+package billing
 
 import (
 	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *BillingAuthorization, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError, metrics map[string]any, actualCostUSDAtoms string) GatewayRequestEvent {
-	startedAt, _ := ctx.Value(requestStartContextKey).(time.Time)
+type EventInput struct {
+	ActualCostUSDAtoms string
+	Authorization      *Authorization
+	Error              *schemas.BifrostError
+	Metrics            map[string]any
+	Model              string
+	RequestType        string
+	Response           *schemas.BifrostResponse
+	StartedAt          time.Time
+}
+
+func NewRequestEvent(input EventInput) RequestEvent {
+	authorization := input.Authorization
+	if authorization == nil {
+		authorization = &Authorization{}
+	}
+	startedAt := input.StartedAt
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
@@ -19,40 +33,39 @@ func gatewayRequestEvent(ctx *schemas.BifrostContext, authorization *BillingAuth
 	}
 	totalTimeMS := uint32Duration(time.Since(startedAt))
 	upstreamTimeMS := totalTimeMS
-	if extra := responseExtraFields(resp); extra != nil && extra.Latency > 0 {
+	if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
 		upstreamTimeMS = uint32FromInt64(extra.Latency)
 	}
 
-	requestType, _ := ctx.Value(requestTypeContextKey).(string)
-	model, _ := ctx.Value(requestModelContextKey).(string)
+	actualCostUSDAtoms := input.ActualCostUSDAtoms
 	if actualCostUSDAtoms == "" {
-		actualCostUSDAtoms = "0"
+		actualCostUSDAtoms = ZeroChargeUSDAtoms
 	}
 
-	return GatewayRequestEvent{
+	return RequestEvent{
 		RequestID:                    authorization.RequestID,
 		CreatedAt:                    createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		StogasAPIKeyID:               authorization.KeyID,
 		StogasUserID:                 authorization.UserID,
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
-		RequestType:                  normalizeRequestType(requestType),
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: normalizeUpstreamStatus(bifrostErr), StatusCode: providerStatusCode(bifrostErr), LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
+		RequestType:                  normalizeRequestType(input.RequestType),
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
 		StogasProcessingSuccess:      true,
-		StogasBillingStatus:          billing.SettlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
-		UpstreamProviderFinishReason: finishReason(resp),
-		ProviderRequestID:            upstreamRequestID(resp),
+		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
+		UpstreamProviderFinishReason: finishReason(input.Response),
+		ProviderRequestID:            upstreamRequestID(input.Response),
 		TotalTimeMS:                  totalTimeMS,
 		UpstreamProviderTimeMS:       upstreamTimeMS,
 		TTFBMS:                       0,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		Metrics:                      metricsObject(model, metrics),
+		Metrics:                      metricsObject(input.Model, input.Metrics),
 	}
 }
 
-func usageMetrics(resp *schemas.BifrostResponse) map[string]any {
+func UsageMetrics(resp *schemas.BifrostResponse) map[string]any {
 	metrics := map[string]any{}
-	usage := llmUsage(resp)
+	usage := LLMUsage(resp)
 	if usage == nil {
 		return metrics
 	}
@@ -62,7 +75,7 @@ func usageMetrics(resp *schemas.BifrostResponse) map[string]any {
 	return metrics
 }
 
-func llmUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
+func LLMUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
 	if resp == nil {
 		return nil
 	}
@@ -79,6 +92,15 @@ func llmUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
 		return resp.ResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage()
 	}
 	return nil
+}
+
+func ProviderErrorIsInsured(bifrostErr *schemas.BifrostError) bool {
+	switch NormalizeUpstreamStatus(bifrostErr) {
+	case "network_error", "provider_error", "rate_limited", "over_budget":
+		return true
+	default:
+		return false
+	}
 }
 
 func responseExtraFields(resp *schemas.BifrostResponse) *schemas.BifrostResponseExtraFields {
@@ -100,7 +122,7 @@ func providerStatusCode(bifrostErr *schemas.BifrostError) *int {
 	return &status
 }
 
-func normalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
+func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr == nil {
 		return "success"
 	}

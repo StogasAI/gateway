@@ -3,13 +3,13 @@ package stogashttp
 import (
 	"strings"
 
-	"github.com/maximhq/bifrost/transports/stogas/apikey"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
 
 type apiCredential struct {
-	Claims *apikey.Claims
+	Claims *billing.APIKeyClaims
 	Raw    string
 }
 

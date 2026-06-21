@@ -5,14 +5,14 @@ import (
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/apikey"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 const openAIProviderKeyID = "stogas-openai"
 
 type Runtime struct {
 	client  *bifrost.Bifrost
-	billing *BillingService
+	billing *billing.Service
 	cancel  context.CancelFunc
 }
 
@@ -22,8 +22,8 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	}
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
-	tinybird := NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
-	billing, err := NewBillingService(runtimeCtx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
+	tinybird := billing.NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
+	billingService, err := billing.NewService(runtimeCtx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -32,17 +32,17 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	client, err := bifrost.Init(runtimeCtx, schemas.BifrostConfig{
 		Account:         newAccount(config),
 		InitialPoolSize: schemas.DefaultInitialPoolSize,
-		LLMPlugins:      []schemas.LLMPlugin{NewPlugin(billing)},
+		LLMPlugins:      []schemas.LLMPlugin{NewPlugin(billingService)},
 		Logger:          logger,
 		Tracer:          schemas.DefaultTracer(),
 	})
 	if err != nil {
-		billing.Close()
+		billingService.Close()
 		cancel()
 		return nil, err
 	}
 
-	return &Runtime{client: client, billing: billing, cancel: cancel}, nil
+	return &Runtime{client: client, billing: billingService, cancel: cancel}, nil
 }
 
 func (r *Runtime) Client() *bifrost.Bifrost {
@@ -57,9 +57,9 @@ func (r *Runtime) ValidateAPIKeyFormat(rawAPIKey string) error {
 	return err
 }
 
-func (r *Runtime) ParseAPIKey(rawAPIKey string) (*apikey.Claims, error) {
+func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
 	if r == nil || r.billing == nil {
-		return nil, ErrInvalidAPIKey
+		return nil, billing.ErrInvalidAPIKey
 	}
 	return r.billing.ParseAPIKey(rawAPIKey)
 }

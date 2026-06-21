@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
@@ -23,7 +24,7 @@ const (
 func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest) (*schemas.BifrostContext, context.CancelFunc, error) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
-		stogas.GatewayRequestLifetime,
+		billing.GatewayRequestLifetime,
 	)
 	requestID, err := uuid.NewV7()
 	if err != nil {

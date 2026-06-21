@@ -1,4 +1,4 @@
-package stogas
+package billing
 
 import (
 	"context"
@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/maximhq/bifrost/transports/stogas/apikey"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 const (
@@ -103,7 +101,7 @@ type settleRow struct {
 	AvailableAfter *string
 }
 
-type BillingAuthorization struct {
+type Authorization struct {
 	AuthorizedAmount *big.Int
 	AvailableAfter   *big.Int
 	CreatedAt        time.Time
@@ -118,12 +116,12 @@ type BillingAuthorization struct {
 	WorkspaceID      string
 }
 
-type BillingService struct {
+type Service struct {
 	db                *GatewayDB
 	retryInitialDelay time.Duration
 	retryMaxDelay     time.Duration
 	retryWindow       time.Duration
-	settleFunc        func(context.Context, *BillingAuthorization, string, string, string, string, bool) error
+	settleFunc        func(context.Context, *Authorization, string, string, string, string, bool) error
 	tinybird          *TinybirdClient
 	tokenPepper       string
 }
@@ -135,6 +133,9 @@ type billingError struct {
 
 func (e *billingError) Error() string { return e.err.Error() }
 func (e *billingError) Unwrap() error { return e.err }
+func (e *billingError) StatusCode() int {
+	return e.statusCode
+}
 
 type settleResultError struct {
 	err        error
@@ -144,9 +145,12 @@ type settleResultError struct {
 
 func (e *settleResultError) Error() string { return e.err.Error() }
 func (e *settleResultError) Unwrap() error { return e.err }
+func (e *settleResultError) StatusCode() int {
+	return e.statusCode
+}
 
-func NewBillingService(ctx context.Context, databaseURL string, databaseSchema string, authSecret string, databasePool DatabasePoolConfig, tinybird *TinybirdClient) (*BillingService, error) {
-	tokenPepper, err := apikey.DeriveTokenPepper(authSecret)
+func NewService(ctx context.Context, databaseURL string, databaseSchema string, authSecret string, databasePool DatabasePoolConfig, tinybird *TinybirdClient) (*Service, error) {
+	tokenPepper, err := deriveTokenPepper(authSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -155,45 +159,45 @@ func NewBillingService(ctx context.Context, databaseURL string, databaseSchema s
 		return nil, err
 	}
 
-	return &BillingService{db: db, tinybird: tinybird, tokenPepper: tokenPepper}, nil
+	return &Service{db: db, tinybird: tinybird, tokenPepper: tokenPepper}, nil
 }
 
-func (s *BillingService) Close() {
+func (s *Service) Close() {
 	if s.db != nil {
 		s.db.Close()
 	}
 }
 
-func (s *BillingService) ValidateAPIKeyFormat(rawAPIKey string) error {
+func (s *Service) ValidateAPIKeyFormat(rawAPIKey string) error {
 	if _, err := s.ParseAPIKey(rawAPIKey); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *BillingService) ParseAPIKey(rawAPIKey string) (*apikey.Claims, error) {
+func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if s == nil {
 		return nil, ErrInvalidAPIKey
 	}
-	claims, err := apikey.ParseSigned(rawAPIKey, s.tokenPepper)
+	claims, err := parseSignedAPIKey(rawAPIKey, s.tokenPepper)
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
 	return claims, nil
 }
 
-func (s *BillingService) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*BillingAuthorization, error) {
+func (s *Service) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*Authorization, error) {
 	if err := s.ValidateAPIKeyFormat(rawAPIKey); err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
 
-	apiKeyHash := apikey.Hash(rawAPIKey, s.tokenPepper)
+	apiKeyHash := hashAPIKey(rawAPIKey, s.tokenPepper)
 	expiresAt := time.Now().UTC().Add(defaultHoldDuration)
 	holdID, err := newUUIDV7String()
 	if err != nil {
 		return nil, fmt.Errorf("generate hold id: %w", err)
 	}
-	paramsHash := billing.CreateHoldParamsHash(providerKey, productKey)
+	paramsHash := createHoldParamsHash(providerKey, productKey)
 
 	row := authorizeRow{}
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
@@ -227,7 +231,7 @@ func (s *BillingService) AuthorizeRequest(ctx context.Context, rawAPIKey string,
 	case "api_key_limit":
 		return nil, &billingError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
-		return &BillingAuthorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), OrganizationID: derefString(row.OrganizationID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID), WorkspaceID: derefString(row.WorkspaceID)}, nil
+		return &Authorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), OrganizationID: derefString(row.OrganizationID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID), WorkspaceID: derefString(row.WorkspaceID)}, nil
 	case "invalid_amount":
 		return nil, &billingError{err: errors.New("Invalid authorization amount"), statusCode: 400}
 	default:
@@ -235,16 +239,16 @@ func (s *BillingService) AuthorizeRequest(ctx context.Context, rawAPIKey string,
 	}
 }
 
-func (s *BillingService) FinalizeRequest(ctx context.Context, authorization *BillingAuthorization, event GatewayRequestEvent) error {
+func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorization, event RequestEvent) error {
 	if authorization == nil {
 		return nil
 	}
 
 	metricsJSON := metricsJSONString(event.Metrics)
-	paramsHash := billing.CreateHoldParamsHash(authorization.ProviderKey, authorization.ProductKey)
+	paramsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey)
 	actualCost := event.TotalCostUSDAtoms
 	if actualCost == "" {
-		actualCost = billing.ZeroChargeUSDAtoms
+		actualCost = ZeroChargeUSDAtoms
 		event.TotalCostUSDAtoms = actualCost
 	}
 	payload, err := encodeGatewayRequestEvent(event)
@@ -265,7 +269,7 @@ func (s *BillingService) FinalizeRequest(ctx context.Context, authorization *Bil
 	return nil
 }
 
-func (s *BillingService) settleOnce(ctx context.Context, authorization *BillingAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, writeOutbox bool) error {
+func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, metricsJSON string, payload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
 		return s.settleFunc(ctx, authorization, paramsHash, actualCost, metricsJSON, payload, writeOutbox)
 	}
@@ -308,7 +312,7 @@ func (s *BillingService) settleOnce(ctx context.Context, authorization *BillingA
 	}
 }
 
-func (s *BillingService) retrySettle(authorization *BillingAuthorization, paramsHash string, actualCost string, metricsJSON string, payload string, event GatewayRequestEvent, writeOutbox bool) {
+func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, metricsJSON string, payload string, event RequestEvent, writeOutbox bool) {
 	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
@@ -351,7 +355,7 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 	return fallback
 }
 
-func encodeGatewayRequestEvent(event GatewayRequestEvent) (string, error) {
+func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
 	if event.Metrics == nil {
 		event.Metrics = map[string]any{}
 	}
@@ -362,7 +366,7 @@ func encodeGatewayRequestEvent(event GatewayRequestEvent) (string, error) {
 	return string(encoded), nil
 }
 
-func (s *BillingService) publishUncommittedFallback(authorization *BillingAuthorization, event GatewayRequestEvent, _ error) {
+func (s *Service) publishUncommittedFallback(authorization *Authorization, event RequestEvent, _ error) {
 	if authorization == nil {
 		return
 	}
@@ -386,6 +390,10 @@ func metricsJSONString(metrics map[string]any) string {
 }
 
 func ErrorStatus(err error) int {
+	var statusError interface{ StatusCode() int }
+	if errors.As(err, &statusError) {
+		return statusError.StatusCode()
+	}
 	var typed *billingError
 	if errors.As(err, &typed) {
 		return typed.statusCode

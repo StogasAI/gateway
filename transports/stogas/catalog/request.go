@@ -85,9 +85,13 @@ type PolicyNode struct {
 }
 
 type requestPricingContext struct {
-	Route             Route
-	SearchContextSize string
-	ToolTypes         []string
+	Route               Route
+	HasWebSearchOptions bool
+	SearchContextSize   string
+	ToolsParseFailed    bool
+	RawBody             map[string]json.RawMessage
+	RawTools            []map[string]json.RawMessage
+	ToolTypes           []string
 }
 
 type requestWithSettableExtraParams interface {
@@ -279,6 +283,9 @@ func resolveOpenAIRequest(
 		extraParams.SetExtraParams(filtered)
 	}
 	pricing := requestPricingContextForBody(route, body)
+	if err := validateProviderRequest(provider, route, deployment, outputTokenLimit, pricing); err != nil {
+		return nil, err
+	}
 	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, effectiveParameters, filtered, outputTokenLimit, len(body), pricing), nil
 }
 
@@ -315,7 +322,9 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 		return requestPricingContext{Route: route}
 	}
 	searchContextSize := ""
+	hasWebSearchOptions := false
 	if rawOptions, ok := rawData["web_search_options"]; ok {
+		hasWebSearchOptions = true
 		var options map[string]json.RawMessage
 		if err := sonic.Unmarshal(rawOptions, &options); err == nil {
 			searchContextSize = rawStringField(options, "search_context_size")
@@ -323,11 +332,11 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 	}
 	rawTools, ok := rawData["tools"]
 	if !ok {
-		return requestPricingContext{Route: route, SearchContextSize: searchContextSize}
+		return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData}
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(rawTools, &tools); err != nil {
-		return requestPricingContext{Route: route, SearchContextSize: searchContextSize}
+		return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, ToolsParseFailed: true, RawBody: rawData}
 	}
 	toolTypes := make([]string, 0, len(tools))
 	for _, tool := range tools {
@@ -336,7 +345,7 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 			toolTypes = append(toolTypes, toolType)
 		}
 	}
-	return requestPricingContext{Route: route, SearchContextSize: searchContextSize, ToolTypes: toolTypes}
+	return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData, RawTools: tools, ToolTypes: toolTypes}
 }
 
 func effectiveOutputTokenLimit(requested *int, max int, policy compiledParameter) (int, error) {

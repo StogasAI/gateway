@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/apikey"
+	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
@@ -33,11 +34,11 @@ type Plugin struct {
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*BillingAuthorization, error)
-	FinalizeRequest(ctx context.Context, authorization *BillingAuthorization, event GatewayRequestEvent) error
+	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*gatewaybilling.Authorization, error)
+	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
-func NewPlugin(billing *BillingService) *Plugin {
+func NewPlugin(billing *gatewaybilling.Service) *Plugin {
 	return &Plugin{billing: billing}
 }
 
@@ -109,35 +110,35 @@ func (p *Plugin) PostLLMHook(ctx *schemas.BifrostContext, resp *schemas.BifrostR
 	}
 
 	ctx.SetValue(billingFinalizedContextKey, true)
-	metrics := usageMetrics(resp)
+	metrics := gatewaybilling.UsageMetrics(resp)
 	actualCost := finalSettlementCost(ctx, authorization, resp, bifrostErr)
-	event := gatewayRequestEvent(ctx, authorization, resp, bifrostErr, metrics, actualCost)
+	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
+		ActualCostUSDAtoms: actualCost,
+		Authorization:      authorization,
+		Error:              bifrostErr,
+		Metrics:            metrics,
+		Model:              requestModel(ctx),
+		RequestType:        requestType(ctx),
+		Response:           resp,
+		StartedAt:          requestStart(ctx),
+	})
 	if err := p.billing.FinalizeRequest(context.WithoutCancel(ctx), authorization, event); err != nil {
 		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", authorization.RequestID, err)
 	}
 	return resp, bifrostErr, nil
 }
 
-func finalSettlementCost(ctx *schemas.BifrostContext, authorization *BillingAuthorization, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) string {
-	if usage := llmUsage(resp); usage != nil {
+func finalSettlementCost(ctx *schemas.BifrostContext, authorization *gatewaybilling.Authorization, resp *schemas.BifrostResponse, bifrostErr *schemas.BifrostError) string {
+	if usage := gatewaybilling.LLMUsage(resp); usage != nil {
 		return catalog.SettlementCost(catalogResolution(ctx), usage)
 	}
-	if bifrostErr == nil || providerErrorIsInsured(bifrostErr) {
-		return "0"
+	if bifrostErr == nil || gatewaybilling.ProviderErrorIsInsured(bifrostErr) {
+		return gatewaybilling.ZeroChargeUSDAtoms
 	}
 	if authorization != nil && authorization.AuthorizedAmount != nil {
 		return authorization.AuthorizedAmount.String()
 	}
-	return "0"
-}
-
-func providerErrorIsInsured(bifrostErr *schemas.BifrostError) bool {
-	switch normalizeUpstreamStatus(bifrostErr) {
-	case "network_error", "provider_error", "rate_limited", "over_budget":
-		return true
-	default:
-		return false
-	}
+	return gatewaybilling.ZeroChargeUSDAtoms
 }
 
 func catalogResolution(ctx *schemas.BifrostContext) *catalog.ResolvedRequest {
@@ -155,24 +156,24 @@ func SetCatalogResolution(ctx *schemas.BifrostContext, resolution *catalog.Resol
 	ctx.SetValue(catalogResolutionContextKey, resolution)
 }
 
-func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPIKey string, requestID string, hold catalog.HoldEstimate, authorizeErr error) (*BillingAuthorization, error) {
-	if ErrorStatus(authorizeErr) != 409 {
+func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPIKey string, requestID string, hold catalog.HoldEstimate, authorizeErr error) (*gatewaybilling.Authorization, error) {
+	if gatewaybilling.ErrorStatus(authorizeErr) != 409 {
 		return nil, authorizeErr
 	}
 
 	for attempt := 1; attempt < maxAuthorizeRequestIDAttempts; attempt++ {
-		nextRequestID, idErr := newUUIDV7String()
+		nextRequestID, idErr := uuid.NewV7()
 		if idErr != nil {
 			return nil, fmt.Errorf("generate retry request id: %w", idErr)
 		}
-		requestID = nextRequestID
+		requestID = nextRequestID.String()
 		ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 
 		authorization, err := p.billing.AuthorizeRequest(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms)
 		if err == nil {
 			return authorization, nil
 		}
-		if ErrorStatus(err) != 409 {
+		if gatewaybilling.ErrorStatus(err) != 409 {
 			return nil, err
 		}
 		authorizeErr = err
@@ -181,7 +182,7 @@ func (p *Plugin) authorizeWithFreshRequestID(ctx *schemas.BifrostContext, rawAPI
 	return nil, authorizeErr
 }
 
-func SetAPIKey(ctx *schemas.BifrostContext, apiKey string, claims *apikey.Claims) {
+func SetAPIKey(ctx *schemas.BifrostContext, apiKey string, claims *gatewaybilling.APIKeyClaims) {
 	if ctx == nil {
 		return
 	}
@@ -199,23 +200,23 @@ func APIKey(ctx *schemas.BifrostContext) (string, bool) {
 	return apiKey, ok && apiKey != ""
 }
 
-func APIKeyClaims(ctx *schemas.BifrostContext) (*apikey.Claims, bool) {
+func StoredAPIKeyClaims(ctx *schemas.BifrostContext) (*gatewaybilling.APIKeyClaims, bool) {
 	if ctx == nil {
 		return nil, false
 	}
-	claims, ok := ctx.Value(apiKeyClaimsContextKey).(*apikey.Claims)
+	claims, ok := ctx.Value(apiKeyClaimsContextKey).(*gatewaybilling.APIKeyClaims)
 	return claims, ok && claims != nil
 }
 
-func billingAuthorization(ctx *schemas.BifrostContext) (*BillingAuthorization, bool) {
+func billingAuthorization(ctx *schemas.BifrostContext) (*gatewaybilling.Authorization, bool) {
 	if ctx == nil {
 		return nil, false
 	}
-	authorization, ok := ctx.Value(billingContextKey).(*BillingAuthorization)
+	authorization, ok := ctx.Value(billingContextKey).(*gatewaybilling.Authorization)
 	return authorization, ok && authorization != nil
 }
 
-func setBillingAuthorization(ctx *schemas.BifrostContext, authorization *BillingAuthorization) {
+func setBillingAuthorization(ctx *schemas.BifrostContext, authorization *gatewaybilling.Authorization) {
 	if ctx == nil || authorization == nil {
 		return
 	}
@@ -232,6 +233,30 @@ func contextBool(ctx *schemas.BifrostContext, key any) bool {
 
 func isStreamingContext(ctx *schemas.BifrostContext) bool {
 	return ctx != nil && ctx.Value(schemas.BifrostContextKeyStreamStartTime) != nil
+}
+
+func requestStart(ctx *schemas.BifrostContext) time.Time {
+	if ctx == nil {
+		return time.Time{}
+	}
+	startedAt, _ := ctx.Value(requestStartContextKey).(time.Time)
+	return startedAt
+}
+
+func requestType(ctx *schemas.BifrostContext) string {
+	if ctx == nil {
+		return ""
+	}
+	requestType, _ := ctx.Value(requestTypeContextKey).(string)
+	return requestType
+}
+
+func requestModel(ctx *schemas.BifrostContext) string {
+	if ctx == nil {
+		return ""
+	}
+	model, _ := ctx.Value(requestModelContextKey).(string)
+	return model
 }
 
 func errorShortCircuit(statusCode int, errorType string, message string) *schemas.LLMPluginShortCircuit {
@@ -251,7 +276,7 @@ func catalogErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
 }
 
 func billingErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
-	statusCode := ErrorStatus(err)
+	statusCode := gatewaybilling.ErrorStatus(err)
 	errorType := "internal_error"
 	switch statusCode {
 	case 400:
@@ -269,7 +294,7 @@ func billingErrorShortCircuit(err error) *schemas.LLMPluginShortCircuit {
 	}
 
 	message := err.Error()
-	if errors.Is(err, ErrInvalidAPIKey) {
+	if errors.Is(err, gatewaybilling.ErrInvalidAPIKey) {
 		message = "Invalid API key"
 	}
 

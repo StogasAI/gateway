@@ -81,7 +81,7 @@ func validateRequestParameterRules(body []byte, routeNode compiledProviderEndpoi
 		if err := validateParameterValue(name, raw, policy); err != nil {
 			return err
 		}
-		if err := validateInvalidParameterRules(name, raw, policy); err != nil {
+		if err := validateParameterRejectRules(name, raw, policy); err != nil {
 			return err
 		}
 	}
