@@ -78,6 +78,31 @@ func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
+	t.Setenv("INFISICAL_SKIP", "true")
+	t.Setenv("AUTH_SECRET", "01234567890123456789012345678901")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
+	t.Setenv("DATABASE_SCHEMA", "public")
+	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+
+	config, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+	if config.AllowPrivateProviderNetwork {
+		t.Fatal("AllowPrivateProviderNetwork = true without explicit opt-in")
+	}
+
+	t.Setenv("STOGAS_ALLOW_PRIVATE_PROVIDER_NETWORK", "true")
+	config, err = LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error after opt-in: %v", err)
+	}
+	if !config.AllowPrivateProviderNetwork {
+		t.Fatal("AllowPrivateProviderNetwork = false with explicit opt-in")
+	}
+}
+
 func TestLoadFromEnvRejectsInvalidDatabasePool(t *testing.T) {
 	t.Setenv("INFISICAL_SKIP", "true")
 	t.Setenv("AUTH_SECRET", "01234567890123456789012345678901")

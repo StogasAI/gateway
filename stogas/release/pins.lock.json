@@ -30,6 +30,16 @@
       "tag": "v4.3.0",
       "commit": "0057852bfaa89a56745cba8c7296529d2fc39830",
       "sourceSha256": "be6686f05c5415b735c22b64f32e27de9c6fb98f9d25421efff087ac99089e39"
+    },
+    "actions/upload-artifact": {
+      "tag": "v7.0.1",
+      "commit": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "sourceSha256": "d14fb1cada435a236a66b448fbb370cd126564c2c2d6cb52abd14d20bcbb9748"
+    },
+    "actions/download-artifact": {
+      "tag": "v8.0.1",
+      "commit": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "sourceSha256": "e31d826b0515c93e5eb0862ebb944bcbb57daa3c575b771163631f7e9583574a"
     }
   },
   "releaseSources": {
@@ -53,24 +63,35 @@
         "EFI_SECRET",
         "EFI_STUB",
         "ELF_CORE",
+        "FORTIFY_SOURCE",
+        "HARDENED_USERCOPY",
         "INET",
+        "INIT_ON_ALLOC_DEFAULT_ON",
         "IPV6",
         "IP_PNP",
         "IP_PNP_DHCP",
         "NET",
         "NETDEVICES",
-        "PACKET",
         "PCI",
         "PCI_DIRECT",
         "PCI_MSI",
         "PCI_MMCONFIG",
         "PROC_FS",
+        "RANDOMIZE_BASE",
         "RD_ZSTD",
+        "SECCOMP",
+        "SECCOMP_FILTER",
         "SECURITYFS",
         "SERIAL_8250",
         "SERIAL_8250_CONSOLE",
         "SERIAL_8250_PCI",
         "SEV_GUEST",
+        "SLAB_FREELIST_HARDENED",
+        "SLAB_FREELIST_RANDOM",
+        "STACKPROTECTOR",
+        "STACKPROTECTOR_STRONG",
+        "STRICT_KERNEL_RWX",
+        "STRICT_MODULE_RWX",
         "SYSFS",
         "TMPFS",
         "TSM_GUEST",
@@ -83,7 +104,6 @@
         "VIRTIO_MENU",
         "VIRTIO_NET",
         "VIRTIO_PCI",
-        "VIRTIO_PCI_LEGACY",
         "VIRTIO_VSOCKETS_COMMON",
         "VIRTIO_VSOCKETS"
       ]

@@ -92,6 +92,7 @@ func newAccount(config Config) *account {
 	if config.OpenAIBaseURL != "" {
 		providerConfig.NetworkConfig.BaseURL = config.OpenAIBaseURL
 	}
+	providerConfig.NetworkConfig.AllowPrivateNetwork = config.AllowPrivateProviderNetwork
 	providerConfig.CheckAndSetDefaults()
 
 	return &account{

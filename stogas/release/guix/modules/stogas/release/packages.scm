@@ -53,65 +53,86 @@
         #~(modify-phases #$phases
             (add-after 'configure 'stogas-built-in-guest-drivers
               (lambda _
-                (let ((disabled '("DEBUG_INFO"
-                                  "DEBUG_INFO_BTF"
-                                  "DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT"
-                                  "DEBUG_INFO_REDUCED"
-                                  "DEBUG_INFO_SPLIT"
-                                  "FTRACE"
-                                  "KALLSYMS"
-                                  "KPROBES"
-                                  "MODULES"))
-                      (built-ins '("ACPI"
-                                   "AMD_MEM_ENCRYPT"
-                                   "BINFMT_ELF"
-                                   "BLK_DEV_INITRD"
-                                   "CONFIGFS_FS"
-                                   "CPU_SUP_AMD"
-                                   "DEVTMPFS"
-                                   "DEVTMPFS_MOUNT"
-                                   "DMI"
-                                   "EARLY_PRINTK"
-                                   "EFI"
-                                   "EFI_COCO_SECRET"
-                                   "EFI_SECRET"
-                                   "EFI_STUB"
-                                   "ELF_CORE"
-                                   "INET"
-                                   "IPV6"
-                                   "IP_PNP"
-                                   "IP_PNP_DHCP"
-                                   "NETDEVICES"
-                                   "NET"
-                                   "PACKET"
-                                   "PCI"
-                                   "PCI_DIRECT"
-                                   "PCI_MSI"
-                                   "PCI_MMCONFIG"
-                                   "PROC_FS"
-                                   "RD_ZSTD"
-                                   "SECURITYFS"
-                                   "SERIAL_8250"
-                                   "SERIAL_8250_CONSOLE"
-                                   "SERIAL_8250_PCI"
-                                   "SEV_GUEST"
-                                   "SYSFS"
-                                   "TMPFS"
-                                   "TTY"
-                                   "TSM_GUEST"
+	                (let ((disabled '("DEBUG_INFO"
+	                                  "BINFMT_MISC"
+	                                  "BPF_SYSCALL"
+	                                  "DEBUG_INFO_BTF"
+	                                  "DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT"
+	                                  "DEBUG_INFO_REDUCED"
+	                                  "DEBUG_INFO_SPLIT"
+	                                  "FW_LOADER"
+	                                  "FTRACE"
+	                                  "HIBERNATION"
+	                                  "KALLSYMS"
+	                                  "KEXEC"
+	                                  "KPROBES"
+	                                  "MODULES"
+	                                  "PACKET"
+	                                  "PROFILING"
+	                                  "USER_NS"
+	                                  "VIRTIO_PCI_LEGACY"))
+	                      (built-ins '("ACPI"
+	                                   "AMD_MEM_ENCRYPT"
+	                                   "BINFMT_ELF"
+	                                   "BLK_DEV_INITRD"
+	                                   "CONFIGFS_FS"
+	                                   "CPU_SUP_AMD"
+	                                   "DEVTMPFS"
+	                                   "DEVTMPFS_MOUNT"
+	                                   "DMI"
+	                                   "EARLY_PRINTK"
+	                                   "EFI"
+	                                   "EFI_COCO_SECRET"
+	                                   "EFI_SECRET"
+	                                   "EFI_STUB"
+	                                   "ELF_CORE"
+	                                   "EXPERT"
+	                                   "FORTIFY_SOURCE"
+	                                   "HARDENED_USERCOPY"
+	                                   "INET"
+	                                   "INIT_ON_ALLOC_DEFAULT_ON"
+	                                   "IPV6"
+	                                   "IP_PNP"
+	                                   "IP_PNP_DHCP"
+	                                   "NETDEVICES"
+	                                   "NET"
+	                                   "PCI"
+	                                   "PCI_DIRECT"
+	                                   "PCI_MSI"
+	                                   "PCI_MMCONFIG"
+	                                   "PROC_FS"
+	                                   "RANDOMIZE_BASE"
+	                                   "RD_ZSTD"
+	                                   "SECCOMP"
+	                                   "SECCOMP_FILTER"
+	                                   "SECURITYFS"
+	                                   "SERIAL_8250"
+	                                   "SERIAL_8250_CONSOLE"
+	                                   "SERIAL_8250_PCI"
+	                                   "SEV_GUEST"
+	                                   "SLAB_FREELIST_HARDENED"
+	                                   "SLAB_FREELIST_RANDOM"
+	                                   "SMP"
+	                                   "STACKPROTECTOR"
+	                                   "STACKPROTECTOR_STRONG"
+	                                   "STRICT_KERNEL_RWX"
+	                                   "SYSFS"
+	                                   "TMPFS"
+	                                   "TTY"
+	                                   "TSM_GUEST"
                                    "TSM_REPORTS"
                                    "UNIX"
-                                   "VIRT_DRIVERS"
-                                   "VIRTIO_MENU"
-                                   "VIRTIO"
-                                   "VIRTIO_CONSOLE"
-                                   "VIRTIO_NET"
-                                   "VIRTIO_PCI"
-                                   "VIRTIO_PCI_LEGACY"
-                                   "VIRTIO_VSOCKETS"
-                                   "VIRTIO_VSOCKETS_COMMON"
-                                   "VSOCKETS")))
+	                                   "VIRT_DRIVERS"
+	                                   "VIRTIO_MENU"
+	                                   "VIRTIO"
+	                                   "VIRTIO_CONSOLE"
+	                                   "VIRTIO_NET"
+	                                   "VIRTIO_PCI"
+	                                   "VIRTIO_VSOCKETS"
+	                                   "VIRTIO_VSOCKETS_COMMON"
+	                                   "VSOCKETS")))
                   (setenv "ARCH" "x86_64")
+                  (unsetenv "KCONFIG_ALLCONFIG")
                   (invoke "make" "ARCH=x86_64" "allnoconfig")
                   (for-each
                    (lambda (option)
@@ -122,14 +143,19 @@
                      (invoke "scripts/config" "--enable" option))
                    built-ins)
                   (invoke "make" "ARCH=x86_64" "olddefconfig")
-                  (for-each
-                   (lambda (option)
-                     (invoke "grep" "-q"
-                             (string-append "^CONFIG_" option "=y$")
-                             ".config"))
-                   built-ins)
-                  (invoke "grep" "-q" "^# CONFIG_MODULES is not set$"
-                          ".config"))))))))
+                  (define (assert-enabled option)
+                    (invoke "grep" "-q"
+                            (string-append "^CONFIG_" option "=y$")
+                            ".config"))
+                  (define (assert-disabled option)
+                    (invoke "bash" "-c"
+                            (string-append
+                             "! grep -q '^CONFIG_" option "=' .config"
+                             " || grep -q '^# CONFIG_" option " is not set$' .config")))
+                  (for-each assert-enabled built-ins)
+	                  (invoke "grep" "-q" "^# CONFIG_MODULES is not set$"
+	                          ".config")
+	                  (for-each assert-disabled disabled))))))))
     (synopsis "Stogas SEV-SNP guest Linux kernel")
     (description
      "Linux 6.18.35 with the virtio, EFI secret, configfs/TSM, and SEV-SNP
