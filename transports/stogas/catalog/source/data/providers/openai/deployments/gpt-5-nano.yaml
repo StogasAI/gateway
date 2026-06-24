@@ -1,10 +1,7 @@
 ---
 deployments:
-  concreteSlugs:
-    expandAttributeWithEnumeratedPrefixes:
-      - [modelSlugs]
-      - [providerSlugs, modelSlugs]
-      - [authorSlugs, providerSlugs, modelSlugs]
+  upstreamModelSlug: gpt-5-nano
+  aliasSlugs: [gpt-5-nano-2025-08-07, gpt-5-nano, gpt-5-nano-latest]
   providerId: openai
   parentProviderEndpointNodes: [openai-chat-completions, openai-responses]
   modelId: gpt-5-nano-2025-08-07

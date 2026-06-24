@@ -1,12 +1,7 @@
 ---
 deployments:
-  modelSlugs:
-    expandAttributeWithEnumeratedSuffixes: [standard]
-  concreteSlugs:
-    expandAttributeWithEnumeratedPrefixes:
-      - [modelSlugs]
-      - [providerSlugs, modelSlugs]
-      - [authorSlugs, providerSlugs, modelSlugs]
+  upstreamModelSlug: gpt-5.5
+  aliasSlugs: [gpt-5.5-2026-04-23, gpt-5.5, gpt-5.5-latest, gpt-5.5-2026-04-23-standard, gpt-5.5-standard, gpt-5.5-standard-latest, gpt-5.5-latest-standard]
   providerId: openai
   parentProviderEndpointNodes: [openai-chat-completions, openai-responses]
   modelId: gpt-5.5-2026-04-23

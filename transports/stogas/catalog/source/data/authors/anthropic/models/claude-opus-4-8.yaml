@@ -1,0 +1,18 @@
+---
+models:
+  authorId: anthropic
+  name: Claude Opus 4.8
+  aliasNames: []
+  modelSlugs: [claude-opus-4-8]
+  family: Claude
+  series: Claude Opus
+  snapshot: null
+  flavors: [base]
+  reasoning: true
+  contextWindowTokens: 1000000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  tokenizer: unknown
+  releaseDate: null
+  knowledgeCutoff: null

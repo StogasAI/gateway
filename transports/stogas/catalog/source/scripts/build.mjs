@@ -173,119 +173,36 @@ function writeIfChanged(path, content) {
 function validateCatalogReferences(catalog) {
 	const graph = catalog?.graph;
 	if (!graph?.stogasEndpoints) return;
-	validateRuleBlocks(graph);
-	for (const [stogasEndpointId, stogasEndpoint] of Object.entries(graph.stogasEndpoints)) {
-		validateSchemaParameterDirectives(
-			stogasEndpointId,
-			stogasEndpoint.schema,
-			stogasEndpoint.schema?.parameters ?? {}
-		);
-		validateSchemaFieldAliases(
-			stogasEndpointId,
-			stogasEndpoint.schema,
-			'headers',
-			stogasEndpoint.schema?.headers ?? {}
-		);
-	}
 	for (const [providerEndpointId, providerEndpoint] of Object.entries(
 		graph.providerEndpoints ?? {}
 	)) {
-		const stogasEndpoint = graph.stogasEndpoints[providerEndpoint.stogasEndpointId];
-		if (!stogasEndpoint) continue;
-		validateSchemaParameterDirectives(
-			providerEndpointId,
-			stogasEndpoint.schema,
-			providerEndpoint.schema?.parameters ?? {}
-		);
-	}
-	for (const [deploymentId, deployment] of Object.entries(graph.deployments ?? {})) {
-		for (const providerEndpointId of deployment.parentProviderEndpointNodes ?? []) {
-			const providerEndpoint = graph.providerEndpoints?.[providerEndpointId];
-			if (!providerEndpoint) continue;
-			const stogasEndpoint = graph.stogasEndpoints[providerEndpoint.stogasEndpointId];
-			if (stogasEndpoint)
-				validateSchemaParameterDirectives(
-					deploymentId,
-					stogasEndpoint.schema,
-					deployment.schema?.parameters ?? {}
-				);
+		for (const stogasEndpointId of providerEndpoint.stogasEndpoints ?? []) {
+			if (!graph.stogasEndpoints[stogasEndpointId]) {
+				throw new Error(`${providerEndpointId}: missing stogas endpoint ${stogasEndpointId}`);
+			}
 		}
 	}
 }
 
 function applyCompiledDerivations(catalog) {
-	applyDeploymentModelSlugPatches(catalog?.graph);
-	applyConcreteSlugProjections(catalog?.graph);
 	rebuildIndexes(catalog);
 }
 
-function applyDeploymentModelSlugPatches(graph) {
-	if (!graph?.deployments || !graph?.models) return;
-	for (const deployment of Object.values(graph.deployments)) {
-		const modelSlugs = deployment.modelSlugs;
-		const model = graph.models[deployment.modelId];
-		if (!modelSlugs || !model) continue;
-		const sourceSlugs = model.modelSlugs ?? [];
-		const explicit = Array.isArray(modelSlugs.value) ? modelSlugs.value : [];
-		const suffixes = modelSlugs.expandAttributeWithEnumeratedSuffixes;
-		const generated = Array.isArray(suffixes)
-			? suffixes.flatMap((suffix) =>
-					sourceSlugs.flatMap((slug) => suffixedSlugVariants(slug, suffix))
-				)
-			: [];
-		const referenced = suffixes?.includes('standard') ? sourceSlugs : [];
-		modelSlugs.value = unique([...referenced, ...explicit, ...generated]);
-	}
-}
-
-function applyConcreteSlugProjections(graph) {
-	if (!graph?.deployments) return;
-	for (const deployment of Object.values(graph.deployments)) {
-		const concreteSlugs = deployment.concreteSlugs;
-		if (!concreteSlugs) continue;
-		const explicit = Array.isArray(concreteSlugs.value) ? concreteSlugs.value : [];
-		const expansions = Array.isArray(concreteSlugs.expandAttributeWithEnumeratedPrefixes)
-			? concreteSlugs.expandAttributeWithEnumeratedPrefixes
-			: [];
-		const generated = expansions.flatMap((slugRefs) =>
-			enumeratedSlugRefs(graph, deployment, slugRefs)
-		);
-		concreteSlugs.value = unique([...explicit, ...generated]);
-	}
-}
-
-function slugsForRef(graph, deployment, ref) {
-	switch (ref) {
-		case 'authorSlugs': {
-			const model = graph.models?.[deployment.modelId];
-			return graph.authors?.[model?.authorId]?.authorSlugs ?? [];
+function enumeratedPublicModelSlugs(graph, deployment) {
+	const model = graph.models?.[deployment.modelId];
+	const authorSlugs = graph.authors?.[model?.authorId]?.authorSlugs ?? [];
+	const providerSlugs = graph.providers?.[deployment.providerId]?.providerSlugs ?? [];
+	const aliasSlugs = deployment.aliasSlugs ?? [];
+	const slugs = [];
+	for (const alias of aliasSlugs) {
+		slugs.push(alias);
+		for (const provider of providerSlugs) slugs.push(`${provider}/${alias}`);
+		for (const author of authorSlugs) {
+			slugs.push(`${author}/${alias}`);
+			for (const provider of providerSlugs) slugs.push(`${author}/${provider}/${alias}`);
 		}
-		case 'providerSlugs':
-			return graph.providers?.[deployment.providerId]?.providerSlugs ?? [];
-		case 'modelSlugs':
-			return deployment.modelSlugs?.value ?? graph.models?.[deployment.modelId]?.modelSlugs ?? [];
-		default:
-			return [];
 	}
-}
-
-function suffixedSlugVariants(slug, suffix) {
-	if (slug.endsWith('-latest')) {
-		const base = slug.slice(0, -'-latest'.length);
-		return [`${base}-${suffix}-latest`, `${slug}-${suffix}`];
-	}
-	return [`${slug}-${suffix}`];
-}
-
-function enumeratedSlugRefs(graph, deployment, slugRefs) {
-	const slugSets = Array.isArray(slugRefs)
-		? slugRefs.map((ref) => slugsForRef(graph, deployment, ref))
-		: [];
-	const slugs = slugSets.reduce(
-		(acc, refs) => acc.flatMap((parts) => refs.map((slug) => [...parts, slug])),
-		[[]]
-	);
-	return slugs.map((parts) => parts.join('/'));
+	return slugs;
 }
 
 function rebuildIndexes(catalog) {
@@ -317,7 +234,7 @@ function providerNativeModelSlugs(graph) {
 		for (const deploymentId of deploymentIdsForProviderEndpoint(graph, endpointId)) {
 			const deployment = graph.deployments?.[deploymentId];
 			if (!deployment) continue;
-			for (const slug of deployment.concreteSlugs?.value ?? []) {
+			for (const slug of enumeratedPublicModelSlugs(graph, deployment)) {
 				if (typeof slug === 'string' && slug) {
 					index[`${endpointId}:${slug}`] = deploymentId;
 				}
@@ -368,7 +285,7 @@ function stogasEndpointProviderEndpoints(graph) {
 	const index = {};
 	for (const stogasEndpointId of Object.keys(graph.stogasEndpoints ?? {})) {
 		index[stogasEndpointId] = Object.entries(graph.providerEndpoints ?? {})
-			.filter(([, endpoint]) => endpoint.stogasEndpointId === stogasEndpointId)
+			.filter(([, endpoint]) => endpoint.stogasEndpoints?.includes(stogasEndpointId))
 			.map(([endpointId]) => endpointId);
 	}
 	return index;
@@ -376,53 +293,6 @@ function stogasEndpointProviderEndpoints(graph) {
 
 function unique(items) {
 	return [...new Set(items)];
-}
-
-function validateSchemaParameterDirectives(ownerId, schema, parameters) {
-	validateSchemaFieldAliases(ownerId, schema, 'parameters', parameters);
-}
-
-function validateSchemaFieldAliases(ownerId, schema, section, fields) {
-	for (const [fieldName, policy] of Object.entries(fields)) {
-		const alias = policy?.alias;
-		if (alias === undefined) continue;
-		if (typeof alias !== 'string') {
-			throw new Error(`${ownerId}.${fieldName}: alias rule must use a schema field target`);
-		}
-		const match = /^schema\.(headers|parameters)\.(.+)$/.exec(alias);
-		if (!match) {
-			throw new Error(
-				`${ownerId}.${fieldName}: alias target must start with schema.headers. or schema.parameters.`
-			);
-		}
-		const [, targetSection, targetPath] = match;
-		const targetRoot = targetPath.split('.')[0];
-		if (!targetRoot || !schema[targetSection]?.[targetRoot]) {
-			throw new Error(
-				`${ownerId}.${section}.${fieldName}: alias target ${alias} is not in the resolved endpoint schema`
-			);
-		}
-	}
-}
-
-function validateRuleBlocks(value, path = 'graph') {
-	if (!value || typeof value !== 'object') return;
-	if (Array.isArray(value)) {
-		value.forEach((item, index) => validateRuleBlocks(item, `${path}[${index}]`));
-		return;
-	}
-	if (Object.prototype.hasOwnProperty.call(value, 'rules')) {
-		throw new Error(`${path}.rules is not supported; put policy keys directly on the object`);
-	}
-	const actions = ['overrideAttribute', 'deleteAttribute'].filter(
-		(action) => value[action] === true
-	);
-	if (actions.length > 1) {
-		throw new Error(`${path} may use only one attribute action: ${actions.join(', ')}`);
-	}
-	for (const [key, child] of Object.entries(value)) {
-		validateRuleBlocks(child, `${path}.${key}`);
-	}
 }
 
 if (args.has('--clean')) {

@@ -1,9 +1,36 @@
-package providers
+package billing
 
 import (
 	"math/big"
 	"strings"
 )
+
+const (
+	MeterInputTokens             = "input_tokens"
+	MeterCachedInputTokens       = "cached_input_tokens"
+	MeterCacheWrite5mInputTokens = "cache_write_5m_input_tokens"
+	MeterCacheWrite1hInputTokens = "cache_write_1h_input_tokens"
+	MeterOutputTokens            = "output_tokens"
+
+	RatePerMillionTokens         = "per_mill_tokens"
+	RatePerMillionContextLTE272K = "per_mill_context_lte_272k"
+	RatePerMillionContextGT272K  = "per_mill_context_gt_272k"
+	RatePerThousandCalls         = "per_1k_calls"
+
+	LongContextThresholdTokens = 272000
+	MillionTokens              = 1000000
+	ThousandCalls              = 1000
+)
+
+type Pricing map[string]map[string]string
+
+type MeterEstimate struct {
+	MeterKey       string
+	RateKey        string
+	Quantity       string
+	AmountUSDAtoms string
+	HoldRequired   bool
+}
 
 func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool, useHighestRate bool) []MeterEstimate {
 	if quantity <= 0 {

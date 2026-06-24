@@ -2,7 +2,7 @@ package catalog
 
 import (
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/providers"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 type Route string
@@ -22,19 +22,12 @@ type Deployment struct {
 	ImpliedServiceTier  *schemas.BifrostServiceTier
 	MaxOutputTokens     int
 	Pricing             Pricing
-	ProfileIDs          []string
 	ReasoningSupported  bool
 	ServiceTier         string
-	ParameterPolicies   map[string]compiledParameter
 }
 
-type Pricing = providers.Pricing
-
-type SlugProjection struct {
-	ExpandAttributeWithEnumeratedPrefixes [][]string `json:"expandAttributeWithEnumeratedPrefixes"`
-	ExpandAttributeWithEnumeratedSuffixes []string   `json:"expandAttributeWithEnumeratedSuffixes"`
-	Value                                 []string   `json:"value"`
-}
+type Pricing = billing.Pricing
+type MeterEstimate = billing.MeterEstimate
 
 type snapshot struct {
 	graph                    compiledGraph
@@ -71,18 +64,15 @@ type compiledStogas struct {
 }
 
 type compiledDeployment struct {
-	ConcreteSlugs               SlugProjection               `json:"concreteSlugs"`
-	ModelSlugs                  SlugProjection               `json:"modelSlugs"`
-	ContextWindowTokens         int                          `json:"contextWindowTokens"`
-	MaxOutputTokens             int                          `json:"maxOutputTokens"`
-	ProviderID                  string                       `json:"providerId"`
-	ParentProviderEndpointNodes []string                     `json:"parentProviderEndpointNodes"`
-	ModelID                     string                       `json:"modelId"`
-	ServiceTier                 string                       `json:"serviceTier"`
-	PolicyProfiles              []string                     `json:"policyProfiles"`
-	Schema                      compiledSchemaPatch          `json:"schema"`
-	ParameterPolicies           map[string]compiledParameter `json:"-"`
-	Pricing                     Pricing                      `json:"pricing"`
+	AliasSlugs                  []string       `json:"aliasSlugs"`
+	ContextWindowTokens         int            `json:"contextWindowTokens"`
+	MaxOutputTokens             int            `json:"maxOutputTokens"`
+	ProviderID                  string         `json:"providerId"`
+	ParentProviderEndpointNodes []string       `json:"parentProviderEndpointNodes"`
+	ModelID                     string         `json:"modelId"`
+	ServiceTier                 string         `json:"serviceTier"`
+	Pricing                     Pricing        `json:"pricing"`
+	UpstreamModelSlug           string         `json:"upstreamModelSlug"`
 }
 
 type compiledModel struct {
@@ -94,14 +84,11 @@ type compiledModel struct {
 }
 
 type compiledProviderEndpoint struct {
-	ID                string                       `json:"-"`
-	DeploymentIDs     []string                     `json:"deploymentIds"`
-	ProviderID        string                       `json:"providerId"`
-	PolicyProfiles    []string                     `json:"policyProfiles"`
-	Schema            compiledSchemaPatch          `json:"schema"`
-	ParameterPolicies map[string]compiledParameter `json:"-"`
-	Pricing           Pricing                      `json:"pricing"`
-	StogasEndpointID  string                       `json:"stogasEndpointId"`
+	ID              string   `json:"-"`
+	DeploymentIDs   []string `json:"deploymentIds"`
+	ProviderID      string   `json:"providerId"`
+	Pricing         Pricing  `json:"pricing"`
+	StogasEndpoints []string `json:"stogasEndpoints"`
 }
 
 type compiledProvider struct {
@@ -110,19 +97,6 @@ type compiledProvider struct {
 }
 
 type compiledStogasEndpoint struct {
-	Schema compiledStogasEndpointSchema `json:"schema"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
 }
-
-type compiledStogasEndpointSchema struct {
-	Parameters map[string]compiledParameter `json:"parameters"`
-	Headers    map[string]compiledParameter `json:"headers"`
-	Method     string                       `json:"method"`
-	Path       string                       `json:"path"`
-}
-
-type compiledSchemaPatch struct {
-	Parameters map[string]compiledParameter `json:"parameters"`
-}
-
-type compiledParameter = providers.Parameter
-type compiledRejectRule = providers.RejectRule

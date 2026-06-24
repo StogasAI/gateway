@@ -1,0 +1,25 @@
+---
+providers:
+  name: Anthropic
+  providerSlugs: [anthropic]
+  cancellationSupported: false
+  streamingSupported: true
+  streamCancellationSupported: false
+  functionCallingSupported: true
+  promptCachingSupported: true
+  systemMessagesSupported: true
+  toolChoiceSupported: true
+  webSearchSupported: true
+  countTokensEndpoints: []
+  moderated: true
+  usesPseudoanonymousUserId: true
+  dataRetentionDaysClaimed: 30
+  dataStorageRegionPinnedByDefaultClaimed: false
+  dataUsedForTrainingClaimed: false
+  dataSoldClaimed: false
+  dataSharedForCrossContextBehavioralAdsClaimed: false
+  headquarteredLocationId: us-ca-san-francisco
+  datacenterLocationIds: [us]
+  pricing:
+    anthropic_web_search_calls:
+      per_1k_calls: '10000000000000000000'

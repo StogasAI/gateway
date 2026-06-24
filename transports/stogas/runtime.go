@@ -8,7 +8,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-const openAIProviderKeyID = "stogas-openai"
+const (
+	openAIProviderKeyID    = "stogas-openai"
+	anthropicProviderKeyID = "stogas-anthropic"
+)
 
 type Runtime struct {
 	client  *bifrost.Bifrost
@@ -32,7 +35,6 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	client, err := bifrost.Init(runtimeCtx, schemas.BifrostConfig{
 		Account:         newAccount(config),
 		InitialPoolSize: schemas.DefaultInitialPoolSize,
-		LLMPlugins:      []schemas.LLMPlugin{NewPlugin(billingService)},
 		Logger:          logger,
 		Tracer:          schemas.DefaultTracer(),
 	})
@@ -64,6 +66,13 @@ func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
 	return r.billing.ParseAPIKey(rawAPIKey)
 }
 
+func (r *Runtime) Billing() *billing.Service {
+	if r == nil {
+		return nil
+	}
+	return r.billing
+}
+
 func (r *Runtime) Close() {
 	if r == nil {
 		return
@@ -80,49 +89,69 @@ func (r *Runtime) Close() {
 }
 
 type account struct {
-	key            schemas.Key
-	providerConfig schemas.ProviderConfig
+	keys            map[schemas.ModelProvider]schemas.Key
+	providerConfigs map[schemas.ModelProvider]schemas.ProviderConfig
 }
 
 func newAccount(config Config) *account {
-	providerConfig := schemas.ProviderConfig{
+	openAIConfig := newProviderConfig(config.OpenAIBaseURL, config.AllowPrivateProviderNetwork)
+	anthropicConfig := newProviderConfig(config.AnthropicBaseURL, config.AllowPrivateProviderNetwork)
+
+	return &account{
+		keys: map[schemas.ModelProvider]schemas.Key{
+			schemas.OpenAI: {
+				ID:      openAIProviderKeyID,
+				Name:    openAIProviderKeyID,
+				Value:   *schemas.NewEnvVar(config.OpenAIAPIKey),
+				Models:  schemas.WhiteList{"*"},
+				Weight:  1,
+				Enabled: schemas.Ptr(true),
+			},
+			schemas.Anthropic: {
+				ID:      anthropicProviderKeyID,
+				Name:    anthropicProviderKeyID,
+				Value:   *schemas.NewEnvVar(config.AnthropicAPIKey),
+				Models:  schemas.WhiteList{"*"},
+				Weight:  1,
+				Enabled: schemas.Ptr(true),
+			},
+		},
+		providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{
+			schemas.OpenAI:    openAIConfig,
+			schemas.Anthropic: anthropicConfig,
+		},
+	}
+}
+
+func newProviderConfig(baseURL string, allowPrivateNetwork bool) schemas.ProviderConfig {
+	config := schemas.ProviderConfig{
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 		NetworkConfig:            schemas.DefaultNetworkConfig,
 	}
-	if config.OpenAIBaseURL != "" {
-		providerConfig.NetworkConfig.BaseURL = config.OpenAIBaseURL
+	if baseURL != "" {
+		config.NetworkConfig.BaseURL = baseURL
 	}
-	providerConfig.NetworkConfig.AllowPrivateNetwork = config.AllowPrivateProviderNetwork
-	providerConfig.CheckAndSetDefaults()
-
-	return &account{
-		key: schemas.Key{
-			ID:      openAIProviderKeyID,
-			Name:    openAIProviderKeyID,
-			Value:   *schemas.NewEnvVar(config.OpenAIAPIKey),
-			Models:  schemas.WhiteList{"*"},
-			Weight:  1,
-			Enabled: schemas.Ptr(true),
-		},
-		providerConfig: providerConfig,
-	}
+	config.NetworkConfig.AllowPrivateNetwork = allowPrivateNetwork
+	config.CheckAndSetDefaults()
+	return config
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {
-	if providerKey != schemas.OpenAI {
+	key, ok := a.keys[providerKey]
+	if !ok {
 		return []schemas.Key{}, nil
 	}
-	return []schemas.Key{a.key}, nil
+	return []schemas.Key{key}, nil
 }
 
 func (a *account) GetConfigForProvider(providerKey schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	if providerKey != schemas.OpenAI {
+	config, ok := a.providerConfigs[providerKey]
+	if !ok {
 		return nil, nil
 	}
-	config := a.providerConfig
 	return &config, nil
 }

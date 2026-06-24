@@ -6,10 +6,14 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/providers"
 )
 
 const (
+	RouteChat      Route = "chat-completions"
+	RouteResponses Route = "responses"
+
 	webSearchFixedContentInputTokens = 8000
 	searchCallQuantity               = 1
 
@@ -23,83 +27,185 @@ const (
 	RatePerThousandSearchContextMediumCalls = "per_1k_search_context_medium_calls"
 )
 
-type Adapter struct{}
+type Route string
 
-func (Adapter) ValidateRequest(ctx providers.RequestContext) error {
-	if ctx.OutputTokenLimit > 0 && ctx.OutputTokenLimit < 16 {
-		return providers.ErrOutputTokenLimitTooLow
-	}
-	if err := validateRequestInput(ctx); err != nil {
+type Deployment struct {
+	Model               string
+	ContextWindowTokens int
+	Pricing             providers.Pricing
+	ReasoningSupported  bool
+}
+
+type PolicyRequest struct {
+	Route               Route
+	Deployment          Deployment
+	OutputTokenLimit    int
+	HasWebSearchOptions bool
+	SearchContextSize   string
+	ToolsParseFailed    bool
+	RawBody             map[string]json.RawMessage
+	ToolTypes           []string
+	RawTools            []map[string]json.RawMessage
+}
+
+func ValidateRequest(req PolicyRequest) error {
+	if err := validateOutputTokensMin16(req); err != nil {
 		return err
 	}
-	if ctx.Route == providers.RouteResponses && ctx.HasWebSearchOptions {
-		return providers.ErrUnsupportedParameter
+	if err := validateReasoningSupport(req); err != nil {
+		return err
 	}
-	if ctx.Route == providers.RouteChat && ctx.HasWebSearchOptions {
-		if meterKey, _ := chatSearchMeter(ctx); meterKey == "" {
-			return providers.ErrUnsupportedParameter
+	switch req.Route {
+	case RouteChat:
+		if err := validateChatTextOnlyMVP(req); err != nil {
+			return err
 		}
-	}
-	if ctx.ToolsParseFailed {
-		return providers.ErrInvalidProviderToolSpec
-	}
-	for _, tool := range ctx.RawTools {
-		if err := validateTool(ctx.Route, tool); err != nil {
+		if err := validateChatNoHostedTools(req); err != nil {
+			return err
+		}
+		if err := validateChatSearchModelWebSearchOptions(req); err != nil {
+			return err
+		}
+	case RouteResponses:
+		if err := validateResponsesTextOnlyMVP(req); err != nil {
+			return err
+		}
+		if err := validateResponsesNoUnbilledHostedTools(req); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (Adapter) ExtraHoldMeters(ctx providers.RequestContext, outputTokenLimit int, inputTokenLimit int) []providers.MeterEstimate {
-	meters := []providers.MeterEstimate{}
-	if fixedContentTokens := webSearchFixedContentTokens(ctx.Deployment.Model, ctx.ToolTypes); fixedContentTokens > 0 {
-		meters = providers.AppendTokenMeterCost(meters, ctx.Deployment.Pricing, providers.MeterInputTokens, fixedContentTokens, true, true)
+func validateReasoningSupport(req PolicyRequest) error {
+	if req.Deployment.ReasoningSupported {
+		return nil
 	}
-	if webSearchContentTokensBilledAtModelRates(ctx) && ctx.Deployment.ContextWindowTokens > 0 {
-		remainingInputTokens := ctx.Deployment.ContextWindowTokens - outputTokenLimit - inputTokenLimit
-		meters = providers.AppendTokenMeterCost(meters, ctx.Deployment.Pricing, providers.MeterInputTokens, remainingInputTokens, true, true)
+	for _, name := range []string{"reasoning", "reasoning_effort", "reasoning_max_tokens", "reasoning_display", "reasoning.effort"} {
+		if _, ok := req.RawBody[name]; ok {
+			return providers.ErrUnsupportedParameter
+		}
 	}
-	if meterKey, rateKey := chatSearchMeter(ctx); meterKey != "" {
-		meters = providers.AppendCallMeterCostWithRate(meters, ctx.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, true)
-	}
-	if meterKey := responsesSearchMeter(ctx); meterKey != "" {
-		meters = providers.AppendCallMeterCost(meters, ctx.Deployment.Pricing, meterKey, searchCallQuantity, true)
-	}
-	return meters
-}
-
-func (Adapter) ExtraSettlementMeters(ctx providers.RequestContext) []providers.MeterEstimate {
-	meters := []providers.MeterEstimate{}
-	if fixedContentTokens := webSearchFixedContentTokens(ctx.Deployment.Model, ctx.ToolTypes); fixedContentTokens > 0 {
-		meters = providers.AppendTokenMeterCost(meters, ctx.Deployment.Pricing, providers.MeterInputTokens, fixedContentTokens, false, true)
-	}
-	if meterKey, rateKey := chatSearchMeter(ctx); meterKey != "" {
-		meters = providers.AppendCallMeterCostWithRate(meters, ctx.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, false)
-	}
-	if meterKey := responsesSearchMeter(ctx); meterKey != "" {
-		meters = providers.AppendCallMeterCost(meters, ctx.Deployment.Pricing, meterKey, searchCallQuantity, false)
-	}
-	return meters
-}
-
-func (Adapter) AllowUpstreamRequestHeader(providers.HeaderContext) bool {
-	return false
-}
-
-func (Adapter) FilterProviderResponseHeaders(providers.HeaderContext, map[string]string) map[string]string {
 	return nil
 }
 
-func validateRequestInput(ctx providers.RequestContext) error {
-	switch ctx.Route {
-	case providers.RouteChat:
-		return validateChatInput(ctx.RawBody["messages"])
-	case providers.RouteResponses:
-		return validateResponsesInput(ctx.RawBody["input"])
-	default:
+func ExtraHoldMeters(req PolicyRequest, outputTokenLimit int, inputTokenLimit int) []providers.MeterEstimate {
+	meters := []providers.MeterEstimate{}
+	if req.Route == RouteResponses {
+		meters = append(meters, extraResponsesHostedToolHoldMeters(req, outputTokenLimit, inputTokenLimit)...)
+	}
+	if req.Route == RouteChat {
+		meters = append(meters, extraChatSearchModelHoldMeters(req, outputTokenLimit, inputTokenLimit)...)
+	}
+	return meters
+}
+
+func ExtraSettlementMeters(req PolicyRequest) []providers.MeterEstimate {
+	meters := []providers.MeterEstimate{}
+	if req.Route == RouteResponses {
+		meters = append(meters, extraResponsesHostedToolSettlementMeters(req)...)
+	}
+	if req.Route == RouteChat {
+		meters = append(meters, extraChatSearchModelSettlementMeters(req)...)
+	}
+	return meters
+}
+
+func validateOutputTokensMin16(req PolicyRequest) error {
+	if req.OutputTokenLimit > 0 && req.OutputTokenLimit < 16 {
+		return providers.ErrOutputTokenLimitTooLow
+	}
+	return nil
+}
+
+func validateChatTextOnlyMVP(req PolicyRequest) error {
+	if req.Route != RouteChat {
 		return nil
 	}
+	return validateChatInput(req.RawBody["messages"])
+}
+
+func validateResponsesTextOnlyMVP(req PolicyRequest) error {
+	if req.Route != RouteResponses {
+		return nil
+	}
+	return validateResponsesInput(req.RawBody["input"])
+}
+
+func validateChatNoHostedTools(req PolicyRequest) error {
+	if req.Route != RouteChat {
+		return nil
+	}
+	return validateHostedTools(req)
+}
+
+func validateResponsesNoUnbilledHostedTools(req PolicyRequest) error {
+	if req.Route != RouteResponses {
+		return nil
+	}
+	return validateHostedTools(req)
+}
+
+func validateHostedTools(req PolicyRequest) error {
+	if req.ToolsParseFailed {
+		return providers.ErrInvalidProviderToolSpec
+	}
+	for _, tool := range req.RawTools {
+		if err := validateTool(req.Route, tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChatSearchModelWebSearchOptions(req PolicyRequest) error {
+	if req.Route != RouteChat || !req.HasWebSearchOptions {
+		return nil
+	}
+	if meterKey, _ := chatSearchMeter(req); meterKey == "" {
+		return providers.ErrUnsupportedParameter
+	}
+	return nil
+}
+
+func extraResponsesHostedToolHoldMeters(req PolicyRequest, outputTokenLimit int, inputTokenLimit int) []providers.MeterEstimate {
+	meters := []providers.MeterEstimate{}
+	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens, true, true)
+	}
+	if webSearchContentTokensBilledAtModelRates(req) && req.Deployment.ContextWindowTokens > 0 {
+		remainingInputTokens := req.Deployment.ContextWindowTokens - outputTokenLimit - inputTokenLimit
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, remainingInputTokens, true, true)
+	}
+	if meterKey := responsesSearchMeter(req); meterKey != "" {
+		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, searchCallQuantity, true)
+	}
+	return meters
+}
+
+func extraResponsesHostedToolSettlementMeters(req PolicyRequest) []providers.MeterEstimate {
+	meters := []providers.MeterEstimate{}
+	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens, false, true)
+	}
+	if meterKey := responsesSearchMeter(req); meterKey != "" {
+		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, searchCallQuantity, false)
+	}
+	return meters
+}
+
+func extraChatSearchModelHoldMeters(req PolicyRequest, _ int, _ int) []providers.MeterEstimate {
+	if meterKey, rateKey := chatSearchMeter(req); meterKey != "" {
+		return billing.AppendCallMeterCostWithRate(nil, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, true)
+	}
+	return nil
+}
+
+func extraChatSearchModelSettlementMeters(req PolicyRequest) []providers.MeterEstimate {
+	if meterKey, rateKey := chatSearchMeter(req); meterKey != "" {
+		return billing.AppendCallMeterCostWithRate(nil, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, false)
+	}
+	return nil
 }
 
 func validateChatInput(raw json.RawMessage) error {
@@ -160,7 +266,7 @@ func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) err
 	return nil
 }
 
-func validateTool(route providers.Route, tool map[string]json.RawMessage) error {
+func validateTool(route Route, tool map[string]json.RawMessage) error {
 	toolType := rawStringField(tool, "type")
 	switch {
 	case toolType == "":
@@ -169,7 +275,7 @@ func validateTool(route providers.Route, tool map[string]json.RawMessage) error 
 		return nil
 	case toolType == "shell":
 		return validateShellTool(tool)
-	case route == providers.RouteResponses && webSearchToolKind(toolType) != "":
+	case route == RouteResponses && webSearchToolKind(toolType) != "":
 		return nil
 	default:
 		return providers.ErrUnsupportedTool
@@ -194,7 +300,7 @@ func validateShellTool(tool map[string]json.RawMessage) error {
 	return nil
 }
 
-func chatSearchMeter(ctx providers.RequestContext) (string, string) {
+func chatSearchMeter(ctx PolicyRequest) (string, string) {
 	normalized := strings.ToLower(strings.TrimSpace(ctx.Deployment.Model))
 	meterKey := ""
 	switch {
@@ -211,8 +317,8 @@ func chatSearchMeter(ctx providers.RequestContext) (string, string) {
 	return meterKey, searchContextRateKey(ctx.Deployment.Pricing, meterKey, ctx.SearchContextSize)
 }
 
-func responsesSearchMeter(ctx providers.RequestContext) string {
-	if ctx.Route != providers.RouteResponses {
+func responsesSearchMeter(ctx PolicyRequest) string {
+	if ctx.Route != RouteResponses {
 		return ""
 	}
 	usesWebSearch := usesWebSearchKind(ctx.ToolTypes, "web_search")
@@ -229,8 +335,8 @@ func responsesSearchMeter(ctx providers.RequestContext) string {
 	}
 }
 
-func webSearchContentTokensBilledAtModelRates(ctx providers.RequestContext) bool {
-	if ctx.Route != providers.RouteResponses {
+func webSearchContentTokensBilledAtModelRates(ctx PolicyRequest) bool {
+	if ctx.Route != RouteResponses {
 		return false
 	}
 	if usesWebSearchKind(ctx.ToolTypes, "web_search") && webSearchFixedContentTokens(ctx.Deployment.Model, ctx.ToolTypes) == 0 {
@@ -319,7 +425,7 @@ func callRate(pricing providers.Pricing, meterKey string) *big.Int {
 	if !ok {
 		return nil
 	}
-	rate, ok := providers.ParseRate(meter[providers.RatePerThousandCalls])
+	rate, ok := billing.ParseRate(meter[billing.RatePerThousandCalls])
 	if !ok {
 		return nil
 	}
@@ -375,10 +481,10 @@ func WebSearchFixedContentInputTokensForRequest(model string, toolTypes []string
 	return webSearchFixedContentTokens(model, toolTypes)
 }
 
-func WebSearchContentTokensBilledAtModelRates(ctx providers.RequestContext) bool {
+func WebSearchContentTokensBilledAtModelRates(ctx PolicyRequest) bool {
 	return webSearchContentTokensBilledAtModelRates(ctx)
 }
 
-func ResponsesWebSearchCallMeter(ctx providers.RequestContext) string {
+func ResponsesWebSearchCallMeter(ctx PolicyRequest) string {
 	return responsesSearchMeter(ctx)
 }

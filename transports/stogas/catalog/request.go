@@ -3,7 +3,6 @@ package catalog
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -20,6 +19,7 @@ const (
 var (
 	ErrCatalogUnavailable = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
 	ErrInvalidJSON        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
 	ErrModelUnavailable   = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
 	ErrRouteUnavailable   = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
 	ErrUnsupportedMethod  = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
@@ -65,18 +65,12 @@ type ResolvedRequest struct {
 	Deployment        Deployment
 	PolicyChain       []PolicyNode
 	AllowedParameters []string
-	Hold              HoldEstimate
 
-	chat      *openaiprovider.OpenAIChatRequest
-	pricing   requestPricingContext
-	responses *openaiprovider.OpenAIResponsesRequest
-}
-
-type HoldEstimate struct {
-	MaxUSDAtoms string
-	ProductKey  string
-	ProviderKey string
-	Meters      []MeterEstimate
+	chat             *openaiprovider.OpenAIChatRequest
+	inputTokenLimit  int
+	outputTokenLimit int
+	pricing          requestPricingContext
+	responses        *openaiprovider.OpenAIResponsesRequest
 }
 
 type PolicyNode struct {
@@ -99,43 +93,22 @@ type requestWithSettableExtraParams interface {
 }
 
 func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
-	route, routeNode, schemaNode, ok := routeForInput(input)
+	route, ok, methodOK := routeForInput(input)
 	if !ok {
 		return nil, ErrRouteUnavailable
+	}
+	if !methodOK {
+		return nil, ErrUnsupportedMethod
 	}
 
 	switch route {
 	case RouteChat:
-		return resolveChatRequest(input.Body, route, routeNode, schemaNode)
+		return resolveChatRequest(input.Body, route)
 	case RouteResponses:
-		return resolveResponsesRequest(input.Body, route, routeNode, schemaNode)
+		return resolveResponsesRequest(input.Body, route)
 	default:
 		return nil, ErrUnsupportedRequest
 	}
-}
-
-func CheckBifrostRequest(requestType schemas.RequestType, req *schemas.BifrostRequest) (*ResolvedRequest, error) {
-	if req == nil {
-		return nil, ErrUnsupportedRequest
-	}
-	route, ok := RouteForRequestType(requestType)
-	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedRequest, requestType)
-	}
-
-	provider, model, fallbacks := req.GetRequestFields()
-	if len(fallbacks) > 0 {
-		return nil, ErrFallbacksDisabled
-	}
-	deployment, ok := DeploymentForRoute(provider, model, route)
-	if !ok {
-		return nil, ErrModelUnavailable
-	}
-	outputTokenLimit, err := effectiveOutputTokenLimit(outputLimitFromBifrost(req), deployment.MaxOutputTokens, compiledParameter{})
-	if err != nil {
-		return nil, err
-	}
-	return resolvedRequest(route, requestType, provider, model, model, deployment, nil, nil, outputTokenLimit, 0, requestPricingContext{}), nil
 }
 
 func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.BifrostRequest, error) {
@@ -166,23 +139,102 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-func RouteForRequestType(requestType schemas.RequestType) (Route, bool) {
-	switch requestType {
-	case schemas.ChatCompletionRequest, schemas.ChatCompletionStreamRequest:
-		return RouteChat, true
-	case schemas.ResponsesRequest, schemas.ResponsesStreamRequest:
-		return RouteResponses, true
-	default:
-		return "", false
+func (r *ResolvedRequest) InputTokenLimit() int {
+	if r == nil {
+		return 0
+	}
+	return r.inputTokenLimit
+}
+
+func (r *ResolvedRequest) OutputTokenLimit() int {
+	if r == nil {
+		return 0
+	}
+	return r.outputTokenLimit
+}
+
+func (r *ResolvedRequest) HasWebSearchOptions() bool {
+	return r != nil && r.pricing.HasWebSearchOptions
+}
+
+func (r *ResolvedRequest) SearchContextSize() string {
+	if r == nil {
+		return ""
+	}
+	return r.pricing.SearchContextSize
+}
+
+func (r *ResolvedRequest) ToolsParseFailed() bool {
+	return r != nil && r.pricing.ToolsParseFailed
+}
+
+func (r *ResolvedRequest) RawBody() map[string]json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	return r.pricing.RawBody
+}
+
+func (r *ResolvedRequest) RawTools() []map[string]json.RawMessage {
+	if r == nil {
+		return nil
+	}
+	return r.pricing.RawTools
+}
+
+func (r *ResolvedRequest) ToolTypes() []string {
+	if r == nil {
+		return nil
+	}
+	return r.pricing.ToolTypes
+}
+
+func (r *ResolvedRequest) SanitizeClientMetadata() {
+	if r == nil {
+		return
+	}
+	if r.chat != nil {
+		r.chat.ChatParameters.Metadata = nil
+	}
+	if r.responses != nil {
+		r.responses.ResponsesParameters.Metadata = nil
 	}
 }
 
-func resolveChatRequest(body []byte, route Route, routeNode compiledProviderEndpoint, schemaNode compiledStogasEndpoint) (*ResolvedRequest, error) {
+func (r *ResolvedRequest) SetProviderExtraParam(name string, value any) {
+	if r == nil {
+		return
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	if r.chat != nil {
+		params := copyStringAnyMap(r.chat.ExtraParams)
+		params[name] = value
+		r.chat.SetExtraParams(params)
+		return
+	}
+	if r.responses != nil {
+		params := copyStringAnyMap(r.responses.ExtraParams)
+		params[name] = value
+		r.responses.SetExtraParams(params)
+	}
+}
+
+func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
+	rawData, err := rawRequestBody(body)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateChatRawAliases(rawData); err != nil {
+		return nil, err
+	}
 	var request openaiprovider.OpenAIChatRequest
 	if err := sonic.Unmarshal(body, &request); err != nil {
 		return nil, ErrInvalidJSON
 	}
-	if len(request.Fallbacks) > 0 {
+	if _, ok := rawData["fallbacks"]; ok {
 		return nil, ErrFallbacksDisabled
 	}
 	requestType := schemas.ChatCompletionRequest
@@ -191,14 +243,13 @@ func resolveChatRequest(body []byte, route Route, routeNode compiledProviderEndp
 	}
 	resolution, err := resolveOpenAIRequest(
 		body,
+		rawData,
 		route,
-		routeNode,
-		schemaNode,
 		requestType,
 		request.Model,
 		&request.Model,
 		&request.ChatParameters.ServiceTier,
-		func(parameters map[string]compiledParameter) { applyChatAliases(&request, parameters) },
+		func() { applyChatAliases(&request) },
 		func() *int { return request.ChatParameters.MaxCompletionTokens },
 		&request,
 	)
@@ -209,12 +260,16 @@ func resolveChatRequest(body []byte, route Route, routeNode compiledProviderEndp
 	return resolution, nil
 }
 
-func resolveResponsesRequest(body []byte, route Route, routeNode compiledProviderEndpoint, schemaNode compiledStogasEndpoint) (*ResolvedRequest, error) {
+func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error) {
+	rawData, err := rawRequestBody(body)
+	if err != nil {
+		return nil, err
+	}
 	var request openaiprovider.OpenAIResponsesRequest
 	if err := sonic.Unmarshal(body, &request); err != nil {
 		return nil, ErrInvalidJSON
 	}
-	if len(request.Fallbacks) > 0 {
+	if _, ok := rawData["fallbacks"]; ok {
 		return nil, ErrFallbacksDisabled
 	}
 	requestType := schemas.ResponsesRequest
@@ -223,9 +278,8 @@ func resolveResponsesRequest(body []byte, route Route, routeNode compiledProvide
 	}
 	resolution, err := resolveOpenAIRequest(
 		body,
+		rawData,
 		route,
-		routeNode,
-		schemaNode,
 		requestType,
 		request.Model,
 		&request.Model,
@@ -243,50 +297,54 @@ func resolveResponsesRequest(body []byte, route Route, routeNode compiledProvide
 
 func resolveOpenAIRequest(
 	body []byte,
+	rawData map[string]json.RawMessage,
 	route Route,
-	routeNode compiledProviderEndpoint,
-	schemaNode compiledStogasEndpoint,
 	requestType schemas.RequestType,
 	requestedModel string,
 	modelField *string,
 	serviceTier **schemas.BifrostServiceTier,
-	applyPolicyAliases func(map[string]compiledParameter),
+	applyPolicyAliases func(),
 	requestedOutputLimit func() *int,
 	extraParams requestWithSettableExtraParams,
 ) (*ResolvedRequest, error) {
-	provider, model := schemas.ParseModelString(requestedModel, schemas.ModelProvider(routeNode.ProviderID))
+	if err := validateAllowedRequestFields(rawData, route); err != nil {
+		return nil, err
+	}
+	provider, ok, err := ProviderForRouteModel(route, requestedModel)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrModelUnavailable
+	}
+	if _, ok = providerEndpointForRoute(provider, route); !ok {
+		return nil, ErrRouteUnavailable
+	}
+	model := requestedModel
 	deployment, ok := DeploymentForRoute(provider, model, route)
 	if !ok {
 		return nil, ErrModelUnavailable
 	}
-	effectiveParameters := effectiveParameterPolicies(schemaNode.Schema, routeNode, deployment)
-	if !applyResolvedDeployment(modelField, serviceTier, deployment, effectiveParameters) {
+	if !applyResolvedDeployment(provider, modelField, serviceTier, deployment) {
 		return nil, ErrModelUnavailable
 	}
 	if applyPolicyAliases != nil {
-		applyPolicyAliases(effectiveParameters)
+		applyPolicyAliases()
 	}
-	outputTokenLimit, err := effectiveOutputTokenLimit(requestedOutputLimit(), deployment.MaxOutputTokens, outputLimitPolicy(route, effectiveParameters))
+	outputTokenLimit, err := effectiveOutputTokenLimit(requestedOutputLimit(), deployment.MaxOutputTokens)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := validateRequestParameterRules(body, routeNode, effectiveParameters, deployment); err != nil {
-		return nil, err
-	}
-
-	filtered, err := filterRequestExtraParams(body, provider, model, route, effectiveParameters)
+	filtered, err := filterRequestExtraParams(rawData, provider, model, route)
 	if err != nil {
 		return nil, err
 	}
 	if extraParams != nil {
 		extraParams.SetExtraParams(filtered)
 	}
-	pricing := requestPricingContextForBody(route, body)
-	if err := validateProviderRequest(provider, route, deployment, outputTokenLimit, pricing); err != nil {
-		return nil, err
-	}
-	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, effectiveParameters, filtered, outputTokenLimit, len(body), pricing), nil
+	pricing := requestPricingContextForRaw(route, rawData)
+	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, len(body), pricing), nil
 }
 
 func resolvedRequest(
@@ -296,7 +354,6 @@ func resolvedRequest(
 	requestedModel string,
 	model string,
 	deployment Deployment,
-	parameters map[string]compiledParameter,
 	extraParams map[string]interface{},
 	outputTokenLimit int,
 	inputTokenLimit int,
@@ -310,17 +367,22 @@ func resolvedRequest(
 		Model:             model,
 		Deployment:        deployment,
 		PolicyChain:       requestPolicyChain(provider, route, deployment),
-		AllowedParameters: allowedParameterNames(parameters, extraParams),
-		Hold:              estimateHold(provider, deployment, outputTokenLimit, inputTokenLimit, pricing),
+		AllowedParameters: allowedParameterNames(route, extraParams),
+		inputTokenLimit:   inputTokenLimit,
+		outputTokenLimit:  outputTokenLimit,
 		pricing:           pricing,
 	}
 }
 
-func requestPricingContextForBody(route Route, body []byte) requestPricingContext {
+func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
 	var rawData map[string]json.RawMessage
 	if err := sonic.Unmarshal(body, &rawData); err != nil {
-		return requestPricingContext{Route: route}
+		return nil, ErrInvalidJSON
 	}
+	return rawData, nil
+}
+
+func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage) requestPricingContext {
 	searchContextSize := ""
 	hasWebSearchOptions := false
 	if rawOptions, ok := rawData["web_search_options"]; ok {
@@ -348,7 +410,7 @@ func requestPricingContextForBody(route Route, body []byte) requestPricingContex
 	return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData, RawTools: tools, ToolTypes: toolTypes}
 }
 
-func effectiveOutputTokenLimit(requested *int, max int, policy compiledParameter) (int, error) {
+func effectiveOutputTokenLimit(requested *int, max int) (int, error) {
 	if max <= 0 {
 		return 0, ErrCatalogUnavailable
 	}
@@ -358,60 +420,24 @@ func effectiveOutputTokenLimit(requested *int, max int, policy compiledParameter
 	if *requested <= 0 {
 		return 0, ErrParameterTooLarge
 	}
-	if policy.Min != nil && float64(*requested) < *policy.Min {
-		return 0, ErrParameterTooLarge
-	}
-	if policy.Max != nil && float64(*requested) > *policy.Max {
-		return 0, ErrParameterTooLarge
-	}
 	if *requested > max {
 		return 0, ErrParameterTooLarge
 	}
 	return *requested, nil
 }
 
-func outputLimitPolicy(route Route, parameters map[string]compiledParameter) compiledParameter {
-	switch route {
-	case RouteChat:
-		return parameters["max_completion_tokens"]
-	case RouteResponses:
-		return parameters["max_output_tokens"]
-	default:
-		return compiledParameter{}
-	}
-}
-
-func outputLimitFromBifrost(req *schemas.BifrostRequest) *int {
-	if req == nil {
-		return nil
-	}
-	if req.ChatRequest != nil && req.ChatRequest.Params != nil {
-		return req.ChatRequest.Params.MaxCompletionTokens
-	}
-	if req.ResponsesRequest != nil && req.ResponsesRequest.Params != nil {
-		return req.ResponsesRequest.Params.MaxOutputTokens
-	}
-	return nil
-}
-
-func routeForInput(input RequestInput) (Route, compiledProviderEndpoint, compiledStogasEndpoint, bool) {
-	snap := active.Load()
-	if snap == nil {
-		return "", compiledProviderEndpoint{}, compiledStogasEndpoint{}, false
-	}
+func routeForInput(input RequestInput) (Route, bool, bool) {
 	normalizedPath := strings.TrimSpace(input.Path)
 	normalizedMethod := strings.ToUpper(strings.TrimSpace(input.Method))
-	for routeID, routeNode := range snap.graph.ProviderEndpoints {
-		schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-		if !ok || schemaNode.Schema.Path != normalizedPath {
-			continue
-		}
-		if strings.ToUpper(schemaNode.Schema.Method) != normalizedMethod {
-			return "", compiledProviderEndpoint{}, compiledStogasEndpoint{}, false
-		}
-		return publicRouteName(routeID, routeNode.ProviderID), routeNode, schemaNode, true
+	route, ok := routeByPath[normalizedPath]
+	if !ok {
+		return "", false, false
 	}
-	return "", compiledProviderEndpoint{}, compiledStogasEndpoint{}, false
+	spec, ok := specForRoute(route)
+	if !ok {
+		return "", false, false
+	}
+	return route, true, strings.ToUpper(spec.Method) == normalizedMethod
 }
 
 func requestPolicyChain(provider schemas.ModelProvider, route Route, deployment Deployment) []PolicyNode {
@@ -425,24 +451,29 @@ func requestPolicyChain(provider schemas.ModelProvider, route Route, deployment 
 	return chain
 }
 
-func filterRequestExtraParams(body []byte, provider schemas.ModelProvider, model string, route Route, parameters map[string]compiledParameter) (map[string]interface{}, error) {
-	knownFields := knownFields(parameters)
+func validateAllowedRequestFields(rawData map[string]json.RawMessage, route Route) error {
+	knownFields := KnownFields(route)
 	if len(knownFields) == 0 {
+		return ErrCatalogUnavailable
+	}
+	for name := range rawData {
+		if !knownFields[name] {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is not supported by Stogas API"}
+		}
+	}
+	return nil
+}
+
+func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route) (map[string]interface{}, error) {
+	typedFields := typedOpenAIRequestFields(route)
+	if len(typedFields) == 0 {
 		return nil, ErrCatalogUnavailable
 	}
-	extraParams, err := extractExtraParams(body, knownFields)
-	if err != nil {
-		return nil, ErrInvalidJSON
-	}
+	extraParams := extractExtraParams(rawData, typedFields)
 	return FilterExtraParams(provider, model, route, extraParams), nil
 }
 
-func extractExtraParams(data []byte, knownFields map[string]bool) (map[string]interface{}, error) {
-	var rawData map[string]json.RawMessage
-	if err := sonic.Unmarshal(data, &rawData); err != nil {
-		return nil, err
-	}
-
+func extractExtraParams(rawData map[string]json.RawMessage, knownFields map[string]bool) map[string]interface{} {
 	extraParams := make(map[string]interface{})
 	for key, value := range rawData {
 		if knownFields[key] {
@@ -454,12 +485,13 @@ func extractExtraParams(data []byte, knownFields map[string]bool) (map[string]in
 		}
 		extraParams[key] = decoded
 	}
-	return extraParams, nil
+	return extraParams
 }
 
-func allowedParameterNames(parameters map[string]compiledParameter, extraParams map[string]interface{}) []string {
-	names := make([]string, 0, len(parameters)+len(extraParams))
-	for name := range parameters {
+func allowedParameterNames(route Route, extraParams map[string]interface{}) []string {
+	fields := KnownFields(route)
+	names := make([]string, 0, len(fields)+len(extraParams))
+	for name := range fields {
 		names = append(names, name)
 	}
 	for name := range extraParams {
@@ -468,19 +500,36 @@ func allowedParameterNames(parameters map[string]compiledParameter, extraParams 
 	return stableStrings(names)
 }
 
-func knownFields(parameters map[string]compiledParameter) map[string]bool {
-	fields := make(map[string]bool, len(parameters))
-	for name := range parameters {
-		fields[name] = true
+func typedOpenAIRequestFields(route Route) map[string]bool {
+	fields := KnownFields(route)
+	if route != RouteResponses {
+		return fields
 	}
+	fields = copyBoolMap(fields)
+	delete(fields, "frequency_penalty")
+	delete(fields, "presence_penalty")
+	delete(fields, "prompt_cache_retention")
+	delete(fields, "reasoning.effort")
 	return fields
 }
 
-func applyChatAliases(request *openaiprovider.OpenAIChatRequest, parameters map[string]compiledParameter) {
-	aliasTarget, ok := parameterAlias(parameters["max_tokens"])
-	if !ok || aliasTarget != "max_completion_tokens" {
-		return
+func copyBoolMap(values map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
+	return out
+}
+
+func copyStringAnyMap(values map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func applyChatAliases(request *openaiprovider.OpenAIChatRequest) {
 	if request.ChatParameters.MaxCompletionTokens != nil {
 		return
 	}
@@ -506,4 +555,62 @@ func applyChatAliases(request *openaiprovider.OpenAIChatRequest, parameters map[
 		delete(request.ExtraParams, "max_tokens")
 		request.ChatParameters.ExtraParams = request.ExtraParams
 	}
+}
+
+func validateChatTokenAliases(rawData map[string]json.RawMessage) error {
+	maxTokensRaw, hasMaxTokens := rawData["max_tokens"]
+	maxCompletionTokensRaw, hasMaxCompletionTokens := rawData["max_completion_tokens"]
+	if !hasMaxTokens || !hasMaxCompletionTokens {
+		return nil
+	}
+	maxTokens, ok := rawInteger(maxTokensRaw)
+	if !ok {
+		return nil
+	}
+	maxCompletionTokens, ok := rawInteger(maxCompletionTokensRaw)
+	if !ok {
+		return nil
+	}
+	if maxTokens == maxCompletionTokens {
+		return nil
+	}
+	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "max_tokens conflicts with max_completion_tokens"}
+}
+
+func validateChatRawAliases(rawData map[string]json.RawMessage) error {
+	if err := validateChatTokenAliases(rawData); err != nil {
+		return err
+	}
+	reasoningRaw, hasReasoning := rawData["reasoning"]
+	if !hasReasoning {
+		return nil
+	}
+	var reasoning map[string]json.RawMessage
+	if err := sonic.Unmarshal(reasoningRaw, &reasoning); err != nil {
+		return nil
+	}
+	for _, item := range []struct {
+		alias string
+		field string
+	}{
+		{"reasoning_effort", "effort"},
+		{"reasoning_max_tokens", "max_tokens"},
+		{"reasoning_display", "display"},
+	} {
+		if _, ok := rawData[item.alias]; !ok {
+			continue
+		}
+		if _, ok := reasoning[item.field]; ok {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: item.alias + " conflicts with reasoning." + item.field}
+		}
+	}
+	return nil
+}
+
+func rawInteger(raw json.RawMessage) (int, bool) {
+	var value int
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return 0, false
+	}
+	return value, true
 }

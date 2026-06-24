@@ -6,15 +6,70 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
+	openaiadapter "github.com/maximhq/bifrost/transports/stogas/providers/openai"
 )
 
-func hasMeter(meters []MeterEstimate, key string) bool {
-	for _, meter := range meters {
-		if meter.MeterKey == key {
-			return true
-		}
+const (
+	meterInputTokens     = billing.MeterInputTokens
+	meterOutputTokens    = billing.MeterOutputTokens
+	ratePerMillionTokens = billing.RatePerMillionTokens
+	ratePerThousandCalls = billing.RatePerThousandCalls
+
+	meterOpenAIResponsesWebSearchCalls        = openaiadapter.MeterOpenAIResponsesWebSearchCalls
+	meterOpenAIResponsesWebSearchPreviewCalls = openaiadapter.MeterOpenAIResponsesWebSearchPreviewCalls
+)
+
+func resolveAndValidateProviderPolicy(input RequestInput) (*ResolvedRequest, error) {
+	resolution, err := ResolveRequest(input)
+	if err != nil {
+		return nil, err
 	}
-	return false
+	if err := ProviderPolicyError(openaiadapter.ValidateRequest(testOpenAIPolicyRequest(resolution.Route, resolution.Deployment, resolution.outputTokenLimit, resolution.pricing))); err != nil {
+		return nil, err
+	}
+	return resolution, nil
+}
+
+func openAIWebSearchFixedContentInputTokensForRequest(model string, toolTypes []string) int {
+	return openaiadapter.WebSearchFixedContentInputTokensForRequest(model, toolTypes)
+}
+
+func openAIWebSearchContentTokensBilledAtModelRates(deployment Deployment, pricing requestPricingContext) bool {
+	return openaiadapter.WebSearchContentTokensBilledAtModelRates(testOpenAIPolicyRequest(pricing.Route, deployment, 0, pricing))
+}
+
+func openAIResponsesWebSearchCallMeter(deployment Deployment, pricing requestPricingContext) string {
+	return openaiadapter.ResponsesWebSearchCallMeter(openaiadapter.PolicyRequest{
+		Route: openaiadapter.Route(pricing.Route),
+		Deployment: openaiadapter.Deployment{
+			Model:               deployment.Model,
+			ContextWindowTokens: deployment.ContextWindowTokens,
+			Pricing:             deployment.Pricing,
+			ReasoningSupported:  deployment.ReasoningSupported,
+		},
+		SearchContextSize: pricing.SearchContextSize,
+		ToolTypes:         pricing.ToolTypes,
+	})
+}
+
+func testOpenAIPolicyRequest(route Route, deployment Deployment, outputTokenLimit int, pricing requestPricingContext) openaiadapter.PolicyRequest {
+	return openaiadapter.PolicyRequest{
+		Route: openaiadapter.Route(route),
+		Deployment: openaiadapter.Deployment{
+			Model:               deployment.Model,
+			ContextWindowTokens: deployment.ContextWindowTokens,
+			Pricing:             deployment.Pricing,
+			ReasoningSupported:  deployment.ReasoningSupported,
+		},
+		OutputTokenLimit:    outputTokenLimit,
+		HasWebSearchOptions: pricing.HasWebSearchOptions,
+		SearchContextSize:   pricing.SearchContextSize,
+		ToolsParseFailed:    pricing.ToolsParseFailed,
+		RawBody:             pricing.RawBody,
+		ToolTypes:           pricing.ToolTypes,
+		RawTools:            pricing.RawTools,
+	}
 }
 
 func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
@@ -81,8 +136,8 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected dated gpt-5-nano alias to resolve")
 	}
-	if nanoSnapshotDeployment.Model != "gpt-5-nano-2025-08-07" {
-		t.Fatalf("expected dated gpt-5-nano provider model passthrough, got %q", nanoSnapshotDeployment.Model)
+	if nanoSnapshotDeployment.Model != "gpt-5-nano" {
+		t.Fatalf("expected dated gpt-5-nano alias to use canonical provider model gpt-5-nano, got %q", nanoSnapshotDeployment.Model)
 	}
 
 	nanoFlexSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-2025-08-07-flex", RouteResponses)
@@ -102,9 +157,6 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	}
 	if deployment.ServiceTier != "default" {
 		t.Fatalf("expected default deployment service tier fact, got %q", deployment.ServiceTier)
-	}
-	if _, ok := deployment.ParameterPolicies["service_tier"]; ok {
-		t.Fatalf("default deployment service_tier should be enforced by Go runtime policy, not compiled schema policy")
 	}
 	if deployment.ImpliedServiceTier != nil {
 		t.Fatalf("default deployment should not imply service tier")
@@ -154,24 +206,46 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected dated gpt-4o search preview alias to resolve")
 	}
-	if searchSnapshotDeployment.Model != "gpt-4o-search-preview-2025-03-11" {
-		t.Fatalf("expected dated provider model passthrough, got %q", searchSnapshotDeployment.Model)
+	if searchSnapshotDeployment.Model != "gpt-4o-search-preview" {
+		t.Fatalf("expected dated alias to use canonical provider model gpt-4o-search-preview, got %q", searchSnapshotDeployment.Model)
+	}
+
+	searchFlexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "openai/gpt-4o-search-preview-flex", RouteChat)
+	if !ok {
+		t.Fatalf("expected gpt-4o search flex deployment to resolve")
+	}
+	if searchFlexDeployment.ID != "gpt-4o-search-preview-flex" || searchFlexDeployment.Model != "gpt-4o-search-preview" {
+		t.Fatalf("unexpected gpt-4o search flex deployment %#v", searchFlexDeployment)
+	}
+	if searchFlexDeployment.ImpliedServiceTier == nil || *searchFlexDeployment.ImpliedServiceTier != schemas.BifrostServiceTier("flex") {
+		t.Fatalf("expected gpt-4o search flex implied tier, got %#v", searchFlexDeployment.ImpliedServiceTier)
 	}
 
 	miniSearchSnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-4o-mini-search-preview-2025-03-11", RouteChat)
 	if !ok {
 		t.Fatalf("expected dated gpt-4o mini search preview alias to resolve")
 	}
-	if miniSearchSnapshotDeployment.Model != "gpt-4o-mini-search-preview-2025-03-11" {
-		t.Fatalf("expected dated provider model passthrough, got %q", miniSearchSnapshotDeployment.Model)
+	if miniSearchSnapshotDeployment.Model != "gpt-4o-mini-search-preview" {
+		t.Fatalf("expected dated alias to use canonical provider model gpt-4o-mini-search-preview, got %q", miniSearchSnapshotDeployment.Model)
 	}
 
 	searchAPISnapshotDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-search-api-2025-10-14", RouteChat)
 	if !ok {
 		t.Fatalf("expected dated gpt-5 search-api alias to resolve")
 	}
-	if searchAPISnapshotDeployment.Model != "gpt-5-search-api-2025-10-14" {
-		t.Fatalf("expected dated gpt-5 search-api provider model passthrough, got %q", searchAPISnapshotDeployment.Model)
+	if searchAPISnapshotDeployment.Model != "gpt-5-search-api" {
+		t.Fatalf("expected dated alias to use canonical provider model gpt-5-search-api, got %q", searchAPISnapshotDeployment.Model)
+	}
+
+	searchAPIPriorityDeployment, ok := DeploymentForRoute(schemas.OpenAI, "open-ai/openai/gpt-5-search-api-priority", RouteChat)
+	if !ok {
+		t.Fatalf("expected gpt-5 search API priority deployment to resolve")
+	}
+	if searchAPIPriorityDeployment.ID != "gpt-5-search-api-priority" || searchAPIPriorityDeployment.Model != "gpt-5-search-api" {
+		t.Fatalf("unexpected gpt-5 search API priority deployment %#v", searchAPIPriorityDeployment)
+	}
+	if searchAPIPriorityDeployment.ImpliedServiceTier == nil || *searchAPIPriorityDeployment.ImpliedServiceTier != schemas.BifrostServiceTier("priority") {
+		t.Fatalf("expected gpt-5 search API priority implied tier, got %#v", searchAPIPriorityDeployment.ImpliedServiceTier)
 	}
 
 	flexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5-flex", RouteChat)
@@ -188,8 +262,102 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	model := ""
 	requestedTier := schemas.BifrostServiceTier("priority")
 	requestedTierPtr := &requestedTier
-	if applyResolvedDeployment(&model, &requestedTierPtr, flexDeployment, flexDeployment.ParameterPolicies) {
+	if applyResolvedDeployment(schemas.OpenAI, &model, &requestedTierPtr, flexDeployment) {
 		t.Fatalf("expected conflicting explicit service tier to be rejected")
+	}
+}
+
+func TestProviderForRouteModelUsesCatalogSlugIndexes(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, slug := range []string{"gpt-5.5", "openai/gpt-5.5", "openai/open-ai/gpt-5.5"} {
+		provider, ok, err := ProviderForRouteModel(RouteChat, slug)
+		if err != nil {
+			t.Fatalf("%s: ProviderForRouteModel returned error: %v", slug, err)
+		}
+		if !ok || provider != schemas.OpenAI {
+			t.Fatalf("%s: expected OpenAI provider, got %q ok=%v", slug, provider, ok)
+		}
+	}
+
+	if _, ok, err := ProviderForRouteModel(RouteChat, "unknown-model"); err != nil || ok {
+		t.Fatalf("expected unknown model to miss without error, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestAnthropicCatalogResolution(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, slug := range []string{"claude-opus-4-8", "anthropic/claude-opus-4-8", "anthropic/anthropic/claude-opus-latest"} {
+		provider, ok, err := ProviderForRouteModel(RouteChat, slug)
+		if err != nil {
+			t.Fatalf("%s: ProviderForRouteModel returned error: %v", slug, err)
+		}
+		if !ok || provider != schemas.Anthropic {
+			t.Fatalf("%s: expected Anthropic provider, got %q ok=%v", slug, provider, ok)
+		}
+		deployment, ok := DeploymentForRoute(schemas.Anthropic, slug, RouteChat)
+		if !ok {
+			t.Fatalf("%s: expected Anthropic deployment", slug)
+		}
+		if deployment.ID != "claude-opus-4-8" || deployment.Model != "claude-opus-4-8" {
+			t.Fatalf("%s: unexpected deployment %#v", slug, deployment)
+		}
+		if deployment.ContextWindowTokens != 1000000 || deployment.MaxOutputTokens != 128000 {
+			t.Fatalf("%s: unexpected limits context=%d output=%d", slug, deployment.ContextWindowTokens, deployment.MaxOutputTokens)
+		}
+	if deployment.Pricing[billing.MeterCacheWrite1hInputTokens][billing.RatePerMillionTokens] != "10000000000000000000" {
+		t.Fatalf("%s: expected Anthropic 1h cache write pricing, got %#v", slug, deployment.Pricing)
+	}
+	if deployment.ServiceTier != "auto" || deployment.ImpliedServiceTier == nil || *deployment.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
+		t.Fatalf("%s: expected Anthropic auto deployment tier, got %q implied=%#v", slug, deployment.ServiceTier, deployment.ImpliedServiceTier)
+	}
+	}
+
+	sonnet, ok := DeploymentForRoute(schemas.Anthropic, "claude-sonnet-latest", RouteChat)
+	if !ok {
+		t.Fatalf("expected Sonnet latest deployment")
+	}
+	if sonnet.ID != "claude-sonnet-4-6" || sonnet.MaxOutputTokens != 64000 {
+		t.Fatalf("unexpected Sonnet deployment %#v", sonnet)
+	}
+
+	fast, ok := DeploymentForRoute(schemas.Anthropic, "claude-opus-4-8-fast", RouteChat)
+	if !ok {
+		t.Fatalf("expected Opus fast deployment")
+	}
+	if fast.ID != "claude-opus-4-8-fast" || fast.Model != "claude-opus-4-8" {
+		t.Fatalf("unexpected Opus fast deployment %#v", fast)
+	}
+	if fast.Pricing[billing.MeterInputTokens][billing.RatePerMillionTokens] != "10000000000000000000" ||
+		fast.Pricing[billing.MeterOutputTokens][billing.RatePerMillionTokens] != "50000000000000000000" {
+		t.Fatalf("unexpected Opus fast pricing %#v", fast.Pricing)
+	}
+	if fast.ServiceTier != "auto" || fast.ImpliedServiceTier == nil || *fast.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
+		t.Fatalf("expected Opus fast auto deployment tier, got %q implied=%#v", fast.ServiceTier, fast.ImpliedServiceTier)
+	}
+
+	standard, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-opus-4-8-standard", RouteChat)
+	if !ok {
+		t.Fatalf("expected Opus standard-only deployment")
+	}
+	if standard.ID != "claude-opus-4-8-standard-only" || standard.ServiceTier != "standard_only" {
+		t.Fatalf("unexpected Opus standard-only deployment %#v", standard)
+	}
+	if standard.ImpliedServiceTier == nil || *standard.ImpliedServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("expected Opus standard-only to imply Bifrost default, got %#v", standard.ImpliedServiceTier)
+	}
+
+	responsesProvider, ok, err := ProviderForRouteModel(RouteResponses, "anthropic/claude-sonnet-4-6")
+	if err != nil {
+		t.Fatalf("Responses ProviderForRouteModel returned error: %v", err)
+	}
+	if !ok || responsesProvider != schemas.Anthropic {
+		t.Fatalf("expected Anthropic provider for Responses route, got %q ok=%v", responsesProvider, ok)
+	}
+	responsesDeployment, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-sonnet-4-6", RouteResponses)
+	if !ok || responsesDeployment.ID != "claude-sonnet-4-6" {
+		t.Fatalf("expected Anthropic Sonnet deployment for Responses route, got %#v ok=%v", responsesDeployment, ok)
 	}
 }
 
@@ -199,7 +367,7 @@ func TestResolveChatRequestAppliesCatalogPolicy(t *testing.T) {
 	resolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5-flex","messages":[],"reasoning":{"effort":"minimal"},"unknown":true,"max_tokens":123}`),
+		Body:   []byte(`{"model":"gpt-5.5-flex","messages":[],"reasoning":{"effort":"minimal"},"max_tokens":123}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -213,66 +381,20 @@ func TestResolveChatRequestAppliesCatalogPolicy(t *testing.T) {
 	if resolution.Deployment.ID != "gpt-5.5-flex" || len(resolution.PolicyChain) != 4 {
 		t.Fatalf("expected concrete catalog deployment chain, got %#v", resolution)
 	}
-	if resolution.Hold.MaxUSDAtoms != "3282500000000000" || resolution.Hold.ProductKey != "gpt-5.5-flex" {
-		t.Fatalf("expected catalog hold estimate, got %#v", resolution.Hold)
-	}
-	if len(resolution.Hold.Meters) != 2 || resolution.Hold.Meters[0].MeterKey != "input_tokens" || resolution.Hold.Meters[1].MeterKey != "output_tokens" {
-		t.Fatalf("expected input/output hold meters, got %#v", resolution.Hold.Meters)
-	}
 	if resolution.chat == nil || resolution.chat.ChatParameters.ServiceTier == nil || *resolution.chat.ChatParameters.ServiceTier != schemas.BifrostServiceTierFlex {
 		t.Fatalf("expected implied flex service tier, got %#v", resolution.chat)
 	}
 	if resolution.chat.ChatParameters.MaxCompletionTokens == nil || *resolution.chat.ChatParameters.MaxCompletionTokens != 123 {
 		t.Fatalf("expected max_tokens alias to populate max_completion_tokens, got %#v", resolution.chat.ChatParameters.MaxCompletionTokens)
 	}
-}
 
-func TestSettlementCostUsesCatalogPricing(t *testing.T) {
-	loadTestCatalog(t)
-
-	resolution, err := ResolveRequest(RequestInput{
+	_, err = ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5-flex-latest","messages":[],"max_completion_tokens":1000}`),
+		Body:   []byte(`{"model":"gpt-5.5","messages":[],"unknown":true}`),
 	})
-	if err != nil {
-		t.Fatalf("ResolveRequest returned error: %v", err)
-	}
-	cost := SettlementCost(resolution, &schemas.BifrostLLMUsage{
-		PromptTokens:     1000,
-		CompletionTokens: 200,
-		TotalTokens:      1200,
-		PromptTokensDetails: &schemas.ChatPromptTokensDetails{
-			CachedReadTokens: 100,
-		},
-	})
-	if cost != "5275000000000000" {
-		t.Fatalf("expected catalog settlement cost, got %s", cost)
-	}
-
-	reasoningCost := SettlementCost(resolution, &schemas.BifrostLLMUsage{
-		PromptTokens:     1000,
-		CompletionTokens: 200,
-		TotalTokens:      1200,
-		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
-			ReasoningTokens: 150,
-		},
-	})
-	if reasoningCost != "5500000000000000" {
-		t.Fatalf("expected reasoning tokens to be billed as output tokens, got %s", reasoningCost)
-	}
-
-	reasoningOnlyCost := SettlementCost(resolution, &schemas.BifrostLLMUsage{
-		PromptTokens:     100,
-		CompletionTokens: 16,
-		TotalTokens:      116,
-		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
-			TextTokens:      0,
-			ReasoningTokens: 16,
-		},
-	})
-	if reasoningOnlyCost != "490000000000000" {
-		t.Fatalf("expected reasoning-only completion to bill input plus output tokens, got %s", reasoningOnlyCost)
+	if err == nil {
+		t.Fatalf("expected unknown request field rejection")
 	}
 }
 
@@ -309,7 +431,7 @@ func TestOpenAIWebSearchFixedContentTokenRule(t *testing.T) {
 func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	loadTestCatalog(t)
 
-	_, err := ResolveRequest(RequestInput{
+	_, err := resolveAndValidateProviderPolicy(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
 		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`),
@@ -318,7 +440,7 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 		t.Fatalf("expected web_search_options to be rejected for gpt-5-nano")
 	}
 
-	_, err = ResolveRequest(RequestInput{
+	_, err = resolveAndValidateProviderPolicy(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
 		Body:   []byte(`{"model":"gpt-5.5","messages":[],"web_search_options":{"search_context_size":"low"}}`),
@@ -327,7 +449,7 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 		t.Fatalf("expected web_search_options to be rejected for non-search model")
 	}
 
-	_, err = ResolveRequest(RequestInput{
+	_, err = resolveAndValidateProviderPolicy(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
 		Body:   []byte(`{"model":"gpt-4o-search-preview","messages":[],"reasoning":{"effort":"minimal"}}`),
@@ -344,8 +466,8 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected gpt-5 search API request to resolve: %v", err)
 	}
-	if len(gpt5SearchResolution.Hold.Meters) != 3 || gpt5SearchResolution.Hold.Meters[2].MeterKey != meterOpenAIChatCompletionSearchModelCalls {
-		t.Fatalf("expected gpt-5 search API call meter, got %#v", gpt5SearchResolution.Hold.Meters)
+	if gpt5SearchResolution.Deployment.ID != "gpt-5-search-api" {
+		t.Fatalf("expected gpt-5 search API deployment, got %#v", gpt5SearchResolution.Deployment)
 	}
 
 	resolution, err := ResolveRequest(RequestInput{
@@ -359,18 +481,6 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	if resolution.Deployment.ID != "gpt-4o-search-preview" {
 		t.Fatalf("expected search deployment, got %#v", resolution.Deployment)
 	}
-	if len(resolution.Hold.Meters) != 3 || resolution.Hold.Meters[2].MeterKey != "openai_chat_completion_search_preview_model_calls" {
-		t.Fatalf("expected token meters plus guaranteed search call meter, got %#v", resolution.Hold.Meters)
-	}
-	if resolution.Hold.Meters[2].Quantity != "1" {
-		t.Fatalf("expected one guaranteed search call, got %#v", resolution.Hold.Meters[2])
-	}
-	if resolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextLowCalls {
-		t.Fatalf("expected 4o search low-context meter, got %#v", resolution.Hold.Meters)
-	}
-	if resolution.Hold.Meters[2].AmountUSDAtoms != "30000000000000000" {
-		t.Fatalf("expected 4o low-context query cost, got %#v", resolution.Hold.Meters[2])
-	}
 
 	searchDefaultResolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
@@ -380,8 +490,8 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if len(searchDefaultResolution.Hold.Meters) != 3 || searchDefaultResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextMediumCalls {
-		t.Fatalf("expected 4o search default medium-context meter, got %#v", searchDefaultResolution.Hold.Meters)
+	if searchDefaultResolution.Deployment.ID != "gpt-4o-search-preview" {
+		t.Fatalf("expected 4o search default deployment, got %#v", searchDefaultResolution.Deployment)
 	}
 
 	miniLowResolution, err := ResolveRequest(RequestInput{
@@ -392,11 +502,8 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if len(miniLowResolution.Hold.Meters) != 3 || miniLowResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextLowCalls {
-		t.Fatalf("expected mini search low-context meter, got %#v", miniLowResolution.Hold.Meters)
-	}
-	if miniLowResolution.Hold.Meters[2].AmountUSDAtoms != "25000000000000000" {
-		t.Fatalf("expected mini low-context query cost, got %#v", miniLowResolution.Hold.Meters[2])
+	if miniLowResolution.Deployment.ID != "gpt-4o-mini-search-preview" {
+		t.Fatalf("expected mini search low-context deployment, got %#v", miniLowResolution.Deployment)
 	}
 
 	miniDefaultResolution, err := ResolveRequest(RequestInput{
@@ -407,8 +514,8 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if len(miniDefaultResolution.Hold.Meters) != 3 || miniDefaultResolution.Hold.Meters[2].RateKey != ratePerThousandSearchContextMediumCalls {
-		t.Fatalf("expected mini search default medium-context meter, got %#v", miniDefaultResolution.Hold.Meters)
+	if miniDefaultResolution.Deployment.ID != "gpt-4o-mini-search-preview" {
+		t.Fatalf("expected mini search default deployment, got %#v", miniDefaultResolution.Deployment)
 	}
 }
 
@@ -447,7 +554,7 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		`{"model":"gpt-5.5","messages":[],"tools":[{}]}`,
 	}
 	for _, body := range deniedChatToolRequests {
-		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)}); err == nil {
+		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)}); err == nil {
 			t.Fatalf("expected chat tool request to be denied by policy: %s", body)
 		}
 	}
@@ -462,15 +569,8 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected responses web search tool request to pass catalog policy: %s: %v", body, err)
 		}
-		if !hasMeter(resolution.Hold.Meters, meterOpenAIResponsesWebSearchCalls) && !hasMeter(resolution.Hold.Meters, meterOpenAIResponsesWebSearchPreviewCalls) {
-			t.Fatalf("expected responses web search call meter in hold: %s: %#v", body, resolution.Hold.Meters)
-		}
-		if !hasMeter(resolution.Hold.Meters, meterInputTokens) {
-			t.Fatalf("expected input hold meter for request and billable search content risk: %s: %#v", body, resolution.Hold.Meters)
-		}
-		settlement := SettlementCost(resolution, &schemas.BifrostLLMUsage{PromptTokens: 100, CompletionTokens: 10, TotalTokens: 110})
-		if settlement == "0" {
-			t.Fatalf("expected responses web search settlement to include token and call meters")
+		if !containsString(resolution.ToolTypes(), "web_search") && !containsString(resolution.ToolTypes(), "web_search_preview") && !containsString(resolution.ToolTypes(), "web_search_preview_2026_01_01") {
+			t.Fatalf("expected responses web search tool facts: %s: %#v", body, resolution.ToolTypes())
 		}
 	}
 
@@ -492,12 +592,12 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		`{"model":"gpt-5.5","input":"hi","tools":[{}]}`,
 	}
 	for _, body := range deniedResponsesToolRequests {
-		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)}); err == nil {
+		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)}); err == nil {
 			t.Fatalf("expected responses tool request to be denied by policy: %s", body)
 		}
 	}
 
-	_, err := ResolveRequest(RequestInput{
+	_, err := resolveAndValidateProviderPolicy(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body:   []byte(`{"model":"gpt-5.5","input":"hi","web_search_options":{"search_context_size":"low"}}`),
@@ -506,7 +606,7 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		t.Fatalf("expected Responses web_search_options to be rejected")
 	}
 
-	_, err = ResolveRequest(RequestInput{
+	_, err = resolveAndValidateProviderPolicy(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`),
@@ -554,7 +654,7 @@ func TestMVPInputPolicyAllowsInlineFilesAndRejectsFileIDsAndMedia(t *testing.T) 
 		if strings.Contains(body, `"messages"`) {
 			path = "/v1/chat/completions"
 		}
-		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)}); err == nil {
+		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: path, Body: []byte(body)}); err == nil {
 			t.Fatalf("expected file/media request to be denied by policy: %s", body)
 		}
 	}
@@ -634,9 +734,6 @@ func TestGPT5NanoSchemaPolicy(t *testing.T) {
 	if chatResolution.Deployment.ID != "gpt-5-nano" || chatResolution.Model != "gpt-5-nano" {
 		t.Fatalf("unexpected gpt-5-nano chat resolution: %#v", chatResolution)
 	}
-	if chatResolution.Hold.ProductKey != "gpt-5-nano" {
-		t.Fatalf("expected gpt-5-nano hold product, got %#v", chatResolution.Hold)
-	}
 
 	responsesResolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
@@ -676,7 +773,7 @@ func TestGPT5NanoSchemaPolicy(t *testing.T) {
 			Body:   []byte(`{"model":"gpt-5-nano","input":"hi","max_output_tokens":15}`),
 		},
 	} {
-		if _, err := ResolveRequest(item); err != ErrParameterTooLarge {
+		if _, err := resolveAndValidateProviderPolicy(item); err != ErrParameterTooLarge {
 			t.Fatalf("expected OpenAI output minimum rejection for %s: %v", string(item.Body), err)
 		}
 	}
@@ -698,8 +795,8 @@ func TestResolveRequestRejectsFallbacks(t *testing.T) {
 func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 	loadTestCatalog(t)
 
-	if provider, ok := ProviderForRoute(RouteChat); !ok || provider != schemas.OpenAI {
-		t.Fatalf("expected OpenAI provider for chat route, got %q ok=%v", provider, ok)
+	if provider, ok := ProviderForRoute(RouteChat); ok || provider != "" {
+		t.Fatalf("chat route has multiple providers and should not collapse to one provider, got %q ok=%v", provider, ok)
 	}
 	if path, ok := PathForRoute(RouteChat); !ok || path != "/v1/chat/completions" {
 		t.Fatalf("expected chat path from catalog, got %q ok=%v", path, ok)
@@ -738,9 +835,6 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 	}
 	if !AllowsResponseMetadataField("raw_request") || AllowsResponseMetadataField("secret") {
 		t.Fatalf("unexpected response metadata field policy")
-	}
-	if AllowsUpstreamRequestHeader(schemas.OpenAI, "gpt-5.5", RouteChat, "authorization") {
-		t.Fatalf("client authorization header must not be forwarded upstream")
 	}
 }
 

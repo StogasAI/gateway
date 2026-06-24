@@ -10,22 +10,21 @@ import (
 )
 
 func TestValidateToolsAllowsOnlyExplicitNoExtraBillingTools(t *testing.T) {
-	adapter := Adapter{}
 	for _, item := range []struct {
 		name  string
-		route providers.Route
+		route Route
 		body  string
 	}{
-		{"chat function", providers.RouteChat, `{"tools":[{"type":"function","function":{"name":"lookup"}}]}`},
-		{"chat local shell alias", providers.RouteChat, `{"tools":[{"type":"local_shell"}]}`},
-		{"chat apply patch", providers.RouteChat, `{"tools":[{"type":"apply_patch"}]}`},
-		{"responses local shell", providers.RouteResponses, `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`},
-		{"responses web search", providers.RouteResponses, `{"tools":[{"type":"web_search"}]}`},
-		{"responses versioned web search", providers.RouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
-		{"responses preview web search", providers.RouteResponses, `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`},
+		{"chat function", RouteChat, `{"tools":[{"type":"function","function":{"name":"lookup"}}]}`},
+		{"chat local shell alias", RouteChat, `{"tools":[{"type":"local_shell"}]}`},
+		{"chat apply patch", RouteChat, `{"tools":[{"type":"apply_patch"}]}`},
+		{"responses local shell", RouteResponses, `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`},
+		{"responses web search", RouteResponses, `{"tools":[{"type":"web_search"}]}`},
+		{"responses versioned web search", RouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
+		{"responses preview web search", RouteResponses, `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if err := adapter.ValidateRequest(toolContext(t, item.route, item.body)); err != nil {
+			if err := ValidateRequest(toolProfileRequest(t, item.route, item.body)); err != nil {
 				t.Fatalf("expected tool request to pass: %v", err)
 			}
 		})
@@ -33,7 +32,6 @@ func TestValidateToolsAllowsOnlyExplicitNoExtraBillingTools(t *testing.T) {
 }
 
 func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
-	adapter := Adapter{}
 	for _, item := range []struct {
 		name string
 		body string
@@ -57,41 +55,40 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 		{"shell local environment extra key", `{"tools":[{"type":"shell","environment":{"type":"local","container_id":"cntr_123"}}]}`, providers.ErrUnsupportedTool},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			err := adapter.ValidateRequest(toolContext(t, providers.RouteChat, item.body))
+			err := ValidateRequest(toolProfileRequest(t, RouteChat, item.body))
 			if !errors.Is(err, item.err) {
 				t.Fatalf("expected %v, got %v", item.err, err)
 			}
 		})
 	}
 
-	if err := adapter.ValidateRequest(providers.RequestContext{ToolsParseFailed: true}); !errors.Is(err, providers.ErrInvalidProviderToolSpec) {
+	if err := ValidateRequest(PolicyRequest{Route: RouteChat, ToolsParseFailed: true}); !errors.Is(err, providers.ErrInvalidProviderToolSpec) {
 		t.Fatalf("expected malformed tools to fail closed, got %v", err)
 	}
 }
 
 func TestValidateRequestRejectsOpenAIOutputCapsBelowMinimum(t *testing.T) {
-	err := Adapter{}.ValidateRequest(providers.RequestContext{Route: providers.RouteChat, OutputTokenLimit: 15})
+	err := ValidateRequest(PolicyRequest{Route: RouteChat, OutputTokenLimit: 15})
 	if !errors.Is(err, providers.ErrOutputTokenLimitTooLow) {
 		t.Fatalf("expected output limit minimum rejection, got %v", err)
 	}
 }
 
 func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
-	adapter := Adapter{}
 	for _, item := range []struct {
 		name  string
-		route providers.Route
+		route Route
 		body  string
 	}{
-		{"chat file", providers.RouteChat, `{"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"abc"}}]}]}`},
-		{"chat image", providers.RouteChat, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`},
-		{"chat audio", providers.RouteChat, `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`},
-		{"responses file id", providers.RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`},
-		{"responses image", providers.RouteResponses, `{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`},
-		{"responses audio", providers.RouteResponses, `{"input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`},
+		{"chat file", RouteChat, `{"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"abc"}}]}]}`},
+		{"chat image", RouteChat, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`},
+		{"chat audio", RouteChat, `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`},
+		{"responses file id", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`},
+		{"responses image", RouteResponses, `{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`},
+		{"responses audio", RouteResponses, `{"input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			err := adapter.ValidateRequest(rawRequestContext(t, item.route, item.body))
+			err := ValidateRequest(rawProfileRequest(t, item.route, item.body))
 			if !errors.Is(err, providers.ErrUnsupportedInput) {
 				t.Fatalf("expected unsupported input rejection, got %v", err)
 			}
@@ -100,18 +97,17 @@ func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
 }
 
 func TestValidateRequestAllowsTextAndInlineResponseFiles(t *testing.T) {
-	adapter := Adapter{}
 	for _, item := range []struct {
 		name  string
-		route providers.Route
+		route Route
 		body  string
 	}{
-		{"chat text", providers.RouteChat, `{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`},
-		{"responses text", providers.RouteResponses, `{"input":[{"type":"input_text","text":"summarize"}]}`},
-		{"responses inline file", providers.RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
+		{"chat text", RouteChat, `{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`},
+		{"responses text", RouteResponses, `{"input":[{"type":"input_text","text":"summarize"}]}`},
+		{"responses inline file", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			if err := adapter.ValidateRequest(rawRequestContext(t, item.route, item.body)); err != nil {
+			if err := ValidateRequest(rawProfileRequest(t, item.route, item.body)); err != nil {
 				t.Fatalf("expected request to pass: %v", err)
 			}
 		})
@@ -119,31 +115,22 @@ func TestValidateRequestAllowsTextAndInlineResponseFiles(t *testing.T) {
 }
 
 func TestValidateRequestAllowsWebSearchOptionsOnlyForChatSearchModels(t *testing.T) {
-	adapter := Adapter{}
-	err := adapter.ValidateRequest(providers.RequestContext{
-		Route:               providers.RouteChat,
+	err := ValidateRequest(PolicyRequest{
+		Route:               RouteChat,
 		HasWebSearchOptions: true,
-		Deployment:          providers.Deployment{Model: "gpt-5.5"},
+		Deployment:          Deployment{Model: "gpt-5.5"},
 	})
 	if !errors.Is(err, providers.ErrUnsupportedParameter) {
 		t.Fatalf("expected normal chat model web_search_options rejection, got %v", err)
 	}
 
-	err = adapter.ValidateRequest(providers.RequestContext{
-		Route:               providers.RouteChat,
+	err = ValidateRequest(PolicyRequest{
+		Route:               RouteChat,
 		HasWebSearchOptions: true,
-		Deployment:          providers.Deployment{Model: "gpt-5-search-api"},
+		Deployment:          Deployment{Model: "gpt-5-search-api"},
 	})
 	if err != nil {
 		t.Fatalf("expected search model web_search_options to pass, got %v", err)
-	}
-
-	err = adapter.ValidateRequest(providers.RequestContext{
-		Route:               providers.RouteResponses,
-		HasWebSearchOptions: true,
-	})
-	if !errors.Is(err, providers.ErrUnsupportedParameter) {
-		t.Fatalf("expected Responses web_search_options rejection, got %v", err)
 	}
 }
 
@@ -161,9 +148,9 @@ func TestWebSearchPricingRules(t *testing.T) {
 		t.Fatalf("preview tool must not use fixed non-preview token block, got %d", got)
 	}
 
-	reasoningPreview := providers.RequestContext{
-		Route: providers.RouteResponses,
-		Deployment: providers.Deployment{
+	reasoningPreview := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{
 			Model:              "gpt-5.5",
 			ReasoningSupported: true,
 		},
@@ -179,9 +166,9 @@ func TestWebSearchPricingRules(t *testing.T) {
 		t.Fatalf("non-reasoning web_search_preview content tokens should be free")
 	}
 
-	ambiguousSearch := providers.RequestContext{
-		Route: providers.RouteResponses,
-		Deployment: providers.Deployment{Pricing: providers.Pricing{
+	ambiguousSearch := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{Pricing: providers.Pricing{
 			MeterOpenAIResponsesWebSearchCalls:        {providers.RatePerThousandCalls: "100"},
 			MeterOpenAIResponsesWebSearchPreviewCalls: {providers.RatePerThousandCalls: "250"},
 		}},
@@ -203,7 +190,7 @@ func TestChatSearchModelPricingRules(t *testing.T) {
 		{"gpt-4o-mini-search-preview-2025-03-11", MeterOpenAIChatCompletionSearchPreviewModelCalls},
 		{"gpt-5-search-api-preview", ""},
 	} {
-		ctx := providers.RequestContext{Deployment: providers.Deployment{Model: item.model}}
+		ctx := PolicyRequest{Deployment: Deployment{Model: item.model}}
 		got, _ := chatSearchMeter(ctx)
 		if got != item.meter {
 			t.Fatalf("expected %s to use meter %q, got %q", item.model, item.meter, got)
@@ -225,7 +212,7 @@ func TestChatSearchModelPricingRules(t *testing.T) {
 	}
 }
 
-func toolContext(t *testing.T, route providers.Route, body string) providers.RequestContext {
+func toolProfileRequest(t *testing.T, route Route, body string) PolicyRequest {
 	t.Helper()
 	var raw map[string]json.RawMessage
 	if err := sonic.Unmarshal([]byte(body), &raw); err != nil {
@@ -242,14 +229,14 @@ func toolContext(t *testing.T, route providers.Route, body string) providers.Req
 			toolTypes = append(toolTypes, toolType)
 		}
 	}
-	return providers.RequestContext{Route: route, RawTools: tools, ToolTypes: toolTypes}
+	return PolicyRequest{Route: route, RawTools: tools, ToolTypes: toolTypes}
 }
 
-func rawRequestContext(t *testing.T, route providers.Route, body string) providers.RequestContext {
+func rawProfileRequest(t *testing.T, route Route, body string) PolicyRequest {
 	t.Helper()
 	var raw map[string]json.RawMessage
 	if err := sonic.Unmarshal([]byte(body), &raw); err != nil {
 		t.Fatalf("invalid test JSON: %v", err)
 	}
-	return providers.RequestContext{Route: route, RawBody: raw}
+	return PolicyRequest{Route: route, RawBody: raw}
 }

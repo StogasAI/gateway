@@ -1,7 +1,7 @@
 ---
 providerEndpoints:
   providerId: openai
-  stogasEndpointId: stogas-chat-completions
+  stogasEndpoints: [stogas-chat-completions]
   endpoint: https://api.openai.com/v1/chat/completions
   regionId: multi-region
   regionalStorageClaimed: false
@@ -10,7 +10,3 @@ providerEndpoints:
   e2ee: unknown
   gdpr: 'not region-pinned'
   class: chat_completion
-  policyProfiles:
-    - openai.chat.output_tokens.min_16
-    - openai.chat.text_only_mvp
-    - openai.chat.no_hosted_tools

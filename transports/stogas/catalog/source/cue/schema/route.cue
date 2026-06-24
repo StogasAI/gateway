@@ -2,7 +2,7 @@ package catalog
 
 #ProviderEndpoint: close({
 	providerId:                #Id
-	stogasEndpointId:          #Id
+	stogasEndpoints:           [#Id, ...#Id]
 	endpoint:                  #EndpointTemplate
 	regionId:                  #Id
 	regionalStorageClaimed:    #ClaimBool
@@ -11,7 +11,5 @@ package catalog
 	e2ee:                      #ClaimText
 	gdpr:                      #ClaimText
 	class:                     #ProviderEndpointClass
-	policyProfiles?:           [...#PolicyProfileId]
 	pricing?:                  #ProviderPricing
-	schema?:                   #SchemaPatch
 })

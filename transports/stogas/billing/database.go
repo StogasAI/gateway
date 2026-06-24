@@ -15,8 +15,6 @@ const (
 	poolMaxConnIdleTime       = 5 * time.Minute
 	poolMaxConnLifetime       = 30 * time.Minute
 	poolMaxConnLifetimeJitter = 5 * time.Minute
-	poolWarmupTimeout         = 5 * time.Second
-	poolWarmupPerConnTimeout  = 2 * time.Second
 )
 
 type DatabasePoolConfig struct {
@@ -73,10 +71,6 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
-	if err := warmPool(ctx, pool, int(poolConfig.MinConns)); err != nil {
-		pool.Close()
-		return nil, err
 	}
 
 	return &GatewayDB{pool: pool}, nil
@@ -157,29 +151,4 @@ func (c DatabasePoolConfig) Validate() error {
 	default:
 		return fmt.Errorf("STOGAS_DB_QUERY_EXEC_MODE must be one of cache_statement, cache_describe, describe_exec, exec, simple_protocol")
 	}
-}
-
-func warmPool(parent context.Context, pool *pgxpool.Pool, target int) error {
-	if target <= 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(parent, poolWarmupTimeout)
-	defer cancel()
-	conns := make([]*pgxpool.Conn, 0, target)
-	for i := 0; i < target; i++ {
-		acquireCtx, acquireCancel := context.WithTimeout(ctx, poolWarmupPerConnTimeout)
-		conn, err := pool.Acquire(acquireCtx)
-		acquireCancel()
-		if err != nil {
-			for _, acquired := range conns {
-				acquired.Release()
-			}
-			return fmt.Errorf("warm postgres pool: %w", err)
-		}
-		conns = append(conns, conn)
-	}
-	for _, conn := range conns {
-		conn.Release()
-	}
-	return nil
 }

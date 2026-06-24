@@ -1,0 +1,19 @@
+---
+deployments:
+  upstreamModelSlug: gpt-4o-search-preview
+  aliasSlugs: [gpt-4o-search-preview-2025-03-11-flex, gpt-4o-search-preview-flex, gpt-4o-search-preview-flex-latest, gpt-4o-search-preview-latest-flex]
+  providerId: openai
+  parentProviderEndpointNodes: [openai-chat-completions]
+  modelId: gpt-4o-search-preview-2025-03-11
+  serviceTier: flex
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1250000000000000000'
+    cached_input_tokens:
+      per_mill_tokens: '625000000000000000'
+    output_tokens:
+      per_mill_tokens: '5000000000000000000'
+    openai_chat_completion_search_preview_model_calls:
+      per_1k_search_context_low_calls: '30000000000000000000'
+      per_1k_search_context_medium_calls: '35000000000000000000'
+      per_1k_search_context_high_calls: '50000000000000000000'

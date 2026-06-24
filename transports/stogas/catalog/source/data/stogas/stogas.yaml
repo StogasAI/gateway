@@ -1,13 +1,4 @@
 ---
 stogas:
   name: Stogas AI
-  responseMetadataFields:
-    [
-      provider,
-      latency,
-      model_requested,
-      model_deployment,
-      provider_response_headers,
-      raw_request,
-      raw_response
-    ]
+  responseMetadataFields: [provider, latency, model_requested, model_deployment, provider_response_headers, raw_request, raw_response]

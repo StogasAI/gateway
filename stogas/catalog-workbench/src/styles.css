@@ -348,6 +348,33 @@ small,
 	overflow-wrap: anywhere;
 }
 
+.svelte-flow__handle.catalog-flow-handle,
+.svelte-flow__handle.catalog-flow-handle.source,
+.svelte-flow__handle.catalog-flow-handle.target,
+.svelte-flow__handle.catalog-flow-handle.connecting,
+.svelte-flow__handle.catalog-flow-handle.valid,
+.svelte-flow__handle.catalog-flow-handle:hover {
+	background: transparent !important;
+	border: 0 !important;
+	box-shadow: none !important;
+	height: 0.2rem !important;
+	min-height: 0.2rem !important;
+	min-width: 0.2rem !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
+	width: 0.2rem !important;
+}
+
+.svelte-flow__handle.catalog-flow-handle.svelte-flow__handle-left,
+.svelte-flow__handle.catalog-flow-handle.left {
+	left: -0.1rem !important;
+}
+
+.svelte-flow__handle.catalog-flow-handle.svelte-flow__handle-right,
+.svelte-flow__handle.catalog-flow-handle.right {
+	right: -0.1rem !important;
+}
+
 .svelte-flow__edge.catalog-edge .svelte-flow__edge-path {
 	stroke: #64748b;
 	stroke-width: 1.15;
@@ -442,11 +469,28 @@ input {
 }
 
 .chain-card,
-.trace {
+.trace,
+.source-card {
 	background: #111821;
 	border: 1px solid #253346;
 	border-radius: 8px;
 	padding: 0.78rem;
+}
+
+.source-card {
+	display: grid;
+	gap: 0.65rem;
+	min-height: 0;
+}
+
+.source-card textarea {
+	font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+	font-size: 0.76rem;
+	line-height: 1.35;
+	min-height: min(54vh, 42rem);
+	padding: 0.6rem;
+	resize: vertical;
+	width: 100%;
 }
 
 .chain-row {
@@ -507,95 +551,36 @@ input {
 }
 
 .chain-node[data-type='stogasEndpoint'],
-.chain-row span[data-type='stogasEndpoint'],
-.chain-picker[data-type='stogasEndpoint'] {
+.chain-row span[data-type='stogasEndpoint'] {
 	background: #0f766e;
 }
 
 .chain-node[data-type='author'],
-.chain-row span[data-type='author'],
-.chain-picker[data-type='author'] {
+.chain-row span[data-type='author'] {
 	background: #0ea5e9;
 	color: #ffffff;
 }
 
 .chain-node[data-type='model'],
-.chain-row span[data-type='model'],
-.chain-picker[data-type='model'] {
+.chain-row span[data-type='model'] {
 	background: #166534;
 	color: #ffffff;
 }
 
 .chain-node[data-type='provider'],
-.chain-row span[data-type='provider'],
-.chain-picker[data-type='provider'] {
+.chain-row span[data-type='provider'] {
 	background: #f59e0b;
 	color: #111827;
 }
 
 .chain-node[data-type='providerEndpoint'],
-.chain-row span[data-type='providerEndpoint'],
-.chain-picker[data-type='providerEndpoint'] {
+.chain-row span[data-type='providerEndpoint'] {
 	background: #7c3aed;
 }
 
 .chain-node[data-type='deployment'],
-.chain-row span[data-type='deployment'],
-.chain-picker[data-type='deployment'] {
+.chain-row span[data-type='deployment'] {
 	background: #e11d48;
-}
-
-.chain-picker {
-	align-items: center;
-	border-radius: 999px;
-	color: #ffffff;
-	display: inline-flex;
-	flex-direction: row;
-	font-size: 0.72rem;
-	font-weight: 700;
-	gap: 0.28rem;
-	line-height: 1;
-	max-width: 100%;
-	min-height: 1.55rem;
-	padding: 0.12rem 0.22rem 0.12rem 0.48rem;
-}
-
-.chain-picker span {
-	color: currentColor;
-	font-size: 0.64rem;
-	letter-spacing: 0;
-	opacity: 0.82;
-	padding: 0;
-}
-
-.chain-picker select {
-	background: rgb(15 23 42 / 0.38);
-	border: 1px solid rgb(255 255 255 / 0.34);
-	border-radius: 999px;
-	color: currentColor;
-	font-size: 0.72rem;
-	font-weight: 750;
-	min-height: 1.25rem;
-	max-width: 11rem;
-	padding: 0 1.2rem 0 0.45rem;
-	width: auto;
-}
-
-.chain-picker select:focus,
-.chain-picker select:focus-visible {
-	border-color: rgb(255 255 255 / 0.75);
-	box-shadow: 0 0 0 2px rgb(255 255 255 / 0.28);
-	outline: none;
-}
-
-.chain-picker[data-type='provider'] select,
-.chain-picker[data-type='provider'] span {
-	color: #111827;
-}
-
-.chain-picker option {
-	background: #0f1720;
-	color: #f8fafc;
 }
 
 .trace-head {
@@ -1412,7 +1397,8 @@ button.secondary {
 }
 
 .shell .chain-card,
-.shell .trace {
+.shell .trace,
+.shell .source-card {
 	background: var(--surface);
 	border-color: var(--border);
 	box-shadow: var(--shadow);
@@ -1439,16 +1425,6 @@ button.secondary {
 	box-shadow:
 		0 0 0 2px var(--text),
 		0 8px 18px rgb(0 0 0 / 0.22);
-}
-
-.shell .chain-picker select {
-	background: color-mix(in srgb, var(--control-bg) 64%, transparent);
-	border-color: color-mix(in srgb, var(--text) 34%, transparent);
-}
-
-.shell .chain-picker option {
-	background: var(--control-bg);
-	color: var(--text);
 }
 
 .trace-head {

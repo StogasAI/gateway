@@ -1,0 +1,12 @@
+---
+providerEndpoints:
+  providerId: anthropic
+  stogasEndpoints: [stogas-chat-completions, stogas-responses]
+  endpoint: https://api.anthropic.com/v1/messages
+  regionId: multi-region
+  regionalStorageClaimed: false
+  regionalProcessingClaimed: false
+  fallbackBehavior: none
+  e2ee: unknown
+  gdpr: 'not region-pinned'
+  class: messages

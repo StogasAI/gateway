@@ -11,11 +11,6 @@ import type {
 } from './types';
 import { MarkerType, type Edge, type Node } from '@xyflow/svelte';
 
-const providerEndpointLaneByClass: Record<string, { x: number; label: string; rank: number }> = {
-	chat_completion: { x: 920, label: 'Chat', rank: 0 },
-	responses: { x: 920, label: 'Responses', rank: 1 }
-};
-
 const deploymentOrder = ['gpt-5.5', 'gpt-5.5-flex', 'gpt-5.5-priority'];
 const graphChainNodeOrder: NodeType[] = [
 	'author',
@@ -48,7 +43,7 @@ const catalogPolicyEntryNames = new Set([
 ]);
 
 const nativeFieldsByType: Record<NodeType, Set<string>> = {
-	stogasEndpoint: new Set(['schema']),
+	stogasEndpoint: new Set(['path', 'method']),
 	author: new Set(['description', 'region', 'authorSlugs', 'name']),
 	model: new Set([
 		'authorId',
@@ -93,7 +88,7 @@ const nativeFieldsByType: Record<NodeType, Set<string>> = {
 		'pricing'
 	]),
 	providerEndpoint: new Set([
-		'stogasEndpointId',
+		'stogasEndpoints',
 		'endpoint',
 		'regionId',
 		'regionalStorageClaimed',
@@ -101,12 +96,10 @@ const nativeFieldsByType: Record<NodeType, Set<string>> = {
 		'fallbackBehavior',
 		'e2ee',
 		'gdpr',
-		'class',
-		'schema'
+		'class'
 	]),
 	deployment: new Set([
 		'modelSlugs',
-		'concreteSlugs',
 		'providerId',
 		'parentProviderEndpointNodes',
 		'modelId',
@@ -117,8 +110,7 @@ const nativeFieldsByType: Record<NodeType, Set<string>> = {
 		'tokenizer',
 		'contextWindowTokens',
 		'maxOutputTokens',
-		'pricing',
-		'schema'
+		'pricing'
 	]),
 	location: new Set(['name', 'kind', 'parentId', 'isoCode', 'domainPrefix'])
 };
@@ -146,82 +138,52 @@ function isNodeType(value: string): value is NodeType {
 }
 
 export function buildFlow(graph: CatalogGraph): CatalogFlow {
+	const positions = groupedLayoutPositions(graph);
 	const nodes: Node<GraphNodeData>[] = [
-		...Object.keys(graph.authors).map((id, index) =>
-			makeNode(
-				'author',
-				id,
-				{ x: 80, y: 280 + index * 92 },
-				{
-					rightOut: true
-				}
-			)
+		...Object.keys(graph.authors).map((id) =>
+			makeNode('author', id, positions.get(nodeKey('author', id)) ?? fallbackNodePosition('author'), {
+				rightOut: true
+			})
 		),
-		...Object.keys(graph.models).map((id, index) =>
-			makeNode(
-				'model',
-				id,
-				{ x: 340, y: 280 + index * 92 },
-				{
-					leftIn: true,
-					rightOut: true
-				}
-			)
+		...Object.keys(graph.models).map((id) =>
+			makeNode('model', id, positions.get(nodeKey('model', id)) ?? fallbackNodePosition('model'), {
+				leftIn: true,
+				rightOut: true
+			})
 		),
-		...Object.keys(graph.providers).map((id, index) =>
+		...Object.keys(graph.providers).map((id) =>
 			makeNode(
 				'provider',
 				id,
-				{ x: 1190, y: 405 + index * 92 },
+				positions.get(nodeKey('provider', id)) ?? fallbackNodePosition('provider'),
 				{
 					leftOut: true,
 					rightIn: true
 				}
 			)
 		),
-		...sortedProviderEndpoints(graph).map(([id, route], index) =>
-			makeNode('providerEndpoint', id, providerEndpointPosition(route, index), {
+		...sortedProviderEndpoints(graph).map(([id]) =>
+			makeNode('providerEndpoint', id, positions.get(nodeKey('providerEndpoint', id)) ?? fallbackNodePosition('providerEndpoint'), {
 				leftOut: true,
 				rightIn: true
 			})
 		),
-		...sortedDeployments(graph).map(([id], index) =>
-			makeNode('deployment', id, deploymentPosition(id, index), {
+		...sortedDeployments(graph).map(([id]) =>
+			makeNode('deployment', id, positions.get(nodeKey('deployment', id)) ?? fallbackNodePosition('deployment'), {
 				leftIn: true,
 				rightIn: true
 			})
 		),
-		...sortedStogasEndpoints(graph).map(([id], index) =>
-			makeNode('stogasEndpoint', id, stogasEndpointPosition(graph, id, index), {
-				leftOut: true
-			})
+		...sortedStogasEndpoints(graph).map(([id]) =>
+			makeNode('stogasEndpoint', id, positions.get(nodeKey('stogasEndpoint', id)) ?? fallbackNodePosition('stogasEndpoint'))
 		)
 	];
 	const edges: Edge[] = [];
-	const schemaProviderEdges = new Set<string>();
 
 	for (const [id, model] of Object.entries(graph.models)) {
 		edges.push(edge('author', String(model.authorId), 'model', id, 'owns', 'right-out', 'left-in'));
 	}
 	for (const [id, route] of Object.entries(graph.providerEndpoints)) {
-		const stogasEndpointId = String(route.stogasEndpointId ?? '');
-		if (stogasEndpointId && graph.stogasEndpoints[stogasEndpointId]) {
-			const edgeId = `${stogasEndpointId}:${route.providerId}`;
-			if (!schemaProviderEdges.has(edgeId)) {
-				schemaProviderEdges.add(edgeId);
-				edges.push(
-					edge(
-						'stogasEndpoint',
-						stogasEndpointId,
-						'provider',
-						String(route.providerId),
-						'adapts',
-						'left-out',
-						'right-in'
-					)
-				);
-			}
-		}
 		edges.push(
 			edge(
 				'provider',
@@ -233,11 +195,6 @@ export function buildFlow(graph: CatalogGraph): CatalogFlow {
 				'right-in'
 			)
 		);
-		for (const deploymentId of deploymentIdsForProviderEndpoint(graph, id)) {
-			edges.push(
-				edge('providerEndpoint', id, 'deployment', deploymentId, 'serves', 'left-out', 'right-in')
-			);
-		}
 	}
 	for (const [id, deployment] of Object.entries(graph.deployments)) {
 		edges.push(
@@ -251,6 +208,17 @@ export function buildFlow(graph: CatalogGraph): CatalogFlow {
 				'left-in'
 			)
 		);
+		edges.push(
+			edge(
+				'providerEndpoint',
+				firstProviderEndpointForDeployment(graph, id),
+				'deployment',
+				id,
+				'serves',
+				'left-out',
+				'right-in'
+			)
+		);
 	}
 
 	return { nodes, edges };
@@ -258,15 +226,12 @@ export function buildFlow(graph: CatalogGraph): CatalogFlow {
 
 function sortedProviderEndpoints(graph: CatalogGraph) {
 	return Object.entries(graph.providerEndpoints).sort(([, a], [, b]) => {
-		return providerEndpointClassRank(String(a.class)) - providerEndpointClassRank(String(b.class));
+		return String(a.class).localeCompare(String(b.class));
 	});
 }
 
 function sortedStogasEndpoints(graph: CatalogGraph) {
-	return Object.entries(graph.stogasEndpoints).sort(([a], [b]) => {
-		const rankDelta = stogasEndpointRank(graph, a) - stogasEndpointRank(graph, b);
-		return rankDelta || a.localeCompare(b);
-	});
+	return Object.entries(graph.stogasEndpoints).sort(([a], [b]) => a.localeCompare(b));
 }
 
 function sortedDeployments(graph: CatalogGraph) {
@@ -276,37 +241,107 @@ function sortedDeployments(graph: CatalogGraph) {
 	});
 }
 
-function providerEndpointPosition(route: Record<string, unknown>, index: number) {
-	const lane = providerEndpointLaneByClass[String(route.class)] ?? { x: 800, label: 'Routes' };
-	return { x: lane.x, y: 340 + (lane.rank ?? index) * 110 };
-}
-
-function stogasEndpointPosition(graph: CatalogGraph, id: string, index: number) {
-	const rank = stogasEndpointRank(graph, id);
-	const yIndex = rank === Number.MAX_SAFE_INTEGER ? index : rank;
-	return { x: 1435, y: 340 + yIndex * 110 };
-}
-
-function deploymentPosition(id: string, index: number) {
-	const rank = deploymentRank(id);
-	const yIndex = rank === Number.MAX_SAFE_INTEGER ? index : rank;
-	return { x: 620, y: 250 + yIndex * 74 };
-}
-
-function providerEndpointClassRank(routeClass: string) {
-	return providerEndpointLaneByClass[routeClass]?.rank ?? Number.MAX_SAFE_INTEGER;
-}
-
-function stogasEndpointRank(graph: CatalogGraph, stogasEndpointId: string) {
-	const route = Object.values(graph.providerEndpoints).find(
-		(candidate) => candidate.stogasEndpointId === stogasEndpointId
-	);
-	return route ? providerEndpointClassRank(String(route.class)) : Number.MAX_SAFE_INTEGER;
-}
-
 function deploymentRank(id: string) {
 	const rank = deploymentOrder.indexOf(id);
 	return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+}
+
+function groupedLayoutPositions(graph: CatalogGraph) {
+	const positions = new Map<string, { x: number; y: number }>();
+	const modelIds = unique(
+		Object.values(graph.deployments).map((deployment) => String(deployment.modelId ?? '')).filter(Boolean)
+	).sort((left, right) => modelLabel(graph, left).localeCompare(modelLabel(graph, right)));
+	const deploymentIdsByModel = new Map<string, string[]>();
+	for (const [deploymentId, deployment] of Object.entries(graph.deployments)) {
+		const modelId = String(deployment.modelId ?? '');
+		if (!modelId) continue;
+		const deploymentIds = deploymentIdsByModel.get(modelId) ?? [];
+		deploymentIds.push(deploymentId);
+		deploymentIdsByModel.set(modelId, deploymentIds);
+	}
+
+	const deploymentStep = 90;
+	const groupGap = 140;
+	let cursor = 190;
+	for (const modelId of modelIds) {
+		const deploymentIds = (deploymentIdsByModel.get(modelId) ?? []).sort(
+			(a, b) => deploymentRank(a) - deploymentRank(b) || deploymentLabel(graph, a).localeCompare(deploymentLabel(graph, b))
+		);
+		const span = Math.max(0, deploymentIds.length - 1) * deploymentStep;
+		const center = cursor + span / 2;
+		positions.set(nodeKey('model', modelId), lanePosition('model', center));
+		deploymentIds.forEach((deploymentId, index) => {
+			positions.set(nodeKey('deployment', deploymentId), lanePosition('deployment', cursor + index * deploymentStep));
+		});
+		cursor += span + groupGap;
+	}
+
+	const yFor = (key: string) => positions.get(key)?.y ?? null;
+	const average = (values: Array<number | null>) => {
+		const concrete = values.filter((value): value is number => typeof value === 'number');
+		if (!concrete.length) return null;
+		return concrete.reduce((sum, value) => sum + value, 0) / concrete.length;
+	};
+	const deploymentY = (deploymentId: string) => yFor(nodeKey('deployment', deploymentId));
+
+	for (const authorId of unique(
+		modelIds.map((modelId) => String(graph.models[modelId]?.authorId ?? '')).filter(Boolean)
+	)) {
+		const center = average(
+			modelIds
+				.filter((modelId) => String(graph.models[modelId]?.authorId ?? '') === authorId)
+				.map((modelId) => yFor(nodeKey('model', modelId)))
+		);
+		if (center !== null) positions.set(nodeKey('author', authorId), lanePosition('author', center));
+	}
+
+	for (const providerId of Object.keys(graph.providers)) {
+		const center = average(
+			Object.entries(graph.deployments)
+				.filter(([, deployment]) => String(deployment.providerId ?? '') === providerId)
+				.map(([deploymentId]) => deploymentY(deploymentId))
+		);
+		if (center !== null) positions.set(nodeKey('provider', providerId), lanePosition('provider', center));
+	}
+
+	for (const [routeId] of Object.entries(graph.providerEndpoints)) {
+		const center = average(deploymentIdsForProviderEndpoint(graph, routeId).map(deploymentY));
+		if (center !== null)
+			positions.set(nodeKey('providerEndpoint', routeId), lanePosition('providerEndpoint', center));
+	}
+
+	sortedStogasEndpoints(graph).forEach(([stogasEndpointId], index) => {
+		positions.set(nodeKey('stogasEndpoint', stogasEndpointId), lanePosition('stogasEndpoint', 190 + index * 110));
+	});
+
+	return positions;
+}
+
+function lanePosition(type: NodeType, y: number) {
+	return {
+		x: laneX(type),
+		y
+	};
+}
+
+function fallbackNodePosition(type: NodeType) {
+	return lanePosition(type, 190);
+}
+
+function laneX(type: NodeType) {
+	const lane = graphChainNodeOrder.indexOf(type);
+	return 80 + Math.max(0, lane) * 280;
+}
+
+function modelLabel(graph: CatalogGraph, modelId: string) {
+	return String(graph.models[modelId]?.canonicalSlug ?? modelId);
+}
+
+function deploymentLabel(graph: CatalogGraph, deploymentId: string) {
+	const deployment = graph.deployments[deploymentId];
+	const aliases = deployment?.aliasSlugs;
+	if (Array.isArray(aliases) && aliases.length) return String(aliases[0]);
+	return deploymentId;
 }
 
 function makeNode(
@@ -395,24 +430,24 @@ export function concreteGraphChains(catalog: Catalog): GraphChain[] {
 		const providerId = String(deployment.providerId ?? '');
 		for (const routeId of parentProviderEndpointNodesForDeployment(graph, deploymentId)) {
 			const route = graph.providerEndpoints[routeId];
-			const stogasEndpointId = String(route?.stogasEndpointId ?? '');
-			chains.push({
-				edgeIds: [
-					graphEdgeId('author', authorId, 'model', modelId),
-					graphEdgeId('model', modelId, 'deployment', deploymentId),
-					graphEdgeId('providerEndpoint', routeId, 'deployment', deploymentId),
-					graphEdgeId('provider', providerId, 'providerEndpoint', routeId),
-					graphEdgeId('stogasEndpoint', stogasEndpointId, 'provider', providerId)
-				].filter(Boolean),
-				nodeKeys: [
-					nodeKey('author', authorId),
-					nodeKey('model', modelId),
-					nodeKey('deployment', deploymentId),
-					nodeKey('providerEndpoint', routeId),
-					nodeKey('provider', providerId),
-					nodeKey('stogasEndpoint', stogasEndpointId)
-				].filter((key) => !key.endsWith(':'))
-			});
+			for (const stogasEndpointId of stogasEndpointIdsForProviderEndpoint(route)) {
+				chains.push({
+					edgeIds: [
+						graphEdgeId('author', authorId, 'model', modelId),
+						graphEdgeId('model', modelId, 'deployment', deploymentId),
+						graphEdgeId('provider', providerId, 'providerEndpoint', routeId),
+						graphEdgeId('providerEndpoint', routeId, 'deployment', deploymentId)
+					].filter(Boolean),
+					nodeKeys: [
+						nodeKey('author', authorId),
+						nodeKey('model', modelId),
+						nodeKey('deployment', deploymentId),
+						nodeKey('providerEndpoint', routeId),
+						nodeKey('provider', providerId),
+						nodeKey('stogasEndpoint', stogasEndpointId)
+					].filter((key) => !key.endsWith(':'))
+				});
+			}
 		}
 	}
 	return chains;
@@ -556,32 +591,7 @@ function compatibleNodeKeysForSelection(selectedKeys: string[], graphChains: Gra
 }
 
 function compactFlowLayout(nodes: Node<GraphNodeData>[], edges: Edge[]): CatalogFlow {
-	const laneX: Record<NodeType, number> = {
-		author: 80,
-		model: 340,
-		deployment: 620,
-		providerEndpoint: 920,
-		provider: 1190,
-		stogasEndpoint: 1435,
-		location: 80
-	};
-	const laneOrder: NodeType[] = [...graphChainNodeOrder, 'location'];
-	const byLane = new Map<NodeType, Node<GraphNodeData>[]>();
-	for (const type of laneOrder) byLane.set(type, []);
-	for (const node of nodes) byLane.get(node.data.type)?.push(node);
-
-	const compactNodes = laneOrder.flatMap((type) => {
-		const lane = byLane.get(type) ?? [];
-		return lane.map((node, index) => ({
-			...node,
-			position: {
-				x: laneX[type],
-				y: 245 + index * (type === 'deployment' ? 72 : 88)
-			}
-		}));
-	});
-
-	return { nodes: compactNodes, edges };
+	return { nodes, edges };
 }
 
 function unique<T>(items: T[]) {
@@ -759,10 +769,16 @@ function firstStogasEndpointNode(graph: CatalogGraph) {
 }
 
 function stogasEndpointForProviderEndpoint(graph: CatalogGraph, route?: Record<string, unknown>) {
-	const stogasEndpointId = String(route?.stogasEndpointId ?? '');
+	const stogasEndpointId = stogasEndpointIdsForProviderEndpoint(route)[0] ?? '';
 	if (stogasEndpointId && graph.stogasEndpoints[stogasEndpointId])
 		return source('stogasEndpoint', stogasEndpointId, graph.stogasEndpoints[stogasEndpointId]);
 	return firstStogasEndpointNode(graph);
+}
+
+function stogasEndpointIdsForProviderEndpoint(route?: Record<string, unknown>) {
+	if (!route) return [];
+	if (Array.isArray(route.stogasEndpoints)) return route.stogasEndpoints.map(String).filter(Boolean);
+	return [];
 }
 
 function source(type: NodeType, id: string, value: Record<string, unknown>): LineageNode {

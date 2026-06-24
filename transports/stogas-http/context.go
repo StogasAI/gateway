@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -19,28 +20,34 @@ const (
 	stogasReturnExtraFieldsKey stogasContextKey = "stogas.return_extra_fields"
 
 	stogasHeaderReturnExtraFields = "X-Stogas-Return-Extra-Fields"
+
+	chatRequestLifetime = 10 * time.Minute
 )
 
-func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest) (*schemas.BifrostContext, context.CancelFunc, error) {
+func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
+	lifetime := requestLifetime(resolution)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
-		billing.GatewayRequestLifetime,
+		lifetime,
 	)
 	requestID, err := uuid.NewV7()
 	if err != nil {
 		cancel()
-		return nil, nil, fmt.Errorf("generate request ID: %w", err)
+		return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
 	}
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID.String())
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestHeaders, requestHeaders(ctx))
-	stogas.SetCatalogResolution(bifrostCtx, resolution)
+	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	state.RequestLifetime = lifetime
+	state.ClientRequestHeaders = requestHeaderValues(ctx)
+	stogas.SetState(bifrostCtx, state)
 
 	extraFields, err := extraFieldsHeader(ctx)
 	if err != nil {
 		cancel()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(extraFields) > 0 {
 		bifrostCtx.SetValue(stogasReturnExtraFieldsKey, extraFields)
@@ -52,11 +59,21 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 		}
 	}
 
-	if extraHeaders := allowedUpstreamRequestHeaders(ctx, resolution.Provider, resolution.Model, resolution.Route); len(extraHeaders) > 0 {
-		bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, extraHeaders)
-	}
+	return bifrostCtx, state, cancel, nil
+}
 
-	return bifrostCtx, cancel, nil
+func requestLifetime(resolution *catalog.ResolvedRequest) time.Duration {
+	if resolution == nil {
+		return billing.GatewayRequestLifetime
+	}
+	switch resolution.Route {
+	case catalog.RouteChat:
+		return chatRequestLifetime
+	case catalog.RouteResponses:
+		return billing.GatewayRequestLifetime
+	default:
+		return billing.GatewayRequestLifetime
+	}
 }
 
 func requestHeaders(ctx *fasthttp.RequestCtx) map[string]string {
@@ -68,6 +85,15 @@ func requestHeaders(ctx *fasthttp.RequestCtx) map[string]string {
 			return
 		}
 		headers[name] = string(value)
+	})
+	return headers
+}
+
+func requestHeaderValues(ctx *fasthttp.RequestCtx) map[string][]string {
+	headers := make(map[string][]string)
+	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {
+		name := string(key)
+		headers[name] = append(headers[name], string(value))
 	})
 	return headers
 }
@@ -93,19 +119,4 @@ func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {
 
 func allowsStogasResponseField(name string) bool {
 	return catalog.AllowsResponseMetadataField(name)
-}
-
-func allowedUpstreamRequestHeaders(ctx *fasthttp.RequestCtx, provider schemas.ModelProvider, model string, route catalog.Route) map[string][]string {
-	allowed := make(map[string][]string)
-	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {
-		name := string(key)
-		if !catalog.AllowsUpstreamRequestHeader(provider, model, route, name) {
-			return
-		}
-		allowed[name] = append(allowed[name], string(value))
-	})
-	if len(allowed) == 0 {
-		return nil
-	}
-	return allowed
 }

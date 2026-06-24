@@ -13,6 +13,8 @@ type apiCredential struct {
 	Raw    string
 }
 
+const inferenceCredentialContextKey = "stogas.inference_credential"
+
 func authorizationToken(raw []byte) string {
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
@@ -77,6 +79,9 @@ func (s *Server) requireInferenceEnvelope(ctx *fasthttp.RequestCtx) (apiCredenti
 }
 
 func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
+	if cached, ok := ctx.UserValue(inferenceCredentialContextKey).(apiCredential); ok {
+		return cached, true
+	}
 	credential, ok := s.requireAPIKey(ctx)
 	if !ok {
 		return apiCredential{}, false
@@ -87,6 +92,7 @@ func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredentia
 		})
 		return apiCredential{}, false
 	}
+	ctx.SetUserValue(inferenceCredentialContextKey, credential)
 	return credential, true
 }
 
