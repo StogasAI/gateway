@@ -46,6 +46,7 @@ type PolicyRequest struct {
 	RawBody             map[string]json.RawMessage
 	ToolTypes           []string
 	RawTools            []map[string]json.RawMessage
+	ActualWebSearchCalls int
 }
 
 func ValidateRequest(req PolicyRequest) error {
@@ -170,26 +171,31 @@ func validateChatSearchModelWebSearchOptions(req PolicyRequest) error {
 
 func extraResponsesHostedToolHoldMeters(req PolicyRequest, outputTokenLimit int, inputTokenLimit int) []providers.MeterEstimate {
 	meters := []providers.MeterEstimate{}
+	quantity := responsesHostedToolHoldQuantity(req)
 	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens, true, true)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, true, true)
 	}
 	if webSearchContentTokensBilledAtModelRates(req) && req.Deployment.ContextWindowTokens > 0 {
 		remainingInputTokens := req.Deployment.ContextWindowTokens - outputTokenLimit - inputTokenLimit
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, remainingInputTokens, true, true)
 	}
 	if meterKey := responsesSearchMeter(req); meterKey != "" {
-		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, searchCallQuantity, true)
+		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, true)
 	}
 	return meters
 }
 
 func extraResponsesHostedToolSettlementMeters(req PolicyRequest) []providers.MeterEstimate {
 	meters := []providers.MeterEstimate{}
+	quantity := req.ActualWebSearchCalls
+	if quantity <= 0 {
+		return meters
+	}
 	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens, false, true)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, false, true)
 	}
 	if meterKey := responsesSearchMeter(req); meterKey != "" {
-		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, searchCallQuantity, false)
+		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, false)
 	}
 	return meters
 }
@@ -222,12 +228,8 @@ func validateChatInput(raw json.RawMessage) error {
 func validateResponsesInput(raw json.RawMessage) error {
 	return walkRawJSON(raw, func(object map[string]json.RawMessage) error {
 		switch rawStringField(object, "type") {
-		case "input_image", "input_audio":
+		case "input_image", "input_audio", "input_file":
 			return providers.ErrUnsupportedInput
-		case "input_file":
-			if _, ok := object["file_id"]; ok {
-				return providers.ErrUnsupportedInput
-			}
 		}
 		return nil
 	})
@@ -268,6 +270,18 @@ func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) err
 
 func validateTool(route Route, tool map[string]json.RawMessage) error {
 	toolType := rawStringField(tool, "type")
+	if route == RouteResponses {
+		switch {
+		case toolType == "":
+			return providers.ErrInvalidProviderToolSpec
+		case toolType == "function":
+			return nil
+		case webSearchToolKind(toolType) != "":
+			return nil
+		default:
+			return providers.ErrUnsupportedTool
+		}
+	}
 	switch {
 	case toolType == "":
 		return providers.ErrInvalidProviderToolSpec
@@ -280,6 +294,21 @@ func validateTool(route Route, tool map[string]json.RawMessage) error {
 	default:
 		return providers.ErrUnsupportedTool
 	}
+}
+
+func responsesHostedToolHoldQuantity(req PolicyRequest) int {
+	if req.Route != RouteResponses {
+		return searchCallQuantity
+	}
+	raw, ok := req.RawBody["max_tool_calls"]
+	if !ok {
+		return searchCallQuantity
+	}
+	var quantity int
+	if err := sonic.Unmarshal(raw, &quantity); err != nil || quantity < searchCallQuantity {
+		return searchCallQuantity
+	}
+	return quantity
 }
 
 func validateShellTool(tool map[string]json.RawMessage) error {

@@ -583,6 +583,57 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 	}
 }
 
+func TestInferenceHeadersRejectUnsupportedUpstreamHeaders(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/v1/responses")
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.Header.Set("Authorization", "Bearer sk-test")
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("Accept", "text/event-stream")
+	ctx.Request.Header.Set("Origin", "https://app.stogas.ai")
+	ctx.Request.Header.Set("X-Request-ID", "client-controlled")
+
+	server := &Server{}
+	if _, ok := server.requireInferenceHeaders(ctx); ok {
+		t.Fatal("expected unsupported custom upstream header to be rejected")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+		t.Fatalf("expected 400 unsupported header response, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
+	tests := []struct {
+		accept string
+		ok     bool
+	}{
+		{"", true},
+		{"application/json", true},
+		{"text/event-stream", true},
+		{"application/json, text/event-stream", true},
+		{"*/*", true},
+		{"text/html", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.accept, func(t *testing.T) {
+			ctx := &fasthttp.RequestCtx{}
+			ctx.Request.SetRequestURI("/v1/responses")
+			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+			ctx.Request.Header.Set("Authorization", "Bearer sk-test")
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			if tt.accept != "" {
+				ctx.Request.Header.Set("Accept", tt.accept)
+			}
+
+			_, ok := (&Server{}).requireInferenceHeaders(ctx)
+			if ok != tt.ok {
+				t.Fatalf("expected ok=%v for Accept %q, got %v with status %d", tt.ok, tt.accept, ok, ctx.Response.StatusCode())
+			}
+		})
+	}
+}
+
 func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
@@ -710,12 +761,16 @@ func TestInferenceAuthorizesAfterBifrostRequestIsMaterialized(t *testing.T) {
 	text := string(source)
 
 	toBifrostIndex := strings.Index(text, "resolution.ToBifrost(bifrostCtx)")
+	dryRunIndex := strings.Index(text, "dryRunProviderRequestMarshal(bifrostCtx, bifrostReq)")
 	authorizeIndex := strings.Index(text, "stogas.AuthorizeState(bifrostCtx")
-	if toBifrostIndex < 0 || authorizeIndex < 0 {
-		t.Fatalf("expected inference source to include ToBifrost and AuthorizeState, got ToBifrost=%d AuthorizeState=%d", toBifrostIndex, authorizeIndex)
+	if toBifrostIndex < 0 || dryRunIndex < 0 || authorizeIndex < 0 {
+		t.Fatalf("expected inference source to include ToBifrost, dry run, and AuthorizeState, got ToBifrost=%d dryRun=%d AuthorizeState=%d", toBifrostIndex, dryRunIndex, authorizeIndex)
 	}
 	if authorizeIndex < toBifrostIndex {
 		t.Fatal("DB hold authorization must happen after the Bifrost request is materialized")
+	}
+	if authorizeIndex < dryRunIndex {
+		t.Fatal("DB hold authorization must happen after provider request marshal dry-run")
 	}
 }
 

@@ -612,19 +612,17 @@ func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
 		Path:   "/v1/responses",
 		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`),
 	})
-	if !errors.Is(err, ErrProviderContainersUnsupported) {
-		t.Fatalf("expected hosted shell container rejection, got %v", err)
+	if !errors.Is(err, ErrUnsupportedTool) {
+		t.Fatalf("expected unsupported shell tool rejection, got %v", err)
 	}
 }
 
-func TestMVPInputPolicyAllowsInlineFilesAndRejectsFileIDsAndMedia(t *testing.T) {
+func TestMVPInputPolicyAllowsTextAndRejectsFilesAndMedia(t *testing.T) {
 	loadTestCatalog(t)
 
 	allowed := []string{
 		`{"model":"gpt-5.5","input":"hi"}`,
 		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"summarize"}]}]}`,
-		`{"model":"gpt-5.5","input":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="},{"type":"input_text","text":"summarize"}]}]}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`,
 	}
@@ -643,6 +641,7 @@ func TestMVPInputPolicyAllowsInlineFilesAndRejectsFileIDsAndMedia(t *testing.T) 
 		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`,
 		`{"model":"gpt-5.5","input":{"type":"input_file","file_id":"file_123"}}`,
 		`{"model":"gpt-5.5","input":{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}}`,
+		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`,
 		`{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`,
 		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/image.png"}]}]}`,
 		`{"model":"gpt-5.5","input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`,

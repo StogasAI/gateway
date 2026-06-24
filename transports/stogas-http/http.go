@@ -3,6 +3,9 @@ package stogashttp
 import (
 	"context"
 
+	"github.com/bytedance/sonic"
+	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
+	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -75,14 +78,19 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	if len(state.UpstreamRequestHeaders) > 0 {
 		bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, state.UpstreamRequestHeaders)
 	}
-	if err := adapter.EstimateHold(state); err != nil {
+	bifrostReq, err := resolution.ToBifrost(bifrostCtx)
+	if err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
 		return
 	}
 
-	bifrostReq, err := resolution.ToBifrost(bifrostCtx)
-	if err != nil {
+	if err := dryRunProviderRequestMarshal(bifrostCtx, bifrostReq); err != nil {
+		cancel()
+		s.writeCatalogError(ctx, err)
+		return
+	}
+	if err := adapter.EstimateHold(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
 		return
@@ -156,6 +164,66 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		cancel()
 		s.writeCatalogError(ctx, catalog.ErrUnsupportedRequest)
 	}
+}
+
+func dryRunProviderRequestMarshal(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) error {
+	if req == nil {
+		return catalog.ErrUnsupportedRequest
+	}
+	switch {
+	case req.ChatRequest != nil:
+		switch req.ChatRequest.Provider {
+		case schemas.OpenAI:
+			converted := openaiprovider.ToOpenAIChatRequest(ctx, req.ChatRequest)
+			if converted == nil {
+				return invalidProviderRequest()
+			}
+			if _, err := sonic.Marshal(converted); err != nil {
+				return invalidProviderRequest()
+			}
+		case schemas.Anthropic:
+			converted, err := anthropicprovider.ToAnthropicChatRequest(ctx, req.ChatRequest)
+			if err != nil || converted == nil {
+				return invalidProviderRequest()
+			}
+			if _, err := sonic.Marshal(converted); err != nil {
+				return invalidProviderRequest()
+			}
+		default:
+			if _, err := sonic.Marshal(req.ChatRequest); err != nil {
+				return invalidProviderRequest()
+			}
+		}
+	case req.ResponsesRequest != nil:
+		switch req.ResponsesRequest.Provider {
+		case schemas.OpenAI:
+			converted := openaiprovider.ToOpenAIResponsesRequest(req.ResponsesRequest)
+			if converted == nil {
+				return invalidProviderRequest()
+			}
+			if _, err := sonic.Marshal(converted); err != nil {
+				return invalidProviderRequest()
+			}
+		case schemas.Anthropic:
+			if _, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, req.ResponsesRequest, anthropicprovider.AnthropicRequestBuildConfig{
+				Provider:    schemas.Anthropic,
+				IsStreaming: req.RequestType == schemas.ResponsesStreamRequest,
+			}); bifrostErr != nil {
+				return invalidProviderRequest()
+			}
+		default:
+			if _, err := sonic.Marshal(req.ResponsesRequest); err != nil {
+				return invalidProviderRequest()
+			}
+		}
+	default:
+		return catalog.ErrUnsupportedRequest
+	}
+	return nil
+}
+
+func invalidProviderRequest() error {
+	return catalog.APIError{StatusCode: fasthttp.StatusBadRequest, Type: catalog.ErrorTypeInvalidRequest, Message: "Invalid request for selected provider"}
 }
 
 func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc) {
