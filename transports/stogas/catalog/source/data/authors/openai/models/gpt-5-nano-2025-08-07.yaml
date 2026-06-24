@@ -2,8 +2,6 @@
 models:
   authorId: openai
   name: GPT-5 Nano
-  aliasNames: []
-  modelSlugs: [gpt-5-nano-2025-08-07, gpt-5-nano, gpt-5-nano-latest]
   family: GPT
   series: GPT-5
   snapshot: 2025-08-07

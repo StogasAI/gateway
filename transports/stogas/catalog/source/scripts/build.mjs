@@ -185,7 +185,16 @@ function validateCatalogReferences(catalog) {
 }
 
 function applyCompiledDerivations(catalog) {
+	applyGraphDerivations(catalog);
 	rebuildIndexes(catalog);
+}
+
+function applyGraphDerivations(catalog) {
+	const graph = catalog?.graph;
+	if (!graph?.providerEndpoints) return;
+	for (const [endpointId, endpoint] of Object.entries(graph.providerEndpoints)) {
+		endpoint.deploymentIds = deploymentIdsForProviderEndpoint(graph, endpointId);
+	}
 }
 
 function enumeratedPublicModelSlugs(graph, deployment) {
@@ -210,7 +219,6 @@ function rebuildIndexes(catalog) {
 	if (!graph) return;
 	catalog.indexes = {
 		author_slugs: slugIndex(graph.authors, (author) => [...(author.authorSlugs ?? [])]),
-		model_slugs: slugIndex(graph.models, (model) => [...(model.modelSlugs ?? [])]),
 		provider_slugs: slugIndex(graph.providers, (provider) => [...(provider.providerSlugs ?? [])]),
 		provider_native_model_slugs: providerNativeModelSlugs(graph),
 		provider_endpoint_deployments: providerEndpointDeployments(graph),

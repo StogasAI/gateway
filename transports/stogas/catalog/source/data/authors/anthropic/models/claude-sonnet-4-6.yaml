@@ -2,8 +2,6 @@
 models:
   authorId: anthropic
   name: Claude Sonnet 4.6
-  aliasNames: []
-  modelSlugs: [claude-sonnet-4-6]
   family: Claude
   series: Claude Sonnet
   snapshot: null
@@ -14,5 +12,5 @@ models:
   inputModalities: [text, image]
   outputModalities: [text]
   tokenizer: unknown
-  releaseDate: null
-  knowledgeCutoff: null
+  releaseDate: 2026-02-17
+  knowledgeCutoff: 2025-08-01

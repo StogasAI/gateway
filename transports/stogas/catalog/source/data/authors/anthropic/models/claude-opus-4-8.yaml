@@ -2,8 +2,6 @@
 models:
   authorId: anthropic
   name: Claude Opus 4.8
-  aliasNames: []
-  modelSlugs: [claude-opus-4-8]
   family: Claude
   series: Claude Opus
   snapshot: null
@@ -14,5 +12,5 @@ models:
   inputModalities: [text, image]
   outputModalities: [text]
   tokenizer: unknown
-  releaseDate: null
-  knowledgeCutoff: null
+  releaseDate: 2026-05-28
+  knowledgeCutoff: 2026-01-01
