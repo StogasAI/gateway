@@ -18,7 +18,7 @@ func TestValidateToolsAllowsOnlyExplicitNoExtraBillingTools(t *testing.T) {
 		{"chat function", RouteChat, `{"tools":[{"type":"function","function":{"name":"lookup"}}]}`},
 		{"chat local shell alias", RouteChat, `{"tools":[{"type":"local_shell"}]}`},
 		{"chat apply patch", RouteChat, `{"tools":[{"type":"apply_patch"}]}`},
-		{"responses local shell", RouteResponses, `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`},
+		{"responses function", RouteResponses, `{"tools":[{"type":"function","name":"lookup"}]}`},
 		{"responses web search", RouteResponses, `{"tools":[{"type":"web_search"}]}`},
 		{"responses versioned web search", RouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
 		{"responses preview web search", RouteResponses, `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`},
@@ -67,6 +67,19 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 	}
 }
 
+func TestValidateResponsesToolsRejectsUnpricedInternalTools(t *testing.T) {
+	for _, body := range []string{
+		`{"tools":[{"type":"local_shell"}]}`,
+		`{"tools":[{"type":"apply_patch"}]}`,
+		`{"tools":[{"type":"shell","environment":{"type":"local"}}]}`,
+	} {
+		err := ValidateRequest(toolProfileRequest(t, RouteResponses, body))
+		if !errors.Is(err, providers.ErrUnsupportedTool) {
+			t.Fatalf("expected Responses internal tool rejection for %s, got %v", body, err)
+		}
+	}
+}
+
 func TestValidateRequestRejectsOpenAIOutputCapsBelowMinimum(t *testing.T) {
 	err := ValidateRequest(PolicyRequest{Route: RouteChat, OutputTokenLimit: 15})
 	if !errors.Is(err, providers.ErrOutputTokenLimitTooLow) {
@@ -84,6 +97,7 @@ func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
 		{"chat image", RouteChat, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`},
 		{"chat audio", RouteChat, `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`},
 		{"responses file id", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`},
+		{"responses inline file", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
 		{"responses image", RouteResponses, `{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`},
 		{"responses audio", RouteResponses, `{"input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`},
 	} {
@@ -96,7 +110,7 @@ func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
 	}
 }
 
-func TestValidateRequestAllowsTextAndInlineResponseFiles(t *testing.T) {
+func TestValidateRequestAllowsTextResponsesInput(t *testing.T) {
 	for _, item := range []struct {
 		name  string
 		route Route
@@ -104,7 +118,6 @@ func TestValidateRequestAllowsTextAndInlineResponseFiles(t *testing.T) {
 	}{
 		{"chat text", RouteChat, `{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`},
 		{"responses text", RouteResponses, `{"input":[{"type":"input_text","text":"summarize"}]}`},
-		{"responses inline file", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if err := ValidateRequest(rawProfileRequest(t, item.route, item.body)); err != nil {
@@ -179,6 +192,46 @@ func TestWebSearchPricingRules(t *testing.T) {
 	}
 }
 
+func TestResponsesWebSearchHoldUsesMaxToolCalls(t *testing.T) {
+	req := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{Pricing: providers.Pricing{
+			MeterOpenAIResponsesWebSearchCalls: {providers.RatePerThousandCalls: "1000"},
+		}},
+		RawBody:   rawJSON(t, `{"max_tool_calls":4}`),
+		ToolTypes: []string{"web_search"},
+	}
+	meters := extraResponsesHostedToolHoldMeters(req, 0, 0)
+	if len(meters) != 1 {
+		t.Fatalf("expected one web search call meter, got %#v", meters)
+	}
+	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "4" || !meters[0].HoldRequired {
+		t.Fatalf("expected max_tool_calls to scale hold meter, got %#v", meters[0])
+	}
+}
+
+func TestResponsesWebSearchSettlementUsesActualCalls(t *testing.T) {
+	req := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{Pricing: providers.Pricing{
+			MeterOpenAIResponsesWebSearchCalls: {providers.RatePerThousandCalls: "1000"},
+		}},
+		ToolTypes: []string{"web_search"},
+	}
+	if meters := extraResponsesHostedToolSettlementMeters(req); len(meters) != 0 {
+		t.Fatalf("expected no web search settlement meter without observed calls, got %#v", meters)
+	}
+
+	req.ActualWebSearchCalls = 2
+	meters := extraResponsesHostedToolSettlementMeters(req)
+	if len(meters) != 1 {
+		t.Fatalf("expected one web search settlement meter, got %#v", meters)
+	}
+	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "2" || meters[0].AmountUSDAtoms != "2" || meters[0].HoldRequired {
+		t.Fatalf("expected settlement quantity 2 charged at call rate, got %#v", meters[0])
+	}
+}
+
 func TestChatSearchModelPricingRules(t *testing.T) {
 	for _, item := range []struct {
 		model string
@@ -239,4 +292,13 @@ func rawProfileRequest(t *testing.T, route Route, body string) PolicyRequest {
 		t.Fatalf("invalid test JSON: %v", err)
 	}
 	return PolicyRequest{Route: route, RawBody: raw}
+}
+
+func rawJSON(t *testing.T, body string) map[string]json.RawMessage {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := sonic.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("invalid test JSON: %v", err)
+	}
+	return raw
 }

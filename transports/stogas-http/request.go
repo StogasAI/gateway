@@ -14,6 +14,7 @@ type apiCredential struct {
 }
 
 const inferenceCredentialContextKey = "stogas.inference_credential"
+const inferenceRouteContextKey = "stogas.inference_route"
 
 func authorizationToken(raw []byte) string {
 	value := strings.TrimSpace(string(raw))
@@ -51,6 +52,7 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 		})
 		return apiCredential{}, false
 	}
+	ctx.SetUserValue(inferenceRouteContextKey, route)
 	if s.runtime == nil {
 		return apiCredential{Raw: token}, true
 	}
@@ -92,6 +94,19 @@ func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredentia
 		})
 		return apiCredential{}, false
 	}
+	route, _ := ctx.UserValue(inferenceRouteContextKey).(catalog.Route)
+	if unsupported := unsupportedInferenceHeader(ctx, route); unsupported != "" {
+		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "Unsupported request header: " + unsupported, "type": "invalid_request_error"},
+		})
+		return apiCredential{}, false
+	}
+	if !validateAcceptHeader(ctx.Request.Header.Peek("accept")) {
+		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "Accept must be application/json or text/event-stream", "type": "invalid_request_error"},
+		})
+		return apiCredential{}, false
+	}
 	ctx.SetUserValue(inferenceCredentialContextKey, credential)
 	return credential, true
 }
@@ -100,4 +115,70 @@ func isJSONContentType(raw []byte) bool {
 	contentType := strings.ToLower(strings.TrimSpace(string(raw)))
 	mediaType, _, _ := strings.Cut(contentType, ";")
 	return strings.TrimSpace(mediaType) == "application/json"
+}
+
+func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx, route catalog.Route) string {
+	allowed := map[string]bool{}
+	for _, name := range catalog.ClientHeaderNames(route) {
+		allowed[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	unsupported := ""
+	ctx.Request.Header.VisitAll(func(key []byte, _ []byte) {
+		if unsupported != "" {
+			return
+		}
+		normalized := strings.ToLower(strings.TrimSpace(string(key)))
+		if normalized == "" || allowed[normalized] || transportOnlyHeader(normalized) {
+			return
+		}
+		unsupported = normalized
+	})
+	return unsupported
+}
+
+func transportOnlyHeader(name string) bool {
+	switch name {
+	case "host",
+		"content-length",
+		"content-encoding",
+		"accept-encoding",
+		"connection",
+		"user-agent",
+		"origin",
+		"referer",
+		"cf-worker",
+		"cf-ray",
+		"cf-connecting-ip",
+		"cf-ipcountry",
+		"cf-visitor",
+		"x-forwarded-for",
+		"x-forwarded-host",
+		"x-forwarded-proto",
+		"sec-fetch-site",
+		"sec-fetch-mode",
+		"sec-fetch-dest",
+		"sec-ch-ua",
+		"sec-ch-ua-mobile",
+		"sec-ch-ua-platform":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateAcceptHeader(raw []byte) bool {
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return true
+	}
+	for _, item := range strings.Split(value, ",") {
+		mediaType, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(item)), ";")
+		switch strings.TrimSpace(mediaType) {
+		case "application/json", "text/event-stream", "*/*":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }

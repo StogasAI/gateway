@@ -10,12 +10,17 @@ type Signals interface {
 	CacheWrite1hInputTokens() int
 }
 
+type SearchUsageSignals interface {
+	WebSearchCalls() int
+}
+
 type StandardSignals struct {
 	Prompt       int
 	Completion   int
 	Cached       int
 	CacheWrite5m int
 	CacheWrite1h int
+	WebSearch    int
 }
 
 func (s *StandardSignals) PromptTokens() int {
@@ -53,6 +58,13 @@ func (s *StandardSignals) CacheWrite1hInputTokens() int {
 	return s.CacheWrite1h
 }
 
+func (s *StandardSignals) WebSearchCalls() int {
+	if s == nil {
+		return 0
+	}
+	return s.WebSearch
+}
+
 func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	if usage == nil {
 		return nil
@@ -69,5 +81,35 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokens
 		}
 	}
-	return &StandardSignals{Prompt: usage.PromptTokens, Completion: usage.CompletionTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h}
+	webSearch := 0
+	if usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.NumSearchQueries != nil {
+		webSearch = *usage.CompletionTokensDetails.NumSearchQueries
+	}
+	return &StandardSignals{Prompt: usage.PromptTokens, Completion: usage.CompletionTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+}
+
+func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
+	if state == nil {
+		return
+	}
+	next := signalsFromUsage(usage)
+	if next == nil {
+		return
+	}
+	if current, ok := state.Signals.(SearchUsageSignals); ok && current.WebSearchCalls() > next.WebSearch {
+		next.WebSearch = current.WebSearchCalls()
+	}
+	state.Signals = next
+}
+
+func incrementWebSearchSignals(state *State) {
+	if state == nil {
+		return
+	}
+	signals, ok := state.Signals.(*StandardSignals)
+	if !ok || signals == nil {
+		signals = &StandardSignals{}
+		state.Signals = signals
+	}
+	signals.WebSearch++
 }

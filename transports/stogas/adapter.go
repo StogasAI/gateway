@@ -44,7 +44,10 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	return validateChatCompletionPolicy(state)
+	if err := validateChatCompletionPolicy(state); err != nil {
+		return err
+	}
+	return validateResponsesPolicy(state)
 }
 
 func (DefaultAdapter) SanitizeRequest(state *State) error {
@@ -74,11 +77,17 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 	switch {
 	case chunk.BifrostChatResponse != nil:
 		state.Response = &schemas.BifrostResponse{ChatResponse: chunk.BifrostChatResponse}
-		state.Signals = signalsFromUsage(chunk.BifrostChatResponse.Usage)
+		setSignalsFromUsage(state, chunk.BifrostChatResponse.Usage)
 	case chunk.BifrostResponsesStreamResponse != nil:
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: chunk.BifrostResponsesStreamResponse}
+		if chunk.BifrostResponsesStreamResponse.Type == schemas.ResponsesStreamResponseTypeWebSearchCallCompleted {
+			incrementWebSearchSignals(state)
+		}
+		if responseWebSearchCalls(chunk.BifrostResponsesStreamResponse.Response) > 0 {
+			setWebSearchSignals(state, responseWebSearchCalls(chunk.BifrostResponsesStreamResponse.Response))
+		}
 		if chunk.BifrostResponsesStreamResponse.Response != nil && chunk.BifrostResponsesStreamResponse.Response.Usage != nil {
-			state.Signals = signalsFromUsage(chunk.BifrostResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage())
+			setSignalsFromUsage(state, chunk.BifrostResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage())
 		}
 	}
 	return nil
@@ -90,7 +99,10 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	}
 	state.Response = resp
 	state.BifrostError = bifrostErr
-	state.Signals = signalsFromUsage(billing.LLMUsage(resp))
+	setSignalsFromUsage(state, billing.LLMUsage(resp))
+	if count := bifrostResponseWebSearchCalls(resp); count > 0 {
+		setWebSearchSignals(state, count)
+	}
 	return nil
 }
 
@@ -150,6 +162,54 @@ func (a OpenAIAdapter) FinalPrice(state *State) error {
 	return nil
 }
 
+func setWebSearchSignals(state *State, count int) {
+	if state == nil || count <= 0 {
+		return
+	}
+	signals, ok := state.Signals.(*StandardSignals)
+	if !ok || signals == nil {
+		signals = &StandardSignals{}
+		state.Signals = signals
+	}
+	if count > signals.WebSearch {
+		signals.WebSearch = count
+	}
+}
+
+func bifrostResponseWebSearchCalls(resp *schemas.BifrostResponse) int {
+	if resp == nil {
+		return 0
+	}
+	switch {
+	case resp.ResponsesResponse != nil:
+		return responseWebSearchCalls(resp.ResponsesResponse)
+	case resp.ResponsesStreamResponse != nil:
+		return responseWebSearchCalls(resp.ResponsesStreamResponse.Response)
+	default:
+		return 0
+	}
+}
+
+func responseWebSearchCalls(resp *schemas.BifrostResponsesResponse) int {
+	if resp == nil {
+		return 0
+	}
+	usageCount := 0
+	if resp.Usage != nil && resp.Usage.OutputTokensDetails != nil && resp.Usage.OutputTokensDetails.NumSearchQueries != nil {
+		usageCount = *resp.Usage.OutputTokensDetails.NumSearchQueries
+	}
+	outputCount := 0
+	for _, item := range resp.Output {
+		if item.Type != nil && *item.Type == schemas.ResponsesMessageTypeWebSearchCall {
+			outputCount++
+		}
+	}
+	if outputCount > usageCount {
+		return outputCount
+	}
+	return usageCount
+}
+
 func openAIPolicyRequest(state *State) openaiadapter.PolicyRequest {
 	if state == nil || state.Resolution == nil {
 		return openaiadapter.PolicyRequest{}
@@ -170,7 +230,19 @@ func openAIPolicyRequest(state *State) openaiadapter.PolicyRequest {
 		RawBody:             resolution.RawBody(),
 		ToolTypes:           resolution.ToolTypes(),
 		RawTools:            resolution.RawTools(),
+		ActualWebSearchCalls: actualWebSearchCalls(state),
 	}
+}
+
+func actualWebSearchCalls(state *State) int {
+	if state == nil || state.Signals == nil {
+		return 0
+	}
+	signals, ok := state.Signals.(SearchUsageSignals)
+	if !ok {
+		return 0
+	}
+	return signals.WebSearchCalls()
 }
 
 type AnthropicAdapter struct {
