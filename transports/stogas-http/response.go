@@ -1,55 +1,63 @@
 package stogashttp
 
 import (
-	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-func publicResponsePayload(ctx *schemas.BifrostContext, raw any, value any, extra schemas.BifrostResponseExtraFields) any {
-	payload := sanitizeBifrostPayload(value)
+func publicResponsePayload(ctx *schemas.BifrostContext, value any, extra schemas.BifrostResponseExtraFields) any {
 	metadata := stogasMetadata(ctx, extra)
-	if len(metadata) == 0 {
-		return payload
-	}
+	return publicPayload(value, metadata)
+}
 
-	if object, ok := payload.(map[string]any); ok {
+func publicPayload(value any, metadata map[string]any) any {
+	switch typed := value.(type) {
+	case *schemas.BifrostChatResponse:
+		return publicChatResponse{BifrostChatResponse: typed, Stogas: metadata}
+	case *schemas.BifrostResponsesResponse:
+		return publicResponsesResponse{BifrostResponsesResponse: typed, Stogas: metadata}
+	case *schemas.BifrostResponsesStreamResponse:
+		return publicResponsesStreamResponse{
+			BifrostResponsesStreamResponse: typed,
+			Response:                       publicPayload(typed.Response, nil),
+			Stogas:                         metadata,
+		}
+	case map[string]any:
+		if len(metadata) == 0 {
+			return typed
+		}
+		object := make(map[string]any, len(typed)+1)
+		for key, value := range typed {
+			object[key] = value
+		}
 		object["stogas"] = metadata
 		return object
-	}
-
-	return map[string]any{
-		"data":   payload,
-		"stogas": metadata,
+	case nil:
+		return nil
+	default:
+		if len(metadata) == 0 {
+			return typed
+		}
+		return map[string]any{"data": typed, "stogas": metadata}
 	}
 }
 
-func sanitizeBifrostPayload(value any) any {
-	data, err := sonic.Marshal(value)
-	if err != nil {
-		return value
-	}
-
-	var decoded any
-	if err := sonic.Unmarshal(data, &decoded); err != nil {
-		return value
-	}
-	removeBifrostExtraFields(decoded)
-	return decoded
+type publicChatResponse struct {
+	*schemas.BifrostChatResponse
+	ExtraFields *struct{}      `json:"extra_fields,omitempty"`
+	Stogas      map[string]any `json:"stogas,omitempty"`
 }
 
-func removeBifrostExtraFields(value any) {
-	switch typed := value.(type) {
-	case map[string]any:
-		delete(typed, "extra_fields")
-		for _, nested := range typed {
-			removeBifrostExtraFields(nested)
-		}
-	case []any:
-		for _, nested := range typed {
-			removeBifrostExtraFields(nested)
-		}
-	}
+type publicResponsesResponse struct {
+	*schemas.BifrostResponsesResponse
+	ExtraFields *struct{}      `json:"extra_fields,omitempty"`
+	Stogas      map[string]any `json:"stogas,omitempty"`
+}
+
+type publicResponsesStreamResponse struct {
+	*schemas.BifrostResponsesStreamResponse
+	Response    any            `json:"response,omitempty"`
+	ExtraFields *struct{}      `json:"extra_fields,omitempty"`
+	Stogas      map[string]any `json:"stogas,omitempty"`
 }
 
 func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseExtraFields) map[string]any {
@@ -80,7 +88,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["raw_response"] && extra.RawResponse != nil {
 		metadata["raw_response"] = extra.RawResponse
 	}
-	if headers := catalog.FilterProviderResponseHeaders(extra.Provider, extra.OriginalModelRequested, extra.ProviderResponseHeaders); fields["provider_response_headers"] && len(headers) > 0 {
+	if headers := filterProviderResponseHeaders(ctx, extra); fields["provider_response_headers"] && len(headers) > 0 {
 		metadata["provider_response_headers"] = headers
 	}
 
@@ -88,6 +96,10 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 		return nil
 	}
 	return metadata
+}
+
+func filterProviderResponseHeaders(_ *schemas.BifrostContext, extra schemas.BifrostResponseExtraFields) map[string]string {
+	return safeProviderResponseHeaders(extra.ProviderResponseHeaders)
 }
 
 type streamMetadataAccumulator struct {

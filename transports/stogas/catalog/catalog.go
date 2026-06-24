@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -38,19 +39,17 @@ func DeploymentForRoute(provider schemas.ModelProvider, model string, route Rout
 		return Deployment{}, false
 	}
 
-	impliedTier := impliedServiceTierForDeployment(deployment)
+	impliedTier := impliedServiceTierForDeployment(schemas.ModelProvider(deployment.ProviderID), deployment)
 	return Deployment{
 		ID:                  deploymentID,
 		ModelID:             deployment.ModelID,
-		Model:               providerModelSlug(deploymentID, model, modelNode),
+		Model:               deployment.UpstreamModelSlug,
 		ContextWindowTokens: effectiveContextWindowTokens(deployment, modelNode),
 		ImpliedServiceTier:  impliedTier,
 		MaxOutputTokens:     effectiveMaxOutputTokens(deployment, modelNode),
 		Pricing:             deployment.Pricing,
-		ProfileIDs:          combinedProfileIDs(routeNode.PolicyProfiles, deployment.PolicyProfiles),
 		ReasoningSupported:  modelNode.ReasoningSupport,
 		ServiceTier:         deployment.ServiceTier,
-		ParameterPolicies:   deployment.ParameterPolicies,
 	}, true
 }
 
@@ -59,80 +58,77 @@ func ProviderForRoute(route Route) (schemas.ModelProvider, bool) {
 	if snap == nil {
 		return "", false
 	}
-	routeNode, ok := snap.routeByName(route)
-	if !ok || routeNode.ProviderID == "" {
-		return "", false
+	var selected schemas.ModelProvider
+	for _, routeNode := range snap.graph.ProviderEndpoints {
+		if !endpointSupportsRoute(routeNode, route) || routeNode.ProviderID == "" {
+			continue
+		}
+		provider := schemas.ModelProvider(routeNode.ProviderID)
+		if selected != "" && selected != provider {
+			return "", false
+		}
+		selected = provider
 	}
-	return schemas.ModelProvider(routeNode.ProviderID), true
+	return selected, selected != ""
+}
+
+func ProviderForRouteModel(route Route, requestedModel string) (schemas.ModelProvider, bool, error) {
+	snap := active.Load()
+	if snap == nil {
+		return "", false, nil
+	}
+	requested := strings.TrimSpace(requestedModel)
+	if requested == "" {
+		return "", false, nil
+	}
+
+	var selected schemas.ModelProvider
+	for _, routeNode := range snap.graph.ProviderEndpoints {
+		if !endpointSupportsRoute(routeNode, route) {
+			continue
+		}
+		if snap.deploymentIDFor(routeNode, requested) == "" {
+			continue
+		}
+		provider := schemas.ModelProvider(routeNode.ProviderID)
+		if selected != "" && selected != provider {
+			return "", false, ErrModelAmbiguous
+		}
+		selected = provider
+	}
+	return selected, selected != "", nil
 }
 
 func PathForRoute(route Route) (string, bool) {
-	snap := active.Load()
-	if snap == nil {
-		return "", false
-	}
-	routeNode, ok := snap.routeByName(route)
-	if !ok {
-		return "", false
-	}
-	schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-	if !ok || schemaNode.Schema.Path == "" {
-		return "", false
-	}
-	return schemaNode.Schema.Path, true
+	spec, ok := specForRoute(route)
+	return spec.Path, ok
 }
 
 func RouteForPath(path string) (Route, bool) {
-	snap := active.Load()
-	if snap == nil {
-		return "", false
-	}
 	normalized := strings.TrimSpace(path)
-	for routeID, routeNode := range snap.graph.ProviderEndpoints {
-		schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-		if !ok || schemaNode.Schema.Path != normalized {
-			continue
-		}
-		return publicRouteName(routeID, routeNode.ProviderID), true
-	}
-	return "", false
+	route, ok := routeByPath[normalized]
+	return route, ok
 }
 
 func InferencePaths() []string {
-	snap := active.Load()
-	if snap == nil {
-		return nil
-	}
 	paths := []string{}
-	seen := map[string]bool{}
-	for _, routeNode := range snap.graph.ProviderEndpoints {
-		schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-		if !ok || schemaNode.Schema.Path == "" || seen[schemaNode.Schema.Path] {
-			continue
-		}
-		seen[schemaNode.Schema.Path] = true
-		paths = append(paths, schemaNode.Schema.Path)
+	for _, spec := range routeSpecs {
+		paths = append(paths, spec.Path)
 	}
 	return stableStrings(paths)
 }
 
-func FilterExtraParams(provider schemas.ModelProvider, model string, route Route, params map[string]interface{}) map[string]interface{} {
+func FilterExtraParams(_ schemas.ModelProvider, _ string, route Route, params map[string]interface{}) map[string]interface{} {
 	if len(params) == 0 {
 		return nil
 	}
-
-	snap := active.Load()
-	if snap == nil {
+	known := parameterSet(route)
+	if len(known) == 0 {
 		return nil
 	}
-	routeNode, ok := snap.route(provider, route)
-	if !ok || snap.deploymentIDFor(routeNode, model) == "" {
-		return nil
-	}
-
 	filtered := make(map[string]interface{})
 	for name, value := range params {
-		if snap.allowsParam(routeNode, name) {
+		if known[name] {
 			filtered[name] = value
 		}
 	}
@@ -143,74 +139,27 @@ func FilterExtraParams(provider schemas.ModelProvider, model string, route Route
 }
 
 func AuthHeaderNames(route Route) []string {
-	snap := active.Load()
-	if snap == nil {
+	spec, ok := specForRoute(route)
+	if !ok || len(spec.AuthHeaders) == 0 {
 		return []string{canonicalAuthHeader}
 	}
-	routeNode, ok := snap.routeByName(route)
-	if !ok {
-		return []string{canonicalAuthHeader}
-	}
-	schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-	if !ok {
-		return []string{canonicalAuthHeader}
-	}
-
-	names := []string{}
-	for name, policy := range schemaNode.Schema.Headers {
-		alias, hasAlias := headerAlias(policy)
-		if name == canonicalAuthHeader || (hasAlias && strings.EqualFold(alias, canonicalAuthHeader)) {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return []string{canonicalAuthHeader}
-	}
-	return stableAuthHeaderOrder(names)
+	return stableAuthHeaderOrder(spec.AuthHeaders)
 }
 
 func ClientHeaderNames(route Route) []string {
-	snap := active.Load()
-	if snap == nil {
-		return nil
-	}
-	routeNode, ok := snap.routeByName(route)
+	spec, ok := specForRoute(route)
 	if !ok {
 		return nil
 	}
-	schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-	if !ok {
-		return nil
-	}
-	names := make([]string, 0, len(schemaNode.Schema.Headers))
-	for name := range schemaNode.Schema.Headers {
-		names = append(names, name)
-	}
-	return stableHeaderOrder(names)
+	return stableHeaderOrder(spec.Headers)
 }
 
 func AllClientHeaderNames() []string {
-	snap := active.Load()
-	if snap == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	names := []string{}
-	for _, routeNode := range snap.graph.ProviderEndpoints {
-		schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-		if !ok {
-			continue
-		}
-		for name := range schemaNode.Schema.Headers {
-			normalized := strings.ToLower(strings.TrimSpace(name))
-			if normalized == "" || seen[normalized] {
-				continue
-			}
-			seen[normalized] = true
-			names = append(names, normalized)
-		}
-	}
-	return stableHeaderOrder(names)
+	return append([]string(nil), allClientHeaderNamesValue...)
+}
+
+func AllClientHeadersValue() string {
+	return allClientHeadersValue
 }
 
 func AllowsResponseMetadataField(name string) bool {
@@ -224,58 +173,31 @@ func AllowsResponseMetadataField(name string) bool {
 }
 
 func KnownFields(route Route) map[string]bool {
-	snap := active.Load()
-	if snap == nil {
-		return nil
-	}
-	routeNode, ok := snap.routeByName(route)
-	if !ok {
-		return nil
-	}
-	schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-	if !ok {
-		return nil
-	}
-	fields := make(map[string]bool, len(schemaNode.Schema.Parameters))
-	for name := range schemaNode.Schema.Parameters {
-		fields[name] = true
-	}
-	return fields
+	return parameterSet(route)
 }
 
 func ParameterAliasFor(route Route, name string) (string, bool) {
-	snap := active.Load()
-	if snap == nil {
-		return "", false
+	if route == RouteChat && name == "max_tokens" {
+		return "max_completion_tokens", true
 	}
-	routeNode, ok := snap.routeByName(route)
-	if !ok {
-		return "", false
-	}
-	schemaNode, ok := snap.graph.StogasEndpoints[routeNode.StogasEndpointID]
-	if !ok {
-		return "", false
-	}
-	parameter, ok := schemaNode.Schema.Parameters[name]
-	if !ok {
-		return "", false
-	}
-	return parameterAlias(parameter)
+	return "", false
 }
 
 func (s *snapshot) route(provider schemas.ModelProvider, route Route) (compiledProviderEndpoint, bool) {
-	routeNode, ok := s.graph.ProviderEndpoints[string(provider)+"-"+string(route)]
-	return routeNode, ok
-}
-
-func (s *snapshot) routeByName(route Route) (compiledProviderEndpoint, bool) {
-	suffix := "-" + string(route)
-	for id, routeNode := range s.graph.ProviderEndpoints {
-		if strings.HasSuffix(id, suffix) {
+	for _, routeNode := range s.graph.ProviderEndpoints {
+		if routeNode.ProviderID == string(provider) && endpointSupportsRoute(routeNode, route) {
 			return routeNode, true
 		}
 	}
 	return compiledProviderEndpoint{}, false
+}
+
+func providerEndpointForRoute(provider schemas.ModelProvider, route Route) (compiledProviderEndpoint, bool) {
+	snap := active.Load()
+	if snap == nil {
+		return compiledProviderEndpoint{}, false
+	}
+	return snap.route(provider, route)
 }
 
 func (s *snapshot) deploymentIDFor(route compiledProviderEndpoint, requestedModel string) string {
@@ -287,82 +209,8 @@ func (s *snapshot) deploymentIDFor(route compiledProviderEndpoint, requestedMode
 }
 
 func (s *snapshot) allowsParam(route compiledProviderEndpoint, name string) bool {
-	schemaNode, ok := s.graph.StogasEndpoints[route.StogasEndpointID]
-	if !ok {
-		return false
-	}
-	policies := effectiveParameterPolicies(schemaNode.Schema, route, Deployment{})
-	_, ok = policies[name]
-	return ok
-}
-
-func providerModelSlug(deploymentID string, requestedModel string, model compiledModel) string {
-	requested := leafSlug(strings.TrimSpace(requestedModel))
-	if isDatedProviderModelAlias(requested, model) {
-		return requested
-	}
-	for _, slug := range model.ModelSlugs {
-		if slug == deploymentID {
-			return slug
-		}
-	}
-	for _, suffix := range []string{"-standard", "-flex", "-priority"} {
-		base := strings.TrimSuffix(deploymentID, suffix)
-		if base != deploymentID {
-			for _, slug := range model.ModelSlugs {
-				if slug == base {
-					return slug
-				}
-			}
-		}
-	}
-	return primaryModelSlug(model)
-}
-
-func isDatedProviderModelAlias(requested string, model compiledModel) bool {
-	if !hasDateSuffix(requested) {
-		return false
-	}
-	for _, slug := range model.ModelSlugs {
-		if requested == slug {
-			return true
-		}
-	}
-	return false
-}
-
-func leafSlug(value string) string {
-	if idx := strings.LastIndex(value, "/"); idx >= 0 {
-		return value[idx+1:]
-	}
-	return value
-}
-
-func primaryModelSlug(model compiledModel) string {
-	if len(model.ModelSlugs) == 0 {
-		return ""
-	}
-	return model.ModelSlugs[0]
-}
-
-func hasDateSuffix(value string) bool {
-	if len(value) < len("2006-01-02") {
-		return false
-	}
-	suffix := value[len(value)-len("2006-01-02"):]
-	for i, char := range suffix {
-		switch i {
-		case 4, 7:
-			if char != '-' {
-				return false
-			}
-		default:
-			if char < '0' || char > '9' {
-				return false
-			}
-		}
-	}
-	return true
+	known := parameterSet(firstPublicRouteName(route))
+	return known[name]
 }
 
 func effectiveContextWindowTokens(deployment compiledDeployment, model compiledModel) int {
@@ -396,13 +244,14 @@ func stableAuthHeaderOrder(names []string) []string {
 		seen[normalized] = true
 		ordered = append(ordered, normalized)
 	}
-	for i := 0; i < len(ordered); i++ {
-		for j := i + 1; j < len(ordered); j++ {
-			if headerPriority(priority, ordered[j]) < headerPriority(priority, ordered[i]) {
-				ordered[i], ordered[j] = ordered[j], ordered[i]
-			}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		leftPriority := headerPriority(priority, ordered[i])
+		rightPriority := headerPriority(priority, ordered[j])
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
 		}
-	}
+		return ordered[i] < ordered[j]
+	})
 	return ordered
 }
 
@@ -421,13 +270,7 @@ func stableHeaderOrder(names []string) []string {
 }
 
 func stableStrings(values []string) []string {
-	for i := 0; i < len(values); i++ {
-		for j := i + 1; j < len(values); j++ {
-			if values[j] < values[i] {
-				values[i], values[j] = values[j], values[i]
-			}
-		}
-	}
+	sort.Strings(values)
 	return values
 }
 
@@ -438,10 +281,24 @@ func headerPriority(priority map[string]int, name string) int {
 	return 100
 }
 
-func publicRouteName(routeID string, providerID string) Route {
-	prefix := providerID + "-"
-	if strings.HasPrefix(routeID, prefix) {
-		return Route(strings.TrimPrefix(routeID, prefix))
+func endpointSupportsRoute(endpoint compiledProviderEndpoint, route Route) bool {
+	for _, stogasEndpointID := range endpoint.StogasEndpoints {
+		if publicRouteName(stogasEndpointID) == route {
+			return true
+		}
 	}
-	return Route(routeID)
+	return false
+}
+
+func firstPublicRouteName(endpoint compiledProviderEndpoint) Route {
+	for _, stogasEndpointID := range endpoint.StogasEndpoints {
+		if route := publicRouteName(stogasEndpointID); route != "" {
+			return route
+		}
+	}
+	return ""
+}
+
+func publicRouteName(stogasEndpointID string) Route {
+	return Route(strings.TrimPrefix(stogasEndpointID, "stogas-"))
 }

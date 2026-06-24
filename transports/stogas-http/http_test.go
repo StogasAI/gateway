@@ -23,7 +23,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, cancel, err := newRequestContext(ctx, testResolution())
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -39,12 +39,16 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	if _, err := uuid.Parse(requestID); err != nil {
 		t.Fatalf("expected UUID request ID, got %q: %v", requestID, err)
 	}
+	state, ok := stogas.StateFrom(bifrostCtx)
+	if !ok || state.RawAPIKey != "sk-test" || state.Resolution == nil {
+		t.Fatalf("expected request state with credential and resolution, got %#v", state)
+	}
 	deadline, ok := bifrostCtx.Deadline()
 	if !ok {
 		t.Fatal("expected gateway request lifetime deadline")
 	}
-	if remaining := time.Until(deadline); remaining <= 0 || remaining > billing.GatewayRequestLifetime {
-		t.Fatalf("request lifetime remaining = %s, want within %s", remaining, billing.GatewayRequestLifetime)
+	if remaining := time.Until(deadline); remaining <= 0 || remaining > chatRequestLifetime {
+		t.Fatalf("chat request lifetime remaining = %s, want within %s", remaining, chatRequestLifetime)
 	}
 }
 
@@ -54,6 +58,31 @@ func testResolution() *catalog.ResolvedRequest {
 		RequestType: schemas.ChatCompletionRequest,
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5.5",
+	}
+}
+
+func TestNewRequestContextUsesResponsesLifetime(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	resolution := testResolution()
+	resolution.Route = catalog.RouteResponses
+	resolution.RequestType = schemas.ResponsesStreamRequest
+
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
+	if err != nil {
+		t.Fatalf("newRequestContext returned error: %v", err)
+	}
+	defer cancel()
+
+	deadline, ok := bifrostCtx.Deadline()
+	if !ok {
+		t.Fatal("expected gateway request lifetime deadline")
+	}
+	if remaining := time.Until(deadline); remaining <= chatRequestLifetime || remaining > billing.GatewayRequestLifetime {
+		t.Fatalf("responses request lifetime remaining = %s, want between %s and %s", remaining, chatRequestLifetime, billing.GatewayRequestLifetime)
+	}
+	state, ok := stogas.StateFrom(bifrostCtx)
+	if !ok || state.RequestLifetime != billing.GatewayRequestLifetime {
+		t.Fatalf("expected response request state lifetime %s, got %#v", billing.GatewayRequestLifetime, state)
 	}
 }
 
@@ -153,6 +182,33 @@ func TestRequestDecompressionChecksContentTypeBeforeCompressedBody(t *testing.T)
 
 	if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
 		t.Fatalf("expected 415 before decompression, got %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestRequestDecompressionCachesInferenceCredential(t *testing.T) {
+	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
+	ctx.Request.Header.Set("Authorization", "Bearer test-key")
+	ctx.Request.Header.Set("Content-Encoding", "gzip")
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.SetBody(gzipBody(t, `{}`))
+
+	called := false
+	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+		called = true
+		ctx.Request.Header.Set("Content-Type", "text/plain")
+		credential, ok := server.requireInferenceEnvelope(ctx)
+		if !ok {
+			t.Fatalf("expected cached inference credential to pass, got status %d body %s", ctx.Response.StatusCode(), ctx.Response.Body())
+		}
+		if credential.Raw != "test-key" {
+			t.Fatalf("expected cached token, got %q", credential.Raw)
+		}
+	})(ctx)
+
+	if !called {
+		t.Fatal("expected next handler to be called")
 	}
 }
 
@@ -300,6 +356,147 @@ func TestSafeProviderResponseHeadersFiltersMixedMap(t *testing.T) {
 	}
 }
 
+func TestPublicBifrostErrorMapsConversionErrorWithoutStatusToBadRequest(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(0, "failed to marshal request: missing required field messages", "", ""))
+
+	if status != fasthttp.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "invalid_request_error" {
+		t.Fatalf("expected invalid_request_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "Invalid request" {
+		t.Fatalf("expected scrubbed invalid request message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorHidesUnknownMissingStatusError(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(0, "panic: database DSN leaked", "", ""))
+
+	if status != fasthttp.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "internal_error" {
+		t.Fatalf("expected internal_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "Internal server error" {
+		t.Fatalf("expected generic internal error message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorMapsMissingStatusNetworkFailureToServiceUnavailable(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(0, "provider do request failed: dial tcp: connection refused", "", ""))
+
+	if status != fasthttp.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "gateway_error" {
+		t.Fatalf("expected gateway_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "Upstream provider is unavailable" {
+		t.Fatalf("expected generic upstream unavailable message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorPreservesSafeClientProviderError(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusBadRequest, "messages.0.content is required", "invalid_request_error", "missing_required_parameter"))
+
+	if status != fasthttp.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "invalid_request_error" {
+		t.Fatalf("expected invalid_request_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "messages.0.content is required" {
+		t.Fatalf("expected provider validation message, got %#v", errorObject)
+	}
+	if errorObject["code"] != "missing_required_parameter" {
+		t.Fatalf("expected provider error code, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorMapsProviderOverload(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(529, "overloaded", "", ""))
+
+	if status != 529 {
+		t.Fatalf("expected 529, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "overloaded_error" {
+		t.Fatalf("expected overloaded_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "Upstream provider is overloaded" {
+		t.Fatalf("expected overload message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorMapsRequestTooLarge(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusRequestEntityTooLarge, "request exceeds maximum size", "", ""))
+
+	if status != fasthttp.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "request_too_large" {
+		t.Fatalf("expected request_too_large, got %#v", errorObject)
+	}
+	if errorObject["message"] != "request exceeds maximum size" {
+		t.Fatalf("expected safe provider size message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorHidesProviderServerDetails(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusInternalServerError, "provider stack trace: token=secret", "api_error", ""))
+
+	if status != fasthttp.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != "gateway_error" {
+		t.Fatalf("expected gateway_error, got %#v", errorObject)
+	}
+	if errorObject["message"] != "Upstream provider error" {
+		t.Fatalf("expected scrubbed provider error message, got %#v", errorObject)
+	}
+}
+
+func testBifrostError(status int, message string, errorType string, code string) *schemas.BifrostError {
+	var statusPtr *int
+	if status > 0 {
+		statusPtr = &status
+	}
+	var typePtr *string
+	if errorType != "" {
+		typePtr = &errorType
+	}
+	var codePtr *string
+	if code != "" {
+		codePtr = &code
+	}
+	return &schemas.BifrostError{
+		StatusCode: statusPtr,
+		Error: &schemas.ErrorField{
+			Type:    typePtr,
+			Code:    codePtr,
+			Message: message,
+		},
+	}
+}
+
+func publicErrorObject(t *testing.T, payload any) map[string]any {
+	t.Helper()
+	object := publicPayloadObject(t, payload)
+	errorObject, ok := object["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error object, got %#v", object)
+	}
+	return errorObject
+}
+
 func TestCorsAllowsAnyOrigin(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.SetMethod(fasthttp.MethodOptions)
@@ -402,11 +599,7 @@ func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 		},
 	}
 
-	payload := publicResponsePayload(bifrostCtx, nil, response, response.ExtraFields)
-	object, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatalf("expected object payload, got %T", payload)
-	}
+	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	if _, exists := object["extra_fields"]; exists {
 		t.Fatal("default public payload should not include Bifrost extra_fields")
 	}
@@ -437,16 +630,12 @@ func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
 		},
 	}
 
-	payload := publicResponsePayload(bifrostCtx, nil, response, response.ExtraFields)
-	object, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatalf("expected object payload, got %T", payload)
-	}
+	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	metadata, ok := object["stogas"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected stogas metadata, got %#v", object["stogas"])
 	}
-	if metadata["provider"] != schemas.OpenAI {
+	if metadata["provider"] != string(schemas.OpenAI) {
 		t.Fatalf("expected requested provider metadata, got %#v", metadata)
 	}
 	if metadata["model_requested"] != "openai/gpt-5" {
@@ -463,11 +652,7 @@ func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
 	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"raw_response": true})
 
 	raw := map[string]any{"id": "raw_provider_response"}
-	payload := publicResponsePayload(bifrostCtx, raw, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawResponse: raw})
-	object, ok := payload.(map[string]any)
-	if !ok {
-		t.Fatalf("expected raw object, got %T", payload)
-	}
+	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawResponse: raw}))
 	if object["id"] != "bifrost_response" {
 		t.Fatalf("expected normalized response to remain primary, got %#v", object)
 	}
@@ -475,6 +660,19 @@ func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
 	if !ok || metadata["raw_response"] == nil {
 		t.Fatalf("expected raw response metadata, got %#v", object)
 	}
+}
+
+func publicPayloadObject(t *testing.T, payload any) map[string]any {
+	t.Helper()
+	data, err := marshalPayload(payload)
+	if err != nil {
+		t.Fatalf("marshal public payload: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(data, &object); err != nil {
+		t.Fatalf("decode public payload %s: %v", string(data), err)
+	}
+	return object
 }
 
 func TestServerDisablesStreamRequestBody(t *testing.T) {
@@ -504,13 +702,30 @@ func TestWriteSSEStreamUsesManagedDirectReader(t *testing.T) {
 	}
 }
 
+func TestInferenceAuthorizesAfterBifrostRequestIsMaterialized(t *testing.T) {
+	source, err := os.ReadFile("http.go")
+	if err != nil {
+		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
+	}
+	text := string(source)
+
+	toBifrostIndex := strings.Index(text, "resolution.ToBifrost(bifrostCtx)")
+	authorizeIndex := strings.Index(text, "stogas.AuthorizeState(bifrostCtx")
+	if toBifrostIndex < 0 || authorizeIndex < 0 {
+		t.Fatalf("expected inference source to include ToBifrost and AuthorizeState, got ToBifrost=%d AuthorizeState=%d", toBifrostIndex, authorizeIndex)
+	}
+	if authorizeIndex < toBifrostIndex {
+		t.Fatal("DB hold authorization must happen after the Bifrost request is materialized")
+	}
+}
+
 func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 
-	server.writeSSEStream(ctx, bifrostCtx, stream, true, false, cancel)
+	server.writeSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel)
 	defer ctx.Response.CloseBodyStream()
 
 	if !ctx.Response.IsBodyStream() {
@@ -537,6 +752,9 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	if !strings.Contains(body, "data: [DONE]\n\n") {
 		t.Fatalf("expected OpenAI done marker, got %q", body)
 	}
+	if strings.Contains(body, "extra_fields") {
+		t.Fatalf("streamed public payload leaked extra_fields: %q", body)
+	}
 }
 
 func TestWriteSSEStreamCancelsOnBodyStreamClose(t *testing.T) {
@@ -548,7 +766,7 @@ func TestWriteSSEStreamCancelsOnBodyStreamClose(t *testing.T) {
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, stream, true, false, func() {
+	server.writeSSEStream(ctx, bifrostCtx, nil, stream, true, false, func() {
 		once.Do(func() { close(cancelled) })
 	})
 

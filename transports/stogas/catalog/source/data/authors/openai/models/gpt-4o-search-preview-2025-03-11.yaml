@@ -3,8 +3,7 @@ models:
   authorId: openai
   name: GPT-4o Search Preview
   aliasNames: []
-  modelSlugs:
-    [gpt-4o-search-preview-2025-03-11, gpt-4o-search-preview, gpt-4o-search-preview-latest]
+  modelSlugs: [gpt-4o-search-preview-2025-03-11, gpt-4o-search-preview, gpt-4o-search-preview-latest]
   family: GPT
   series: GPT-4o
   snapshot: 2025-03-11

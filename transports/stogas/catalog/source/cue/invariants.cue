@@ -33,7 +33,9 @@ deployments: [#Id]: #Deployment
 
 	_providerEndpointRefs: {
 		for id, endpoint in providerEndpoints {
-			"\(id):stogasEndpoint": stogasEndpoints[endpoint.stogasEndpointId]
+			for stogasEndpointId in endpoint.stogasEndpoints {
+				"\(id):stogasEndpoint:\(stogasEndpointId)": stogasEndpoints[stogasEndpointId]
+			}
 			"\(id):provider": providers[endpoint.providerId]
 			"\(id):region": locations.nodes[endpoint.regionId]
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,7 +22,6 @@ const (
 
 	// GatewayRequestLifetime bounds direct inference streams so reconciliation never races a live request.
 	GatewayRequestLifetime = 60 * time.Minute
-	defaultHoldDuration    = GatewayRequestLifetime + holdSettlementExpiryBuffer
 )
 
 var (
@@ -121,6 +121,7 @@ type Service struct {
 	retryInitialDelay time.Duration
 	retryMaxDelay     time.Duration
 	retryWindow       time.Duration
+	retryWG           sync.WaitGroup
 	settleFunc        func(context.Context, *Authorization, string, string, string, string, bool) error
 	tinybird          *TinybirdClient
 	tokenPepper       string
@@ -163,6 +164,7 @@ func NewService(ctx context.Context, databaseURL string, databaseSchema string, 
 }
 
 func (s *Service) Close() {
+	s.retryWG.Wait()
 	if s.db != nil {
 		s.db.Close()
 	}
@@ -187,12 +189,19 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 }
 
 func (s *Service) AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*Authorization, error) {
+	return s.AuthorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, GatewayRequestLifetime)
+}
+
+func (s *Service) AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*Authorization, error) {
 	if err := s.ValidateAPIKeyFormat(rawAPIKey); err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
 
 	apiKeyHash := hashAPIKey(rawAPIKey, s.tokenPepper)
-	expiresAt := time.Now().UTC().Add(defaultHoldDuration)
+	if requestLifetime <= 0 {
+		requestLifetime = GatewayRequestLifetime
+	}
+	expiresAt := time.Now().UTC().Add(requestLifetime + holdSettlementExpiryBuffer)
 	holdID, err := newUUIDV7String()
 	if err != nil {
 		return nil, fmt.Errorf("generate hold id: %w", err)
@@ -262,7 +271,11 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 	}
 
 	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(metricsJSON), payload, writeOutbox); err != nil {
-		go s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event, writeOutbox)
+		s.retryWG.Add(1)
+		go func() {
+			defer s.retryWG.Done()
+			s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event, writeOutbox)
+		}()
 		return nil
 	}
 
@@ -339,7 +352,7 @@ func (s *Service) retrySettle(authorization *Authorization, paramsHash string, a
 		lastErr = errors.New("postgres settlement did not commit after retry window")
 	}
 	if writeOutbox {
-		s.publishUncommittedFallback(authorization, event, lastErr)
+		s.publishUncommittedFallback(authorization, event)
 	}
 }
 
@@ -366,7 +379,7 @@ func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
 	return string(encoded), nil
 }
 
-func (s *Service) publishUncommittedFallback(authorization *Authorization, event RequestEvent, _ error) {
+func (s *Service) publishUncommittedFallback(authorization *Authorization, event RequestEvent) {
 	if authorization == nil {
 		return
 	}
@@ -421,14 +434,7 @@ func derefString(value *string) string {
 }
 
 func parseMoneyOrZero(value *string) *big.Int {
-	if value == nil || *value == "" {
-		return big.NewInt(0)
-	}
-	parsed, ok := new(big.Int).SetString(*value, 10)
-	if !ok {
-		return big.NewInt(0)
-	}
-	return parsed
+	return parseMoneyOrZeroString(derefString(value))
 }
 
 func derefTime(value *time.Time) time.Time {

@@ -89,7 +89,7 @@ func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
 		ctx.Response.Header.Set("Access-Control-Expose-Headers", "*")
-		ctx.Response.Header.Set("Access-Control-Allow-Headers", strings.Join(catalog.AllClientHeaderNames(), ", "))
+		ctx.Response.Header.Set("Access-Control-Allow-Headers", catalog.AllClientHeadersValue())
 
 		if string(ctx.Method()) == fasthttp.MethodOptions {
 			ctx.SetStatusCode(fasthttp.StatusNoContent)

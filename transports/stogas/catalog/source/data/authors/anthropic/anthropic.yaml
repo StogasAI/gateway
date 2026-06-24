@@ -1,0 +1,7 @@
+authors:
+  description: AI safety and research company.
+  region:
+    locationId: us-ca-san-francisco
+    claim: headquarters
+  authorSlugs: [anthropic]
+  name: Anthropic

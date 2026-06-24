@@ -8,6 +8,7 @@ func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 
 	config, err := LoadFromEnv()
 	if err != nil {
@@ -33,6 +34,7 @@ func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "12")
 	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "2")
 	t.Setenv("STOGAS_DB_POOL_MIN_IDLE_CONNS", "1")
@@ -62,6 +64,7 @@ func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 	t.Setenv("TB_HOST_URL", "https://api.tinybird.co")
 	t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", "gateway-requests-rw-token")
 	t.Setenv("TB_APPEND_ONLY_GATEWAY_REQUESTS", "stale-append-token")
@@ -84,6 +87,7 @@ func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 
 	config, err := LoadFromEnv()
 	if err != nil {
@@ -109,6 +113,7 @@ func TestLoadFromEnvRejectsInvalidDatabasePool(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
 	t.Setenv("OPENAI_API_KEY", "test-openai-key")
+	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
 	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "2")
 	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "3")
 

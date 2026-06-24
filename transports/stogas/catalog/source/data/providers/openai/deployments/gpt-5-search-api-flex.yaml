@@ -1,0 +1,17 @@
+---
+deployments:
+  upstreamModelSlug: gpt-5-search-api
+  aliasSlugs: [gpt-5-search-api-2025-10-14-flex, gpt-5-search-api-flex, gpt-5-search-api-flex-latest, gpt-5-search-api-latest-flex]
+  providerId: openai
+  parentProviderEndpointNodes: [openai-chat-completions]
+  modelId: gpt-5-search-api-2025-10-14
+  serviceTier: flex
+  pricing:
+    input_tokens:
+      per_mill_tokens: '625000000000000000'
+    cached_input_tokens:
+      per_mill_tokens: '62500000000000000'
+    output_tokens:
+      per_mill_tokens: '5000000000000000000'
+    openai_chat_completion_search_model_calls:
+      per_1k_calls: '10000000000000000000'

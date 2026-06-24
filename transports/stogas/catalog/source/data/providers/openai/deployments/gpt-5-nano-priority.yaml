@@ -1,17 +1,11 @@
 ---
 deployments:
-  modelSlugs:
-    expandAttributeWithEnumeratedSuffixes: [priority]
-  concreteSlugs:
-    expandAttributeWithEnumeratedPrefixes:
-      - [modelSlugs]
-      - [providerSlugs, modelSlugs]
-      - [authorSlugs, providerSlugs, modelSlugs]
+  upstreamModelSlug: gpt-5-nano
+  aliasSlugs: [gpt-5-nano-2025-08-07-priority, gpt-5-nano-priority, gpt-5-nano-priority-latest, gpt-5-nano-latest-priority]
   providerId: openai
   parentProviderEndpointNodes: [openai-chat-completions, openai-responses]
   modelId: gpt-5-nano-2025-08-07
   serviceTier: priority
-  policyProfiles: [openai.service_tier.enforce_deployment_tier]
   pricing:
     input_tokens:
       per_mill_tokens: '2500000000000000000'

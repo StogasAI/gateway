@@ -24,4 +24,6 @@ bun run release:verify-pins
 bun run release:build -- v0.0.0 dist/gateway/v0.0.0
 ```
 
+Go unit tests use conventional `*_test.go` filenames beside their package sources under `transports/**` when they cover package-private behavior. Public gateway behavior coverage is centralized in the private monorepo test harness under `apps/tests`.
+
 The release artifact is the measured `gateway.igvm` built by `stogas/release`. Outputs should be written under this repository's `dist/` directory. See `stogas/release/BUILD_AUDIT.md` for the public reproducible-build audit map.

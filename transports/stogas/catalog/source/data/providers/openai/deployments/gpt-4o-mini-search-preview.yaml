@@ -1,15 +1,11 @@
 ---
 deployments:
-  concreteSlugs:
-    expandAttributeWithEnumeratedPrefixes:
-      - [modelSlugs]
-      - [providerSlugs, modelSlugs]
-      - [authorSlugs, providerSlugs, modelSlugs]
+  upstreamModelSlug: gpt-4o-mini-search-preview
+  aliasSlugs: [gpt-4o-mini-search-preview-2025-03-11, gpt-4o-mini-search-preview, gpt-4o-mini-search-preview-latest]
   providerId: openai
   parentProviderEndpointNodes: [openai-chat-completions]
   modelId: gpt-4o-mini-search-preview-2025-03-11
   serviceTier: default
-  policyProfiles: [openai.chat.search_model.web_search_options]
   pricing:
     input_tokens:
       per_mill_tokens: '150000000000000000'

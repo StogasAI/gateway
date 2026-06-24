@@ -20,14 +20,11 @@
 		concreteGraphChains,
 		decorateFlow,
 		definedAttributes,
-		deploymentIdsForProviderEndpoint,
-		deploymentIdsForModel,
 		displayValue,
 		extendGraphSelection,
 		filterFlow,
 		lineageForSelection,
 		nodeKey,
-		parentProviderEndpointNodesForDeployment,
 		parseNodeKey,
 		selectedOwnerKey
 	} from './catalog';
@@ -74,40 +71,17 @@
 	let draft = $derived(sourceContent(activePath));
 	let sourceStatus = $state('');
 	let buildStatus = $state('');
-	let rawOpen = $state(false);
 
 	const selected = $derived(parseNodeKey(selectedKey));
 	const flow = $derived(buildFlow(catalog.graph));
 	const graphChains = $derived(concreteGraphChains(catalog));
-	const routeOptions = $derived(
-		selected?.type === 'deployment'
-			? Object.entries(catalog.graph.providerEndpoints)
-					.filter(([routeId]) => routeDeploymentIds(routeId).includes(selected.id))
-					.map(([route]) => route)
-					.sort()
-			: selected?.type === 'model' && contextDeploymentId
-				? parentProviderEndpointNodesForDeployment(catalog.graph, contextDeploymentId)
-				: selected?.type === 'providerEndpoint'
-					? [selected.id]
-					: []
-	);
-	const deploymentOptions = $derived(
-		selected?.type === 'model'
-			? deploymentIdsForModel(catalog.graph, selected.id)
-			: selected?.type === 'providerEndpoint'
-				? routeDeploymentIds(selected.id)
-				: []
-	);
-	const showRouteContextPicker = $derived(
-		(selected?.type === 'deployment' || (selected?.type === 'model' && contextDeploymentId)) &&
-			routeOptions.length > 0
-	);
 	const lineage = $derived(
 		lineageForSelection(catalog, selectedKey, {
 			routeId: contextRouteId,
 			deploymentId: contextDeploymentId
 		})
 	);
+	const visibleLineage = $derived(dedupedVisibleLineage(lineage));
 	const decoratedFlow = $derived(
 		decorateFlow(flow, selectedKey, selectedEdgeId, selectedGraphKeys, graphChains)
 	);
@@ -174,31 +148,6 @@
 	});
 
 	$effect(() => {
-		if (selected?.type === 'deployment') {
-			if (!routeOptions.includes(contextRouteId)) {
-				contextRouteId = '';
-			}
-			contextDeploymentId = selected.id;
-		}
-		if (selected?.type === 'providerEndpoint') {
-			if (!deploymentOptions.includes(contextDeploymentId)) {
-				contextDeploymentId = '';
-			}
-			contextRouteId = selected.id;
-		}
-		if (selected?.type === 'model') {
-			if (!deploymentOptions.includes(contextDeploymentId)) {
-				contextDeploymentId = '';
-				contextRouteId = '';
-				return;
-			}
-			if (!contextDeploymentId || !routeOptions.includes(contextRouteId)) {
-				contextRouteId = '';
-			}
-		}
-	});
-
-	$effect(() => {
 		if (ownerFilter !== 'all' && !ownerOptions.includes(ownerFilter)) ownerFilter = 'all';
 	});
 
@@ -211,10 +160,6 @@
 
 	$effect(() => {
 		if (!sourcePaths.includes(activePath)) activePath = sourcePaths[0] ?? '';
-	});
-
-	$effect(() => {
-		if (rawOpen && !sourcePaths.length) rawOpen = false;
 	});
 
 	function selectNode(event: { node: Node }) {
@@ -302,20 +247,6 @@
 
 	function sourceContent(path: string) {
 		return sources?.files.find((file) => file.path === path)?.content ?? '';
-	}
-
-	function openRawFile() {
-		if (!sourcePaths.length) return;
-		rawOpen = true;
-		sourceStatus = '';
-	}
-
-	function closeRawFile() {
-		rawOpen = false;
-	}
-
-	function routeDeploymentIds(routeId: string) {
-		return deploymentIdsForProviderEndpoint(catalog.graph, routeId);
 	}
 
 	async function buildCatalog() {
@@ -677,6 +608,19 @@
 		return true;
 	}
 
+	function dedupedVisibleLineage(nodes: LineageNode[]) {
+		const seen = new Set<string>();
+		const visible: LineageNode[] = [];
+		for (const node of nodes) {
+			if (!showChainNode(node)) continue;
+			const key = nodeKey(node.type, node.id);
+			if (seen.has(key)) continue;
+			seen.add(key);
+			visible.push(node);
+		}
+		return visible;
+	}
+
 	function startResize(event: PointerEvent) {
 		const startX = event.clientX;
 		const startWidth = inspectorWidth;
@@ -796,56 +740,57 @@
 				<span>{selected ? nodeTypeLabel(selected.type) : 'node'}</span>
 				<h2>{selected?.id ?? 'Select a node'}</h2>
 			</div>
-			<button type="button" onclick={openRawFile} disabled={!sourcePaths.length}>Raw file</button>
 		</header>
 
 		<section class="chain-card" aria-label="Inheritance chain">
 			<div class="section-head">
 				<div>
 					<span>Context</span>
-					<strong>{lineage.length ? `${lineage.length} nodes` : 'No selection'}</strong>
+					<strong>{visibleLineage.length ? `${visibleLineage.length} nodes` : 'No selection'}</strong>
 				</div>
 			</div>
 			<div class="chain-row">
-				{#each lineage as node (nodeKey(node.type, node.id))}
-					{#if showChainNode(node)}
-						<button
-							type="button"
-							class="chain-node"
-							data-type={node.type}
-							aria-current={nodeKey(node.type, node.id) === selectedKey ? 'true' : undefined}
-							onclick={() => selectChainNode(node.type, node.id)}
-						>
-							<span>{nodeTypeLabel(node.type)}</span>
-							<strong>{node.id}</strong>
-						</button>
-					{/if}
+				{#each visibleLineage as node (nodeKey(node.type, node.id))}
+					<button
+						type="button"
+						class="chain-node"
+						data-type={node.type}
+						aria-current={nodeKey(node.type, node.id) === selectedKey ? 'true' : undefined}
+						onclick={() => selectChainNode(node.type, node.id)}
+					>
+						<span>{nodeTypeLabel(node.type)}</span>
+						<strong>{node.id}</strong>
+					</button>
 				{/each}
-				{#if showRouteContextPicker}
-					<label data-type="providerEndpoint" class="chain-picker">
-						<span>provider endpoint</span>
-						<select bind:value={contextRouteId} aria-label="Provider endpoint context">
-							<option value="">none</option>
-							{#each routeOptions as route (route)}
-								<option value={route}>{route}</option>
-							{/each}
-						</select>
-					</label>
-				{/if}
-				{#if (selected?.type === 'model' || selected?.type === 'providerEndpoint') && deploymentOptions.length}
-					<label data-type="deployment" class="chain-picker">
-						<span>deployment</span>
-						<select bind:value={contextDeploymentId} aria-label="Deployment target">
-							<option value="">none</option>
-							{#each deploymentOptions as deployment (deployment)}
-								<option value={deployment}>{deployment}</option>
-							{/each}
-						</select>
-					</label>
-				{/if}
 			</div>
 		</section>
 
+		<section class="source-card" aria-label="Raw source file">
+			<div class="source-head">
+				<div>
+					<span>Raw file</span>
+					<strong>{activePath ? 'Source' : 'No source file'}</strong>
+				</div>
+				<div class="source-actions">
+					<button type="button" onclick={saveSource} disabled={!activePath}>Save</button>
+				</div>
+			</div>
+			{#if sourcePaths.length > 1}
+				<select bind:value={activePath} aria-label="Raw source file">
+					{#each sourcePaths as path (path)}
+						<option value={path}>{path}</option>
+					{/each}
+				</select>
+			{/if}
+			{#if activePath}
+				<textarea bind:value={draft} spellcheck="false" aria-label="Raw catalog source"></textarea>
+			{:else}
+				<p class="empty">Select a graph node with a source file.</p>
+			{/if}
+			{#if sourceStatus}<p class="status">{sourceStatus}</p>{/if}
+		</section>
+
+		{#if false}
 		<section class="trace">
 			<div class="section-head trace-title">
 				<div>
@@ -1143,27 +1088,6 @@
 				{/each}
 			</div>
 		</section>
+		{/if}
 	</aside>
-
-	{#if rawOpen}
-		<div class="raw-backdrop">
-			<dialog open class="raw-dialog" aria-label="Selected node raw file">
-				<div class="source-head">
-					<div>
-						<strong>{selected?.id ?? selectedKey}</strong>
-						{#if activePath}<small>{activePath}</small>{/if}
-					</div>
-					<div class="source-actions">
-						<button type="button" onclick={saveSource} disabled={!activePath}>Save</button>
-						<button type="button" class="secondary" onclick={closeRawFile}>Close</button>
-					</div>
-				</div>
-				{#if sourcePaths.length}
-					{#if activePath}<p class="source-path">{activePath}</p>{/if}
-					<textarea bind:value={draft} spellcheck="false"></textarea>
-				{/if}
-				{#if sourceStatus}<p class="status">{sourceStatus}</p>{/if}
-			</dialog>
-		</div>
-	{/if}
 </main>

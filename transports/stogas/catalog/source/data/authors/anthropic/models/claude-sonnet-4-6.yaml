@@ -1,0 +1,18 @@
+---
+models:
+  authorId: anthropic
+  name: Claude Sonnet 4.6
+  aliasNames: []
+  modelSlugs: [claude-sonnet-4-6]
+  family: Claude
+  series: Claude Sonnet
+  snapshot: null
+  flavors: [base]
+  reasoning: true
+  contextWindowTokens: 1000000
+  maxOutputTokens: 64000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  tokenizer: unknown
+  releaseDate: null
+  knowledgeCutoff: null

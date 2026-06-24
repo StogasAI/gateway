@@ -6,10 +6,10 @@
 </script>
 
 {#if data.handles?.leftIn}
-	<Handle id="left-in" type="target" position={Position.Left} />
+	<Handle id="left-in" class="catalog-flow-handle" type="target" position={Position.Left} />
 {/if}
 {#if data.handles?.leftOut}
-	<Handle id="left-out" type="source" position={Position.Left} />
+	<Handle id="left-out" class="catalog-flow-handle" type="source" position={Position.Left} />
 {/if}
 
 <div class="node-card">
@@ -17,8 +17,8 @@
 </div>
 
 {#if data.handles?.rightIn}
-	<Handle id="right-in" type="target" position={Position.Right} />
+	<Handle id="right-in" class="catalog-flow-handle" type="target" position={Position.Right} />
 {/if}
 {#if data.handles?.rightOut}
-	<Handle id="right-out" type="source" position={Position.Right} />
+	<Handle id="right-out" class="catalog-flow-handle" type="source" position={Position.Right} />
 {/if}

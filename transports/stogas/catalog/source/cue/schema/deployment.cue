@@ -1,12 +1,12 @@
 package catalog
 
 #Deployment: close({
-	modelSlugs?:         #ModelSlugsPatch
-	concreteSlugs:       #ConcreteSlugs
+	aliasSlugs:          #Slugs
+	upstreamModelSlug:   #Slug
 	providerId:          #Id
 	parentProviderEndpointNodes: [#Id, ...#Id]
 	modelId:             #Id
-	serviceTier:         #OpenAIServiceTier
+	serviceTier:         #ServiceTier
 	tee?: close({
 		status:                #TeeStatus
 		mechanism:             #TeeMechanism
@@ -18,7 +18,5 @@ package catalog
 	tokenizer?:           #ClaimText
 	contextWindowTokens?: int & >=0
 	maxOutputTokens?:     int & >=0
-	policyProfiles?:      [...#PolicyProfileId]
-	schema?:              #SchemaPatch
 	pricing: #DeploymentPricing
 })

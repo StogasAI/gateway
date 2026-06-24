@@ -36,6 +36,8 @@ type Config struct {
 	LogLevel                    string
 	LogOutputStyle              string
 	MaxRequestBodyMiB           int
+	AnthropicAPIKey             string
+	AnthropicBaseURL            string
 	OpenAIAPIKey                string
 	OpenAIBaseURL               string
 	Port                        string
@@ -60,6 +62,8 @@ func LoadFromEnv() (Config, error) {
 		LogLevel:                    string(schemas.LogLevelInfo),
 		LogOutputStyle:              string(schemas.LoggerOutputTypeJSON),
 		MaxRequestBodyMiB:           defaultMaxRequestBodyMiB,
+		AnthropicAPIKey:             strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
+		AnthropicBaseURL:            strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")),
 		OpenAIAPIKey:                strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
 		OpenAIBaseURL:               strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:                        defaultPort,
@@ -98,9 +102,9 @@ func loadInfisicalRuntimeSecrets() {
 		return
 	}
 
-	required := []string{"AUTH_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "OPENAI_API_KEY"}
+	required := []string{"AUTH_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" || os.Getenv("DATABASE_URL") != "" {
-		required = []string{"AUTH_SECRET", "DATABASE_SCHEMA", "OPENAI_API_KEY"}
+		required = []string{"AUTH_SECRET", "DATABASE_SCHEMA", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	}
 	for _, secretName := range required {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
@@ -163,6 +167,9 @@ func (c Config) Validate() error {
 	}
 	if c.OpenAIAPIKey == "" {
 		return fmt.Errorf("OPENAI_API_KEY is required")
+	}
+	if c.AnthropicAPIKey == "" {
+		return fmt.Errorf("ANTHROPIC_API_KEY is required")
 	}
 	if strings.TrimSpace(c.Host) == "" {
 		return fmt.Errorf("host is required")

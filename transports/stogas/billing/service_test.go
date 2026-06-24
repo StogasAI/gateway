@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -215,7 +216,6 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 			StogasProcessingSuccess: true,
 			TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
 		},
-		nil,
 	)
 
 	if captured.RequestID != "request-1" {
@@ -509,6 +509,51 @@ func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend
 	}
 	if requests != 1 {
 		t.Fatalf("Tinybird requests = %d, want only initial committed append", requests)
+	}
+}
+
+func TestCloseWaitsForActiveSettlementRetry(t *testing.T) {
+	retryStarted := make(chan struct{})
+	releaseRetry := make(chan struct{})
+	closeReturned := make(chan struct{})
+	attempts := 0
+	var once sync.Once
+	service := &Service{
+		retryInitialDelay: time.Millisecond,
+		retryMaxDelay:     time.Millisecond,
+		retryWindow:       time.Second,
+		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+			attempts++
+			if attempts == 1 {
+				return errors.New("transient postgres failure")
+			}
+			once.Do(func() { close(retryStarted) })
+			<-releaseRetry
+			return nil
+		},
+	}
+
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+		t.Fatalf("FinalizeRequest returned error: %v", err)
+	}
+	<-retryStarted
+
+	go func() {
+		service.Close()
+		close(closeReturned)
+	}()
+
+	select {
+	case <-closeReturned:
+		t.Fatal("Close returned before active settlement retry finished")
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(releaseRetry)
+	select {
+	case <-closeReturned:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after settlement retry finished")
 	}
 }
 

@@ -1,0 +1,19 @@
+---
+deployments:
+  upstreamModelSlug: claude-sonnet-4-6
+  aliasSlugs: [claude-sonnet-4-6-standard-only, claude-sonnet-4-6-standard, claude-sonnet-latest-standard-only, claude-sonnet-latest-standard]
+  providerId: anthropic
+  parentProviderEndpointNodes: [anthropic-messages]
+  modelId: claude-sonnet-4-6
+  serviceTier: standard_only
+  pricing:
+    input_tokens:
+      per_mill_tokens: '3000000000000000000'
+    cached_input_tokens:
+      per_mill_tokens: '300000000000000000'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '3750000000000000000'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '6000000000000000000'
+    output_tokens:
+      per_mill_tokens: '15000000000000000000'

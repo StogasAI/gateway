@@ -1,5 +1,7 @@
 package catalog
 
+import "list"
+
 let sourceStogas = stogas
 let sourceStogasEndpoints = stogasEndpoints
 let sourceLocations = locations
@@ -51,7 +53,7 @@ compiled: {
 			for stogasEndpointId, _ in sourceStogasEndpoints {
 				(stogasEndpointId): [
 					for endpointId, endpoint in sourceProviderEndpoints
-					if endpoint.stogasEndpointId == stogasEndpointId {endpointId},
+					if list.Contains(endpoint.stogasEndpoints, stogasEndpointId) {endpointId},
 				]
 			}
 		}

@@ -1,11 +1,15 @@
 package catalog
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+//go:embed generated/catalog.json
+var embeddedCatalogJSON []byte
 
 func loadSnapshot() (*snapshot, error) {
 	return snapshotFromCatalogBytes(embeddedCatalogJSON)
@@ -29,17 +33,9 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 		route.ID = id
 		route.DeploymentIDs = providerEndpointDeployments[id]
 		sortDeploymentIDs(route.DeploymentIDs, catalog.Graph.Deployments)
-		route.ParameterPolicies = cloneParameterPolicies(route.Schema.Parameters)
-		if err := validatePolicyProfiles(route.PolicyProfiles); err != nil {
-			return nil, err
-		}
 		catalog.Graph.ProviderEndpoints[id] = route
 	}
 	for id, deployment := range catalog.Graph.Deployments {
-		deployment.ParameterPolicies = cloneParameterPolicies(deployment.Schema.Parameters)
-		if err := validatePolicyProfiles(deployment.PolicyProfiles); err != nil {
-			return nil, err
-		}
 		if providerNode, ok := catalog.Graph.Providers[deployment.ProviderID]; ok {
 			deployment.Pricing = mergedPricing(providerNode.Pricing, deployment.Pricing)
 		}
@@ -55,14 +51,6 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 		snap.providerNativeModelSlugs = map[string]string{}
 	}
 	return snap, nil
-}
-
-func cloneParameterPolicies(source map[string]compiledParameter) map[string]compiledParameter {
-	out := make(map[string]compiledParameter, len(source))
-	for key, value := range source {
-		out[key] = value
-	}
-	return out
 }
 
 func sortDeploymentIDs(ids []string, deployments map[string]compiledDeployment) {
@@ -81,7 +69,7 @@ func sortDeploymentIDs(ids []string, deployments map[string]compiledDeployment) 
 
 func serviceTierRank(tier string) int {
 	switch tier {
-	case "default", "standard", "":
+	case "auto", "default", "standard", "standard_only", "":
 		return 0
 	case "flex":
 		return 1
