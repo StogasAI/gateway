@@ -214,15 +214,15 @@ func (s *snapshot) allowsParam(route compiledProviderEndpoint, name string) bool
 }
 
 func effectiveContextWindowTokens(deployment compiledDeployment, model compiledModel) int {
-	if deployment.ContextWindowTokens > 0 {
-		return deployment.ContextWindowTokens
+	if deployment.ContextWindowTokens != nil && *deployment.ContextWindowTokens > 0 {
+		return *deployment.ContextWindowTokens
 	}
 	return model.ContextWindowTokens
 }
 
 func effectiveMaxOutputTokens(deployment compiledDeployment, model compiledModel) int {
-	if deployment.MaxOutputTokens > 0 {
-		return deployment.MaxOutputTokens
+	if deployment.MaxOutputTokens != nil && *deployment.MaxOutputTokens > 0 {
+		return *deployment.MaxOutputTokens
 	}
 	return model.MaxOutputTokens
 }

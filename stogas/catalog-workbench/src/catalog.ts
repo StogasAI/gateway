@@ -48,8 +48,6 @@ const nativeFieldsByType: Record<NodeType, Set<string>> = {
 	model: new Set([
 		'authorId',
 		'name',
-		'aliasNames',
-		'modelSlugs',
 		'family',
 		'series',
 		'snapshot',
@@ -99,7 +97,8 @@ const nativeFieldsByType: Record<NodeType, Set<string>> = {
 		'class'
 	]),
 	deployment: new Set([
-		'modelSlugs',
+		'aliasSlugs',
+		'upstreamModelSlug',
 		'providerId',
 		'parentProviderEndpointNodes',
 		'modelId',
@@ -917,9 +916,6 @@ function normalizeNodeValue(node: LineageNode) {
 	}
 	if (node.type === 'deployment') {
 		const rest = { ...value };
-		if (value.serviceTier && value.serviceTier !== 'default') {
-			return { ...rest, modelSlugs: [node.id] };
-		}
 		return rest;
 	}
 	return value;

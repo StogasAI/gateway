@@ -52,14 +52,6 @@ deployments: [#Id]: #Deployment
 		}
 	}
 
-	_modelSlugUniqueness: {
-		for id, model in models {
-			for slug in model.modelSlugs {
-				(slug): id
-			}
-		}
-	}
-
 	_providerSlugUniqueness: {
 		for id, provider in providers {
 			for slug in provider.providerSlugs {

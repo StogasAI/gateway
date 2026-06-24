@@ -3,8 +3,6 @@ package catalog
 #Model: close({
 	authorId:      #Id
 	name:          string
-	aliasNames:    #AliasNames
-	modelSlugs:    #Slugs
 	family:        string
 	series:        string
 	snapshot:      #MaybeDate

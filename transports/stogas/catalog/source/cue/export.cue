@@ -31,13 +31,6 @@ compiled: {
 				}
 			}
 		}
-		model_slugs: {
-			for id, model in sourceModels {
-				for slug in model.modelSlugs {
-					(slug): id
-				}
-			}
-		}
 		provider_slugs: {
 			for id, provider in sourceProviders {
 				for slug in provider.providerSlugs {

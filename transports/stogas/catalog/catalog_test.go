@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -306,12 +307,12 @@ func TestAnthropicCatalogResolution(t *testing.T) {
 		if deployment.ContextWindowTokens != 1000000 || deployment.MaxOutputTokens != 128000 {
 			t.Fatalf("%s: unexpected limits context=%d output=%d", slug, deployment.ContextWindowTokens, deployment.MaxOutputTokens)
 		}
-	if deployment.Pricing[billing.MeterCacheWrite1hInputTokens][billing.RatePerMillionTokens] != "10000000000000000000" {
-		t.Fatalf("%s: expected Anthropic 1h cache write pricing, got %#v", slug, deployment.Pricing)
-	}
-	if deployment.ServiceTier != "auto" || deployment.ImpliedServiceTier == nil || *deployment.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
-		t.Fatalf("%s: expected Anthropic auto deployment tier, got %q implied=%#v", slug, deployment.ServiceTier, deployment.ImpliedServiceTier)
-	}
+		if deployment.Pricing[billing.MeterCacheWrite1hInputTokens][billing.RatePerMillionTokens] != "10000000000000000000" {
+			t.Fatalf("%s: expected Anthropic 1h cache write pricing, got %#v", slug, deployment.Pricing)
+		}
+		if deployment.ServiceTier != "auto" || deployment.ImpliedServiceTier == nil || *deployment.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
+			t.Fatalf("%s: expected Anthropic auto deployment tier, got %q implied=%#v", slug, deployment.ServiceTier, deployment.ImpliedServiceTier)
+		}
 	}
 
 	sonnet, ok := DeploymentForRoute(schemas.Anthropic, "claude-sonnet-latest", RouteChat)
@@ -835,6 +836,45 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 	}
 	if !AllowsResponseMetadataField("raw_request") || AllowsResponseMetadataField("secret") {
 		t.Fatalf("unexpected response metadata field policy")
+	}
+}
+
+func TestPublicCatalogDeploymentNodesOnlyExposeOwnAttributes(t *testing.T) {
+	loadTestCatalog(t)
+
+	encoded, ok := PublicCatalogJSON()
+	if !ok {
+		t.Fatalf("expected public catalog JSON")
+	}
+
+	var payload struct {
+		Graph struct {
+			Deployments map[string]map[string]json.RawMessage `json:"deployments"`
+			Models      map[string]map[string]json.RawMessage `json:"models"`
+		} `json:"graph"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("decode public catalog JSON: %v", err)
+	}
+
+	deployment, ok := payload.Graph.Deployments["gpt-5-search-api"]
+	if !ok {
+		t.Fatalf("expected gpt-5-search-api deployment node")
+	}
+	for _, field := range []string{"contextWindowTokens", "maxOutputTokens"} {
+		if _, ok := deployment[field]; ok {
+			t.Fatalf("deployment node should not expose inherited %s", field)
+		}
+	}
+
+	model, ok := payload.Graph.Models["gpt-5-search-api-2025-10-14"]
+	if !ok {
+		t.Fatalf("expected gpt-5-search-api-2025-10-14 model node")
+	}
+	for _, field := range []string{"contextWindowTokens", "maxOutputTokens", "releaseDate", "knowledgeCutoff"} {
+		if _, ok := model[field]; !ok {
+			t.Fatalf("model node should expose %s", field)
+		}
 	}
 }
 

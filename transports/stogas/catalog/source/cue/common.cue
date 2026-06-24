@@ -11,7 +11,7 @@ package catalog
 #ClaimBool:        "unknown" | bool
 #MaybeDate:        null | #Date
 #MaybeString:      null | string
-#SlugAttributeRef: "authorSlugs" | "providerSlugs" | "modelSlugs"
+#SlugAttributeRef: "authorSlugs" | "providerSlugs"
 
 #Modality:      "text" | "image" | "audio" | "video"
 #Flavor:        "base" | "instruct" | "search" | "preview" | "code" | "unknown"
@@ -26,11 +26,6 @@ package catalog
 #OpenAPIValue: null | bool | number | string | [...#OpenAPIValue] | {
 	[string]: #OpenAPIValue
 }
-
-#ModelSlugsPatch: close({
-	value?:                                   #Slugs
-	expandAttributeWithEnumeratedSuffixes?:   [...#Slug]
-})
 
 #StogasEndpoint: close({
 	path:   #Path
