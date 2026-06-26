@@ -1,6 +1,10 @@
 package stogas
 
-import "github.com/maximhq/bifrost/core/schemas"
+import (
+	"strings"
+
+	"github.com/maximhq/bifrost/core/schemas"
+)
 
 type Signals interface {
 	PromptTokens() int
@@ -15,12 +19,17 @@ type SearchUsageSignals interface {
 }
 
 type StandardSignals struct {
-	Prompt       int
-	Completion   int
-	Cached       int
-	CacheWrite5m int
-	CacheWrite1h int
-	WebSearch    int
+	Prompt            int
+	Completion        int
+	Cached            int
+	CacheWrite5m      int
+	CacheWrite1h      int
+	WebSearch         int
+	ActualServiceTier *schemas.BifrostServiceTier
+	ActualSpeed       string
+
+	webSearchCallIDs map[string]struct{}
+	webSearchEvents  map[string]struct{}
 }
 
 func (s *StandardSignals) PromptTokens() int {
@@ -96,20 +105,97 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next == nil {
 		return
 	}
-	if current, ok := state.Signals.(SearchUsageSignals); ok && current.WebSearchCalls() > next.WebSearch {
-		next.WebSearch = current.WebSearchCalls()
+	current, ok := state.Signals.(*StandardSignals)
+	if !ok || current == nil {
+		state.Signals = next
+		return
 	}
-	state.Signals = next
+	current.Prompt = next.Prompt
+	current.Completion = next.Completion
+	current.Cached = next.Cached
+	current.CacheWrite5m = next.CacheWrite5m
+	current.CacheWrite1h = next.CacheWrite1h
+	if next.WebSearch > current.WebSearch {
+		current.WebSearch = next.WebSearch
+	}
+	if next.ActualServiceTier != nil {
+		tier := *next.ActualServiceTier
+		current.ActualServiceTier = &tier
+	}
+	if next.ActualSpeed != "" {
+		current.ActualSpeed = next.ActualSpeed
+	}
 }
 
-func incrementWebSearchSignals(state *State) {
+func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string) {
 	if state == nil {
 		return
 	}
+	signals := standardSignals(state)
+	if tier != nil {
+		value := *tier
+		signals.ActualServiceTier = &value
+	}
+	if speed != nil {
+		signals.ActualSpeed = strings.ToLower(strings.TrimSpace(*speed))
+	}
+}
+
+func setWebSearchSignals(state *State, count int) {
+	if state == nil || count <= 0 {
+		return
+	}
+	signals := standardSignals(state)
+	if count > signals.WebSearch {
+		signals.WebSearch = count
+	}
+}
+
+func observeWebSearchCall(state *State, id string) {
+	if state == nil {
+		return
+	}
+	signals := standardSignals(state)
+	id = strings.TrimSpace(id)
+	if id == "" {
+		signals.WebSearch++
+		return
+	}
+	if signals.webSearchCallIDs == nil {
+		signals.webSearchCallIDs = map[string]struct{}{}
+	}
+	if _, ok := signals.webSearchCallIDs[id]; ok {
+		return
+	}
+	signals.webSearchCallIDs[id] = struct{}{}
+	if len(signals.webSearchCallIDs) > signals.WebSearch {
+		signals.WebSearch = len(signals.webSearchCallIDs)
+	}
+}
+
+func observeWebSearchEvent(state *State, eventKey string, callID string) {
+	if state == nil {
+		return
+	}
+	signals := standardSignals(state)
+	eventKey = strings.TrimSpace(eventKey)
+	if eventKey != "" {
+		if signals.webSearchEvents == nil {
+			signals.webSearchEvents = map[string]struct{}{}
+		}
+		if _, ok := signals.webSearchEvents[eventKey]; ok {
+			return
+		}
+		signals.webSearchEvents[eventKey] = struct{}{}
+	}
+	observeWebSearchCall(state, callID)
+}
+
+func standardSignals(state *State) *StandardSignals {
 	signals, ok := state.Signals.(*StandardSignals)
 	if !ok || signals == nil {
 		signals = &StandardSignals{}
 		state.Signals = signals
 	}
-	signals.WebSearch++
+	return signals
 }

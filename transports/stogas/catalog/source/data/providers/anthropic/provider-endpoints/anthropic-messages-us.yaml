@@ -1,0 +1,12 @@
+---
+providerEndpoints:
+  providerId: anthropic
+  stogasEndpoints: [stogas-chat-completions, stogas-responses]
+  endpoint: https://api.anthropic.com/v1/messages
+  regionId: us
+  regionalStorageClaimed: false
+  regionalProcessingClaimed: true
+  fallbackBehavior: none
+  e2ee: unknown
+  gdpr: 'us-only inference'
+  class: messages

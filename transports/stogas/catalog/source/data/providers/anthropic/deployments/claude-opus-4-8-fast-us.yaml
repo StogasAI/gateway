@@ -1,0 +1,19 @@
+---
+deployments:
+  upstreamModelSlug: claude-opus-4-8
+  aliasSlugs: [claude-opus-4-8-fast-us, claude-opus-4-8-us-fast, claude-opus-4-8-fast-auto-us, claude-opus-4-8-fast-us-auto, claude-opus-latest-fast-us, claude-opus-latest-us-fast, claude-opus-latest-fast-auto-us, claude-opus-latest-fast-us-auto]
+  providerId: anthropic
+  parentProviderEndpointNodes: [anthropic-messages-us]
+  modelId: claude-opus-4-8
+  serviceTier: auto
+  pricing:
+    input_tokens:
+      per_mill_tokens: '11000000000000000000'
+    cached_input_tokens:
+      per_mill_tokens: '1100000000000000000'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '13750000000000000000'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '22000000000000000000'
+    output_tokens:
+      per_mill_tokens: '55000000000000000000'

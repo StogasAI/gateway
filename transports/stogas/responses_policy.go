@@ -10,6 +10,8 @@ import (
 	openaiadapter "github.com/maximhq/bifrost/transports/stogas/providers/openai"
 )
 
+const maxResponsesToolCalls = 128
+
 func validateResponsesPolicy(state *State) error {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
 		return nil
@@ -26,7 +28,6 @@ func validateResponsesPolicy(state *State) error {
 	}
 	for _, name := range []string{
 		"background",
-		"cache_control",
 		"container",
 		"context_management",
 		"conversation",
@@ -69,7 +70,7 @@ func validateResponsesPolicy(state *State) error {
 	if err := validatePositiveInteger(raw, "max_output_tokens"); err != nil {
 		return err
 	}
-	if err := validatePositiveInteger(raw, "max_tool_calls"); err != nil {
+	if err := validateIntegerRange(raw, "max_tool_calls", 1, maxResponsesToolCalls); err != nil {
 		return err
 	}
 	if err := validateIntegerAtLeast(raw, "top_logprobs", 0); err != nil {
@@ -79,6 +80,9 @@ func validateResponsesPolicy(state *State) error {
 		return err
 	}
 	if err := validatePromptCacheKey(raw["prompt_cache_key"], "prompt_cache_key"); err != nil {
+		return err
+	}
+	if err := validateResponsesCacheControls(state, raw); err != nil {
 		return err
 	}
 	if err := validateResponsesReasoning(raw); err != nil {
@@ -101,8 +105,12 @@ func validateResponsesPolicy(state *State) error {
 		if _, ok := raw["parallel_tool_calls"]; ok {
 			return invalidRequest("parallel_tool_calls requires supported tools")
 		}
+	} else if responsesHasHostedTool(tools) {
+		if _, ok := raw["max_tool_calls"]; !ok {
+			return invalidRequest("max_tool_calls is required for priced hosted tools")
+		}
 	}
-	if err := validateResponsesToolChoice(raw["tool_choice"], tools); err != nil {
+	if err := validateResponsesToolChoice(state, raw["tool_choice"], tools); err != nil {
 		return err
 	}
 	return validateResponsesInputTextOnly(raw["input"])
@@ -128,6 +136,21 @@ func validateString(raw map[string]json.RawMessage, name string) error {
 	var value string
 	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
 		return invalidRequest(name + " must be a string")
+	}
+	return nil
+}
+
+func validateIntegerRange(raw map[string]json.RawMessage, name string, min int, max int) error {
+	valueRaw, ok := raw[name]
+	if !ok {
+		return nil
+	}
+	var value int
+	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
+		return invalidRequest(name + " must be an integer")
+	}
+	if value < min || value > max {
+		return invalidRequest(name + " is outside the supported range")
 	}
 	return nil
 }
@@ -215,53 +238,297 @@ func validateResponsesTruncation(raw json.RawMessage) error {
 	}
 }
 
-func parseResponsesTools(state *State, raw json.RawMessage) ([]map[string]json.RawMessage, error) {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil, nil
+func validateResponsesCacheControls(state *State, raw map[string]json.RawMessage) error {
+	if cacheControl, ok := raw["cache_control"]; ok {
+		if err := validateProviderCacheControl(state, cacheControl, "cache_control"); err != nil {
+			return err
+		}
+	}
+	if err := validateResponsesInputCacheControls(state, raw["input"]); err != nil {
+		return err
+	}
+	return validateResponsesToolCacheControls(state, raw["tools"])
+}
+
+func validateResponsesInputCacheControls(state *State, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	return walkResponsesInputCacheControls(state, raw, "input")
+}
+
+func walkResponsesInputCacheControls(state *State, raw json.RawMessage, path string) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" || trimmed[0] == '"' {
+		return nil
+	}
+	switch trimmed[0] {
+	case '{':
+		object, ok := rawObject(raw)
+		if !ok {
+			return nil
+		}
+		if cacheControl, ok := object["cache_control"]; ok {
+			switch rawString(object["type"]) {
+			case "input_text", "output_text":
+				if err := validateProviderCacheControl(state, cacheControl, path+".cache_control"); err != nil {
+					return err
+				}
+			default:
+				return invalidRequest(path + ".cache_control is not supported by Stogas API")
+			}
+		}
+		if content, ok := object["content"]; ok {
+			if err := walkResponsesInputCacheControls(state, content, path+".content"); err != nil {
+				return err
+			}
+		}
+	case '[':
+		var array []json.RawMessage
+		if err := sonic.Unmarshal(raw, &array); err != nil {
+			return nil
+		}
+		for _, child := range array {
+			if err := walkResponsesInputCacheControls(state, child, path+"[]"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateResponsesToolCacheControls(state *State, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &tools); err != nil {
+		return nil
+	}
+	for _, tool := range tools {
+		if cacheControl, ok := tool["cache_control"]; ok {
+			if err := validateProviderCacheControl(state, cacheControl, "tools[].cache_control"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.ResponsesTool, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var rawTools []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &rawTools); err != nil {
 		return nil, invalidRequest("tools must be an array")
 	}
-	names := map[string]bool{}
+	for _, rawTool := range rawTools {
+		if err := validateRawResponsesToolType(state, rawTool); err != nil {
+			return nil, err
+		}
+	}
+	var tools []schemas.ResponsesTool
+	if err := sonic.Unmarshal(raw, &tools); err != nil {
+		return nil, invalidRequest("tools must be an array")
+	}
 	for _, tool := range tools {
-		kind := responsesToolKind(rawString(tool["type"]))
-		switch kind {
-		case "function":
-			name := strings.TrimSpace(rawString(tool["name"]))
-			if name == "" {
-				return nil, invalidRequest("function tools require a name")
+		switch tool.Type {
+		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+			name := ""
+			if tool.Name != nil {
+				name = strings.TrimSpace(*tool.Name)
 			}
-			names[name] = true
-		case "web_search", "web_search_preview":
-			if state != nil && !responsesHostedToolIsPriced(state, kind) {
+			if name == "" {
+				return nil, invalidRequest(string(tool.Type) + " tools require a name")
+			}
+		case schemas.ResponsesToolTypeLocalShell:
+			if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+				return nil, invalidRequest("local_shell is only supported for OpenAI Responses deployments")
+			}
+		case schemas.ResponsesToolTypeApplyPatch:
+			if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+				return nil, invalidRequest("apply_patch is only supported for OpenAI Responses deployments")
+			}
+		case schemas.ResponsesToolTypeShell:
+			if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+				return nil, invalidRequest("shell is only supported for OpenAI Responses deployments")
+			}
+			if err := validateResponsesLocalShellTool(raw, tool); err != nil {
+				return nil, err
+			}
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
+			if err := validateResponsesHostedToolVersion(state, raw, tool.Type); err != nil {
+				return nil, err
+			}
+			if state != nil && !responsesHostedToolIsPriced(state, tool.Type) {
 				return nil, invalidRequest("Hosted tools are not supported for this deployment")
 			}
 		default:
-			return nil, invalidRequest("Only function and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, local_shell, apply_patch, local shell, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
 }
 
-func responsesHostedToolIsPriced(state *State, kind string) bool {
-	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
+	rawType := rawString(tool["type"])
+	if rawType == "" {
+		return invalidRequest("tools must declare a type")
+	}
+	if state == nil || state.Resolution == nil {
+		return invalidRequest("Only function, custom, local_shell, apply_patch, local shell, and priced hosted web search tools are supported")
+	}
+	switch state.Resolution.Provider {
+	case schemas.OpenAI:
+		if rawType == "function" || rawType == "custom" || rawType == "local_shell" || rawType == "apply_patch" || rawType == "shell" || openAIWebSearchToolType(rawType) {
+			return nil
+		}
+	case schemas.Anthropic:
+		switch rawType {
+		case "local_shell", "apply_patch", "shell":
+			return invalidRequest(rawType + " is only supported for OpenAI Responses deployments")
+		}
+		if strings.HasPrefix(rawType, "web_search") && rawType != "web_search_20250305" {
+			return invalidRequest("Only Anthropic basic web_search_20250305 is supported until dynamic web search code execution is priced")
+		}
+		if rawType == "function" || rawType == "custom" || rawType == "web_search_20250305" {
+			return nil
+		}
+	default:
+		if rawType == "function" || rawType == "custom" {
+			return nil
+		}
+	}
+	return invalidRequest("Only function, custom, local_shell, apply_patch, local shell, and priced hosted web search tools are supported")
+}
+
+func openAIWebSearchToolType(rawType string) bool {
+	if rawType == "web_search" || rawType == "web_search_preview" {
+		return true
+	}
+	for _, prefix := range []string{"web_search_preview_", "web_search_"} {
+		if strings.HasPrefix(rawType, prefix) {
+			return validDatedToolSuffix(strings.TrimPrefix(rawType, prefix))
+		}
+	}
+	return false
+}
+
+func validDatedToolSuffix(suffix string) bool {
+	return validCompactDateSuffix(suffix) || validUnderscoreDateSuffix(suffix)
+}
+
+func validCompactDateSuffix(suffix string) bool {
+	if len(suffix) != len("20060102") {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validUnderscoreDateSuffix(suffix string) bool {
+	if len(suffix) != len("2006_01_02") {
+		return false
+	}
+	for i, r := range suffix {
+		switch i {
+		case 4, 7:
+			if r != '_' {
+				return false
+			}
+		default:
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validateResponsesLocalShellTool(rawTools json.RawMessage, selected schemas.ResponsesTool) error {
+	var tools []map[string]json.RawMessage
+	if err := sonic.Unmarshal(rawTools, &tools); err != nil {
+		return invalidRequest("tools must be an array")
+	}
+	for _, tool := range tools {
+		if rawString(tool["type"]) != string(selected.Type) {
+			continue
+		}
+		rawEnvironment, ok := tool["environment"]
+		if !ok {
+			return invalidRequest("shell tools require environment.type=local")
+		}
+		environment, ok := rawObject(rawEnvironment)
+		if !ok || rawString(environment["type"]) != "local" {
+			return invalidRequest("Only local shell tools are supported")
+		}
+		if !onlyRawKeys(tool, "type", "environment") || !onlyRawKeys(environment, "type") {
+			return invalidRequest("Only local shell tools are supported")
+		}
+	}
+	return nil
+}
+
+func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
+	for _, tool := range tools {
+		switch tool.Type {
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
+			return true
+		}
+	}
+	return false
+}
+
+func validateResponsesHostedToolVersion(state *State, raw json.RawMessage, toolType schemas.ResponsesToolType) error {
+	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.Anthropic || toolType != schemas.ResponsesToolTypeWebSearch {
+		return nil
+	}
+	var rawTools []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &rawTools); err != nil {
+		return nil
+	}
+	for _, tool := range rawTools {
+		rawType := rawString(tool["type"])
+		if strings.HasPrefix(rawType, "web_search") && rawType != "web_search_20250305" {
+			return invalidRequest("Only Anthropic basic web_search_20250305 is supported until dynamic web search code execution is priced")
+		}
+	}
+	return nil
+}
+
+func responsesHostedToolIsPriced(state *State, kind schemas.ResponsesToolType) bool {
+	if state == nil || state.Resolution == nil {
 		return false
 	}
 	pricing := state.Resolution.Deployment.Pricing
-	switch kind {
-	case "web_search":
-		_, ok := pricing[openaiadapter.MeterOpenAIResponsesWebSearchCalls]
+	switch state.Resolution.Provider {
+	case schemas.OpenAI:
+		switch kind {
+		case schemas.ResponsesToolTypeWebSearch:
+			_, ok := pricing[openaiadapter.MeterOpenAIResponsesWebSearchCalls]
+			return ok
+		case schemas.ResponsesToolTypeWebSearchPreview:
+			_, ok := pricing[openaiadapter.MeterOpenAIResponsesWebSearchPreviewCalls]
+			return ok
+		default:
+			return false
+		}
+	case schemas.Anthropic:
+		if kind != schemas.ResponsesToolTypeWebSearch {
+			return false
+		}
+		_, ok := pricing[meterAnthropicWebSearchCalls]
 		return ok
-	case "web_search_preview":
-		_, ok := pricing[openaiadapter.MeterOpenAIResponsesWebSearchPreviewCalls]
-		return ok
-	default:
-		return false
 	}
+	return false
 }
 
-func validateResponsesToolChoice(raw json.RawMessage, tools []map[string]json.RawMessage) error {
+func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
@@ -281,54 +548,111 @@ func validateResponsesToolChoice(raw json.RawMessage, tools []map[string]json.Ra
 	if !ok {
 		return invalidRequest("tool_choice must be auto, none, required, or a supported tool selector")
 	}
-	kind := responsesToolKind(rawString(choice["type"]))
-	switch kind {
-	case "function":
-		name := strings.TrimSpace(rawString(choice["name"]))
-		if name == "" {
-			name = strings.TrimSpace(rawString(choice["function"]))
-		}
-		if name != "" && !responsesToolNameExists(tools, name) {
-			return invalidRequest("tool_choice selects an unknown function tool")
-		}
-		return nil
-	case "web_search", "web_search_preview":
-		return nil
-	case "allowed_tools":
+	if rawString(choice["type"]) == "allowed_tools" {
 		rawAllowed, ok := choice["tools"]
 		if !ok {
 			return invalidRequest("tool_choice.allowed_tools requires tools")
 		}
-		_, err := parseResponsesTools(nil, rawAllowed)
-		return err
+		allowedTools, err := parseResponsesTools(state, rawAllowed)
+		if err != nil {
+			return err
+		}
+		for _, allowed := range allowedTools {
+			if allowed.Type == schemas.ResponsesToolTypeFunction || allowed.Type == schemas.ResponsesToolTypeCustom {
+				name := strings.TrimSpace(rawString(choice["name"]))
+				if allowed.Name != nil {
+					name = strings.TrimSpace(*allowed.Name)
+				}
+				if name != "" && !responsesNamedToolExists(tools, allowed.Type, name) {
+					return invalidRequest("tool_choice selects an unknown " + string(allowed.Type) + " tool")
+				}
+				continue
+			}
+			if !responsesToolTypeExists(tools, allowed.Type) {
+				return invalidRequest("tool_choice selects an unknown " + string(allowed.Type) + " tool")
+			}
+		}
+		return nil
+	}
+	var selected schemas.ResponsesTool
+	if err := sonic.Unmarshal(raw, &selected); err != nil {
+		return invalidRequest("tool_choice must select a supported tool")
+	}
+	switch selected.Type {
+	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+		name := strings.TrimSpace(rawString(choice["name"]))
+		if name == "" {
+			name = strings.TrimSpace(rawString(choice["function"]))
+		}
+		if name != "" && !responsesNamedToolExists(tools, selected.Type, name) {
+			return invalidRequest("tool_choice selects an unknown " + string(selected.Type) + " tool")
+		}
+		return nil
+	case schemas.ResponsesToolTypeLocalShell:
+		if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+			return invalidRequest("local_shell is only supported for OpenAI Responses deployments")
+		}
+		if !responsesToolTypeExists(tools, schemas.ResponsesToolTypeLocalShell) {
+			return invalidRequest("tool_choice selects an unknown local_shell tool")
+		}
+		return nil
+	case schemas.ResponsesToolTypeApplyPatch:
+		if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+			return invalidRequest("apply_patch is only supported for OpenAI Responses deployments")
+		}
+		if !responsesToolTypeExists(tools, schemas.ResponsesToolTypeApplyPatch) {
+			return invalidRequest("tool_choice selects an unknown apply_patch tool")
+		}
+		return nil
+	case schemas.ResponsesToolTypeShell:
+		if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI {
+			return invalidRequest("shell is only supported for OpenAI Responses deployments")
+		}
+		if !responsesToolTypeExists(tools, schemas.ResponsesToolTypeShell) {
+			return invalidRequest("tool_choice selects an unknown shell tool")
+		}
+		return nil
+	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
+		if !responsesToolTypeExists(tools, selected.Type) {
+			return invalidRequest("tool_choice selects an unknown " + string(selected.Type) + " tool")
+		}
+		if state != nil && !responsesHostedToolIsPriced(state, selected.Type) {
+			return invalidRequest("Hosted tools are not supported for this deployment")
+		}
+		return nil
 	default:
 		return invalidRequest("tool_choice must select a supported tool")
 	}
 }
 
-func responsesToolNameExists(tools []map[string]json.RawMessage, name string) bool {
+func responsesToolTypeExists(tools []schemas.ResponsesTool, toolType schemas.ResponsesToolType) bool {
 	for _, tool := range tools {
-		if responsesToolKind(rawString(tool["type"])) == "function" && rawString(tool["name"]) == name {
+		if tool.Type == toolType {
 			return true
 		}
 	}
 	return false
 }
 
-func responsesToolKind(toolType string) string {
-	normalized := strings.ToLower(strings.TrimSpace(toolType))
-	switch {
-	case normalized == "function":
-		return "function"
-	case normalized == "allowed_tools":
-		return "allowed_tools"
-	case normalized == "web_search" || strings.HasPrefix(normalized, "web_search_") && !strings.HasPrefix(normalized, "web_search_preview"):
-		return "web_search"
-	case normalized == "web_search_preview" || strings.HasPrefix(normalized, "web_search_preview_"):
-		return "web_search_preview"
-	default:
-		return ""
+func responsesNamedToolExists(tools []schemas.ResponsesTool, toolType schemas.ResponsesToolType, name string) bool {
+	for _, tool := range tools {
+		if tool.Type == toolType && tool.Name != nil && *tool.Name == name {
+			return true
+		}
 	}
+	return false
+}
+
+func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
+	if len(object) != len(keys) {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := object[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func validateResponsesInputTextOnly(raw json.RawMessage) error {
@@ -340,7 +664,13 @@ func validateResponsesInputTextOnly(raw json.RawMessage) error {
 		case "", "message", "input_text", "output_text", "refusal":
 			return nil
 		case "input_file":
-			return invalidRequest("Only text input is supported")
+			if _, hasFileID := object["file_id"]; hasFileID {
+				return invalidRequest("file_id inputs are not supported")
+			}
+			if _, hasFileURL := object["file_url"]; hasFileURL {
+				return invalidRequest("file_url inputs are not supported")
+			}
+			return invalidRequest("file inputs are not supported")
 		default:
 			return invalidRequest("Only text input is supported")
 		}
@@ -361,7 +691,10 @@ func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) err
 		if err := visit(object); err != nil {
 			return err
 		}
-		for _, child := range object {
+		for key, child := range object {
+			if key == "cache_control" {
+				continue
+			}
 			if err := walkRawJSON(child, visit); err != nil {
 				return err
 			}

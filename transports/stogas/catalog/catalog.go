@@ -17,40 +17,107 @@ func init() {
 }
 
 func DeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
+	return DeploymentForRouteServiceTier(provider, model, route, nil)
+}
+
+func DeploymentForRouteServiceTier(provider schemas.ModelProvider, model string, route Route, requestedTier *schemas.BifrostServiceTier) (Deployment, bool) {
 	snap := active.Load()
 	if snap == nil {
 		return Deployment{}, false
 	}
 
-	routeNode, ok := snap.route(provider, route)
-	if !ok {
-		return Deployment{}, false
+	for _, routeNode := range snap.routes(provider, route) {
+		deploymentID := snap.deploymentIDFor(routeNode, model)
+		if deploymentID == "" {
+			continue
+		}
+		deploymentID = snap.deploymentIDForRequestedServiceTier(provider, routeNode, deploymentID, requestedTier)
+		deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
+		if ok {
+			return deployment, true
+		}
 	}
-	deploymentID := snap.deploymentIDFor(routeNode, model)
-	if deploymentID == "" {
-		return Deployment{}, false
-	}
-	deployment, ok := snap.graph.Deployments[deploymentID]
-	if !ok || deployment.ProviderID != string(provider) {
-		return Deployment{}, false
-	}
-	modelNode, ok := snap.graph.Models[deployment.ModelID]
-	if !ok {
-		return Deployment{}, false
-	}
+	return Deployment{}, false
+}
 
-	impliedTier := impliedServiceTierForDeployment(schemas.ModelProvider(deployment.ProviderID), deployment)
-	return Deployment{
-		ID:                  deploymentID,
-		ModelID:             deployment.ModelID,
-		Model:               deployment.UpstreamModelSlug,
-		ContextWindowTokens: effectiveContextWindowTokens(deployment, modelNode),
-		ImpliedServiceTier:  impliedTier,
-		MaxOutputTokens:     effectiveMaxOutputTokens(deployment, modelNode),
-		Pricing:             deployment.Pricing,
-		ReasoningSupported:  modelNode.ReasoningSupport,
-		ServiceTier:         deployment.ServiceTier,
-	}, true
+func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelProvider, routeNode compiledProviderEndpoint, currentID string, requestedTier *schemas.BifrostServiceTier) string {
+	targetTier := deploymentServiceTierForRequest(provider, requestedTier)
+	if targetTier == "" {
+		return currentID
+	}
+	current, ok := s.graph.Deployments[currentID]
+	if !ok || current.ServiceTier == targetTier {
+		return currentID
+	}
+	currentFast := deploymentIsFast(currentID, current)
+	for _, candidateID := range routeNode.DeploymentIDs {
+		candidate, ok := s.graph.Deployments[candidateID]
+		if !ok ||
+			candidate.ProviderID != current.ProviderID ||
+			candidate.UpstreamModelSlug != current.UpstreamModelSlug ||
+			candidate.ServiceTier != targetTier ||
+			deploymentIsFast(candidateID, candidate) != currentFast {
+			continue
+		}
+		return candidateID
+	}
+	return currentID
+}
+
+func deploymentServiceTierForRequest(provider schemas.ModelProvider, requestedTier *schemas.BifrostServiceTier) string {
+	if provider != schemas.Anthropic || requestedTier == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(string(*requestedTier))) {
+	case "auto", "priority":
+		return "auto"
+	case "default", "flex", "standard", "standard_only":
+		return "standard_only"
+	default:
+		return ""
+	}
+}
+
+func deploymentIsFast(deploymentID string, deployment compiledDeployment) bool {
+	if strings.Contains(strings.ToLower(deploymentID), "-fast") {
+		return true
+	}
+	for _, alias := range deployment.AliasSlugs {
+		if strings.Contains(strings.ToLower(alias), "-fast") {
+			return true
+		}
+	}
+	return false
+}
+
+func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, current Deployment, actualTier *schemas.BifrostServiceTier, actualSpeed string) (Deployment, bool) {
+	snap := active.Load()
+	if snap == nil || current.Model == "" {
+		return Deployment{}, false
+	}
+	actualSpeed = strings.ToLower(strings.TrimSpace(actualSpeed))
+	for _, routeNode := range snap.routes(provider, route) {
+		for _, deploymentID := range routeNode.DeploymentIDs {
+			deployment, ok := snap.graph.Deployments[deploymentID]
+			if !ok || deployment.ProviderID != string(provider) || deployment.UpstreamModelSlug != current.Model {
+				continue
+			}
+			if current.RegionID != "" && routeNode.RegionID != current.RegionID {
+				continue
+			}
+			if actualTier != nil && !deploymentMatchesActualServiceTier(provider, deployment.ServiceTier, *actualTier) {
+				continue
+			}
+			if actualSpeed != "" && !deploymentMatchesActualSpeed(deploymentID, deployment, actualSpeed) {
+				continue
+			}
+			resolved, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
+			if ok {
+				return resolved, true
+			}
+		}
+	}
+	return Deployment{}, false
 }
 
 func ProviderForRoute(route Route) (schemas.ModelProvider, bool) {
@@ -73,6 +140,18 @@ func ProviderForRoute(route Route) (schemas.ModelProvider, bool) {
 }
 
 func ProviderForRouteModel(route Route, requestedModel string) (schemas.ModelProvider, bool, error) {
+	return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{})
+}
+
+func ProviderForRouteModelPreference(route Route, requestedModel string, preferredProvider string) (schemas.ModelProvider, bool, error) {
+	preferredProvider = strings.TrimSpace(preferredProvider)
+	if preferredProvider == "" {
+		return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{})
+	}
+	return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{Only: []string{preferredProvider}})
+}
+
+func ProviderForRouteModelRouting(route Route, requestedModel string, preference ProviderRoutingPreference) (schemas.ModelProvider, bool, error) {
 	snap := active.Load()
 	if snap == nil {
 		return "", false, nil
@@ -82,21 +161,122 @@ func ProviderForRouteModel(route Route, requestedModel string) (schemas.ModelPro
 		return "", false, nil
 	}
 
-	var selected schemas.ModelProvider
-	for _, routeNode := range snap.graph.ProviderEndpoints {
+	if preference.Empty() {
+		return snap.providerForRouteModel(route, requested, nil)
+	}
+
+	only, err := snap.resolveProviderPreferences(preference.Only)
+	if err != nil {
+		return "", false, err
+	}
+	order, err := snap.resolveProviderPreferences(preference.Order)
+	if err != nil {
+		return "", false, err
+	}
+	allowed := map[schemas.ModelProvider]bool(nil)
+	if len(only) > 0 {
+		allowed = make(map[schemas.ModelProvider]bool, len(only))
+		for _, provider := range only {
+			allowed[provider] = true
+		}
+	}
+	candidates := snap.routeModelProviders(route, requested, allowed)
+	if len(candidates) == 0 {
+		return "", false, ErrModelUnavailable
+	}
+	for _, preferred := range order {
+		for _, candidate := range candidates {
+			if candidate == preferred {
+				return candidate, true, nil
+			}
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true, nil
+	}
+	return "", false, ErrModelAmbiguous
+}
+
+func (s *snapshot) providerForRouteModel(route Route, requested string, allowed map[schemas.ModelProvider]bool) (schemas.ModelProvider, bool, error) {
+	candidates := s.routeModelProviders(route, requested, allowed)
+	if len(candidates) == 0 {
+		return "", false, nil
+	}
+	if len(candidates) > 1 {
+		return "", false, ErrModelAmbiguous
+	}
+	return candidates[0], true, nil
+}
+
+func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[schemas.ModelProvider]bool) []schemas.ModelProvider {
+	seen := map[schemas.ModelProvider]bool{}
+	providers := []schemas.ModelProvider{}
+	for _, routeNode := range s.graph.ProviderEndpoints {
 		if !endpointSupportsRoute(routeNode, route) {
 			continue
 		}
-		if snap.deploymentIDFor(routeNode, requested) == "" {
+		if s.deploymentIDFor(routeNode, requested) == "" {
 			continue
 		}
 		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if selected != "" && selected != provider {
-			return "", false, ErrModelAmbiguous
+		if allowed != nil && !allowed[provider] {
+			continue
 		}
-		selected = provider
+		if seen[provider] {
+			continue
+		}
+		seen[provider] = true
+		providers = append(providers, provider)
 	}
-	return selected, selected != "", nil
+	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
+	return providers
+}
+
+func (s *snapshot) resolveProviderPreferences(preferences []string) ([]schemas.ModelProvider, error) {
+	if len(preferences) == 0 {
+		return nil, nil
+	}
+	providers := make([]schemas.ModelProvider, 0, len(preferences))
+	seen := map[schemas.ModelProvider]bool{}
+	for _, preference := range preferences {
+		provider, ok := s.providerForPreference(preference)
+		if !ok {
+			return nil, ErrProviderUnavailable
+		}
+		if seen[provider] {
+			continue
+		}
+		seen[provider] = true
+		providers = append(providers, provider)
+	}
+	return providers, nil
+}
+
+func (s *snapshot) providerForPreference(preference string) (schemas.ModelProvider, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(preference))
+	if normalized == "" {
+		return "", false
+	}
+	for providerID, provider := range s.graph.Providers {
+		if strings.EqualFold(providerID, normalized) {
+			return schemas.ModelProvider(providerID), true
+		}
+		for _, slug := range provider.ProviderSlugs {
+			if strings.EqualFold(strings.TrimSpace(slug), normalized) {
+				return schemas.ModelProvider(providerID), true
+			}
+		}
+	}
+	return "", false
+}
+
+func ProviderUsesPseudoanonymousUserID(provider schemas.ModelProvider) bool {
+	snap := active.Load()
+	if snap == nil {
+		return false
+	}
+	providerNode, ok := snap.graph.Providers[string(provider)]
+	return ok && providerNode.UsesPseudoanonymousUserID
 }
 
 func PathForRoute(route Route) (string, bool) {
@@ -184,12 +364,24 @@ func ParameterAliasFor(route Route, name string) (string, bool) {
 }
 
 func (s *snapshot) route(provider schemas.ModelProvider, route Route) (compiledProviderEndpoint, bool) {
+	routes := s.routes(provider, route)
+	if len(routes) == 0 {
+		return compiledProviderEndpoint{}, false
+	}
+	return routes[0], true
+}
+
+func (s *snapshot) routes(provider schemas.ModelProvider, route Route) []compiledProviderEndpoint {
+	routes := []compiledProviderEndpoint{}
 	for _, routeNode := range s.graph.ProviderEndpoints {
 		if routeNode.ProviderID == string(provider) && endpointSupportsRoute(routeNode, route) {
-			return routeNode, true
+			routes = append(routes, routeNode)
 		}
 	}
-	return compiledProviderEndpoint{}, false
+	sort.Slice(routes, func(i, j int) bool {
+		return routes[i].ID < routes[j].ID
+	})
+	return routes
 }
 
 func providerEndpointForRoute(provider schemas.ModelProvider, route Route) (compiledProviderEndpoint, bool) {
@@ -205,7 +397,30 @@ func (s *snapshot) deploymentIDFor(route compiledProviderEndpoint, requestedMode
 	if requested == "" {
 		return ""
 	}
-	return s.providerNativeModelSlugs[route.ID+":"+requested]
+	return s.providerEndpointRequestSlugs[route.ID+":"+requested]
+}
+
+func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledProviderEndpoint) (Deployment, bool) {
+	deployment, ok := s.graph.Deployments[deploymentID]
+	if !ok || deployment.ProviderID != route.ProviderID {
+		return Deployment{}, false
+	}
+	modelNode, ok := s.graph.Models[deployment.ModelID]
+	if !ok {
+		return Deployment{}, false
+	}
+	return Deployment{
+		ID:                  deploymentID,
+		ModelID:             deployment.ModelID,
+		Model:               deployment.UpstreamModelSlug,
+		ContextWindowTokens: effectiveContextWindowTokens(deployment, modelNode),
+		ImpliedServiceTier:  impliedServiceTierForDeployment(schemas.ModelProvider(deployment.ProviderID), deployment),
+		MaxOutputTokens:     effectiveMaxOutputTokens(deployment, modelNode),
+		Pricing:             deployment.Pricing,
+		ReasoningSupported:  modelNode.ReasoningSupport,
+		RegionID:            route.RegionID,
+		ServiceTier:         deployment.ServiceTier,
+	}, true
 }
 
 func (s *snapshot) allowsParam(route compiledProviderEndpoint, name string) bool {
@@ -225,6 +440,43 @@ func effectiveMaxOutputTokens(deployment compiledDeployment, model compiledModel
 		return *deployment.MaxOutputTokens
 	}
 	return model.MaxOutputTokens
+}
+
+func deploymentMatchesActualServiceTier(provider schemas.ModelProvider, deploymentTier string, actual schemas.BifrostServiceTier) bool {
+	deploymentTier = strings.ToLower(strings.TrimSpace(deploymentTier))
+	actualValue := strings.ToLower(strings.TrimSpace(string(actual)))
+	if provider == schemas.Anthropic {
+		switch actualValue {
+		case "priority", "auto":
+			return deploymentTier == "auto"
+		case "default", "standard", "standard_only", "":
+			return deploymentTier == "standard_only" || deploymentTier == "standard"
+		default:
+			return false
+		}
+	}
+	switch actualValue {
+	case "priority":
+		return deploymentTier == "priority"
+	case "flex":
+		return deploymentTier == "flex"
+	case "default", "standard", "standard_only", "auto", "":
+		return deploymentTier == "" || deploymentTier == "default" || deploymentTier == "standard"
+	default:
+		return false
+	}
+}
+
+func deploymentMatchesActualSpeed(deploymentID string, deployment compiledDeployment, actualSpeed string) bool {
+	fast := deploymentIsFast(deploymentID, deployment)
+	switch actualSpeed {
+	case "fast":
+		return fast
+	case "standard":
+		return !fast
+	default:
+		return true
+	}
 }
 
 func stableAuthHeaderOrder(names []string) []string {

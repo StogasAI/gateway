@@ -32,13 +32,13 @@ func validateChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "safety_identifier", "store", "user", "container", "fallbacks", "inference_geo", "stream_options"} {
+	for _, name := range []string{"audio", "function_call", "functions", "safety_identifier", "store", "user", "container", "context_management", "fallbacks", "inference_geo", "mcp_servers", "prompt_cache_retention", "stream_options", "task_budget"} {
 		if _, ok := raw[name]; ok {
 			return invalidRequest(name + " is not supported by Stogas API")
 		}
 	}
 	if state.Resolution.Provider != schemas.Anthropic {
-		for _, name := range []string{"mcp_servers", "cache_control", "task_budget", "context_management"} {
+		for _, name := range []string{"cache_control"} {
 			if _, ok := raw[name]; ok {
 				return invalidRequest(name + " is only supported for Anthropic deployments")
 			}
@@ -77,6 +77,9 @@ func validateChatCompletionPolicy(state *State) error {
 	if err := validateMetadata(raw["metadata"]); err != nil {
 		return err
 	}
+	if err := validateChatCacheControls(state, raw); err != nil {
+		return err
+	}
 	if err := validateModalities(raw["modalities"]); err != nil {
 		return err
 	}
@@ -95,13 +98,19 @@ func validateChatCompletionPolicy(state *State) error {
 	if err := validateChatMessagesTextOnly(raw["messages"]); err != nil {
 		return err
 	}
-	if err := validateChatTools(raw["tools"]); err != nil {
+	tools, err := validateChatTools(raw["tools"])
+	if err != nil {
 		return err
 	}
-	if err := validateChatToolChoice(raw["tool_choice"]); err != nil {
+	if err := validateChatToolChoice(raw["tool_choice"], tools); err != nil {
 		return err
 	}
 	return nil
+}
+
+type chatToolRef struct {
+	kind string
+	name string
 }
 
 func invalidRequest(message string) error {
@@ -199,6 +208,103 @@ func validateMetadata(raw json.RawMessage) error {
 		}
 		if len(text) > maxMetadataValueBytes || !utf8.ValidString(text) {
 			return invalidRequest("metadata values must be valid strings up to 512 bytes")
+		}
+	}
+	return nil
+}
+
+func validateChatCacheControls(state *State, raw map[string]json.RawMessage) error {
+	if cacheControl, ok := raw["cache_control"]; ok {
+		if err := validateProviderCacheControl(state, cacheControl, "cache_control"); err != nil {
+			return err
+		}
+	}
+	if err := validateChatMessageCacheControls(state, raw["messages"]); err != nil {
+		return err
+	}
+	return validateChatToolCacheControls(state, raw["tools"])
+}
+
+func validateChatMessageCacheControls(state *State, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var messages []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &messages); err != nil {
+		return nil
+	}
+	for _, message := range messages {
+		if _, ok := message["cache_control"]; ok {
+			return invalidRequest("messages[].cache_control is not supported by Stogas API")
+		}
+		contentRaw := message["content"]
+		if len(contentRaw) == 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(contentRaw))
+		if trimmed == "" || trimmed == "null" || trimmed[0] != '[' {
+			continue
+		}
+		var blocks []map[string]json.RawMessage
+		if err := sonic.Unmarshal(contentRaw, &blocks); err != nil {
+			continue
+		}
+		for _, block := range blocks {
+			if cacheControl, ok := block["cache_control"]; ok {
+				if err := validateProviderCacheControl(state, cacheControl, "messages[].content[].cache_control"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateChatToolCacheControls(state *State, raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var tools []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &tools); err != nil {
+		return nil
+	}
+	for _, tool := range tools {
+		if cacheControl, ok := tool["cache_control"]; ok {
+			if err := validateProviderCacheControl(state, cacheControl, "tools[].cache_control"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateProviderCacheControl(state *State, raw json.RawMessage, name string) error {
+	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.Anthropic {
+		return invalidRequest("cache_control is only supported for Anthropic deployments")
+	}
+	return validateCacheControl(raw, name)
+}
+
+func validateCacheControl(raw json.RawMessage, name string) error {
+	cacheControl, ok := rawObject(raw)
+	if !ok {
+		return invalidRequest(name + " must be an object")
+	}
+	for key := range cacheControl {
+		switch key {
+		case "type", "ttl":
+		default:
+			return invalidRequest(name + "." + key + " is not supported by Stogas API")
+		}
+	}
+	if rawString(cacheControl["type"]) != "ephemeral" {
+		return invalidRequest(name + ".type must be ephemeral")
+	}
+	if ttlRaw, ok := cacheControl["ttl"]; ok {
+		switch rawString(ttlRaw) {
+		case "5m", "1h":
+		default:
+			return invalidRequest(name + ".ttl must be 5m or 1h")
 		}
 	}
 	return nil
@@ -303,25 +409,32 @@ func validateChatMessagesTextOnly(raw json.RawMessage) error {
 	return nil
 }
 
-func validateChatTools(raw json.RawMessage) error {
+func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &tools); err != nil {
-		return invalidRequest("tools must be an array")
+		return nil, invalidRequest("tools must be an array")
 	}
+	refs := make([]chatToolRef, 0, len(tools))
 	for _, tool := range tools {
-		switch rawString(tool["type"]) {
+		kind := rawString(tool["type"])
+		switch kind {
 		case "function", "custom":
+			name := chatToolName(tool, kind)
+			if name == "" {
+				return nil, invalidRequest(kind + " tools require a name")
+			}
+			refs = append(refs, chatToolRef{kind: kind, name: name})
 		default:
-			return invalidRequest("Only function and custom tools are supported")
+			return nil, invalidRequest("Only function and custom tools are supported")
 		}
 	}
-	return nil
+	return refs, nil
 }
 
-func validateChatToolChoice(raw json.RawMessage) error {
+func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
@@ -329,12 +442,52 @@ func validateChatToolChoice(raw json.RawMessage) error {
 	if err := sonic.Unmarshal(raw, &object); err != nil {
 		return invalidRequest("tool_choice must select a function or custom tool")
 	}
-	switch rawString(object["type"]) {
+	kind := rawString(object["type"])
+	switch kind {
 	case "function", "custom":
+		if len(tools) == 0 {
+			return invalidRequest("tool_choice requires supported tools")
+		}
+		name := chatToolChoiceName(object, kind)
+		if name == "" {
+			return invalidRequest("tool_choice must name a " + kind + " tool")
+		}
+		if !chatToolExists(tools, kind, name) {
+			return invalidRequest("tool_choice selects an unknown " + kind + " tool")
+		}
 		return nil
 	default:
 		return invalidRequest("tool_choice must select a function or custom tool")
 	}
+}
+
+func chatToolName(tool map[string]json.RawMessage, kind string) string {
+	if name := strings.TrimSpace(rawString(tool["name"])); name != "" {
+		return name
+	}
+	if nested, ok := rawObject(tool[kind]); ok {
+		return strings.TrimSpace(rawString(nested["name"]))
+	}
+	return ""
+}
+
+func chatToolChoiceName(choice map[string]json.RawMessage, kind string) string {
+	if name := strings.TrimSpace(rawString(choice["name"])); name != "" {
+		return name
+	}
+	if nested, ok := rawObject(choice[kind]); ok {
+		return strings.TrimSpace(rawString(nested["name"]))
+	}
+	return ""
+}
+
+func chatToolExists(tools []chatToolRef, kind string, name string) bool {
+	for _, tool := range tools {
+		if tool.kind == kind && tool.name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func rawString(raw json.RawMessage) string {

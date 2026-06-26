@@ -1251,6 +1251,9 @@ func TestResponsesTool_UnmarshalJSON_NormalizesVersionedToolTypes(t *testing.T) 
 		// unrecognized types pass through unchanged
 		{name: "function unchanged", input: `{"type":"function","name":"foo","strict":true}`, wantType: ResponsesToolTypeFunction},
 		{name: "custom unchanged", input: `{"type":"custom","name":"bar"}`, wantType: ResponsesToolTypeCustom},
+		{name: "local_shell unchanged", input: `{"type":"local_shell"}`, wantType: ResponsesToolTypeLocalShell},
+		{name: "shell unchanged", input: `{"type":"shell","environment":{"type":"local"}}`, wantType: ResponsesToolTypeShell},
+		{name: "apply_patch unchanged", input: `{"type":"apply_patch"}`, wantType: ResponsesToolTypeApplyPatch},
 	}
 
 	for _, tt := range tests {
@@ -1275,6 +1278,14 @@ func TestResponsesTool_UnmarshalJSON_NormalizesVersionedToolTypes(t *testing.T) 
 			if tt.wantAdvisor {
 				require.NotNil(t, tool.ResponsesToolAdvisor, "ResponsesToolAdvisor should be populated")
 				assert.Equal(t, tt.wantModel, tool.ResponsesToolAdvisor.Model)
+			}
+			switch tt.wantType {
+			case ResponsesToolTypeLocalShell:
+				assert.NotNil(t, tool.ResponsesToolLocalShell, "ResponsesToolLocalShell should be populated")
+			case ResponsesToolTypeShell:
+				assert.NotNil(t, tool.ResponsesToolShell, "ResponsesToolShell should be populated")
+			case ResponsesToolTypeApplyPatch:
+				assert.NotNil(t, tool.ResponsesToolApplyPatch, "ResponsesToolApplyPatch should be populated")
 			}
 		})
 	}

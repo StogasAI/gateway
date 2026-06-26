@@ -12,7 +12,6 @@ type EventInput struct {
 	Authorization      *Authorization
 	Error              *schemas.BifrostError
 	Metrics            map[string]any
-	Model              string
 	RequestType        string
 	Response           *schemas.BifrostResponse
 	StartedAt          time.Time
@@ -59,20 +58,8 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		UpstreamProviderTimeMS:       upstreamTimeMS,
 		TTFBMS:                       0,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		Metrics:                      metricsObject(input.Model, input.Metrics),
+		Metrics:                      metricsObject(input.Metrics),
 	}
-}
-
-func UsageMetrics(resp *schemas.BifrostResponse) map[string]any {
-	metrics := map[string]any{}
-	usage := LLMUsage(resp)
-	if usage == nil {
-		return metrics
-	}
-	metrics["promptTokens"] = usage.PromptTokens
-	metrics["completionTokens"] = usage.CompletionTokens
-	metrics["totalTokens"] = usage.TotalTokens
-	return metrics
 }
 
 func LLMUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
@@ -134,6 +121,8 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	text := strings.ToLower(errorText(bifrostErr))
 
 	switch {
+	case looksLikeRequestConversionError(text):
+		return "invalid_request"
 	case strings.Contains(text, "content_filter") ||
 		strings.Contains(text, "content filter") ||
 		strings.Contains(text, "safety") ||
@@ -149,7 +138,7 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		strings.Contains(text, "rate_limit") ||
 		strings.Contains(text, "slow down"):
 		return "rate_limited"
-	case statusCode == 400 || statusCode == 404 || statusCode == 409 || statusCode == 422:
+	case statusCode == 400 || statusCode == 404 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
 	case statusCode == 408 || statusCode == 504 ||
 		strings.Contains(text, "timeout") ||
@@ -184,6 +173,16 @@ func errorText(bifrostErr *schemas.BifrostError) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func looksLikeRequestConversionError(text string) bool {
+	return strings.Contains(text, "failed to marshal") ||
+		strings.Contains(text, "failed to unmarshal") ||
+		strings.Contains(text, "marshal request") ||
+		strings.Contains(text, "unmarshal request") ||
+		strings.Contains(text, "request conversion") ||
+		strings.Contains(text, "convert request") ||
+		strings.Contains(text, "could not parse request")
 }
 
 func normalizeRequestType(requestType string) string {
@@ -240,38 +239,11 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
-func metricsObject(model string, usage map[string]any) map[string]any {
-	tokens := map[string]any{
-		"prompt":     numberMetric(usage, "promptTokens"),
-		"completion": numberMetric(usage, "completionTokens"),
-		"reasoning":  nil,
-		"cached":     nil,
+func metricsObject(metrics map[string]any) map[string]any {
+	if metrics == nil {
+		return map[string]any{}
 	}
-	return map[string]any{
-		"model":  model,
-		"tokens": tokens,
-	}
-}
-
-func numberMetric(metrics map[string]any, key string) any {
-	value, ok := metrics[key]
-	if !ok {
-		return 0
-	}
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int64:
-		return typed
-	case uint:
-		return typed
-	case uint64:
-		return typed
-	case float64:
-		return typed
-	default:
-		return 0
-	}
+	return metrics
 }
 
 func uint32Duration(value time.Duration) uint32 {

@@ -1741,6 +1741,8 @@ const (
 	ResponsesToolTypeCodeInterpreter    ResponsesToolType = "code_interpreter"
 	ResponsesToolTypeImageGeneration    ResponsesToolType = "image_generation"
 	ResponsesToolTypeLocalShell         ResponsesToolType = "local_shell"
+	ResponsesToolTypeShell              ResponsesToolType = "shell"
+	ResponsesToolTypeApplyPatch         ResponsesToolType = "apply_patch"
 	ResponsesToolTypeCustom             ResponsesToolType = "custom"
 	ResponsesToolTypeWebSearchPreview   ResponsesToolType = "web_search_preview"
 	ResponsesToolTypeMemory             ResponsesToolType = "memory"
@@ -1810,6 +1812,8 @@ type ResponsesTool struct {
 	*ResponsesToolCodeInterpreter
 	*ResponsesToolImageGeneration
 	*ResponsesToolLocalShell
+	*ResponsesToolShell
+	*ResponsesToolApplyPatch
 	*ResponsesToolCustom
 	*ResponsesToolWebSearchPreview
 	*ResponsesToolToolSearch
@@ -1933,6 +1937,14 @@ func (t ResponsesTool) MarshalJSON() ([]byte, error) {
 	case ResponsesToolTypeLocalShell:
 		if t.ResponsesToolLocalShell != nil {
 			typeBytes, err = MarshalSorted(t.ResponsesToolLocalShell)
+		}
+	case ResponsesToolTypeShell:
+		if t.ResponsesToolShell != nil {
+			typeBytes, err = MarshalSorted(t.ResponsesToolShell)
+		}
+	case ResponsesToolTypeApplyPatch:
+		if t.ResponsesToolApplyPatch != nil {
+			typeBytes, err = MarshalSorted(t.ResponsesToolApplyPatch)
 		}
 	case ResponsesToolTypeCustom:
 		if t.ResponsesToolCustom != nil {
@@ -2104,6 +2116,20 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		t.ResponsesToolLocalShell = &localShellTool
+
+	case ResponsesToolTypeShell:
+		var shellTool ResponsesToolShell
+		if err := Unmarshal(data, &shellTool); err != nil {
+			return err
+		}
+		t.ResponsesToolShell = &shellTool
+
+	case ResponsesToolTypeApplyPatch:
+		var applyPatchTool ResponsesToolApplyPatch
+		if err := Unmarshal(data, &applyPatchTool); err != nil {
+			return err
+		}
+		t.ResponsesToolApplyPatch = &applyPatchTool
 
 	case ResponsesToolTypeCustom:
 		var customTool ResponsesToolCustom
@@ -2532,6 +2558,17 @@ type ResponsesToolImageGenerationInputImageMask struct {
 // ResponsesToolLocalShell represents a tool local shell
 type ResponsesToolLocalShell struct {
 	// No unique fields needed since Type is now in the top-level struct
+}
+
+// ResponsesToolShell represents OpenAI's shell tool. Environment is intentionally
+// provider-shaped because OpenAI supports both local and container environments.
+type ResponsesToolShell struct {
+	Environment interface{} `json:"environment,omitempty"`
+}
+
+// ResponsesToolApplyPatch represents OpenAI's apply_patch tool.
+type ResponsesToolApplyPatch struct {
+	// No unique fields needed since Type is now in the top-level struct.
 }
 
 // ResponsesToolCustom represents a custom tool

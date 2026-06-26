@@ -812,16 +812,17 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	}
 }
 
-func TestWriteSSEStreamCancelsOnBodyStreamClose(t *testing.T) {
+func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{Adapter: stogas.DefaultAdapter{}}
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, nil, stream, true, false, func() {
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
 		once.Do(func() { close(cancelled) })
 	})
 
@@ -835,8 +836,207 @@ func TestWriteSSEStreamCancelsOnBodyStreamClose(t *testing.T) {
 
 	select {
 	case <-cancelled:
+		t.Fatal("body stream close must not cancel upstream before final usage can be drained")
+	default:
+	}
+
+	stream <- &schemas.BifrostStreamChunk{
+		BifrostChatResponse: &schemas.BifrostChatResponse{
+			ID:     "chatcmpl_final_usage",
+			Object: "chat.completion.chunk",
+			Model:  "gpt-4o-mini",
+			Usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     17,
+				CompletionTokens: 23,
+				TotalTokens:      40,
+			},
+		},
+	}
+	close(stream)
+
+	select {
+	case <-cancelled:
 	case <-time.After(time.Second):
-		t.Fatal("expected body stream close to cancel upstream stream promptly")
+		t.Fatal("expected upstream cancellation after stream drain completes")
+	}
+	signals, ok := state.Signals.(*stogas.StandardSignals)
+	if !ok || signals.PromptTokens() != 17 || signals.CompletionTokens() != 23 {
+		t.Fatalf("expected final usage to be ingested after client disconnect, got %#v", state.Signals)
+	}
+}
+
+func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer bifrostCancel()
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{Adapter: stogas.DefaultAdapter{}}
+	cancelled := make(chan struct{})
+	var once sync.Once
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+		once.Do(func() { close(cancelled) })
+	})
+
+	closer, ok := ctx.Response.BodyStream().(io.Closer)
+	if !ok {
+		t.Fatal("expected response body stream to be closeable")
+	}
+
+	firstSent := make(chan struct{})
+	go func() {
+		stream <- &schemas.BifrostStreamChunk{
+			BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID:      "chatcmpl_first",
+				Object:  "chat.completion.chunk",
+				Model:   "gpt-4o-mini",
+				Choices: []schemas.BifrostResponseChoice{},
+			},
+		}
+		close(firstSent)
+	}()
+	select {
+	case <-firstSent:
+	case <-time.After(time.Second):
+		t.Fatal("timed out sending first stream chunk")
+	}
+
+	secondSent := make(chan struct{})
+	go func() {
+		stream <- &schemas.BifrostStreamChunk{
+			BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID:      "chatcmpl_second",
+				Object:  "chat.completion.chunk",
+				Model:   "gpt-4o-mini",
+				Choices: []schemas.BifrostResponseChoice{},
+			},
+		}
+		close(secondSent)
+	}()
+	select {
+	case <-secondSent:
+	case <-time.After(time.Second):
+		t.Fatal("timed out sending second stream chunk")
+	}
+
+	if err := closer.Close(); err != nil {
+		t.Fatalf("closing body stream failed: %v", err)
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("blocked SSE send close must not cancel upstream before final usage can be drained")
+	default:
+	}
+
+	select {
+	case stream <- &schemas.BifrostStreamChunk{
+		BifrostChatResponse: &schemas.BifrostChatResponse{
+			ID:     "chatcmpl_final_usage",
+			Object: "chat.completion.chunk",
+			Model:  "gpt-4o-mini",
+			Usage: &schemas.BifrostLLMUsage{
+				PromptTokens:     31,
+				CompletionTokens: 37,
+				TotalTokens:      68,
+			},
+		},
+	}:
+	case <-time.After(time.Second):
+		t.Fatal("stream goroutine stopped draining after blocked SSE send close")
+	}
+	close(stream)
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("expected upstream cancellation after stream drain completes")
+	}
+	signals, ok := state.Signals.(*stogas.StandardSignals)
+	if !ok || signals.PromptTokens() != 31 || signals.CompletionTokens() != 37 {
+		t.Fatalf("expected final usage to be ingested after blocked send close, got %#v", state.Signals)
+	}
+}
+
+func TestWriteSSEStreamTimesOutIdleChatStream(t *testing.T) {
+	previousTimeout := chatStreamIdleTimeout
+	chatStreamIdleTimeout = 10 * time.Millisecond
+	defer func() { chatStreamIdleTimeout = previousTimeout }()
+
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer bifrostCancel()
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+	cancelled := make(chan struct{})
+	var once sync.Once
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+		once.Do(func() { close(cancelled) })
+	})
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("expected idle chat stream timeout to cancel upstream")
+	}
+	payload := requireSSEErrorPayload(t, body)
+	if payload["type"] != schemas.RequestTimedOut {
+		t.Fatalf("expected request_timed_out stream error, got %#v in %q", payload, body)
+	}
+	if payload["message"] != "Upstream request timed out" {
+		t.Fatalf("expected sanitized timeout message, got %#v", payload)
+	}
+	if state.BifrostError == nil || state.BifrostError.Type == nil || *state.BifrostError.Type != schemas.RequestTimedOut {
+		t.Fatalf("expected idle timeout to mark request state for billing/logging, got %#v", state.BifrostError)
+	}
+}
+
+func TestWriteSSEStreamDoesNotApplyChatIdleTimeoutToResponses(t *testing.T) {
+	previousTimeout := chatStreamIdleTimeout
+	chatStreamIdleTimeout = 10 * time.Millisecond
+	defer func() { chatStreamIdleTimeout = previousTimeout }()
+
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer bifrostCancel()
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteResponses}}
+	cancelled := make(chan struct{})
+	var once sync.Once
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+		once.Do(func() { close(cancelled) })
+	})
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		stream <- &schemas.BifrostStreamChunk{
+			BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID:      "responses_quiet_stream_allowed",
+				Object:  "chat.completion.chunk",
+				Model:   "gpt-5.5",
+				Choices: []schemas.BifrostResponseChoice{},
+			},
+		}
+		close(stream)
+	}()
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("expected stream completion to cancel upstream")
+	}
+	if strings.Contains(body, schemas.RequestTimedOut) {
+		t.Fatalf("Responses streams must not inherit chat idle timeout, got %q", body)
+	}
+	payload := requireSSEDataPayload(t, body, "responses_quiet_stream_allowed")
+	if payload["id"] != "responses_quiet_stream_allowed" {
+		t.Fatalf("expected delayed Responses-route stream chunk, got %#v", payload)
 	}
 }
 
@@ -884,6 +1084,29 @@ func requireSSEDataPayload(t *testing.T, body string, id string) map[string]any 
 	}
 
 	t.Fatalf("expected SSE data frame with id %q, got %q", id, body)
+	return nil
+}
+
+func requireSSEErrorPayload(t *testing.T, body string) map[string]any {
+	t.Helper()
+
+	for _, frame := range strings.Split(body, "\n\n") {
+		data, ok := strings.CutPrefix(strings.TrimSpace(frame), "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(data), &payload); err != nil {
+			t.Fatalf("failed to parse SSE JSON frame %q: %v", frame, err)
+		}
+		errorObject, ok := payload["error"].(map[string]any)
+		if ok {
+			return errorObject
+		}
+	}
+
+	t.Fatalf("expected SSE error frame, got %q", body)
 	return nil
 }
 

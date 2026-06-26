@@ -106,13 +106,11 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 			fmt.Printf("stogas final price calculation failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
 		}
 	}
-	metrics := gatewaybilling.UsageMetrics(state.Response)
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms: state.FinalCostUSDAtoms,
 		Authorization:      state.Authorization,
 		Error:              state.BifrostError,
-		Metrics:            metrics,
-		Model:              state.Model,
+		Metrics:            pricingMetricsForState(state),
 		RequestType:        state.RequestType,
 		Response:           state.Response,
 		StartedAt:          state.StartedAt,
@@ -120,6 +118,44 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, event); err != nil {
 		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
 	}
+}
+
+func pricingMetricsForState(state *State) map[string]any {
+	if state == nil {
+		return map[string]any{"pricing": map[string]any{}}
+	}
+	basis := "metered_usage"
+	switch {
+	case state.Signals == nil && state.BifrostError != nil && gatewaybilling.ProviderErrorIsInsured(state.BifrostError):
+		basis = "insured_no_usage"
+	case state.Signals == nil && state.BifrostError != nil:
+		basis = "authorized_hold_capture"
+	case state.Signals == nil:
+		basis = "zero_no_usage"
+	}
+	return map[string]any{
+		"pricing": map[string]any{
+			"basis":                basis,
+			"hold_meters":          meterMetrics(state.Hold.Meters),
+			"hold_usd_atoms":       state.Hold.MaxUSDAtoms,
+			"final_meters":         meterMetrics(state.FinalMeters),
+			"total_cost_usd_atoms": state.FinalCostUSDAtoms,
+		},
+	}
+}
+
+func meterMetrics(meters []catalog.MeterEstimate) []map[string]any {
+	out := make([]map[string]any, 0, len(meters))
+	for _, meter := range meters {
+		out = append(out, map[string]any{
+			"meter_key":        meter.MeterKey,
+			"rate_key":         meter.RateKey,
+			"quantity":         meter.Quantity,
+			"amount_usd_atoms": meter.AmountUSDAtoms,
+			"hold_required":    meter.HoldRequired,
+		})
+	}
+	return out
 }
 
 func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, requestID string, hold HoldEstimate, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {

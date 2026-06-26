@@ -24,6 +24,8 @@ const (
 	chatRequestLifetime = 10 * time.Minute
 )
 
+var chatStreamIdleTimeout = 2 * time.Minute
+
 func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := requestLifetime(resolution)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
@@ -73,6 +75,18 @@ func requestLifetime(resolution *catalog.ResolvedRequest) time.Duration {
 		return billing.GatewayRequestLifetime
 	default:
 		return billing.GatewayRequestLifetime
+	}
+}
+
+func streamIdleTimeout(state *stogas.State) time.Duration {
+	if state == nil || state.Resolution == nil {
+		return 0
+	}
+	switch state.Resolution.Route {
+	case catalog.RouteChat:
+		return chatStreamIdleTimeout
+	default:
+		return 0
 	}
 }
 

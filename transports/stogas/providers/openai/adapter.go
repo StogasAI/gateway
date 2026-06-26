@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bytedance/sonic"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/providers"
 )
@@ -172,14 +173,15 @@ func validateChatSearchModelWebSearchOptions(req PolicyRequest) error {
 func extraResponsesHostedToolHoldMeters(req PolicyRequest, outputTokenLimit int, inputTokenLimit int) []providers.MeterEstimate {
 	meters := []providers.MeterEstimate{}
 	quantity := responsesHostedToolHoldQuantity(req)
-	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
+	searchKind := responsesSearchKind(req)
+	if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, true, true)
 	}
-	if webSearchContentTokensBilledAtModelRates(req) && req.Deployment.ContextWindowTokens > 0 {
+	if webSearchContentTokensBilledAtModelRatesForKind(req, searchKind) && req.Deployment.ContextWindowTokens > 0 {
 		remainingInputTokens := req.Deployment.ContextWindowTokens - outputTokenLimit - inputTokenLimit
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, remainingInputTokens, true, true)
 	}
-	if meterKey := responsesSearchMeter(req); meterKey != "" {
+	if meterKey := responsesSearchMeterForKind(searchKind); meterKey != "" {
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, true)
 	}
 	return meters
@@ -191,10 +193,11 @@ func extraResponsesHostedToolSettlementMeters(req PolicyRequest) []providers.Met
 	if quantity <= 0 {
 		return meters
 	}
-	if fixedContentTokens := webSearchFixedContentTokens(req.Deployment.Model, req.ToolTypes); fixedContentTokens > 0 {
+	searchKind := responsesSearchKind(req)
+	if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, false, true)
 	}
-	if meterKey := responsesSearchMeter(req); meterKey != "" {
+	if meterKey := responsesSearchMeterForKind(searchKind); meterKey != "" {
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, false)
 	}
 	return meters
@@ -228,7 +231,9 @@ func validateChatInput(raw json.RawMessage) error {
 func validateResponsesInput(raw json.RawMessage) error {
 	return walkRawJSON(raw, func(object map[string]json.RawMessage) error {
 		switch rawStringField(object, "type") {
-		case "input_image", "input_audio", "input_file":
+		case "input_image", "input_audio":
+			return providers.ErrUnsupportedInput
+		case "input_file":
 			return providers.ErrUnsupportedInput
 		}
 		return nil
@@ -271,12 +276,33 @@ func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) err
 func validateTool(route Route, tool map[string]json.RawMessage) error {
 	toolType := rawStringField(tool, "type")
 	if route == RouteResponses {
-		switch {
-		case toolType == "":
+		raw, err := sonic.Marshal(tool)
+		if err != nil {
 			return providers.ErrInvalidProviderToolSpec
-		case toolType == "function":
+		}
+		var responsesTool schemas.ResponsesTool
+		if err := sonic.Unmarshal(raw, &responsesTool); err != nil {
+			return providers.ErrInvalidProviderToolSpec
+		}
+		switch responsesTool.Type {
+		case schemas.ResponsesToolTypeFunction,
+			schemas.ResponsesToolTypeCustom,
+			schemas.ResponsesToolTypeLocalShell,
+			schemas.ResponsesToolTypeApplyPatch,
+			schemas.ResponsesToolTypeWebSearch,
+			schemas.ResponsesToolTypeWebSearchPreview:
 			return nil
-		case webSearchToolKind(toolType) != "":
+		case schemas.ResponsesToolTypeShell:
+			return validateShellTool(tool)
+		default:
+			return providers.ErrUnsupportedTool
+		}
+	}
+	if route == RouteChat {
+		switch toolType {
+		case "":
+			return providers.ErrInvalidProviderToolSpec
+		case "function", "custom":
 			return nil
 		default:
 			return providers.ErrUnsupportedTool
@@ -289,8 +315,6 @@ func validateTool(route Route, tool map[string]json.RawMessage) error {
 		return nil
 	case toolType == "shell":
 		return validateShellTool(tool)
-	case route == RouteResponses && webSearchToolKind(toolType) != "":
-		return nil
 	default:
 		return providers.ErrUnsupportedTool
 	}
@@ -347,6 +371,21 @@ func chatSearchMeter(ctx PolicyRequest) (string, string) {
 }
 
 func responsesSearchMeter(ctx PolicyRequest) string {
+	return responsesSearchMeterForKind(responsesSearchKind(ctx))
+}
+
+func responsesSearchMeterForKind(kind string) string {
+	switch kind {
+	case "web_search_preview":
+		return MeterOpenAIResponsesWebSearchPreviewCalls
+	case "web_search":
+		return MeterOpenAIResponsesWebSearchCalls
+	default:
+		return ""
+	}
+}
+
+func responsesSearchKind(ctx PolicyRequest) string {
 	if ctx.Route != RouteResponses {
 		return ""
 	}
@@ -354,28 +393,39 @@ func responsesSearchMeter(ctx PolicyRequest) string {
 	usesPreview := usesWebSearchKind(ctx.ToolTypes, "web_search_preview")
 	switch {
 	case usesWebSearch && usesPreview:
-		return higherCallRateMeter(ctx.Deployment.Pricing, MeterOpenAIResponsesWebSearchCalls, MeterOpenAIResponsesWebSearchPreviewCalls)
+		return higherCostSearchKind(ctx)
 	case usesPreview:
-		return MeterOpenAIResponsesWebSearchPreviewCalls
+		return "web_search_preview"
 	case usesWebSearch:
-		return MeterOpenAIResponsesWebSearchCalls
+		return "web_search"
 	default:
 		return ""
 	}
 }
 
 func webSearchContentTokensBilledAtModelRates(ctx PolicyRequest) bool {
+	return webSearchContentTokensBilledAtModelRatesForKind(ctx, responsesSearchKind(ctx))
+}
+
+func webSearchContentTokensBilledAtModelRatesForKind(ctx PolicyRequest, kind string) bool {
 	if ctx.Route != RouteResponses {
 		return false
 	}
-	if usesWebSearchKind(ctx.ToolTypes, "web_search") && webSearchFixedContentTokens(ctx.Deployment.Model, ctx.ToolTypes) == 0 {
+	if kind == "web_search" && webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind) == 0 {
 		return true
 	}
-	return usesWebSearchKind(ctx.ToolTypes, "web_search_preview") && ctx.Deployment.ReasoningSupported
+	return kind == "web_search_preview" && ctx.Deployment.ReasoningSupported
 }
 
 func webSearchFixedContentTokens(model string, toolTypes []string) int {
 	if !usesWebSearchKind(toolTypes, "web_search") {
+		return 0
+	}
+	return webSearchFixedContentTokensForKind(model, "web_search")
+}
+
+func webSearchFixedContentTokensForKind(model string, kind string) int {
+	if kind != "web_search" {
 		return 0
 	}
 	normalized := strings.ToLower(strings.TrimSpace(model))
@@ -387,23 +437,41 @@ func webSearchFixedContentTokens(model string, toolTypes []string) int {
 
 func usesWebSearchKind(toolTypes []string, kind string) bool {
 	for _, toolType := range toolTypes {
-		if webSearchToolKind(toolType) == kind {
+		if strings.EqualFold(strings.TrimSpace(toolType), kind) {
 			return true
 		}
 	}
 	return false
 }
 
-func webSearchToolKind(toolType string) string {
-	normalized := strings.ToLower(strings.TrimSpace(toolType))
-	switch {
-	case normalized == "web_search" || strings.HasPrefix(normalized, "web_search_") && !strings.HasPrefix(normalized, "web_search_preview"):
-		return "web_search"
-	case normalized == "web_search_preview" || strings.HasPrefix(normalized, "web_search_preview_"):
+func higherCostSearchKind(ctx PolicyRequest) string {
+	webSearchCost := searchKindEstimatedExtraCost(ctx, "web_search")
+	previewCost := searchKindEstimatedExtraCost(ctx, "web_search_preview")
+	if previewCost != nil && (webSearchCost == nil || previewCost.Cmp(webSearchCost) >= 0) {
 		return "web_search_preview"
-	default:
-		return ""
 	}
+	if webSearchCost != nil {
+		return "web_search"
+	}
+	return ""
+}
+
+func searchKindEstimatedExtraCost(ctx PolicyRequest, kind string) *big.Int {
+	meterKey := responsesSearchMeterForKind(kind)
+	if meterKey == "" {
+		return nil
+	}
+	call := callRate(ctx.Deployment.Pricing, meterKey)
+	if call == nil {
+		return nil
+	}
+	total := billing.CostPerThousand(searchCallQuantity, call)
+	if fixedContentTokens := webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind); fixedContentTokens > 0 {
+		if _, inputRate, ok := billing.PricingRate(ctx.Deployment.Pricing, billing.MeterInputTokens, true); ok {
+			total = new(big.Int).Add(total, billing.CostPerMillion(fixedContentTokens, inputRate))
+		}
+	}
+	return total
 }
 
 func searchContextRateKey(pricing providers.Pricing, meterKey string, searchContextSize string) string {
@@ -435,18 +503,6 @@ func searchContextRateKey(pricing providers.Pricing, meterKey string, searchCont
 		return RatePerThousandSearchContextMediumCalls
 	}
 	return RatePerThousandSearchContextLowCalls
-}
-
-func higherCallRateMeter(pricing providers.Pricing, first string, second string) string {
-	firstRate := callRate(pricing, first)
-	secondRate := callRate(pricing, second)
-	if secondRate != nil && (firstRate == nil || secondRate.Cmp(firstRate) >= 0) {
-		return second
-	}
-	if firstRate != nil {
-		return first
-	}
-	return ""
 }
 
 func callRate(pricing providers.Pricing, meterKey string) *big.Int {

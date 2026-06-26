@@ -42,13 +42,13 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 		catalog.Graph.Deployments[id] = deployment
 	}
 	snap := &snapshot{
-		graph:                    catalog.Graph,
-		providerNativeModelSlugs: catalog.Indexes.ProviderNativeModelSlugs,
-		raw:                      append([]byte(nil), data...),
-		responseMetadataFields:   responseMetadataFields(catalog.Graph),
+		graph:                       catalog.Graph,
+		providerEndpointRequestSlugs: catalog.Indexes.ProviderEndpointRequestSlugs,
+		raw:                         append([]byte(nil), data...),
+		responseMetadataFields:      responseMetadataFields(catalog.Graph),
 	}
-	if snap.providerNativeModelSlugs == nil {
-		snap.providerNativeModelSlugs = map[string]string{}
+	if snap.providerEndpointRequestSlugs == nil {
+		snap.providerEndpointRequestSlugs = map[string]string{}
 	}
 	return snap, nil
 }

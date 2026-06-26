@@ -8,6 +8,7 @@ import {
 	statSync,
 	writeFileSync
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
@@ -17,8 +18,22 @@ const compiledDir = join(root, '..', 'generated');
 const jsonPath = join(compiledDir, 'catalog.json');
 const gzipPath = join(compiledDir, 'catalog.json.gz');
 const tempBuildDir = join(root, '.tmp-catalog-build');
-const fallbackCue = ['go', 'run', 'cuelang.org/go/cmd/cue@v0.16.1'];
+const cueVersion = 'v0.16.1';
+const toolCacheDir = join(resolveToolCacheRoot(), 'cue', cueVersion);
+const cachedCue = join(toolCacheDir, process.platform === 'win32' ? 'cue.exe' : 'cue');
 const args = new Set(process.argv.slice(2));
+
+function resolveToolCacheRoot() {
+	const configured = process.env.STOGAS_CATALOG_TOOL_CACHE_DIR?.trim();
+	if (configured) return configured;
+	const xdgCache = process.env.XDG_CACHE_HOME?.trim();
+	if (xdgCache) return join(xdgCache, 'stogas', 'catalog-tools');
+	const home = homedir();
+	if (home) return join(home, '.cache', 'stogas', 'catalog-tools');
+	throw new Error(
+		'Unable to resolve CUE tool cache directory. Set STOGAS_CATALOG_TOOL_CACHE_DIR or HOME.'
+	);
+}
 
 function walkFiles(dir, predicate) {
 	const files = [];
@@ -154,8 +169,15 @@ async function commandWorks(command) {
 async function resolveCueCommand() {
 	const configured = process.env.CUE_BIN?.trim();
 	if (configured) return configured.split(/\s+/);
+	if (existsSync(cachedCue) && (await commandWorks([cachedCue, 'version']))) return [cachedCue];
 	if (await commandWorks(['cue', 'version'])) return ['cue'];
-	if (await commandWorks(['go', 'version'])) return fallbackCue;
+	if (await commandWorks(['go', 'version'])) {
+		mkdirSync(toolCacheDir, { recursive: true });
+		await run(['go', 'install', `cuelang.org/go/cmd/cue@${cueVersion}`], {
+			env: { GOBIN: toolCacheDir }
+		});
+		return [cachedCue];
+	}
 	throw new Error(
 		'CUE is required. Install cue, install Go, or set CUE_BIN to a compatible cue command.'
 	);
@@ -220,7 +242,7 @@ function rebuildIndexes(catalog) {
 	catalog.indexes = {
 		author_slugs: slugIndex(graph.authors, (author) => [...(author.authorSlugs ?? [])]),
 		provider_slugs: slugIndex(graph.providers, (provider) => [...(provider.providerSlugs ?? [])]),
-		provider_native_model_slugs: providerNativeModelSlugs(graph),
+		provider_endpoint_request_slugs: providerEndpointRequestSlugs(graph),
 		provider_endpoint_deployments: providerEndpointDeployments(graph),
 		stogas_endpoint_provider_endpoints: stogasEndpointProviderEndpoints(graph)
 	};
@@ -236,7 +258,7 @@ function slugIndex(nodes, slugsForNode) {
 	return index;
 }
 
-function providerNativeModelSlugs(graph) {
+function providerEndpointRequestSlugs(graph) {
 	const index = {};
 	for (const [endpointId] of Object.entries(graph.providerEndpoints ?? {})) {
 		for (const deploymentId of deploymentIdsForProviderEndpoint(graph, endpointId)) {
