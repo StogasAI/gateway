@@ -23,6 +23,7 @@ type Deployment struct {
 	MaxOutputTokens     int
 	Pricing             Pricing
 	ReasoningSupported  bool
+	RegionID            string
 	ServiceTier         string
 }
 
@@ -31,7 +32,7 @@ type MeterEstimate = billing.MeterEstimate
 
 type snapshot struct {
 	graph                    compiledGraph
-	providerNativeModelSlugs map[string]string
+	providerEndpointRequestSlugs map[string]string
 	responseMetadataFields   map[string]struct{}
 	raw                      []byte
 }
@@ -42,7 +43,7 @@ type compiledCatalog struct {
 }
 
 type compiledIndexes struct {
-	ProviderNativeModelSlugs map[string]string `json:"provider_native_model_slugs"`
+	ProviderEndpointRequestSlugs map[string]string `json:"provider_endpoint_request_slugs"`
 }
 
 type compiledGraph struct {

@@ -16,11 +16,16 @@ func TestValidateToolsAllowsOnlyExplicitNoExtraBillingTools(t *testing.T) {
 		body  string
 	}{
 		{"chat function", RouteChat, `{"tools":[{"type":"function","function":{"name":"lookup"}}]}`},
-		{"chat local shell alias", RouteChat, `{"tools":[{"type":"local_shell"}]}`},
-		{"chat apply patch", RouteChat, `{"tools":[{"type":"apply_patch"}]}`},
+		{"chat custom", RouteChat, `{"tools":[{"type":"custom","name":"lookup"}]}`},
 		{"responses function", RouteResponses, `{"tools":[{"type":"function","name":"lookup"}]}`},
+		{"responses custom", RouteResponses, `{"tools":[{"type":"custom","name":"lookup"}]}`},
+		{"responses local shell", RouteResponses, `{"tools":[{"type":"local_shell"}]}`},
+		{"responses apply patch", RouteResponses, `{"tools":[{"type":"apply_patch"}]}`},
+		{"responses local shell tool", RouteResponses, `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`},
 		{"responses web search", RouteResponses, `{"tools":[{"type":"web_search"}]}`},
+		{"responses compact versioned web search", RouteResponses, `{"tools":[{"type":"web_search_20260209"}]}`},
 		{"responses versioned web search", RouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
+		{"responses compact preview web search", RouteResponses, `{"tools":[{"type":"web_search_preview_20250311"}]}`},
 		{"responses preview web search", RouteResponses, `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -38,6 +43,9 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 		err  error
 	}{
 		{"missing type", `{"tools":[{"function":{"name":"lookup"}}]}`, providers.ErrInvalidProviderToolSpec},
+		{"chat local shell alias", `{"tools":[{"type":"local_shell"}]}`, providers.ErrUnsupportedTool},
+		{"chat apply patch", `{"tools":[{"type":"apply_patch"}]}`, providers.ErrUnsupportedTool},
+		{"chat shell local", `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`, providers.ErrUnsupportedTool},
 		{"chat web search", `{"tools":[{"type":"web_search"}]}`, providers.ErrUnsupportedTool},
 		{"chat preview web search", `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`, providers.ErrUnsupportedTool},
 		{"file search", `{"tools":[{"type":"file_search"}]}`, providers.ErrUnsupportedTool},
@@ -48,9 +56,9 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 		{"computer use hyphen", `{"tools":[{"type":"computer-use-preview"}]}`, providers.ErrUnsupportedTool},
 		{"computer use underscore", `{"tools":[{"type":"computer_use_preview"}]}`, providers.ErrUnsupportedTool},
 		{"remote mcp", `{"tools":[{"type":"mcp","server_label":"docs"}]}`, providers.ErrUnsupportedTool},
-		{"shell missing environment", `{"tools":[{"type":"shell"}]}`, providers.ErrProviderContainers},
-		{"shell container auto", `{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, providers.ErrProviderContainers},
-		{"shell container reference", `{"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`, providers.ErrProviderContainers},
+		{"shell missing environment", `{"tools":[{"type":"shell"}]}`, providers.ErrUnsupportedTool},
+		{"shell container auto", `{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, providers.ErrUnsupportedTool},
+		{"shell container reference", `{"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`, providers.ErrUnsupportedTool},
 		{"shell local extra key", `{"tools":[{"type":"shell","environment":{"type":"local"},"max_uses":2}]}`, providers.ErrUnsupportedTool},
 		{"shell local environment extra key", `{"tools":[{"type":"shell","environment":{"type":"local","container_id":"cntr_123"}}]}`, providers.ErrUnsupportedTool},
 	} {
@@ -67,15 +75,20 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 	}
 }
 
-func TestValidateResponsesToolsRejectsUnpricedInternalTools(t *testing.T) {
-	for _, body := range []string{
-		`{"tools":[{"type":"local_shell"}]}`,
-		`{"tools":[{"type":"apply_patch"}]}`,
-		`{"tools":[{"type":"shell","environment":{"type":"local"}}]}`,
+func TestValidateResponsesToolsRejectsContainerShellTools(t *testing.T) {
+	for _, item := range []struct {
+		body string
+		err  error
+	}{
+		{`{"tools":[{"type":"shell"}]}`, providers.ErrProviderContainers},
+		{`{"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, providers.ErrProviderContainers},
+		{`{"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`, providers.ErrProviderContainers},
+		{`{"tools":[{"type":"shell","environment":{"type":"local","container_id":"cntr_123"}}]}`, providers.ErrUnsupportedTool},
+		{`{"tools":[{"type":"shell","environment":{"type":"local"},"max_uses":2}]}`, providers.ErrUnsupportedTool},
 	} {
-		err := ValidateRequest(toolProfileRequest(t, RouteResponses, body))
-		if !errors.Is(err, providers.ErrUnsupportedTool) {
-			t.Fatalf("expected Responses internal tool rejection for %s, got %v", body, err)
+		err := ValidateRequest(toolProfileRequest(t, RouteResponses, item.body))
+		if !errors.Is(err, item.err) {
+			t.Fatalf("expected Responses shell tool rejection %v for %s, got %v", item.err, item.body, err)
 		}
 	}
 }
@@ -97,6 +110,7 @@ func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
 		{"chat image", RouteChat, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`},
 		{"chat audio", RouteChat, `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`},
 		{"responses file id", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`},
+		{"responses file url", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/file.pdf"}]}]}`},
 		{"responses inline file", RouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
 		{"responses image", RouteResponses, `{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`},
 		{"responses audio", RouteResponses, `{"input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`},
@@ -151,7 +165,7 @@ func TestWebSearchPricingRules(t *testing.T) {
 	if got := webSearchFixedContentTokens("gpt-4o-mini", []string{"web_search"}); got != 8000 {
 		t.Fatalf("expected fixed non-preview content tokens, got %d", got)
 	}
-	if got := webSearchFixedContentTokens("gpt-4.1-mini-2026-01-01", []string{"web_search_2026_01_01"}); got != 8000 {
+	if got := webSearchFixedContentTokens("gpt-4.1-mini-2026-01-01", []string{"web_search"}); got != 8000 {
 		t.Fatalf("expected fixed versioned non-preview content tokens, got %d", got)
 	}
 	if got := webSearchFixedContentTokens("gpt-4o-mini-search-preview", []string{"web_search"}); got != 0 {
@@ -185,7 +199,7 @@ func TestWebSearchPricingRules(t *testing.T) {
 			MeterOpenAIResponsesWebSearchCalls:        {providers.RatePerThousandCalls: "100"},
 			MeterOpenAIResponsesWebSearchPreviewCalls: {providers.RatePerThousandCalls: "250"},
 		}},
-		ToolTypes: []string{"web_search", "web_search_preview_2026_01_01"},
+		ToolTypes: []string{"web_search", "web_search_preview"},
 	}
 	if got := responsesSearchMeter(ambiguousSearch); got != MeterOpenAIResponsesWebSearchPreviewCalls {
 		t.Fatalf("expected ambiguous Responses web search tools to choose costlier meter, got %q", got)
@@ -229,6 +243,66 @@ func TestResponsesWebSearchSettlementUsesActualCalls(t *testing.T) {
 	}
 	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "2" || meters[0].AmountUSDAtoms != "2" || meters[0].HoldRequired {
 		t.Fatalf("expected settlement quantity 2 charged at call rate, got %#v", meters[0])
+	}
+}
+
+func TestResponsesAmbiguousWebSearchUsesOneCostlierTool(t *testing.T) {
+	req := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{
+			Model: "gpt-4o-mini",
+			Pricing: providers.Pricing{
+				providers.MeterInputTokens:                  {providers.RatePerMillionTokens: "1000000"},
+				MeterOpenAIResponsesWebSearchCalls:        {providers.RatePerThousandCalls: "10000000000000000000"},
+				MeterOpenAIResponsesWebSearchPreviewCalls: {providers.RatePerThousandCalls: "25000000000000000000"},
+			},
+		},
+		ToolTypes: []string{"web_search", "web_search_preview"},
+		RawBody:   rawJSON(t, `{"max_tool_calls":2}`),
+	}
+	if got := responsesSearchMeter(req); got != MeterOpenAIResponsesWebSearchPreviewCalls {
+		t.Fatalf("expected ambiguous tools to choose preview call meter, got %q", got)
+	}
+	holdMeters := extraResponsesHostedToolHoldMeters(req, 0, 0)
+	if len(holdMeters) != 1 {
+		t.Fatalf("expected exactly one hold meter for costlier ambiguous tool, got %#v", holdMeters)
+	}
+	if holdMeters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewCalls || holdMeters[0].Quantity != "2" {
+		t.Fatalf("expected preview hold meter quantity 2, got %#v", holdMeters[0])
+	}
+
+	req.ActualWebSearchCalls = 1
+	settlementMeters := extraResponsesHostedToolSettlementMeters(req)
+	if len(settlementMeters) != 1 {
+		t.Fatalf("expected exactly one settlement meter for costlier ambiguous tool, got %#v", settlementMeters)
+	}
+	if settlementMeters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewCalls || settlementMeters[0].Quantity != "1" {
+		t.Fatalf("expected preview settlement meter quantity 1, got %#v", settlementMeters[0])
+	}
+}
+
+func TestResponsesNonPreviewWebSearchAddsFixedContentTokensOnlyWhenSelected(t *testing.T) {
+	req := PolicyRequest{
+		Route: RouteResponses,
+		Deployment: Deployment{
+			Model: "gpt-4o-mini",
+			Pricing: providers.Pricing{
+				providers.MeterInputTokens:           {providers.RatePerMillionTokens: "1000000"},
+				MeterOpenAIResponsesWebSearchCalls: {providers.RatePerThousandCalls: "10000000000000000000"},
+			},
+		},
+		ToolTypes:            []string{"web_search"},
+		ActualWebSearchCalls: 1,
+	}
+	meters := extraResponsesHostedToolSettlementMeters(req)
+	if len(meters) != 2 {
+		t.Fatalf("expected fixed content token meter plus call meter, got %#v", meters)
+	}
+	if meters[0].MeterKey != providers.MeterInputTokens || meters[0].Quantity != "8000" {
+		t.Fatalf("expected fixed 8000 search content tokens, got %#v", meters[0])
+	}
+	if meters[1].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[1].Quantity != "1" {
+		t.Fatalf("expected web_search call meter, got %#v", meters[1])
 	}
 }
 

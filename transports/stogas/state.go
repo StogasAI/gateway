@@ -28,6 +28,7 @@ type State struct {
 	Response          *schemas.BifrostResponse
 	BifrostError      *schemas.BifrostError
 	FinalCostUSDAtoms string
+	FinalMeters       []catalog.MeterEstimate
 
 	ClientRequestHeaders    map[string][]string
 	UpstreamRequestHeaders  map[string][]string

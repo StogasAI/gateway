@@ -1432,6 +1432,94 @@ func TestResponsesTool_MarshalUnmarshal_LocalShellTool(t *testing.T) {
 	})
 }
 
+func TestResponsesTool_MarshalUnmarshal_ShellTool(t *testing.T) {
+	jsonData := `{"type":"shell","environment":{"type":"local"}}`
+
+	t.Run("shell tool - marshal", func(t *testing.T) {
+		tool := schemas.ResponsesTool{
+			Type: schemas.ResponsesToolTypeShell,
+			ResponsesToolShell: &schemas.ResponsesToolShell{
+				Environment: map[string]interface{}{"type": "local"},
+			},
+		}
+
+		data, err := json.Marshal(tool)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var expected, actual map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &expected); err != nil {
+			t.Fatalf("failed to unmarshal expected JSON: %v", err)
+		}
+		if err := json.Unmarshal(data, &actual); err != nil {
+			t.Fatalf("failed to unmarshal actual JSON: %v", err)
+		}
+
+		if !mapsEqual(expected, actual) {
+			t.Errorf("marshaled JSON mismatch\nexpected: %s\nactual:   %s", jsonData, string(data))
+		}
+	})
+
+	t.Run("shell tool - unmarshal", func(t *testing.T) {
+		var tool schemas.ResponsesTool
+		if err := json.Unmarshal([]byte(jsonData), &tool); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if tool.Type != schemas.ResponsesToolTypeShell {
+			t.Errorf("type mismatch: expected %s, got %s", schemas.ResponsesToolTypeShell, tool.Type)
+		}
+
+		if tool.ResponsesToolShell == nil {
+			t.Fatal("expected ResponsesToolShell to be populated")
+		}
+	})
+}
+
+func TestResponsesTool_MarshalUnmarshal_ApplyPatchTool(t *testing.T) {
+	jsonData := `{"type":"apply_patch"}`
+
+	t.Run("apply patch tool - marshal", func(t *testing.T) {
+		tool := schemas.ResponsesTool{
+			Type:                    schemas.ResponsesToolTypeApplyPatch,
+			ResponsesToolApplyPatch: &schemas.ResponsesToolApplyPatch{},
+		}
+
+		data, err := json.Marshal(tool)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		var expected, actual map[string]interface{}
+		if err := json.Unmarshal([]byte(jsonData), &expected); err != nil {
+			t.Fatalf("failed to unmarshal expected JSON: %v", err)
+		}
+		if err := json.Unmarshal(data, &actual); err != nil {
+			t.Fatalf("failed to unmarshal actual JSON: %v", err)
+		}
+
+		if !mapsEqual(expected, actual) {
+			t.Errorf("marshaled JSON mismatch\nexpected: %s\nactual:   %s", jsonData, string(data))
+		}
+	})
+
+	t.Run("apply patch tool - unmarshal", func(t *testing.T) {
+		var tool schemas.ResponsesTool
+		if err := json.Unmarshal([]byte(jsonData), &tool); err != nil {
+			t.Fatalf("failed to unmarshal: %v", err)
+		}
+
+		if tool.Type != schemas.ResponsesToolTypeApplyPatch {
+			t.Errorf("type mismatch: expected %s, got %s", schemas.ResponsesToolTypeApplyPatch, tool.Type)
+		}
+
+		if tool.ResponsesToolApplyPatch == nil {
+			t.Fatal("expected ResponsesToolApplyPatch to be populated")
+		}
+	})
+}
+
 func TestResponsesTool_MarshalUnmarshal_CustomTool(t *testing.T) {
 	jsonData := `{"type":"custom","name":"custom_tool","description":"A custom tool"}`
 

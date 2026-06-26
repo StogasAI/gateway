@@ -38,7 +38,7 @@ compiled: {
 				}
 			}
 		}
-		provider_native_model_slugs: {
+		provider_endpoint_request_slugs: {
 		}
 		provider_endpoint_deployments: {
 		}

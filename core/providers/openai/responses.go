@@ -324,6 +324,8 @@ func (resp *OpenAIResponsesRequest) filterUnsupportedTools() {
 		schemas.ResponsesToolTypeCodeInterpreter:    true,
 		schemas.ResponsesToolTypeImageGeneration:    true,
 		schemas.ResponsesToolTypeLocalShell:         true,
+		schemas.ResponsesToolTypeShell:              true,
+		schemas.ResponsesToolTypeApplyPatch:         true,
 		schemas.ResponsesToolTypeCustom:             true,
 		schemas.ResponsesToolTypeWebSearchPreview:   true,
 		schemas.ResponsesToolTypeMemory:             true,

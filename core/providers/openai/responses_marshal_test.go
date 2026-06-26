@@ -797,6 +797,18 @@ func TestOpenAIResponsesRequest_MarshalJSON_DropsAnthropicOnlyToolTypes(t *testi
 				{
 					Type: schemas.ResponsesToolTypeToolSearch,
 				},
+				// Kept: shell local (OpenAI-native).
+				{
+					Type: schemas.ResponsesToolTypeShell,
+					ResponsesToolShell: &schemas.ResponsesToolShell{
+						Environment: map[string]interface{}{"type": "local"},
+					},
+				},
+				// Kept: apply_patch (OpenAI-native).
+				{
+					Type:                    schemas.ResponsesToolTypeApplyPatch,
+					ResponsesToolApplyPatch: &schemas.ResponsesToolApplyPatch{},
+				},
 			},
 		},
 	}
@@ -814,21 +826,21 @@ func TestOpenAIResponsesRequest_MarshalJSON_DropsAnthropicOnlyToolTypes(t *testi
 		}
 	}
 	// Kept types must still appear.
-	for _, kept := range []string{`"function"`, `"web_search"`, `"tool_search"`, `"keeper_func"`} {
+	for _, kept := range []string{`"function"`, `"web_search"`, `"tool_search"`, `"shell"`, `"apply_patch"`, `"keeper_func"`} {
 		if !strings.Contains(raw, kept) {
 			t.Errorf("supported tool %s should be preserved; raw=%s", kept, raw)
 		}
 	}
 
-	// Confirm the tools array is present and has exactly 3 entries (2 dropped of 5).
+	// Confirm the tools array is present and has exactly 5 entries (2 dropped of 7).
 	var decoded struct {
 		Tools []map[string]interface{} `json:"tools"`
 	}
 	if err := json.Unmarshal(jsonBytes, &decoded); err != nil {
 		t.Fatalf("decode failed: %v", err)
 	}
-	if len(decoded.Tools) != 3 {
-		t.Errorf("expected 3 tools after drop (function, web_search, tool_search), got %d; tools=%+v", len(decoded.Tools), decoded.Tools)
+	if len(decoded.Tools) != 5 {
+		t.Errorf("expected 5 tools after drop (function, web_search, tool_search, shell, apply_patch), got %d; tools=%+v", len(decoded.Tools), decoded.Tools)
 	}
 }
 

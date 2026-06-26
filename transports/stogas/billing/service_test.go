@@ -165,8 +165,10 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
 	event := tinybirdGatewayRequestEvent(RequestEvent{
 		Metrics: map[string]any{
-			"model":  "gpt-4o-mini",
-			"tokens": map[string]any{"prompt": 1, "completion": 2},
+			"pricing": map[string]any{
+				"basis":                "metered_usage",
+				"total_cost_usd_atoms": "123",
+			},
 		},
 		ProviderAttempts: []ProviderAttempt{{
 			IsBYOK:     false,
@@ -186,8 +188,15 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
 	var metrics map[string]any
-	if err := json.Unmarshal([]byte(event.Metrics), &metrics); err != nil || metrics["model"] != "gpt-4o-mini" {
+	if err := json.Unmarshal([]byte(event.Metrics), &metrics); err != nil {
 		t.Fatalf("metrics = %q, err=%v", event.Metrics, err)
+	}
+	pricing, ok := metrics["pricing"].(map[string]any)
+	if !ok || pricing["total_cost_usd_atoms"] != "123" {
+		t.Fatalf("metrics = %#v, want pricing bag", metrics)
+	}
+	if _, ok := metrics["tokens"]; ok {
+		t.Fatalf("metrics must not expose fixed usage token schema: %#v", metrics)
 	}
 }
 

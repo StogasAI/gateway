@@ -17,16 +17,18 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable   = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrRouteUnavailable   = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod  = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrFallbacksDisabled  = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Fallbacks are not supported"}
-	ErrParameterTooLarge  = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrUnsupportedTool    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas billing policy"}
+	ErrCatalogUnavailable    = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON           = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable   = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable      = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod     = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrFallbacksDisabled     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Fallbacks are not supported"}
+	ErrParameterTooLarge     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrUnsupportedTool       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas billing policy"}
+	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
 )
 
 type APIError struct {
@@ -86,6 +88,15 @@ type requestPricingContext struct {
 	RawBody             map[string]json.RawMessage
 	RawTools            []map[string]json.RawMessage
 	ToolTypes           []string
+}
+
+type ProviderRoutingPreference struct {
+	Only  []string
+	Order []string
+}
+
+func (p ProviderRoutingPreference) Empty() bool {
+	return len(p.Only) == 0 && len(p.Order) == 0
 }
 
 type requestWithSettableExtraParams interface {
@@ -201,6 +212,32 @@ func (r *ResolvedRequest) SanitizeClientMetadata() {
 	}
 }
 
+func (r *ResolvedRequest) SetUpstreamUser(user string) {
+	if r == nil {
+		return
+	}
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return
+	}
+	if r.chat != nil {
+		r.chat.ChatParameters.User = &user
+	}
+	if r.responses != nil {
+		r.responses.ResponsesParameters.User = &user
+	}
+}
+
+func (r *ResolvedRequest) RequireUpstreamUsage() {
+	if r == nil || r.chat == nil || !r.chat.IsStreamingRequested() {
+		return
+	}
+	if r.chat.ChatParameters.StreamOptions == nil {
+		r.chat.ChatParameters.StreamOptions = &schemas.ChatStreamOptions{}
+	}
+	r.chat.ChatParameters.StreamOptions.IncludeUsage = schemas.Ptr(true)
+}
+
 func (r *ResolvedRequest) SetProviderExtraParam(name string, value any) {
 	if r == nil {
 		return
@@ -310,7 +347,11 @@ func resolveOpenAIRequest(
 	if err := validateAllowedRequestFields(rawData, route); err != nil {
 		return nil, err
 	}
-	provider, ok, err := ProviderForRouteModel(route, requestedModel)
+	providerPreference, err := requestProviderPreference(rawData)
+	if err != nil {
+		return nil, err
+	}
+	provider, ok, err := ProviderForRouteModelRouting(route, requestedModel, providerPreference)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +362,14 @@ func resolveOpenAIRequest(
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel
-	deployment, ok := DeploymentForRoute(provider, model, route)
+	var requestedServiceTier *schemas.BifrostServiceTier
+	if serviceTier != nil && *serviceTier != nil {
+		requestedServiceTier = *serviceTier
+	}
+	if err := validateRequestedServiceTier(provider, requestedServiceTier); err != nil {
+		return nil, err
+	}
+	deployment, ok := DeploymentForRouteServiceTier(provider, model, route, requestedServiceTier)
 	if !ok {
 		return nil, ErrModelUnavailable
 	}
@@ -345,6 +393,104 @@ func resolveOpenAIRequest(
 	}
 	pricing := requestPricingContextForRaw(route, rawData)
 	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, len(body), pricing), nil
+}
+
+func validateRequestedServiceTier(provider schemas.ModelProvider, requested *schemas.BifrostServiceTier) error {
+	if requested == nil {
+		return nil
+	}
+	value := strings.ToLower(strings.TrimSpace(string(*requested)))
+	if value == "" {
+		return nil
+	}
+	switch provider {
+	case schemas.OpenAI:
+		switch value {
+		case "auto", "default", "flex", "priority":
+			return nil
+		case "scale":
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI scale service_tier is not supported by Stogas"}
+		default:
+			return ErrUnsupportedServiceTier
+		}
+	case schemas.Anthropic:
+		switch value {
+		case "auto", "priority", "default", "flex", "standard", "standard_only":
+			return nil
+		default:
+			return ErrUnsupportedServiceTier
+		}
+	default:
+		return ErrUnsupportedServiceTier
+	}
+}
+
+func requestProviderPreference(rawData map[string]json.RawMessage) (ProviderRoutingPreference, error) {
+	raw, ok := rawData["provider"]
+	if !ok {
+		return ProviderRoutingPreference{}, nil
+	}
+	var provider string
+	if err := sonic.Unmarshal(raw, &provider); err == nil {
+		provider = strings.TrimSpace(provider)
+		if provider == "" {
+			return ProviderRoutingPreference{}, providerPreferenceShapeError()
+		}
+		return ProviderRoutingPreference{Only: []string{provider}}, nil
+	}
+	var object map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &object); err != nil || object == nil {
+		return ProviderRoutingPreference{}, providerPreferenceShapeError()
+	}
+	for key := range object {
+		switch key {
+		case "only", "order":
+		default:
+			return ProviderRoutingPreference{}, providerPreferenceShapeError()
+		}
+	}
+	only, err := providerStringList(object["only"])
+	if err != nil {
+		return ProviderRoutingPreference{}, err
+	}
+	order, err := providerStringList(object["order"])
+	if err != nil {
+		return ProviderRoutingPreference{}, err
+	}
+	preference := ProviderRoutingPreference{Only: only, Order: order}
+	if preference.Empty() {
+		return ProviderRoutingPreference{}, providerPreferenceShapeError()
+	}
+	return preference, nil
+}
+
+func providerStringList(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var values []string
+	if err := sonic.Unmarshal(raw, &values); err != nil || len(values) == 0 {
+		return nil, providerPreferenceShapeError()
+	}
+	out := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		normalized := strings.TrimSpace(value)
+		if normalized == "" {
+			return nil, providerPreferenceShapeError()
+		}
+		key := strings.ToLower(normalized)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, normalized)
+	}
+	return out, nil
+}
+
+func providerPreferenceShapeError() APIError {
+	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "provider must be a non-empty string or an object with provider only/order lists"}
 }
 
 func resolvedRequest(
@@ -401,10 +547,21 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 		return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, ToolsParseFailed: true, RawBody: rawData}
 	}
 	toolTypes := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		toolType := rawStringField(tool, "type")
-		if toolType != "" {
-			toolTypes = append(toolTypes, toolType)
+	if route == RouteResponses {
+		var normalizedTools []schemas.ResponsesTool
+		if err := sonic.Unmarshal(rawTools, &normalizedTools); err == nil {
+			for _, tool := range normalizedTools {
+				if tool.Type != "" {
+					toolTypes = append(toolTypes, string(tool.Type))
+				}
+			}
+		}
+	} else {
+		for _, tool := range tools {
+			toolType := rawStringField(tool, "type")
+			if toolType != "" {
+				toolTypes = append(toolTypes, toolType)
+			}
 		}
 	}
 	return requestPricingContext{Route: route, HasWebSearchOptions: hasWebSearchOptions, SearchContextSize: searchContextSize, RawBody: rawData, RawTools: tools, ToolTypes: toolTypes}
@@ -506,6 +663,7 @@ func typedOpenAIRequestFields(route Route) map[string]bool {
 		return fields
 	}
 	fields = copyBoolMap(fields)
+	delete(fields, "cache_control")
 	delete(fields, "frequency_penalty")
 	delete(fields, "presence_penalty")
 	delete(fields, "prompt_cache_retention")

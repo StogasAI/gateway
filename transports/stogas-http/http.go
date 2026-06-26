@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"context"
+	"time"
 
 	"github.com/bytedance/sonic"
 	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
@@ -240,14 +241,53 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 		defer cancel()
 
 		metadata := newStreamMetadataAccumulator(bifrostCtx)
+		clientConnected := true
+		clientClosed := reader.closed()
+		idleTimeout := streamIdleTimeout(state)
+		var idleTimer *time.Timer
+		var idleC <-chan time.Time
+		if idleTimeout > 0 {
+			idleTimer = time.NewTimer(idleTimeout)
+			idleC = idleTimer.C
+			defer idleTimer.Stop()
+		}
+		resetIdleTimer := func() {
+			if idleTimer == nil {
+				return
+			}
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C:
+				default:
+				}
+			}
+			idleTimer.Reset(idleTimeout)
+		}
 
 		for {
 			var chunk *schemas.BifrostStreamChunk
 			select {
-			case <-reader.closed():
+			case <-clientClosed:
+				clientConnected = false
+				clientClosed = nil
+				continue
+			case <-idleC:
+				bifrostErr := streamIdleTimeoutError()
+				if state != nil {
+					state.BifrostError = bifrostErr
+				}
+				if clientConnected {
+					encoded, err := marshalPayload(bifrostErrorPayload(bifrostErr))
+					if err == nil {
+						_ = reader.sendEvent("", encoded)
+					}
+				}
 				return
 			case next, ok := <-stream:
 				if !ok {
+					if !clientConnected {
+						return
+					}
 					if meta := metadata.metadata(bifrostCtx); len(meta) > 0 {
 						encoded, err := marshalPayload(meta)
 						if err != nil || !reader.sendEvent("stogas.meta", encoded) {
@@ -263,6 +303,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				chunk = next
 			}
 
+			resetIdleTimer()
 			if chunk == nil {
 				continue
 			}
@@ -271,6 +312,9 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			}
 
 			if chunk.BifrostError != nil {
+				if !clientConnected {
+					return
+				}
 				payload := bifrostErrorPayload(chunk.BifrostError)
 				encoded, err := marshalPayload(payload)
 				if err != nil {
@@ -300,19 +344,40 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				continue
 			}
 
+			if !clientConnected {
+				continue
+			}
 			encoded, err := marshalPayload(payload)
 			if err != nil {
 				return
 			}
 
 			if !reader.sendEvent(streamEventName(includeEventName, eventName), encoded) {
-				return
+				clientConnected = false
+				clientClosed = nil
+				continue
 			}
 		}
 	}()
 
 	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string); ok {
 		s.forwardProviderHeaders(ctx, bifrostCtx, schemas.BifrostResponseExtraFields{ProviderResponseHeaders: headers})
+	}
+}
+
+func streamIdleTimeoutError() *schemas.BifrostError {
+	statusCode := fasthttp.StatusGatewayTimeout
+	errorType := schemas.RequestTimedOut
+	code := "stream_idle_timeout"
+	return &schemas.BifrostError{
+		IsBifrostError: true,
+		StatusCode:     &statusCode,
+		Type:           &errorType,
+		Error: &schemas.ErrorField{
+			Type:    &errorType,
+			Code:    &code,
+			Message: "Upstream stream timed out",
+		},
 	}
 }
 

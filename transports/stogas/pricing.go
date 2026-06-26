@@ -14,19 +14,20 @@ func baseHoldEstimate(state *State) HoldEstimate {
 		return HoldEstimate{}
 	}
 	resolution := state.Resolution
+	deployment := resolution.Deployment
 	inputTokenLimit := resolution.InputTokenLimit()
 	outputTokenLimit := resolution.OutputTokenLimit()
-	if resolution.Deployment.ContextWindowTokens > 0 && inputTokenLimit > resolution.Deployment.ContextWindowTokens-outputTokenLimit {
-		inputTokenLimit = resolution.Deployment.ContextWindowTokens - outputTokenLimit
+	if deployment.ContextWindowTokens > 0 && inputTokenLimit > deployment.ContextWindowTokens-outputTokenLimit {
+		inputTokenLimit = deployment.ContextWindowTokens - outputTokenLimit
 	}
 	if inputTokenLimit < 0 {
 		inputTokenLimit = 0
 	}
 	meters := []catalog.MeterEstimate{}
 	if inputTokenLimit > 0 {
-		meters = billing.AppendTokenMeterCost(meters, resolution.Deployment.Pricing, billing.MeterInputTokens, inputTokenLimit, true, true)
+		meters = billing.AppendTokenMeterCost(meters, deployment.Pricing, billing.MeterInputTokens, inputTokenLimit, true, true)
 	}
-	meters = billing.AppendTokenMeterCost(meters, resolution.Deployment.Pricing, billing.MeterOutputTokens, outputTokenLimit, true, true)
+	meters = billing.AppendTokenMeterCost(meters, deployment.Pricing, billing.MeterOutputTokens, outputTokenLimit, true, true)
 	return HoldEstimate{
 		MaxUSDAtoms: sumMeterAmounts(meters),
 		ProductKey:  resolution.Deployment.ID,
@@ -40,6 +41,7 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		return billing.ZeroChargeUSDAtoms
 	}
 	if state.Signals == nil {
+		state.FinalMeters = nil
 		return noUsageFinalPrice(state)
 	}
 	promptTokens := state.Signals.PromptTokens()
@@ -55,7 +57,7 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 
 	meters := []catalog.MeterEstimate{}
 	if state.Resolution != nil {
-		pricing := state.Resolution.Deployment.Pricing
+		pricing := pricingDeploymentForState(state).Pricing
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterInputTokens, inputTokens, false, totalTokens > longContextThresholdTokens)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCachedInputTokens, cachedInputTokens, false, totalTokens > longContextThresholdTokens)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite5mInputTokens, cacheWrite5mTokens, false, totalTokens > longContextThresholdTokens)
@@ -63,7 +65,24 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, completionTokens, false, totalTokens > longContextThresholdTokens)
 	}
 	meters = append(meters, extraMeters...)
+	state.FinalMeters = meters
 	return sumMeterAmounts(meters)
+}
+
+func pricingDeploymentForState(state *State) catalog.Deployment {
+	if state == nil || state.Resolution == nil {
+		return catalog.Deployment{}
+	}
+	deployment := state.Resolution.Deployment
+	signals, ok := state.Signals.(*StandardSignals)
+	if !ok || signals == nil || (signals.ActualServiceTier == nil && signals.ActualSpeed == "") {
+		return deployment
+	}
+	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, signals.ActualServiceTier, signals.ActualSpeed)
+	if !ok {
+		return deployment
+	}
+	return actual
 }
 
 func noUsageFinalPrice(state *State) string {

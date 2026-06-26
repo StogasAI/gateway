@@ -16,7 +16,7 @@ type PublicCatalog struct {
 }
 
 type PublicIndexes struct {
-	ProviderNativeModelSlugs map[string]string `json:"provider_native_model_slugs"`
+	ProviderEndpointRequestSlugs map[string]string `json:"provider_endpoint_request_slugs"`
 }
 
 type PublicModelsResponse struct {
@@ -40,7 +40,7 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 		GeneratedAt: time.Unix(1, 0).UTC().Format(time.RFC3339),
 		Graph:       snap.graph,
 		Indexes: PublicIndexes{
-			ProviderNativeModelSlugs: snap.providerNativeModelSlugs,
+			ProviderEndpointRequestSlugs: snap.providerEndpointRequestSlugs,
 		},
 		Version: PublicCatalogVersion,
 	}, true
@@ -63,9 +63,9 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	if snap == nil {
 		return PublicModelsResponse{}, false
 	}
-	ids := make([]string, 0, len(snap.providerNativeModelSlugs))
+	ids := make([]string, 0, len(snap.providerEndpointRequestSlugs))
 	seen := map[string]bool{}
-	for _, id := range snap.providerNativeModelSlugs {
+	for _, id := range snap.providerEndpointRequestSlugs {
 		if id == "" || seen[id] {
 			continue
 		}

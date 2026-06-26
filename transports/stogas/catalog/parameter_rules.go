@@ -37,10 +37,18 @@ func applyServiceTierPolicy(provider schemas.ModelProvider, serviceTier **schema
 	switch deployment.ServiceTier {
 	case "", "default", "standard":
 		if *serviceTier == nil {
+			if provider == schemas.OpenAI {
+				value := schemas.BifrostServiceTierDefault
+				*serviceTier = &value
+			}
 			return true
 		}
 		switch **serviceTier {
 		case schemas.BifrostServiceTierAuto, schemas.BifrostServiceTierDefault, "":
+			if provider == schemas.OpenAI {
+				value := schemas.BifrostServiceTierDefault
+				*serviceTier = &value
+			}
 			return true
 		default:
 			return false
@@ -87,7 +95,9 @@ func equivalentServiceTier(provider schemas.ModelProvider, requested, implied sc
 	case schemas.BifrostServiceTierAuto:
 		return requested == schemas.BifrostServiceTierPriority
 	case schemas.BifrostServiceTierDefault:
-		return requested == schemas.BifrostServiceTier("standard_only")
+		return requested == schemas.BifrostServiceTier("standard_only") ||
+			requested == schemas.BifrostServiceTier("standard") ||
+			requested == schemas.BifrostServiceTierFlex
 	default:
 		return false
 	}
