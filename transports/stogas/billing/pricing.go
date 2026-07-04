@@ -32,11 +32,19 @@ type MeterEstimate struct {
 	HoldRequired   bool
 }
 
-func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool, useHighestRate bool) []MeterEstimate {
+type TokenRateMode int
+
+const (
+	TokenRateStandard TokenRateMode = iota
+	TokenRateLongContext
+	TokenRateHighest
+)
+
+func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool, mode TokenRateMode) []MeterEstimate {
 	if quantity <= 0 {
 		return meters
 	}
-	rateKey, rateAtoms, ok := PricingRate(pricing, meterKey, useHighestRate)
+	rateKey, rateAtoms, ok := PricingRate(pricing, meterKey, mode)
 	if !ok {
 		return meters
 	}
@@ -82,7 +90,7 @@ func AppendCallMeterCostWithRate(meters []MeterEstimate, pricing Pricing, meterK
 	})
 }
 
-func PricingRate(pricing Pricing, meterKey string, useHighest bool) (string, *big.Int, bool) {
+func PricingRate(pricing Pricing, meterKey string, mode TokenRateMode) (string, *big.Int, bool) {
 	if len(pricing) == 0 {
 		return "", nil, false
 	}
@@ -90,7 +98,13 @@ func PricingRate(pricing Pricing, meterKey string, useHighest bool) (string, *bi
 	if !ok || len(meter) == 0 {
 		return "", nil, false
 	}
-	if useHighest {
+	if mode == TokenRateHighest {
+		return HighestRate(meter)
+	}
+	if mode == TokenRateLongContext {
+		if rate, ok := ParseRate(meter[RatePerMillionContextGT272K]); ok {
+			return RatePerMillionContextGT272K, rate, true
+		}
 		return HighestRate(meter)
 	}
 	if rate, ok := ParseRate(meter[RatePerMillionTokens]); ok {

@@ -8,70 +8,17 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
-	openaiadapter "github.com/maximhq/bifrost/transports/stogas/providers/openai"
 )
 
 const (
-	meterInputTokens     = billing.MeterInputTokens
-	meterOutputTokens    = billing.MeterOutputTokens
-	ratePerMillionTokens = billing.RatePerMillionTokens
-	ratePerThousandCalls = billing.RatePerThousandCalls
-
-	meterOpenAIResponsesWebSearchCalls        = openaiadapter.MeterOpenAIResponsesWebSearchCalls
-	meterOpenAIResponsesWebSearchPreviewCalls = openaiadapter.MeterOpenAIResponsesWebSearchPreviewCalls
+	meterInputTokens                         = billing.MeterInputTokens
+	meterOutputTokens                        = billing.MeterOutputTokens
+	meterOpenAIResponsesWebSearchCalls       = "openai_responses_web_search_calls"
+	meterOpenAIResponsesWebSearchPreviewCalls = "openai_responses_web_search_preview_calls"
+	meterOpenAIResponsesWebSearchPreviewNonReasoningCalls = "openai_responses_web_search_preview_non_reasoning_calls"
+	ratePerMillionTokens                     = billing.RatePerMillionTokens
+	ratePerThousandCalls                     = billing.RatePerThousandCalls
 )
-
-func resolveAndValidateProviderPolicy(input RequestInput) (*ResolvedRequest, error) {
-	resolution, err := ResolveRequest(input)
-	if err != nil {
-		return nil, err
-	}
-	if err := ProviderPolicyError(openaiadapter.ValidateRequest(testOpenAIPolicyRequest(resolution.Route, resolution.Deployment, resolution.outputTokenLimit, resolution.pricing))); err != nil {
-		return nil, err
-	}
-	return resolution, nil
-}
-
-func openAIWebSearchFixedContentInputTokensForRequest(model string, toolTypes []string) int {
-	return openaiadapter.WebSearchFixedContentInputTokensForRequest(model, toolTypes)
-}
-
-func openAIWebSearchContentTokensBilledAtModelRates(deployment Deployment, pricing requestPricingContext) bool {
-	return openaiadapter.WebSearchContentTokensBilledAtModelRates(testOpenAIPolicyRequest(pricing.Route, deployment, 0, pricing))
-}
-
-func openAIResponsesWebSearchCallMeter(deployment Deployment, pricing requestPricingContext) string {
-	return openaiadapter.ResponsesWebSearchCallMeter(openaiadapter.PolicyRequest{
-		Route: openaiadapter.Route(pricing.Route),
-		Deployment: openaiadapter.Deployment{
-			Model:               deployment.Model,
-			ContextWindowTokens: deployment.ContextWindowTokens,
-			Pricing:             deployment.Pricing,
-			ReasoningSupported:  deployment.ReasoningSupported,
-		},
-		SearchContextSize: pricing.SearchContextSize,
-		ToolTypes:         pricing.ToolTypes,
-	})
-}
-
-func testOpenAIPolicyRequest(route Route, deployment Deployment, outputTokenLimit int, pricing requestPricingContext) openaiadapter.PolicyRequest {
-	return openaiadapter.PolicyRequest{
-		Route: openaiadapter.Route(route),
-		Deployment: openaiadapter.Deployment{
-			Model:               deployment.Model,
-			ContextWindowTokens: deployment.ContextWindowTokens,
-			Pricing:             deployment.Pricing,
-			ReasoningSupported:  deployment.ReasoningSupported,
-		},
-		OutputTokenLimit:    outputTokenLimit,
-		HasWebSearchOptions: pricing.HasWebSearchOptions,
-		SearchContextSize:   pricing.SearchContextSize,
-		ToolsParseFailed:    pricing.ToolsParseFailed,
-		RawBody:             pricing.RawBody,
-		ToolTypes:           pricing.ToolTypes,
-		RawTools:            pricing.RawTools,
-	}
-}
 
 func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	loadTestCatalog(t)
@@ -92,11 +39,24 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if nanoDeployment.Pricing[meterInputTokens][ratePerMillionTokens] != "50000000000000000" {
 		t.Fatalf("expected gpt-5-nano input pricing, got %#v", nanoDeployment.Pricing[meterInputTokens])
 	}
-	if nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls][ratePerThousandCalls] != "10000000000000000000" {
-		t.Fatalf("expected provider-level web search call pricing, got %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
+	if _, ok := nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls]; ok {
+		t.Fatalf("provider-level web search call pricing must not be duplicated onto deployment pricing: %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
 	}
-	if nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls][ratePerThousandCalls] != "10000000000000000000" {
-		t.Fatalf("expected provider-level reasoning preview call pricing, got %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls])
+	if _, ok := nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls]; ok {
+		t.Fatalf("provider-level web search preview pricing must not be duplicated onto deployment pricing: %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewCalls])
+	}
+	if _, ok := nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewNonReasoningCalls]; ok {
+		t.Fatalf("provider-level non-reasoning web search preview pricing must not be duplicated onto deployment pricing: %#v", nanoDeployment.Pricing[meterOpenAIResponsesWebSearchPreviewNonReasoningCalls])
+	}
+	openAIPricing := ProviderPricing(schemas.OpenAI)
+	if openAIPricing[meterOpenAIResponsesWebSearchCalls][ratePerThousandCalls] != "10000000000000000000" {
+		t.Fatalf("expected provider-level web search call pricing, got %#v", openAIPricing[meterOpenAIResponsesWebSearchCalls])
+	}
+	if openAIPricing[meterOpenAIResponsesWebSearchPreviewCalls][ratePerThousandCalls] != "10000000000000000000" {
+		t.Fatalf("expected provider-level reasoning preview call pricing, got %#v", openAIPricing[meterOpenAIResponsesWebSearchPreviewCalls])
+	}
+	if openAIPricing[meterOpenAIResponsesWebSearchPreviewNonReasoningCalls][ratePerThousandCalls] != "25000000000000000000" {
+		t.Fatalf("expected provider-level non-reasoning preview call pricing, got %#v", openAIPricing[meterOpenAIResponsesWebSearchPreviewNonReasoningCalls])
 	}
 
 	nanoFlexDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-flex-latest", RouteChat)
@@ -112,8 +72,8 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if nanoFlexDeployment.Pricing[meterInputTokens][ratePerMillionTokens] != "25000000000000000" {
 		t.Fatalf("expected gpt-5-nano flex input pricing, got %#v", nanoFlexDeployment.Pricing[meterInputTokens])
 	}
-	if nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls][ratePerThousandCalls] != "10000000000000000000" {
-		t.Fatalf("expected provider-level web search pricing on flex deployment, got %#v", nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
+	if _, ok := nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls]; ok {
+		t.Fatalf("provider-level web search pricing must stay provider-owned, got deployment pricing %#v", nanoFlexDeployment.Pricing[meterOpenAIResponsesWebSearchCalls])
 	}
 
 	nanoPriorityDeployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano-priority-latest", RouteResponses)
@@ -286,38 +246,133 @@ func TestProviderForRouteModelUsesCatalogSlugIndexes(t *testing.T) {
 	}
 }
 
+func TestAnthropicDeploymentsDeclareAllCachePricingMeters(t *testing.T) {
+	loadTestCatalog(t)
+
+	snap := active.Load()
+	if snap == nil {
+		t.Fatal("expected loaded catalog")
+	}
+	for deploymentID, deployment := range snap.graph.Deployments {
+		if deployment.ProviderID != string(schemas.Anthropic) {
+			continue
+		}
+		for _, meterKey := range []string{
+			billing.MeterInputTokens,
+			billing.MeterCachedInputTokens,
+			billing.MeterCacheWrite5mInputTokens,
+			billing.MeterCacheWrite1hInputTokens,
+			billing.MeterOutputTokens,
+		} {
+			rates := deployment.Pricing[meterKey]
+			if rates[billing.RatePerMillionTokens] == "" {
+				t.Fatalf("%s missing %s.%s pricing: %#v", deploymentID, meterKey, billing.RatePerMillionTokens, deployment.Pricing)
+			}
+		}
+	}
+}
+
+func TestOpenAILongContextDeploymentsDeclareLongContextRateKeys(t *testing.T) {
+	loadTestCatalog(t)
+
+	snap := active.Load()
+	if snap == nil {
+		t.Fatal("expected loaded catalog")
+	}
+	for deploymentID, deployment := range snap.graph.Deployments {
+		contextWindowTokens := effectiveContextWindowTokens(deployment, snap.graph.Models[deployment.ModelID])
+		if deployment.ProviderID != string(schemas.OpenAI) || contextWindowTokens <= billing.LongContextThresholdTokens {
+			continue
+		}
+		for _, meterKey := range []string{
+			billing.MeterInputTokens,
+			billing.MeterCachedInputTokens,
+			billing.MeterOutputTokens,
+		} {
+			rates := deployment.Pricing[meterKey]
+			if rates[billing.RatePerMillionContextLTE272K] == "" || rates[billing.RatePerMillionContextGT272K] == "" {
+				t.Fatalf("%s has context window %d and must declare %s short/long rates: %#v", deploymentID, contextWindowTokens, meterKey, rates)
+			}
+		}
+	}
+
+	nano, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5-nano", RouteResponses)
+	if !ok {
+		t.Fatal("expected gpt-5-nano deployment")
+	}
+	if nano.ContextWindowTokens != billing.LongContextThresholdTokens {
+		t.Fatalf("expected gpt-5-nano to sit at the long-context threshold, got %d", nano.ContextWindowTokens)
+	}
+	if nano.Pricing[billing.MeterInputTokens][billing.RatePerMillionContextGT272K] != "" {
+		t.Fatalf("gpt-5-nano cannot exceed %d context tokens and should not advertise gt-272k pricing: %#v", billing.LongContextThresholdTokens, nano.Pricing[billing.MeterInputTokens])
+	}
+}
+
 func TestProviderPreferenceDisambiguatesCatalogSlugIndexes(t *testing.T) {
 	previous := active.Load()
 	defer active.Store(previous)
 	active.Store(&snapshot{
 		graph: compiledGraph{
-			ProviderEndpoints: map[string]compiledProviderEndpoint{
-				"anthropic-messages": {
-					ID:              "anthropic-messages",
-					ProviderID:      "anthropic",
-					StogasEndpoints: []string{"stogas-chat-completions"},
+				ProviderEndpoints: map[string]compiledProviderEndpoint{
+					"anthropic-messages": {
+						ID:              "anthropic-messages",
+						ProviderID:      "anthropic",
+						StogasEndpoints: []string{"stogas-chat-completions"},
 				},
 				"openai-chat-completions": {
 					ID:              "openai-chat-completions",
 					ProviderID:      "openai",
 					StogasEndpoints: []string{"stogas-chat-completions"},
 				},
+				},
+				Providers: map[string]compiledProvider{
+					"anthropic": {ProviderSlugs: []string{"anthropic", "anthropic-api"}},
+					"openai":   {ProviderSlugs: []string{"openai", "open-ai"}},
+				},
 			},
-			Providers: map[string]compiledProvider{
-				"anthropic": {ProviderSlugs: []string{"anthropic"}},
-				"openai":   {ProviderSlugs: []string{"openai", "open-ai"}},
+			providerEndpointRequestSlugs: map[string]string{
+				"anthropic-messages:anthropic-lab/anthropic-api/shared-model": "anthropic-shared-model",
+				"anthropic-messages:anthropic-lab/shared-model":               "anthropic-shared-model",
+				"anthropic-messages:anthropic/anthropic/shared-model":         "anthropic-shared-model",
+				"anthropic-messages:anthropic/shared-model":                   "anthropic-shared-model",
+				"anthropic-messages:shared-model":                             "anthropic-shared-model",
+				"openai-chat-completions:open-ai/openai/shared-model":          "openai-shared-model",
+				"openai-chat-completions:open-ai/shared-model":                 "openai-shared-model",
+				"openai-chat-completions:openai/open-ai/shared-model":          "openai-shared-model",
+				"openai-chat-completions:openai/openai/shared-model":           "openai-shared-model",
+				"openai-chat-completions:openai/shared-model":                  "openai-shared-model",
+				"openai-chat-completions:shared-model":                         "openai-shared-model",
 			},
-		},
-		providerEndpointRequestSlugs: map[string]string{
-			"anthropic-messages:shared-model":       "anthropic-shared-model",
-			"openai-chat-completions:shared-model": "openai-shared-model",
-		},
-	})
+		})
 
 	if _, _, err := ProviderForRouteModelPreference(RouteChat, "shared-model", ""); !errors.Is(err, ErrModelAmbiguous) {
 		t.Fatalf("expected ambiguous model without provider preference, got %v", err)
 	}
-	provider, ok, err := ProviderForRouteModelPreference(RouteChat, "shared-model", "open-ai")
+	provider, ok, err := ProviderForRouteModelPreference(RouteChat, "open-ai/shared-model", "")
+	if err != nil || !ok || provider != schemas.OpenAI {
+		t.Fatalf("expected provider-prefixed slug to resolve openai, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "openai/open-ai/shared-model", "")
+	if err != nil || !ok || provider != schemas.OpenAI {
+		t.Fatalf("expected author/provider-prefixed slug to resolve openai, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "anthropic/shared-model", "")
+	if err != nil || !ok || provider != schemas.Anthropic {
+		t.Fatalf("expected provider-prefixed slug to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "anthropic/anthropic/shared-model", "")
+	if err != nil || !ok || provider != schemas.Anthropic {
+		t.Fatalf("expected author/provider-prefixed slug to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "anthropic-lab/shared-model", "")
+	if err != nil || !ok || provider != schemas.Anthropic {
+		t.Fatalf("expected author-prefixed slug to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "anthropic-lab/anthropic-api/shared-model", "")
+	if err != nil || !ok || provider != schemas.Anthropic {
+		t.Fatalf("expected distinct author/provider-prefixed slug to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelPreference(RouteChat, "shared-model", "open-ai")
 	if err != nil || !ok || provider != schemas.OpenAI {
 		t.Fatalf("expected openai provider preference to resolve, provider=%q ok=%v err=%v", provider, ok, err)
 	}
@@ -329,6 +384,14 @@ func TestProviderPreferenceDisambiguatesCatalogSlugIndexes(t *testing.T) {
 	if err != nil || !ok || provider != schemas.Anthropic {
 		t.Fatalf("expected provider order preference to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
 	}
+	provider, ok, err = ProviderForRouteModelRouting(RouteChat, "shared-model", ProviderRoutingPreference{Order: []string{"anthropic"}})
+	if err != nil || !ok || provider != schemas.Anthropic {
+		t.Fatalf("expected order-only provider preference to resolve anthropic, provider=%q ok=%v err=%v", provider, ok, err)
+	}
+	provider, ok, err = ProviderForRouteModelRouting(RouteChat, "shared-model", ProviderRoutingPreference{Only: []string{"openai"}, Order: []string{"anthropic", "openai"}})
+	if err != nil || !ok || provider != schemas.OpenAI {
+		t.Fatalf("expected provider order to respect only filter, provider=%q ok=%v err=%v", provider, ok, err)
+	}
 	if _, _, err := ProviderForRouteModelRouting(RouteChat, "shared-model", ProviderRoutingPreference{Only: []string{"openai", "anthropic"}}); !errors.Is(err, ErrModelAmbiguous) {
 		t.Fatalf("expected multi-provider only filter without order to stay ambiguous, got %v", err)
 	}
@@ -338,6 +401,12 @@ func TestProviderPreferenceDisambiguatesCatalogSlugIndexes(t *testing.T) {
 	}
 	if _, _, err := ProviderForRouteModelPreference(RouteChat, "shared-model", "missing"); !errors.Is(err, ErrProviderUnavailable) {
 		t.Fatalf("expected unknown provider preference to be rejected, got %v", err)
+	}
+	if _, _, err := ProviderForRouteModelRouting(RouteChat, "shared-model", ProviderRoutingPreference{Only: []string{"missing"}}); !errors.Is(err, ErrProviderUnavailable) {
+		t.Fatalf("expected unknown provider in only filter to be rejected, got %v", err)
+	}
+	if _, _, err := ProviderForRouteModelRouting(RouteChat, "shared-model", ProviderRoutingPreference{Order: []string{"missing"}}); !errors.Is(err, ErrProviderUnavailable) {
+		t.Fatalf("expected unknown provider in order preference to be rejected, got %v", err)
 	}
 	if _, _, err := ProviderForRouteModelPreference(RouteChat, "missing-model", "openai"); !errors.Is(err, ErrModelUnavailable) {
 		t.Fatalf("expected unavailable model for preferred provider, got %v", err)
@@ -364,20 +433,26 @@ func TestProviderPreferenceIsLocalRoutingHint(t *testing.T) {
 	if _, ok := resolution.chat.ExtraParams["provider"]; ok {
 		t.Fatalf("provider preference must not be forwarded as extra param: %#v", resolution.chat.ExtraParams)
 	}
+	if _, ok := resolution.chat.ExtraParams["rules"]; ok {
+		t.Fatalf("rules preference must not be forwarded as extra param: %#v", resolution.chat.ExtraParams)
+	}
 
 	resolution, err = ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"claude-sonnet-4-6","provider":{"only":["anthropic"],"order":["anthropic"]},"input":"hi","max_output_tokens":16}`),
+		Body:   []byte(`{"model":"claude-sonnet-4-6","rules":{"only":["anthropic"],"order":["anthropic"]},"input":"hi","max_output_tokens":16}`),
 	})
 	if err != nil {
-		t.Fatalf("expected provider object preference to resolve request: %v", err)
+		t.Fatalf("expected rules object preference to resolve request: %v", err)
 	}
 	if resolution.Provider != schemas.Anthropic || resolution.Deployment.ID != "claude-sonnet-4-6" {
-		t.Fatalf("unexpected provider object preference resolution: %#v", resolution)
+		t.Fatalf("unexpected rules object preference resolution: %#v", resolution)
 	}
 	if _, ok := resolution.responses.ExtraParams["provider"]; ok {
 		t.Fatalf("provider object preference must not be forwarded as extra param: %#v", resolution.responses.ExtraParams)
+	}
+	if _, ok := resolution.responses.ExtraParams["rules"]; ok {
+		t.Fatalf("rules object preference must not be forwarded as extra param: %#v", resolution.responses.ExtraParams)
 	}
 
 	_, err = ResolveRequest(RequestInput{
@@ -405,6 +480,22 @@ func TestProviderPreferenceIsLocalRoutingHint(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider must be a non-empty string or an object") {
 		t.Fatalf("expected empty provider preference list to reject request, got %v", err)
 	}
+	_, err = ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"claude-sonnet-4-6","provider":"anthropic","rules":"anthropic","input":"hi","max_output_tokens":16}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "provider and rules cannot both be set") {
+		t.Fatalf("expected duplicate routing preference aliases to reject request, got %v", err)
+	}
+	_, err = ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"claude-sonnet-4-6","rules":{"only":[]},"input":"hi","max_output_tokens":16}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "rules must be a non-empty string or an object") {
+		t.Fatalf("expected empty rules preference list to reject request, got %v", err)
+	}
 }
 
 func TestAnthropicCatalogResolution(t *testing.T) {
@@ -431,8 +522,8 @@ func TestAnthropicCatalogResolution(t *testing.T) {
 		if deployment.Pricing[billing.MeterCacheWrite1hInputTokens][billing.RatePerMillionTokens] != "10000000000000000000" {
 			t.Fatalf("%s: expected Anthropic 1h cache write pricing, got %#v", slug, deployment.Pricing)
 		}
-		if deployment.ServiceTier != "auto" || deployment.ImpliedServiceTier == nil || *deployment.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
-			t.Fatalf("%s: expected Anthropic auto deployment tier, got %q implied=%#v", slug, deployment.ServiceTier, deployment.ImpliedServiceTier)
+		if deployment.ServiceTier != "standard" || deployment.ImpliedServiceTier == nil || *deployment.ImpliedServiceTier != schemas.BifrostServiceTierDefault {
+			t.Fatalf("%s: expected Anthropic standard deployment tier, got %q implied=%#v", slug, deployment.ServiceTier, deployment.ImpliedServiceTier)
 		}
 	}
 
@@ -455,19 +546,20 @@ func TestAnthropicCatalogResolution(t *testing.T) {
 		fast.Pricing[billing.MeterOutputTokens][billing.RatePerMillionTokens] != "50000000000000000000" {
 		t.Fatalf("unexpected Opus fast pricing %#v", fast.Pricing)
 	}
-	if fast.ServiceTier != "auto" || fast.ImpliedServiceTier == nil || *fast.ImpliedServiceTier != schemas.BifrostServiceTierAuto {
-		t.Fatalf("expected Opus fast auto deployment tier, got %q implied=%#v", fast.ServiceTier, fast.ImpliedServiceTier)
+	if fast.ServiceTier != "standard" || fast.ImpliedServiceTier == nil || *fast.ImpliedServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("expected Opus fast standard deployment tier, got %q implied=%#v", fast.ServiceTier, fast.ImpliedServiceTier)
 	}
 
-	standard, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-opus-4-8-standard", RouteChat)
+	standardOnlyTier := schemas.BifrostServiceTier("standard_only")
+	standard, ok := DeploymentForRouteServiceTier(schemas.Anthropic, "anthropic/claude-opus-4-8", RouteChat, &standardOnlyTier)
 	if !ok {
-		t.Fatalf("expected Opus standard-only deployment")
+		t.Fatalf("expected Opus standard deployment")
 	}
-	if standard.ID != "claude-opus-4-8-standard-only" || standard.ServiceTier != "standard_only" {
-		t.Fatalf("unexpected Opus standard-only deployment %#v", standard)
+	if standard.ID != "claude-opus-4-8" || standard.ServiceTier != "standard" {
+		t.Fatalf("unexpected Opus standard deployment %#v", standard)
 	}
 	if standard.ImpliedServiceTier == nil || *standard.ImpliedServiceTier != schemas.BifrostServiceTierDefault {
-		t.Fatalf("expected Opus standard-only to imply Bifrost default, got %#v", standard.ImpliedServiceTier)
+		t.Fatalf("expected Opus standard to imply Bifrost default, got %#v", standard.ImpliedServiceTier)
 	}
 
 	us, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-opus-4-8-us", RouteChat)
@@ -482,12 +574,12 @@ func TestAnthropicCatalogResolution(t *testing.T) {
 		t.Fatalf("expected US inference 1.1x pricing, got %#v", us.Pricing)
 	}
 
-	usFastStandard, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-opus-4-8-fast-us-standard", RouteChat)
+	usFastStandard, ok := DeploymentForRoute(schemas.Anthropic, "anthropic/claude-opus-4-8-fast-us", RouteChat)
 	if !ok {
-		t.Fatalf("expected Opus fast US standard-only deployment")
+		t.Fatalf("expected Opus fast US deployment")
 	}
-	if usFastStandard.ID != "claude-opus-4-8-fast-standard-only-us" || usFastStandard.RegionID != "us" || usFastStandard.ServiceTier != "standard_only" {
-		t.Fatalf("unexpected Opus fast US standard-only deployment %#v", usFastStandard)
+	if usFastStandard.ID != "claude-opus-4-8-fast-us" || usFastStandard.RegionID != "us" || usFastStandard.ServiceTier != "standard" {
+		t.Fatalf("unexpected Opus fast US deployment %#v", usFastStandard)
 	}
 	if usFastStandard.Pricing[billing.MeterInputTokens][billing.RatePerMillionTokens] != "11000000000000000000" ||
 		usFastStandard.Pricing[billing.MeterOutputTokens][billing.RatePerMillionTokens] != "55000000000000000000" {
@@ -519,7 +611,7 @@ func TestAnthropicCatalogResolution(t *testing.T) {
 	}
 }
 
-func TestAnthropicRequestedServiceTierSelectsDeployment(t *testing.T) {
+func TestAnthropicRequestedServiceTierNormalizesToStandardDeployment(t *testing.T) {
 	loadTestCatalog(t)
 
 	for _, item := range []struct {
@@ -529,33 +621,39 @@ func TestAnthropicRequestedServiceTierSelectsDeployment(t *testing.T) {
 		wantTier       schemas.BifrostServiceTier
 	}{
 		{
-			name:           "priority requests auto",
+			name:           "default requests standard only",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "auto requests standard deployment with auto capacity",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8",
+			wantTier:       schemas.BifrostServiceTierAuto,
+		},
+		{
+			name:           "priority requests standard deployment with auto capacity",
 			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"priority","max_completion_tokens":16}`,
 			wantDeployment: "claude-opus-4-8",
 			wantTier:       schemas.BifrostServiceTierAuto,
 		},
 		{
-			name:           "default requests standard only",
-			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
-			wantDeployment: "claude-opus-4-8-standard-only",
-			wantTier:       schemas.BifrostServiceTierDefault,
-		},
-		{
 			name:           "flex requests standard only",
 			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"flex","max_completion_tokens":16}`,
-			wantDeployment: "claude-opus-4-8-standard-only",
+			wantDeployment: "claude-opus-4-8",
 			wantTier:       schemas.BifrostServiceTierDefault,
 		},
 		{
 			name:           "standard_only requests standard only",
 			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only","max_completion_tokens":16}`,
-			wantDeployment: "claude-opus-4-8-standard-only",
+			wantDeployment: "claude-opus-4-8",
 			wantTier:       schemas.BifrostServiceTierDefault,
 		},
 		{
-			name:           "fast flex keeps fast standard only",
-			body:           `{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"flex","max_completion_tokens":16}`,
-			wantDeployment: "claude-opus-4-8-fast-standard-only",
+			name:           "fast standard only keeps fast deployment",
+			body:           `{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-fast",
 			wantTier:       schemas.BifrostServiceTierDefault,
 		},
 	} {
@@ -580,22 +678,322 @@ func TestAnthropicRequestedServiceTierSelectsDeployment(t *testing.T) {
 	responsesResolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"flex","max_output_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"standard_only","max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("Responses ResolveRequest returned error: %v", err)
 	}
-	if responsesResolution.Deployment.ID != "claude-sonnet-4-6-standard-only" {
-		t.Fatalf("expected Responses standard-only deployment, got %#v", responsesResolution.Deployment)
+	if responsesResolution.Deployment.ID != "claude-sonnet-4-6" {
+		t.Fatalf("expected Responses standard deployment, got %#v", responsesResolution.Deployment)
 	}
 	if responsesResolution.responses == nil ||
 		responsesResolution.responses.ResponsesParameters.ServiceTier == nil ||
 		*responsesResolution.responses.ResponsesParameters.ServiceTier != schemas.BifrostServiceTierDefault {
 		t.Fatalf("expected Responses tier to normalize to Bifrost default, got %#v", responsesResolution.responses)
 	}
+
+	for _, item := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "chat default_only",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default_only","max_completion_tokens":16}`,
+		},
+		{
+			name: "responses default_only",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"default_only","max_output_tokens":16}`,
+		},
+		{
+			name: "chat scale",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"scale","max_completion_tokens":16}`,
+		},
+		{
+			name: "responses provisioned",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"provisioned","max_output_tokens":16}`,
+		},
+	} {
+		t.Run("rejects "+item.name, func(t *testing.T) {
+			_, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err == nil {
+				t.Fatalf("expected unsupported Anthropic service tier to be rejected")
+			}
+			var apiErr APIError
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 || apiErr.Type != ErrorTypeInvalidRequest {
+				t.Fatalf("expected unsupported service tier error, got %#v", err)
+			}
+		})
+	}
 }
 
-func TestResolveChatRequestAppliesCatalogPolicy(t *testing.T) {
+func TestAnthropicInferenceGeoSelectsRegionalDeployment(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, item := range []struct {
+		name           string
+		path           string
+		body           string
+		wantDeployment string
+		wantRegion     string
+		wantTier       schemas.BifrostServiceTier
+	}{
+		{
+			name:           "chat auto us",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-us",
+			wantRegion:     "us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "chat auto global",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8-us","messages":[{"role":"user","content":"hi"}],"inference_geo":"global","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8",
+			wantRegion:     "multi-region",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "chat standard us",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us","service_tier":"standard_only","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-us",
+			wantRegion:     "us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "responses auto us",
+			path:           "/v1/responses",
+			body:           `{"model":"anthropic/claude-sonnet-4-6","input":"hi","inference_geo":"us","max_output_tokens":16}`,
+			wantDeployment: "claude-sonnet-4-6-us",
+			wantRegion:     "us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "responses auto global",
+			path:           "/v1/responses",
+			body:           `{"model":"anthropic/claude-sonnet-4-6-us","input":"hi","inference_geo":"global","max_output_tokens":16}`,
+			wantDeployment: "claude-sonnet-4-6",
+			wantRegion:     "multi-region",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "responses standard us",
+			path:           "/v1/responses",
+			body:           `{"model":"anthropic/claude-sonnet-4-6","input":"hi","inference_geo":"us","service_tier":"standard_only","max_output_tokens":16}`,
+			wantDeployment: "claude-sonnet-4-6-us",
+			wantRegion:     "us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			if resolution.Deployment.ID != item.wantDeployment || resolution.Deployment.RegionID != item.wantRegion {
+				t.Fatalf("expected deployment %q in region %q, got %#v", item.wantDeployment, item.wantRegion, resolution.Deployment)
+			}
+			switch item.path {
+			case "/v1/chat/completions":
+				if resolution.chat == nil || resolution.chat.ChatParameters.ServiceTier == nil || *resolution.chat.ChatParameters.ServiceTier != item.wantTier {
+					t.Fatalf("expected normalized Chat tier %q, got %#v", item.wantTier, resolution.chat)
+				}
+			case "/v1/responses":
+				if resolution.responses == nil || resolution.responses.ResponsesParameters.ServiceTier == nil || *resolution.responses.ResponsesParameters.ServiceTier != item.wantTier {
+					t.Fatalf("expected normalized Responses tier %q, got %#v", item.wantTier, resolution.responses)
+				}
+			}
+		})
+	}
+}
+
+func TestAnthropicSpeedSelectsDeployment(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, item := range []struct {
+		name           string
+		path           string
+		body           string
+		wantDeployment string
+		wantTier       schemas.BifrostServiceTier
+	}{
+		{
+			name:           "chat fast",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-fast",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "chat fast standard only",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast","service_tier":"standard_only","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-fast",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "chat standard overrides fast slug",
+			path:           "/v1/chat/completions",
+			body:           `{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"speed":"standard","max_completion_tokens":16}`,
+			wantDeployment: "claude-opus-4-8",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "responses fast us",
+			path:           "/v1/responses",
+			body:           `{"model":"anthropic/claude-opus-4-8","input":"hi","speed":"fast","inference_geo":"us","max_output_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-fast-us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+		{
+			name:           "responses standard us overrides fast slug",
+			path:           "/v1/responses",
+			body:           `{"model":"anthropic/claude-opus-4-8-fast-us","input":"hi","speed":"standard","max_output_tokens":16}`,
+			wantDeployment: "claude-opus-4-8-us",
+			wantTier:       schemas.BifrostServiceTierDefault,
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			if resolution.Deployment.ID != item.wantDeployment {
+				t.Fatalf("expected deployment %q, got %#v", item.wantDeployment, resolution.Deployment)
+			}
+			switch item.path {
+			case "/v1/chat/completions":
+				if resolution.chat == nil || resolution.chat.ChatParameters.ServiceTier == nil || *resolution.chat.ChatParameters.ServiceTier != item.wantTier {
+					t.Fatalf("expected normalized Chat tier %q, got %#v", item.wantTier, resolution.chat)
+				}
+			case "/v1/responses":
+				if resolution.responses == nil || resolution.responses.ResponsesParameters.ServiceTier == nil || *resolution.responses.ResponsesParameters.ServiceTier != item.wantTier {
+					t.Fatalf("expected normalized Responses tier %q, got %#v", item.wantTier, resolution.responses)
+				}
+			}
+		})
+	}
+}
+
+func TestInferenceGeoRejectsUnsupportedRequests(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, item := range []struct {
+		name string
+		path string
+		body string
+		want string
+	}{
+		{
+			name: "openai",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"inference_geo":"us","max_completion_tokens":16}`,
+			want: "only supported for Anthropic",
+		},
+		{
+			name: "unsupported region",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"eu","max_completion_tokens":16}`,
+			want: "inference_geo is not supported",
+		},
+		{
+			name: "bad shape",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","inference_geo":["us"],"max_output_tokens":16}`,
+			want: "inference_geo must be a string",
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			_, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err == nil || !strings.Contains(err.Error(), item.want) {
+				t.Fatalf("expected %q rejection, got %v", item.want, err)
+			}
+		})
+	}
+}
+
+func TestSpeedRejectsUnsupportedRequests(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, item := range []struct {
+		name string
+		path string
+		body string
+		want string
+	}{
+		{
+			name: "openai",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"speed":"fast","max_completion_tokens":16}`,
+			want: "only supported for Anthropic",
+		},
+		{
+			name: "bad shape",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-opus-4-8","input":"hi","speed":true,"max_output_tokens":16}`,
+			want: "speed must be a string",
+		},
+		{
+			name: "bad value",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"turbo","max_completion_tokens":16}`,
+			want: "speed is not supported",
+		},
+		{
+			name: "unsupported model",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","speed":"fast","max_output_tokens":16}`,
+			want: "Model is not available",
+		},
+		{
+			name: "priority tier",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast","service_tier":"priority","max_completion_tokens":16}`,
+			want: "Anthropic priority service_tier is not supported with speed fast",
+		},
+		{
+			name: "auto tier",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-opus-4-8","input":"hi","speed":"fast","service_tier":"auto","max_output_tokens":16}`,
+			want: "Anthropic auto service_tier is not supported with speed fast",
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			_, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err == nil || !strings.Contains(err.Error(), item.want) {
+				t.Fatalf("expected %q rejection, got %v", item.want, err)
+			}
+		})
+	}
+}
+
+func TestResolveChatRequestAppliesDeploymentResolution(t *testing.T) {
 	loadTestCatalog(t)
 
 	resolution, err := ResolveRequest(RequestInput{
@@ -612,8 +1010,8 @@ func TestResolveChatRequestAppliesCatalogPolicy(t *testing.T) {
 	if resolution.Model != "gpt-5.5" {
 		t.Fatalf("expected provider model gpt-5.5, got %q", resolution.Model)
 	}
-	if resolution.Deployment.ID != "gpt-5.5-flex" || len(resolution.PolicyChain) != 4 {
-		t.Fatalf("expected concrete catalog deployment chain, got %#v", resolution)
+	if resolution.Deployment.ID != "gpt-5.5-flex" {
+		t.Fatalf("expected concrete catalog deployment, got %#v", resolution.Deployment)
 	}
 	if resolution.chat == nil || resolution.chat.ChatParameters.ServiceTier == nil || *resolution.chat.ChatParameters.ServiceTier != schemas.BifrostServiceTierFlex {
 		t.Fatalf("expected implied flex service tier, got %#v", resolution.chat)
@@ -621,76 +1019,89 @@ func TestResolveChatRequestAppliesCatalogPolicy(t *testing.T) {
 	if resolution.chat.ChatParameters.MaxCompletionTokens == nil || *resolution.chat.ChatParameters.MaxCompletionTokens != 123 {
 		t.Fatalf("expected max_tokens alias to populate max_completion_tokens, got %#v", resolution.chat.ChatParameters.MaxCompletionTokens)
 	}
+	for _, item := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "string stop",
+			body: `{"model":"gpt-5.5","messages":[],"stop":"END"}`,
+		},
+		{
+			name: "array stop",
+			body: `{"model":"gpt-5.5","messages":[],"stop":["END"]}`,
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(item.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			req, err := resolution.ToBifrost(&schemas.BifrostContext{})
+			if err != nil {
+				t.Fatalf("ToBifrost returned error: %v", err)
+			}
+			if req.ChatRequest == nil || req.ChatRequest.Params == nil || len(req.ChatRequest.Params.Stop) != 1 || req.ChatRequest.Params.Stop[0] != "END" {
+				t.Fatalf("expected stop sequence to normalize to Bifrost array, got %#v", req)
+			}
+		})
+	}
+	for _, item := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "numeric stop",
+			body: `{"model":"gpt-5.5","messages":[],"stop":123}`,
+		},
+		{
+			name: "object stop",
+			body: `{"model":"gpt-5.5","messages":[],"stop":{"value":"END"}}`,
+		},
+		{
+			name: "mixed array stop",
+			body: `{"model":"gpt-5.5","messages":[],"stop":["END",123]}`,
+		},
+	} {
+		t.Run("rejects "+item.name, func(t *testing.T) {
+			_, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(item.body),
+			})
+			var apiErr APIError
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 || apiErr.Message != "stop must be a string or array of strings" {
+				t.Fatalf("expected explicit stop shape rejection, got %#v", err)
+			}
+		})
+	}
 
-	_, err = ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[],"unknown":true}`),
-	})
-	if err == nil {
-		t.Fatalf("expected unknown request field rejection")
-	}
-}
-
-func TestOpenAIWebSearchFixedContentTokenRule(t *testing.T) {
-	if got := openAIWebSearchFixedContentInputTokensForRequest("gpt-4o-mini", []string{"web_search"}); got != 8000 {
-		t.Fatalf("expected fixed non-preview web search content tokens, got %d", got)
-	}
-	if got := openAIWebSearchFixedContentInputTokensForRequest("gpt-4.1-mini-2026-01-01", []string{"web_search"}); got != 8000 {
-		t.Fatalf("expected normalized non-preview web search content tokens, got %d", got)
-	}
-	if got := openAIWebSearchFixedContentInputTokensForRequest("gpt-4o-mini-search-preview", []string{"web_search"}); got != 0 {
-		t.Fatalf("search preview model must not use fixed non-preview content tokens, got %d", got)
-	}
-	if got := openAIWebSearchFixedContentInputTokensForRequest("gpt-4o-mini", []string{"web_search_preview"}); got != 0 {
-		t.Fatalf("preview web search tool must not use fixed non-preview content tokens, got %d", got)
-	}
-	if !openAIWebSearchContentTokensBilledAtModelRates(Deployment{ReasoningSupported: true, Model: "gpt-5.5"}, requestPricingContext{Route: RouteResponses, ToolTypes: []string{"web_search_preview"}}) {
-		t.Fatalf("reasoning-model web_search_preview content tokens should be billed at model rates")
-	}
-	if openAIWebSearchContentTokensBilledAtModelRates(Deployment{ReasoningSupported: false, Model: "gpt-4o-mini"}, requestPricingContext{Route: RouteResponses, ToolTypes: []string{"web_search_preview"}}) {
-		t.Fatalf("non-reasoning web_search_preview content tokens should be free")
-	}
-	if got := openAIResponsesWebSearchCallMeter(
-		Deployment{Pricing: Pricing{
-			meterOpenAIResponsesWebSearchCalls:        {ratePerThousandCalls: "100"},
-			meterOpenAIResponsesWebSearchPreviewCalls: {ratePerThousandCalls: "250"},
-		}},
-		requestPricingContext{Route: RouteResponses, ToolTypes: []string{"web_search", "web_search_preview"}},
-	); got != meterOpenAIResponsesWebSearchPreviewCalls {
-		t.Fatalf("expected ambiguous Responses web search tools to choose costlier meter, got %q", got)
+	for _, input := range []RequestInput{
+		{
+			Method: "POST",
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"gpt-5.5","messages":[],"unknown":true}`),
+		},
+		{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"gpt-5.5","input":"hi","unknown":true}`),
+		},
+	} {
+		_, err = ResolveRequest(input)
+		var apiErr APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 || apiErr.Message != "unknown is not supported by Stogas API" {
+			t.Fatalf("%s expected unknown request field rejection, got %#v", input.Path, err)
+		}
 	}
 }
 
 func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	loadTestCatalog(t)
-
-	_, err := resolveAndValidateProviderPolicy(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`),
-	})
-	if err == nil {
-		t.Fatalf("expected web_search_options to be rejected for gpt-5-nano")
-	}
-
-	_, err = resolveAndValidateProviderPolicy(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[],"web_search_options":{"search_context_size":"low"}}`),
-	})
-	if err == nil {
-		t.Fatalf("expected web_search_options to be rejected for non-search model")
-	}
-
-	_, err = resolveAndValidateProviderPolicy(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-4o-search-preview","messages":[],"reasoning":{"effort":"minimal"}}`),
-	})
-	if err == nil {
-		t.Fatalf("expected reasoning to be rejected for non-reasoning search model")
-	}
 
 	gpt5SearchResolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
@@ -753,154 +1164,26 @@ func TestChatSearchModelsUseCatalogWebSearchRules(t *testing.T) {
 	}
 }
 
-func TestToolBillingPolicyIsCatalogDriven(t *testing.T) {
+func TestCatalogCapturesResponsesToolFacts(t *testing.T) {
 	loadTestCatalog(t)
 
-	allowedChatToolRequests := []string{
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"function","function":{"name":"local_lookup"}}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"custom","name":"local_lookup"}]}`,
-	}
-	for _, body := range allowedChatToolRequests {
-		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)}); err != nil {
-			t.Fatalf("expected chat tool request to pass catalog policy: %s: %v", body, err)
-		}
-	}
-
-	deniedChatToolRequests := []string{
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"local_shell"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"apply_patch"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"shell","environment":{"type":"local"}}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"shell"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"shell","environment":{"type":"local"},"max_uses":2}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"file_search"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"file_search_2026_01_01"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"code_interpreter"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"image_generation"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"computer-use-preview"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"computer_use_preview"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"mcp","server_label":"docs"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"web_search"}]}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{"type":"web_search_preview_2026_01_01"}]}`,
-		`{"model":"gpt-5-search-api","messages":[],"tools":[{"type":"web_search"}],"web_search_options":{}}`,
-		`{"model":"gpt-4o-search-preview","messages":[],"tools":[{"type":"web_search_preview"}],"web_search_options":{}}`,
-		`{"model":"gpt-5.5","messages":[],"tools":{"type":"web_search"}}`,
-		`{"model":"gpt-5.5","messages":[],"tools":[{}]}`,
-	}
-	for _, body := range deniedChatToolRequests {
-		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)}); err == nil {
-			t.Fatalf("expected chat tool request to be denied by policy: %s", body)
-		}
-	}
-
-	allowedResponsesToolRequests := []string{
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"local_shell"}],"max_output_tokens":16}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}],"max_output_tokens":16}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local"}}],"max_output_tokens":16}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local"}}],"tool_choice":{"type":"shell"},"max_output_tokens":16}`,
+	requests := []string{
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"}],"max_tool_calls":1,"max_output_tokens":16}`,
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2026_01_01"}],"max_tool_calls":1,"max_output_tokens":16}`,
 		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_preview"}],"max_tool_calls":1,"max_output_tokens":16}`,
 	}
-	for _, body := range allowedResponsesToolRequests {
+	for _, body := range requests {
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 		if err != nil {
-			t.Fatalf("expected responses web search tool request to pass catalog policy: %s: %v", body, err)
+			t.Fatalf("ResolveRequest returned error: %s: %v", body, err)
 		}
-		if strings.Contains(body, "web_search") && !containsString(resolution.ToolTypes(), "web_search") && !containsString(resolution.ToolTypes(), "web_search_preview") {
+		if !containsString(resolution.ToolTypes(), "web_search") && !containsString(resolution.ToolTypes(), "web_search_preview") {
 			t.Fatalf("expected responses web search tool facts: %s: %#v", body, resolution.ToolTypes())
 		}
 	}
-
-	deniedResponsesToolRequests := []string{
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_reference","container_id":"cntr_123"}}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local"},"max_uses":2}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"local","container_id":"cntr_123"}}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"file_search"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"file_search_2026_01_01"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_interpreter-2026-01-01"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer-use-preview"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer-use-preview-2026-01-01"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"docs"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":{"type":"web_search"}}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{}]}`,
-	}
-	for _, body := range deniedResponsesToolRequests {
-		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)}); err == nil {
-			t.Fatalf("expected responses tool request to be denied by policy: %s", body)
-		}
-	}
-
-	_, err := resolveAndValidateProviderPolicy(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","web_search_options":{"search_context_size":"low"}}`),
-	})
-	if err == nil {
-		t.Fatalf("expected Responses web_search_options to be rejected")
-	}
-
-	_, err = resolveAndValidateProviderPolicy(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`),
-	})
-	if !errors.Is(err, ErrProviderContainersUnsupported) {
-		t.Fatalf("expected unsupported shell tool rejection, got %v", err)
-	}
 }
 
-func TestMVPInputPolicyAllowsTextAndRejectsFilesAndMedia(t *testing.T) {
-	loadTestCatalog(t)
-
-	allowed := []string{
-		`{"model":"gpt-5.5","input":"hi"}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"summarize"}]}]}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`,
-	}
-	for _, body := range allowed {
-		path := "/v1/responses"
-		if strings.Contains(body, `"messages"`) {
-			path = "/v1/chat/completions"
-		}
-		if _, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)}); err != nil {
-			t.Fatalf("expected text-only request to pass catalog policy: %s: %v", body, err)
-		}
-	}
-
-	denied := []string{
-		`{"model":"gpt-5.5","input":[{"type":"input_file","file_id":"file_123"}]}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`,
-		`{"model":"gpt-5.5","input":{"type":"input_file","file_id":"file_123"}}`,
-		`{"model":"gpt-5.5","input":{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/file.pdf"}]}]}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`,
-		`{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/image.png"}]}]}`,
-		`{"model":"gpt-5.5","input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"abc"}}]}]}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`,
-	}
-	for _, body := range denied {
-		path := "/v1/responses"
-		if strings.Contains(body, `"messages"`) {
-			path = "/v1/chat/completions"
-		}
-		if _, err := resolveAndValidateProviderPolicy(RequestInput{Method: "POST", Path: path, Body: []byte(body)}); err == nil {
-			t.Fatalf("expected file/media request to be denied by policy: %s", body)
-		}
-	}
-}
-
-func TestGPT5NanoSchemaPolicy(t *testing.T) {
+func TestGPT5NanoDeploymentServiceTierResolution(t *testing.T) {
 	loadTestCatalog(t)
 
 	flexResolution, err := ResolveRequest(RequestInput{
@@ -991,6 +1274,54 @@ func TestGPT5NanoSchemaPolicy(t *testing.T) {
 		t.Fatalf("expected explicit OpenAI Responses scale rejection, got %#v", err)
 	}
 
+	for _, item := range []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "chat standard",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"standard","max_completion_tokens":16}`,
+		},
+		{
+			name: "responses standard",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5-nano","input":"hi","service_tier":"standard","max_output_tokens":16}`,
+		},
+		{
+			name: "chat provisioned",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"provisioned","max_completion_tokens":16}`,
+		},
+		{
+			name: "responses provisioned",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5-nano","input":"hi","service_tier":"provisioned","max_output_tokens":16}`,
+		},
+	} {
+		_, err = ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   item.path,
+			Body:   []byte(item.body),
+		})
+		if err == nil {
+			t.Fatalf("expected OpenAI %s service tier to be rejected", item.name)
+		}
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("expected OpenAI %s rejection, got %#v", item.name, err)
+		}
+		if strings.Contains(item.name, "standard") {
+			if apiErr != ErrUnsupportedServiceTier {
+				t.Fatalf("expected unsupported OpenAI %s service tier error, got %#v", item.name, err)
+			}
+			continue
+		}
+		if apiErr.Message != "OpenAI provisioned service_tier is not supported by Stogas" {
+			t.Fatalf("expected explicit OpenAI %s provisioned rejection, got %#v", item.name, err)
+		}
+	}
+
 	_, err = ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -1048,40 +1379,121 @@ func TestGPT5NanoSchemaPolicy(t *testing.T) {
 		t.Fatalf("expected output cap rejection, got %v", err)
 	}
 
-	for _, item := range []RequestInput{
+	for _, item := range []struct {
+		name string
+		input RequestInput
+	}{
 		{
-			Method: "POST",
-			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`),
+			name: "chat max_completion_tokens",
+			input: RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`),
+			},
 		},
 		{
-			Method: "POST",
-			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`),
+			name: "chat max_tokens alias",
+			input: RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`),
+			},
 		},
 		{
-			Method: "POST",
-			Path:   "/v1/responses",
-			Body:   []byte(`{"model":"gpt-5-nano","input":"hi","max_output_tokens":15}`),
+			name: "responses max_output_tokens",
+			input: RequestInput{
+				Method: "POST",
+				Path:   "/v1/responses",
+				Body:   []byte(`{"model":"gpt-5-nano","input":"hi","max_output_tokens":15}`),
+			},
 		},
 	} {
-		if _, err := resolveAndValidateProviderPolicy(item); err != ErrParameterTooLarge {
-			t.Fatalf("expected OpenAI output minimum rejection for %s: %v", string(item.Body), err)
-		}
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := ResolveRequest(item.input)
+			if err != nil {
+				t.Fatalf("expected output limit below provider minimum to parse before adapter normalization, got %v", err)
+			}
+			if resolution.OutputTokenLimit() != 15 {
+				t.Fatalf("expected catalog to preserve parsed output limit 15, got %d", resolution.OutputTokenLimit())
+			}
+			req, err := resolution.ToBifrost(&schemas.BifrostContext{})
+			if err != nil {
+				t.Fatalf("expected request to convert to Bifrost before adapter normalization: %v", err)
+			}
+			switch {
+			case req.ChatRequest != nil:
+				if req.ChatRequest.Params == nil || req.ChatRequest.Params.MaxCompletionTokens == nil || *req.ChatRequest.Params.MaxCompletionTokens != 15 {
+					t.Fatalf("expected parsed chat max_completion_tokens, got %#v", req.ChatRequest.Params)
+				}
+			case req.ResponsesRequest != nil:
+				if req.ResponsesRequest.Params == nil || req.ResponsesRequest.Params.MaxOutputTokens == nil || *req.ResponsesRequest.Params.MaxOutputTokens != 15 {
+					t.Fatalf("expected parsed responses max_output_tokens, got %#v", req.ResponsesRequest.Params)
+				}
+			default:
+				t.Fatalf("expected Bifrost chat or responses request, got %#v", req)
+			}
+		})
 	}
 }
 
-func TestResolveRequestRejectsFallbacks(t *testing.T) {
+func TestResolveRequestUsesSimpleCappedInputHoldEstimate(t *testing.T) {
 	loadTestCatalog(t)
 
-	_, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5-latest","messages":[],"fallbacks":["gpt-5.5-flex"]}`),
-	})
-	if err != ErrFallbacksDisabled {
-		t.Fatalf("expected fallback rejection, got %v", err)
+	for _, item := range []struct {
+		name string
+		path string
+		body string
+		want int
+	}{
+		{
+			name: "openai ascii",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
+			want: roughInputTokenEstimate([]byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`), schemas.OpenAI),
+		},
+		{
+			name: "anthropic multiplier",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hello","max_output_tokens":16}`,
+			want: roughInputTokenEstimate([]byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hello","max_output_tokens":16}`), schemas.Anthropic),
+		},
+		{
+			name: "unicode multiplier",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5-nano","input":"こんにちは世界🌍","max_output_tokens":16}`,
+			want: roughInputTokenEstimate([]byte(`{"model":"gpt-5-nano","input":"こんにちは世界🌍","max_output_tokens":16}`), schemas.OpenAI),
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolution, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   item.path,
+				Body:   []byte(item.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			if resolution.InputTokenLimit() != item.want {
+				t.Fatalf("expected input estimate %d, got %d", item.want, resolution.InputTokenLimit())
+			}
+		})
 	}
+
+	t.Run("caps estimate to deployment input cap", func(t *testing.T) {
+		body := `{"model":"gpt-5-nano","input":"` + strings.Repeat("a", 1200000) + `","max_output_tokens":128000}`
+		resolution, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(body),
+		})
+		if err != nil {
+			t.Fatalf("ResolveRequest returned error: %v", err)
+		}
+		want := resolution.Deployment.ContextWindowTokens
+		if resolution.InputTokenLimit() != want {
+			t.Fatalf("expected capped input estimate %d, got %d", want, resolution.InputTokenLimit())
+		}
+	})
 }
 
 func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
@@ -1110,8 +1522,25 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 		"reasoning":     map[string]interface{}{"effort": "minimal"},
 		"unknown":       true,
 	})
-	if len(params) != 1 || params["reasoning"] == nil {
-		t.Fatalf("expected only catalog-approved request params, got %#v", params)
+	if len(params) != 0 {
+		t.Fatalf("expected OpenAI client extra params to be blocked, got %#v", params)
+	}
+	params = FilterExtraParams(schemas.Anthropic, "claude-sonnet-4-6", RouteResponses, map[string]interface{}{
+		"cache_control":       map[string]interface{}{"type": "ephemeral"},
+		"context_management":  map[string]interface{}{"edits": []interface{}{}},
+		"reasoning.effort":    "low",
+		"speed":               "fast",
+		"task_budget":         map[string]interface{}{"type": "tokens", "total": float64(20000)},
+		"top_k":               float64(40),
+		"unknown":             true,
+	})
+	if len(params) != 3 || params["cache_control"] == nil || params["context_management"] == nil || params["task_budget"] == nil {
+		t.Fatalf("expected only explicit Anthropic Responses extra params, got %#v", params)
+	}
+	for _, blocked := range []string{"reasoning.effort", "speed", "top_k", "unknown"} {
+		if _, ok := params[blocked]; ok {
+			t.Fatalf("client param %q must not pass through ExtraParams: %#v", blocked, params)
+		}
 	}
 	authHeaders := AuthHeaderNames(RouteChat)
 	for _, expected := range []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"} {
@@ -1127,6 +1556,16 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 	}
 	if !AllowsResponseMetadataField("raw_request") || AllowsResponseMetadataField("secret") {
 		t.Fatalf("unexpected response metadata field policy")
+	}
+}
+
+func TestCompiledCatalogRequiresProviderUserIdentityPropagation(t *testing.T) {
+	loadTestCatalog(t)
+
+	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic} {
+		if !ProviderUsesPseudoanonymousUserID(provider) {
+			t.Fatalf("expected %s provider to require upstream pseudoanonymous user identity", provider)
+		}
 	}
 }
 
@@ -1166,6 +1605,46 @@ func TestPublicCatalogDeploymentNodesOnlyExposeOwnAttributes(t *testing.T) {
 		if _, ok := model[field]; !ok {
 			t.Fatalf("model node should expose %s", field)
 		}
+	}
+}
+
+func TestResponsesPenaltyParametersResolveToTypedBifrostFields(t *testing.T) {
+	loadTestCatalog(t)
+
+	resolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","frequency_penalty":0.25,"presence_penalty":-0.5,"max_output_tokens":16}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	if resolution.responses == nil {
+		t.Fatal("expected parsed Responses request")
+	}
+	params := resolution.responses.ResponsesParameters
+	if params.FrequencyPenalty == nil || *params.FrequencyPenalty != 0.25 {
+		t.Fatalf("frequency_penalty was not preserved in parsed Responses parameters: %#v", params.FrequencyPenalty)
+	}
+	if params.PresencePenalty == nil || *params.PresencePenalty != -0.5 {
+		t.Fatalf("presence_penalty was not preserved in parsed Responses parameters: %#v", params.PresencePenalty)
+	}
+
+	bifrostReq, err := resolution.ToBifrost(nil)
+	if err != nil {
+		t.Fatalf("ToBifrost returned error: %v", err)
+	}
+	if bifrostReq.ResponsesRequest == nil || bifrostReq.ResponsesRequest.Params == nil {
+		t.Fatalf("expected Bifrost Responses request, got %#v", bifrostReq)
+	}
+	if bifrostReq.ResponsesRequest.Params.FrequencyPenalty == nil || *bifrostReq.ResponsesRequest.Params.FrequencyPenalty != 0.25 {
+		t.Fatalf("frequency_penalty was not preserved in Bifrost request: %#v", bifrostReq.ResponsesRequest.Params)
+	}
+	if bifrostReq.ResponsesRequest.Params.PresencePenalty == nil || *bifrostReq.ResponsesRequest.Params.PresencePenalty != -0.5 {
+		t.Fatalf("presence_penalty was not preserved in Bifrost request: %#v", bifrostReq.ResponsesRequest.Params)
+	}
+	if len(bifrostReq.ResponsesRequest.Params.ExtraParams) != 0 {
+		t.Fatalf("penalty parameters must be typed, not ExtraParams: %#v", bifrostReq.ResponsesRequest.Params.ExtraParams)
 	}
 }
 

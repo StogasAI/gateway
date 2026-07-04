@@ -583,6 +583,11 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 			mapped := MapBifrostServiceTierToAnthropicRequest(*bifrostReq.Params.ServiceTier)
 			anthropicReq.ServiceTier = &mapped
 		}
+		if bifrostReq.Params.User != nil {
+			anthropicReq.Metadata = &AnthropicMetaData{
+				UserID: bifrostReq.Params.User,
+			}
+		}
 	}
 
 	// Convert messages - group consecutive tool messages into single user messages

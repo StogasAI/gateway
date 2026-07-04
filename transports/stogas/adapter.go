@@ -1,20 +1,20 @@
 package stogas
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	openaiadapter "github.com/maximhq/bifrost/transports/stogas/providers/openai"
 )
 
 type Adapter interface {
-	ResolveDeployment(*State) error
 	ValidateRequest(*State) error
 	SanitizeRequest(*State) error
 	EstimateHold(*State) error
+	ValidateRawResponsesToolType(*State, map[string]json.RawMessage) error
 	IngestChunk(*State, *schemas.BifrostStreamChunk) error
 	IngestResponse(*State, *schemas.BifrostResponse, *schemas.BifrostError) error
 	FinalPrice(*State) error
@@ -23,38 +23,36 @@ type Adapter interface {
 
 type DefaultAdapter struct{}
 
-const meterAnthropicWebSearchCalls = "anthropic_web_search_calls"
-const (
-	anthropicOpus48MaxToolOverheadTokens   = 410
-	anthropicSonnet46MaxToolOverheadTokens = 589
-)
+type OpenAIAdapter struct {
+	DefaultAdapter
+}
+
+type AnthropicAdapter struct {
+	DefaultAdapter
+}
 
 func AdapterFor(provider schemas.ModelProvider) Adapter {
 	switch provider {
 	case schemas.OpenAI:
-		return OpenAIAdapter{DefaultAdapter: DefaultAdapter{}}
+		return OpenAIAdapter{}
 	case schemas.Anthropic:
-		return AnthropicAdapter{DefaultAdapter: DefaultAdapter{}}
+		return AnthropicAdapter{}
 	default:
 		return DefaultAdapter{}
 	}
-}
-
-func (DefaultAdapter) ResolveDeployment(state *State) error {
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	return nil
 }
 
 func (DefaultAdapter) ValidateRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	if err := validateChatCompletionPolicy(state); err != nil {
+	if err := validateCommonChatCompletionPolicy(state); err != nil {
 		return err
 	}
-	return validateResponsesPolicy(state)
+	if err := validateCommonResponsesPolicy(state); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (DefaultAdapter) SanitizeRequest(state *State) error {
@@ -93,13 +91,11 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
-		if responsesStreamHasWebSearchCall(streamResp) {
-			observeWebSearchEvent(state, responsesStreamEventKey(streamResp), responsesStreamWebSearchCallID(streamResp))
-		}
-		observeResponseWebSearchCalls(state, streamResp.Response)
-		if streamResp.Response != nil && streamResp.Response.Usage != nil {
+		if streamResp.Response != nil {
 			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed)
-			setSignalsFromUsage(state, streamResp.Response.Usage.ToBifrostLLMUsage())
+			if streamResp.Response.Usage != nil {
+				setSignalsFromUsage(state, streamResp.Response.Usage.ToBifrostLLMUsage())
+			}
 		}
 	}
 	return nil
@@ -113,7 +109,6 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	state.BifrostError = bifrostErr
 	observeBifrostActualExecution(state, resp)
 	setSignalsFromUsage(state, billing.LLMUsage(resp))
-	observeBifrostResponseWebSearchCalls(state, resp)
 	return nil
 }
 
@@ -140,39 +135,6 @@ func (DefaultAdapter) SanitizeResponse(state *State) error {
 	return nil
 }
 
-type OpenAIAdapter struct {
-	DefaultAdapter
-}
-
-func (a OpenAIAdapter) ValidateRequest(state *State) error {
-	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
-		return err
-	}
-	return catalog.ProviderPolicyError(openaiadapter.ValidateRequest(openAIPolicyRequest(state)))
-}
-
-func (a OpenAIAdapter) EstimateHold(state *State) error {
-	if err := a.DefaultAdapter.EstimateHold(state); err != nil {
-		return err
-	}
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	extra := openaiadapter.ExtraHoldMeters(openAIPolicyRequestForDeployment(state, state.Resolution.Deployment), state.Resolution.OutputTokenLimit(), state.Resolution.InputTokenLimit())
-	state.Hold.Meters = append(state.Hold.Meters, extra...)
-	state.Hold.MaxUSDAtoms = sumMeterAmounts(state.Hold.Meters)
-	return nil
-}
-
-func (a OpenAIAdapter) FinalPrice(state *State) error {
-	if state == nil {
-		return nil
-	}
-	extra := openaiadapter.ExtraSettlementMeters(openAIPolicyRequestForFinalPrice(state))
-	state.FinalCostUSDAtoms = baseFinalPrice(state, extra)
-	return nil
-}
-
 func responsesStreamHasWebSearchCall(resp *schemas.BifrostResponsesStreamResponse) bool {
 	if resp == nil {
 		return false
@@ -182,13 +144,24 @@ func responsesStreamHasWebSearchCall(resp *schemas.BifrostResponsesStreamRespons
 	}
 	switch resp.Type {
 	case schemas.ResponsesStreamResponseTypeWebSearchCallCompleted:
-		return responsesStreamWebSearchCallID(resp) != "" || resp.Type == schemas.ResponsesStreamResponseTypeWebSearchCallCompleted
+		return true
 	default:
 		return false
 	}
 }
 
-func observeBifrostResponseWebSearchCalls(state *State, resp *schemas.BifrostResponse) {
+func observePricedResponsesWebSearchChunk(state *State, chunk *schemas.BifrostStreamChunk) {
+	if state == nil || chunk == nil || chunk.BifrostResponsesStreamResponse == nil {
+		return
+	}
+	streamResp := chunk.BifrostResponsesStreamResponse
+	if responsesStreamHasWebSearchCall(streamResp) {
+		observeWebSearchEvent(state, responsesStreamEventKey(streamResp), responsesStreamWebSearchCallID(streamResp))
+	}
+	observeResponseWebSearchCalls(state, streamResp.Response)
+}
+
+func observePricedResponsesWebSearchResponse(state *State, resp *schemas.BifrostResponse) {
 	if resp == nil {
 		return
 	}
@@ -293,40 +266,6 @@ func responsesStreamEventKey(resp *schemas.BifrostResponsesStreamResponse) strin
 	return ""
 }
 
-func openAIPolicyRequest(state *State) openaiadapter.PolicyRequest {
-	return openAIPolicyRequestForDeployment(state, pricingDeploymentForState(state))
-}
-
-func openAIPolicyRequestForFinalPrice(state *State) openaiadapter.PolicyRequest {
-	req := openAIPolicyRequestForDeployment(state, pricingDeploymentForState(state))
-	req.ActualWebSearchCalls = billableHostedToolCalls(state)
-	return req
-}
-
-func openAIPolicyRequestForDeployment(state *State, deployment catalog.Deployment) openaiadapter.PolicyRequest {
-	if state == nil || state.Resolution == nil {
-		return openaiadapter.PolicyRequest{}
-	}
-	resolution := state.Resolution
-	return openaiadapter.PolicyRequest{
-		Route: openaiadapter.Route(resolution.Route),
-		Deployment: openaiadapter.Deployment{
-			Model:               deployment.Model,
-			ContextWindowTokens: deployment.ContextWindowTokens,
-			Pricing:             deployment.Pricing,
-			ReasoningSupported:  deployment.ReasoningSupported,
-		},
-		OutputTokenLimit:    resolution.OutputTokenLimit(),
-		HasWebSearchOptions: resolution.HasWebSearchOptions(),
-		SearchContextSize:   resolution.SearchContextSize(),
-		ToolsParseFailed:    resolution.ToolsParseFailed(),
-		RawBody:             resolution.RawBody(),
-		ToolTypes:           resolution.ToolTypes(),
-		RawTools:            resolution.RawTools(),
-		ActualWebSearchCalls: actualWebSearchCalls(state),
-	}
-}
-
 func actualWebSearchCalls(state *State) int {
 	if state == nil || state.Signals == nil {
 		return 0
@@ -338,110 +277,19 @@ func actualWebSearchCalls(state *State) int {
 	return signals.WebSearchCalls()
 }
 
-func billableHostedToolCalls(state *State) int {
-	actual := actualWebSearchCalls(state)
-	if actual <= 0 {
-		return 0
-	}
-	allowed := hostedToolHoldQuantity(state)
-	if allowed > 0 && actual > allowed {
-		return allowed
-	}
-	return actual
-}
-
-type AnthropicAdapter struct {
-	DefaultAdapter
-}
-
-func (a AnthropicAdapter) SanitizeRequest(state *State) error {
-	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
-		return err
-	}
+func responsesTopLevelMaxToolCallsOrDefault(state *State) int {
 	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	if anthropicFastSlug(state.Resolution.RequestedModel) {
-		state.Resolution.SetProviderExtraParam("speed", "fast")
-	}
-	if state.Resolution.Deployment.RegionID == "us" {
-		state.Resolution.SetProviderExtraParam("inference_geo", "us")
-	}
-	return nil
-}
-
-func anthropicFastSlug(model string) bool {
-	parts := strings.Split(model, "/")
-	slug := parts[len(parts)-1]
-	return strings.Contains(slug, "-fast")
-}
-
-func (a AnthropicAdapter) EstimateHold(state *State) error {
-	if err := a.DefaultAdapter.EstimateHold(state); err != nil {
-		return err
-	}
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	inputTokenLimit := state.Resolution.InputTokenLimit()
-	if inputTokenLimit <= 0 {
-		inputTokenLimit = 0
-	} else {
-		state.Hold.Meters = billing.AppendTokenMeterCost(state.Hold.Meters, state.Resolution.Deployment.Pricing, billing.MeterCacheWrite1hInputTokens, inputTokenLimit, true, true)
-	}
-	if overhead := anthropicToolSystemPromptHoldTokens(state); overhead > 0 {
-		state.Hold.Meters = billing.AppendTokenMeterCost(state.Hold.Meters, state.Resolution.Deployment.Pricing, billing.MeterInputTokens, overhead, true, true)
-		state.Hold.Meters = billing.AppendTokenMeterCost(state.Hold.Meters, state.Resolution.Deployment.Pricing, billing.MeterCacheWrite1hInputTokens, overhead, true, true)
-	}
-	if state.Resolution.Route == catalog.RouteResponses && resolutionUsesToolType(state, schemas.ResponsesToolTypeWebSearch) {
-		state.Hold.Meters = billing.AppendCallMeterCost(state.Hold.Meters, state.Resolution.Deployment.Pricing, meterAnthropicWebSearchCalls, hostedToolHoldQuantity(state), true)
-	}
-	state.Hold.MaxUSDAtoms = sumMeterAmounts(state.Hold.Meters)
-	return nil
-}
-
-func (a AnthropicAdapter) FinalPrice(state *State) error {
-	if state == nil {
-		return nil
-	}
-	extra := []catalog.MeterEstimate(nil)
-	if state.Resolution != nil && state.Resolution.Route == catalog.RouteResponses && resolutionUsesToolType(state, schemas.ResponsesToolTypeWebSearch) {
-		if calls := billableHostedToolCalls(state); calls > 0 {
-			extra = billing.AppendCallMeterCost(extra, pricingDeploymentForState(state).Pricing, meterAnthropicWebSearchCalls, calls, false)
-		}
-	}
-	state.FinalCostUSDAtoms = baseFinalPrice(state, extra)
-	return nil
-}
-
-func hostedToolHoldQuantity(state *State) int {
-	if state == nil || state.Resolution == nil {
-		return 1
+		return defaultResponsesHostedToolCalls
 	}
 	raw, ok := state.Resolution.RawBody()["max_tool_calls"]
 	if !ok {
-		return 1
+		return defaultResponsesHostedToolCalls
 	}
-	var quantity int
-	if err := schemas.Unmarshal(raw, &quantity); err != nil || quantity < 1 {
-		return 1
+	quantity, _, err := rawInteger(raw, "max_tool_calls")
+	if err != nil || quantity < 1 {
+		return defaultResponsesHostedToolCalls
 	}
 	return quantity
-}
-
-func anthropicToolSystemPromptHoldTokens(state *State) int {
-	if state == nil || state.Resolution == nil || len(state.Resolution.ToolTypes()) == 0 {
-		return 0
-	}
-	model := strings.ToLower(strings.TrimSpace(state.Resolution.Deployment.Model))
-	switch {
-	case strings.HasPrefix(model, "claude-opus-4-8"):
-		return anthropicOpus48MaxToolOverheadTokens
-	case strings.HasPrefix(model, "claude-sonnet-4-6"):
-		return anthropicSonnet46MaxToolOverheadTokens
-	default:
-		return anthropicSonnet46MaxToolOverheadTokens
-	}
 }
 
 func resolutionUsesToolType(state *State, toolType schemas.ResponsesToolType) bool {
@@ -454,4 +302,8 @@ func resolutionUsesToolType(state *State, toolType schemas.ResponsesToolType) bo
 		}
 	}
 	return false
+}
+
+func (DefaultAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
+	return invalidRequest("Only function, custom, mcp, and priced hosted web search tools are supported")
 }

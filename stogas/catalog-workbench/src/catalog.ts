@@ -1,13 +1,11 @@
 import type {
-	AttributeTrace,
 	Catalog,
 	CatalogFlow,
 	CatalogGraph,
 	GraphChain,
 	GraphNodeData,
 	LineageNode,
-	NodeType,
-	PolicyEntry
+	NodeType
 } from './types';
 import { MarkerType, type Edge, type Node } from '@xyflow/svelte';
 
@@ -20,99 +18,6 @@ const graphChainNodeOrder: NodeType[] = [
 	'provider',
 	'stogasEndpoint'
 ];
-type FlattenedAttribute = {
-	path: string;
-	policyEntries: PolicyEntry[];
-	policies: string[];
-	value: unknown;
-};
-
-const catalogPolicyEntryNames = new Set([
-	'alias',
-	'deleteAttribute',
-	'deprecated',
-	'endpointClasses',
-	'expandAttributeWithEnumeratedSuffixes',
-	'implyValue',
-	'normalize',
-	'overrideAttribute',
-	'reject',
-	'rejectConflict',
-	'rejectUnsupported',
-	'source'
-]);
-
-const nativeFieldsByType: Record<NodeType, Set<string>> = {
-	stogasEndpoint: new Set(['path', 'method']),
-	author: new Set(['description', 'region', 'authorSlugs', 'name']),
-	model: new Set([
-		'authorId',
-		'name',
-		'family',
-		'series',
-		'snapshot',
-		'flavors',
-		'reasoning',
-		'contextWindowTokens',
-		'maxOutputTokens',
-		'inputModalities',
-		'outputModalities',
-		'tokenizer',
-		'releaseDate',
-		'knowledgeCutoff'
-	]),
-	provider: new Set([
-		'name',
-		'providerSlugs',
-		'cancellationSupported',
-		'streamingSupported',
-		'streamCancellationSupported',
-		'functionCallingSupported',
-		'promptCachingSupported',
-		'systemMessagesSupported',
-		'toolChoiceSupported',
-		'webSearchSupported',
-		'nativelySupportedFileTypes',
-		'countTokensEndpoints',
-		'moderated',
-		'usesPseudoanonymousUserId',
-		'dataRetentionDaysClaimed',
-		'dataStorageRegionPinnedByDefaultClaimed',
-		'dataUsedForTrainingClaimed',
-		'dataSoldClaimed',
-		'dataSharedForCrossContextBehavioralAdsClaimed',
-		'headquarteredLocationId',
-		'datacenterLocationIds',
-		'pricing'
-	]),
-	providerEndpoint: new Set([
-		'stogasEndpoints',
-		'endpoint',
-		'regionId',
-		'regionalStorageClaimed',
-		'regionalProcessingClaimed',
-		'fallbackBehavior',
-		'e2ee',
-		'gdpr',
-		'class'
-	]),
-	deployment: new Set([
-		'aliasSlugs',
-		'upstreamModelSlug',
-		'providerId',
-		'parentProviderEndpointNodes',
-		'modelId',
-		'serviceTier',
-		'tee',
-		'streaming',
-		'streamCancellation',
-		'tokenizer',
-		'contextWindowTokens',
-		'maxOutputTokens',
-		'pricing'
-	]),
-	location: new Set(['name', 'kind', 'parentId', 'isoCode', 'domainPrefix'])
-};
 
 export function nodeKey(type: NodeType, id: string) {
 	return `${type}:${id}`;
@@ -145,10 +50,16 @@ export function buildFlow(graph: CatalogGraph): CatalogFlow {
 			})
 		),
 		...Object.keys(graph.models).map((id) =>
-			makeNode('model', id, positions.get(nodeKey('model', id)) ?? fallbackNodePosition('model'), {
-				leftIn: true,
-				rightOut: true
-			})
+			makeNode(
+				'model',
+				id,
+				positions.get(nodeKey('model', id)) ?? fallbackNodePosition('model'),
+				{
+					leftIn: true,
+					rightOut: true
+				},
+				nodeDetailsForModel(graph, id)
+			)
 		),
 		...Object.keys(graph.providers).map((id) =>
 			makeNode(
@@ -162,19 +73,34 @@ export function buildFlow(graph: CatalogGraph): CatalogFlow {
 			)
 		),
 		...sortedProviderEndpoints(graph).map(([id]) =>
-			makeNode('providerEndpoint', id, positions.get(nodeKey('providerEndpoint', id)) ?? fallbackNodePosition('providerEndpoint'), {
-				leftOut: true,
-				rightIn: true
-			})
+			makeNode(
+				'providerEndpoint',
+				id,
+				positions.get(nodeKey('providerEndpoint', id)) ?? fallbackNodePosition('providerEndpoint'),
+				{
+					leftOut: true,
+					rightIn: true
+				}
+			)
 		),
 		...sortedDeployments(graph).map(([id]) =>
-			makeNode('deployment', id, positions.get(nodeKey('deployment', id)) ?? fallbackNodePosition('deployment'), {
-				leftIn: true,
-				rightIn: true
-			})
+			makeNode(
+				'deployment',
+				id,
+				positions.get(nodeKey('deployment', id)) ?? fallbackNodePosition('deployment'),
+				{
+					leftIn: true,
+					rightIn: true
+				},
+				nodeDetailsForDeployment(graph, id)
+			)
 		),
 		...sortedStogasEndpoints(graph).map(([id]) =>
-			makeNode('stogasEndpoint', id, positions.get(nodeKey('stogasEndpoint', id)) ?? fallbackNodePosition('stogasEndpoint'))
+			makeNode(
+				'stogasEndpoint',
+				id,
+				positions.get(nodeKey('stogasEndpoint', id)) ?? fallbackNodePosition('stogasEndpoint')
+			)
 		)
 	];
 	const edges: Edge[] = [];
@@ -343,17 +269,33 @@ function deploymentLabel(graph: CatalogGraph, deploymentId: string) {
 	return deploymentId;
 }
 
+function nodeDetailsForModel(graph: CatalogGraph, modelId: string) {
+	return {
+		label: modelLabel(graph, modelId),
+		subtitle: ''
+	};
+}
+
+function nodeDetailsForDeployment(graph: CatalogGraph, deploymentId: string) {
+	return {
+		label: deploymentLabel(graph, deploymentId),
+		subtitle: ''
+	};
+}
+
 function makeNode(
 	type: NodeType,
 	id: string,
 	position: { x: number; y: number },
-	handles: GraphNodeData['handles'] = {}
+	handles: GraphNodeData['handles'] = {},
+	details: Partial<Pick<GraphNodeData, 'label' | 'subtitle'>> = {}
 ) {
 	const data: GraphNodeData = {
 		id,
 		type,
 		handles,
-		label: id
+		label: details.label || id,
+		subtitle: details.subtitle
 	};
 	return {
 		id: nodeKey(type, id),
@@ -788,312 +730,4 @@ function valueForNode(graph: CatalogGraph, type: NodeType, id: string): Record<s
 	if (type === 'location') return graph.locations.nodes[id];
 	const collection = `${type}s` as keyof CatalogGraph;
 	return (graph[collection] as Record<string, Record<string, unknown>>)[id];
-}
-
-export function concreteAttributes(lineage: LineageNode[]): AttributeTrace[] {
-	const final = new Map<string, AttributeTrace>();
-	for (const node of lineage) {
-		for (const { path, policyEntries, policies, value } of flatten(normalizeNodeValue(node))) {
-			const owner = nodeKey(node.type, node.id);
-			if (isDeletePolicy(value)) {
-				const previous = deletePriorTraces(final, path);
-				final.set(path, {
-					path,
-					status: 'deletes',
-					owner,
-					previousOwner: previous?.owner,
-					policyEntries,
-					policies,
-					value: 'deleted',
-					previousValue: previous?.value
-				});
-				continue;
-			}
-			const previous = final.get(path);
-			const action = attributeAction(policyEntries);
-			if (!previous) {
-				final.set(path, {
-					path,
-					owner,
-					policyEntries,
-					policies,
-					status: actionStatus(action),
-					value
-				});
-				continue;
-			}
-			if (sameValue(previous.value, value) && !action) continue;
-			const extended =
-				!action && Array.isArray(previous.value) && Array.isArray(value)
-					? extendedArrayValue(previous.value, value)
-					: null;
-			const native = isNativeDefinition(node.type, path);
-			final.set(path, {
-				path,
-				status: native && !action ? undefined : (actionStatus(action) ?? 'overrides'),
-				owner,
-				previousOwner: previous.owner,
-				policyEntries,
-				policies,
-				value: extended ?? value,
-				previousValue: previous.value
-			});
-		}
-	}
-	return Array.from(final.values()).sort((a, b) => {
-		const statusDelta = statusRank(a.status) - statusRank(b.status);
-		if (statusDelta) return statusDelta;
-		return a.path.localeCompare(b.path);
-	});
-}
-
-export function definedAttributes(lineage: LineageNode[], ownerKey: string): AttributeTrace[] {
-	const seen = new Map<string, { owner: string; value: unknown }>();
-	const traces: AttributeTrace[] = [];
-	for (const node of lineage) {
-		const owner = nodeKey(node.type, node.id);
-		for (const { path, policyEntries, policies, value } of flatten(normalizeNodeValue(node)).sort(
-			(a, b) => a.path.localeCompare(b.path)
-		)) {
-			if (isDeletePolicy(value)) {
-				const previous = deletePriorValues(seen, path);
-				if (owner === ownerKey) {
-					traces.push({
-						path,
-						status: 'deletes',
-						owner,
-						previousOwner: previous?.owner,
-						policyEntries,
-						policies,
-						value: 'deleted',
-						previousValue: previous?.value
-					});
-				}
-				seen.set(path, { owner, value: 'deleted' });
-				continue;
-			}
-			const previous = seen.get(path);
-			const action = attributeAction(policyEntries);
-			const extended =
-				previous && !action && Array.isArray(previous.value) && Array.isArray(value)
-					? extendedArrayValue(previous.value, value)
-					: null;
-			const native = isNativeDefinition(node.type, path);
-			if (owner === ownerKey) {
-				traces.push({
-					path,
-					status:
-						actionStatus(action) ??
-						(previous && !sameValue(previous.value, value) && !native ? 'overrides' : undefined),
-					owner,
-					previousOwner: previous?.owner,
-					policyEntries,
-					policies,
-					value: extended ?? value,
-					previousValue: previous?.value
-				});
-			}
-			seen.set(path, { owner, value: extended ?? value });
-		}
-	}
-	return traces;
-}
-
-export function selectedOwnerKey(selectedKey: string, lineage: LineageNode[]) {
-	const parsed = parseNodeKey(selectedKey);
-	if (!parsed) return lineage[0] ? nodeKey(lineage[0].type, lineage[0].id) : '';
-	if (parsed.type === 'providerEndpoint' || parsed.type === 'deployment') return selectedKey;
-	const matching = lineage.find((node) => node.type === parsed.type && node.id === parsed.id);
-	return matching ? nodeKey(matching.type, matching.id) : selectedKey;
-}
-
-function normalizeNodeValue(node: LineageNode) {
-	const { value } = node;
-	if (node.type === 'providerEndpoint') {
-		const rest = { ...value };
-		delete rest.providerId;
-		return rest;
-	}
-	if (node.type === 'deployment') {
-		const rest = { ...value };
-		return rest;
-	}
-	return value;
-}
-
-function extendedArrayValue(previous: unknown, next: unknown) {
-	if (!Array.isArray(previous) || !Array.isArray(next)) return null;
-	const merged = [...previous];
-	for (const item of next) {
-		if (!merged.some((existing) => sameValue(existing, item))) merged.push(item);
-	}
-	return merged.length === previous.length ? null : merged;
-}
-
-function statusRank(status: AttributeTrace['status']) {
-	if (status === 'overrides') return 0;
-	if (status === 'deletes') return 1;
-	return 3;
-}
-
-function isNativeDefinition(type: NodeType, path: string) {
-	return nativeFieldsByType[type].has(path.split('.', 1)[0] ?? path);
-}
-
-function deletePriorTraces(final: Map<string, AttributeTrace>, path: string) {
-	let previous: AttributeTrace | undefined;
-	for (const key of Array.from(final.keys())) {
-		if (key !== path && !key.startsWith(`${path}.`)) continue;
-		const candidate = final.get(key);
-		if (!previous || key === path) previous = candidate;
-		final.delete(key);
-	}
-	return previous;
-}
-
-function deletePriorValues(seen: Map<string, { owner: string; value: unknown }>, path: string) {
-	let previous: { owner: string; value: unknown } | undefined;
-	for (const key of Array.from(seen.keys())) {
-		if (key !== path && !key.startsWith(`${path}.`)) continue;
-		const candidate = seen.get(key);
-		if (!previous || key === path) previous = candidate;
-		seen.delete(key);
-	}
-	return previous;
-}
-
-function flatten(
-	value: unknown,
-	prefix = '',
-	inheritedPolicies: string[] = [],
-	inheritedPolicyEntries: PolicyEntry[] = []
-): FlattenedAttribute[] {
-	if (value === null || typeof value !== 'object') {
-		return [
-			{
-				path: prefix || '(value)',
-				policyEntries: inheritedPolicyEntries,
-				policies: inheritedPolicies,
-				value
-			}
-		];
-	}
-	if (Array.isArray(value)) {
-		return [
-			{ path: prefix, policyEntries: inheritedPolicyEntries, policies: inheritedPolicies, value }
-		];
-	}
-	if (isDeletePolicy(value)) {
-		return [
-			{ path: prefix, policyEntries: inheritedPolicyEntries, policies: inheritedPolicies, value }
-		];
-	}
-	if (isAttributeValueWrapper(value)) {
-		const policyEntries = [...inheritedPolicyEntries, ...catalogPolicyEntriesFor(value)];
-		return [
-			{
-				path: prefix,
-				policyEntries,
-				policies: [...inheritedPolicies, ...catalogPoliciesFor(policyEntries)],
-				value: (value as { value: unknown }).value
-			}
-		];
-	}
-
-	const currentPolicyEntries = catalogPolicyEntriesFor(value);
-	const policies = [...inheritedPolicies, ...catalogPoliciesFor(currentPolicyEntries)];
-	const policyEntries = [...inheritedPolicyEntries, ...currentPolicyEntries];
-	const entries: FlattenedAttribute[] = [];
-	let visibleChildren = 0;
-	for (const [key, child] of Object.entries(value)) {
-		if (catalogPolicyEntryNames.has(key)) continue;
-		visibleChildren++;
-		const path = prefix ? `${prefix}.${key}` : key;
-		if (child && typeof child === 'object' && !Array.isArray(child)) {
-			entries.push(...flatten(child, path, policies, policyEntries));
-		} else {
-			entries.push({
-				path,
-				policyEntries,
-				policies,
-				value: child
-			});
-		}
-	}
-	if (visibleChildren === 0 && policyEntries.length > inheritedPolicyEntries.length) {
-		return [{ path: prefix, policyEntries, policies, value: '(policy)' }];
-	}
-	return entries;
-}
-
-function catalogPolicyEntriesFor(value: object): PolicyEntry[] {
-	return scopedPolicyEntries(value as Record<string, unknown>);
-}
-
-function isAttributeValueWrapper(value: object): value is { value: unknown } {
-	const record = value as Record<string, unknown>;
-	return (
-		Object.prototype.hasOwnProperty.call(record, 'value') && scopedPolicyEntries(record).length > 0
-	);
-}
-
-function scopedPolicyEntries(policy: Record<string, unknown>): PolicyEntry[] {
-	const entries: PolicyEntry[] = [];
-	for (const [name, value] of Object.entries(policy)) {
-		if (catalogPolicyEntryNames.has(name)) {
-			entries.push({ name, value });
-		}
-	}
-	return entries;
-}
-
-function catalogPoliciesFor(policyEntries: PolicyEntry[]) {
-	const record = Object.fromEntries(
-		policyEntries.map((policy) => [policy.name.split('.').at(-1) ?? policy.name, policy.value])
-	);
-	const policies: string[] = [];
-	if (record.overrideAttribute === true) policies.push('override');
-	if (record.deleteAttribute === true) policies.push('delete');
-	if (record.deprecated === true) policies.push('deprecated');
-	if (record.normalize === true) policies.push('normalize');
-	if (typeof record.alias === 'string') policies.push(`alias ${record.alias}`);
-	if (Array.isArray(record.expandAttributeWithEnumeratedSuffixes))
-		policies.push(
-			`expand ${record.expandAttributeWithEnumeratedSuffixes.map((suffix) => `-${suffix}`).join(', ')}`
-		);
-	if (typeof record.rejectUnsupported === 'string')
-		policies.push(`requires ${record.rejectUnsupported}`);
-	if (typeof record.implyValue === 'string') policies.push(`imply ${record.implyValue}`);
-	if (record.rejectConflict === true) policies.push('reject conflict');
-	if (Array.isArray(record.reject)) policies.push(`${record.reject.length} rejects`);
-	return policies;
-}
-
-function attributeAction(policyEntries: PolicyEntry[]) {
-	if (policyEntries.some((policy) => policy.name === 'overrideAttribute' && policy.value === true))
-		return 'override';
-	if (policyEntries.some((policy) => policy.name === 'deleteAttribute' && policy.value === true))
-		return 'delete';
-	return '';
-}
-
-function actionStatus(action: string): AttributeTrace['status'] | undefined {
-	if (action === 'override') return 'overrides';
-	if (action === 'delete') return 'deletes';
-	return undefined;
-}
-
-function isDeletePolicy(value: unknown) {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-	const record = value as Record<string, unknown>;
-	return record.deleteAttribute === true;
-}
-
-export function displayValue(value: unknown) {
-	if (typeof value === 'string') return value;
-	return JSON.stringify(value);
-}
-
-function sameValue(a: unknown, b: unknown) {
-	return JSON.stringify(a) === JSON.stringify(b);
 }

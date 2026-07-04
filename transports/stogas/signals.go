@@ -78,6 +78,9 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	if usage == nil {
 		return nil
 	}
+	promptTokens := usage.PromptTokens
+	completionTokens := usage.CompletionTokens
+
 	cached := 0
 	cacheWrite5m := 0
 	cacheWrite1h := 0
@@ -86,15 +89,69 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 		if usage.PromptTokensDetails.CachedWriteTokenDetails != nil {
 			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens5m
 			cacheWrite1h = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h
+			if residual := usage.PromptTokensDetails.CachedWriteTokens - cacheWrite5m - cacheWrite1h; residual > 0 {
+				cacheWrite1h += residual
+			}
 		} else {
 			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokens
 		}
 	}
 	webSearch := 0
-	if usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.NumSearchQueries != nil {
-		webSearch = *usage.CompletionTokensDetails.NumSearchQueries
+	if usage.CompletionTokensDetails != nil {
+		if usage.CompletionTokensDetails.NumSearchQueries != nil {
+			webSearch = *usage.CompletionTokensDetails.NumSearchQueries
+		}
 	}
-	return &StandardSignals{Prompt: usage.PromptTokens, Completion: usage.CompletionTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	if usage.TotalTokens > 0 {
+		if promptTokens == 0 && usage.TotalTokens > completionTokens {
+			promptTokens = usage.TotalTokens - completionTokens
+		}
+		if completionTokens == 0 && usage.TotalTokens > promptTokens {
+			completionTokens = usage.TotalTokens - promptTokens
+		}
+	}
+	if promptTokens == 0 && usage.PromptTokensDetails != nil {
+		promptTokens = promptTokenFallback(usage.PromptTokensDetails)
+	}
+	if completionTokens == 0 && usage.CompletionTokensDetails != nil {
+		completionTokens = completionTokenFallback(usage.CompletionTokensDetails)
+	}
+	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+}
+
+func promptTokenFallback(details *schemas.ChatPromptTokensDetails) int {
+	if details == nil {
+		return 0
+	}
+	return details.TextTokens + details.AudioTokens + details.ImageTokens + details.CachedReadTokens + cacheWriteTokenTotal(details)
+}
+
+func cacheWriteTokenTotal(details *schemas.ChatPromptTokensDetails) int {
+	if details == nil {
+		return 0
+	}
+	splitTotal := 0
+	if details.CachedWriteTokenDetails != nil {
+		splitTotal = details.CachedWriteTokenDetails.CachedWriteTokens5m + details.CachedWriteTokenDetails.CachedWriteTokens1h
+	}
+	if details.CachedWriteTokens > splitTotal {
+		return details.CachedWriteTokens
+	}
+	return splitTotal
+}
+
+func completionTokenFallback(details *schemas.ChatCompletionTokensDetails) int {
+	if details == nil {
+		return 0
+	}
+	tokens := details.TextTokens + details.AcceptedPredictionTokens + details.AudioTokens + details.ReasoningTokens + details.RejectedPredictionTokens
+	if details.ImageTokens != nil {
+		tokens += *details.ImageTokens
+	}
+	if details.CitationTokens != nil {
+		tokens += *details.CitationTokens
+	}
+	return tokens
 }
 
 func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {

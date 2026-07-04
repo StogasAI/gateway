@@ -1,6 +1,7 @@
 package schemas
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"strings"
@@ -362,6 +363,8 @@ type ResponsesParameters struct {
 	PreviousResponseID   *string                       `json:"previous_response_id,omitempty"`
 	PromptCacheKey       *string                       `json:"prompt_cache_key,omitempty"` // Prompt cache key
 	PromptCacheRetention *string                       `json:"prompt_cache_retention,omitempty"`
+	PresencePenalty      *float64                      `json:"presence_penalty,omitempty"`
+	FrequencyPenalty     *float64                      `json:"frequency_penalty,omitempty"`
 	Reasoning            *ResponsesParametersReasoning `json:"reasoning,omitempty"`         // Configuration options for reasoning models
 	SafetyIdentifier     *string                       `json:"safety_identifier,omitempty"` // Safety identifier
 	ServiceTier          *BifrostServiceTier           `json:"service_tier,omitempty"`
@@ -2447,6 +2450,39 @@ type ResponsesToolMCPAllowedTools struct {
 	// Either a simple array of tool names or a filter object
 	ToolNames []string                            `json:",omitempty"`
 	Filter    *ResponsesToolMCPAllowedToolsFilter `json:",omitempty"`
+}
+
+func (at ResponsesToolMCPAllowedTools) MarshalJSON() ([]byte, error) {
+	if len(at.ToolNames) > 0 && at.Filter != nil {
+		return nil, fmt.Errorf("only one of ToolNames or Filter can be set")
+	}
+	if len(at.ToolNames) > 0 {
+		return MarshalSorted(at.ToolNames)
+	}
+	if at.Filter != nil {
+		return MarshalSorted(at.Filter)
+	}
+	return []byte("null"), nil
+}
+
+func (at *ResponsesToolMCPAllowedTools) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+	var toolNames []string
+	if err := Unmarshal(trimmed, &toolNames); err == nil {
+		at.ToolNames = toolNames
+		at.Filter = nil
+		return nil
+	}
+	var filter ResponsesToolMCPAllowedToolsFilter
+	if err := Unmarshal(trimmed, &filter); err == nil {
+		at.ToolNames = nil
+		at.Filter = &filter
+		return nil
+	}
+	return fmt.Errorf("allowed_tools field is neither an array of strings nor a filter object")
 }
 
 // ResponsesToolMCPAllowedToolsFilter - A filter object to specify which tools are allowed

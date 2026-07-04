@@ -3,6 +3,9 @@ package stogashttp
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
@@ -16,6 +19,11 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
+	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 	"github.com/valyala/fasthttp"
 )
 
@@ -49,6 +57,22 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	}
 	if remaining := time.Until(deadline); remaining <= 0 || remaining > chatRequestLifetime {
 		t.Fatalf("chat request lifetime remaining = %s, want within %s", remaining, chatRequestLifetime)
+	}
+}
+
+func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.Set("Authorization", "Bearer sk-secret")
+	ctx.Request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
+
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
+	if err != nil {
+		t.Fatalf("newRequestContext returned error: %v", err)
+	}
+	defer cancel()
+
+	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyRequestHeaders).(map[string]string); ok && len(headers) > 0 {
+		t.Fatalf("Stogas inference context must not expose raw client headers to Bifrost, got %#v", headers)
 	}
 }
 
@@ -93,6 +117,34 @@ func mustCatalogPath(t *testing.T, route catalog.Route) string {
 		t.Fatalf("missing catalog path for route %s", route)
 	}
 	return path
+}
+
+func TestReadinessProbeIsHealthyWhenConfidentialRuntimeIsDisabled(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+
+	server.readiness(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusNoContent {
+		t.Fatalf("expected 204 readiness, got %d", ctx.Response.StatusCode())
+	}
+	if len(ctx.Response.Body()) != 0 {
+		t.Fatalf("readiness probe should not return a body on success, got %q", ctx.Response.Body())
+	}
+}
+
+func TestReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *testing.T) {
+	server := &Server{secure: &confidentialruntime.Runtime{EntropyReady: true}}
+	ctx := &fasthttp.RequestCtx{}
+
+	server.readiness(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusServiceUnavailable {
+		t.Fatalf("expected 503 readiness, got %d", ctx.Response.StatusCode())
+	}
+	if got := string(ctx.Response.Body()); got != `{"ok":false}` {
+		t.Fatalf("readiness probe should not leak private reasons, got %q", got)
+	}
 }
 
 func TestRequestDecompressionGzip(t *testing.T) {
@@ -212,7 +264,110 @@ func TestRequestDecompressionCachesInferenceCredential(t *testing.T) {
 	}
 }
 
-func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyPolicy(t *testing.T) {
+func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("p", 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{proofs: &proofhttp.Service{
+		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
+		Signer: privateKey,
+	}}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	state := &stogas.State{
+		Resolution: &catalog.ResolvedRequest{
+			Route:    catalog.RouteResponses,
+			Provider: schemas.OpenAI,
+			Model:    "gpt-5-nano",
+			Deployment: catalog.Deployment{
+				ID:                  "deployment-node",
+				ModelID:             "model-node",
+				ProviderEndpointIDs: []string{"provider-endpoint-node"},
+			},
+		},
+		ProcessedRequestJSON: []byte(`{"processed":true}`),
+	}
+
+	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
+
+	if ctx.Response.StatusCode() != fasthttp.StatusOK {
+		t.Fatalf("expected status 200, got %d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if got := string(ctx.Response.Header.Peek(proofhttp.HeaderQuote)); got != base64.RawURLEncoding.EncodeToString([]byte("quote")) {
+		t.Fatalf("unexpected quote header: %q", got)
+	}
+	nodeIDs := string(ctx.Response.Header.Peek(proofhttp.HeaderResolvedCatalogNodeID))
+	if !strings.Contains(nodeIDs, "deployment:deployment-node") || !strings.Contains(nodeIDs, "provider_endpoint:provider-endpoint-node") {
+		t.Fatalf("proof did not bind resolved catalog chain: %q", nodeIDs)
+	}
+	processedHash := string(ctx.Response.Header.Peek(proofhttp.HeaderProcessedHash))
+	signature := string(ctx.Response.Header.Peek(proofhttp.HeaderProcessedSignature))
+	if processedHash == "" || !proof.Verify(publicKey, processedHash, signature) {
+		t.Fatalf("proof signature did not verify: hash=%q signature=%q", processedHash, signature)
+	}
+}
+
+func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
+	server := &Server{proofs: &proofhttp.Service{}}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	state := &stogas.State{
+		Resolution:           testResolution(),
+		ProcessedRequestJSON: []byte(`{"processed":true}`),
+	}
+
+	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
+
+	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
+		t.Fatalf("expected proof failure to return 500, got %d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
+	}
+	if !strings.Contains(string(ctx.Response.Body()), "Failed to build confidential response proof") {
+		t.Fatalf("unexpected proof failure body: %s", ctx.Response.Body())
+	}
+}
+
+type staticProofQuotes struct {
+	snapshot *quote.Snapshot
+}
+
+func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
+	return s.snapshot, nil
+}
+
+func testProofSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
+	t.Helper()
+	payload, err := reportdata.NewPayload(reportdata.Payload{
+		ReleaseMeasurement: strings.Repeat("a", 64),
+		Region:             "global",
+		CatalogHash:        strings.Repeat("b", 64),
+		TLSSPKISHA256:      strings.Repeat("c", 64),
+		ActiveCertSHA256:   strings.Repeat("d", 64),
+		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
+		HPKEPublicKey:      "aHBrZQ",
+		Ed25519PublicKey:   base64.RawURLEncoding.EncodeToString(publicKey),
+		Drand: reportdata.Drand{
+			Round:      1,
+			Randomness: strings.Repeat("e", 64),
+			Signature:  strings.Repeat("f", 96),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := reportdata.HashHex(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &quote.Snapshot{
+		Payload:       payload,
+		ReportDataHex: hash,
+		Quote:         []byte("quote"),
+		GeneratedAt:   time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyValidation(t *testing.T) {
 	server := &Server{}
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
@@ -302,6 +457,9 @@ func TestProviderResponseHeaderSafetyBlocksCookieAndControlHeaders(t *testing.T)
 		"Content-Security-Policy",
 		"Strict-Transport-Security",
 		"Access-Control-Allow-Origin",
+		"Anthropic-Organization-Id",
+		"Server",
+		"X-RateLimit-Limit-Requests",
 		"Sec-Fetch-Site",
 		"Cf-Cache-Status",
 	}
@@ -318,8 +476,9 @@ func TestProviderResponseHeaderSafetyBlocksCookieAndControlHeaders(t *testing.T)
 func TestProviderResponseHeaderSafetyAllowsOrdinaryProviderMetadata(t *testing.T) {
 	allowed := []string{
 		"OpenAI-Processing-Ms",
+		"OpenAI-Version",
+		"Request-Id",
 		"X-Request-Id",
-		"Anthropic-Organization-Id",
 	}
 
 	for _, header := range allowed {
@@ -335,8 +494,10 @@ func TestSafeProviderResponseHeadersFiltersMixedMap(t *testing.T) {
 	got := safeProviderResponseHeaders(map[string]string{
 		" OpenAI-Processing-Ms ":      "41",
 		"Access-Control-Allow-Origin": "https://evil.example",
+		"Anthropic-Organization-Id":   "org-secret",
 		"Set-Cookie":                  "session=attacker",
 		"X-Request-Id":                "provider-request-id",
+		"X-RateLimit-Limit-Requests":  "100",
 	})
 
 	if got == nil {
@@ -348,11 +509,44 @@ func TestSafeProviderResponseHeadersFiltersMixedMap(t *testing.T) {
 	if _, ok := got["Access-Control-Allow-Origin"]; ok {
 		t.Fatal("expected CORS headers to be filtered")
 	}
+	if _, ok := got["Anthropic-Organization-Id"]; ok {
+		t.Fatal("expected Anthropic organization headers to be filtered")
+	}
+	if _, ok := got["X-RateLimit-Limit-Requests"]; ok {
+		t.Fatal("expected provider rate-limit headers to be filtered")
+	}
 	if got["OpenAI-Processing-Ms"] != "41" {
 		t.Fatalf("expected trimmed provider metadata header to be retained, got %#v", got)
 	}
 	if got["X-Request-Id"] != "provider-request-id" {
 		t.Fatalf("expected ordinary metadata header to be retained, got %#v", got)
+	}
+}
+
+func TestSafeProviderResponseHeadersFiltersUnsafeValues(t *testing.T) {
+	got := safeProviderResponseHeaders(map[string]string{
+		"X-Request-Id":   "provider-request-id",
+		"Request-Id":     "line\r\nset-cookie: attacker=true",
+		"OpenAI-Version": "2026-01-01\x00hidden",
+		"OpenAI-Processing-Ms": string([]byte{
+			0xff,
+		}),
+	})
+
+	if got == nil {
+		t.Fatal("expected safe header to be retained")
+	}
+	if got["X-Request-Id"] != "provider-request-id" {
+		t.Fatalf("expected safe request id to be retained, got %#v", got)
+	}
+	if _, ok := got["Request-Id"]; ok {
+		t.Fatalf("expected CRLF header value to be filtered, got %#v", got)
+	}
+	if _, ok := got["OpenAI-Version"]; ok {
+		t.Fatalf("expected NUL header value to be filtered, got %#v", got)
+	}
+	if _, ok := got["OpenAI-Processing-Ms"]; ok {
+		t.Fatalf("expected invalid UTF-8 header value to be filtered, got %#v", got)
 	}
 }
 
@@ -401,6 +595,66 @@ func TestPublicBifrostErrorMapsMissingStatusNetworkFailureToServiceUnavailable(t
 	}
 }
 
+func TestPublicBifrostErrorHidesProviderCredentialAndQuotaFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		msg    string
+		code   string
+	}{
+		{name: "provider auth", status: fasthttp.StatusUnauthorized, msg: "OpenAI API key is invalid", code: "invalid_api_key"},
+		{name: "provider quota", status: fasthttp.StatusPaymentRequired, msg: "upstream account quota exceeded", code: "insufficient_quota"},
+		{name: "provider permission", status: fasthttp.StatusForbidden, msg: "organization policy disabled provider access", code: "permission_denied"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			status, payload := publicBifrostError(testBifrostError(tt.status, tt.msg, "", tt.code))
+
+			if status != fasthttp.StatusServiceUnavailable {
+				t.Fatalf("expected 503, got %d", status)
+			}
+			errorObject := publicErrorObject(t, payload)
+			if errorObject["type"] != "gateway_error" {
+				t.Fatalf("expected gateway_error, got %#v", errorObject)
+			}
+			if errorObject["message"] != "Upstream provider is unavailable" {
+				t.Fatalf("expected generic upstream unavailable message, got %#v", errorObject)
+			}
+			if errorObject["code"] != nil {
+				t.Fatalf("expected provider code to be hidden, got %#v", errorObject["code"])
+			}
+		})
+	}
+}
+
+func TestPublicBifrostErrorMapsProviderRateLimitAndTimeout(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		status      int
+		msg         string
+		wantStatus  int
+		wantType    string
+		wantMessage string
+	}{
+		{name: "provider rate limit", status: fasthttp.StatusTooManyRequests, msg: "provider rate_limit exceeded", wantStatus: fasthttp.StatusTooManyRequests, wantType: "rate_limit_error", wantMessage: "provider rate_limit exceeded"},
+		{name: "provider timeout", status: fasthttp.StatusGatewayTimeout, msg: "upstream timed out", wantStatus: fasthttp.StatusGatewayTimeout, wantType: schemas.RequestTimedOut, wantMessage: "Upstream request timed out"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			status, payload := publicBifrostError(testBifrostError(tt.status, tt.msg, "", ""))
+
+			if status != tt.wantStatus {
+				t.Fatalf("expected %d, got %d", tt.wantStatus, status)
+			}
+			errorObject := publicErrorObject(t, payload)
+			if errorObject["type"] != tt.wantType {
+				t.Fatalf("expected %s, got %#v", tt.wantType, errorObject)
+			}
+			if errorObject["message"] != tt.wantMessage {
+				t.Fatalf("expected %q, got %#v", tt.wantMessage, errorObject)
+			}
+		})
+	}
+}
+
 func TestPublicBifrostErrorPreservesSafeClientProviderError(t *testing.T) {
 	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusBadRequest, "messages.0.content is required", "invalid_request_error", "missing_required_parameter"))
 
@@ -446,6 +700,21 @@ func TestPublicBifrostErrorMapsRequestTooLarge(t *testing.T) {
 	}
 	if errorObject["message"] != "request exceeds maximum size" {
 		t.Fatalf("expected safe provider size message, got %#v", errorObject)
+	}
+}
+
+func TestPublicBifrostErrorMapsRequestCancelled(t *testing.T) {
+	status, payload := publicBifrostError(testBifrostError(0, "client cancelled before provider response", schemas.RequestCancelled, ""))
+
+	if status != 499 {
+		t.Fatalf("expected 499, got %d", status)
+	}
+	errorObject := publicErrorObject(t, payload)
+	if errorObject["type"] != schemas.RequestCancelled {
+		t.Fatalf("expected request_cancelled, got %#v", errorObject)
+	}
+	if errorObject["message"] != "client cancelled before provider response" {
+		t.Fatalf("expected safe cancellation message, got %#v", errorObject)
 	}
 }
 
@@ -528,44 +797,61 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 		name    string
 		headers map[string]string
 		want    string
+		wantOK  bool
 	}{
 		{
 			name:    "authorization bearer",
 			headers: map[string]string{"Authorization": "Bearer sk-sto-bearer"},
 			want:    "sk-sto-bearer",
+			wantOK:  true,
 		},
 		{
 			name:    "authorization raw token",
 			headers: map[string]string{"Authorization": "sk-sto-raw"},
 			want:    "sk-sto-raw",
+			wantOK:  true,
 		},
 		{
 			name:    "api-key",
 			headers: map[string]string{"api-key": "sk-sto-api-key"},
 			want:    "sk-sto-api-key",
+			wantOK:  true,
 		},
 		{
 			name:    "x-api-key",
 			headers: map[string]string{"x-api-key": "sk-sto-x-api-key"},
 			want:    "sk-sto-x-api-key",
+			wantOK:  true,
 		},
 		{
 			name:    "x-goog-api-key",
 			headers: map[string]string{"x-goog-api-key": "sk-sto-google"},
 			want:    "sk-sto-google",
+			wantOK:  true,
 		},
 		{
-			name: "authorization takes precedence",
+			name: "same token aliases",
+			headers: map[string]string{
+				"Authorization": "Bearer sk-sto-same",
+				"x-api-key":     "sk-sto-same",
+			},
+			want:   "sk-sto-same",
+			wantOK: true,
+		},
+		{
+			name: "conflicting aliases",
 			headers: map[string]string{
 				"Authorization": "Bearer sk-sto-primary",
 				"x-api-key":     "sk-sto-secondary",
 			},
-			want: "sk-sto-primary",
+			want:   "",
+			wantOK: false,
 		},
 		{
 			name:    "missing",
 			headers: map[string]string{},
 			want:    "",
+			wantOK:  true,
 		},
 	}
 
@@ -576,10 +862,31 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 				ctx.Request.Header.Set(key, value)
 			}
 
-			if got := apiKeyToken(ctx, catalog.RouteChat); got != tt.want {
-				t.Fatalf("expected %q, got %q", tt.want, got)
+			got, ok := apiKeyToken(ctx, catalog.RouteChat)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("expected token=%q ok=%v, got token=%q ok=%v", tt.want, tt.wantOK, got, ok)
 			}
 		})
+	}
+}
+
+func TestInferenceHeadersRejectConflictingAuthAliases(t *testing.T) {
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetRequestURI("/v1/chat/completions")
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.Header.Set("Authorization", "Bearer sk-test-primary")
+	ctx.Request.Header.Set("X-API-Key", "sk-test-secondary")
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	server := &Server{}
+	if _, ok := server.requireInferenceHeaders(ctx); ok {
+		t.Fatal("expected conflicting API key aliases to be rejected")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+		t.Fatalf("expected 400 conflicting API key response, got %d", ctx.Response.StatusCode())
+	}
+	if !strings.Contains(string(ctx.Response.Body()), "Conflicting API key headers") {
+		t.Fatalf("expected conflict message, got %s", string(ctx.Response.Body()))
 	}
 }
 
@@ -697,6 +1004,35 @@ func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicResponseProviderHeaderMetadataUsesSanitizedState(t *testing.T) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"provider_response_headers": true})
+	stogas.SetState(bifrostCtx, &stogas.State{
+		ProviderResponseHeaders: map[string]string{
+			"X-Request-Id": "adapter-sanitized",
+		},
+	})
+
+	extra := schemas.BifrostResponseExtraFields{
+		ProviderResponseHeaders: map[string]string{
+			"X-Request-Id": "raw-extra",
+		},
+	}
+	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, extra))
+	metadata, ok := object["stogas"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected stogas metadata, got %#v", object)
+	}
+	headers, ok := metadata["provider_response_headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected provider response headers metadata, got %#v", metadata["provider_response_headers"])
+	}
+	if headers["X-Request-Id"] != "adapter-sanitized" {
+		t.Fatalf("expected sanitized state provider headers to win, got %#v", headers)
+	}
+}
+
 func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
@@ -710,6 +1046,74 @@ func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
 	metadata, ok := object["stogas"].(map[string]any)
 	if !ok || metadata["raw_response"] == nil {
 		t.Fatalf("expected raw response metadata, got %#v", object)
+	}
+}
+
+func TestPublicResponsePayloadRedactsRawRequestSecrets(t *testing.T) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"raw_request": true})
+
+	raw := map[string]any{
+		"mcp_servers": []any{map[string]any{
+			"authorization_token": "secret",
+			"name":                "remote",
+		}},
+		"tools": []any{map[string]any{
+			"authorization": "secret",
+			"server_label":  "remote",
+		}},
+		"headers": map[string]any{
+			"X-Goog-Api-Key": "secret",
+			"Accept":         "application/json",
+		},
+		"nested": map[string]any{
+			"accessToken":        "secret",
+			"api-key":            "secret",
+			"apiKey":             "secret",
+			"api_key":            "secret",
+			"authorizationToken": "secret",
+			"bearer_token":       "secret",
+			"client_secret":      "secret",
+			"password":           "secret",
+			"secretKey":          "secret",
+			"token":              "secret",
+			"token_count":        float64(42),
+			"apikey_hint":        "last4",
+			"ordinary_name":      "kept",
+		},
+	}
+	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawRequest: raw}))
+	metadata, ok := object["stogas"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected stogas metadata, got %#v", object)
+	}
+	redacted, ok := metadata["raw_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected raw request object, got %#v", metadata["raw_request"])
+	}
+	servers := redacted["mcp_servers"].([]any)
+	server := servers[0].(map[string]any)
+	if server["authorization_token"] != "<redacted>" || server["name"] != "remote" {
+		t.Fatalf("unexpected redacted mcp server %#v", server)
+	}
+	tools := redacted["tools"].([]any)
+	tool := tools[0].(map[string]any)
+	if tool["authorization"] != "<redacted>" || tool["server_label"] != "remote" {
+		t.Fatalf("unexpected redacted mcp tool %#v", tool)
+	}
+	headers := redacted["headers"].(map[string]any)
+	if headers["X-Goog-Api-Key"] != "<redacted>" || headers["Accept"] != "application/json" {
+		t.Fatalf("unexpected redacted headers %#v", headers)
+	}
+	nested := redacted["nested"].(map[string]any)
+	for _, key := range []string{"accessToken", "api-key", "apiKey", "api_key", "authorizationToken", "bearer_token", "client_secret", "password", "secretKey", "token"} {
+		if nested[key] != "<redacted>" {
+			t.Fatalf("expected nested %s redaction, got %#v", key, nested)
+		}
+	}
+	if nested["token_count"] != float64(42) || nested["apikey_hint"] != "last4" || nested["ordinary_name"] != "kept" {
+		t.Fatalf("redacted non-secret fields unexpectedly: %#v", nested)
 	}
 }
 
@@ -760,17 +1164,117 @@ func TestInferenceAuthorizesAfterBifrostRequestIsMaterialized(t *testing.T) {
 	}
 	text := string(source)
 
+	resolveIndex := strings.Index(text, "catalog.ResolveRequest")
+	validateIndex := strings.Index(text, "adapter.ValidateRequest(state)")
 	toBifrostIndex := strings.Index(text, "resolution.ToBifrost(bifrostCtx)")
 	dryRunIndex := strings.Index(text, "dryRunProviderRequestMarshal(bifrostCtx, bifrostReq)")
 	authorizeIndex := strings.Index(text, "stogas.AuthorizeState(bifrostCtx")
-	if toBifrostIndex < 0 || dryRunIndex < 0 || authorizeIndex < 0 {
-		t.Fatalf("expected inference source to include ToBifrost, dry run, and AuthorizeState, got ToBifrost=%d dryRun=%d AuthorizeState=%d", toBifrostIndex, dryRunIndex, authorizeIndex)
+	if resolveIndex < 0 || validateIndex < 0 || toBifrostIndex < 0 || dryRunIndex < 0 || authorizeIndex < 0 {
+		t.Fatalf("expected inference source to include catalog resolution, validation, ToBifrost, dry run, and AuthorizeState, got ResolveRequest=%d Validate=%d ToBifrost=%d dryRun=%d AuthorizeState=%d", resolveIndex, validateIndex, toBifrostIndex, dryRunIndex, authorizeIndex)
+	}
+	if validateIndex < resolveIndex {
+		t.Fatal("request validation must happen after catalog resolution")
 	}
 	if authorizeIndex < toBifrostIndex {
 		t.Fatal("DB hold authorization must happen after the Bifrost request is materialized")
 	}
 	if authorizeIndex < dryRunIndex {
 		t.Fatal("DB hold authorization must happen after provider request marshal dry-run")
+	}
+}
+
+func TestInferenceDoesNotEnableBifrostExtraHeaders(t *testing.T) {
+	source, err := os.ReadFile("http.go")
+	if err != nil {
+		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
+	}
+	if strings.Contains(string(source), "BifrostContextKeyExtraHeaders") {
+		t.Fatal("Stogas must not bridge client or state headers into Bifrost extra headers")
+	}
+}
+
+func TestDryRunProviderRequestMarshalCoversPublicProvidersAndRoutes(t *testing.T) {
+	text := "hello"
+	maxTokens := 16
+	chatContent := &schemas.ChatMessageContent{ContentStr: &text}
+	responseRole := schemas.ResponsesInputMessageRoleUser
+	responseContent := &schemas.ResponsesMessageContent{ContentStr: &text}
+
+	tests := []struct {
+		name string
+		req  *schemas.BifrostRequest
+	}{
+		{
+			name: "openai chat completions",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.OpenAI,
+					Model:    "gpt-5-nano",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "anthropic chat completions",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.Anthropic,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "openai responses",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.OpenAI,
+					Model:    "gpt-5-nano",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "anthropic responses",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.Anthropic,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+			defer cancel()
+
+			if err := dryRunProviderRequestMarshal(bifrostCtx, tt.req); err != nil {
+				t.Fatalf("dryRunProviderRequestMarshal returned error: %v", err)
+			}
+		})
 	}
 }
 
@@ -809,6 +1313,94 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	}
 	if strings.Contains(body, "extra_fields") {
 		t.Fatalf("streamed public payload leaked extra_fields: %q", body)
+	}
+}
+
+func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("s", 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{proofs: &proofhttp.Service{
+		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
+		Signer: privateKey,
+	}}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{
+		Resolution: &catalog.ResolvedRequest{
+			Route:    catalog.RouteChat,
+			Provider: schemas.OpenAI,
+			Model:    "gpt-5.5",
+			Deployment: catalog.Deployment{
+				ID:                  "stream-deployment",
+				ModelID:             "stream-model",
+				ProviderEndpointIDs: []string{"stream-provider-endpoint"},
+			},
+		},
+		ProcessedRequestJSON: []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`),
+	}
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer ctx.Response.CloseBodyStream()
+
+	if got := string(ctx.Response.Header.Peek(proofhttp.HeaderQuote)); got != "" {
+		t.Fatalf("streaming proof must not be sent as an initial header, got quote header %q", got)
+	}
+
+	go func() {
+		content := "hello"
+		stream <- &schemas.BifrostStreamChunk{
+			BifrostChatResponse: &schemas.BifrostChatResponse{
+				ID:     "chatcmpl_stream_proof",
+				Object: "chat.completion.chunk",
+				Model:  "gpt-5.5",
+				Choices: []schemas.BifrostResponseChoice{{
+					Index: 0,
+					ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+						Delta: &schemas.ChatStreamResponseChoiceDelta{Content: &content},
+					},
+				}},
+			},
+		}
+		close(stream)
+	}()
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	chunkJSON := requireSSEDataFrame(t, body, "chatcmpl_stream_proof")
+	proofJSON := requireSSEEventData(t, body, proofhttp.SSEEventName)
+	if proofIndex, doneIndex := strings.Index(body, "event: "+proofhttp.SSEEventName+"\n"), strings.Index(body, "data: [DONE]\n\n"); proofIndex < 0 || doneIndex < 0 || proofIndex > doneIndex {
+		t.Fatalf("expected final proof before [DONE], got %q", body)
+	}
+
+	var proofObject map[string]any
+	if err := json.Unmarshal([]byte(proofJSON), &proofObject); err != nil {
+		t.Fatalf("failed to parse proof event: %v", err)
+	}
+	if proofObject["quote"] != base64.RawURLEncoding.EncodeToString([]byte("quote")) {
+		t.Fatalf("unexpected proof quote: %#v", proofObject["quote"])
+	}
+	reportData, ok := proofObject["report_data"].(map[string]any)
+	if !ok || reportData["ed25519_public_key"] != base64.RawURLEncoding.EncodeToString(publicKey) {
+		t.Fatalf("proof report data did not expose the bound signer key: %#v", proofObject["report_data"])
+	}
+	nodeIDs := stringSliceFromJSON(t, proofObject["resolved_catalog_node_ids"])
+	if !containsString(nodeIDs, "deployment:stream-deployment") || !containsString(nodeIDs, "provider_endpoint:stream-provider-endpoint") {
+		t.Fatalf("proof did not bind resolved catalog node ids: %#v", nodeIDs)
+	}
+	catalogHash, ok := catalog.PublicCatalogHash()
+	if !ok {
+		t.Fatal("expected public catalog hash")
+	}
+	processedHash, _ := proofObject["processed_hash"].(string)
+	signature, _ := proofObject["processed_signature"].(string)
+	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
+		ProcessedRequestJSON: state.ProcessedRequestJSON,
+		CatalogHash:          catalogHash,
+		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
+	}, [][]byte{[]byte(chunkJSON)}, processedHash, signature) {
+		t.Fatalf("streaming proof did not verify: hash=%q signature=%q body=%q", processedHash, signature, body)
 	}
 }
 
@@ -1068,6 +1660,17 @@ func readResponseBodyStream(t *testing.T, reader io.Reader) string {
 func requireSSEDataPayload(t *testing.T, body string, id string) map[string]any {
 	t.Helper()
 
+	data := requireSSEDataFrame(t, body, id)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		t.Fatalf("failed to parse SSE JSON data %q: %v", data, err)
+	}
+	return payload
+}
+
+func requireSSEDataFrame(t *testing.T, body string, id string) string {
+	t.Helper()
+
 	for _, frame := range strings.Split(body, "\n\n") {
 		data, ok := strings.CutPrefix(strings.TrimSpace(frame), "data: ")
 		if !ok || data == "[DONE]" {
@@ -1079,12 +1682,58 @@ func requireSSEDataPayload(t *testing.T, body string, id string) map[string]any 
 			t.Fatalf("failed to parse SSE JSON frame %q: %v", frame, err)
 		}
 		if payload["id"] == id {
-			return payload
+			return data
 		}
 	}
 
 	t.Fatalf("expected SSE data frame with id %q, got %q", id, body)
-	return nil
+	return ""
+}
+
+func requireSSEEventData(t *testing.T, body string, eventName string) string {
+	t.Helper()
+
+	for _, frame := range strings.Split(body, "\n\n") {
+		lines := strings.Split(strings.TrimSpace(frame), "\n")
+		if len(lines) != 2 || lines[0] != "event: "+eventName {
+			continue
+		}
+		data, ok := strings.CutPrefix(lines[1], "data: ")
+		if !ok {
+			t.Fatalf("expected data line in SSE event frame %q", frame)
+		}
+		return data
+	}
+
+	t.Fatalf("expected SSE event %q, got %q", eventName, body)
+	return ""
+}
+
+func stringSliceFromJSON(t *testing.T, value any) []string {
+	t.Helper()
+
+	items, ok := value.([]any)
+	if !ok {
+		t.Fatalf("expected JSON array, got %#v", value)
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			t.Fatalf("expected JSON string array item, got %#v", item)
+		}
+		out = append(out, text)
+	}
+	return out
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func requireSSEErrorPayload(t *testing.T, body string) map[string]any {

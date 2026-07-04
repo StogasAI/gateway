@@ -11,6 +11,5 @@ models:
   maxOutputTokens: 64000
   inputModalities: [text, image]
   outputModalities: [text]
-  tokenizer: anthropic-count-tokens
   releaseDate: 2026-02-17
   knowledgeCutoff: 2025-08-01

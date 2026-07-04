@@ -15,7 +15,6 @@ package catalog
 	})
 	streaming?:           #SupportStatus
 	streamCancellation?:  #SupportStatus
-	tokenizer?:           #ClaimText
 	contextWindowTokens?: int & >=0
 	maxOutputTokens?:     int & >=0
 	pricing: #DeploymentPricing

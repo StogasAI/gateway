@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -17,18 +18,18 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable    = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON           = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrProviderUnavailable   = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrRouteUnavailable      = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod     = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrFallbacksDisabled     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Fallbacks are not supported"}
-	ErrParameterTooLarge     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrUnsupportedTool       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas billing policy"}
-	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrCatalogUnavailable      = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON             = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous          = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable        = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod       = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrUnsupportedTool         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
+	ErrUnsupportedServiceTier  = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrUnsupportedInferenceGeo = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo is not supported by Stogas"}
 )
 
 type APIError struct {
@@ -59,25 +60,18 @@ type RequestInput struct {
 }
 
 type ResolvedRequest struct {
-	Route             Route
-	RequestType       schemas.RequestType
-	Provider          schemas.ModelProvider
-	RequestedModel    string
-	Model             string
-	Deployment        Deployment
-	PolicyChain       []PolicyNode
-	AllowedParameters []string
+	Route          Route
+	RequestType    schemas.RequestType
+	Provider       schemas.ModelProvider
+	RequestedModel string
+	Model          string
+	Deployment     Deployment
 
 	chat             *openaiprovider.OpenAIChatRequest
 	inputTokenLimit  int
 	outputTokenLimit int
 	pricing          requestPricingContext
 	responses        *openaiprovider.OpenAIResponsesRequest
-}
-
-type PolicyNode struct {
-	Kind string
-	ID   string
 }
 
 type requestPricingContext struct {
@@ -150,6 +144,37 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
+func (r *ResolvedRequest) CatalogNodeIDs() []string {
+	if r == nil {
+		return nil
+	}
+	ids := []string{
+		"stogas_endpoint:" + string(r.Route),
+		"provider:" + string(r.Provider),
+	}
+	if r.Model != "" {
+		ids = append(ids, "model:"+r.Model)
+	}
+	if r.Deployment.ModelID != "" && r.Deployment.ModelID != r.Model {
+		ids = append(ids, "model_node:"+r.Deployment.ModelID)
+	}
+	if r.Deployment.ID != "" {
+		ids = append(ids, "deployment:"+r.Deployment.ID)
+	}
+	for _, endpointID := range sortedStrings(r.Deployment.ProviderEndpointIDs) {
+		if endpointID != "" {
+			ids = append(ids, "provider_endpoint:"+endpointID)
+		}
+	}
+	return ids
+}
+
+func sortedStrings(values []string) []string {
+	out := append([]string(nil), values...)
+	sort.Strings(out)
+	return out
+}
+
 func (r *ResolvedRequest) InputTokenLimit() int {
 	if r == nil {
 		return 0
@@ -162,6 +187,19 @@ func (r *ResolvedRequest) OutputTokenLimit() int {
 		return 0
 	}
 	return r.outputTokenLimit
+}
+
+func (r *ResolvedRequest) NormalizeMinimumOutputTokenLimit(min int) {
+	if r == nil || min <= 0 || r.outputTokenLimit <= 0 || r.outputTokenLimit >= min {
+		return
+	}
+	r.outputTokenLimit = min
+	if r.chat != nil && r.chat.ChatParameters.MaxCompletionTokens != nil {
+		r.chat.ChatParameters.MaxCompletionTokens = &r.outputTokenLimit
+	}
+	if r.responses != nil && r.responses.ResponsesParameters.MaxOutputTokens != nil {
+		r.responses.ResponsesParameters.MaxOutputTokens = &r.outputTokenLimit
+	}
 }
 
 func (r *ResolvedRequest) HasWebSearchOptions() bool {
@@ -238,7 +276,129 @@ func (r *ResolvedRequest) RequireUpstreamUsage() {
 	r.chat.ChatParameters.StreamOptions.IncludeUsage = schemas.Ptr(true)
 }
 
-func (r *ResolvedRequest) SetProviderExtraParam(name string, value any) {
+func (r *ResolvedRequest) NormalizePromptCacheRetention() {
+	if r == nil {
+		return
+	}
+	if r.chat != nil {
+		if normalized, ok := normalizePromptCacheRetention(r.chat.ChatParameters.PromptCacheRetention); ok {
+			r.chat.ChatParameters.PromptCacheRetention = &normalized
+			setRawString(r.pricing.RawBody, "prompt_cache_retention", normalized)
+		}
+		return
+	}
+	if r.responses != nil {
+		if normalized, ok := normalizePromptCacheRetention(r.responses.ResponsesParameters.PromptCacheRetention); ok {
+			r.responses.ResponsesParameters.PromptCacheRetention = &normalized
+			setRawString(r.pricing.RawBody, "prompt_cache_retention", normalized)
+		}
+	}
+}
+
+func (r *ResolvedRequest) ApplyProviderSamplingParameters() {
+	if r == nil {
+		return
+	}
+	if topK, ok := rawIntValue(r.pricing.RawBody["top_k"]); ok {
+		if r.chat != nil {
+			r.chat.ChatParameters.TopK = &topK
+		} else if r.responses != nil {
+			r.SetExtraParam("top_k", topK)
+		}
+	}
+	if stopSequences, ok := rawStringListValue(r.pricing.RawBody["stop_sequences"]); ok {
+		if r.chat != nil {
+			r.chat.ChatParameters.Stop = stopSequences
+		} else if r.responses != nil {
+			r.SetExtraParam("stop", stopSequences)
+		}
+	}
+}
+
+func (r *ResolvedRequest) SetSpeed(speed string) {
+	if r == nil {
+		return
+	}
+	normalized := strings.ToLower(strings.TrimSpace(speed))
+	if r.chat != nil {
+		if normalized == "fast" {
+			r.chat.ChatParameters.Speed = &normalized
+		} else {
+			r.chat.ChatParameters.Speed = nil
+		}
+	}
+	if r.responses != nil {
+		params := copyStringAnyMap(r.responses.ExtraParams)
+		if normalized == "fast" {
+			params["speed"] = normalized
+		} else {
+			delete(params, "speed")
+		}
+		r.responses.SetExtraParams(params)
+	}
+}
+
+func (r *ResolvedRequest) EnsureResponsesMaxToolCalls(maxToolCalls int) {
+	if r == nil || r.responses == nil || maxToolCalls < 1 {
+		return
+	}
+	if r.responses.ResponsesParameters.MaxToolCalls == nil {
+		r.responses.ResponsesParameters.MaxToolCalls = schemas.Ptr(maxToolCalls)
+	}
+	setRawIntIfMissing(r.pricing.RawBody, "max_tool_calls", maxToolCalls)
+}
+
+func (r *ResolvedRequest) EnsureResponsesToolMaxUses(maxUses int, toolTypes ...schemas.ResponsesToolType) {
+	if r == nil || r.responses == nil || maxUses < 1 {
+		return
+	}
+	allowed := make(map[schemas.ResponsesToolType]struct{}, len(toolTypes))
+	for _, toolType := range toolTypes {
+		allowed[toolType] = struct{}{}
+	}
+	for i := range r.responses.ResponsesParameters.Tools {
+		tool := &r.responses.ResponsesParameters.Tools[i]
+		if _, ok := allowed[tool.Type]; !ok {
+			continue
+		}
+		switch tool.Type {
+		case schemas.ResponsesToolTypeWebSearch:
+			if tool.ResponsesToolWebSearch == nil {
+				tool.ResponsesToolWebSearch = &schemas.ResponsesToolWebSearch{}
+			}
+			if tool.ResponsesToolWebSearch.MaxUses == nil {
+				tool.ResponsesToolWebSearch.MaxUses = schemas.Ptr(maxUses)
+			}
+		case schemas.ResponsesToolTypeWebFetch:
+			if tool.ResponsesToolWebFetch == nil {
+				tool.ResponsesToolWebFetch = &schemas.ResponsesToolWebFetch{}
+			}
+			if tool.ResponsesToolWebFetch.MaxUses == nil {
+				tool.ResponsesToolWebFetch.MaxUses = schemas.Ptr(maxUses)
+			}
+		}
+	}
+	for _, tool := range r.pricing.RawTools {
+		if _, ok := allowed[rawResponsesServerToolFamily(rawStringField(tool, "type"))]; !ok {
+			continue
+		}
+		setRawIntIfMissing(tool, "max_uses", maxUses)
+	}
+}
+
+func rawResponsesServerToolFamily(rawType string) schemas.ResponsesToolType {
+	rawType = strings.TrimSpace(rawType)
+	switch {
+	case rawType == "web_search" || strings.HasPrefix(rawType, "web_search_"):
+		return schemas.ResponsesToolTypeWebSearch
+	case rawType == "web_fetch" || strings.HasPrefix(rawType, "web_fetch_"):
+		return schemas.ResponsesToolTypeWebFetch
+	default:
+		return schemas.ResponsesToolType(rawType)
+	}
+}
+
+func (r *ResolvedRequest) SetExtraParam(name string, value any) {
 	if r == nil {
 		return
 	}
@@ -259,20 +419,89 @@ func (r *ResolvedRequest) SetProviderExtraParam(name string, value any) {
 	}
 }
 
+func setRawIntIfMissing(raw map[string]json.RawMessage, name string, value int) {
+	if raw == nil {
+		return
+	}
+	if _, ok := raw[name]; ok {
+		return
+	}
+	encoded, err := sonic.Marshal(value)
+	if err != nil {
+		return
+	}
+	raw[name] = encoded
+}
+
+func setRawString(raw map[string]json.RawMessage, name string, value string) {
+	if raw == nil {
+		return
+	}
+	encoded, err := sonic.Marshal(value)
+	if err != nil {
+		return
+	}
+	raw[name] = encoded
+}
+
+func normalizePromptCacheRetention(value *string) (string, bool) {
+	if value == nil {
+		return "", false
+	}
+	switch strings.TrimSpace(*value) {
+	case "24h":
+		return "24h", true
+	case "in-memory", "in_memory":
+		return "in-memory", true
+	default:
+		return "", false
+	}
+}
+
+func rawIntValue(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0, false
+	}
+	var value int
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func rawStringListValue(raw json.RawMessage) ([]string, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false
+	}
+	var values []string
+	if err := sonic.Unmarshal(raw, &values); err != nil {
+		return nil, false
+	}
+	return values, true
+}
+
 func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
 	}
+	if normalized, err := normalizeChatStopString(rawData); err != nil {
+		return nil, err
+	} else if normalized {
+		body, err = sonic.Marshal(rawData)
+		if err != nil {
+			return nil, ErrInvalidJSON
+		}
+	}
 	if err := validateChatRawAliases(rawData); err != nil {
+		return nil, err
+	}
+	if err := validateRawReasoningParameters(rawData, chatRawReasoningFields, true, false); err != nil {
 		return nil, err
 	}
 	var request openaiprovider.OpenAIChatRequest
 	if err := sonic.Unmarshal(body, &request); err != nil {
 		return nil, ErrInvalidJSON
-	}
-	if _, ok := rawData["fallbacks"]; ok {
-		return nil, ErrFallbacksDisabled
 	}
 	requestType := schemas.ChatCompletionRequest
 	if request.IsStreamingRequested() {
@@ -297,17 +526,38 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	return resolution, nil
 }
 
+func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
+	rawStop, ok := rawData["stop"]
+	if !ok || len(rawStop) == 0 || string(rawStop) == "null" {
+		return false, nil
+	}
+	var stop string
+	if err := sonic.Unmarshal(rawStop, &stop); err != nil {
+		var stops []string
+		if err := sonic.Unmarshal(rawStop, &stops); err != nil {
+			return false, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "stop must be a string or array of strings"}
+		}
+		return false, nil
+	}
+	encoded, err := sonic.Marshal([]string{stop})
+	if err != nil {
+		return false, ErrInvalidJSON
+	}
+	rawData["stop"] = encoded
+	return true, nil
+}
+
 func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
 	}
+	if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
+		return nil, err
+	}
 	var request openaiprovider.OpenAIResponsesRequest
 	if err := sonic.Unmarshal(body, &request); err != nil {
 		return nil, ErrInvalidJSON
-	}
-	if _, ok := rawData["fallbacks"]; ok {
-		return nil, ErrFallbacksDisabled
 	}
 	requestType := schemas.ResponsesRequest
 	if request.IsStreamingRequested() {
@@ -321,7 +571,7 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 		request.Model,
 		&request.Model,
 		&request.ResponsesParameters.ServiceTier,
-		nil,
+		func() { applyResponsesAliases(rawData, &request) },
 		func() *int { return request.ResponsesParameters.MaxOutputTokens },
 		&request,
 	)
@@ -340,7 +590,7 @@ func resolveOpenAIRequest(
 	requestedModel string,
 	modelField *string,
 	serviceTier **schemas.BifrostServiceTier,
-	applyPolicyAliases func(),
+	applyRequestAliases func(),
 	requestedOutputLimit func() *int,
 	extraParams requestWithSettableExtraParams,
 ) (*ResolvedRequest, error) {
@@ -369,15 +619,23 @@ func resolveOpenAIRequest(
 	if err := validateRequestedServiceTier(provider, requestedServiceTier); err != nil {
 		return nil, err
 	}
-	deployment, ok := DeploymentForRouteServiceTier(provider, model, route, requestedServiceTier)
+	requestedRegion, err := requestedInferenceGeo(provider, rawData)
+	if err != nil {
+		return nil, err
+	}
+	requestedSpeed, err := requestedAnthropicSpeed(provider, rawData, requestedServiceTier)
+	if err != nil {
+		return nil, err
+	}
+	deployment, ok := DeploymentForRouteServiceTierRegionSpeed(provider, model, route, requestedServiceTier, requestedRegion, requestedSpeed)
 	if !ok {
 		return nil, ErrModelUnavailable
 	}
 	if !applyResolvedDeployment(provider, modelField, serviceTier, deployment) {
 		return nil, ErrModelUnavailable
 	}
-	if applyPolicyAliases != nil {
-		applyPolicyAliases()
+	if applyRequestAliases != nil {
+		applyRequestAliases()
 	}
 	outputTokenLimit, err := effectiveOutputTokenLimit(requestedOutputLimit(), deployment.MaxOutputTokens)
 	if err != nil {
@@ -392,7 +650,63 @@ func resolveOpenAIRequest(
 		extraParams.SetExtraParams(filtered)
 	}
 	pricing := requestPricingContextForRaw(route, rawData)
-	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, len(body), pricing), nil
+	inputTokenEstimate := inputTokenHoldEstimate(body, provider, deployment.ContextWindowTokens)
+	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing), nil
+}
+
+func requestedInferenceGeo(provider schemas.ModelProvider, rawData map[string]json.RawMessage) (string, error) {
+	raw, ok := rawData["inference_geo"]
+	if !ok || len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var value string
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo must be a string"}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", ErrUnsupportedInferenceGeo
+	}
+	if provider != schemas.Anthropic {
+		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo is only supported for Anthropic deployments"}
+	}
+	switch normalized {
+	case "global":
+		return "multi-region", nil
+	case "us":
+		return normalized, nil
+	default:
+		return "", ErrUnsupportedInferenceGeo
+	}
+}
+
+func requestedAnthropicSpeed(provider schemas.ModelProvider, rawData map[string]json.RawMessage, requestedTier *schemas.BifrostServiceTier) (string, error) {
+	raw, ok := rawData["speed"]
+	if !ok || len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var value string
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed must be a string"}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if provider != schemas.Anthropic {
+		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed is only supported for Anthropic deployments"}
+	}
+	switch normalized {
+	case "fast":
+		if requestedTier != nil {
+			switch strings.ToLower(strings.TrimSpace(string(*requestedTier))) {
+			case "auto", "priority":
+				return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic " + strings.ToLower(strings.TrimSpace(string(*requestedTier))) + " service_tier is not supported with speed fast"}
+			}
+		}
+		return "fast", nil
+	case "standard":
+		return "standard", nil
+	default:
+		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed is not supported by Stogas"}
+	}
 }
 
 func validateRequestedServiceTier(provider schemas.ModelProvider, requested *schemas.BifrostServiceTier) error {
@@ -408,8 +722,8 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 		switch value {
 		case "auto", "default", "flex", "priority":
 			return nil
-		case "scale":
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI scale service_tier is not supported by Stogas"}
+		case "scale", "provisioned":
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI " + value + " service_tier is not supported by Stogas"}
 		default:
 			return ErrUnsupportedServiceTier
 		}
@@ -426,7 +740,10 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 }
 
 func requestProviderPreference(rawData map[string]json.RawMessage) (ProviderRoutingPreference, error) {
-	raw, ok := rawData["provider"]
+	raw, name, ok, err := requestRoutingPreferenceRaw(rawData)
+	if err != nil {
+		return ProviderRoutingPreference{}, err
+	}
 	if !ok {
 		return ProviderRoutingPreference{}, nil
 	}
@@ -434,50 +751,65 @@ func requestProviderPreference(rawData map[string]json.RawMessage) (ProviderRout
 	if err := sonic.Unmarshal(raw, &provider); err == nil {
 		provider = strings.TrimSpace(provider)
 		if provider == "" {
-			return ProviderRoutingPreference{}, providerPreferenceShapeError()
+			return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
 		}
 		return ProviderRoutingPreference{Only: []string{provider}}, nil
 	}
 	var object map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &object); err != nil || object == nil {
-		return ProviderRoutingPreference{}, providerPreferenceShapeError()
+		return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
 	}
 	for key := range object {
 		switch key {
 		case "only", "order":
 		default:
-			return ProviderRoutingPreference{}, providerPreferenceShapeError()
+			return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
 		}
 	}
-	only, err := providerStringList(object["only"])
+	only, err := providerStringList(name, object["only"])
 	if err != nil {
 		return ProviderRoutingPreference{}, err
 	}
-	order, err := providerStringList(object["order"])
+	order, err := providerStringList(name, object["order"])
 	if err != nil {
 		return ProviderRoutingPreference{}, err
 	}
 	preference := ProviderRoutingPreference{Only: only, Order: order}
 	if preference.Empty() {
-		return ProviderRoutingPreference{}, providerPreferenceShapeError()
+		return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
 	}
 	return preference, nil
 }
 
-func providerStringList(raw json.RawMessage) ([]string, error) {
+func requestRoutingPreferenceRaw(rawData map[string]json.RawMessage) (json.RawMessage, string, bool, error) {
+	providerRaw, hasProvider := rawData["provider"]
+	rulesRaw, hasRules := rawData["rules"]
+	if hasProvider && hasRules {
+		return nil, "", false, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "provider and rules cannot both be set"}
+	}
+	if hasProvider {
+		return providerRaw, "provider", true, nil
+	}
+	if hasRules {
+		return rulesRaw, "rules", true, nil
+	}
+	return nil, "", false, nil
+}
+
+func providerStringList(name string, raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
 	var values []string
 	if err := sonic.Unmarshal(raw, &values); err != nil || len(values) == 0 {
-		return nil, providerPreferenceShapeError()
+		return nil, providerPreferenceShapeError(name)
 	}
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
 		if normalized == "" {
-			return nil, providerPreferenceShapeError()
+			return nil, providerPreferenceShapeError(name)
 		}
 		key := strings.ToLower(normalized)
 		if seen[key] {
@@ -489,8 +821,11 @@ func providerStringList(raw json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-func providerPreferenceShapeError() APIError {
-	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "provider must be a non-empty string or an object with provider only/order lists"}
+func providerPreferenceShapeError(name string) APIError {
+	if name == "" {
+		name = "provider"
+	}
+	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a non-empty string or an object with provider only/order lists"}
 }
 
 func resolvedRequest(
@@ -506,17 +841,15 @@ func resolvedRequest(
 	pricing requestPricingContext,
 ) *ResolvedRequest {
 	return &ResolvedRequest{
-		Route:             route,
-		RequestType:       requestType,
-		Provider:          provider,
-		RequestedModel:    requestedModel,
-		Model:             model,
-		Deployment:        deployment,
-		PolicyChain:       requestPolicyChain(provider, route, deployment),
-		AllowedParameters: allowedParameterNames(route, extraParams),
-		inputTokenLimit:   inputTokenLimit,
-		outputTokenLimit:  outputTokenLimit,
-		pricing:           pricing,
+		Route:            route,
+		RequestType:      requestType,
+		Provider:         provider,
+		RequestedModel:   requestedModel,
+		Model:            model,
+		Deployment:       deployment,
+		inputTokenLimit:  inputTokenLimit,
+		outputTokenLimit: outputTokenLimit,
+		pricing:          pricing,
 	}
 }
 
@@ -526,6 +859,66 @@ func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
 		return nil, ErrInvalidJSON
 	}
 	return rawData, nil
+}
+
+func inputTokenHoldEstimate(body []byte, provider schemas.ModelProvider, maxInputTokens int) int {
+	estimate := roughInputTokenEstimate(body, provider)
+	if maxInputTokens < 0 {
+		maxInputTokens = 0
+	}
+	if maxInputTokens > 0 && estimate > maxInputTokens {
+		return maxInputTokens
+	}
+	return estimate
+}
+
+func roughInputTokenEstimate(body []byte, provider schemas.ModelProvider) int {
+	if len(body) == 0 {
+		return 0
+	}
+	base := ceilDiv(len(body), 4)
+	estimate := base
+	if provider == schemas.Anthropic {
+		estimate = ceilMulDiv(base, 135, 100)
+	}
+	if highRawNonASCIIRatio(body) {
+		estimate = maxInt(estimate, ceilMulDiv(base, 150, 100))
+	}
+	return maxInt(estimate, 1)
+}
+
+func highRawNonASCIIRatio(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	nonASCII := 0
+	for _, b := range body {
+		if b >= 0x80 {
+			nonASCII++
+		}
+	}
+	return nonASCII*10 >= len(body)
+}
+
+func ceilDiv(value int, divisor int) int {
+	if value <= 0 {
+		return 0
+	}
+	return (value + divisor - 1) / divisor
+}
+
+func ceilMulDiv(value int, multiplier int, divisor int) int {
+	if value <= 0 {
+		return 0
+	}
+	return (value*multiplier + divisor - 1) / divisor
+}
+
+func maxInt(left int, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage) requestPricingContext {
@@ -574,7 +967,7 @@ func effectiveOutputTokenLimit(requested *int, max int) (int, error) {
 	if requested == nil {
 		return max, nil
 	}
-	if *requested <= 0 {
+	if *requested < 0 {
 		return 0, ErrParameterTooLarge
 	}
 	if *requested > max {
@@ -595,17 +988,6 @@ func routeForInput(input RequestInput) (Route, bool, bool) {
 		return "", false, false
 	}
 	return route, true, strings.ToUpper(spec.Method) == normalizedMethod
-}
-
-func requestPolicyChain(provider schemas.ModelProvider, route Route, deployment Deployment) []PolicyNode {
-	chain := []PolicyNode{{Kind: "provider", ID: string(provider)}, {Kind: "route", ID: string(provider) + "-" + string(route)}}
-	if deployment.ID != "" {
-		chain = append(chain, PolicyNode{Kind: "deployment", ID: deployment.ID})
-	}
-	if deployment.ModelID != "" {
-		chain = append(chain, PolicyNode{Kind: "model", ID: deployment.ModelID})
-	}
-	return chain
 }
 
 func validateAllowedRequestFields(rawData map[string]json.RawMessage, route Route) error {
@@ -645,18 +1027,6 @@ func extractExtraParams(rawData map[string]json.RawMessage, knownFields map[stri
 	return extraParams
 }
 
-func allowedParameterNames(route Route, extraParams map[string]interface{}) []string {
-	fields := KnownFields(route)
-	names := make([]string, 0, len(fields)+len(extraParams))
-	for name := range fields {
-		names = append(names, name)
-	}
-	for name := range extraParams {
-		names = append(names, name)
-	}
-	return stableStrings(names)
-}
-
 func typedOpenAIRequestFields(route Route) map[string]bool {
 	fields := KnownFields(route)
 	if route != RouteResponses {
@@ -664,10 +1034,10 @@ func typedOpenAIRequestFields(route Route) map[string]bool {
 	}
 	fields = copyBoolMap(fields)
 	delete(fields, "cache_control")
-	delete(fields, "frequency_penalty")
-	delete(fields, "presence_penalty")
-	delete(fields, "prompt_cache_retention")
+	delete(fields, "context_management")
 	delete(fields, "reasoning.effort")
+	delete(fields, "speed")
+	delete(fields, "task_budget")
 	return fields
 }
 
@@ -713,6 +1083,180 @@ func applyChatAliases(request *openaiprovider.OpenAIChatRequest) {
 		delete(request.ExtraParams, "max_tokens")
 		request.ChatParameters.ExtraParams = request.ExtraParams
 	}
+}
+
+func applyResponsesAliases(rawData map[string]json.RawMessage, request *openaiprovider.OpenAIResponsesRequest) {
+	if request == nil {
+		return
+	}
+	rawEffort, ok := rawData["reasoning.effort"]
+	if !ok {
+		return
+	}
+	if request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
+		return
+	}
+	var effort string
+	if err := sonic.Unmarshal(rawEffort, &effort); err != nil {
+		return
+	}
+	if request.ResponsesParameters.Reasoning == nil {
+		request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+	}
+	request.ResponsesParameters.Reasoning.Effort = &effort
+}
+
+var (
+	chatRawReasoningFields = map[string]bool{
+		"display":    true,
+		"effort":     true,
+		"enabled":    true,
+		"max_tokens": true,
+	}
+	responsesRawReasoningFields = map[string]bool{
+		"effort":           true,
+		"generate_summary": true,
+		"max_tokens":       true,
+		"summary":          true,
+	}
+)
+
+func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedFields map[string]bool, allowAliases bool, allowDottedEffort bool) error {
+	reasoning, hasReasoning, err := rawReasoningObject(rawData["reasoning"])
+	if err != nil {
+		return err
+	}
+	if hasReasoning {
+		for name := range reasoning {
+			if !allowedFields[name] {
+				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning." + name + " is not supported by Stogas API"}
+			}
+		}
+	}
+	if allowAliases {
+		for _, item := range []struct {
+			alias string
+			field string
+		}{
+			{"reasoning_effort", "effort"},
+			{"reasoning_max_tokens", "max_tokens"},
+			{"reasoning_display", "display"},
+		} {
+			if _, ok := rawData[item.alias]; ok && hasReasoning {
+				if _, exists := reasoning[item.field]; exists {
+					return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: item.alias + " conflicts with reasoning." + item.field}
+				}
+			}
+		}
+		if err := validateRawReasoningEffort(rawData["reasoning_effort"], "reasoning_effort"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningDisplay(rawData["reasoning_display"], "reasoning_display"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningPositiveInteger(rawData["reasoning_max_tokens"], "reasoning_max_tokens"); err != nil {
+			return err
+		}
+	}
+	if allowDottedEffort {
+		if err := validateRawReasoningEffort(rawData["reasoning.effort"], "reasoning.effort"); err != nil {
+			return err
+		}
+		if _, ok := rawData["reasoning.effort"]; ok && hasReasoning {
+			if _, exists := reasoning["effort"]; exists {
+				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.effort conflicts with reasoning.effort"}
+			}
+		}
+	}
+	if hasReasoning {
+		if err := validateRawReasoningEffort(reasoning["effort"], "reasoning.effort"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningDisplay(reasoning["display"], "reasoning.display"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningPositiveInteger(reasoning["max_tokens"], "reasoning.max_tokens"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningBoolean(reasoning["enabled"], "reasoning.enabled"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningSummary(reasoning["summary"], "reasoning.summary"); err != nil {
+			return err
+		}
+		if err := validateRawReasoningSummary(reasoning["generate_summary"], "reasoning.generate_summary"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rawReasoningObject(raw json.RawMessage) (map[string]json.RawMessage, bool, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil, false, nil
+	}
+	var object map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &object); err != nil {
+		return nil, false, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning must be an object"}
+	}
+	return object, true, nil
+}
+
+func validateRawReasoningEffort(raw json.RawMessage, name string) error {
+	value, ok, err := rawReasoningString(raw, name)
+	if err != nil || !ok {
+		return err
+	}
+	if strings.TrimSpace(value) == "" {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a string"}
+	}
+	return nil
+}
+
+func validateRawReasoningDisplay(raw json.RawMessage, name string) error {
+	_, _, err := rawReasoningString(raw, name)
+	return err
+}
+
+func validateRawReasoningSummary(raw json.RawMessage, name string) error {
+	_, _, err := rawReasoningString(raw, name)
+	return err
+}
+
+func rawReasoningString(raw json.RawMessage, name string) (string, bool, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return "", false, nil
+	}
+	var value string
+	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+		return "", true, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a string"}
+	}
+	return value, true, nil
+}
+
+func validateRawReasoningPositiveInteger(raw json.RawMessage, name string) error {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var value int
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be an integer"}
+	}
+	if value < 1 {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is outside the supported range"}
+	}
+	return nil
+}
+
+func validateRawReasoningBoolean(raw json.RawMessage, name string) error {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var value bool
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a boolean"}
+	}
+	return nil
 }
 
 func validateChatTokenAliases(rawData map[string]json.RawMessage) error {

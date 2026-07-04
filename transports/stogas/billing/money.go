@@ -41,6 +41,20 @@ func cloneOrZero(value *big.Int) *big.Int {
 	return new(big.Int).Set(value)
 }
 
+func moneyOrZeroString(value *big.Int) string {
+	if value == nil {
+		return ZeroChargeUSDAtoms
+	}
+	return value.String()
+}
+
+func nonEmptyMoneyString(value string) string {
+	if value == "" {
+		return ZeroChargeUSDAtoms
+	}
+	return value
+}
+
 func parseMoneyOrZeroString(value string) *big.Int {
 	if value == "" {
 		return big.NewInt(0)

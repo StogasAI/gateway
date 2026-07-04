@@ -973,3 +973,37 @@ func TestOpenAIResponsesRequest_MarshalJSON_CompactionSummaryStripped(t *testing
 		t.Errorf("reasoning item summary should be [], got: %s", string(rawSummary))
 	}
 }
+
+func TestOpenAIResponsesRequest_MarshalJSON_PreservesPenaltyParameters(t *testing.T) {
+	request := &OpenAIResponsesRequest{
+		Model: "gpt-5-nano",
+		Input: OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputStr: schemas.Ptr("hello"),
+		},
+		ResponsesParameters: schemas.ResponsesParameters{
+			FrequencyPenalty: schemas.Ptr(0.25),
+			PresencePenalty:  schemas.Ptr(-0.5),
+		},
+	}
+
+	encoded, err := request.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON returned error: %v", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("failed to decode marshaled request: %v\n%s", err, string(encoded))
+	}
+	for name, expected := range map[string]string{
+		"frequency_penalty": "0.25",
+		"presence_penalty":  "-0.5",
+	} {
+		raw, ok := payload[name]
+		if !ok {
+			t.Fatalf("%s was dropped from OpenAI Responses request JSON: %s", name, string(encoded))
+		}
+		if string(raw) != expected {
+			t.Fatalf("%s = %s, want %s", name, string(raw), expected)
+		}
+	}
+}

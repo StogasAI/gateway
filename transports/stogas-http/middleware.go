@@ -4,31 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
 
-var unsafeProviderResponseHeaders = map[string]bool{
-	"connection":                true,
-	"content-encoding":          true,
-	"content-length":            true,
-	"content-security-policy":   true,
-	"cookie":                    true,
-	"keep-alive":                true,
-	"location":                  true,
-	"proxy-authenticate":        true,
-	"proxy-authorization":       true,
-	"set-cookie":                true,
-	"set-cookie2":               true,
-	"strict-transport-security": true,
-	"te":                        true,
-	"trailer":                   true,
-	"transfer-encoding":         true,
-	"upgrade":                   true,
-	"x-accel-buffering":         true,
-	"x-content-type-options":    true,
-	"x-frame-options":           true,
+var allowedProviderResponseHeaders = map[string]bool{
+	"openai-processing-ms": true,
+	"openai-version":       true,
+	"request-id":           true,
+	"x-request-id":         true,
 }
 
 func isSafeProviderResponseHeader(header string) bool {
@@ -36,19 +22,7 @@ func isSafeProviderResponseHeader(header string) bool {
 	if normalized == "" {
 		return false
 	}
-	if unsafeProviderResponseHeaders[normalized] {
-		return false
-	}
-	if strings.HasPrefix(normalized, "access-control-") {
-		return false
-	}
-	if strings.HasPrefix(normalized, "cf-") {
-		return false
-	}
-	if strings.HasPrefix(normalized, "sec-") {
-		return false
-	}
-	return true
+	return allowedProviderResponseHeaders[normalized]
 }
 
 func safeProviderResponseHeaders(headers map[string]string) map[string]string {
@@ -59,7 +33,7 @@ func safeProviderResponseHeaders(headers map[string]string) map[string]string {
 	filtered := make(map[string]string)
 	for name, value := range headers {
 		trimmed := strings.TrimSpace(name)
-		if isSafeProviderResponseHeader(trimmed) {
+		if isSafeProviderResponseHeader(trimmed) && safeProviderResponseHeaderValue(value) {
 			filtered[trimmed] = value
 		}
 	}
@@ -67,6 +41,10 @@ func safeProviderResponseHeaders(headers map[string]string) map[string]string {
 		return nil
 	}
 	return filtered
+}
+
+func safeProviderResponseHeaderValue(value string) bool {
+	return utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
 }
 
 func securityHeaders(next fasthttp.RequestHandler) fasthttp.RequestHandler {

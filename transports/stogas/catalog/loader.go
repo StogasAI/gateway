@@ -35,12 +35,6 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 		sortDeploymentIDs(route.DeploymentIDs, catalog.Graph.Deployments)
 		catalog.Graph.ProviderEndpoints[id] = route
 	}
-	for id, deployment := range catalog.Graph.Deployments {
-		if providerNode, ok := catalog.Graph.Providers[deployment.ProviderID]; ok {
-			deployment.Pricing = mergedPricing(providerNode.Pricing, deployment.Pricing)
-		}
-		catalog.Graph.Deployments[id] = deployment
-	}
 	snap := &snapshot{
 		graph:                       catalog.Graph,
 		providerEndpointRequestSlugs: catalog.Indexes.ProviderEndpointRequestSlugs,
@@ -78,23 +72,6 @@ func serviceTierRank(tier string) int {
 	default:
 		return 9
 	}
-}
-
-func mergedPricing(base Pricing, overrides Pricing) Pricing {
-	if len(base) == 0 {
-		return overrides
-	}
-	if len(overrides) == 0 {
-		return base
-	}
-	merged := make(Pricing, len(base)+len(overrides))
-	for key, meter := range base {
-		merged[key] = meter
-	}
-	for key, meter := range overrides {
-		merged[key] = meter
-	}
-	return merged
 }
 
 func responseMetadataFields(graph compiledGraph) map[string]struct{} {

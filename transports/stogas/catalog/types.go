@@ -22,6 +22,7 @@ type Deployment struct {
 	ImpliedServiceTier  *schemas.BifrostServiceTier
 	MaxOutputTokens     int
 	Pricing             Pricing
+	ProviderEndpointIDs []string
 	ReasoningSupported  bool
 	RegionID            string
 	ServiceTier         string
@@ -31,10 +32,10 @@ type Pricing = billing.Pricing
 type MeterEstimate = billing.MeterEstimate
 
 type snapshot struct {
-	graph                    compiledGraph
+	graph                        compiledGraph
 	providerEndpointRequestSlugs map[string]string
-	responseMetadataFields   map[string]struct{}
-	raw                      []byte
+	responseMetadataFields       map[string]struct{}
+	raw                          []byte
 }
 
 type compiledCatalog struct {
@@ -80,7 +81,6 @@ type compiledDeployment struct {
 	StreamCancellation          string         `json:"streamCancellation,omitempty"`
 	Streaming                   string         `json:"streaming,omitempty"`
 	TEE                         map[string]any `json:"tee,omitempty"`
-	Tokenizer                   string         `json:"tokenizer,omitempty"`
 	UpstreamModelSlug           string         `json:"upstreamModelSlug"`
 }
 
@@ -98,7 +98,6 @@ type compiledModel struct {
 	ReasoningSupport    bool     `json:"reasoning"`
 	Series              string   `json:"series"`
 	Snapshot            *string  `json:"snapshot"`
-	Tokenizer           string   `json:"tokenizer"`
 }
 
 type compiledProviderEndpoint struct {

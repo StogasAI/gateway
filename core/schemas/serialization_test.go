@@ -1107,6 +1107,18 @@ func TestResponsesToolMCPApprovalSetting_MarshalJSON_Deterministic(t *testing.T)
 	}
 }
 
+func TestResponsesToolMCPAllowedTools_ArrayRoundTrip(t *testing.T) {
+	input := []byte(`["search","lookup"]`)
+	var allowed ResponsesToolMCPAllowedTools
+	require.NoError(t, Unmarshal(input, &allowed))
+	require.Equal(t, []string{"search", "lookup"}, allowed.ToolNames)
+	require.Nil(t, allowed.Filter)
+
+	encoded, err := Marshal(allowed)
+	require.NoError(t, err)
+	require.JSONEq(t, string(input), string(encoded))
+}
+
 // TestNetworkConfig_TLSFieldsRoundTrip verifies that insecure_skip_verify and ca_cert_pem
 // round-trip correctly through JSON marshaling (used by config.json).
 func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {

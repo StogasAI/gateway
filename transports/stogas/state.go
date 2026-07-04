@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -11,6 +12,7 @@ import (
 type contextKey string
 
 const stateContextKey contextKey = "stogas.state"
+const localDevReleaseMeasurement = "0000000000000000000000000000000000000000000000000000000000000000"
 
 type State struct {
 	Resolution        *catalog.ResolvedRequest
@@ -29,10 +31,12 @@ type State struct {
 	BifrostError      *schemas.BifrostError
 	FinalCostUSDAtoms string
 	FinalMeters       []catalog.MeterEstimate
+	FirstByteAt       time.Time
+	ProviderTTFBMS    *uint32
+	ReleaseMeasurement string
 
-	ClientRequestHeaders    map[string][]string
-	UpstreamRequestHeaders  map[string][]string
 	ProviderResponseHeaders map[string]string
+	ProcessedRequestJSON    []byte
 }
 
 type HoldEstimate struct {
@@ -48,7 +52,38 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 		Adapter:      adapter,
 		RawAPIKey:    rawAPIKey,
 		APIKeyClaims: claims,
+		ReleaseMeasurement: localDevReleaseMeasurement,
 	}
+}
+
+func ReleaseMeasurementForLog(measurement string) string {
+	normalized := strings.ToLower(strings.TrimSpace(measurement))
+	if normalized == "" {
+		return localDevReleaseMeasurement
+	}
+	return normalized
+}
+
+func (s *State) MarkFirstByte() {
+	if s == nil || !s.FirstByteAt.IsZero() {
+		return
+	}
+	s.FirstByteAt = time.Now().UTC()
+}
+
+func (s *State) ObserveProviderTTFB(latencyMS int64) {
+	if s == nil || s.ProviderTTFBMS != nil || latencyMS <= 0 {
+		return
+	}
+	value := uint32(latencyMS)
+	if latencyMS > int64(^uint32(0)) {
+		value = ^uint32(0)
+	}
+	s.ProviderTTFBMS = &value
+}
+
+func (s *State) ObserveUnaryProviderLatency(extra schemas.BifrostResponseExtraFields) {
+	s.ObserveProviderTTFB(extra.Latency)
 }
 
 func SetState(ctx *schemas.BifrostContext, state *State) {

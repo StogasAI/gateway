@@ -12,6 +12,8 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
+	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 	"github.com/valyala/fasthttp"
 )
 
@@ -21,6 +23,8 @@ type Server struct {
 	router  *router.Router
 	runtime *stogas.Runtime
 	server  *fasthttp.Server
+	proofs  *proofhttp.Service
+	secure  *confidentialruntime.Runtime
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
@@ -28,8 +32,25 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		return nil, err
 	}
 
+	secure, err := confidentialruntime.Start(ctx, config.Confidential)
+	if err != nil {
+		return nil, err
+	}
+	var releasedSecrets stogas.ConfidentialSecretLookup
+	if secure != nil {
+		releasedSecrets = secure.Secrets
+	}
+	if err := stogas.ApplyConfidentialRuntimeSecrets(&config, releasedSecrets); err != nil {
+		if secure != nil {
+			secure.Close()
+		}
+		return nil, err
+	}
 	runtime, err := stogas.NewRuntime(ctx, config, logger)
 	if err != nil {
+		if secure != nil {
+			secure.Close()
+		}
 		return nil, err
 	}
 
@@ -37,8 +58,15 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		config:  config,
 		logger:  logger,
 		runtime: runtime,
+		secure:  secure,
+	}
+	if secure != nil {
+		s.proofs = secure.Proofs
 	}
 	if err := s.routes(); err != nil {
+		if secure != nil {
+			secure.Close()
+		}
 		runtime.Close()
 		return nil, err
 	}
@@ -49,6 +77,7 @@ func (s *Server) routes() error {
 	r := router.New()
 
 	r.GET("/health", s.health)
+	r.GET("/ready", s.readiness)
 	r.GET("/v1/catalog", s.catalog)
 	r.GET("/v1/models", s.models)
 	for _, path := range catalog.InferencePaths() {

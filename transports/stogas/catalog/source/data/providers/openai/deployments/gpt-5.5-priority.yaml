@@ -5,6 +5,7 @@ deployments:
   providerId: openai
   parentProviderEndpointNodes: [openai-chat-completions, openai-responses]
   modelId: gpt-5.5-2026-04-23
+  contextWindowTokens: 272000
   serviceTier: priority
   pricing:
     input_tokens:

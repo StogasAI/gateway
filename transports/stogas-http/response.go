@@ -1,7 +1,10 @@
 package stogashttp
 
 import (
+	"strings"
+
 	"github.com/maximhq/bifrost/core/schemas"
+	stogas "github.com/maximhq/bifrost/transports/stogas"
 )
 
 func publicResponsePayload(ctx *schemas.BifrostContext, value any, extra schemas.BifrostResponseExtraFields) any {
@@ -83,7 +86,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 		metadata["latency"] = extra.Latency
 	}
 	if fields["raw_request"] && extra.RawRequest != nil {
-		metadata["raw_request"] = extra.RawRequest
+		metadata["raw_request"] = redactRawRequest(extra.RawRequest)
 	}
 	if fields["raw_response"] && extra.RawResponse != nil {
 		metadata["raw_response"] = extra.RawResponse
@@ -98,8 +101,78 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	return metadata
 }
 
-func filterProviderResponseHeaders(_ *schemas.BifrostContext, extra schemas.BifrostResponseExtraFields) map[string]string {
-	return safeProviderResponseHeaders(extra.ProviderResponseHeaders)
+func redactRawRequest(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if rawRequestRedactedKey(key) {
+				out[key] = "<redacted>"
+				continue
+			}
+			out[key] = redactRawRequest(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = redactRawRequest(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func rawRequestRedactedKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	switch normalized {
+	case "authorization",
+		"authorization_token",
+		"api-key",
+		"api_key",
+		"access_token",
+		"refresh_token",
+		"password",
+		"proxy-authorization",
+		"secret",
+		"token",
+		"x-api-key",
+		"x-goog-api-key":
+		return true
+	default:
+		return rawRequestCanonicalSecretKey(normalized)
+	}
+}
+
+func rawRequestCanonicalSecretKey(key string) bool {
+	canonical := strings.NewReplacer("_", "", "-", "", " ", "").Replace(key)
+	switch canonical {
+	case "authorizationtoken",
+		"apikey",
+		"xapikey",
+		"xgoogapikey",
+		"accesstoken",
+		"refreshtoken",
+		"password",
+		"proxyauthorization",
+		"secret",
+		"secretkey",
+		"clientsecret",
+		"token",
+		"bearertoken":
+		return true
+	default:
+		return false
+	}
+}
+
+func filterProviderResponseHeaders(ctx *schemas.BifrostContext, extra schemas.BifrostResponseExtraFields) map[string]string {
+	headers := extra.ProviderResponseHeaders
+	if state, ok := stogas.StateFrom(ctx); ok && state.ProviderResponseHeaders != nil {
+		headers = state.ProviderResponseHeaders
+	}
+	return safeProviderResponseHeaders(headers)
 }
 
 type streamMetadataAccumulator struct {

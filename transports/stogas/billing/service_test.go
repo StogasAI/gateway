@@ -145,7 +145,7 @@ func TestSettlementStatuses(t *testing.T) {
 	}
 }
 
-func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
+func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	payload, err := encodeGatewayRequestEvent(RequestEvent{RequestID: "request"})
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
@@ -155,20 +155,28 @@ func TestEncodeGatewayRequestEventDefaultsMetrics(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		t.Fatalf("payload is not valid JSON: %v", err)
 	}
-	metrics, ok := decoded["metrics"].(map[string]any)
-	if !ok || len(metrics) != 0 {
-		t.Fatalf("metrics = %v, want empty object", decoded["metrics"])
+	pricing, ok := decoded["pricing"].(map[string]any)
+	if !ok {
+		t.Fatalf("pricing = %v, want pricing object", decoded["pricing"])
+	}
+	if len(pricing) != 0 {
+		t.Fatalf("pricing = %#v, want empty pricing bag when no meters are present", pricing)
 	}
 }
 
 func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		Metrics: map[string]any{
-			"pricing": map[string]any{
-				"basis":                "metered_usage",
-				"total_cost_usd_atoms": "123",
-			},
+		Pricing: map[string]any{
+			"usageMetrics": map[string]any{"prompt_tokens": 1},
+			"tokens":       map[string]any{"prompt": 1},
+			"basis":                "metered_usage",
+			"final":                map[string]any{"input_tokens": "legacy"},
+			"final_meters":         []any{},
+			"hold":                 map[string]any{"output_tokens": "legacy"},
+			"hold_meters":          []any{},
+			"input_tokens":         map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "usdAtoms": "34"},
+			"total_cost_usd_atoms": "123",
 		},
 		ProviderAttempts: []ProviderAttempt{{
 			IsBYOK:     false,
@@ -177,26 +185,76 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			Status:     "success",
 			StatusCode: &status,
 		}},
+		ReleaseMeasurement:     strings.Repeat("a", 64),
+		ResolvedCatalogNodeIDs: []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
 	})
 
 	if event.StogasProcessingSuccess != 1 {
 		t.Fatalf("stogas_processing_success = %d, want 1", event.StogasProcessingSuccess)
 	}
+	if event.ReleaseMeasurement != strings.Repeat("a", 64) {
+		t.Fatalf("release_measurement = %q", event.ReleaseMeasurement)
+	}
+	var nodeIDs []string
+	if err := json.Unmarshal([]byte(event.ResolvedCatalogNodeIDs), &nodeIDs); err != nil || len(nodeIDs) != 3 {
+		t.Fatalf("resolved_catalog_node_ids = %q, err=%v", event.ResolvedCatalogNodeIDs, err)
+	}
 	var attempts []ProviderAttempt
 	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
-	var metrics map[string]any
-	if err := json.Unmarshal([]byte(event.Metrics), &metrics); err != nil {
-		t.Fatalf("metrics = %q, err=%v", event.Metrics, err)
+	var pricing map[string]any
+	if err := json.Unmarshal([]byte(event.Pricing), &pricing); err != nil {
+		t.Fatalf("pricing = %q, err=%v", event.Pricing, err)
 	}
-	pricing, ok := metrics["pricing"].(map[string]any)
-	if !ok || pricing["total_cost_usd_atoms"] != "123" {
-		t.Fatalf("metrics = %#v, want pricing bag", metrics)
+	for _, key := range []string{"usageMetrics", "hold_meters", "final_meters", "hold", "final", "basis", "hold_usd_atoms", "total_cost_usd_atoms"} {
+		if _, ok := pricing[key]; ok {
+			t.Fatalf("pricing must not expose legacy metric key %q: %#v", key, pricing)
+		}
 	}
-	if _, ok := metrics["tokens"]; ok {
-		t.Fatalf("metrics must not expose fixed usage token schema: %#v", metrics)
+	input, ok := pricing["input_tokens"].(map[string]any)
+	if !ok || input["quantity"] != "12" || input["rateKey"] != "per_mill_tokens" || input["usdAtoms"] != "34" {
+		t.Fatalf("pricing should keep dynamic meter keys: %#v", pricing)
+	}
+}
+
+func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
+	startedAt := time.Now().Add(-25 * time.Millisecond)
+	firstByteAt := startedAt.Add(10 * time.Millisecond)
+	providerTTFB := uint32(8)
+	event := NewRequestEvent(EventInput{
+		Authorization: &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
+		FirstByteAt:   firstByteAt,
+		ProviderTTFBMS: &providerTTFB,
+		Pricing: map[string]any{
+			"model":        "gpt-5",
+			"tokens":       map[string]any{"prompt": 1},
+			"usageMetrics": map[string]any{"prompt_tokens": 1},
+			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
+			"total_cost_usd_atoms": "2",
+		},
+		StartedAt: startedAt,
+	})
+
+	pricing := event.Pricing
+	if _, ok := pricing["total_cost_usd_atoms"]; ok {
+		t.Fatalf("pricing must not duplicate top-level total cost: %#v", pricing)
+	}
+	if _, ok := pricing["basis"]; ok {
+		t.Fatalf("pricing must not expose fixed basis: %#v", pricing)
+	}
+	if _, ok := pricing["hold_usd_atoms"]; ok {
+		t.Fatalf("pricing must not expose fixed hold total: %#v", pricing)
+	}
+	if _, ok := pricing["usageMetrics"]; ok {
+		t.Fatalf("pricing must not contain usageMetrics: %#v", pricing)
+	}
+	if event.TTFBMS == 0 {
+		t.Fatalf("expected gateway ttfb to be measured")
+	}
+	if event.ProviderAttempts[0].ProviderTTFBMS == nil || *event.ProviderAttempts[0].ProviderTTFBMS != providerTTFB {
+		t.Fatalf("expected provider ttfb on provider attempt, got %#v", event.ProviderAttempts)
 	}
 }
 
@@ -617,7 +675,7 @@ func testAuthorization() *Authorization {
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
 		CreatedAt:               time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		Metrics:                 map[string]any{},
+		Pricing:                 map[string]any{},
 		RequestID:               "request-1",
 		StogasAPIKeyID:          "key-1",
 		StogasBillingStatus:     "complete",

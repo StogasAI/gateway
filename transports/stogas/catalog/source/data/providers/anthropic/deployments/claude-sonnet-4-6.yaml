@@ -1,11 +1,11 @@
 ---
 deployments:
   upstreamModelSlug: claude-sonnet-4-6
-  aliasSlugs: [claude-sonnet-4-6, claude-sonnet-latest, claude-sonnet-4-6-auto, claude-sonnet-latest-auto]
+  aliasSlugs: [claude-sonnet-4-6, claude-sonnet-latest]
   providerId: anthropic
   parentProviderEndpointNodes: [anthropic-messages]
   modelId: claude-sonnet-4-6
-  serviceTier: auto
+  serviceTier: standard
   pricing:
     input_tokens:
       per_mill_tokens: '3000000000000000000'

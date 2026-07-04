@@ -13,7 +13,10 @@
 {/if}
 
 <div class="node-card">
-	<strong>{data.id}</strong>
+	<strong>{data.label}</strong>
+	{#if data.subtitle}
+		<span>{data.subtitle}</span>
+	{/if}
 </div>
 
 {#if data.handles?.rightIn}

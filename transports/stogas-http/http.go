@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	"github.com/valyala/fasthttp"
 )
 
@@ -17,6 +18,21 @@ func (s *Server) health(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	_, _ = ctx.WriteString(`{"ok":true,"catalogVersion":"` + catalog.PublicCatalogVersion + `"}`)
+}
+
+func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
+	if s == nil || s.secure == nil {
+		ctx.SetStatusCode(fasthttp.StatusNoContent)
+		return
+	}
+	result := s.secure.Readiness()
+	if result.Ready {
+		ctx.SetStatusCode(fasthttp.StatusNoContent)
+		return
+	}
+	ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+	ctx.SetContentType("application/json")
+	_, _ = ctx.WriteString(`{"ok":false}`)
 }
 
 func (s *Server) catalog(ctx *fasthttp.RequestCtx) {
@@ -61,11 +77,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		})
 		return
 	}
-	if err := adapter.ResolveDeployment(state); err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
+	state.ReleaseMeasurement = stogas.ReleaseMeasurementForLog(s.config.Confidential.ReleaseMeasurement)
 	if err := adapter.ValidateRequest(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
@@ -75,9 +87,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		cancel()
 		s.writeCatalogError(ctx, err)
 		return
-	}
-	if len(state.UpstreamRequestHeaders) > 0 {
-		bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, state.UpstreamRequestHeaders)
 	}
 	bifrostReq, err := resolution.ToBifrost(bifrostCtx)
 	if err != nil {
@@ -91,6 +100,13 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeCatalogError(ctx, err)
 		return
 	}
+	processedRequestJSON, err := sonic.Marshal(bifrostReq)
+	if err != nil {
+		cancel()
+		s.writeCatalogError(ctx, invalidProviderRequest())
+		return
+	}
+	state.ProcessedRequestJSON = processedRequestJSON
 	if err := adapter.EstimateHold(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
@@ -134,6 +150,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stateResponse := &schemas.BifrostResponse{ChatResponse: response}
 		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
 		_ = adapter.SanitizeResponse(state)
+		if response != nil {
+			state.ObserveUnaryProviderLatency(response.ExtraFields)
+		}
+		state.MarkFirstByte()
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -142,7 +162,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		}
 
 		s.forwardProviderHeaders(ctx, bifrostCtx, response.ExtraFields)
-		s.writeJSON(ctx, fasthttp.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
+		s.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	case schemas.ResponsesRequest:
 		defer cancel()
 		response, bifrostErr := s.runtime.Client().ResponsesRequest(bifrostCtx, bifrostReq.ResponsesRequest)
@@ -152,6 +172,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stateResponse := &schemas.BifrostResponse{ResponsesResponse: response}
 		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
 		_ = adapter.SanitizeResponse(state)
+		if response != nil {
+			state.ObserveUnaryProviderLatency(response.ExtraFields)
+		}
+		state.MarkFirstByte()
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -160,7 +184,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		}
 
 		s.forwardProviderHeaders(ctx, bifrostCtx, response.ExtraFields)
-		s.writeJSON(ctx, fasthttp.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
+		s.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	default:
 		cancel()
 		s.writeCatalogError(ctx, catalog.ErrUnsupportedRequest)
@@ -228,6 +252,12 @@ func invalidProviderRequest() error {
 }
 
 func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc) {
+	streamProof, proofErr := s.newStreamProof(state)
+	if proofErr != nil {
+		s.writeProofError(ctx)
+		cancel()
+		return
+	}
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("text/event-stream")
 	ctx.Response.Header.Set("Cache-Control", "no-cache")
@@ -294,6 +324,25 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 							return
 						}
 					}
+					if streamProof != nil {
+						output, err := s.proofs.FinishStream(bifrostCtx, streamProof)
+						if err != nil {
+							encoded, encodeErr := marshalPayload(map[string]any{
+								"error": map[string]any{
+									"message": "Failed to build confidential response proof",
+									"type":    "internal_error",
+								},
+							})
+							if encodeErr == nil {
+								_ = reader.sendEvent("", encoded)
+							}
+							return
+						}
+						encoded, err := marshalPayload(output.Object)
+						if err != nil || !reader.sendEvent(proofhttp.SSEEventName, encoded) {
+							return
+						}
+					}
 
 					if sendDone {
 						_ = reader.sendDone()
@@ -333,11 +382,17 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			case chunk.BifrostChatResponse != nil:
 				eventName = ""
 				extra := chunk.BifrostChatResponse.ExtraFields
+				if state != nil {
+					state.ObserveProviderTTFB(extra.Latency)
+				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostChatResponse, extra)
 			case chunk.BifrostResponsesStreamResponse != nil:
 				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
 				extra := chunk.BifrostResponsesStreamResponse.ExtraFields
+				if state != nil {
+					state.ObserveProviderTTFB(extra.Latency)
+				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostResponsesStreamResponse.WithDefaults(), extra)
 			default:
@@ -351,11 +406,17 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			if err != nil {
 				return
 			}
+			if state != nil {
+				state.MarkFirstByte()
+			}
 
 			if !reader.sendEvent(streamEventName(includeEventName, eventName), encoded) {
 				clientConnected = false
 				clientClosed = nil
 				continue
+			}
+			if streamProof != nil {
+				streamProof.WriteSentChunk(encoded)
 			}
 		}
 	}()
@@ -397,6 +458,9 @@ func (s *Server) notFound(ctx *fasthttp.RequestCtx) {
 func (s *Server) shutdown() {
 	if s.runtime != nil {
 		s.runtime.Close()
+	}
+	if s.secure != nil {
+		s.secure.Close()
 	}
 	if s.server != nil {
 		_ = s.server.Shutdown()
