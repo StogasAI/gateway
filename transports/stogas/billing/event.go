@@ -11,8 +11,12 @@ type EventInput struct {
 	ActualCostUSDAtoms string
 	Authorization      *Authorization
 	Error              *schemas.BifrostError
-	Metrics            map[string]any
+	FirstByteAt        time.Time
+	Pricing            map[string]any
+	ProviderTTFBMS     *uint32
+	ReleaseMeasurement string
 	RequestType        string
+	ResolvedCatalogNodeIDs []string
 	Response           *schemas.BifrostResponse
 	StartedAt          time.Time
 }
@@ -35,6 +39,10 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
 		upstreamTimeMS = uint32FromInt64(extra.Latency)
 	}
+	ttfbMS := uint32(0)
+	if !input.FirstByteAt.IsZero() && input.FirstByteAt.After(startedAt) {
+		ttfbMS = uint32Duration(input.FirstByteAt.Sub(startedAt))
+	}
 
 	actualCostUSDAtoms := input.ActualCostUSDAtoms
 	if actualCostUSDAtoms == "" {
@@ -49,16 +57,18 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
 		RequestType:                  normalizeRequestType(input.RequestType),
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderTTFBMS: nil, IsBYOK: false}},
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderTTFBMS: input.ProviderTTFBMS, IsBYOK: false}},
 		StogasProcessingSuccess:      true,
 		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
 		UpstreamProviderFinishReason: finishReason(input.Response),
 		ProviderRequestID:            upstreamRequestID(input.Response),
 		TotalTimeMS:                  totalTimeMS,
 		UpstreamProviderTimeMS:       upstreamTimeMS,
-		TTFBMS:                       0,
+		TTFBMS:                       ttfbMS,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		Metrics:                      metricsObject(input.Metrics),
+		Pricing:                      canonicalPricing(input.Pricing),
+		ReleaseMeasurement:           strings.ToLower(strings.TrimSpace(input.ReleaseMeasurement)),
+		ResolvedCatalogNodeIDs:       append([]string(nil), input.ResolvedCatalogNodeIDs...),
 	}
 }
 
@@ -121,27 +131,29 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	text := strings.ToLower(errorText(bifrostErr))
 
 	switch {
+	case statusCode == 402:
+		return "over_budget"
+	case statusCode == 429:
+		return "rate_limited"
+	case statusCode == 408 || statusCode == 504:
+		return "network_error"
+	case statusCode >= 500:
+		return "provider_error"
+	case looksLikeContentFilterError(text):
+		return "content_filter"
+	case statusCode == 400 || statusCode == 404 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
+		return "invalid_request"
 	case looksLikeRequestConversionError(text):
 		return "invalid_request"
-	case strings.Contains(text, "content_filter") ||
-		strings.Contains(text, "content filter") ||
-		strings.Contains(text, "safety") ||
-		strings.Contains(text, "policy"):
-		return "content_filter"
-	case statusCode == 402 ||
-		strings.Contains(text, "budget") ||
-		strings.Contains(text, "quota") ||
-		strings.Contains(text, "insufficient_quota"):
-		return "over_budget"
-	case statusCode == 429 ||
-		strings.Contains(text, "rate limit") ||
+	case strings.Contains(text, "rate limit") ||
 		strings.Contains(text, "rate_limit") ||
 		strings.Contains(text, "slow down"):
 		return "rate_limited"
-	case statusCode == 400 || statusCode == 404 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
-		return "invalid_request"
-	case statusCode == 408 || statusCode == 504 ||
-		strings.Contains(text, "timeout") ||
+	case strings.Contains(text, "budget") ||
+		strings.Contains(text, "quota") ||
+		strings.Contains(text, "insufficient_quota"):
+		return "over_budget"
+	case strings.Contains(text, "timeout") ||
 		strings.Contains(text, "timed out") ||
 		strings.Contains(text, "connection") ||
 		strings.Contains(text, "network") ||
@@ -176,13 +188,47 @@ func errorText(bifrostErr *schemas.BifrostError) string {
 }
 
 func looksLikeRequestConversionError(text string) bool {
-	return strings.Contains(text, "failed to marshal") ||
-		strings.Contains(text, "failed to unmarshal") ||
-		strings.Contains(text, "marshal request") ||
-		strings.Contains(text, "unmarshal request") ||
-		strings.Contains(text, "request conversion") ||
-		strings.Contains(text, "convert request") ||
-		strings.Contains(text, "could not parse request")
+	for _, needle := range []string{
+		"invalid request",
+		"invalid chat completion request",
+		"invalid responses request",
+		"failed to marshal",
+		"failed to unmarshal",
+		"marshal request",
+		"unmarshal request",
+		"request conversion",
+		"convert request",
+		"unsupported request",
+		"could not parse request",
+		"invalid json",
+		"missing required",
+		"required field",
+		"cannot be nil",
+		"request cannot be nil",
+		"bifrost request cannot be nil",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeContentFilterError(text string) bool {
+	for _, needle := range []string{
+		"content_filter",
+		"content filter",
+		"safety policy",
+		"safety filter",
+		"safety system refusal",
+		"blocked by safety",
+		"blocked for safety",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeRequestType(requestType string) string {
@@ -239,11 +285,24 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
-func metricsObject(metrics map[string]any) map[string]any {
-	if metrics == nil {
-		return map[string]any{}
+func canonicalPricing(pricing map[string]any) map[string]any {
+	canonicalPricing := make(map[string]any, len(pricing))
+	for key, value := range pricing {
+		if isLegacyPricingMetricKey(key) {
+			continue
+		}
+		canonicalPricing[key] = value
 	}
-	return metrics
+	return canonicalPricing
+}
+
+func isLegacyPricingMetricKey(key string) bool {
+	switch key {
+	case "usageMetrics", "hold_meters", "final_meters", "hold", "final", "basis", "hold_usd_atoms", "total_cost_usd_atoms":
+		return true
+	default:
+		return false
+	}
 }
 
 func uint32Duration(value time.Duration) uint32 {

@@ -29,6 +29,7 @@ export type GraphNodeData = {
 	label: string;
 	type: NodeType;
 	id: string;
+	subtitle?: string;
 	count?: number;
 	handles?: {
 		leftIn?: boolean;
@@ -42,22 +43,6 @@ export type LineageNode = {
 	type: NodeType;
 	id: string;
 	value: Record<string, unknown>;
-};
-
-export type AttributeTrace = {
-	path: string;
-	status?: 'overrides' | 'deletes';
-	owner: string;
-	previousOwner?: string;
-	policyEntries?: PolicyEntry[];
-	policies?: string[];
-	value: unknown;
-	previousValue?: unknown;
-};
-
-export type PolicyEntry = {
-	name: string;
-	value: unknown;
 };
 
 export type CatalogFlow = {

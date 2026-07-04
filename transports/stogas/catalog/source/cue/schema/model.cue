@@ -12,7 +12,6 @@ package catalog
 	maxOutputTokens:     int & >=0
 	inputModalities:     [...#Modality]
 	outputModalities:    [...#Modality]
-	tokenizer:           #ClaimText
 	releaseDate:     #MaybeDate
 	knowledgeCutoff: #MaybeDate
 })

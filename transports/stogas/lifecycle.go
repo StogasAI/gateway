@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,7 +40,9 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 		errorType = "invalid_request_error"
 	case 401:
 		errorType = "authentication_error"
-	case 402, 403:
+	case 402:
+		errorType = "billing_error"
+	case 403:
 		errorType = "permission_denied"
 	case 409:
 		errorType = "invalid_request_error"
@@ -106,12 +109,20 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 			fmt.Printf("stogas final price calculation failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
 		}
 	}
+	if len(state.FinalMeters) > 0 {
+		state.FinalMeters = compactMeterEstimates(state.FinalMeters, effectivePricingForState(state))
+		state.FinalCostUSDAtoms = sumMeterAmounts(state.FinalMeters)
+	}
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms: state.FinalCostUSDAtoms,
 		Authorization:      state.Authorization,
 		Error:              state.BifrostError,
-		Metrics:            pricingMetricsForState(state),
+		FirstByteAt:        state.FirstByteAt,
+		Pricing:            pricingForState(state),
+		ProviderTTFBMS:     state.ProviderTTFBMS,
+		ReleaseMeasurement: state.ReleaseMeasurement,
 		RequestType:        state.RequestType,
+		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
 		Response:           state.Response,
 		StartedAt:          state.StartedAt,
 	})
@@ -120,42 +131,59 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	}
 }
 
-func pricingMetricsForState(state *State) map[string]any {
+func pricingForState(state *State) map[string]any {
+	out := map[string]any{}
 	if state == nil {
-		return map[string]any{"pricing": map[string]any{}}
+		return out
 	}
-	basis := "metered_usage"
-	switch {
-	case state.Signals == nil && state.BifrostError != nil && gatewaybilling.ProviderErrorIsInsured(state.BifrostError):
-		basis = "insured_no_usage"
-	case state.Signals == nil && state.BifrostError != nil:
-		basis = "authorized_hold_capture"
-	case state.Signals == nil:
-		basis = "zero_no_usage"
-	}
-	return map[string]any{
-		"pricing": map[string]any{
-			"basis":                basis,
-			"hold_meters":          meterMetrics(state.Hold.Meters),
-			"hold_usd_atoms":       state.Hold.MaxUSDAtoms,
-			"final_meters":         meterMetrics(state.FinalMeters),
-			"total_cost_usd_atoms": state.FinalCostUSDAtoms,
-		},
+	mergePricingMeters(out, compactMeterEstimates(state.FinalMeters, effectivePricingForState(state)))
+	return out
+}
+
+func requestLogPricingBag(state *State) map[string]any {
+	return pricingForState(state)
+}
+
+func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate) {
+	for _, meter := range meters {
+		if meter.MeterKey == "" || meter.RateKey == "" {
+			continue
+		}
+		key := meter.MeterKey
+		if existing, ok := out[key].(map[string]any); ok {
+			if fmt.Sprint(existing["rateKey"]) != meter.RateKey {
+				key = meter.MeterKey + ":" + meter.RateKey
+			}
+		}
+		out[key] = mergeMeterMetric(out[key], meter)
 	}
 }
 
-func meterMetrics(meters []catalog.MeterEstimate) []map[string]any {
-	out := make([]map[string]any, 0, len(meters))
-	for _, meter := range meters {
-		out = append(out, map[string]any{
-			"meter_key":        meter.MeterKey,
-			"rate_key":         meter.RateKey,
-			"quantity":         meter.Quantity,
-			"amount_usd_atoms": meter.AmountUSDAtoms,
-			"hold_required":    meter.HoldRequired,
-		})
+func mergeMeterMetric(existing any, meter catalog.MeterEstimate) map[string]any {
+	metric, _ := existing.(map[string]any)
+	if metric == nil {
+		return map[string]any{
+			"quantity": meter.Quantity,
+			"rateKey":  meter.RateKey,
+			"usdAtoms": meter.AmountUSDAtoms,
+		}
 	}
-	return out
+	metric["quantity"] = addDecimalStrings(fmt.Sprint(metric["quantity"]), meter.Quantity)
+	metric["usdAtoms"] = addDecimalStrings(fmt.Sprint(metric["usdAtoms"]), meter.AmountUSDAtoms)
+	metric["rateKey"] = meter.RateKey
+	return metric
+}
+
+func addDecimalStrings(left string, right string) string {
+	leftValue, ok := new(big.Int).SetString(left, 10)
+	if !ok {
+		leftValue = big.NewInt(0)
+	}
+	rightValue, ok := new(big.Int).SetString(right, 10)
+	if !ok {
+		rightValue = big.NewInt(0)
+	}
+	return leftValue.Add(leftValue, rightValue).String()
 }
 
 func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, requestID string, hold HoldEstimate, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {

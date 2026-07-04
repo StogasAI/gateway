@@ -10,6 +10,5 @@ models:
   maxOutputTokens: 128000
   inputModalities: [text, image]
   outputModalities: [text]
-  tokenizer: o200k_base
   releaseDate: 2026-04-23
   knowledgeCutoff: 2025-12-01

@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import {
 	existsSync,
+	mkdtempSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
+	rmdirSync,
 	statSync,
 	writeFileSync
 } from 'node:fs';
@@ -17,11 +19,12 @@ const root = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const compiledDir = join(root, '..', 'generated');
 const jsonPath = join(compiledDir, 'catalog.json');
 const gzipPath = join(compiledDir, 'catalog.json.gz');
-const tempBuildDir = join(root, '.tmp-catalog-build');
+const tempBuildRoot = join(root, '.tmp-catalog-build');
 const cueVersion = 'v0.16.1';
 const toolCacheDir = join(resolveToolCacheRoot(), 'cue', cueVersion);
 const cachedCue = join(toolCacheDir, process.platform === 'win32' ? 'cue.exe' : 'cue');
 const args = new Set(process.argv.slice(2));
+let tempBuildDir = null;
 
 function resolveToolCacheRoot() {
 	const configured = process.env.STOGAS_CATALOG_TOOL_CACHE_DIR?.trim();
@@ -104,7 +107,7 @@ function indentYaml(content, spaces) {
 
 function writeFileOwnedNodeSource(sources) {
 	if (!sources.length) return null;
-	mkdirSync(tempBuildDir, { recursive: true });
+	const tempDir = ensureTempBuildDir();
 	const grouped = new Map();
 	for (const source of sources) {
 		const entries = grouped.get(source.type) ?? [];
@@ -123,9 +126,27 @@ function writeFileOwnedNodeSource(sources) {
 				])
 		])
 		.join('\n');
-	const generatedPath = join(tempBuildDir, 'file-owned-nodes.yaml');
+	const generatedPath = join(tempDir, 'file-owned-nodes.yaml');
 	writeFileSync(generatedPath, `${content.trimEnd()}\n`);
 	return generatedPath;
+}
+
+function ensureTempBuildDir() {
+	if (tempBuildDir) return tempBuildDir;
+	mkdirSync(tempBuildRoot, { recursive: true });
+	tempBuildDir = mkdtempSync(join(tempBuildRoot, 'build-'));
+	return tempBuildDir;
+}
+
+function cleanupTempBuildDir() {
+	if (!tempBuildDir) return;
+	rmSync(tempBuildDir, { force: true, recursive: true });
+	tempBuildDir = null;
+	try {
+		rmdirSync(tempBuildRoot);
+	} catch {
+		// Another catalog build may still own a sibling temp directory.
+	}
 }
 
 function run(command, options = {}) {
@@ -287,28 +308,19 @@ function deploymentIdsForProviderEndpoint(graph, endpointId) {
 	return Object.entries(graph.deployments ?? {})
 		.filter(([, deployment]) => deployment.parentProviderEndpointNodes?.includes(endpointId))
 		.map(([deploymentId]) => deploymentId)
-		.sort((a, b) => deploymentSortKey(a).localeCompare(deploymentSortKey(b)));
+		.sort((a, b) => deploymentSortKey(graph, a).localeCompare(deploymentSortKey(graph, b)));
 }
 
-function deploymentSortKey(deploymentId) {
-	const tierRank = deploymentId.endsWith('-priority')
-		? '2'
-		: deploymentId.endsWith('-flex')
-			? '1'
-			: '0';
-	const base = deploymentId.replace(/-(flex|priority)$/, '');
-	const familyRank = base.startsWith('gpt-5.5')
-		? '0'
-		: base.startsWith('gpt-5-nano')
-			? '1'
-			: base.startsWith('gpt-5-search-api')
-				? '2'
-				: base.startsWith('gpt-4o-search-preview')
-					? '3'
-					: base.startsWith('gpt-4o-mini-search-preview')
-						? '4'
-						: '9';
-	return `${familyRank}:${base}:${tierRank}:${deploymentId}`;
+function deploymentSortKey(graph, deploymentId) {
+	const deployment = graph.deployments?.[deploymentId];
+	const model = graph.models?.[deployment?.modelId];
+	return `${descendingDateRank(model?.releaseDate)}:${deploymentId}`;
+}
+
+function descendingDateRank(date) {
+	const normalized = typeof date === 'string' ? date.replaceAll('-', '').slice(0, 8) : '';
+	const numeric = /^[0-9]{8}$/.test(normalized) ? Number(normalized) : 0;
+	return String(99999999 - numeric).padStart(8, '0');
 }
 
 function stogasEndpointProviderEndpoints(graph) {
@@ -327,7 +339,7 @@ function unique(items) {
 
 if (args.has('--clean')) {
 	rmSync(compiledDir, { force: true, recursive: true });
-	rmSync(tempBuildDir, { force: true, recursive: true });
+	rmSync(tempBuildRoot, { force: true, recursive: true });
 	process.exit(0);
 }
 
@@ -343,7 +355,6 @@ const fileOwnedSources = allDataFiles
 const fileOwnedPaths = new Set(fileOwnedSources.map((source) => source.path));
 const dataFiles = allDataFiles.filter((path) => !fileOwnedPaths.has(path)).map(rel);
 
-rmSync(tempBuildDir, { force: true, recursive: true });
 const generatedFileOwnedSource = writeFileOwnedNodeSource(fileOwnedSources);
 
 try {
@@ -377,6 +388,6 @@ try {
 			writeIfChanged(gzipPath, gzipped);
 		}
 	}
-} finally {
-	rmSync(tempBuildDir, { force: true, recursive: true });
-}
+	} finally {
+		cleanupTempBuildDir();
+	}

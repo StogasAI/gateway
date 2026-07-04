@@ -40,10 +40,8 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID.String())
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
-	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestHeaders, requestHeaders(ctx))
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
 	state.RequestLifetime = lifetime
-	state.ClientRequestHeaders = requestHeaderValues(ctx)
 	stogas.SetState(bifrostCtx, state)
 
 	extraFields, err := extraFieldsHeader(ctx)
@@ -88,28 +86,6 @@ func streamIdleTimeout(state *stogas.State) time.Duration {
 	default:
 		return 0
 	}
-}
-
-func requestHeaders(ctx *fasthttp.RequestCtx) map[string]string {
-	headers := make(map[string]string)
-	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {
-		name := strings.ToLower(string(key))
-		if existing := headers[name]; existing != "" {
-			headers[name] = existing + ", " + string(value)
-			return
-		}
-		headers[name] = string(value)
-	})
-	return headers
-}
-
-func requestHeaderValues(ctx *fasthttp.RequestCtx) map[string][]string {
-	headers := make(map[string][]string)
-	ctx.Request.Header.VisitAll(func(key []byte, value []byte) {
-		name := string(key)
-		headers[name] = append(headers[name], string(value))
-	})
-	return headers
 }
 
 func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {

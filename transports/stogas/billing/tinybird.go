@@ -46,7 +46,9 @@ type RequestEvent struct {
 	UpstreamProviderTimeMS       uint32            `json:"upstream_provider_time_ms"`
 	TTFBMS                       uint32            `json:"ttfb_ms"`
 	TotalCostUSDAtoms            string            `json:"total_cost_usd_atoms"`
-	Metrics                      map[string]any    `json:"metrics"`
+	Pricing                      map[string]any    `json:"pricing"`
+	ReleaseMeasurement           string            `json:"release_measurement"`
+	ResolvedCatalogNodeIDs       []string          `json:"resolved_catalog_node_ids"`
 }
 
 type tinybirdEventsResponse struct {
@@ -128,23 +130,29 @@ type tinybirdGatewayRequestEventPayload struct {
 	UpstreamProviderTimeMS       uint32 `json:"upstream_provider_time_ms"`
 	TTFBMS                       uint32 `json:"ttfb_ms"`
 	TotalCostUSDAtoms            string `json:"total_cost_usd_atoms"`
-	Metrics                      string `json:"metrics"`
+	Pricing                      string `json:"pricing"`
+	ReleaseMeasurement           string `json:"release_measurement"`
+	ResolvedCatalogNodeIDs       string `json:"resolved_catalog_node_ids"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
-	metricsJSON := mustJSONString(event.Metrics, "{}")
+	pricing := canonicalPricing(event.Pricing)
+	pricingJSON := mustJSONString(pricing, "{}")
+	resolvedCatalogNodeIDsJSON := mustJSONString(event.ResolvedCatalogNodeIDs, "[]")
 	processed := uint8(0)
 	if event.StogasProcessingSuccess {
 		processed = 1
 	}
 	return tinybirdGatewayRequestEventPayload{
 		CreatedAt:                    event.CreatedAt,
-		Metrics:                      metricsJSON,
+		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
 		ProviderRequestID:            event.ProviderRequestID,
+		ReleaseMeasurement:           strings.ToLower(strings.TrimSpace(event.ReleaseMeasurement)),
 		RequestID:                    event.RequestID,
 		RequestType:                  event.RequestType,
+		ResolvedCatalogNodeIDs:       resolvedCatalogNodeIDsJSON,
 		StogasAPIKeyID:               event.StogasAPIKeyID,
 		StogasBillingStatus:          event.StogasBillingStatus,
 		StogasOrganizationID:         event.StogasOrganizationID,

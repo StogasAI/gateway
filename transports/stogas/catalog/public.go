@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"sort"
 	"time"
@@ -56,6 +58,15 @@ func PublicCatalogJSON() ([]byte, bool) {
 		return nil, false
 	}
 	return encoded, true
+}
+
+func PublicCatalogHash() (string, bool) {
+	encoded, ok := PublicCatalogJSON()
+	if !ok {
+		return "", false
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), true
 }
 
 func PublicModelsPayload() (PublicModelsResponse, bool) {

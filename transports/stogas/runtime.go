@@ -23,6 +23,9 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validateProviderRuntimeSecretsReady(config); err != nil {
+		return nil, err
+	}
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	tinybird := billing.NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
@@ -95,6 +98,7 @@ type account struct {
 
 func newAccount(config Config) *account {
 	openAIConfig := newProviderConfig(config.OpenAIBaseURL, config.AllowPrivateProviderNetwork)
+	openAIConfig.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
 	anthropicConfig := newProviderConfig(config.AnthropicBaseURL, config.AllowPrivateProviderNetwork)
 
 	return &account{

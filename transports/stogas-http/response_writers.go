@@ -50,6 +50,10 @@ func publicBifrostStatus(bifrostErr *schemas.BifrostError) int {
 	if bifrostErr.StatusCode != nil {
 		status := *bifrostErr.StatusCode
 		if status >= 400 && status <= 599 {
+			switch status {
+			case fasthttp.StatusUnauthorized, fasthttp.StatusPaymentRequired, fasthttp.StatusForbidden:
+				return fasthttp.StatusServiceUnavailable
+			}
 			return status
 		}
 		return fasthttp.StatusInternalServerError

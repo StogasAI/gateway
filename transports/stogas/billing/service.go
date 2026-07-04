@@ -253,13 +253,14 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		return nil
 	}
 
-	metricsJSON := metricsJSONString(event.Metrics)
 	paramsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey)
 	actualCost := event.TotalCostUSDAtoms
 	if actualCost == "" {
 		actualCost = ZeroChargeUSDAtoms
 		event.TotalCostUSDAtoms = actualCost
 	}
+	event.Pricing = canonicalPricing(event.Pricing)
+	pricingJSON := pricingJSONString(event.Pricing)
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		return err
@@ -270,11 +271,11 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
 	}
 
-	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(metricsJSON), payload, writeOutbox); err != nil {
+	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(pricingJSON), payload, writeOutbox); err != nil {
 		s.retryWG.Add(1)
 		go func() {
 			defer s.retryWG.Done()
-			s.retrySettle(authorization, paramsHash, actualCost, string(metricsJSON), payload, event, writeOutbox)
+			s.retrySettle(authorization, paramsHash, actualCost, string(pricingJSON), payload, event, writeOutbox)
 		}()
 		return nil
 	}
@@ -282,9 +283,9 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 	return nil
 }
 
-func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, metricsJSON string, payload string, writeOutbox bool) error {
+func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, pricingJSON string, payload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, paramsHash, actualCost, metricsJSON, payload, writeOutbox)
+		return s.settleFunc(ctx, authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
@@ -304,7 +305,7 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 		authorization.ProductKey,
 		paramsHash,
 		actualCost,
-		metricsJSON,
+		pricingJSON,
 		payload,
 	).Scan(&row.Result, &row.FinalCost, &row.RefundAmount, &row.AvailableAfter)
 	if err != nil {
@@ -325,14 +326,14 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	}
 }
 
-func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, metricsJSON string, payload string, event RequestEvent, writeOutbox bool) {
+func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, pricingJSON string, payload string, event RequestEvent, writeOutbox bool) {
 	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
-		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, metricsJSON, payload, writeOutbox); err == nil {
+		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox); err == nil {
 			return
 		} else {
 			if isPermanentSettleError(err) {
@@ -369,9 +370,7 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 }
 
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
-	if event.Metrics == nil {
-		event.Metrics = map[string]any{}
-	}
+	event.Pricing = canonicalPricing(event.Pricing)
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
@@ -391,11 +390,8 @@ func (s *Service) publishUncommittedFallback(authorization *Authorization, event
 	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
 }
 
-func metricsJSONString(metrics map[string]any) string {
-	if len(metrics) == 0 {
-		return "{}"
-	}
-	encoded, err := json.Marshal(metrics)
+func pricingJSONString(pricing map[string]any) string {
+	encoded, err := json.Marshal(canonicalPricing(pricing))
 	if err != nil {
 		return "{}"
 	}

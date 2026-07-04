@@ -28,13 +28,22 @@ func authorizationToken(raw []byte) string {
 	return value
 }
 
-func apiKeyToken(ctx *fasthttp.RequestCtx, route catalog.Route) string {
+func apiKeyToken(ctx *fasthttp.RequestCtx, route catalog.Route) (string, bool) {
+	token := ""
 	for _, header := range catalog.AuthHeaderNames(route) {
-		if token := authorizationToken(ctx.Request.Header.Peek(header)); token != "" {
-			return token
+		next := authorizationToken(ctx.Request.Header.Peek(header))
+		if next == "" {
+			continue
+		}
+		if token == "" {
+			token = next
+			continue
+		}
+		if next != token {
+			return "", false
 		}
 	}
-	return ""
+	return token, true
 }
 
 func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
@@ -45,7 +54,13 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 		})
 		return apiCredential{}, false
 	}
-	token := apiKeyToken(ctx, route)
+	token, ok := apiKeyToken(ctx, route)
+	if !ok {
+		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": "Conflicting API key headers", "type": "invalid_request_error"},
+		})
+		return apiCredential{}, false
+	}
 	if token == "" {
 		s.writeError(ctx, fasthttp.StatusUnauthorized, map[string]any{
 			"error": map[string]any{"message": "Missing API key", "type": "authentication_error"},

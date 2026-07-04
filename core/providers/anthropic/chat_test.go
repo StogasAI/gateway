@@ -592,6 +592,31 @@ func TestToAnthropicChatRequest_NormalFlowUnchanged(t *testing.T) {
 	}
 }
 
+func TestToAnthropicChatRequest_MapsUserToMetadataUserID(t *testing.T) {
+	userID := "user_01K7EXAMPLE"
+	bifrostReq := &schemas.BifrostChatRequest{
+		Provider: schemas.Anthropic,
+		Model:    "claude-sonnet-4-20250514",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hi")},
+		}},
+		Params: &schemas.ChatParameters{
+			User: schemas.Ptr(userID),
+		},
+	}
+
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	result, err := ToAnthropicChatRequest(ctx, bifrostReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Metadata == nil || result.Metadata.UserID == nil || *result.Metadata.UserID != userID {
+		t.Fatalf("expected metadata.user_id %q, got %#v", userID, result.Metadata)
+	}
+}
+
 func TestToAnthropicChatRequest_Opus47_StripsTemperatureTopPTopK(t *testing.T) {
 	temp := 0.7
 	topP := 0.9
