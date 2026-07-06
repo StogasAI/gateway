@@ -69,27 +69,54 @@ jobs:
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
 
-      - name: Verify release payload file set
+      - name: Package release evidence
         run: |
           set -euo pipefail
           cd "dist/gateway/$GITHUB_REF_NAME"
-          expected_files=(
-            gateway.igvm
+          evidence_files=(
             gateway.efi
             gateway.init
             gateway.kernel
             gateway.initramfs.cpio.zst
-            launch-measurement.txt
-            release-manifest.json
             pins.lock.json
-            SHA256SUMS
             igvmmeasure-check-kvm.txt
             ukify-inspect.txt
             guix-describe.txt
             guix-store-requisites.txt
             kernel-config.txt
             build-inputs.sha256
+          )
+          tar \
+            --sort=name \
+            --mtime='@1' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
+            -I 'zstd -19 --threads=0' \
+            -cf gateway-evidence.tar.zst \
+            "${evidence_files[@]}"
+          rm "${evidence_files[@]}"
+          sha256sum \
+            gateway.igvm \
+            launch-measurement.txt \
+            release-manifest.json \
+            github-attestation.jsonl \
+            gateway-evidence.tar.zst \
+            > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Verify release payload file set
+        run: |
+          set -euo pipefail
+          cd "dist/gateway/$GITHUB_REF_NAME"
+          expected_files=(
+            gateway.igvm
+            launch-measurement.txt
+            release-manifest.json
+            SHA256SUMS
             github-attestation.jsonl
+            gateway-evidence.tar.zst
           )
           actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
           expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
@@ -150,23 +177,18 @@ jobs:
           test "$(git rev-list -n1 "$tag")" = "$release_commit"
           ASSETS=(
             "dist/gateway/$tag/gateway.igvm"
-            "dist/gateway/$tag/gateway.efi"
-            "dist/gateway/$tag/gateway.init"
-            "dist/gateway/$tag/gateway.kernel"
-            "dist/gateway/$tag/gateway.initramfs.cpio.zst"
             "dist/gateway/$tag/launch-measurement.txt"
             "dist/gateway/$tag/release-manifest.json"
-            "dist/gateway/$tag/pins.lock.json"
             "dist/gateway/$tag/SHA256SUMS"
-            "dist/gateway/$tag/igvmmeasure-check-kvm.txt"
-            "dist/gateway/$tag/ukify-inspect.txt"
-            "dist/gateway/$tag/guix-describe.txt"
-            "dist/gateway/$tag/guix-store-requisites.txt"
-            "dist/gateway/$tag/kernel-config.txt"
-            "dist/gateway/$tag/build-inputs.sha256"
             "dist/gateway/$tag/github-attestation.jsonl"
+            "dist/gateway/$tag/gateway-evidence.tar.zst"
           )
           if gh release view "$tag" >/dev/null 2>&1; then
+            gh release view "$tag" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                [ -n "$asset" ] || continue
+                gh release delete-asset "$tag" "$asset" --yes
+              done
             gh release upload "$tag" "${ASSETS[@]}" --clobber
             gh release edit "$tag" --draft=true --target "$release_commit"
           else
