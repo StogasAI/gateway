@@ -152,11 +152,13 @@ function verifyWorkflows() {
 		);
 		assert(releaseWorkflow.includes('Verify release payload file set'), 'Release workflow must verify the final payload file set.');
 		assert(releaseWorkflow.includes('release payload contains unexpected files'), 'Release workflow must fail on payload clutter files.');
+		assert(releaseWorkflow.includes('gateway-evidence.tar.zst'), 'Release workflow must compress advanced evidence into one archive.');
+		assert(releaseWorkflow.includes('gh release delete-asset'), 'Release workflow must delete stale draft release assets before upload.');
 		assert(!releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must not attach separate Sigstore trust evidence.');
 		assert(!releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must not upload separate Sigstore trust evidence.');
-		assert(releaseWorkflow.includes('gateway.init'), 'Release workflow must upload the init binary evidence.');
-		assert(releaseWorkflow.includes('gateway.kernel'), 'Release workflow must upload the kernel image evidence.');
-		assert(releaseWorkflow.includes('gateway.initramfs.cpio.zst'), 'Release workflow must upload initramfs evidence.');
+		assert(releaseWorkflow.includes('gateway.init'), 'Release workflow must archive the init binary evidence.');
+		assert(releaseWorkflow.includes('gateway.kernel'), 'Release workflow must archive the kernel image evidence.');
+		assert(releaseWorkflow.includes('gateway.initramfs.cpio.zst'), 'Release workflow must archive initramfs evidence.');
 		assert(!releaseWorkflow.includes('gateway.ca-certificates.crt'), 'Release workflow must not clutter draft releases with a standalone CA bundle asset.');
 		assert(releaseWorkflow.includes('igvmmeasure-check-kvm.txt'), 'Release workflow must upload KVM measurement evidence.');
 		assert(!releaseWorkflow.includes('igvm-inspect.txt'), 'Release workflow must not publish measurement output as IGVM inspection evidence.');

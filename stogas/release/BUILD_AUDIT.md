@@ -77,7 +77,7 @@ Release graph files:
 
 | File | Role |
 | --- | --- |
-| `stogas/release/guix/release.scm` | Builds the output directory containing `gateway.igvm`, `gateway.efi`, `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst`, `launch-measurement.txt`, `release-manifest.json`, `SHA256SUMS`, `pins.lock.json`, `igvmmeasure-check-kvm.txt`, `ukify-inspect.txt`, `kernel-config.txt`, and `build-inputs.sha256`; its gateway source input includes only `core/` and `transports/`. |
+| `stogas/release/guix/release.scm` | Builds the raw output directory containing `gateway.igvm`, `gateway.efi`, `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst`, `launch-measurement.txt`, `release-manifest.json`, `SHA256SUMS`, `pins.lock.json`, `igvmmeasure-check-kvm.txt`, `ukify-inspect.txt`, `kernel-config.txt`, and `build-inputs.sha256`; its gateway source input includes only `core/` and `transports/`. The GitHub release workflow keeps only runtime/proof essentials at top level and packs advanced evidence into `gateway-evidence.tar.zst`. |
 | `stogas/release/guix/modules/stogas/release/packages.scm` | Defines Stogas-local Guix packages for the custom kernel, UKI tooling, OVMF, and IGVM measurement/update tools. |
 | `stogas/release/guix/cmdline.txt` | Fixed guest kernel command line. |
 | `stogas/release/guix/os-release` | Fixed UKI OS release metadata. |
@@ -97,7 +97,7 @@ Build flow by file:
 | Final Guix derivation | `stogas/release/guix/release.scm` | Defines the measured release output: copies gateway source without vendor caches, imports the hydrated Go module cache, sets offline Go mode with `GOPROXY=off`/`GOSUMDB=off`, checks `go.mod`/`go.sum` before and after vendoring, runs offline `go mod verify`, regenerates vendor inside the sandbox, checks the vendor source-tree hash, builds the Go `/init`, adds the pinned Guix `nss-certs` bundle at `/etc/ssl/certs/ca-certificates.crt`, creates the deterministic initramfs with single-threaded zstd, builds the UKI, wraps/injects the IGVM, measures it with `igvmmeasure --check-kvm gateway.igvm measure`, and writes manifest, checksum, KVM measurement, UKI inspect, kernel image, kernel config, and build-input evidence. |
 | Fixed UKI inputs | `stogas/release/guix/cmdline.txt`, `stogas/release/guix/os-release` | Provide deterministic kernel command line and UKI OS metadata consumed by `release.scm`. |
 | PR workflow | `.github/workflows/pr-dependencies.yml` | Verifies release pins and Go dependency hydration on dependency/source changes without relying on committed vendor code. |
-| Draft release workflow | `.github/workflows/gateway-igvm-release.yml` | Runs from pushed `v*.*.*` tags, builds with read-only repository authority, then publishes draft release assets from a separate contents-write job after verifying the tag points at the checked-out commit. |
+| Draft release workflow | `.github/workflows/gateway-igvm-release.yml` | Runs from pushed `v*.*.*` tags, builds with read-only repository authority, packages advanced evidence into `gateway-evidence.tar.zst`, deletes stale draft assets, then publishes the clean draft release from a separate contents-write job after verifying the tag points at the checked-out commit. |
 
 ## Package And Toolchain Pins
 
