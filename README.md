@@ -9,6 +9,15 @@ This repository intentionally keeps only the runtime Go surface and Stogas-owned
 - `stogas/`: Stogas catalog workbench and deterministic SEV-SNP IGVM release pipeline.
 - `.github/`: Stogas-owned CI and release workflows.
 
+License and attribution:
+
+- The upstream Bifrost-derived work is Apache-2.0. The upstream license text and
+  copyright notice are preserved in `LICENSE`.
+- Stogas changes and repository-scope notes are summarized in `NOTICE`.
+- Only `core/` is treated as imported Bifrost runtime code. The remaining
+  repository surface is Stogas-owned runtime/release tooling; upstream Bifrost
+  deployment, application, and non-runtime artifacts are intentionally unused.
+
 This fork does not support full upstream merges. Import upstream changes by applying only the approved runtime allowlist:
 
 ```bash
@@ -27,3 +36,9 @@ bun run release:build -- v0.0.0 dist/gateway/v0.0.0
 Go unit tests use conventional `*_test.go` filenames beside their package sources under `transports/**` when they cover package-private behavior. Public gateway behavior coverage is centralized in the private monorepo test harness under `apps/tests`.
 
 The release artifact is the measured `gateway.igvm` built by `stogas/release`. Outputs should be written under this repository's `dist/` directory. See `stogas/release/BUILD_AUDIT.md` for the public reproducible-build audit map.
+
+GitHub draft releases use official GitHub artifact attestation and a faster
+single-build path so release candidates do not spend CI time doing a redundant
+Guix rebuild check. The GitHub build still uses pinned public inputs and the
+final no-substitutes Guix build. The Stogas publish/signing step independently
+rebuilds and compares locally before any measurement is accepted into Control.

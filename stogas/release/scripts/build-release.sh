@@ -28,7 +28,7 @@ node "$release_root/scripts/verify-pins.mjs"
 "$release_root/scripts/hydrate-guix-closure.sh" "$tag" >/dev/null
 
 check_args=(--check)
-if [ "${STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK:-0}" = "1" ]; then
+if [ "${STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK:-0}" = "1" ]; then
   check_args=()
 fi
 

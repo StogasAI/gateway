@@ -107,7 +107,16 @@ function verifyWorkflows() {
 				assert(!source.includes('guix shell'), `${basename(path)} must not use guix shell for release builds.`);
 			}
 			assert(!source.includes('/gnu/store'), `${basename(path)} must not cache or mutate /gnu/store.`);
-			assert(!source.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), `${basename(path)} must not skip guix build --check.`);
+			if (source.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK')) {
+				assert(
+					basename(path) === 'gateway-igvm-release.yml',
+					`${basename(path)} must not skip guix build --check.`
+				);
+				assert(
+					source.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK: "1"'),
+					`${basename(path)} must make the CI rebuild-check skip explicit.`
+				);
+			}
 		if (source.includes('actions/cache@')) {
 			assert(source.includes('path: stogas/release/vendor'), `${basename(path)} may only cache the Stogas release vendor cache.`);
 		}
@@ -128,6 +137,9 @@ function verifyWorkflows() {
 		assert(releaseWorkflow.includes('id-token: write'), 'Build job must retain OIDC only for attestation.');
 		assert(releaseWorkflow.includes('actions/upload-artifact@'), 'Build job must hand off release assets as a workflow artifact.');
 		assert(releaseWorkflow.includes('actions/download-artifact@'), 'Publish job must download build assets before release upload.');
+		assert(releaseWorkflow.includes('actions/attest@'), 'Release workflow must use official GitHub artifact attestation.');
+		assert(!releaseWorkflow.includes('officialGithubArtifactAttestation: false'), 'Release workflow must not emit non-official draft provenance.');
+		assert(!releaseWorkflow.includes('github.event.repository.private'), 'Release workflow must not branch on private-repository provenance.');
 		assert(!releaseWorkflow.includes('restore-keys:'), 'Release workflow must not restore partial cache matches.');
 		assert(releaseWorkflow.includes("'transports/go.mod'"), 'Release cache key must include transports/go.mod.');
 		assert(releaseWorkflow.includes("'transports/go.sum'"), 'Release cache key must include transports/go.sum.');
@@ -246,7 +258,7 @@ function verifyReleaseSources() {
 		assert(buildScript.includes('expected_files=('), 'Build script must keep a tight release output allow-list.');
 		assert(buildScript.includes('release output contains unexpected files'), 'Build script must fail on clutter files.');
 		assert(buildScript.includes('sha256sum -c SHA256SUMS'), 'Build script must verify generated release checksums.');
-		assert(buildScript.includes('STOGAS_RELEASE_DEV_SKIP_GUIX_CHECK'), 'Build script must gate local no-check builds explicitly.');
+		assert(buildScript.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK'), 'Build script must gate CI no-check builds explicitly.');
 		assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
 		assert(!hydrateScript.includes('2>&1 || true'), 'Hydration dry run must fail closed on unexpected Guix errors.');
 		assert(hydrateScript.includes('cat "$dry_run" >&2'), 'Hydration dry-run failure must print Guix output.');
