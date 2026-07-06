@@ -152,8 +152,8 @@ function verifyWorkflows() {
 		);
 		assert(releaseWorkflow.includes('Verify release payload file set'), 'Release workflow must verify the final payload file set.');
 		assert(releaseWorkflow.includes('release payload contains unexpected files'), 'Release workflow must fail on payload clutter files.');
-		assert(releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must attach Sigstore trust evidence.');
-		assert(releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must upload Sigstore trust evidence.');
+		assert(!releaseWorkflow.includes('fetch-sigstore-trust-bundle.mjs'), 'Release workflow must not attach separate Sigstore trust evidence.');
+		assert(!releaseWorkflow.includes('sigstore-trust-bundle.json'), 'Release workflow must not upload separate Sigstore trust evidence.');
 		assert(releaseWorkflow.includes('gateway.init'), 'Release workflow must upload the init binary evidence.');
 		assert(releaseWorkflow.includes('gateway.kernel'), 'Release workflow must upload the kernel image evidence.');
 		assert(releaseWorkflow.includes('gateway.initramfs.cpio.zst'), 'Release workflow must upload initramfs evidence.');

@@ -69,9 +69,6 @@ jobs:
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
 
-      - name: Collect Sigstore trust evidence
-        run: node stogas/release/scripts/fetch-sigstore-trust-bundle.mjs "dist/gateway/${{ github.ref_name }}/sigstore-trust-bundle.json"
-
       - name: Verify release payload file set
         run: |
           set -euo pipefail
@@ -93,7 +90,6 @@ jobs:
             kernel-config.txt
             build-inputs.sha256
             github-attestation.jsonl
-            sigstore-trust-bundle.json
           )
           actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
           expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
@@ -169,7 +165,6 @@ jobs:
             "dist/gateway/$tag/kernel-config.txt"
             "dist/gateway/$tag/build-inputs.sha256"
             "dist/gateway/$tag/github-attestation.jsonl"
-            "dist/gateway/$tag/sigstore-trust-bundle.json"
           )
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${ASSETS[@]}" --clobber

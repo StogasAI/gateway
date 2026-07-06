@@ -340,9 +340,6 @@
 	                                  "packages.scm"))
 	             (cons "stogas/release/scripts/build-release.sh"
 	                   #$(source-file "scripts/build-release.sh" "build-release.sh"))
-	             (cons "stogas/release/scripts/fetch-sigstore-trust-bundle.mjs"
-	                   #$(source-file "scripts/fetch-sigstore-trust-bundle.mjs"
-	                                  "fetch-sigstore-trust-bundle.mjs"))
 	             (cons "stogas/release/scripts/hydrate-go-vendor.sh"
 	                   #$(source-file "scripts/hydrate-go-vendor.sh"
 	                                  "hydrate-go-vendor.sh"))
