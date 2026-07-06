@@ -28,7 +28,11 @@ type Server struct {
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
-	if err := config.Validate(); err != nil {
+	if config.Confidential.RequestSecrets {
+		if err := config.Confidential.Validate(); err != nil {
+			return nil, err
+		}
+	} else if err := config.Validate(); err != nil {
 		return nil, err
 	}
 

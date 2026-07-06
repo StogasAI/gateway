@@ -1,8 +1,8 @@
 package identity
 
 import (
-	"crypto/rand"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -87,6 +87,40 @@ func TestCertificateStoreCreatesCSRWithExistingTLSKey(t *testing.T) {
 	}
 	if got := strings.Join(csr.DNSNames, ","); got != "api.stogas.ai,gateway.stogas.ai" {
 		t.Fatalf("unexpected sorted DNS SANs: %s", got)
+	}
+}
+
+func TestProvisionalCertificateStoreCreatesInMemoryActiveCertificate(t *testing.T) {
+	material, err := Generate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	store, err := NewProvisionalCertificateStore(material, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := store.State()
+	if len(state.ActiveCertSHA256) != 64 || len(state.AcceptedCertSHA256) != 1 || state.AcceptedCertSHA256[0] != state.ActiveCertSHA256 {
+		t.Fatalf("unexpected provisional cert hashes: %#v", state)
+	}
+	if !state.ExpiresAt.Equal(now.Add(24 * time.Hour)) {
+		t.Fatalf("unexpected provisional expiry: %s", state.ExpiresAt)
+	}
+	tlsCert, ok := store.ActiveTLSCertificate()
+	if !ok || len(tlsCert.Certificate) != 1 {
+		t.Fatalf("provisional certificate was not active in memory: %#v", tlsCert)
+	}
+	cert, err := x509.ParseCertificate(tlsCert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	spki, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SHA256Hex(spki) != material.TLSSPKISHA256 {
+		t.Fatal("provisional certificate did not use runtime TLS key")
 	}
 }
 

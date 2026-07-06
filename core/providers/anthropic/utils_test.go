@@ -1468,9 +1468,6 @@ func TestNetworkConfigBetaOverridesFlow(t *testing.T) {
 		tc := tc
 
 		t.Run(string(tc.provider)+"/override_enables_default_dropped", func(t *testing.T) {
-			if tc.provider == schemas.Anthropic {
-				t.Skip("Anthropic accepts all known betas by default")
-			}
 			ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
 			ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, map[string][]string{
 				AnthropicBetaHeader: {tc.droppedByDefault},
@@ -1495,10 +1492,7 @@ func TestNetworkConfigBetaOverridesFlow(t *testing.T) {
 		})
 
 		t.Run(string(tc.provider)+"/override_only_affects_targeted_prefix", func(t *testing.T) {
-			const otherAllowed = "interleaved-thinking-2025-05-14"
-			if tc.allowedByDefaultPfx == AnthropicInterleavedThinkingBetaHeaderPrefix {
-				t.Skip("test fixture uses interleaved-thinking as the allowed beta")
-			}
+			const otherAllowed = AnthropicCompactionBetaHeader
 			ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
 			ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, map[string][]string{
 				AnthropicBetaHeader: {tc.allowedByDefault + "," + otherAllowed},

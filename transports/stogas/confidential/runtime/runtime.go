@@ -27,34 +27,34 @@ import (
 )
 
 type Runtime struct {
-	Identity *identity.Material
-	Certs    *identity.CertificateStore
-	Proofs   *proofhttp.Service
-	Quotes   *quote.Manager
-	Secrets  *secretstore.Store
-	Control  *ControlLoop
+	Identity     *identity.Material
+	Certs        *identity.CertificateStore
+	Proofs       *proofhttp.Service
+	Quotes       *quote.Manager
+	Secrets      *secretstore.Store
+	Control      *ControlLoop
 	EntropyReady bool
-	cancel   context.CancelFunc
+	cancel       context.CancelFunc
 }
 
 type ControlLoop struct {
-	client   provision.Client
-	config   stogas.ConfidentialConfig
-	certs    *identity.CertificateStore
+	client       provision.Client
+	config       stogas.ConfidentialConfig
+	certs        *identity.CertificateStore
 	entropyReady bool
-	identity *identity.Material
-	nodeID   string
-	quotes   *quote.Manager
-	secrets  *secretstore.Store
+	identity     *identity.Material
+	nodeID       string
+	quotes       *quote.Manager
+	secrets      *secretstore.Store
 
-	mu                  sync.RWMutex
-	generationID        string
-	lastHeartbeatQuote  string
-	lastHeartbeatReport string
-	lastBundleAdmission provision.HeartbeatBundleAdmission
-	lastHeartbeatError  error
-	lastReadinessError  error
-	lastSecretError     error
+	mu                   sync.RWMutex
+	generationID         string
+	lastHeartbeatQuote   string
+	lastHeartbeatReport  string
+	lastBundleAdmission  provision.HeartbeatBundleAdmission
+	lastHeartbeatError   error
+	lastReadinessError   error
+	lastSecretError      error
 	lastCertificateError error
 }
 
@@ -71,6 +71,9 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 	if !config.Enabled {
 		return nil, nil
 	}
+	if config.AttesterMode == "" {
+		config.AttesterMode = config.DerivedAttesterMode()
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -82,7 +85,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 	if err != nil {
 		return nil, err
 	}
-	certs, err := identity.NewCertificateStore(material, config.ActiveCertSHA256, config.AcceptedCertSHA256, config.CertExpiresAt)
+	certs, err := newCertificateStore(material, config)
 	if err != nil {
 		return nil, err
 	}
@@ -105,8 +108,6 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		}
 		certState := certs.State()
 		return reportdata.NewPayload(reportdata.Payload{
-			ReleaseMeasurement: config.ReleaseMeasurement,
-			Region:             config.Region,
 			CatalogHash:        catalogHash,
 			TLSSPKISHA256:      material.TLSSPKISHA256,
 			ActiveCertSHA256:   certState.ActiveCertSHA256,
@@ -162,6 +163,18 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		EntropyReady: true,
 		cancel:       cancel,
 	}, nil
+}
+
+func newCertificateStore(material *identity.Material, config stogas.ConfidentialConfig) (*identity.CertificateStore, error) {
+	if strings.TrimSpace(config.ActiveCertSHA256) == "" && len(config.AcceptedCertSHA256) == 0 && config.CertExpiresAt.IsZero() {
+		return identity.NewProvisionalCertificateStore(material, time.Now().UTC())
+	}
+	return identity.NewCertificateStore(
+		material,
+		config.ActiveCertSHA256,
+		config.AcceptedCertSHA256,
+		config.CertExpiresAt,
+	)
 }
 
 func (r *Runtime) Close() {
@@ -253,9 +266,10 @@ func (l *ControlLoop) Readiness() readiness.Result {
 func newControlLoop(config stogas.ConfidentialConfig, material *identity.Material, certs *identity.CertificateStore, manager *quote.Manager, secrets *secretstore.Store, catalogHash string, entropyReady bool) *ControlLoop {
 	return &ControlLoop{
 		client: provision.Client{
+			AccessClientID:     config.AccessClientID,
+			AccessClientSecret: config.AccessClientSecret,
 			AllowInsecureLocal: config.ControlAllowHTTP,
 			BaseURL:            config.ControlURL,
-			BearerToken:        config.ControlToken,
 		},
 		config:       config,
 		certs:        certs,
@@ -361,7 +375,6 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 	}
 	input := provision.HeartbeatInput{
 		CertExpiresAt: l.certs.State().ExpiresAt,
-		ChipID:        l.config.ChipID,
 		Health: provision.NodeHealth{
 			LastQuoteError: lastErrorString(l.quotes.LastError()),
 			Ready:          l.quotes.LastError() == nil,
@@ -369,7 +382,6 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		NodeID:     l.nodeID,
 		ObservedAt: time.Now().UTC(),
 		Quote:      snapshot,
-		Region:     l.config.Region,
 	}
 	response, err := l.client.SendHeartbeat(ctx, input)
 	if err != nil {
@@ -598,13 +610,10 @@ func (l *ControlLoop) recordCertificateError(err error) {
 
 func deriveNodeID(config stogas.ConfidentialConfig, material *identity.Material, catalogHash string) string {
 	preimage, _ := json.Marshal(map[string]string{
-		"catalog_hash":         catalogHash,
-		"chip_id":              strings.ToLower(config.ChipID),
-		"ed25519_public_key":   material.Ed25519PublicKey,
-		"hpke_public_key":      material.HPKEPublicKey,
-		"region":               config.Region,
-		"release_measurement":  strings.ToLower(config.ReleaseMeasurement),
-		"tls_spki_sha256":      material.TLSSPKISHA256,
+		"catalog_hash":       catalogHash,
+		"ed25519_public_key": material.Ed25519PublicKey,
+		"hpke_public_key":    material.HPKEPublicKey,
+		"tls_spki_sha256":    material.TLSSPKISHA256,
 	})
 	sum := sha256.Sum256(preimage)
 	return hex.EncodeToString(sum[:])

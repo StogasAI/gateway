@@ -8,8 +8,6 @@ import (
 
 func testPayload() Payload {
 	return Payload{
-		ReleaseMeasurement: strings.Repeat("a", 64),
-		Region:             "global",
 		CatalogHash:        strings.Repeat("b", 64),
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),

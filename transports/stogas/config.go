@@ -3,6 +3,7 @@ package stogas
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -16,16 +17,31 @@ import (
 )
 
 const (
-	defaultHost              = "127.0.0.1"
-	defaultPort              = "5185"
-	defaultMaxRequestBodyMiB = 16
-	defaultInfisicalSiteURL  = "https://secrets.stogas.ai"
+	defaultHost               = "127.0.0.1"
+	defaultPort               = "5185"
+	defaultMaxRequestBodyMiB  = 16
+	defaultInfisicalSiteURL   = "https://secrets.stogas.ai"
+	defaultControlURLLocal    = "http://127.0.0.1:5184"
+	defaultControlURLStaging  = "https://staging.stogas.ai"
+	defaultControlURLProd     = "https://stogas.ai"
+	defaultConfidentialRegion = "global"
+
+	confidentialEntropyTimeout    = 10 * time.Second
+	confidentialHeartbeatInterval = 60 * time.Second
+	confidentialQuoteRefresh      = 30 * time.Second
+	confidentialReadinessInterval = 60 * time.Second
 
 	defaultDatabasePoolMaxConns     int32 = 32
 	defaultDatabasePoolMinConns     int32 = 4
 	defaultDatabasePoolMinIdleConns int32 = 4
 	defaultDatabaseQueryExecMode          = "cache_statement"
 )
+
+var confidentialInfisicalBootstrapSecrets = []string{
+	"INFISICAL_PROJECT_ID",
+	"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID",
+	"INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
+}
 
 type Config struct {
 	AllowPrivateProviderNetwork bool
@@ -49,22 +65,21 @@ type Config struct {
 
 type ConfidentialConfig struct {
 	AcceptedCertSHA256 []string
+	AccessClientID     string
+	AccessClientSecret string
 	ActiveCertSHA256   string
 	AttesterMode       string
 	CertExpiresAt      time.Time
-	ChipID             string
 	ControlAllowHTTP   bool
-	ControlToken       string
 	ControlURL         string
 	EndpointAddress    string
 	EndpointPort       int
 	Enabled            bool
 	EntropyTimeout     time.Duration
+	Environment        string
 	HeartbeatInterval  time.Duration
 	QuoteRefresh       time.Duration
 	ReadinessInterval  time.Duration
-	Region             string
-	ReleaseMeasurement string
 	RequestSecrets     bool
 }
 
@@ -73,6 +88,9 @@ func LoadFromEnv() (Config, error) {
 	databasePool, err := loadDatabasePoolConfig()
 	if err != nil {
 		return Config{}, err
+	}
+	if strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE")) != "" {
+		return Config{}, fmt.Errorf("STOGAS_CONFIDENTIAL_ATTESTER_MODE is not supported; attester mode is derived from the gateway boot path")
 	}
 
 	config := Config{
@@ -95,7 +113,11 @@ func LoadFromEnv() (Config, error) {
 		TinybirdToken:               strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
 	}
 
-	if err := config.Validate(); err != nil {
+	if config.Confidential.RequestSecrets {
+		if err := config.Confidential.Validate(); err != nil {
+			return Config{}, err
+		}
+	} else if err := config.Validate(); err != nil {
 		return Config{}, err
 	}
 
@@ -103,47 +125,65 @@ func LoadFromEnv() (Config, error) {
 }
 
 func loadConfidentialConfigFromEnv() ConfidentialConfig {
-	refresh := envDurationSeconds("STOGAS_CONFIDENTIAL_QUOTE_REFRESH_SECONDS", 30)
-	if refresh <= 0 {
-		refresh = 30 * time.Second
-	}
-	heartbeat := envDurationSeconds("STOGAS_CONFIDENTIAL_HEARTBEAT_SECONDS", 60)
-	if heartbeat <= 0 {
-		heartbeat = 60 * time.Second
-	}
-	readiness := envDurationSeconds("STOGAS_CONFIDENTIAL_READINESS_SECONDS", 60)
-	if readiness <= 0 {
-		readiness = 60 * time.Second
-	}
-	entropyTimeout := envDurationSeconds("STOGAS_CONFIDENTIAL_ENTROPY_TIMEOUT_SECONDS", 10)
-	if entropyTimeout <= 0 {
-		entropyTimeout = 10 * time.Second
-	}
+	environment := loadRuntimeEnvironment()
+	confidentialDeployment := environment == "staging" || environment == "production"
 	certExpiresAt := time.Time{}
 	if raw := strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT")); raw != "" {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			certExpiresAt = parsed.UTC()
 		}
 	}
-	return ConfidentialConfig{
+	controlURL := strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_URL"))
+	if controlURL == "" {
+		controlURL = defaultControlURLForEnvironment(environment)
+	}
+	config := ConfidentialConfig{
 		AcceptedCertSHA256: splitCSV(os.Getenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256")),
+		AccessClientID:     strings.TrimSpace(os.Getenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID")),
+		AccessClientSecret: strings.TrimSpace(os.Getenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET")),
 		ActiveCertSHA256:   strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256"))),
-		AttesterMode:       strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE"))),
 		CertExpiresAt:      certExpiresAt,
-		ChipID:             strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CHIP_ID"))),
-		ControlAllowHTTP:   os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL") == "true",
-		ControlToken:       strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_TOKEN")),
-		ControlURL:         strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_URL")),
+		ControlAllowHTTP:   environment == "local" || os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL") == "true",
+		ControlURL:         controlURL,
 		EndpointAddress:    strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS")),
 		EndpointPort:       envInt("STOGAS_CONFIDENTIAL_ENDPOINT_PORT", 0),
-		Enabled:            os.Getenv("STOGAS_CONFIDENTIAL_ENABLED") == "true",
-		EntropyTimeout:     entropyTimeout,
-		HeartbeatInterval:  heartbeat,
-		QuoteRefresh:       refresh,
-		ReadinessInterval:  readiness,
-		Region:             strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_REGION")),
-		ReleaseMeasurement: strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT"))),
-		RequestSecrets:     os.Getenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS") == "true",
+		Enabled:            confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_ENABLED") == "true",
+		EntropyTimeout:     confidentialEntropyTimeout,
+		Environment:        environment,
+		HeartbeatInterval:  confidentialHeartbeatInterval,
+		QuoteRefresh:       confidentialQuoteRefresh,
+		ReadinessInterval:  confidentialReadinessInterval,
+		RequestSecrets:     confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS") == "true",
+	}
+	config.AttesterMode = config.DerivedAttesterMode()
+	return config
+}
+
+func loadRuntimeEnvironment() string {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_ENVIRONMENT")))
+	if value == "" {
+		value = strings.ToLower(strings.TrimSpace(os.Getenv("NODE_ENV")))
+	}
+	switch value {
+	case "local", "testing", "test":
+		return "local"
+	case "staging":
+		return "staging"
+	case "production", "prod":
+		return "production"
+	default:
+		return "local"
+	}
+}
+
+func defaultControlURLForEnvironment(environment string) string {
+	switch environment {
+	case "staging":
+		return defaultControlURLStaging
+	case "production":
+		return defaultControlURLProd
+	default:
+		return ""
 	}
 }
 
@@ -179,7 +219,7 @@ func loadInfisicalRuntimeSecrets() {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
 	}
 	for _, secretName := range []string{"TB_GATEWAY_REQUESTS_TOKEN", "TB_HOST_URL"} {
-		resolveInfisicalSecret(client, projectID, "/gateway/tinybird", secretName, false)
+		resolveInfisicalSecret(client, projectID, "/gateway", secretName, false)
 	}
 }
 
@@ -266,16 +306,24 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 	if secrets == nil {
 		return fmt.Errorf("confidential secret store is required")
 	}
-	openAI, ok := secrets.Get("OPENAI_API_KEY")
-	if !ok || len(openAI.Value) == 0 {
-		return fmt.Errorf("confidential secret OPENAI_API_KEY is required")
+
+	for _, name := range confidentialInfisicalBootstrapSecrets {
+		secret, ok := secrets.Get(name)
+		if !ok || len(secret.Value) == 0 {
+			return fmt.Errorf("confidential secret %s is required", name)
+		}
+		if err := os.Setenv(name, string(secret.Value)); err != nil {
+			return fmt.Errorf("failed to install confidential secret %s: %w", name, err)
+		}
 	}
-	anthropic, ok := secrets.Get("ANTHROPIC_API_KEY")
-	if !ok || len(anthropic.Value) == 0 {
-		return fmt.Errorf("confidential secret ANTHROPIC_API_KEY is required")
+	if siteURL, ok := secrets.Get("INFISICAL_SITE_URL"); ok && len(siteURL.Value) > 0 {
+		if err := os.Setenv("INFISICAL_SITE_URL", string(siteURL.Value)); err != nil {
+			return fmt.Errorf("failed to install confidential secret INFISICAL_SITE_URL: %w", err)
+		}
 	}
-	config.OpenAIAPIKey = string(openAI.Value)
-	config.AnthropicAPIKey = string(anthropic.Value)
+
+	loadInfisicalRuntimeSecrets()
+	applyRuntimeSecretsFromEnv(config)
 	return nil
 }
 
@@ -289,6 +337,16 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 	return nil
 }
 
+func applyRuntimeSecretsFromEnv(config *Config) {
+	config.AuthSecret = strings.TrimSpace(os.Getenv("AUTH_SECRET"))
+	config.DatabaseSchema = strings.TrimSpace(os.Getenv("DATABASE_SCHEMA"))
+	config.DatabaseURL = strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	config.OpenAIAPIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	config.AnthropicAPIKey = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	config.TinybirdHost = strings.TrimSpace(os.Getenv("TB_HOST_URL"))
+	config.TinybirdToken = strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN"))
+}
+
 func (c ConfidentialConfig) Validate() error {
 	if !c.Enabled {
 		if c.RequestSecrets {
@@ -296,37 +354,41 @@ func (c ConfidentialConfig) Validate() error {
 		}
 		return nil
 	}
-	if c.AttesterMode == "" {
-		return fmt.Errorf("STOGAS_CONFIDENTIAL_ATTESTER_MODE is required when confidential mode is enabled")
+	attesterMode := c.AttesterMode
+	if attesterMode == "" {
+		attesterMode = c.DerivedAttesterMode()
 	}
-	switch c.AttesterMode {
+	if attesterMode == "" {
+		return fmt.Errorf("confidential attester mode could not be derived")
+	}
+	switch attesterMode {
 	case "mock", "igvm-native", "sev-snp":
 	default:
-		return fmt.Errorf("unsupported STOGAS_CONFIDENTIAL_ATTESTER_MODE %q", c.AttesterMode)
+		return fmt.Errorf("unsupported confidential attester mode %q", attesterMode)
 	}
-	if err := validateHashHex("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT", c.ReleaseMeasurement); err != nil {
-		return err
+	if c.RequestSecrets && attesterMode != "sev-snp" {
+		return fmt.Errorf("confidential secret release requires sev-snp attestation")
 	}
-	if strings.TrimSpace(c.Region) == "" {
-		return fmt.Errorf("STOGAS_CONFIDENTIAL_REGION is required when confidential mode is enabled")
-	}
-	if err := validateHashHex("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", c.ActiveCertSHA256); err != nil {
-		return err
-	}
-	if len(c.AcceptedCertSHA256) == 0 {
-		return fmt.Errorf("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256 is required when confidential mode is enabled")
-	}
-	activeAccepted := false
-	for _, hash := range c.AcceptedCertSHA256 {
-		if err := validateHashHex("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", hash); err != nil {
+	hasConfiguredCertificate := strings.TrimSpace(c.ActiveCertSHA256) != "" || len(c.AcceptedCertSHA256) > 0
+	if hasConfiguredCertificate {
+		if err := validateHashHex("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", c.ActiveCertSHA256); err != nil {
 			return err
 		}
-		if hash == c.ActiveCertSHA256 {
-			activeAccepted = true
+		if len(c.AcceptedCertSHA256) == 0 {
+			return fmt.Errorf("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256 is required when STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256 is configured")
 		}
-	}
-	if !activeAccepted {
-		return fmt.Errorf("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256 must include STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256")
+		activeAccepted := false
+		for _, hash := range c.AcceptedCertSHA256 {
+			if err := validateHashHex("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", hash); err != nil {
+				return err
+			}
+			if hash == c.ActiveCertSHA256 {
+				activeAccepted = true
+			}
+		}
+		if !activeAccepted {
+			return fmt.Errorf("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256 must include STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256")
+		}
 	}
 	if c.QuoteRefresh <= 0 {
 		return fmt.Errorf("STOGAS_CONFIDENTIAL_QUOTE_REFRESH_SECONDS must be positive")
@@ -338,13 +400,10 @@ func (c ConfidentialConfig) Validate() error {
 		if strings.TrimSpace(c.ControlURL) == "" {
 			return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_URL is required when Control heartbeats are configured")
 		}
-		if strings.TrimSpace(c.ControlToken) == "" {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_TOKEN is required when Control heartbeats are configured")
-		}
-		if err := validateChipID("STOGAS_CONFIDENTIAL_CHIP_ID", c.ChipID); err != nil {
+		if err := validateControlAccess(c); err != nil {
 			return err
 		}
-		if c.CertExpiresAt.IsZero() {
+		if hasConfiguredCertificate && c.CertExpiresAt.IsZero() {
 			return fmt.Errorf("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT is required when Control heartbeats are configured")
 		}
 		if c.HeartbeatInterval <= 0 {
@@ -371,12 +430,39 @@ func (c ConfidentialConfig) Validate() error {
 	return nil
 }
 
+func (c ConfidentialConfig) DerivedAttesterMode() string {
+	if !c.Enabled {
+		return ""
+	}
+	if c.ControlConfigured() || c.RequestSecrets {
+		return "sev-snp"
+	}
+	return "igvm-native"
+}
+
 func (c ConfidentialConfig) ControlConfigured() bool {
-	return strings.TrimSpace(c.ControlURL) != "" || strings.TrimSpace(c.ControlToken) != ""
+	return strings.TrimSpace(c.ControlURL) != ""
 }
 
 func (c ConfidentialConfig) ReadinessConfigured() bool {
 	return strings.TrimSpace(c.EndpointAddress) != "" || c.EndpointPort != 0
+}
+
+func validateControlAccess(c ConfidentialConfig) error {
+	parsed, err := url.Parse(strings.TrimSpace(c.ControlURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_URL must be absolute")
+	}
+	if c.ControlAllowHTTP && parsed.Scheme == "http" {
+		return nil
+	}
+	if strings.TrimSpace(c.AccessClientID) == "" {
+		return fmt.Errorf("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID is required for confidential Control access")
+	}
+	if strings.TrimSpace(c.AccessClientSecret) == "" {
+		return fmt.Errorf("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET is required for confidential Control access")
+	}
+	return nil
 }
 
 func loadDatabasePoolConfig() (billing.DatabasePoolConfig, error) {

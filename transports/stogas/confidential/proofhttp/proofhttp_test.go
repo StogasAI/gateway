@@ -20,7 +20,6 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
 	output, err := service.Build(context.Background(), Input{
-		CatalogHash:          strings.Repeat("1", 64),
 		CatalogNodeIDs:       []string{"stogas_endpoint:responses", "provider:openai", "deployment:gpt-5"},
 		ProcessedRequestJSON: []byte(`{"request":true}`),
 		ResponseJSON:         []byte(`{"response":true}`),
@@ -55,8 +54,7 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
-	stream, err := NewStream(Input{
-		CatalogHash:          strings.Repeat("1", 64),
+	stream, err := service.NewStream(context.Background(), Input{
 		CatalogNodeIDs:       []string{"node-a"},
 		ProcessedRequestJSON: []byte(`{"request":true}`),
 	})
@@ -74,7 +72,6 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	}
 	expected := proof.NewStreamHasher(proof.StreamingInput{
 		ProcessedRequestJSON: []byte(`{"request":true}`),
-		CatalogHash:          strings.Repeat("1", 64),
 		CatalogNodeIDs:       []string{"node-a"},
 	})
 	expected.WriteChunk([]byte(`{"delta":"a"}`))
@@ -114,7 +111,6 @@ func TestEnabledServiceFailsClosedWhenSignerDoesNotMatchReportData(t *testing.T)
 		Signer: otherPrivateKey,
 	}
 	_, err = service.Build(context.Background(), Input{
-		CatalogHash:          strings.Repeat("1", 64),
 		CatalogNodeIDs:       []string{"node-a"},
 		ProcessedRequestJSON: []byte(`{"request":true}`),
 		ResponseJSON:         []byte(`{"response":true}`),
@@ -135,8 +131,6 @@ func (s staticQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
 func testSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		ReleaseMeasurement: strings.Repeat("a", 64),
-		Region:             "global",
 		CatalogHash:        strings.Repeat("b", 64),
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),

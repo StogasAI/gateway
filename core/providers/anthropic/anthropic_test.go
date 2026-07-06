@@ -1,3 +1,5 @@
+//go:build integration
+
 package anthropic_test
 
 import (

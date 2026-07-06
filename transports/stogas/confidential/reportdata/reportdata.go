@@ -27,8 +27,6 @@ type Drand struct {
 
 type Payload struct {
 	Schema             string   `json:"schema"`
-	ReleaseMeasurement string   `json:"release_measurement"`
-	Region             string   `json:"region"`
 	CatalogHash        string   `json:"catalog_hash"`
 	TLSSPKISHA256      string   `json:"tls_spki_sha256"`
 	ActiveCertSHA256   string   `json:"active_cert_sha256"`
@@ -62,13 +60,11 @@ func (p Payload) Validate() error {
 		return fmt.Errorf("unsupported report data schema %q", p.Schema)
 	}
 	for name, value := range map[string]string{
-		"release_measurement": p.ReleaseMeasurement,
-		"region":              p.Region,
-		"catalog_hash":        p.CatalogHash,
-		"tls_spki_sha256":     p.TLSSPKISHA256,
-		"active_cert_sha256":  p.ActiveCertSHA256,
-		"hpke_public_key":     p.HPKEPublicKey,
-		"ed25519_public_key":  p.Ed25519PublicKey,
+		"catalog_hash":       p.CatalogHash,
+		"tls_spki_sha256":    p.TLSSPKISHA256,
+		"active_cert_sha256": p.ActiveCertSHA256,
+		"hpke_public_key":    p.HPKEPublicKey,
+		"ed25519_public_key": p.Ed25519PublicKey,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required", name)
@@ -84,7 +80,6 @@ func (p Payload) Validate() error {
 		name string
 		hex  string
 	}{
-		{"release_measurement", p.ReleaseMeasurement},
 		{"catalog_hash", p.CatalogHash},
 		{"tls_spki_sha256", p.TLSSPKISHA256},
 		{"active_cert_sha256", p.ActiveCertSHA256},

@@ -983,7 +983,8 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"fallbacks", `{"model":"gpt-5-nano","input":"hi","fallbacks":["gpt-5-nano-flex"]}`, "Fallbacks are not supported"},
 		{"top-level mcp servers", `{"model":"gpt-5-nano","input":"hi","mcp_servers":[{"type":"url","url":"https://example.com/mcp","name":"remote"}]}`, "mcp_servers is not supported"},
 		{"previous response", `{"model":"gpt-5-nano","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
-		{"reasoning input item", `{"model":"gpt-5-nano","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "Only text input is supported"},
+		{"reasoning input item without encrypted content", `{"model":"gpt-5-nano","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
+		{"reasoning input item on Anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
 		{"prompt cache retention anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_retention":"24h"}`, "prompt_cache_retention is only supported for OpenAI"},
 		{"openai cache control", `{"model":"gpt-5-nano","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
 		{"openai input cache control", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
@@ -1170,7 +1171,7 @@ func TestResponsesInputTextOnlyRejectsMultimodalAliases(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateResponsesInputTextOnly(json.RawMessage(tc.body))
+			err := validateResponsesInputTextOnly(nil, json.RawMessage(tc.body))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, err)
 			}
@@ -1507,6 +1508,99 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 	}
 	if wireTopLogProbs != 3 {
 		t.Fatalf("expected OpenAI wire top_logprobs=3, got %d body=%s", wireTopLogProbs, wireBytes)
+	}
+}
+
+func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantContext   int
+		wantSearchCap bool
+	}{
+		{
+			name:        "standard reasoning model",
+			body:        `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			wantContext: 272000,
+		},
+		{
+			name:        "priority deployment context cap",
+			body:        `{"model":"gpt-5.5-priority","input":[{"type":"input_text","text":"continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			wantContext: 272000,
+		},
+		{
+			name:          "hosted tool content headroom is already reserved",
+			body:          `{"model":"gpt-5-nano","input":[{"type":"input_text","text":"search and continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
+			wantContext:   272000,
+			wantSearchCap: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   "/v1/responses",
+				Body:   []byte(tc.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			if resolution.Deployment.ContextWindowTokens != tc.wantContext {
+				t.Fatalf("expected deployment context cap %d, got %d for %#v", tc.wantContext, resolution.Deployment.ContextWindowTokens, resolution.Deployment)
+			}
+			wantInput := tc.wantContext - resolution.OutputTokenLimit()
+			if resolution.InputTokenLimit() != wantInput {
+				t.Fatalf("encrypted reasoning must reserve effective max input %d, got %d", wantInput, resolution.InputTokenLimit())
+			}
+
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatalf("ValidateRequest returned error: %v", err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatalf("SanitizeRequest returned error: %v", err)
+			}
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatalf("EstimateHold returned error: %v", err)
+			}
+			if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(wantInput)) == nil {
+				t.Fatalf("expected max-input hold quantity %d, got %#v", wantInput, state.Hold.Meters)
+			}
+			if got := countMeterEstimates(state.Hold.Meters, billing.MeterInputTokens); got != 1 {
+				t.Fatalf("encrypted reasoning hold must not add a second input-token meter, got %d in %#v", got, state.Hold.Meters)
+			}
+			if tc.wantSearchCap {
+				searchMeter := findMeterEstimate(state.Hold.Meters, MeterOpenAIResponsesWebSearchCalls)
+				if searchMeter == nil || searchMeter.Quantity != "3" {
+					t.Fatalf("expected web_search call hold quantity 3, got %#v in %#v", searchMeter, state.Hold.Meters)
+				}
+			}
+
+			bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+			if err != nil {
+				t.Fatalf("ToBifrost returned error: %v", err)
+			}
+			wireRequest := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+			wireBytes, err := json.Marshal(wireRequest)
+			if err != nil {
+				t.Fatalf("marshal OpenAI Responses request: %v", err)
+			}
+			if !strings.Contains(string(wireBytes), `"encrypted_content":"opaque-ciphertext"`) {
+				t.Fatalf("encrypted reasoning input must reach OpenAI wire request, got %s", string(wireBytes))
+			}
+
+			state.Signals = &StandardSignals{Prompt: 100, Completion: 16}
+			if tc.wantSearchCap {
+				state.Signals = &StandardSignals{Prompt: 100, Completion: 16, WebSearch: 2}
+			}
+			if err := state.Adapter.FinalPrice(state); err != nil {
+				t.Fatalf("FinalPrice returned error: %v", err)
+			}
+			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover actual provider usage after encrypted reasoning replay: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			}
+		})
 	}
 }
 
@@ -2429,6 +2523,9 @@ func TestOpenAIResponsesFinalNonPreviewSearchCapsFixedContentTokens(t *testing.T
 	if searchMeter == nil || searchMeter.Quantity != "1" || searchMeter.HoldRequired {
 		t.Fatalf("expected final non-preview search call capped to one call, got %#v in %#v", searchMeter, state.FinalMeters)
 	}
+	pricing := requestLogPricingBag(state)
+	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "8000", inputMeter.AmountUSDAtoms)
+	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "1", searchMeter.AmountUSDAtoms)
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
 		t.Fatalf("hold must cover capped fixed-content web search charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
@@ -3159,6 +3256,16 @@ func findMeterEstimateQuantity(meters []catalog.MeterEstimate, key string, quant
 		}
 	}
 	return nil
+}
+
+func countMeterEstimates(meters []catalog.MeterEstimate, key string) int {
+	count := 0
+	for _, meter := range meters {
+		if meter.MeterKey == key {
+			count++
+		}
+	}
+	return count
 }
 
 func assertMeterQuantity(t *testing.T, meters []catalog.MeterEstimate, key string, quantity string) {

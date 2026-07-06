@@ -34,7 +34,7 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 	_, _ = ctx.Write(data)
 }
 
-func (s *Server) newStreamProof(state *stogas.State) (*proofhttp.Stream, error) {
+func (s *Server) newStreamProof(ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
 	if s.proofs == nil {
 		return nil, nil
 	}
@@ -42,19 +42,14 @@ func (s *Server) newStreamProof(state *stogas.State) (*proofhttp.Stream, error) 
 	if err != nil {
 		return nil, err
 	}
-	return proofhttp.NewStream(input)
+	return s.proofs.NewStream(ctx, input)
 }
 
 func (s *Server) proofInput(state *stogas.State, responseJSON []byte) (proofhttp.Input, error) {
 	if state == nil || state.Resolution == nil {
 		return proofhttp.Input{}, catalog.ErrUnsupportedRequest
 	}
-	catalogHash, ok := catalog.PublicCatalogHash()
-	if !ok {
-		return proofhttp.Input{}, catalog.ErrCatalogUnavailable
-	}
 	return proofhttp.Input{
-		CatalogHash:          catalogHash,
 		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
 		ProcessedRequestJSON: append([]byte(nil), state.ProcessedRequestJSON...),
 		ResponseJSON:         append([]byte(nil), responseJSON...),

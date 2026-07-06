@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	meterInputTokens                         = billing.MeterInputTokens
-	meterOutputTokens                        = billing.MeterOutputTokens
-	meterOpenAIResponsesWebSearchCalls       = "openai_responses_web_search_calls"
-	meterOpenAIResponsesWebSearchPreviewCalls = "openai_responses_web_search_preview_calls"
+	meterInputTokens                                      = billing.MeterInputTokens
+	meterOutputTokens                                     = billing.MeterOutputTokens
+	meterOpenAIResponsesWebSearchCalls                    = "openai_responses_web_search_calls"
+	meterOpenAIResponsesWebSearchPreviewCalls             = "openai_responses_web_search_preview_calls"
 	meterOpenAIResponsesWebSearchPreviewNonReasoningCalls = "openai_responses_web_search_preview_non_reasoning_calls"
-	ratePerMillionTokens                     = billing.RatePerMillionTokens
-	ratePerThousandCalls                     = billing.RatePerThousandCalls
+	ratePerMillionTokens                                  = billing.RatePerMillionTokens
+	ratePerThousandCalls                                  = billing.RatePerThousandCalls
 )
 
 func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
@@ -313,37 +313,37 @@ func TestProviderPreferenceDisambiguatesCatalogSlugIndexes(t *testing.T) {
 	defer active.Store(previous)
 	active.Store(&snapshot{
 		graph: compiledGraph{
-				ProviderEndpoints: map[string]compiledProviderEndpoint{
-					"anthropic-messages": {
-						ID:              "anthropic-messages",
-						ProviderID:      "anthropic",
-						StogasEndpoints: []string{"stogas-chat-completions"},
+			ProviderEndpoints: map[string]compiledProviderEndpoint{
+				"anthropic-messages": {
+					ID:              "anthropic-messages",
+					ProviderID:      "anthropic",
+					StogasEndpoints: []string{"stogas-chat-completions"},
 				},
 				"openai-chat-completions": {
 					ID:              "openai-chat-completions",
 					ProviderID:      "openai",
 					StogasEndpoints: []string{"stogas-chat-completions"},
 				},
-				},
-				Providers: map[string]compiledProvider{
-					"anthropic": {ProviderSlugs: []string{"anthropic", "anthropic-api"}},
-					"openai":   {ProviderSlugs: []string{"openai", "open-ai"}},
-				},
 			},
-			providerEndpointRequestSlugs: map[string]string{
-				"anthropic-messages:anthropic-lab/anthropic-api/shared-model": "anthropic-shared-model",
-				"anthropic-messages:anthropic-lab/shared-model":               "anthropic-shared-model",
-				"anthropic-messages:anthropic/anthropic/shared-model":         "anthropic-shared-model",
-				"anthropic-messages:anthropic/shared-model":                   "anthropic-shared-model",
-				"anthropic-messages:shared-model":                             "anthropic-shared-model",
-				"openai-chat-completions:open-ai/openai/shared-model":          "openai-shared-model",
-				"openai-chat-completions:open-ai/shared-model":                 "openai-shared-model",
-				"openai-chat-completions:openai/open-ai/shared-model":          "openai-shared-model",
-				"openai-chat-completions:openai/openai/shared-model":           "openai-shared-model",
-				"openai-chat-completions:openai/shared-model":                  "openai-shared-model",
-				"openai-chat-completions:shared-model":                         "openai-shared-model",
+			Providers: map[string]compiledProvider{
+				"anthropic": {ProviderSlugs: []string{"anthropic", "anthropic-api"}},
+				"openai":    {ProviderSlugs: []string{"openai", "open-ai"}},
 			},
-		})
+		},
+		providerEndpointRequestSlugs: map[string]string{
+			"anthropic-messages:anthropic-lab/anthropic-api/shared-model": "anthropic-shared-model",
+			"anthropic-messages:anthropic-lab/shared-model":               "anthropic-shared-model",
+			"anthropic-messages:anthropic/anthropic/shared-model":         "anthropic-shared-model",
+			"anthropic-messages:anthropic/shared-model":                   "anthropic-shared-model",
+			"anthropic-messages:shared-model":                             "anthropic-shared-model",
+			"openai-chat-completions:open-ai/openai/shared-model":         "openai-shared-model",
+			"openai-chat-completions:open-ai/shared-model":                "openai-shared-model",
+			"openai-chat-completions:openai/open-ai/shared-model":         "openai-shared-model",
+			"openai-chat-completions:openai/openai/shared-model":          "openai-shared-model",
+			"openai-chat-completions:openai/shared-model":                 "openai-shared-model",
+			"openai-chat-completions:shared-model":                        "openai-shared-model",
+		},
+	})
 
 	if _, _, err := ProviderForRouteModelPreference(RouteChat, "shared-model", ""); !errors.Is(err, ErrModelAmbiguous) {
 		t.Fatalf("expected ambiguous model without provider preference, got %v", err)
@@ -1380,7 +1380,7 @@ func TestGPT5NanoDeploymentServiceTierResolution(t *testing.T) {
 	}
 
 	for _, item := range []struct {
-		name string
+		name  string
 		input RequestInput
 	}{
 		{
@@ -1436,7 +1436,7 @@ func TestGPT5NanoDeploymentServiceTierResolution(t *testing.T) {
 	}
 }
 
-func TestResolveRequestUsesSimpleCappedInputHoldEstimate(t *testing.T) {
+func TestResolveRequestUsesProviderAwareInputHoldEstimate(t *testing.T) {
 	loadTestCatalog(t)
 
 	for _, item := range []struct {
@@ -1446,22 +1446,27 @@ func TestResolveRequestUsesSimpleCappedInputHoldEstimate(t *testing.T) {
 		want int
 	}{
 		{
-			name: "openai ascii",
+			name: "openai known tokenizer chat",
 			path: "/v1/chat/completions",
 			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
-			want: roughInputTokenEstimate([]byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`), schemas.OpenAI),
+			want: 86,
 		},
 		{
-			name: "anthropic multiplier",
+			name: "anthropic weighted text estimator",
 			path: "/v1/responses",
 			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hello","max_output_tokens":16}`,
-			want: roughInputTokenEstimate([]byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hello","max_output_tokens":16}`), schemas.Anthropic),
+			want: 172,
 		},
 		{
-			name: "unicode multiplier",
+			name: "openai known tokenizer unicode",
 			path: "/v1/responses",
 			body: `{"model":"gpt-5-nano","input":"こんにちは世界🌍","max_output_tokens":16}`,
-			want: roughInputTokenEstimate([]byte(`{"model":"gpt-5-nano","input":"こんにちは世界🌍","max_output_tokens":16}`), schemas.OpenAI),
+			want: openAIInputTokenHold("gpt-5-nano", inputHoldStats{
+				TextFields:    []string{"こんにちは世界🌍"},
+				TextBytes:     len("こんにちは世界🌍"),
+				Messages:      1,
+				ContentBlocks: 1,
+			}),
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1478,6 +1483,23 @@ func TestResolveRequestUsesSimpleCappedInputHoldEstimate(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("anthropic dense text uses strict floor", func(t *testing.T) {
+		dense := strings.Repeat("0123456789abcdef", 8)
+		body := `{"model":"anthropic/claude-sonnet-4-6","input":"` + dense + `","max_output_tokens":16}`
+		resolution, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(body),
+		})
+		if err != nil {
+			t.Fatalf("ResolveRequest returned error: %v", err)
+		}
+		wantFloor := ceilMulDiv(len(dense), 85, 100) + anthropicInputHoldBaseTokens + anthropicInputHoldMessageTokens + anthropicInputHoldBlockTokens
+		if resolution.InputTokenLimit() < wantFloor {
+			t.Fatalf("expected dense Anthropic input hold >= strict floor %d, got %d", wantFloor, resolution.InputTokenLimit())
+		}
+	})
 
 	t.Run("caps estimate to deployment input cap", func(t *testing.T) {
 		body := `{"model":"gpt-5-nano","input":"` + strings.Repeat("a", 1200000) + `","max_output_tokens":128000}`
@@ -1526,13 +1548,13 @@ func TestCompiledCatalogFiltersRequestSurface(t *testing.T) {
 		t.Fatalf("expected OpenAI client extra params to be blocked, got %#v", params)
 	}
 	params = FilterExtraParams(schemas.Anthropic, "claude-sonnet-4-6", RouteResponses, map[string]interface{}{
-		"cache_control":       map[string]interface{}{"type": "ephemeral"},
-		"context_management":  map[string]interface{}{"edits": []interface{}{}},
-		"reasoning.effort":    "low",
-		"speed":               "fast",
-		"task_budget":         map[string]interface{}{"type": "tokens", "total": float64(20000)},
-		"top_k":               float64(40),
-		"unknown":             true,
+		"cache_control":      map[string]interface{}{"type": "ephemeral"},
+		"context_management": map[string]interface{}{"edits": []interface{}{}},
+		"reasoning.effort":   "low",
+		"speed":              "fast",
+		"task_budget":        map[string]interface{}{"type": "tokens", "total": float64(20000)},
+		"top_k":              float64(40),
+		"unknown":            true,
 	})
 	if len(params) != 3 || params["cache_control"] == nil || params["context_management"] == nil || params["task_budget"] == nil {
 		t.Fatalf("expected only explicit Anthropic Responses extra params, got %#v", params)

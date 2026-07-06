@@ -77,7 +77,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		})
 		return
 	}
-	state.ReleaseMeasurement = stogas.ReleaseMeasurementForLog(s.config.Confidential.ReleaseMeasurement)
 	if err := adapter.ValidateRequest(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
@@ -252,7 +251,7 @@ func invalidProviderRequest() error {
 }
 
 func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc) {
-	streamProof, proofErr := s.newStreamProof(state)
+	streamProof, proofErr := s.newStreamProof(bifrostCtx, state)
 	if proofErr != nil {
 		s.writeProofError(ctx)
 		cancel()

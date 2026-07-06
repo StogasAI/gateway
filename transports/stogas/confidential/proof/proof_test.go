@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNonStreamingProofSignsProcessedRequestResponseAndCatalogPath(t *testing.T) {
+func TestNonStreamingProofSignsProcessedRequestResponseAndReleasePath(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -13,7 +13,6 @@ func TestNonStreamingProofSignsProcessedRequestResponseAndCatalogPath(t *testing
 	input := Input{
 		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
 		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai", "gpt-5-mini"},
 	}
 	hash, err := Hash(input)
@@ -31,25 +30,16 @@ func TestNonStreamingProofSignsProcessedRequestResponseAndCatalogPath(t *testing
 		"request": {
 			ProcessedRequestJSON: []byte(`{"model":"other"}`),
 			ResponseJSON:         input.ResponseJSON,
-			CatalogHash:          input.CatalogHash,
 			CatalogNodeIDs:       input.CatalogNodeIDs,
 		},
 		"response": {
 			ProcessedRequestJSON: input.ProcessedRequestJSON,
 			ResponseJSON:         []byte(`{"id":"resp_2"}`),
-			CatalogHash:          input.CatalogHash,
-			CatalogNodeIDs:       input.CatalogNodeIDs,
-		},
-		"catalog hash": {
-			ProcessedRequestJSON: input.ProcessedRequestJSON,
-			ResponseJSON:         input.ResponseJSON,
-			CatalogHash:          "other-catalog",
 			CatalogNodeIDs:       input.CatalogNodeIDs,
 		},
 		"catalog path": {
 			ProcessedRequestJSON: input.ProcessedRequestJSON,
 			ResponseJSON:         input.ResponseJSON,
-			CatalogHash:          input.CatalogHash,
 			CatalogNodeIDs:       []string{"root", "anthropic", "claude"},
 		},
 	} {
@@ -71,7 +61,6 @@ func TestProofSignatureRejectsWrongKey(t *testing.T) {
 	input := Input{
 		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
 		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai"},
 	}
 	hash, err := Hash(input)
@@ -87,7 +76,6 @@ func TestCatalogNodeChainChangesProofHash(t *testing.T) {
 	base := Input{
 		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
 		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai"},
 	}
 	first, err := Hash(base)
@@ -111,7 +99,6 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 	}
 	stream := NewStreamHasher(StreamingInput{
 		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai", "stream"},
 	})
 	stream.WriteChunk([]byte("data: one\n\n"))
@@ -126,7 +113,6 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 	}
 	if !VerifyStreamingInput(publicKey, StreamingInput{
 		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai", "stream"},
 	}, [][]byte{[]byte("data: one\n\n"), []byte("data: two\n\n")}, hash, signature) {
 		t.Fatal("expected recomputed streaming input to verify")
@@ -134,7 +120,6 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 
 	other := NewStreamHasher(StreamingInput{
 		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai", "stream"},
 	})
 	other.WriteChunk([]byte("data: one\n\n"))
@@ -148,7 +133,6 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 	}
 	if VerifyStreamingInput(publicKey, StreamingInput{
 		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogHash:          "catalog-hash",
 		CatalogNodeIDs:       []string{"root", "openai", "stream"},
 	}, [][]byte{[]byte("data: one\n\n"), []byte("data: changed\n\n")}, hash, signature) {
 		t.Fatal("tampered stream chunks should not verify")

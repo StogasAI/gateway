@@ -24,20 +24,21 @@ const (
 
 type Client struct {
 	BaseURL            string
-	BearerToken        string
+	AccessClientID     string
+	AccessClientSecret string
 	HTTPClient         *http.Client
 	MaxResponseBytes   int64
 	AllowInsecureLocal bool
 }
 
 type HeartbeatInput struct {
-	CertExpiresAt time.Time
-	ChipID        string
-	Health        NodeHealth
-	NodeID        string
-	ObservedAt    time.Time
-	Quote         *quote.Snapshot
-	Region        string
+	CertExpiresAt    time.Time
+	Health           NodeHealth
+	NodeID           string
+	ObservedAt       time.Time
+	Quote            *quote.Snapshot
+	QuoteVerifier    string
+	QuoteVerifierJWT string
 }
 
 type NodeHealth struct {
@@ -139,12 +140,6 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	if input.NodeID == "" {
 		return nil, errors.New("heartbeat node id is required")
 	}
-	if input.ChipID == "" {
-		return nil, errors.New("heartbeat chip id is required")
-	}
-	if input.Region == "" {
-		return nil, errors.New("heartbeat region is required")
-	}
 	if input.CertExpiresAt.IsZero() {
 		return nil, errors.New("heartbeat cert expiry is required")
 	}
@@ -153,19 +148,23 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	}
 	body := map[string]any{
 		"cert_expires_at":    formatTime(input.CertExpiresAt),
-		"chip_id":            strings.ToLower(input.ChipID),
 		"health":             input.Health,
 		"node_id":            input.NodeID,
 		"observed_at":        formatTime(input.ObservedAt),
 		"quote":              base64.RawURLEncoding.EncodeToString(input.Quote.Quote),
 		"quote_generated_at": formatTime(input.Quote.GeneratedAt),
-		"region":             input.Region,
 		"report_data":        input.Quote.Payload,
 		"report_data_sha512": strings.ToLower(input.Quote.ReportDataHex),
 	}
+	if strings.TrimSpace(input.QuoteVerifier) != "" {
+		body["quote_verifier"] = strings.TrimSpace(input.QuoteVerifier)
+	}
+	if strings.TrimSpace(input.QuoteVerifierJWT) != "" {
+		body["quote_verifier_jwt"] = strings.TrimSpace(input.QuoteVerifierJWT)
+	}
 
 	var response heartbeatResponseJSON
-	if err := c.postJSON(ctx, "/api/gateway-nodes/heartbeat", body, &response); err != nil {
+	if err := c.postJSON(ctx, "/api/fleet/heartbeat", body, &response); err != nil {
 		return nil, err
 	}
 	return parseHeartbeatResponse(response)
@@ -197,7 +196,7 @@ func (c Client) SendReadiness(ctx context.Context, input ReadinessInput) (*Readi
 	}
 
 	var response readinessResponseJSON
-	if err := c.postJSON(ctx, "/api/gateway-nodes/readiness", body, &response); err != nil {
+	if err := c.postJSON(ctx, "/api/fleet/readiness", body, &response); err != nil {
 		return nil, err
 	}
 	if !response.OK {
@@ -238,7 +237,7 @@ func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSu
 	}
 
 	var response certificateCSRSubmissionResponseJSON
-	if err := c.postJSON(ctx, "/api/gateway-nodes/cert/csr", body, &response); err != nil {
+	if err := c.postJSON(ctx, "/api/fleet/cert/csr", body, &response); err != nil {
 		return nil, err
 	}
 	if !response.OK {
@@ -269,7 +268,7 @@ func (c Client) RequestSecrets(ctx context.Context, input SecretReleaseRequest) 
 		"report_data_sha512": strings.ToLower(input.ReportDataSHA512),
 	}
 	var response secretReleaseResponseJSON
-	if err := c.postJSON(ctx, "/api/gateway-nodes/secrets", body, &response); err != nil {
+	if err := c.postJSON(ctx, "/api/fleet/secrets", body, &response); err != nil {
 		return nil, err
 	}
 	return parseSecretReleaseResponse(response, input)
@@ -280,10 +279,6 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	if err != nil {
 		return err
 	}
-	token := strings.TrimSpace(c.BearerToken)
-	if token == "" {
-		return errors.New("control bearer token is required")
-	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -292,9 +287,12 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	if err != nil {
 		return err
 	}
-	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
+	if strings.TrimSpace(c.AccessClientID) != "" || strings.TrimSpace(c.AccessClientSecret) != "" {
+		req.Header.Set("CF-Access-Client-Id", strings.TrimSpace(c.AccessClientID))
+		req.Header.Set("CF-Access-Client-Secret", strings.TrimSpace(c.AccessClientSecret))
+	}
 
 	httpClient := c.HTTPClient
 	if httpClient == nil {
@@ -355,12 +353,12 @@ func (c Client) endpoint(path string) (string, error) {
 }
 
 type heartbeatResponseJSON struct {
-	Bundle                 heartbeatBundleAdmissionJSON  `json:"bundle"`
-	CertificateInstruction *certificateInstructionJSON    `json:"certificate_instruction"`
-	GenerationID           string                        `json:"generation_id"`
-	NodeID                 string                        `json:"node_id"`
-	OK                     bool                          `json:"ok"`
-	QuoteVerifiedAt        string                        `json:"quote_verified_at"`
+	Bundle                 heartbeatBundleAdmissionJSON `json:"bundle"`
+	CertificateInstruction *certificateInstructionJSON  `json:"certificate_instruction"`
+	GenerationID           string                       `json:"generation_id"`
+	NodeID                 string                       `json:"node_id"`
+	OK                     bool                         `json:"ok"`
+	QuoteVerifiedAt        string                       `json:"quote_verified_at"`
 }
 
 type heartbeatBundleAdmissionJSON struct {
@@ -646,11 +644,9 @@ func BuildHeartbeatInput(
 ) HeartbeatInput {
 	return HeartbeatInput{
 		CertExpiresAt: certExpiresAt,
-		ChipID:        chipID,
 		Health:        BuildHealth(ready, lastQuoteErr),
 		NodeID:        nodeID,
 		ObservedAt:    time.Now().UTC(),
 		Quote:         snapshot,
-		Region:        region,
 	}
 }
