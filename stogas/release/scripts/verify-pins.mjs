@@ -118,7 +118,20 @@ function verifyWorkflows() {
 				);
 			}
 		if (source.includes('actions/cache@')) {
-			assert(source.includes('path: stogas/release/vendor'), `${basename(path)} may only cache the Stogas release vendor cache.`);
+			assert(source.includes('path: stogas/release/vendor'), `${basename(path)} must cache the Stogas release vendor cache.`);
+			if (basename(path) === 'gateway-igvm-release.yml') {
+				assert(
+					source.includes('path: ~/.cache/guix/checkouts'),
+					`${basename(path)} must cache only the Guix channel checkout cache.`
+				);
+			} else {
+				assert(
+					!source.includes('path: ~/.cache/guix/checkouts'),
+					`${basename(path)} must not cache the Guix channel checkout cache.`
+				);
+			}
+			assert(!source.includes('path: /gnu/store'), `${basename(path)} must not cache the Guix store.`);
+			assert(!source.includes('path: ~/.cache/guix/authentication'), `${basename(path)} must not cache Guix authentication state.`);
 		}
 	}
 		const releaseWorkflow = readFileSync(resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'), 'utf8');

@@ -46,8 +46,20 @@ jobs:
           path: stogas/release/vendor
           key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
 
+      - name: Prepare Guix channel cache path
+        run: mkdir -p ~/.cache/guix/checkouts
+
+      - name: Restore Guix channel checkout cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/guix/checkouts
+          key: stogas-release-guix-channel-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('stogas/release/guix/channels.scm', 'stogas/release/pins.lock.json') }}
+
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
+
+      - name: Warm pinned Guix time-machine
+        run: guix time-machine -C stogas/release/guix/channels.scm -- describe
 
       - name: Build IGVM in pinned Guix environment
         env:
