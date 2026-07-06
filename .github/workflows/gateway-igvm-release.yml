@@ -50,6 +50,8 @@ jobs:
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
+        env:
+          STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK: "1"
         run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
 
       - name: Verify release checksums
@@ -58,13 +60,13 @@ jobs:
           cd "dist/gateway/$GITHUB_REF_NAME"
           sha256sum -c SHA256SUMS
 
-      - name: Generate GitHub attestation
+      - name: Generate GitHub artifact attestation
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
         with:
           subject-path: dist/gateway/${{ github.ref_name }}/gateway.igvm
 
-      - name: Collect attestation evidence
+      - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
 
       - name: Collect Sigstore trust evidence
