@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"sort"
 	"strings"
 	"sync"
@@ -64,6 +65,50 @@ func NewCertificateStore(material *Material, activeHash string, accepted []strin
 		activeHash: activeHash,
 		accepted:   accepted,
 		expiresAt:  expiresAt.UTC(),
+	}, nil
+}
+
+func NewProvisionalCertificateStore(material *Material, now time.Time) (*CertificateStore, error) {
+	if material == nil || material.TLSPrivateKey == nil {
+		return nil, errors.New("tls identity key is required")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	notAfter := now.UTC().Add(24 * time.Hour)
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return nil, fmt.Errorf("generate provisional certificate serial: %w", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "stogas-confidential-provisional",
+		},
+		NotBefore:             now.UTC().Add(-time.Minute),
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(
+		rand.Reader,
+		template,
+		template,
+		&material.TLSPrivateKey.PublicKey,
+		material.TLSPrivateKey,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create provisional certificate: %w", err)
+	}
+	hash := CertSHA256Hex(der)
+	return &CertificateStore{
+		material:   material,
+		activeHash: hash,
+		accepted:   []string{hash},
+		expiresAt:  notAfter,
+		activeDER:  [][]byte{append([]byte(nil), der...)},
 	}, nil
 }
 

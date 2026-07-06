@@ -50,8 +50,7 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Payload.ReleaseMeasurement != config.ReleaseMeasurement ||
-		snapshot.Payload.ActiveCertSHA256 != config.ActiveCertSHA256 ||
+	if snapshot.Payload.ActiveCertSHA256 != config.ActiveCertSHA256 ||
 		snapshot.Payload.TLSSPKISHA256 != runtime.Identity.TLSSPKISHA256 ||
 		snapshot.Payload.HPKEPublicKey != runtime.Identity.HPKEPublicKey ||
 		snapshot.Payload.Ed25519PublicKey != runtime.Identity.Ed25519PublicKey {
@@ -61,7 +60,6 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 		t.Fatal("expected initial mock quote")
 	}
 	output, err := runtime.Proofs.Build(context.Background(), proofhttp.Input{
-		CatalogHash:          snapshot.Payload.CatalogHash,
 		CatalogNodeIDs:       []string{"node-a"},
 		ProcessedRequestJSON: []byte(`{"request":true}`),
 		ResponseJSON:         []byte(`{"response":true}`),
@@ -74,6 +72,37 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	}
 	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.ProcessedHash, output.Object.ProcessedSignature) {
 		t.Fatal("proof signature was not produced by runtime identity")
+	}
+}
+
+func TestStartWithoutConfiguredCertificateQuotesProvisionalCertificate(t *testing.T) {
+	config := testConfig("mock")
+	config.ActiveCertSHA256 = ""
+	config.AcceptedCertSHA256 = nil
+	config.CertExpiresAt = time.Time{}
+
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	certState := runtime.Certs.State()
+	if len(certState.ActiveCertSHA256) != 64 || len(certState.AcceptedCertSHA256) != 1 || certState.AcceptedCertSHA256[0] != certState.ActiveCertSHA256 {
+		t.Fatalf("runtime did not create a provisional certificate state: %#v", certState)
+	}
+	tlsCert, ok := runtime.Certs.ActiveTLSCertificate()
+	if !ok || len(tlsCert.Certificate) != 1 || identity.CertSHA256Hex(tlsCert.Certificate[0]) != certState.ActiveCertSHA256 {
+		t.Fatalf("runtime did not keep provisional certificate in memory: %#v", tlsCert)
+	}
+	snapshot, err := runtime.Quotes.Current(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Payload.ActiveCertSHA256 != certState.ActiveCertSHA256 ||
+		len(snapshot.Payload.AcceptedCertSHA256) != 1 ||
+		snapshot.Payload.AcceptedCertSHA256[0] != certState.ActiveCertSHA256 {
+		t.Fatalf("quote did not bind provisional certificate state: %#v", snapshot.Payload)
 	}
 }
 
@@ -103,18 +132,15 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 	heartbeatCh := make(chan map[string]any, 1)
 	readinessCh := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("authorization") != "Bearer control-token" {
-			t.Fatalf("unexpected authorization header: %q", r.Header.Get("authorization"))
-		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
 		switch r.URL.Path {
-		case "/api/gateway-nodes/heartbeat":
+		case "/api/fleet/heartbeat":
 			heartbeatCh <- body
 			writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
-		case "/api/gateway-nodes/readiness":
+		case "/api/fleet/readiness":
 			readinessCh <- body
 			_, _ = w.Write([]byte(`{"generation_id":"` + strings.Repeat("9", 64) + `","ok":true}`))
 		default:
@@ -125,9 +151,7 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 
 	config := testConfig("mock")
 	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
-	config.ChipID = strings.Repeat("1", 128)
 	config.ControlAllowHTTP = true
-	config.ControlToken = "control-token"
 	config.ControlURL = server.URL
 	config.EndpointAddress = "10.0.0.10"
 	config.EndpointPort = 8443
@@ -142,8 +166,11 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 
 	select {
 	case body := <-heartbeatCh:
-		if body["chip_id"] != config.ChipID || body["region"] != config.Region {
-			t.Fatalf("unexpected heartbeat body: %#v", body)
+		if _, ok := body["chip_id"]; ok {
+			t.Fatalf("heartbeat must not send host-derived chip_id: %#v", body)
+		}
+		if _, ok := body["region"]; ok {
+			t.Fatalf("heartbeat must not send host-derived region: %#v", body)
 		}
 		if _, ok := body["quote"].(string); !ok {
 			t.Fatalf("heartbeat did not include full quote: %#v", body)
@@ -182,17 +209,14 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 	generationID := strings.Repeat("9", 64)
 	csrCh := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("authorization") != "Bearer control-token" {
-			t.Fatalf("unexpected authorization header: %q", r.Header.Get("authorization"))
-		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
 		switch r.URL.Path {
-		case "/api/gateway-nodes/heartbeat":
+		case "/api/fleet/heartbeat":
 			writeHeartbeatResponse(t, w, generationID, `{"action":"request_csr","order_id":"order-1","dns_names":["Gateway.Stogas.AI","gateway.stogas.ai"],"common_name":"gateway.stogas.ai"}`)
-		case "/api/gateway-nodes/cert/csr":
+		case "/api/fleet/cert/csr":
 			csrCh <- body
 			_, _ = w.Write([]byte(`{"generation_id":"` + generationID + `","ok":true,"order_id":"order-1"}`))
 		default:
@@ -203,9 +227,7 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 
 	config := testConfig("mock")
 	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
-	config.ChipID = strings.Repeat("1", 128)
 	config.ControlAllowHTTP = true
-	config.ControlToken = "control-token"
 	config.ControlURL = server.URL
 	config.HeartbeatInterval = time.Hour
 
@@ -259,10 +281,7 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	var instruction string
 	var heartbeatBodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("authorization") != "Bearer control-token" {
-			t.Fatalf("unexpected authorization header: %q", r.Header.Get("authorization"))
-		}
-		if r.URL.Path != "/api/gateway-nodes/heartbeat" {
+		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var body map[string]any
@@ -280,9 +299,7 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 
 	config := testConfig("mock")
 	config.CertExpiresAt = time.Now().UTC().Add(30 * 24 * time.Hour)
-	config.ChipID = strings.Repeat("1", 128)
 	config.ControlAllowHTTP = true
-	config.ControlToken = "control-token"
 	config.ControlURL = server.URL
 	config.HeartbeatInterval = time.Hour
 
@@ -417,9 +434,7 @@ func TestStartFailsClosedWhenInitialHeartbeatIsRejected(t *testing.T) {
 
 	config := testConfig("mock")
 	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
-	config.ChipID = strings.Repeat("1", 128)
 	config.ControlAllowHTTP = true
-	config.ControlToken = "control-token"
 	config.ControlURL = server.URL
 	config.HeartbeatInterval = time.Hour
 
@@ -431,11 +446,10 @@ func TestStartFailsClosedWhenInitialHeartbeatIsRejected(t *testing.T) {
 
 func TestDeriveNodeIDUsesBootIdentityNotCertificateHash(t *testing.T) {
 	config := testConfig("mock")
-	config.ChipID = strings.Repeat("1", 128)
 	material := &identity.Material{
-		TLSSPKISHA256:     strings.Repeat("2", 64),
-		HPKEPublicKey:     "aHBrZQ",
-		Ed25519PublicKey:  "ZWRrZXk",
+		TLSSPKISHA256:    strings.Repeat("2", 64),
+		HPKEPublicKey:    "aHBrZQ",
+		Ed25519PublicKey: "ZWRrZXk",
 	}
 	catalogHash := strings.Repeat("3", 64)
 
@@ -522,8 +536,6 @@ func testConfig(mode string) stogas.ConfidentialConfig {
 		Enabled:            true,
 		EntropyTimeout:     time.Second,
 		QuoteRefresh:       time.Hour,
-		Region:             "global",
-		ReleaseMeasurement: strings.Repeat("a", 64),
 	}
 }
 

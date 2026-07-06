@@ -338,8 +338,6 @@ func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error)
 func testProofSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		ReleaseMeasurement: strings.Repeat("a", 64),
-		Region:             "global",
 		CatalogHash:        strings.Repeat("b", 64),
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
@@ -1389,15 +1387,10 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	if !containsString(nodeIDs, "deployment:stream-deployment") || !containsString(nodeIDs, "provider_endpoint:stream-provider-endpoint") {
 		t.Fatalf("proof did not bind resolved catalog node ids: %#v", nodeIDs)
 	}
-	catalogHash, ok := catalog.PublicCatalogHash()
-	if !ok {
-		t.Fatal("expected public catalog hash")
-	}
 	processedHash, _ := proofObject["processed_hash"].(string)
 	signature, _ := proofObject["processed_signature"].(string)
 	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
 		ProcessedRequestJSON: state.ProcessedRequestJSON,
-		CatalogHash:          catalogHash,
 		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
 	}, [][]byte{[]byte(chunkJSON)}, processedHash, signature) {
 		t.Fatalf("streaming proof did not verify: hash=%q signature=%q body=%q", processedHash, signature, body)

@@ -650,7 +650,10 @@ func resolveOpenAIRequest(
 		extraParams.SetExtraParams(filtered)
 	}
 	pricing := requestPricingContextForRaw(route, rawData)
-	inputTokenEstimate := inputTokenHoldEstimate(body, provider, deployment.ContextWindowTokens)
+	if provider == schemas.OpenAI && route == RouteResponses && deployment.ReasoningSupported && responsesInputHasEncryptedReasoning(rawData["input"]) {
+		return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, maxInputTokenHold(deployment.ContextWindowTokens, outputTokenLimit), pricing), nil
+	}
+	inputTokenEstimate := inputTokenHoldEstimate(body, rawData, provider, *modelField, route, deployment.ContextWindowTokens)
 	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing), nil
 }
 
@@ -861,64 +864,71 @@ func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
 	return rawData, nil
 }
 
-func inputTokenHoldEstimate(body []byte, provider schemas.ModelProvider, maxInputTokens int) int {
-	estimate := roughInputTokenEstimate(body, provider)
-	if maxInputTokens < 0 {
-		maxInputTokens = 0
-	}
-	if maxInputTokens > 0 && estimate > maxInputTokens {
-		return maxInputTokens
-	}
-	return estimate
-}
-
-func roughInputTokenEstimate(body []byte, provider schemas.ModelProvider) int {
-	if len(body) == 0 {
+func maxInputTokenHold(contextWindowTokens int, outputTokenLimit int) int {
+	if contextWindowTokens <= 0 {
 		return 0
 	}
-	base := ceilDiv(len(body), 4)
-	estimate := base
-	if provider == schemas.Anthropic {
-		estimate = ceilMulDiv(base, 135, 100)
+	remaining := contextWindowTokens - outputTokenLimit
+	if remaining < 0 {
+		return 0
 	}
-	if highRawNonASCIIRatio(body) {
-		estimate = maxInt(estimate, ceilMulDiv(base, 150, 100))
-	}
-	return maxInt(estimate, 1)
+	return remaining
 }
 
-func highRawNonASCIIRatio(body []byte) bool {
-	if len(body) == 0 {
+func responsesInputHasEncryptedReasoning(raw json.RawMessage) bool {
+	if len(raw) == 0 {
 		return false
 	}
-	nonASCII := 0
-	for _, b := range body {
-		if b >= 0x80 {
-			nonASCII++
+	return rawJSONContainsObject(raw, func(object map[string]json.RawMessage) bool {
+		if rawStringValue(object["type"]) != "reasoning" {
+			return false
+		}
+		return strings.TrimSpace(rawStringValue(object["encrypted_content"])) != ""
+	})
+}
+
+func rawJSONContainsObject(raw json.RawMessage, match func(map[string]json.RawMessage) bool) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return false
+	}
+	switch trimmed[0] {
+	case '{':
+		var object map[string]json.RawMessage
+		if err := sonic.Unmarshal(raw, &object); err != nil {
+			return false
+		}
+		if match(object) {
+			return true
+		}
+		for _, child := range object {
+			if rawJSONContainsObject(child, match) {
+				return true
+			}
+		}
+	case '[':
+		var array []json.RawMessage
+		if err := sonic.Unmarshal(raw, &array); err != nil {
+			return false
+		}
+		for _, child := range array {
+			if rawJSONContainsObject(child, match) {
+				return true
+			}
 		}
 	}
-	return nonASCII*10 >= len(body)
+	return false
 }
 
-func ceilDiv(value int, divisor int) int {
-	if value <= 0 {
-		return 0
+func rawStringValue(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
 	}
-	return (value + divisor - 1) / divisor
-}
-
-func ceilMulDiv(value int, multiplier int, divisor int) int {
-	if value <= 0 {
-		return 0
+	var value string
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return ""
 	}
-	return (value*multiplier + divisor - 1) / divisor
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
+	return value
 }
 
 func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage) requestPricingContext {

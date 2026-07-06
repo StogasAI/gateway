@@ -14,13 +14,11 @@ const DomainV1 = "stogas.processed-proof.v1"
 type Input struct {
 	ProcessedRequestJSON []byte
 	ResponseJSON         []byte
-	CatalogHash          string
 	CatalogNodeIDs       []string
 }
 
 type StreamingInput struct {
 	ProcessedRequestJSON []byte
-	CatalogHash          string
 	CatalogNodeIDs       []string
 }
 
@@ -28,7 +26,6 @@ type Payload struct {
 	Domain         string   `json:"domain"`
 	RequestSHA256  string   `json:"request_sha256"`
 	ResponseSHA256 string   `json:"response_sha256"`
-	CatalogHash    string   `json:"catalog_hash"`
 	CatalogNodeIDs []string `json:"catalog_node_ids"`
 	Streaming      bool     `json:"streaming"`
 }
@@ -38,7 +35,6 @@ func Hash(input Input) (string, error) {
 		Domain:         DomainV1,
 		RequestSHA256:  sha256Hex(input.ProcessedRequestJSON),
 		ResponseSHA256: sha256Hex(input.ResponseJSON),
-		CatalogHash:    input.CatalogHash,
 		CatalogNodeIDs: append([]string(nil), input.CatalogNodeIDs...),
 		Streaming:      false,
 	}
@@ -69,7 +65,6 @@ func (h *StreamHasher) FinalHash() (string, error) {
 		Domain:         DomainV1,
 		RequestSHA256:  sha256Hex(h.base.ProcessedRequestJSON),
 		ResponseSHA256: hex.EncodeToString(h.hash.Sum(nil)),
-		CatalogHash:    h.base.CatalogHash,
 		CatalogNodeIDs: append([]string(nil), h.base.CatalogNodeIDs...),
 		Streaming:      true,
 	}

@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -77,7 +78,7 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateResponsesTruncation(raw["truncation"]); err != nil {
 		return err
 	}
-	return validateResponsesInputTextOnly(raw["input"])
+	return validateResponsesInputTextOnly(state, raw["input"])
 }
 
 func validateJSONBool(raw map[string]json.RawMessage, name string) error {
@@ -579,11 +580,20 @@ func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
 	return true
 }
 
-func validateResponsesInputTextOnly(raw json.RawMessage) error {
+func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return invalidRequest("input is required")
 	}
 	return walkRawJSON(raw, func(object map[string]json.RawMessage) error {
+		if rawString(object["type"]) == "reasoning" {
+			if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI || !state.Resolution.Deployment.ReasoningSupported {
+				return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
+			}
+			if strings.TrimSpace(rawString(object["encrypted_content"])) == "" {
+				return invalidRequest("reasoning input items require encrypted_content")
+			}
+			return errSkipRawJSONChildren
+		}
 		if err := validateTextOnlyMediaFields(object, "Only text input is supported"); err != nil {
 			return err
 		}
@@ -598,6 +608,8 @@ func validateResponsesInputTextOnly(raw json.RawMessage) error {
 	})
 }
 
+var errSkipRawJSONChildren = errors.New("skip raw JSON children")
+
 func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) error) error {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {
@@ -610,6 +622,9 @@ func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) err
 			return invalidRequest("input must be valid JSON")
 		}
 		if err := visit(object); err != nil {
+			if errors.Is(err, errSkipRawJSONChildren) {
+				return nil
+			}
 			return err
 		}
 		for key, child := range object {

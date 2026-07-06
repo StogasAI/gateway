@@ -31,7 +31,6 @@ type Service struct {
 }
 
 type Input struct {
-	CatalogHash          string
 	CatalogNodeIDs       []string
 	ProcessedRequestJSON []byte
 	ResponseJSON         []byte
@@ -43,7 +42,6 @@ type Output struct {
 }
 
 type Object struct {
-	CatalogHash            string             `json:"catalog_hash"`
 	ProcessedHash          string             `json:"processed_hash"`
 	ProcessedSignature     string             `json:"processed_signature"`
 	Quote                  string             `json:"quote"`
@@ -64,25 +62,25 @@ func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
 	if len(input.ResponseJSON) == 0 {
 		return nil, errors.New("response JSON is required")
 	}
-	if strings.TrimSpace(input.CatalogHash) == "" {
-		return nil, errors.New("catalog hash is required")
-	}
 	if len(input.CatalogNodeIDs) == 0 {
 		return nil, errors.New("resolved catalog node ids are required")
+	}
+	snapshot, err := s.currentValidatedSnapshot(ctx)
+	if err != nil {
+		return nil, err
 	}
 	processedHash, err := proof.Hash(proof.Input{
 		ProcessedRequestJSON: append([]byte(nil), input.ProcessedRequestJSON...),
 		ResponseJSON:         append([]byte(nil), input.ResponseJSON...),
-		CatalogHash:          input.CatalogHash,
 		CatalogNodeIDs:       append([]string(nil), input.CatalogNodeIDs...),
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.outputForHash(ctx, input.CatalogHash, input.CatalogNodeIDs, processedHash)
+	return s.outputForHash(snapshot, input.CatalogNodeIDs, processedHash)
 }
 
-func (s *Service) outputForHash(ctx context.Context, catalogHash string, catalogNodeIDs []string, processedHash string) (*Output, error) {
+func (s *Service) currentValidatedSnapshot(ctx context.Context) (*quote.Snapshot, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
@@ -97,13 +95,16 @@ func (s *Service) outputForHash(ctx context.Context, catalogHash string, catalog
 	if !ok || snapshot.Payload.Ed25519PublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
 		return nil, errors.New("confidential proof signer does not match report-data ed25519 key")
 	}
+	return snapshot, nil
+}
+
+func (s *Service) outputForHash(snapshot *quote.Snapshot, catalogNodeIDs []string, processedHash string) (*Output, error) {
 	canonicalReportData, err := reportdata.CanonicalJSON(snapshot.Payload)
 	if err != nil {
 		return nil, err
 	}
 	signature := proof.Sign(s.Signer, processedHash)
 	object := Object{
-		CatalogHash:            catalogHash,
 		ProcessedHash:          processedHash,
 		ProcessedSignature:     signature,
 		Quote:                  base64.RawURLEncoding.EncodeToString(snapshot.Quote),
@@ -140,12 +141,20 @@ type Stream struct {
 	hasher *proof.StreamHasher
 }
 
-func NewStream(input Input) (*Stream, error) {
+func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
+	if s == nil {
+		return nil, nil
+	}
+	_, err := s.currentValidatedSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return newStream(input)
+}
+
+func newStream(input Input) (*Stream, error) {
 	if len(input.ProcessedRequestJSON) == 0 {
 		return nil, errors.New("processed request JSON is required")
-	}
-	if strings.TrimSpace(input.CatalogHash) == "" {
-		return nil, errors.New("catalog hash is required")
 	}
 	if len(input.CatalogNodeIDs) == 0 {
 		return nil, errors.New("resolved catalog node ids are required")
@@ -154,7 +163,6 @@ func NewStream(input Input) (*Stream, error) {
 		base: input,
 		hasher: proof.NewStreamHasher(proof.StreamingInput{
 			ProcessedRequestJSON: append([]byte(nil), input.ProcessedRequestJSON...),
-			CatalogHash:          input.CatalogHash,
 			CatalogNodeIDs:       append([]string(nil), input.CatalogNodeIDs...),
 		}),
 	}, nil
@@ -171,9 +179,13 @@ func (svc *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, 
 	if svc == nil || stream == nil {
 		return nil, nil
 	}
+	snapshot, err := svc.currentValidatedSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
 	hash, err := stream.hasher.FinalHash()
 	if err != nil {
 		return nil, err
 	}
-	return svc.outputForHash(ctx, stream.base.CatalogHash, stream.base.CatalogNodeIDs, hash)
+	return svc.outputForHash(snapshot, stream.base.CatalogNodeIDs, hash)
 }

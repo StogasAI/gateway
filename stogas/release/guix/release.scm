@@ -96,6 +96,7 @@
     (with-imported-modules '((guix build utils))
       #~(begin
           (use-modules (guix build utils)
+                       (ice-9 ftw)
                        (ice-9 match)
                        (ice-9 popen)
                        (ice-9 textual-ports))
@@ -159,6 +160,23 @@
 	          (define (copy-recursively/quiet source target)
 	            (copy-recursively source target
 	                              #:log (%make-void-port "w")))
+
+	          (define (write-ca-bundle source-dir target)
+	            (call-with-output-file target
+	              (lambda (port)
+	                (for-each
+	                 (lambda (name)
+	                   (display
+	                    (call-with-input-file
+	                     (string-append source-dir "/" name)
+	                     get-string-all)
+	                    port)
+	                   (newline port))
+	                 (sort
+	                  (filter
+	                   (lambda (name) (string-suffix? ".pem" name))
+	                   (scandir source-dir))
+	                  string<?)))))
 
 	          (define (write-json-hash-map port inputs)
 	            (let loop ((remaining inputs))
@@ -305,9 +323,10 @@
 	          (define kernel (string-append #$stogas-linux-6-18 "/bzImage"))
 	          (define ovmf (string-append #$stogas-edk2-amdsev-ovmf
 	                                      "/share/firmware/ovmf-amdsev-x64.fd"))
+	          (define ca-bundle-source-dir
+	            #$(file-append (pkg "nss-certs") "/etc/ssl/certs"))
 	          (define ca-bundle
-	            #$(file-append (pkg "nss-certs")
-	                           "/etc/ssl/certs/ca-certificates.crt"))
+	            (string-append work "/ca-certificates.crt"))
 	          (define rootfs-ca-bundle
 	            (string-append rootfs "/etc/ssl/certs/ca-certificates.crt"))
 	          (define build-inputs
@@ -398,7 +417,9 @@
           (copy-recursively/quiet #$%go-modcache go-modcache)
           (invoke "chmod" "-R" "u+w" go-modcache)
           (mkdir-p rootfs)
+	          (mkdir-p (string-append rootfs "/stogas"))
 	          (mkdir-p (dirname rootfs-ca-bundle))
+	          (write-ca-bundle ca-bundle-source-dir ca-bundle)
 	          (copy-file ca-bundle rootfs-ca-bundle)
 	          (chmod rootfs-ca-bundle #o444)
 	          (with-directory-excursion (string-append build-source "/transports")
@@ -419,9 +440,17 @@
                     "-buildvcs=false"
                     "-ldflags=-buildid= -s -w"
                     "-mod=vendor"
+                    "-o" (string-append rootfs "/stogas/gateway.init")
+                    "./cmd/stogas-gateway")
+	            (invoke "go" "build"
+                    "-trimpath"
+                    "-buildvcs=false"
+                    "-ldflags=-buildid= -s -w"
+                    "-mod=vendor"
                     "-o" (string-append rootfs "/init")
-                    "./cmd/stogas-gateway"))
+                    "./cmd/stogas-gateway-init"))
           (chmod (string-append rootfs "/init") #o555)
+	          (chmod (string-append rootfs "/stogas/gateway.init") #o555)
           (invoke "find" rootfs "-exec" "touch" "-h" "-d" "@1" "{}" "+")
           (invoke "bash" "-c"
                   (string-append "cd " rootfs
@@ -430,7 +459,7 @@
 	                                 " --format=newc --owner=0:0"
 	                                 " | zstd -19 -T1 --no-progress -o "
 	                                 initramfs))
-	          (copy-file (string-append rootfs "/init") init)
+	          (copy-file (string-append rootfs "/stogas/gateway.init") init)
 	          (copy-file kernel release-kernel)
 	          (copy-file initramfs release-initramfs)
 	          (invoke ukify "build"

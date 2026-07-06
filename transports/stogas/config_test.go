@@ -1,9 +1,9 @@
 package stogas
 
 import (
+	"os"
 	"strings"
 	"testing"
-	"time"
 
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
@@ -139,46 +139,92 @@ func TestLoadFromEnvConfidentialModeIsExplicitOptIn(t *testing.T) {
 	}
 
 	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
-	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
-	t.Setenv("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT", strings.Repeat("a", 64))
-	t.Setenv("STOGAS_CONFIDENTIAL_REGION", "global")
 	t.Setenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", strings.Repeat("b", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", strings.Repeat("b", 64)+","+strings.Repeat("c", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT", "2026-12-31T00:00:00Z")
-	t.Setenv("STOGAS_CONFIDENTIAL_CHIP_ID", strings.Repeat("d", 128))
 	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL", "true")
-	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_TOKEN", "control-token")
 	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID", "access-client-id")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET", "access-client-secret")
 	t.Setenv("STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS", "10.0.0.10")
 	t.Setenv("STOGAS_CONFIDENTIAL_ENDPOINT_PORT", "8443")
-	t.Setenv("STOGAS_CONFIDENTIAL_ENTROPY_TIMEOUT_SECONDS", "17")
-	t.Setenv("STOGAS_CONFIDENTIAL_HEARTBEAT_SECONDS", "11")
-	t.Setenv("STOGAS_CONFIDENTIAL_QUOTE_REFRESH_SECONDS", "7")
-	t.Setenv("STOGAS_CONFIDENTIAL_READINESS_SECONDS", "13")
 
 	config, err = LoadFromEnv()
 	if err != nil {
 		t.Fatalf("LoadFromEnv returned error after confidential opt-in: %v", err)
 	}
 	if !config.Confidential.Enabled ||
-		config.Confidential.AttesterMode != "mock" ||
+		config.Confidential.AttesterMode != "sev-snp" ||
 		config.Confidential.ControlURL != "https://control.stogas.localhost" ||
 		config.Confidential.EndpointPort != 8443 ||
-		config.Confidential.EntropyTimeout != 17*time.Second ||
-		config.Confidential.HeartbeatInterval != 11*time.Second ||
-		config.Confidential.QuoteRefresh != 7*time.Second ||
-		config.Confidential.ReadinessInterval != 13*time.Second ||
+		config.Confidential.EntropyTimeout != confidentialEntropyTimeout ||
+		config.Confidential.HeartbeatInterval != confidentialHeartbeatInterval ||
+		config.Confidential.QuoteRefresh != confidentialQuoteRefresh ||
+		config.Confidential.ReadinessInterval != confidentialReadinessInterval ||
 		len(config.Confidential.AcceptedCertSHA256) != 2 {
 		t.Fatalf("unexpected confidential config: %#v", config.Confidential)
+	}
+}
+
+func TestLoadFromEnvStagingConfidentialDefaultsRequireCloudflareAccess(t *testing.T) {
+	setRequiredEnvWithoutProviderKeys(t)
+	t.Setenv("STOGAS_ENVIRONMENT", "staging")
+
+	_, err := LoadFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID") {
+		t.Fatalf("expected missing Cloudflare Access error, got %v", err)
+	}
+
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID", "access-client-id")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET", "access-client-secret")
+	config, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error after Access config: %v", err)
+	}
+	if !config.Confidential.Enabled || !config.Confidential.RequestSecrets {
+		t.Fatalf("staging should enable confidential provisioning: %#v", config.Confidential)
+	}
+	if config.Confidential.ControlURL != defaultControlURLStaging || config.Confidential.AttesterMode != "sev-snp" {
+		t.Fatalf("unexpected staging defaults: %#v", config.Confidential)
+	}
+	if config.OpenAIAPIKey != "" || config.AnthropicAPIKey != "" {
+		t.Fatalf("staging should wait for released provider keys: %#v", config)
+	}
+}
+
+func TestLoadFromEnvDerivesNativeConfidentialModeWithoutControl(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
+	t.Setenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", strings.Repeat("b", 64))
+	t.Setenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", strings.Repeat("b", 64))
+	t.Setenv("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT", "2026-12-31T00:00:00Z")
+
+	config, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+	if config.Confidential.AttesterMode != "igvm-native" {
+		t.Fatalf("expected direct native mode without Control, got %#v", config.Confidential)
+	}
+	if config.Confidential.RequestSecrets || config.Confidential.ControlConfigured() {
+		t.Fatalf("native direct mode should not request Control provisioning: %#v", config.Confidential)
+	}
+}
+
+func TestLoadFromEnvRejectsAttesterModeEnvOverride(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
+	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
+
+	_, err := LoadFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "STOGAS_CONFIDENTIAL_ATTESTER_MODE is not supported") {
+		t.Fatalf("expected attester env rejection, got %v", err)
 	}
 }
 
 func TestLoadFromEnvRejectsIncompleteConfidentialConfig(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
-	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
-	t.Setenv("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT", strings.Repeat("a", 64))
-	t.Setenv("STOGAS_CONFIDENTIAL_REGION", "global")
 	t.Setenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", strings.Repeat("b", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", strings.Repeat("c", 64))
 
@@ -188,19 +234,32 @@ func TestLoadFromEnvRejectsIncompleteConfidentialConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFromEnvAllowsConfidentialFirstBootWithoutConfiguredCertificate(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
+	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID", "access-client-id")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET", "access-client-secret")
+
+	config, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+	if config.Confidential.ActiveCertSHA256 != "" || len(config.Confidential.AcceptedCertSHA256) != 0 || !config.Confidential.CertExpiresAt.IsZero() {
+		t.Fatalf("first boot should leave cert config empty for runtime provisioning: %#v", config.Confidential)
+	}
+}
+
 func TestLoadFromEnvRejectsIncompleteConfidentialControlConfig(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
-	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
-	t.Setenv("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT", strings.Repeat("a", 64))
-	t.Setenv("STOGAS_CONFIDENTIAL_REGION", "global")
+	t.Setenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS", "true")
 	t.Setenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", strings.Repeat("b", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", strings.Repeat("b", 64))
-	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
 
 	_, err := LoadFromEnv()
-	if err == nil || !strings.Contains(err.Error(), "STOGAS_CONFIDENTIAL_CONTROL_TOKEN is required") {
-		t.Fatalf("expected missing control token error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "Control heartbeats must be configured before secret release") {
+		t.Fatalf("expected missing Control URL error, got %v", err)
 	}
 }
 
@@ -208,15 +267,12 @@ func TestLoadFromEnvAllowsProviderKeysFromConfidentialSecretRelease(t *testing.T
 	setRequiredEnvWithoutProviderKeys(t)
 	t.Setenv("STOGAS_CONFIDENTIAL_ENABLED", "true")
 	t.Setenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS", "true")
-	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
-	t.Setenv("STOGAS_CONFIDENTIAL_RELEASE_MEASUREMENT", strings.Repeat("a", 64))
-	t.Setenv("STOGAS_CONFIDENTIAL_REGION", "global")
 	t.Setenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256", strings.Repeat("b", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256", strings.Repeat("b", 64))
 	t.Setenv("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT", "2026-12-31T00:00:00Z")
-	t.Setenv("STOGAS_CONFIDENTIAL_CHIP_ID", strings.Repeat("d", 128))
-	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_TOKEN", "control-token")
 	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID", "access-client-id")
+	t.Setenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET", "access-client-secret")
 
 	config, err := LoadFromEnv()
 	if err != nil {
@@ -224,6 +280,9 @@ func TestLoadFromEnvAllowsProviderKeysFromConfidentialSecretRelease(t *testing.T
 	}
 	if !config.Confidential.RequestSecrets {
 		t.Fatal("expected request secrets to be enabled")
+	}
+	if config.Confidential.AttesterMode != "sev-snp" {
+		t.Fatalf("secret release should derive sev-snp attestation, got %#v", config.Confidential)
 	}
 	if config.OpenAIAPIKey != "" || config.AnthropicAPIKey != "" {
 		t.Fatalf("provider keys should not come from host env: %#v", config)
@@ -240,31 +299,49 @@ func TestLoadFromEnvRejectsSecretReleaseWithoutConfidentialRuntime(t *testing.T)
 	}
 }
 
-func TestApplyConfidentialRuntimeSecretsOverridesHostProviderKeys(t *testing.T) {
+func TestApplyConfidentialRuntimeSecretsInstallsInfisicalBootstrapAndRefreshesRuntimeSecrets(t *testing.T) {
+	t.Setenv("INFISICAL_SKIP", "true")
+	t.Setenv("AUTH_SECRET", "infisical-auth-secret-0123456789")
+	t.Setenv("DATABASE_URL", "postgres://infisical:pass@localhost:5432/postgres")
+	t.Setenv("DATABASE_SCHEMA", "public")
+	t.Setenv("OPENAI_API_KEY", "infisical-openai")
+	t.Setenv("ANTHROPIC_API_KEY", "infisical-anthropic")
+	t.Setenv("TB_HOST_URL", "https://tinybird.example")
+	t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", "tinybird-token")
+
 	config := Config{
 		AnthropicAPIKey: "host-anthropic",
-		Confidential:   ConfidentialConfig{RequestSecrets: true},
-		OpenAIAPIKey:   "host-openai",
+		Confidential:    ConfidentialConfig{RequestSecrets: true},
+		OpenAIAPIKey:    "host-openai",
 	}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"ANTHROPIC_API_KEY": "released-anthropic",
-		"OPENAI_API_KEY":    "released-openai",
+		"INFISICAL_PROJECT_ID":                   "project-id",
+		"INFISICAL_SITE_URL":                     "https://secrets.example",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID":     "client-id",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET": "client-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.OpenAIAPIKey != "released-openai" || config.AnthropicAPIKey != "released-anthropic" {
-		t.Fatalf("released secrets did not replace host provider keys: %#v", config)
+	if os.Getenv("INFISICAL_PROJECT_ID") != "project-id" || os.Getenv("INFISICAL_SITE_URL") != "https://secrets.example" {
+		t.Fatalf("released Infisical bootstrap secrets were not installed")
+	}
+	if config.OpenAIAPIKey != "infisical-openai" || config.AnthropicAPIKey != "infisical-anthropic" {
+		t.Fatalf("runtime provider keys did not refresh from Infisical/env: %#v", config)
+	}
+	if config.TinybirdHost != "https://tinybird.example" || config.TinybirdToken != "tinybird-token" {
+		t.Fatalf("runtime service secrets did not refresh from Infisical/env: %#v", config)
 	}
 }
 
-func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingProviderSecret(t *testing.T) {
+func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingInfisicalBootstrapSecret(t *testing.T) {
 	config := Config{Confidential: ConfidentialConfig{RequestSecrets: true}}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"OPENAI_API_KEY": "released-openai",
+		"INFISICAL_PROJECT_ID":               "project-id",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID": "client-id",
 	})
-	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
-		t.Fatalf("expected missing anthropic secret error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET") {
+		t.Fatalf("expected missing Infisical bootstrap secret error, got %v", err)
 	}
 }
 
@@ -281,10 +358,15 @@ func TestValidateProviderRuntimeSecretsReadyRequiresAppliedSecrets(t *testing.T)
 }
 
 func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.T) {
+	t.Setenv("INFISICAL_SKIP", "true")
+	t.Setenv("OPENAI_API_KEY", "infisical-openai")
+	t.Setenv("ANTHROPIC_API_KEY", "infisical-anthropic")
+
 	config := Config{Confidential: ConfidentialConfig{RequestSecrets: true}}
 	if err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"ANTHROPIC_API_KEY": "released-anthropic",
-		"OPENAI_API_KEY":    "released-openai",
+		"INFISICAL_PROJECT_ID":                   "project-id",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID":     "client-id",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET": "client-secret",
 	}); err != nil {
 		t.Fatal(err)
 	}

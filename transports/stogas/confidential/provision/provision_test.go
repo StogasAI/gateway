@@ -19,21 +19,30 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	snapshot := testSnapshot(t, now)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/gateway-nodes/heartbeat" {
+		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		if r.Header.Get("authorization") != "Bearer control-token" {
-			t.Fatalf("missing bearer token: %q", r.Header.Get("authorization"))
+		if r.Header.Get("CF-Access-Client-Id") != "access-client-id" || r.Header.Get("CF-Access-Client-Secret") != "access-client-secret" {
+			t.Fatalf("missing Cloudflare Access headers: %#v", r.Header)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["node_id"] != "node-1" || body["chip_id"] != strings.Repeat("a", 128) {
+		if body["node_id"] != "node-1" {
 			t.Fatalf("unexpected heartbeat identity: %#v", body)
+		}
+		if _, ok := body["chip_id"]; ok {
+			t.Fatalf("heartbeat must not send host-derived chip_id: %#v", body)
+		}
+		if _, ok := body["region"]; ok {
+			t.Fatalf("heartbeat must not send launch region: %#v", body)
 		}
 		if body["quote"] != base64.RawURLEncoding.EncodeToString([]byte("quote-bytes")) {
 			t.Fatalf("quote was not base64url encoded: %#v", body["quote"])
+		}
+		if body["quote_verifier"] != "amd-verifier" || body["quote_verifier_jwt"] != "verifier.jwt" {
+			t.Fatalf("verifier evidence was not sent: %#v", body)
 		}
 		reportData, ok := body["report_data"].(map[string]any)
 		if !ok || reportData["schema"] != reportdata.SchemaV1 {
@@ -48,15 +57,20 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+	client := Client{
+		AccessClientID:     "access-client-id",
+		AccessClientSecret: "access-client-secret",
+		BaseURL:            server.URL,
+		AllowInsecureLocal: true,
+	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
-		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		ChipID:        strings.Repeat("A", 128),
-		Health:        NodeHealth{Ready: false, LastQuoteError: "drand fetch failed"},
-		NodeID:        "node-1",
-		ObservedAt:    now,
-		Quote:         snapshot,
-		Region:        "global",
+		CertExpiresAt:    now.Add(90 * 24 * time.Hour),
+		Health:           NodeHealth{Ready: false, LastQuoteError: "drand fetch failed"},
+		NodeID:           "node-1",
+		ObservedAt:       now,
+		Quote:            snapshot,
+		QuoteVerifier:    "amd-verifier",
+		QuoteVerifierJWT: "verifier.jwt",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +93,7 @@ func TestSendHeartbeatParsesCertificateInstruction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.SendHeartbeat(context.Background(), testHeartbeatInput(t))
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +111,7 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 	generationID := strings.Repeat("a", 64)
 	spkiHash := strings.Repeat("b", 64)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/gateway-nodes/cert/csr" {
+		if r.URL.Path != "/api/fleet/cert/csr" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var body map[string]any
@@ -117,7 +131,7 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.SubmitCertificateCSR(context.Background(), CertificateCSRSubmission{
 		CommonName:    "Gateway.Stogas.AI",
 		CSRDER:        []byte("csr-der"),
@@ -136,7 +150,7 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 
 func TestSendReadinessPostsPrivateHealthObservation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/gateway-nodes/readiness" {
+		if r.URL.Path != "/api/fleet/readiness" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var body map[string]any
@@ -150,7 +164,7 @@ func TestSendReadinessPostsPrivateHealthObservation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.SendReadiness(context.Background(), ReadinessInput{
 		Address:      "10.0.0.10",
 		GenerationID: strings.Repeat("C", 64),
@@ -170,7 +184,7 @@ func TestRequestSecretsValidatesPlaintextFreeRelease(t *testing.T) {
 	generationID := strings.Repeat("d", 64)
 	reportHash := strings.Repeat("e", 128)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/gateway-nodes/secrets" {
+		if r.URL.Path != "/api/fleet/secrets" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		var body map[string]string
@@ -203,7 +217,7 @@ func TestRequestSecretsValidatesPlaintextFreeRelease(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.RequestSecrets(context.Background(), SecretReleaseRequest{
 		GenerationID:     strings.ToUpper(generationID),
 		ReportDataSHA512: strings.ToUpper(reportHash),
@@ -300,7 +314,7 @@ func TestClientFailsClosedForUnsafeOrMalformedControlResponses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(tt.handler)
 			defer server.Close()
-			client := Client{BaseURL: server.URL, BearerToken: "control-token", AllowInsecureLocal: true}
+			client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 			err := tt.call(client)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("expected error containing %q, got %v", tt.want, err)
@@ -314,20 +328,16 @@ func testHeartbeatInput(t *testing.T) HeartbeatInput {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	return HeartbeatInput{
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		ChipID:        strings.Repeat("a", 128),
 		Health:        NodeHealth{Ready: true},
 		NodeID:        "node-1",
 		ObservedAt:    now,
 		Quote:         testSnapshot(t, now),
-		Region:        "global",
 	}
 }
 
 func testSnapshot(t *testing.T, generatedAt time.Time) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		ReleaseMeasurement: strings.Repeat("1", 64),
-		Region:             "global",
 		CatalogHash:        strings.Repeat("2", 64),
 		TLSSPKISHA256:      strings.Repeat("3", 64),
 		ActiveCertSHA256:   strings.Repeat("4", 64),
