@@ -11,11 +11,35 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
-const DefaultQuicknetLatestURL = "https://api.drand.sh/v2/beacons/quicknet/rounds/latest"
+const (
+	QuicknetLatestV2Path      = "/v2/beacons/quicknet/rounds/latest"
+	QuicknetLatestV1Path      = "/" + reportdata.QuicknetChainHash + "/public/latest"
+	QuicknetLatestPath        = QuicknetLatestV2Path
+	DefaultQuicknetLatestURL  = "https://api.drand.sh" + QuicknetLatestV2Path
+	defaultHTTPRequestTimeout = 2 * time.Second
+	defaultHTTPFetchTimeout   = 4 * time.Second
+)
+
+var DefaultQuicknetRelayURLs = []string{
+	"https://api.drand.sh",
+	"https://api2.drand.sh",
+	"https://api3.drand.sh",
+	"https://drand.cloudflare.com",
+	"https://api.drand.secureweb3.com:6875",
+}
+
+var DefaultQuicknetLatestURLs = []string{
+	"https://api.drand.sh" + QuicknetLatestV2Path,
+	"https://api2.drand.sh" + QuicknetLatestV2Path,
+	"https://api3.drand.sh" + QuicknetLatestV2Path,
+	"https://drand.cloudflare.com" + QuicknetLatestV1Path,
+	"https://api.drand.secureweb3.com:6875" + QuicknetLatestV1Path,
+}
 
 type Fetcher interface {
 	Fetch(ctx context.Context) (reportdata.Drand, error)
@@ -38,8 +62,10 @@ func (f SignatureVerifierFunc) Verify(ctx context.Context, beacon reportdata.Dra
 }
 
 type HTTPFetcher struct {
-	client *http.Client
-	url    string
+	client         *http.Client
+	urls           []string
+	requestTimeout time.Duration
+	fetchTimeout   time.Duration
 }
 
 func NewHTTPFetcher(client *http.Client, url string) *HTTPFetcher {
@@ -47,13 +73,32 @@ func NewHTTPFetcher(client *http.Client, url string) *HTTPFetcher {
 		client = http.DefaultClient
 	}
 	if strings.TrimSpace(url) == "" {
-		url = DefaultQuicknetLatestURL
+		return &HTTPFetcher{client: client, urls: append([]string(nil), DefaultQuicknetLatestURLs...)}
 	}
-	return &HTTPFetcher{client: client, url: url}
+	return &HTTPFetcher{client: client, urls: normalizeQuicknetURLs(url)}
 }
 
 func (f *HTTPFetcher) Fetch(ctx context.Context) (reportdata.Drand, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
+	fetchCtx, cancel := context.WithTimeout(ctx, f.effectiveFetchTimeout())
+	defer cancel()
+	var errs []error
+	for _, url := range f.urls {
+		beacon, err := f.fetchOne(fetchCtx, url)
+		if err == nil {
+			return beacon, nil
+		}
+		errs = append(errs, fmt.Errorf("%s: %w", url, err))
+		if fetchCtx.Err() != nil {
+			return reportdata.Drand{}, errors.Join(errs...)
+		}
+	}
+	return reportdata.Drand{}, errors.Join(errs...)
+}
+
+func (f *HTTPFetcher) fetchOne(ctx context.Context, url string) (reportdata.Drand, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, f.effectiveRequestTimeout())
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return reportdata.Drand{}, err
 	}
@@ -89,6 +134,28 @@ func (f *HTTPFetcher) Fetch(ctx context.Context) (reportdata.Drand, error) {
 		Randomness: randomness,
 		Signature:  body.Signature,
 	}, nil
+}
+
+func (f *HTTPFetcher) effectiveRequestTimeout() time.Duration {
+	if f != nil && f.requestTimeout > 0 {
+		return f.requestTimeout
+	}
+	return defaultHTTPRequestTimeout
+}
+
+func (f *HTTPFetcher) effectiveFetchTimeout() time.Duration {
+	if f != nil && f.fetchTimeout > 0 {
+		return f.fetchTimeout
+	}
+	return defaultHTTPFetchTimeout
+}
+
+func normalizeQuicknetURLs(url string) []string {
+	url = strings.TrimRight(strings.TrimSpace(url), "/")
+	if strings.HasSuffix(url, QuicknetLatestV2Path) || strings.HasSuffix(url, QuicknetLatestV1Path) {
+		return []string{url}
+	}
+	return []string{url + QuicknetLatestV2Path, url + QuicknetLatestV1Path}
 }
 
 type Source struct {

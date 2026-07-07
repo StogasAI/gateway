@@ -120,6 +120,27 @@ func TestEnabledServiceFailsClosedWhenSignerDoesNotMatchReportData(t *testing.T)
 	}
 }
 
+func TestEnabledServiceFailsClosedWhenSnapshotReportDataHashDoesNotMatchPayload(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("e", 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := testSnapshot(t, publicKey)
+	snapshot.ReportDataHex = strings.Repeat("0", 128)
+	service := &Service{
+		Quotes: staticQuotes{snapshot: snapshot},
+		Signer: privateKey,
+	}
+	_, err = service.Build(context.Background(), Input{
+		CatalogNodeIDs:       []string{"node-a"},
+		ProcessedRequestJSON: []byte(`{"request":true}`),
+		ResponseJSON:         []byte(`{"response":true}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "report-data hash mismatch") {
+		t.Fatalf("expected report-data mismatch failure, got %v", err)
+	}
+}
+
 type staticQuotes struct {
 	snapshot *quote.Snapshot
 }

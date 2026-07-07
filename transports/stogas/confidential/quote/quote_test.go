@@ -62,13 +62,17 @@ func TestCurrentRefreshesOnDemandWhenEmpty(t *testing.T) {
 
 func TestRefreshFailureKeepsLastValidQuote(t *testing.T) {
 	fail := atomic.Bool{}
+	round := atomic.Uint64{}
+	round.Store(1)
 	manager, err := New(AttesterFunc(func(ctx context.Context, reportData [64]byte) ([]byte, error) {
 		if fail.Load() {
 			return nil, errors.New("psp unavailable")
 		}
 		return []byte("valid-quote"), nil
 	}), func(ctx context.Context) (reportdata.Payload, error) {
-		return testPayload(), nil
+		payload := testPayload()
+		payload.Drand.Round = round.Load()
+		return payload, nil
 	}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -76,6 +80,7 @@ func TestRefreshFailureKeepsLastValidQuote(t *testing.T) {
 	if err := manager.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	round.Store(2)
 	fail.Store(true)
 	if err := manager.Refresh(context.Background()); err == nil {
 		t.Fatal("expected refresh failure")
@@ -92,13 +97,38 @@ func TestRefreshFailureKeepsLastValidQuote(t *testing.T) {
 	}
 }
 
+func TestRefreshSkipsQuoteGenerationWhenReportDataIsUnchanged(t *testing.T) {
+	var calls atomic.Int32
+	manager, err := New(AttesterFunc(func(ctx context.Context, reportData [64]byte) ([]byte, error) {
+		calls.Add(1)
+		return []byte("quote"), nil
+	}), func(ctx context.Context) (reportdata.Payload, error) {
+		return testPayload(), nil
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("expected unchanged report data to reuse quote, got %d generations", calls.Load())
+	}
+}
+
 func TestBackgroundRefreshesAtConfiguredInterval(t *testing.T) {
 	var calls atomic.Int32
+	var round atomic.Uint64
 	manager, err := New(AttesterFunc(func(ctx context.Context, reportData [64]byte) ([]byte, error) {
 		count := calls.Add(1)
 		return []byte{byte(count)}, nil
 	}), func(ctx context.Context) (reportdata.Payload, error) {
-		return testPayload(), nil
+		payload := testPayload()
+		payload.Drand.Round = round.Add(1)
+		return payload, nil
 	}, 10*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)

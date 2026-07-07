@@ -91,6 +91,13 @@ func (s *Service) currentValidatedSnapshot(ctx context.Context) (*quote.Snapshot
 	if snapshot == nil || len(snapshot.Quote) == 0 {
 		return nil, errors.New("current quote snapshot is empty")
 	}
+	reportDataHex, err := reportdata.HashHex(snapshot.Payload)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.ReportDataHex == "" || snapshot.ReportDataHex != reportDataHex {
+		return nil, errors.New("current quote snapshot report-data hash mismatch")
+	}
 	publicKey, ok := s.Signer.Public().(ed25519.PublicKey)
 	if !ok || snapshot.Payload.Ed25519PublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
 		return nil, errors.New("confidential proof signer does not match report-data ed25519 key")

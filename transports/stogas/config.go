@@ -21,14 +21,14 @@ const (
 	defaultPort               = "5185"
 	defaultMaxRequestBodyMiB  = 16
 	defaultInfisicalSiteURL   = "https://secrets.stogas.ai"
-	defaultControlURLLocal    = "http://127.0.0.1:5184"
-	defaultControlURLStaging  = "https://staging.stogas.ai"
-	defaultControlURLProd     = "https://stogas.ai"
+	defaultFleetAPIURLLocal   = "http://127.0.0.1:5184/api/fleet"
+	defaultFleetAPIURLStaging = "https://staging.stogas.ai/api/fleet"
+	defaultFleetAPIURLProd    = "https://stogas.ai/api/fleet"
 	defaultConfidentialRegion = "global"
 
 	confidentialEntropyTimeout    = 10 * time.Second
 	confidentialHeartbeatInterval = 60 * time.Second
-	confidentialQuoteRefresh      = 30 * time.Second
+	confidentialQuoteRefresh      = 10 * time.Second
 	confidentialReadinessInterval = 60 * time.Second
 
 	defaultDatabasePoolMaxConns     int32 = 32
@@ -37,10 +37,12 @@ const (
 	defaultDatabaseQueryExecMode          = "cache_statement"
 )
 
-var confidentialInfisicalBootstrapSecrets = []string{
-	"INFISICAL_PROJECT_ID",
-	"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID",
-	"INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
+var confidentialRuntimeSecretNames = []string{
+	"AUTH_SECRET",
+	"DATABASE_SCHEMA",
+	"DATABASE_URL",
+	"OPENAI_API_KEY",
+	"ANTHROPIC_API_KEY",
 }
 
 type Config struct {
@@ -84,13 +86,21 @@ type ConfidentialConfig struct {
 }
 
 func LoadFromEnv() (Config, error) {
-	loadInfisicalRuntimeSecrets()
+	if loadRuntimeEnvironment() == "local" {
+		loadInfisicalRuntimeSecrets()
+	}
 	databasePool, err := loadDatabasePoolConfig()
 	if err != nil {
 		return Config{}, err
 	}
 	if strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE")) != "" {
 		return Config{}, fmt.Errorf("STOGAS_CONFIDENTIAL_ATTESTER_MODE is not supported; attester mode is derived from the gateway boot path")
+	}
+	if err := rejectUnsupportedConfidentialKnobs(); err != nil {
+		return Config{}, err
+	}
+	if err := rejectUnsupportedConfidentialHostOverrides(); err != nil {
+		return Config{}, err
 	}
 
 	config := Config{
@@ -127,21 +137,21 @@ func LoadFromEnv() (Config, error) {
 func loadConfidentialConfigFromEnv() ConfidentialConfig {
 	environment := loadRuntimeEnvironment()
 	confidentialDeployment := environment == "staging" || environment == "production"
+	requestSecrets := confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS") == "true"
+	activeCertSHA256 := strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256")))
+	acceptedCertSHA256 := splitCSV(os.Getenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256"))
 	certExpiresAt := time.Time{}
 	if raw := strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT")); raw != "" {
 		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
 			certExpiresAt = parsed.UTC()
 		}
 	}
-	controlURL := strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_URL"))
-	if controlURL == "" {
-		controlURL = defaultControlURLForEnvironment(environment)
-	}
+	controlURL := fleetAPIURLForEnvironment(environment, requestSecrets, activeCertSHA256, acceptedCertSHA256)
 	config := ConfidentialConfig{
-		AcceptedCertSHA256: splitCSV(os.Getenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256")),
+		AcceptedCertSHA256: acceptedCertSHA256,
 		AccessClientID:     strings.TrimSpace(os.Getenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID")),
 		AccessClientSecret: strings.TrimSpace(os.Getenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET")),
-		ActiveCertSHA256:   strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256"))),
+		ActiveCertSHA256:   activeCertSHA256,
 		CertExpiresAt:      certExpiresAt,
 		ControlAllowHTTP:   environment == "local" || os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL") == "true",
 		ControlURL:         controlURL,
@@ -153,7 +163,7 @@ func loadConfidentialConfigFromEnv() ConfidentialConfig {
 		HeartbeatInterval:  confidentialHeartbeatInterval,
 		QuoteRefresh:       confidentialQuoteRefresh,
 		ReadinessInterval:  confidentialReadinessInterval,
-		RequestSecrets:     confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS") == "true",
+		RequestSecrets:     requestSecrets,
 	}
 	config.AttesterMode = config.DerivedAttesterMode()
 	return config
@@ -176,15 +186,91 @@ func loadRuntimeEnvironment() string {
 	}
 }
 
-func defaultControlURLForEnvironment(environment string) string {
+func defaultFleetAPIURLForEnvironment(environment string) string {
 	switch environment {
 	case "staging":
-		return defaultControlURLStaging
+		return defaultFleetAPIURLStaging
 	case "production":
-		return defaultControlURLProd
+		return defaultFleetAPIURLProd
 	default:
 		return ""
 	}
+}
+
+func fleetAPIURLForEnvironment(environment string, requestSecrets bool, activeCertSHA256 string, acceptedCertSHA256 []string) string {
+	if environment == "local" {
+		if override := strings.TrimSpace(os.Getenv("STOGAS_FLEET_API_URL")); override != "" {
+			return override
+		}
+		if requestSecrets || (strings.TrimSpace(activeCertSHA256) == "" && len(acceptedCertSHA256) == 0) {
+			return defaultFleetAPIURLLocal
+		}
+		return ""
+	}
+	return defaultFleetAPIURLForEnvironment(environment)
+}
+
+func rejectUnsupportedConfidentialHostOverrides() error {
+	environment := loadRuntimeEnvironment()
+	if strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_URL")) != "" {
+		return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_URL is not supported; fleet API URL is derived from STOGAS_ENVIRONMENT")
+	}
+	if environment != "staging" && environment != "production" {
+		return nil
+	}
+	if strings.TrimSpace(os.Getenv("STOGAS_FLEET_API_URL")) != "" {
+		return fmt.Errorf("STOGAS_FLEET_API_URL is only supported for local testing")
+	}
+	for _, name := range []string{
+		"ANTHROPIC_API_KEY",
+		"AUTH_SECRET",
+		"DATABASE_SCHEMA",
+		"DATABASE_URL",
+		"INFISICAL_PROJECT_ID",
+		"INFISICAL_SITE_URL",
+		"INFISICAL_SKIP",
+		"INFISICAL_SKIP_DATABASE_URL",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID",
+		"INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET",
+		"OPENAI_API_KEY",
+		"TB_GATEWAY_REQUESTS_TOKEN",
+		"TB_HOST_URL",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return fmt.Errorf("%s is not supported in staging/prod confidential guests; runtime secrets are released by Control after attestation", name)
+		}
+	}
+	for _, name := range []string{
+		"STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256",
+		"STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256",
+		"STOGAS_CONFIDENTIAL_CERT_EXPIRES_AT",
+		"STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL",
+		"STOGAS_CONFIDENTIAL_ENABLED",
+		"STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS",
+		"STOGAS_CONFIDENTIAL_ENDPOINT_PORT",
+		"STOGAS_CONFIDENTIAL_REQUEST_SECRETS",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return fmt.Errorf("%s is not supported in staging/prod confidential guests; only STOGAS_ENVIRONMENT and Cloudflare Access service credentials are accepted", name)
+		}
+	}
+	return nil
+}
+
+func rejectUnsupportedConfidentialKnobs() error {
+	for _, name := range []string{
+		"STOGAS_IGVM_MODE",
+		"STOGAS_CONFIDENTIAL_ENTROPY_TIMEOUT_SECONDS",
+		"STOGAS_CONFIDENTIAL_HEARTBEAT_SECONDS",
+		"STOGAS_CONFIDENTIAL_QUOTE_REFRESH_SECONDS",
+		"STOGAS_CONFIDENTIAL_READINESS_SECONDS",
+		"STOGAS_CONFIDENTIAL_RELEASE_ENCRYPTOR",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return fmt.Errorf("%s is not supported; confidential timing, attestation, and release behavior are fixed by the IGVM and Control policy", name)
+		}
+	}
+	return nil
 }
 
 func loadInfisicalRuntimeSecrets() {
@@ -307,7 +393,7 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 		return fmt.Errorf("confidential secret store is required")
 	}
 
-	for _, name := range confidentialInfisicalBootstrapSecrets {
+	for _, name := range confidentialRuntimeSecretNames {
 		secret, ok := secrets.Get(name)
 		if !ok || len(secret.Value) == 0 {
 			return fmt.Errorf("confidential secret %s is required", name)
@@ -316,15 +402,16 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 			return fmt.Errorf("failed to install confidential secret %s: %w", name, err)
 		}
 	}
-	if siteURL, ok := secrets.Get("INFISICAL_SITE_URL"); ok && len(siteURL.Value) > 0 {
-		if err := os.Setenv("INFISICAL_SITE_URL", string(siteURL.Value)); err != nil {
-			return fmt.Errorf("failed to install confidential secret INFISICAL_SITE_URL: %w", err)
+	for _, name := range []string{"TB_GATEWAY_REQUESTS_TOKEN", "TB_HOST_URL"} {
+		if secret, ok := secrets.Get(name); ok && len(secret.Value) > 0 {
+			if err := os.Setenv(name, string(secret.Value)); err != nil {
+				return fmt.Errorf("failed to install confidential secret %s: %w", name, err)
+			}
 		}
 	}
 
-	loadInfisicalRuntimeSecrets()
 	applyRuntimeSecretsFromEnv(config)
-	return nil
+	return validateProviderRuntimeSecretsReady(*config)
 }
 
 func validateProviderRuntimeSecretsReady(config Config) error {
@@ -366,7 +453,7 @@ func (c ConfidentialConfig) Validate() error {
 	default:
 		return fmt.Errorf("unsupported confidential attester mode %q", attesterMode)
 	}
-	if c.RequestSecrets && attesterMode != "sev-snp" {
+	if c.Environment != "local" && c.RequestSecrets && attesterMode != "sev-snp" {
 		return fmt.Errorf("confidential secret release requires sev-snp attestation")
 	}
 	hasConfiguredCertificate := strings.TrimSpace(c.ActiveCertSHA256) != "" || len(c.AcceptedCertSHA256) > 0
@@ -398,7 +485,7 @@ func (c ConfidentialConfig) Validate() error {
 	}
 	if c.ControlConfigured() {
 		if strings.TrimSpace(c.ControlURL) == "" {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_URL is required when Control heartbeats are configured")
+			return fmt.Errorf("fleet API URL is required when Control heartbeats are configured")
 		}
 		if err := validateControlAccess(c); err != nil {
 			return err
@@ -434,6 +521,9 @@ func (c ConfidentialConfig) DerivedAttesterMode() string {
 	if !c.Enabled {
 		return ""
 	}
+	if c.Environment == "local" {
+		return "igvm-native"
+	}
 	if c.ControlConfigured() || c.RequestSecrets {
 		return "sev-snp"
 	}
@@ -451,7 +541,7 @@ func (c ConfidentialConfig) ReadinessConfigured() bool {
 func validateControlAccess(c ConfidentialConfig) error {
 	parsed, err := url.Parse(strings.TrimSpace(c.ControlURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("STOGAS_CONFIDENTIAL_CONTROL_URL must be absolute")
+		return fmt.Errorf("fleet API URL must be absolute")
 	}
 	if c.ControlAllowHTTP && parsed.Scheme == "http" {
 		return nil

@@ -2,7 +2,10 @@ package quote
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 
@@ -49,7 +52,7 @@ func New(attester Attester, build PayloadFunc, interval time.Duration) (*Manager
 		return nil, errors.New("payload builder is required")
 	}
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = 10 * time.Second
 	}
 	return &Manager{attester: attester, build: build, interval: interval, now: time.Now}, nil
 }
@@ -87,12 +90,19 @@ func (m *Manager) Refresh(ctx context.Context) error {
 		m.recordErr(err)
 		return err
 	}
+	hashHex := hex.EncodeToString(hash[:])
+	m.mu.RLock()
+	current := cloneSnapshot(m.current)
+	m.mu.RUnlock()
+	if current != nil && current.ReportDataHex == hashHex {
+		m.recordErr(nil)
+		return nil
+	}
 	quoteBytes, err := m.attester.Quote(ctx, hash)
 	if err != nil {
 		m.recordErr(err)
 		return err
 	}
-	hashHex, _ := reportdata.HashHex(payload)
 	next := &Snapshot{
 		Payload:       payload,
 		ReportDataHex: hashHex,
@@ -116,15 +126,16 @@ func (m *Manager) Start(ctx context.Context) {
 	m.mu.Unlock()
 
 	go func() {
-		ticker := time.NewTicker(m.interval)
-		defer ticker.Stop()
 		_ = m.Refresh(ctx)
+		timer := time.NewTimer(jitteredInterval(m.interval))
+		defer timer.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				_ = m.Refresh(ctx)
+				timer.Reset(jitteredInterval(m.interval))
 			}
 		}
 	}()
@@ -150,4 +161,19 @@ func cloneSnapshot(snapshot *Snapshot) *Snapshot {
 	out.Payload.AcceptedCertSHA256 = append([]string(nil), snapshot.Payload.AcceptedCertSHA256...)
 	out.Quote = append([]byte(nil), snapshot.Quote...)
 	return &out
+}
+
+func jitteredInterval(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		return 10 * time.Second
+	}
+	window := interval / 10
+	if window <= 0 {
+		return interval
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(window*2+1)))
+	if err != nil {
+		return interval
+	}
+	return interval - window + time.Duration(n.Int64())
 }

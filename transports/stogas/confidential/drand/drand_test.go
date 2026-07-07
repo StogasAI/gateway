@@ -3,11 +3,13 @@ package drand
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
@@ -75,6 +77,120 @@ func TestHTTPFetcherRejectsBadStatusAndMalformedSignature(t *testing.T) {
 	if _, err := NewHTTPFetcher(malformed.Client(), malformed.URL).Fetch(context.Background()); err == nil {
 		t.Fatal("expected malformed signature error")
 	}
+}
+
+func TestHTTPFetcherFallsBackAcrossQuicknetEndpoints(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary upstream failure", http.StatusBadGateway)
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != QuicknetLatestPath {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"round":43,"randomness":"` + strings.Repeat("a", 64) + `","signature":"` + strings.Repeat("b", 96) + `"}`))
+	}))
+	defer second.Close()
+
+	fetcher := &HTTPFetcher{
+		client: second.Client(),
+		urls:   []string{first.URL + QuicknetLatestPath, second.URL + QuicknetLatestPath},
+	}
+	beacon, err := fetcher.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beacon.Round != 43 {
+		t.Fatalf("unexpected round %d", beacon.Round)
+	}
+}
+
+func TestHTTPFetcherFallsBackFromV2ToV1ForRelay(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case QuicknetLatestV2Path:
+			http.NotFound(w, r)
+		case QuicknetLatestV1Path:
+			_, _ = w.Write([]byte(`{"round":44,"randomness":"` + strings.Repeat("a", 64) + `","signature":"` + strings.Repeat("b", 96) + `"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	beacon, err := NewHTTPFetcher(server.Client(), server.URL).Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beacon.Round != 44 {
+		t.Fatalf("unexpected round %d", beacon.Round)
+	}
+}
+
+func TestHTTPFetcherAppliesTotalFetchBudget(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		deadline, ok := req.Context().Deadline()
+		if !ok {
+			t.Fatal("expected request context deadline")
+		}
+		remaining := time.Until(deadline)
+		if remaining > 5*time.Second {
+			t.Fatalf("expected total fetch budget to cap request deadline, got %s", remaining)
+		}
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Body:       io.NopCloser(strings.NewReader("bad gateway")),
+			Header:     make(http.Header),
+		}, nil
+	})}
+	fetcher := &HTTPFetcher{
+		client:         client,
+		urls:           []string{"https://example.test/one"},
+		requestTimeout: time.Hour,
+		fetchTimeout:   4 * time.Second,
+	}
+	if _, err := fetcher.Fetch(context.Background()); err == nil {
+		t.Fatal("expected fetch error")
+	}
+}
+
+func TestDefaultQuicknetRelayURLsArePinnedFallbackSet(t *testing.T) {
+	expected := []string{
+		"https://api.drand.sh",
+		"https://api2.drand.sh",
+		"https://api3.drand.sh",
+		"https://drand.cloudflare.com",
+		"https://api.drand.secureweb3.com:6875",
+	}
+	if len(DefaultQuicknetRelayURLs) != len(expected) {
+		t.Fatalf("expected %d default relays, got %d", len(expected), len(DefaultQuicknetRelayURLs))
+	}
+	for i := range expected {
+		if DefaultQuicknetRelayURLs[i] != expected[i] {
+			t.Fatalf("default relay %d = %q, want %q", i, DefaultQuicknetRelayURLs[i], expected[i])
+		}
+	}
+	expectedLatestURLs := []string{
+		"https://api.drand.sh" + QuicknetLatestV2Path,
+		"https://api2.drand.sh" + QuicknetLatestV2Path,
+		"https://api3.drand.sh" + QuicknetLatestV2Path,
+		"https://drand.cloudflare.com" + QuicknetLatestV1Path,
+		"https://api.drand.secureweb3.com:6875" + QuicknetLatestV1Path,
+	}
+	if len(DefaultQuicknetLatestURLs) != len(expectedLatestURLs) {
+		t.Fatalf("expected %d default latest urls, got %d", len(expectedLatestURLs), len(DefaultQuicknetLatestURLs))
+	}
+	for i := range expectedLatestURLs {
+		if DefaultQuicknetLatestURLs[i] != expectedLatestURLs[i] {
+			t.Fatalf("default latest url %d = %q, want %q", i, DefaultQuicknetLatestURLs[i], expectedLatestURLs[i])
+		}
+	}
+}
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func TestSourceCurrentRefreshesOnDemandAndVerifiesSignature(t *testing.T) {

@@ -189,9 +189,38 @@
 	                         (if (null? rest) "" ","))
 	                 (loop rest)))))
 
-	          (define (write-artifact-manifest out igvm efi init kernel initramfs ca-bundle measurement
-	                                           vendor-modules build-inputs
-	                                           build-inputs-sha256)
+		          (define (write-gateway-launch-policy out igvm measurement)
+		            (let ((policy (string-append out "/gateway-launch-policy.json")))
+		              (call-with-output-file policy
+		                (lambda (port)
+		                  (display "{\n" port)
+		                  (display "  \"schema\": \"stogas.gateway.launch-policy.v1\",\n" port)
+		                  (format port "  \"sequence\": ~a,\n" #$(release-sequence %release-tag))
+		                  (display "  \"git\": {\n" port)
+		                  (format port "    \"commit\": ~a,\n" (json-string #$%release-commit))
+		                  (format port "    \"ref\": ~a,\n"
+		                          (json-string (string-append "refs/tags/" #$%release-tag)))
+		                  (display "    \"repository\": \"https://github.com/StogasAI/gateway\",\n" port)
+		                  (format port "    \"tag\": ~a,\n" (json-string #$%release-tag))
+		                  (format port "    \"tree\": ~a\n" (json-string #$%release-tree))
+		                  (display "  },\n" port)
+		                  (format port "  \"igvm_sha256\": ~a,\n" (json-string (sha256 igvm)))
+		                  (format port "  \"measurement\": ~a,\n"
+		                          (json-string (string-trim-both measurement)))
+		                  (display "  \"launch\": {\n" port)
+		                  (display "    \"policy\": \"0x0000000000030000\",\n" port)
+		                  (display "    \"host_data\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n" port)
+		                  (display "    \"vmpl\": 0,\n" port)
+		                  (display "    \"family_id\": \"00000000000000000000000000000000\",\n" port)
+		                  (display "    \"image_id\": \"00000000000000000000000000000000\",\n" port)
+		                  (display "    \"id_key_digest\": \"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\n" port)
+		                  (display "    \"author_key_digest\": \"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"\n" port)
+		                  (display "  }\n" port)
+		                  (display "}\n" port)))))
+
+		          (define (write-artifact-manifest out igvm efi init kernel initramfs launch-policy ca-bundle measurement
+		                                           vendor-modules build-inputs
+		                                           build-inputs-sha256)
             (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
                    (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
                    (core-go-mod (string-append #$source "/core/go.mod"))
@@ -258,11 +287,15 @@
 	                  (display "    }\n" port)
 	                  (display "  },\n" port)
 	                  (display "  \"artifacts\": {\n" port)
-	                  (display "    \"gateway.igvm\": {\n" port)
-                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 igvm)))
-                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat igvm)))
-                  (display "    },\n" port)
-	                  (display "    \"gateway.efi\": {\n" port)
+		                  (display "    \"gateway.igvm\": {\n" port)
+	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 igvm)))
+	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat igvm)))
+	                  (display "    },\n" port)
+		                  (display "    \"gateway-launch-policy.json\": {\n" port)
+		                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 launch-policy)))
+		                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat launch-policy)))
+		                  (display "    },\n" port)
+		                  (display "    \"gateway.efi\": {\n" port)
 	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 efi)))
 	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat efi)))
 	                  (display "    },\n" port)
@@ -305,9 +338,10 @@
 	          (define igvm (string-append out "/gateway.igvm"))
 	          (define init (string-append out "/gateway.init"))
 	          (define release-kernel (string-append out "/gateway.kernel"))
-	          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
-	          (define measurement-path (string-append out "/launch-measurement.txt"))
-	          (define igvmmeasure-check-kvm
+		          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
+		          (define measurement-path (string-append out "/launch-measurement.txt"))
+		          (define launch-policy (string-append out "/gateway-launch-policy.json"))
+		          (define igvmmeasure-check-kvm
 	            (string-append out "/igvmmeasure-check-kvm.txt"))
 	          (define ukify-inspect (string-append out "/ukify-inspect.txt"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
@@ -488,23 +522,28 @@
 	                       port)))
 	          (call-with-output-file measurement-path
 	            (lambda (port)
-	              (display (launch-digest
-	                        (call-with-input-file igvmmeasure-check-kvm
-	                                              get-string-all))
-	                       port)
-	              (newline port)))
-	          (copy-file pins (string-append out "/pins.lock.json"))
+		              (display (launch-digest
+		                        (call-with-input-file igvmmeasure-check-kvm
+		                                              get-string-all))
+		                       port)
+		              (newline port)))
+		          (write-gateway-launch-policy
+		           out
+		           igvm
+		           (call-with-input-file measurement-path get-string-all))
+		          (copy-file pins (string-append out "/pins.lock.json"))
 	          (copy-file (string-append #$stogas-linux-6-18 "/.config") kernel-config)
 	          (write-sha256-lines build-inputs-sha256 build-inputs)
 	          (write-artifact-manifest
 	           out
 	           igvm
 	           efi
-	           init
-	           release-kernel
-	           release-initramfs
-	           ca-bundle
-	           (call-with-input-file measurement-path get-string-all)
+		           init
+		           release-kernel
+		           release-initramfs
+		           launch-policy
+		           ca-bundle
+		           (call-with-input-file measurement-path get-string-all)
 	           (string-append build-source "/transports/vendor/modules.txt")
 	           build-inputs
 	           build-inputs-sha256)
@@ -513,8 +552,9 @@
               (for-each
                (lambda (file)
                  (format port "~a  ~a~%" (sha256 (string-append out "/" file)) file))
-	               '("gateway.igvm"
-	                 "gateway.efi"
+		               '("gateway.igvm"
+		                 "gateway-launch-policy.json"
+		                 "gateway.efi"
 	                 "gateway.init"
 	                 "gateway.kernel"
 	                 "gateway.initramfs.cpio.zst"

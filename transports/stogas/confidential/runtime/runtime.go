@@ -102,6 +102,11 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		if !ok {
 			return reportdata.Payload{}, catalog.ErrCatalogUnavailable
 		}
+		if err := drandSource.Refresh(ctx); err != nil {
+			if _, currentErr := drandSource.Current(ctx); currentErr != nil {
+				return reportdata.Payload{}, err
+			}
+		}
 		beacon, err := drandSource.Current(ctx)
 		if err != nil {
 			return reportdata.Payload{}, err
