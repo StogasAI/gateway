@@ -132,6 +132,7 @@
 	                                   "VIRTIO_VSOCKETS_COMMON"
 	                                   "VSOCKETS")))
                   (setenv "ARCH" "x86_64")
+                  (setenv "KBUILD_BUILD_TIMESTAMP" "1970-01-01 00:00:01 UTC")
                   (unsetenv "KCONFIG_ALLCONFIG")
                   (invoke "make" "ARCH=x86_64" "allnoconfig")
                   (for-each
@@ -252,6 +253,12 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
         #~(modify-phases #$phases
             (add-before 'build 'pin-amdsev-grub-tools
               (lambda _
+                (invoke "sed" "-i"
+                        "s|mkfs\\.msdos -C --|mkfs.msdos --invariant -C --|"
+                        "OvmfPkg/AmdSev/Grub/grub.sh")
+                (invoke "sed" "-i"
+                        "s|mcopy -i |mcopy -m -i |"
+                        "OvmfPkg/AmdSev/Grub/grub.sh")
                 (invoke "sed" "-i"
                         (string-append "s|^mkimage=$|mkimage="
                                        #$(file-append (pkg "grub-efi")
