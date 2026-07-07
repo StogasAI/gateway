@@ -55,6 +55,7 @@ hydrate_virt_firmware_rs() {
   mkdir -p "$source"
   tar -xf "$archive" --strip-components=1 -C "$source"
   (cd "$source" && patch -p1 < "$release_root/patches/virt-firmware-rs-kvm-vmsa-last.patch")
+  (cd "$source" && patch -p1 < "$release_root/patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch")
   cp "$release_root/locks/virt-firmware-rs.Cargo.lock" "$source/Cargo.lock"
   cargo_vendor "$source"
 
@@ -86,6 +87,7 @@ hydrate_igvmmeasure() {
   mkdir -p "$source"
   tar -xf "$archive" --strip-components=1 -C "$source"
   (cd "$source" && patch -p1 < "$release_root/patches/svsm-igvmmeasure-standalone-cargo.patch")
+  (cd "$source" && patch -p1 < "$release_root/patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch")
   mkdir -p "$crate"
   cp -R "$source/tools/igvmmeasure"/. "$crate"/
   cp "$release_root/locks/igvmmeasure.Cargo.lock" "$crate/Cargo.lock"

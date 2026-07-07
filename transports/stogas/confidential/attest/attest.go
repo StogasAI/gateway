@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,10 @@ const (
 	DefaultSEVGuestPath  = "/dev/sev-guest"
 	EnvelopeSchemaV1     = "stogas.sev-snp-quote-envelope.v1"
 	ProviderSEVGuest     = "sev_guest"
+	snpReportSize        = 0x4a0
+	snpReportVersionMin  = 2
+	snpReportVersionMax  = 5
+	snpReportSigAlgo     = 1
 )
 
 type Attester interface {
@@ -162,6 +167,7 @@ func (a ConfigFS) Quote(ctx context.Context, reportData [64]byte) ([]byte, error
 	if len(report) == 0 {
 		return nil, errors.New("TSM outblob is empty")
 	}
+	report = NormalizeReportBlob(report)
 	providerBytes, err := fs.ReadFile(filepath.Join(dir, "provider"))
 	if err != nil {
 		return nil, fmt.Errorf("read TSM provider: %w", err)
@@ -197,6 +203,41 @@ func (a ConfigFS) Quote(ctx context.Context, reportData [64]byte) ([]byte, error
 		AuxBlob:      optionalBase64URL(auxblob),
 		ManifestBlob: optionalBase64URL(manifestblob),
 	})
+}
+
+func NormalizeReportBlob(report []byte) []byte {
+	if isSNPReport(report) {
+		return report[:snpReportSize]
+	}
+	if len(report) < 0x20+snpReportSize {
+		return report
+	}
+	status := binary.LittleEndian.Uint32(report[0:4])
+	size := binary.LittleEndian.Uint32(report[4:8])
+	if status != 0 || int(size) < snpReportSize || int(size) > len(report)-0x20 {
+		return report
+	}
+	payload := report[0x20 : 0x20+int(size)]
+	if !isSNPReport(payload) {
+		return report
+	}
+	return payload[:snpReportSize]
+}
+
+func isSNPReport(report []byte) bool {
+	if len(report) < snpReportSize {
+		return false
+	}
+	version := binary.LittleEndian.Uint32(report[0:4])
+	if version < snpReportVersionMin || version > snpReportVersionMax {
+		return false
+	}
+	vmpl := binary.LittleEndian.Uint32(report[0x30:0x34])
+	if vmpl > 3 {
+		return false
+	}
+	sigAlgo := binary.LittleEndian.Uint32(report[0x34:0x38])
+	return sigAlgo == snpReportSigAlgo
 }
 
 func EncodeEnvelope(envelope Envelope) ([]byte, error) {
