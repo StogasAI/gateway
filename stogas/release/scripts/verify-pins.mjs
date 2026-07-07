@@ -230,6 +230,8 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('(cons "core/go.mod"'), 'Build input hashes must include core/go.mod.');
 		assert(releaseSource.includes('(cons "core/go.sum"'), 'Build input hashes must include core/go.sum.');
 		assert(releaseSource.includes('igvmmeasure-check-kvm.txt'), 'Release graph must emit KVM measurement output.');
+		assert(releaseSource.includes('"--real16"'), 'Release graph must wrap OVMF with real-mode IGVM entry for QEMU SEV-SNP boot.');
+		assert(!releaseSource.includes('"--flat32"'), 'Release graph must not force flat32 OVMF IGVM entry.');
 		assert(!releaseSource.includes('igvm-inspect.txt'), 'Release graph must not publish measurement output as IGVM inspection output.');
 		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
 		assert(releaseSource.includes('kernel-config.txt'), 'Release graph must emit the kernel config.');
