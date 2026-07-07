@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"os"
@@ -67,6 +68,43 @@ func TestConfigFSQuoteBuildsEnvelopeAndCleansUpReportInstance(t *testing.T) {
 	}
 	if !fs.removed[dir] {
 		t.Fatalf("report instance was not cleaned up")
+	}
+}
+
+func TestConfigFSQuoteUnwrapsReportBlobEnvelope(t *testing.T) {
+	fs := newFakeConfigFS()
+	report := make([]byte, snpReportSize)
+	binary.LittleEndian.PutUint32(report[0:4], snpReportVersionMin)
+	binary.LittleEndian.PutUint32(report[0x34:0x38], snpReportSigAlgo)
+	report[0x50] = 0xaa
+	wrapped := make([]byte, 0x20+len(report))
+	binary.LittleEndian.PutUint32(wrapped[4:8], uint32(len(report)))
+	copy(wrapped[0x20:], report)
+	fs.outblob = wrapped
+
+	quote, err := ConfigFS{
+		Root:       "/config/tsm/report",
+		Random:     bytes.NewReader([]byte("0123456789abcdef")),
+		FileSystem: fs,
+	}.Quote(context.Background(), [64]byte{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var envelope Envelope
+	if err := json.Unmarshal(quote, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	assertBase64URL(t, "report", envelope.Report, report)
+}
+
+func TestNormalizeReportBlobDoesNotUnwrapInvalidFirmwarePayload(t *testing.T) {
+	wrapped := make([]byte, 0x20+snpReportSize)
+	binary.LittleEndian.PutUint32(wrapped[4:8], snpReportSize)
+
+	normalized := NormalizeReportBlob(wrapped)
+	if !bytes.Equal(normalized, wrapped) {
+		t.Fatal("invalid firmware payload was unwrapped")
 	}
 }
 
@@ -155,6 +193,7 @@ func (f AttesterFunc) Quote(ctx context.Context, reportData [64]byte) ([]byte, e
 
 type fakeConfigFS struct {
 	provider             string
+	outblob              []byte
 	reports              map[string]*fakeReport
 	removed              map[string]bool
 	conflictAfterOutblob bool
@@ -178,11 +217,15 @@ func (fs *fakeConfigFS) Mkdir(name string, perm os.FileMode) error {
 	if _, exists := fs.reports[name]; exists {
 		return os.ErrExist
 	}
+	outblob := fs.outblob
+	if len(outblob) == 0 {
+		outblob = []byte("sev-snp-report")
+	}
 	fs.reports[name] = &fakeReport{
 		files: map[string][]byte{
 			"auxblob":      []byte("cert-table"),
 			"manifestblob": []byte("manifest"),
-			"outblob":      []byte("sev-snp-report"),
+			"outblob":      append([]byte(nil), outblob...),
 			"provider":     []byte(fs.provider),
 		},
 	}

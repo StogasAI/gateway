@@ -197,6 +197,7 @@ function verifyWorkflows() {
 
 function verifyReleaseSources() {
 	const releaseSource = releaseSchemePaths.map((path) => readFileSync(path, 'utf8')).join('\n');
+	const cmdlineSource = readFileSync(resolve(releaseRoot, 'guix/cmdline.txt'), 'utf8');
 	assert(releaseSource.includes('linux-libre@6.18.35'), 'Release graph must inherit linux-libre@6.18.35.');
 	assert(releaseSource.includes('stogas-linux-6.18'), 'Release graph must use the Stogas kernel derivation.');
 	assert(releaseSource.includes('OvmfPkg/AmdSev/AmdSevX64.dsc'), 'Release graph must build AmdSevX64 OVMF.');
@@ -235,6 +236,7 @@ function verifyReleaseSources() {
 		assert(!releaseSource.includes('igvm-inspect.txt'), 'Release graph must not publish measurement output as IGVM inspection output.');
 		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
 		assert(releaseSource.includes('kernel-config.txt'), 'Release graph must emit the kernel config.');
+		assert(cmdlineSource.includes('ip=dhcp'), 'Kernel cmdline must request DHCP for the stateless QEMU guest network.');
 		assert(releaseSource.includes('\\"platform\\": \\"SEV_SNP\\"'), 'Release manifest must record measured SNP platform.');
 		assert(releaseSource.includes('\\"vmm\\": \\"qemu-kvm\\"'), 'Release manifest must record measured VMM path.');
 		assert(releaseSource.includes('\\"measurementTool\\": \\"igvmmeasure\\"'), 'Release manifest must record measurement tool.');
@@ -263,9 +265,11 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('(setenv "TZ" "UTC")'), 'Release graph must pin TZ.');
 		assert(releaseSource.includes('(umask #o022)'), 'Release graph must pin umask.');
 		assert(releaseSource.includes('zstd -19 -T1 --no-progress'), 'Release graph must use single-threaded zstd.');
+		assert(releaseSource.includes('nameserver 10.0.2.3'), 'Initramfs must include QEMU user-mode DNS resolver configuration.');
 		assert(releaseSource.includes('"CONFIG_STACKPROTECTOR"') || releaseSource.includes('"STACKPROTECTOR"'), 'Kernel config must explicitly enable stack protector.');
 		assert(releaseSource.includes('"STACKPROTECTOR_STRONG"'), 'Kernel config must explicitly enable strong stack protector.');
 		assert(releaseSource.includes('"FORTIFY_SOURCE"'), 'Kernel config must explicitly enable fortify source.');
+		assert(releaseSource.includes('"FW_CFG_SYSFS"'), 'Kernel config must explicitly enable QEMU fw_cfg sysfs for measured forward config.');
 		assert(releaseSource.includes('"HARDENED_USERCOPY"'), 'Kernel config must explicitly enable hardened usercopy.');
 		assert(releaseSource.includes('"STRICT_KERNEL_RWX"'), 'Kernel config must explicitly enable strict kernel RWX.');
 		assert(releaseSource.includes('"RANDOMIZE_BASE"'), 'Kernel config must explicitly enable KASLR.');
@@ -319,7 +323,9 @@ function verifyReleaseSources() {
 		resolve(releaseRoot, 'locks/virt-firmware-rs.Cargo.lock'),
 		resolve(releaseRoot, 'locks/igvmmeasure.Cargo.lock'),
 		resolve(releaseRoot, 'patches/virt-firmware-rs-kvm-vmsa-last.patch'),
-		resolve(releaseRoot, 'patches/svsm-igvmmeasure-standalone-cargo.patch')
+		resolve(releaseRoot, 'patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch'),
+		resolve(releaseRoot, 'patches/svsm-igvmmeasure-standalone-cargo.patch'),
+		resolve(releaseRoot, 'patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch')
 	]) {
 		readFileSync(path);
 	}

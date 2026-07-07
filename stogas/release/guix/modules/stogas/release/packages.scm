@@ -88,6 +88,7 @@
 	                                   "ELF_CORE"
 	                                   "EXPERT"
 	                                   "FORTIFY_SOURCE"
+	                                   "FW_CFG_SYSFS"
 	                                   "HARDENED_USERCOPY"
 	                                   "INET"
 	                                   "INIT_ON_ALLOC_DEFAULT_ON"
@@ -409,7 +410,8 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
      (sha256
       (base32 "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph"))
      (patches
-      (list (patch-file "virt-firmware-rs-kvm-vmsa-last.patch"))))
+      (list (patch-file "virt-firmware-rs-kvm-vmsa-last.patch")
+            (patch-file "virt-firmware-rs-kvm-real-mode-cr0-ne.patch"))))
    "."
    (release-file "vendor/virt-firmware-rs/vendor"
                  "virt-firmware-rs-vendor"
@@ -443,7 +445,8 @@ directory = \"vendor\"
      (sha256
       (base32 "03lnkgbw40p43dx2pf07kdjayxz4mv1hy752dk7h27awc680y7ih"))
      (patches
-      (list (patch-file "svsm-igvmmeasure-standalone-cargo.patch"))))
+      (list (patch-file "svsm-igvmmeasure-standalone-cargo.patch")
+            (patch-file "svsm-igvmmeasure-kvm-vmsa-normalization.patch"))))
    "tools/igvmmeasure"
    (release-file "vendor/igvmmeasure/vendor"
                  "igvmmeasure-vendor"

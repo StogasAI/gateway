@@ -1,0 +1,15 @@
+diff --git a/igvm-tools/src/x86regs.rs b/igvm-tools/src/x86regs.rs
+index 7d3e22b..d5c9c3a 100644
+--- a/igvm-tools/src/x86regs.rs
++++ b/igvm-tools/src/x86regs.rs
+@@ -203,7 +203,9 @@ fn common_regs() -> Vec<X86Register> {
+ }
+ 
+ pub fn real_mode_regs() -> Vec<X86Register> {
+-    let cr0 = ControlRegister0::reset_fast().into();
++    let cr0 = ControlRegister0::reset_fast()
++        .with_ne(true)
++        .into();
+     let code = SegmentRegister {
+         base: 0xffff0000,
+         limit: 0xffff,

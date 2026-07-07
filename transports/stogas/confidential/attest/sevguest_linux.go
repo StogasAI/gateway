@@ -61,7 +61,7 @@ func (a SEVGuestDevice) getReport(fd uintptr, reportData [64]byte) ([]byte, erro
 	if err := sevGuestIoctl(fd, snpGetReportIOCTL(), guestReq); err != nil {
 		return nil, formatSEVGuestError("SNP_GET_REPORT", err, guestReq.ExitInfo2)
 	}
-	return append([]byte(nil), resp.Data[:]...), nil
+	return NormalizeReportBlob(append([]byte(nil), resp.Data[:]...)), nil
 }
 
 func (a SEVGuestDevice) getExtReport(fd uintptr, reportData [64]byte) ([]byte, []byte, error) {
@@ -100,7 +100,7 @@ func (a SEVGuestDevice) getExtReportWithCertBuffer(fd uintptr, reportData [64]by
 	if certsLen > len(certs) {
 		return nil, nil, fmt.Errorf("SNP_GET_EXT_REPORT returned cert length %d beyond buffer %d", certsLen, len(certs))
 	}
-	return append([]byte(nil), resp.Data[:]...), append([]byte(nil), certs[:certsLen]...), nil
+	return NormalizeReportBlob(append([]byte(nil), resp.Data[:]...)), append([]byte(nil), certs[:certsLen]...), nil
 }
 
 type snpReportReq struct {

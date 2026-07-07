@@ -64,6 +64,7 @@
         "EFI_STUB",
         "ELF_CORE",
         "FORTIFY_SOURCE",
+        "FW_CFG_SYSFS",
         "HARDENED_USERCOPY",
         "INET",
         "INIT_ON_ALLOC_DEFAULT_ON",
@@ -139,6 +140,10 @@
         {
           "file": "virt-firmware-rs-kvm-vmsa-last.patch",
           "sha256": "221daa69fe4b1aa639e8778fd912f60bbe869c9729d403e5e4c58f43c3ddfba6"
+        },
+        {
+          "file": "virt-firmware-rs-kvm-real-mode-cr0-ne.patch",
+          "sha256": "c2da9afa49c5e44e3388e0c1a978a784f89ea289b4d37851263022062b6d33b6"
         }
       ]
     },
@@ -154,6 +159,10 @@
         {
           "file": "svsm-igvmmeasure-standalone-cargo.patch",
           "sha256": "0836f588e50b5eb2bab17836ba87aebed53c662dba158b9c241450e924c88867"
+        },
+        {
+          "file": "svsm-igvmmeasure-kvm-vmsa-normalization.patch",
+          "sha256": "9ea759156540925e03e8d76025cad20e58de191fa55121af8f4e2443e89f3c9a"
         }
       ]
     }

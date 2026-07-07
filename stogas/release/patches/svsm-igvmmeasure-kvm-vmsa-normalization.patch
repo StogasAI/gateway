@@ -1,0 +1,29 @@
+--- a/tools/igvmmeasure/src/igvm_measure.rs
++++ b/tools/igvmmeasure/src/igvm_measure.rs
+@@ -414,6 +414,26 @@
+         self.check_vmsa(gpa, vmsa)?;
+ 
+         let mut vmsa_page = vmsa.as_bytes().to_vec();
++        if self.check_kvm {
++            /*
++             * QEMU passes the IGVM VMSA through KVM CPU state before SNP
++             * launch finalization. KVM's svm_set_cr4() preserves host CR4.MCE
++             * in the measured VMSA, and RFLAGS bit 1 is architecturally fixed.
++             */
++            const CR4_OFFSET: usize = 0x148;
++            const RFLAGS_OFFSET: usize = 0x170;
++            const CR4_MCE: u64 = 1 << 6;
++            const RFLAGS_FIXED_BIT: u64 = 1 << 1;
++
++            let cr4 = u64::from_le_bytes(vmsa_page[CR4_OFFSET..CR4_OFFSET + 8].try_into().unwrap())
++                | CR4_MCE;
++            vmsa_page[CR4_OFFSET..CR4_OFFSET + 8].copy_from_slice(&cr4.to_le_bytes());
++
++            let rflags =
++                u64::from_le_bytes(vmsa_page[RFLAGS_OFFSET..RFLAGS_OFFSET + 8].try_into().unwrap())
++                    | RFLAGS_FIXED_BIT;
++            vmsa_page[RFLAGS_OFFSET..RFLAGS_OFFSET + 8].copy_from_slice(&rflags.to_le_bytes());
++        }
+         vmsa_page.resize(PAGE_SIZE_4K as usize, 0);
+         self.log_page(SnpPageType::Vmsa, gpa, PAGE_SIZE_4K);
+         if self.platform == IgvmPlatformType::SEV_SNP {

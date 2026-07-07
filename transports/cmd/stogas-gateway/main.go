@@ -33,10 +33,6 @@ func main() {
 	flag.IntVar(&config.MaxRequestBodyMiB, "max-request-body-mib", config.MaxRequestBodyMiB, "Maximum request body size in MiB")
 	flag.Parse()
 
-	if err := config.Validate(); err != nil {
-		fatal(err.Error())
-	}
-
 	logger := bifrost.NewDefaultLogger(schemas.LogLevel(config.LogLevel))
 	logger.SetOutputType(schemas.LoggerOutputType(config.LogOutputStyle))
 
