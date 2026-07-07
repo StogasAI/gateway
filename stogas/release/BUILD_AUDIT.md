@@ -120,4 +120,6 @@ All direct compiler/build-tool inputs come from the pinned Guix channel. The ful
 | `stogas/release/patches/virt-firmware-rs-kvm-vmsa-last.patch` | `virt-firmware-rs` commit `e01dffc463934547a42506df656becd9061926f7` | `igvm-tools/src/builder.rs` | Sorts SNP VMSA directives after regular memory directives so generated IGVM files satisfy `igvmmeasure --check-kvm` for the bare-metal QEMU/KVM launch path. |
 | `stogas/release/patches/svsm-igvmmeasure-standalone-cargo.patch` | SVSM commit `8850f7bd766e0b592d01efb67c615a9d8f171269` | `tools/igvmmeasure/Cargo.toml` | Detaches `igvmmeasure` from the larger SVSM workspace by replacing workspace dependency references with explicit crate versions. Source files remain upstream SVSM files. |
 
+The final IGVM wraps AmdSev OVMF with `igvm-wrap --snp --real16`. Real-mode firmware entry is required for the generated SEV-SNP platform to include the SNP VMSA reset-vector context that QEMU consumes during `igvm-cfg` launch.
+
 Patch file hashes are pinned in `stogas/release/pins.lock.json` and verified by `stogas/release/scripts/verify-pins.mjs`.

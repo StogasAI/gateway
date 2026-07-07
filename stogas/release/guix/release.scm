@@ -508,7 +508,7 @@
 	          (invoke "igvm-wrap"
                   "--input" ovmf
                   "--snp"
-                  "--flat32"
+                  "--real16"
                   "--output" (string-append work "/base.igvm"))
           (invoke "igvm-update"
                   "--input" (string-append work "/base.igvm")
