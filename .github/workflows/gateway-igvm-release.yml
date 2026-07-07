@@ -58,9 +58,6 @@ jobs:
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
-      - name: Warm pinned Guix time-machine
-        run: guix time-machine -C stogas/release/guix/channels.scm -- describe
-
       - name: Build IGVM in pinned Guix environment
         env:
           STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK: "1"
