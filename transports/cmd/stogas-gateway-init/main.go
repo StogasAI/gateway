@@ -19,14 +19,21 @@ const (
 )
 
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var forwardConfigKeys = map[string]struct{}{
+	"STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID":     {},
+	"STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET": {},
+	"STOGAS_ENVIRONMENT":                     {},
+}
 
 func main() {
 	mount("proc", "/proc", "proc")
 	mount("sysfs", "/sys", "sysfs")
 	mount("devtmpfs", "/dev", "devtmpfs")
 
-	loadEnv(envFWCfgPath)
-	loadEnv(envFallbackPath)
+	loadEnv(envFWCfgPath, forwardConfigKeys)
+	if localEnvironment(os.Getenv("STOGAS_ENVIRONMENT")) {
+		loadEnv(envFallbackPath, nil)
+	}
 	probeURL("OPENAI_BASE_URL")
 
 	args := []string{
@@ -34,7 +41,7 @@ func main() {
 		"-host", envDefault("STOGAS_GATEWAY_HOST", "0.0.0.0"),
 		"-port", envDefault("STOGAS_GATEWAY_PORT", "5185"),
 		"-log-style", "json",
-		"-log-level", envDefault("STOGAS_GATEWAY_LOG_LEVEL", "info"),
+		"-log-level", "info",
 	}
 	if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: exec %s failed: %v\n", gatewayPath, err)
@@ -50,7 +57,7 @@ func mount(source, target, fstype string) {
 	}
 }
 
-func loadEnv(path string) {
+func loadEnv(path string, allowedKeys map[string]struct{}) {
 	file, err := os.Open(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -71,6 +78,12 @@ func loadEnv(path string) {
 		if !ok || !envKeyPattern.MatchString(key) {
 			_, _ = fmt.Fprintf(os.Stderr, "stogas-init: ignored invalid env line in %s\n", path)
 			continue
+		}
+		if allowedKeys != nil {
+			if _, allowed := allowedKeys[key]; !allowed {
+				_, _ = fmt.Fprintf(os.Stderr, "stogas-init: ignored unsupported forward config key %s\n", key)
+				continue
+			}
 		}
 		_ = os.Setenv(key, strings.TrimSpace(value))
 	}
@@ -113,4 +126,13 @@ func envDefault(name string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func localEnvironment(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "local", "test", "testing":
+		return true
+	default:
+		return false
+	}
 }

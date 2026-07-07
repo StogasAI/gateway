@@ -151,6 +151,12 @@ function verifyWorkflows() {
 		assert(releaseWorkflow.includes('actions/upload-artifact@'), 'Build job must hand off release assets as a workflow artifact.');
 		assert(releaseWorkflow.includes('actions/download-artifact@'), 'Publish job must download build assets before release upload.');
 		assert(releaseWorkflow.includes('actions/attest@'), 'Release workflow must use official GitHub artifact attestation.');
+		assert(releaseWorkflow.includes('gateway-launch-policy.json'), 'Release workflow must attest and publish gateway-launch-policy.json.');
+		assert(
+			releaseWorkflow.includes('dist/gateway/${{ github.ref_name }}/gateway.igvm') &&
+				releaseWorkflow.includes('dist/gateway/${{ github.ref_name }}/gateway-launch-policy.json'),
+			'Release workflow must include both IGVM and launch policy subjects in the official GitHub attestation.'
+		);
 		assert(!releaseWorkflow.includes('officialGithubArtifactAttestation: false'), 'Release workflow must not emit non-official draft provenance.');
 		assert(!releaseWorkflow.includes('github.event.repository.private'), 'Release workflow must not branch on private-repository provenance.');
 		assert(!releaseWorkflow.includes('restore-keys:'), 'Release workflow must not restore partial cache matches.');
@@ -208,6 +214,10 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('vendor/go-modcache'), 'Release graph must consume the hydrated Go module cache.');
 		assert(releaseSource.includes('build-inputs.sha256'), 'Release graph must emit build input hashes.');
 		assert(releaseSource.includes('gateway.init'), 'Release graph must emit the Go init binary.');
+		assert(releaseSource.includes('gateway-launch-policy.json'), 'Release graph must emit the launch policy artifact.');
+		assert(releaseSource.includes('stogas.gateway.launch-policy.v1'), 'Release graph must stamp the launch policy schema.');
+		assert(releaseSource.includes('\\"policy\\": \\"0x0000000000030000\\"'), 'Launch policy must record the expected SNP policy.');
+		assert(releaseSource.includes('\\"vmpl\\": 0'), 'Launch policy must record VMPL 0.');
 		assert(releaseSource.includes('gateway.kernel'), 'Release graph must emit the kernel image.');
 		assert(releaseSource.includes('gateway.initramfs.cpio.zst'), 'Release graph must emit the compressed initramfs.');
 		assert(!releaseSource.includes('gateway.ca-certificates.crt'), 'Release graph must not emit a standalone CA bundle artifact.');

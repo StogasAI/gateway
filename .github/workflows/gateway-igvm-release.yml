@@ -76,7 +76,9 @@ jobs:
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
         with:
-          subject-path: dist/gateway/${{ github.ref_name }}/gateway.igvm
+          subject-path: |
+            dist/gateway/${{ github.ref_name }}/gateway.igvm
+            dist/gateway/${{ github.ref_name }}/gateway-launch-policy.json
 
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
@@ -111,6 +113,7 @@ jobs:
           rm "${evidence_files[@]}"
           sha256sum \
             gateway.igvm \
+            gateway-launch-policy.json \
             launch-measurement.txt \
             release-manifest.json \
             github-attestation.jsonl \
@@ -124,6 +127,7 @@ jobs:
           cd "dist/gateway/$GITHUB_REF_NAME"
           expected_files=(
             gateway.igvm
+            gateway-launch-policy.json
             launch-measurement.txt
             release-manifest.json
             SHA256SUMS
@@ -189,6 +193,7 @@ jobs:
           test "$(git rev-list -n1 "$tag")" = "$release_commit"
           ASSETS=(
             "dist/gateway/$tag/gateway.igvm"
+            "dist/gateway/$tag/gateway-launch-policy.json"
             "dist/gateway/$tag/launch-measurement.txt"
             "dist/gateway/$tag/release-manifest.json"
             "dist/gateway/$tag/SHA256SUMS"
