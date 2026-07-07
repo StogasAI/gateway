@@ -239,6 +239,7 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('measurementToolVersion'), 'Release manifest must record measurement tool version.');
 		assert(releaseSource.includes('measurementToolSha256'), 'Release manifest must record measurement tool hash.');
 		assert(releaseSource.includes('igvmmeasure --check-kvm gateway.igvm measure'), 'Release manifest must record measurement command.');
+		assert(releaseSource.includes('string-downcase (substring line'), 'Release graph must normalize launch measurement hex to lowercase.');
 		assert(releaseSource.includes('\\"checkKvm\\": true'), 'Release manifest must record KVM measurement mode.');
 		assert(!releaseSource.includes('linux-libre-6.12'), 'Release graph still references linux-libre-6.12.');
 		assert(!releaseSource.includes('ovmf-x86-64') || releaseSource.includes('(inherit ovmf-x86-64)'), 'Release graph must not use generic OVMF output.');

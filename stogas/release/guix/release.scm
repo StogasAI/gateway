@@ -154,7 +154,7 @@
                 ((line . rest)
                  (let ((prefix "Launch Digest: "))
                    (if (string-prefix? prefix line)
-                       (substring line (string-length prefix))
+                       (string-downcase (substring line (string-length prefix)))
                        (loop rest)))))))
 
 	          (define (copy-recursively/quiet source target)
