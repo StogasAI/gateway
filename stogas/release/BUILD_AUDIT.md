@@ -69,7 +69,7 @@ guix time-machine -C stogas/release/guix/channels.scm -- build \
 
 The final build has no network substitute path and no offload path. Guix grafts remain enabled so pinned-channel security grafts are applied deterministically for that Guix revision. The hydration preflight fails if the final dry run would compile compiler/toolchain/base packages locally. In normal release operation, the final release-authority derivation compiles only the gateway Go payload and assembles already hydrated Guix store inputs. Product-specific Stogas derivations, such as the kernel, OVMF, UKI tools, and IGVM tools, are fixed-source, hash-pinned Guix inputs; they may be built during hydration if no substitute is available, but they are not unpinned fallback work.
 
-Release builds keep `guix build --check` enabled so Guix rebuilds the derivation and fails on nondeterministic output before publication. Local developer test builds may explicitly skip that second build for speed; the GitHub release workflow must never set that fast-path flag.
+Local publish builds keep `guix build --check` enabled so Guix rebuilds the derivation and fails on nondeterministic output before Stogas countersigns. The GitHub draft-release workflow may skip that duplicate rebuild for speed because it only produces a draft artifact; `bun stogas gateway release publish` independently rebuilds the same source locally, compares the IGVM hash and launch measurement against the GitHub artifact, signs only on an exact match, and then publishes the release.
 
 The wrapper keeps an exact output allowlist and fails if the final release directory contains any file beyond the listed artifacts. Do not add release files unless they are required for verification, reproducibility audit, or IGVM smoke/debug.
 

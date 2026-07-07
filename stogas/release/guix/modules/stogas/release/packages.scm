@@ -260,6 +260,10 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                         "s|mcopy -i |mcopy -m -i |"
                         "OvmfPkg/AmdSev/Grub/grub.sh")
                 (invoke "sed" "-i"
+                        "s|(UINT32) time(NULL)|(UINT32) 1|g"
+                        "BaseTools/Source/C/GenFw/Elf32Convert.c"
+                        "BaseTools/Source/C/GenFw/Elf64Convert.c")
+                (invoke "sed" "-i"
                         (string-append "s|^mkimage=$|mkimage="
                                        #$(file-append (pkg "grub-efi")
                                                       "/bin/grub-mkimage")
@@ -280,6 +284,8 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                 (invoke "sed" "-i"
                         "/linuxefi/d;/sevsecret/d"
                         "OvmfPkg/AmdSev/Grub/grub.sh"
+                        "OvmfPkg/AmdSev/Grub/grub.cfg")
+                (invoke "touch" "-d" "1980-01-01 00:00:00 UTC"
                         "OvmfPkg/AmdSev/Grub/grub.cfg")
                 (invoke "grep" "-q"
                         #$(file-append (pkg "grub-efi") "/bin/grub-mkimage")

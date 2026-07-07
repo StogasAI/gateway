@@ -110,7 +110,7 @@ function verifyWorkflows() {
 			if (source.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK')) {
 				assert(
 					basename(path) === 'gateway-igvm-release.yml',
-					`${basename(path)} must not skip guix build --check.`
+					`${basename(path)} must not skip guix build --check outside the release workflow.`
 				);
 				assert(
 					source.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK: "1"'),
