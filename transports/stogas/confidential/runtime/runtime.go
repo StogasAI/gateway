@@ -71,6 +71,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 	if !config.Enabled {
 		return nil, nil
 	}
+	config = config.WithRuntimeDefaults()
 	if config.AttesterMode == "" {
 		config.AttesterMode = config.DerivedAttesterMode()
 	}

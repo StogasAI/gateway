@@ -19,6 +19,8 @@ import (
 const (
 	defaultHost               = "127.0.0.1"
 	defaultPort               = "5185"
+	defaultReadinessAddress   = "gateway.local"
+	defaultReadinessPort      = 5185
 	defaultMaxRequestBodyMiB  = 16
 	defaultInfisicalSiteURL   = "https://secrets.stogas.ai"
 	defaultFleetAPIURLLocal   = "http://127.0.0.1:5184/api/fleet"
@@ -166,7 +168,7 @@ func loadConfidentialConfigFromEnv() ConfidentialConfig {
 		RequestSecrets:     requestSecrets,
 	}
 	config.AttesterMode = config.DerivedAttesterMode()
-	return config
+	return config.WithRuntimeDefaults()
 }
 
 func loadRuntimeEnvironment() string {
@@ -535,7 +537,31 @@ func (c ConfidentialConfig) ControlConfigured() bool {
 }
 
 func (c ConfidentialConfig) ReadinessConfigured() bool {
-	return strings.TrimSpace(c.EndpointAddress) != "" || c.EndpointPort != 0
+	return c.ControlConfigured() || strings.TrimSpace(c.EndpointAddress) != "" || c.EndpointPort != 0
+}
+
+func (c ConfidentialConfig) WithRuntimeDefaults() ConfidentialConfig {
+	if c.EntropyTimeout == 0 {
+		c.EntropyTimeout = confidentialEntropyTimeout
+	}
+	if c.HeartbeatInterval == 0 {
+		c.HeartbeatInterval = confidentialHeartbeatInterval
+	}
+	if c.QuoteRefresh == 0 {
+		c.QuoteRefresh = confidentialQuoteRefresh
+	}
+	if c.ReadinessInterval == 0 {
+		c.ReadinessInterval = confidentialReadinessInterval
+	}
+	if c.ControlConfigured() {
+		if strings.TrimSpace(c.EndpointAddress) == "" {
+			c.EndpointAddress = defaultReadinessAddress
+		}
+		if c.EndpointPort == 0 {
+			c.EndpointPort = defaultReadinessPort
+		}
+	}
+	return c
 }
 
 func validateControlAccess(c ConfidentialConfig) error {

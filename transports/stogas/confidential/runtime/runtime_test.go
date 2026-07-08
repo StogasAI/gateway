@@ -153,8 +153,6 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
 	config.ControlAllowHTTP = true
 	config.ControlURL = server.URL
-	config.EndpointAddress = "10.0.0.10"
-	config.EndpointPort = 8443
 	config.HeartbeatInterval = time.Hour
 	config.ReadinessInterval = time.Hour
 
@@ -182,7 +180,8 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 	select {
 	case body := <-readinessCh:
 		if body["generation_id"] != strings.Repeat("9", 64) ||
-			body["address"] != "10.0.0.10" ||
+			body["address"] != "gateway.local" ||
+			body["port"] != float64(5185) ||
 			body["local_ready"] != false {
 			t.Fatalf("unexpected readiness body: %#v", body)
 		}
@@ -281,6 +280,10 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	var instruction string
 	var heartbeatBodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/fleet/readiness" {
+			_, _ = w.Write([]byte(`{"generation_id":"` + generationID + `","ok":true}`))
+			return
+		}
 		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
