@@ -48,6 +48,7 @@ type ControlLoop struct {
 	quotes       *quote.Manager
 	secrets      *secretstore.Store
 
+	heartbeatMu          sync.Mutex
 	mu                   sync.RWMutex
 	generationID         string
 	lastHeartbeatQuote   string
@@ -67,6 +68,8 @@ var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
 	}
 	return entropy.Wait(ctx, nil)
 }
+
+const controlRequestTimeout = 25 * time.Second
 
 func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
 	if !config.Enabled {
@@ -144,12 +147,18 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 			return nil, fmt.Errorf("confidential catalog hash unavailable: %w", catalog.ErrCatalogUnavailable)
 		}
 		controlLoop = newControlLoop(config, material, certs, manager, secrets, catalogHash, true)
-		if err := controlLoop.sendHeartbeat(runtimeCtx); err != nil {
+		heartbeatCtx, heartbeatCancel := controlLoop.controlAttemptContext(runtimeCtx)
+		err := controlLoop.sendHeartbeat(heartbeatCtx)
+		heartbeatCancel()
+		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("initial confidential heartbeat failed: %w", err)
 		}
 		if config.RequestSecrets {
-			if err := controlLoop.requestSecrets(runtimeCtx); err != nil {
+			secretsCtx, secretsCancel := controlLoop.controlAttemptContext(runtimeCtx)
+			err := controlLoop.requestSecrets(secretsCtx)
+			secretsCancel()
+			if err != nil {
 				cancel()
 				return nil, fmt.Errorf("initial confidential secret release failed: %w", err)
 			}
@@ -336,7 +345,12 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = l.sendHeartbeat(ctx)
+			heartbeatCtx, cancel := l.controlAttemptContext(ctx)
+			err := l.sendHeartbeat(heartbeatCtx)
+			cancel()
+			if err != nil {
+				log.Printf("stogas confidential heartbeat failed: %v", err)
+			}
 		}
 	}
 }
@@ -344,18 +358,38 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 func (l *ControlLoop) runReadiness(ctx context.Context) {
 	ticker := time.NewTicker(l.config.ReadinessInterval)
 	defer ticker.Stop()
-	_ = l.sendReadiness(ctx)
+	readinessCtx, cancel := l.controlAttemptContext(ctx)
+	err := l.sendReadiness(readinessCtx)
+	cancel()
+	if err != nil {
+		log.Printf("stogas confidential readiness observation failed: %v", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = l.sendReadiness(ctx)
+			readinessCtx, cancel := l.controlAttemptContext(ctx)
+			err := l.sendReadiness(readinessCtx)
+			cancel()
+			if err != nil {
+				log.Printf("stogas confidential readiness observation failed: %v", err)
+			}
 		}
 	}
 }
 
+func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, controlRequestTimeout)
+}
+
 func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
+	l.heartbeatMu.Lock()
+	defer l.heartbeatMu.Unlock()
+
 	response, err := l.sendHeartbeatOnce(ctx)
 	if err != nil {
 		return err
@@ -531,13 +565,22 @@ func (l *ControlLoop) sendReadiness(ctx context.Context) error {
 	})
 	if err != nil {
 		l.recordReadinessError(err)
-		log.Printf("stogas confidential readiness observation failed: %v", err)
+		if isUnknownGenerationError(err) {
+			log.Printf("stogas confidential readiness generation is unknown to control; sending registration heartbeat")
+			if heartbeatErr := l.sendHeartbeat(ctx); heartbeatErr != nil {
+				log.Printf("stogas confidential recovery heartbeat failed after unknown generation: %v", heartbeatErr)
+			}
+		}
 		return err
 	}
 	l.mu.Lock()
 	l.lastReadinessError = nil
 	l.mu.Unlock()
 	return nil
+}
+
+func isUnknownGenerationError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unknown generation_id")
 }
 
 func (l *ControlLoop) requestSecrets(ctx context.Context) error {

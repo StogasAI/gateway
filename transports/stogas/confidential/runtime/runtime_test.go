@@ -204,6 +204,92 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 	}
 }
 
+func TestReadinessUnknownGenerationTriggersRecoveryHeartbeat(t *testing.T) {
+	const firstGenerationID = "9999999999999999999999999999999999999999999999999999999999999999"
+	const secondGenerationID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	heartbeatCh := make(chan map[string]any, 2)
+	readinessCh := make(chan map[string]any, 2)
+	var mu sync.Mutex
+	rejectReadiness := false
+	heartbeatCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		switch r.URL.Path {
+		case "/api/fleet/heartbeat":
+			mu.Lock()
+			heartbeatCount++
+			count := heartbeatCount
+			mu.Unlock()
+			heartbeatCh <- body
+			generationID := firstGenerationID
+			if count > 1 {
+				generationID = secondGenerationID
+			}
+			writeHeartbeatResponse(t, w, generationID, "")
+		case "/api/fleet/readiness":
+			readinessCh <- body
+			mu.Lock()
+			shouldReject := rejectReadiness
+			mu.Unlock()
+			if shouldReject {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"Rejected confidential gateway readiness observation","reason":"unknown generation_id"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"generation_id":"` + firstGenerationID + `","ok":true}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	config := testConfig("mock")
+	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
+	config.ControlAllowHTTP = true
+	config.ControlURL = server.URL
+	config.HeartbeatInterval = time.Hour
+	config.ReadinessInterval = time.Hour
+
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	select {
+	case <-heartbeatCh:
+	case <-time.After(time.Second):
+		t.Fatal("initial heartbeat was not sent")
+	}
+	select {
+	case <-readinessCh:
+	case <-time.After(time.Second):
+		t.Fatal("initial readiness was not sent")
+	}
+
+	mu.Lock()
+	rejectReadiness = true
+	mu.Unlock()
+
+	err = runtime.Control.sendReadiness(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unknown generation_id") {
+		t.Fatalf("expected unknown generation readiness failure, got %v", err)
+	}
+
+	select {
+	case <-heartbeatCh:
+	case <-time.After(time.Second):
+		t.Fatal("unknown generation did not trigger a recovery heartbeat")
+	}
+	if runtime.Control.GenerationID() != secondGenerationID {
+		t.Fatalf("recovery heartbeat did not refresh generation id: %q", runtime.Control.GenerationID())
+	}
+}
+
 func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 	generationID := strings.Repeat("9", 64)
 	csrCh := make(chan map[string]any, 1)
