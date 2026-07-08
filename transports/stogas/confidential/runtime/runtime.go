@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -514,6 +515,7 @@ func (l *ControlLoop) sendReadiness(ctx context.Context) error {
 	})
 	if err != nil {
 		l.recordReadinessError(err)
+		log.Printf("stogas confidential readiness observation failed: %v", err)
 		return err
 	}
 	l.mu.Lock()

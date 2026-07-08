@@ -80,7 +80,6 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 func (s *Server) routes() error {
 	r := router.New()
 
-	r.GET("/health", s.health)
 	r.GET("/ready", s.readiness)
 	r.GET("/v1/catalog", s.catalog)
 	r.GET("/v1/models", s.models)
