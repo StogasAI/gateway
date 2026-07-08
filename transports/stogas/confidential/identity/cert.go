@@ -206,6 +206,35 @@ func (s *CertificateStore) ActivateStaged(hash string) (CertificateState, error)
 	return s.stateLocked(), nil
 }
 
+func (s *CertificateStore) InstallActiveChain(chain []byte) (CertificateState, error) {
+	if _, err := s.StageRenewedChain(chain); err != nil {
+		return CertificateState{}, err
+	}
+	s.mu.RLock()
+	if s.staged == nil {
+		s.mu.RUnlock()
+		return CertificateState{}, errors.New("certificate was not staged")
+	}
+	hash := s.staged.hash
+	s.mu.RUnlock()
+	if _, err := s.ActivateStaged(hash); err != nil {
+		return CertificateState{}, err
+	}
+	return s.PruneAcceptedToActive()
+}
+
+func (s *CertificateStore) InstallActiveChainWithExpectedHash(chain []byte, expectedHash string) (CertificateState, error) {
+	state, err := s.InstallActiveChain(chain)
+	if err != nil {
+		return CertificateState{}, err
+	}
+	expectedHash = strings.ToLower(strings.TrimSpace(expectedHash))
+	if state.ActiveCertSHA256 != expectedHash {
+		return CertificateState{}, errors.New("installed active certificate hash did not match expected hash")
+	}
+	return state, nil
+}
+
 func (s *CertificateStore) PruneAcceptedToActive() (CertificateState, error) {
 	if s == nil {
 		return CertificateState{}, errors.New("certificate store is not initialized")

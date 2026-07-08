@@ -426,6 +426,45 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	if runtime.Control.LastCertificateError() != nil {
 		t.Fatalf("unexpected certificate instruction error after prune: %v", runtime.Control.LastCertificateError())
 	}
+
+	directChainPEM, directLeafDER := selfSignedRuntimeLeaf(t, runtime.Identity, 21, newExpiry.Add(24*time.Hour))
+	directHash := identity.CertSHA256Hex(directLeafDER)
+	directJSON, err := json.Marshal(map[string]string{
+		"action":          "install_active_chain",
+		"order_id":        "order-3",
+		"cert_chain_pem":  string(directChainPEM),
+		"new_cert_sha256": directHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	instruction = string(directJSON)
+	before = len(heartbeatBodies)
+	mu.Unlock()
+
+	if err := runtime.Control.sendHeartbeat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	after = len(heartbeatBodies)
+	last = heartbeatBodies[len(heartbeatBodies)-1]
+	mu.Unlock()
+	if after-before != 2 {
+		t.Fatalf("expected direct install heartbeat plus refreshed follow-up heartbeat, got %d", after-before)
+	}
+	reportData, ok = last["report_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("follow-up heartbeat missing report_data after direct install: %#v", last)
+	}
+	accepted, ok = reportData["accepted_cert_sha256"].([]any)
+	if reportData["active_cert_sha256"] != directHash || !ok || len(accepted) != 1 || accepted[0] != directHash {
+		t.Fatalf("direct install should activate and prune to only the public certificate hash: %#v", reportData)
+	}
+	if runtime.Control.LastCertificateError() != nil {
+		t.Fatalf("unexpected certificate instruction error after direct install: %v", runtime.Control.LastCertificateError())
+	}
 }
 
 func TestStartFailsClosedWhenInitialHeartbeatIsRejected(t *testing.T) {
