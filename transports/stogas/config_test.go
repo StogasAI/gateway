@@ -186,6 +186,9 @@ func TestLoadFromEnvStagingConfidentialDefaultsRequireCloudflareAccess(t *testin
 	if config.Confidential.ControlURL != defaultFleetAPIURLStaging || config.Confidential.AttesterMode != "sev-snp" {
 		t.Fatalf("unexpected staging defaults: %#v", config.Confidential)
 	}
+	if config.Confidential.EndpointAddress != defaultReadinessAddress || config.Confidential.EndpointPort != defaultReadinessPort {
+		t.Fatalf("staging should derive readiness defaults without forward config: %#v", config.Confidential)
+	}
 	if config.OpenAIAPIKey != "" || config.AnthropicAPIKey != "" {
 		t.Fatalf("staging should wait for released provider keys: %#v", config)
 	}
