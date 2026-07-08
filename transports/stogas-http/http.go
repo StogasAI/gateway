@@ -14,12 +14,6 @@ import (
 	"github.com/valyala/fasthttp"
 )
 
-func (s *Server) health(ctx *fasthttp.RequestCtx) {
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetContentType("application/json")
-	_, _ = ctx.WriteString(`{"ok":true,"catalogVersion":"` + catalog.PublicCatalogVersion + `"}`)
-}
-
 func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
 	if s == nil || s.secure == nil {
 		ctx.SetStatusCode(fasthttp.StatusNoContent)
