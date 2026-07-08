@@ -2,6 +2,8 @@ package stogashttp
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -105,6 +107,7 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", serverAddr, err)
 	}
+	listener = s.wrapListener(listener)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -128,5 +131,40 @@ func (s *Server) Start() error {
 		}
 		s.shutdown()
 		return err
+	}
+}
+
+func (s *Server) wrapListener(listener net.Listener) net.Listener {
+	if !s.serveConfidentialTLS() {
+		return listener
+	}
+	return tls.NewListener(listener, s.confidentialTLSConfig())
+}
+
+func (s *Server) serveConfidentialTLS() bool {
+	if s == nil || s.secure == nil || s.secure.Certs == nil {
+		return false
+	}
+	switch s.config.Confidential.Environment {
+	case "staging", "production":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) confidentialTLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if s == nil || s.secure == nil || s.secure.Certs == nil {
+				return nil, errors.New("confidential certificate store is not initialized")
+			}
+			cert, ok := s.secure.Certs.ActiveTLSCertificate()
+			if !ok {
+				return nil, errors.New("active confidential TLS certificate is not available")
+			}
+			return &cert, nil
+		},
 	}
 }
