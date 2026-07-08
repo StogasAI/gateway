@@ -457,7 +457,7 @@ func parseCertificateInstruction(input *certificateInstructionJSON) (*Certificat
 		if len(instruction.DNSNames) == 0 {
 			return nil, errors.New("control certificate CSR instruction missing DNS names")
 		}
-	case "install_renewed_chain":
+	case "install_renewed_chain", "install_active_chain":
 		if strings.TrimSpace(instruction.CertChainPEM) == "" {
 			return nil, errors.New("control certificate install instruction missing certificate chain")
 		}

@@ -449,6 +449,22 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 			return false, err
 		}
 		return true, nil
+	case "install_active_chain":
+		current := l.certs.State()
+		if current.ActiveCertSHA256 == instruction.NewCertSHA256 && len(current.AcceptedCertSHA256) == 1 && current.AcceptedCertSHA256[0] == instruction.NewCertSHA256 {
+			return false, nil
+		}
+		state, err := l.certs.InstallActiveChainWithExpectedHash([]byte(instruction.CertChainPEM), instruction.NewCertSHA256)
+		if err != nil {
+			return false, fmt.Errorf("install active certificate chain: %w", err)
+		}
+		if state.ActiveCertSHA256 != instruction.NewCertSHA256 || len(state.AcceptedCertSHA256) != 1 || state.AcceptedCertSHA256[0] != instruction.NewCertSHA256 {
+			return false, errors.New("installed active certificate state did not match control instruction")
+		}
+		if err := l.refreshQuoteAfterCertificateChange(ctx); err != nil {
+			return false, err
+		}
+		return true, nil
 	case "activate_staged":
 		if l.certs.State().ActiveCertSHA256 == instruction.CertSHA256 {
 			return false, nil
