@@ -180,5 +180,43 @@ func buildAllClientHeaders() []string {
 			names = append(names, normalized)
 		}
 	}
+	for _, name := range compatibilityClientHeaders() {
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		names = append(names, normalized)
+	}
 	return stableHeaderOrder(names)
+}
+
+func compatibilityClientHeaders() []string {
+	return []string{
+		"accept-language",
+		"baggage",
+		"openai-organization",
+		"openai-project",
+		"request-id",
+		"sentry-trace",
+		"traceparent",
+		"tracestate",
+		"x-client-request-id",
+		"x-correlation-id",
+		"x-datadog-origin",
+		"x-datadog-parent-id",
+		"x-datadog-sampling-priority",
+		"x-datadog-trace-id",
+		"x-request-id",
+		"x-stainless-arch",
+		"x-stainless-async",
+		"x-stainless-helper-method",
+		"x-stainless-lang",
+		"x-stainless-os",
+		"x-stainless-package-version",
+		"x-stainless-retry-count",
+		"x-stainless-runtime",
+		"x-stainless-runtime-version",
+		"x-stainless-timeout",
+	}
 }

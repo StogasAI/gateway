@@ -783,7 +783,16 @@ func TestCorsAllowsAnyOrigin(t *testing.T) {
 		t.Fatalf("expected wildcard CORS origin, got %q", got)
 	}
 	allowedHeaders := string(ctx.Response.Header.Peek("Access-Control-Allow-Headers"))
-	for _, expected := range []string{"authorization", "content-type", "api-key", "x-api-key", "x-goog-api-key"} {
+	for _, expected := range []string{
+		"authorization",
+		"content-type",
+		"api-key",
+		"x-api-key",
+		"x-goog-api-key",
+		"accept-language",
+		"x-stainless-retry-count",
+		"x-stainless-timeout",
+	} {
 		if !strings.Contains(strings.ToLower(allowedHeaders), expected) {
 			t.Fatalf("expected CORS headers to include %q, got %q", expected, allowedHeaders)
 		}
@@ -888,22 +897,62 @@ func TestInferenceHeadersRejectConflictingAuthAliases(t *testing.T) {
 	}
 }
 
-func TestInferenceHeadersRejectUnsupportedUpstreamHeaders(t *testing.T) {
+func TestInferenceHeadersIgnoreBenignSDKAndTracingHeaders(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.SetRequestURI("/v1/responses")
 	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
 	ctx.Request.Header.Set("Authorization", "Bearer sk-test")
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.Header.Set("Accept", "text/event-stream")
+	ctx.Request.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	ctx.Request.Header.Set("Origin", "https://app.stogas.ai")
+	ctx.Request.Header.Set("OpenAI-Organization", "org_client")
+	ctx.Request.Header.Set("OpenAI-Project", "proj_client")
+	ctx.Request.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
+	ctx.Request.Header.Set("X-Datadog-Trace-Id", "123")
 	ctx.Request.Header.Set("X-Request-ID", "client-controlled")
+	ctx.Request.Header.Set("X-Stainless-Arch", "x64")
+	ctx.Request.Header.Set("X-Stainless-Lang", "js")
+	ctx.Request.Header.Set("X-Stainless-Package-Version", "6.0.0")
+	ctx.Request.Header.Set("X-Stainless-Retry-Count", "0")
+	ctx.Request.Header.Set("X-Stainless-Runtime", "node")
+	ctx.Request.Header.Set("X-Stainless-Runtime-Version", "24.0.0")
+	ctx.Request.Header.Set("X-Stainless-Timeout", "600")
 
 	server := &Server{}
-	if _, ok := server.requireInferenceHeaders(ctx); ok {
-		t.Fatal("expected unsupported custom upstream header to be rejected")
+	if _, ok := server.requireInferenceHeaders(ctx); !ok {
+		t.Fatalf("expected benign compatibility headers to be ignored, got status %d body %s", ctx.Response.StatusCode(), string(ctx.Response.Body()))
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-		t.Fatalf("expected 400 unsupported header response, got %d", ctx.Response.StatusCode())
+}
+
+func TestInferenceHeadersRejectInternalControlHeaders(t *testing.T) {
+	tests := []string{
+		"X-BF-Direct-Key",
+		"X-BF-EH-Authorization",
+		"X-BF-EH-OpenAI-Organization",
+		"X-Stogas-Internal-Mode",
+	}
+
+	for _, header := range tests {
+		t.Run(header, func(t *testing.T) {
+			ctx := &fasthttp.RequestCtx{}
+			ctx.Request.SetRequestURI("/v1/responses")
+			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+			ctx.Request.Header.Set("Authorization", "Bearer sk-test")
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			ctx.Request.Header.Set(header, "client-controlled")
+
+			server := &Server{}
+			if _, ok := server.requireInferenceHeaders(ctx); ok {
+				t.Fatalf("expected %s to be rejected", header)
+			}
+			if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+				t.Fatalf("expected 400 unsupported header response, got %d", ctx.Response.StatusCode())
+			}
+			if !strings.Contains(string(ctx.Response.Body()), strings.ToLower(header)) {
+				t.Fatalf("expected rejected header in response, got %s", string(ctx.Response.Body()))
+			}
+		})
 	}
 }
 

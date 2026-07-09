@@ -143,12 +143,50 @@ func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx, route catalog.Route) s
 			return
 		}
 		normalized := strings.ToLower(strings.TrimSpace(string(key)))
-		if normalized == "" || allowed[normalized] || transportOnlyHeader(normalized) {
+		if normalized == "" || allowed[normalized] || ignoredClientHeader(normalized) {
 			return
 		}
 		unsupported = normalized
 	})
 	return unsupported
+}
+
+func ignoredClientHeader(name string) bool {
+	if benignClientHeader(name) {
+		return true
+	}
+	if internalOrProviderControlHeader(name) {
+		return false
+	}
+	return transportOnlyHeader(name)
+}
+
+func benignClientHeader(name string) bool {
+	if strings.HasPrefix(name, "x-stainless-") ||
+		strings.HasPrefix(name, "x-datadog-") ||
+		strings.HasPrefix(name, "x-amzn-trace-id") {
+		return true
+	}
+	switch name {
+	case "openai-organization",
+		"openai-project",
+		"x-request-id",
+		"x-correlation-id",
+		"x-client-request-id",
+		"request-id",
+		"traceparent",
+		"tracestate",
+		"baggage",
+		"sentry-trace":
+		return true
+	default:
+		return false
+	}
+}
+
+func internalOrProviderControlHeader(name string) bool {
+	return strings.HasPrefix(name, "x-bf-") ||
+		(strings.HasPrefix(name, "x-stogas-") && name != "x-stogas-return-extra-fields")
 }
 
 func transportOnlyHeader(name string) bool {
@@ -157,10 +195,19 @@ func transportOnlyHeader(name string) bool {
 		"content-length",
 		"content-encoding",
 		"accept-encoding",
+		"accept-language",
+		"access-control-request-headers",
+		"access-control-request-method",
 		"connection",
 		"user-agent",
 		"origin",
 		"referer",
+		"forwarded",
+		"te",
+		"trailer",
+		"transfer-encoding",
+		"upgrade",
+		"via",
 		"cf-worker",
 		"cf-ray",
 		"cf-connecting-ip",
@@ -169,6 +216,8 @@ func transportOnlyHeader(name string) bool {
 		"x-forwarded-for",
 		"x-forwarded-host",
 		"x-forwarded-proto",
+		"x-forwarded-port",
+		"x-real-ip",
 		"sec-fetch-site",
 		"sec-fetch-mode",
 		"sec-fetch-dest",
