@@ -56,7 +56,20 @@
        (method url-fetch)
        (uri "https://go.dev/dl/go1.26.5.src.tar.gz")
        (sha256
-        (base32 "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"))))))
+        (base32 "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"))))
+    (arguments
+     (substitute-keyword-arguments (package-arguments %go-1-26)
+       ((#:phases phases)
+        #~(modify-phases #$phases
+            (add-after 'unpack 'patch-test-toolchain-shells
+              (lambda _
+                (for-each
+                 (lambda (file)
+                   (substitute* file
+                     (("/bin/sh") (which "sh"))))
+                 (find-files
+                  "src/cmd/go/testdata/mod"
+                  "^golang\\.org_toolchain_.*\\.txt$"))))))))))
 
 (define stogas-linux-6-18
   (package
