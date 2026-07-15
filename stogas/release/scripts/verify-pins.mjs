@@ -267,6 +267,8 @@ function verifyReleaseSources() {
 	assert(releaseSource.includes('(setenv "GOPROXY" "off")'), 'Release graph must disable GOPROXY.');
 	assert(releaseSource.includes('(setenv "GOSUMDB" "off")'), 'Release graph must disable GOSUMDB.');
 	assert(releaseSource.includes('(setenv "GOTOOLCHAIN" "local")'), 'Release graph must use local Go toolchain only.');
+	assert(releaseSource.includes('patch-test-toolchain-shells'), 'Go package must patch synthetic toolchain test shells for the Guix sandbox.');
+	assert(releaseSource.includes('^golang\\\\.org_toolchain_.*\\\\.txt$'), 'Go package must target only synthetic toolchain test fixtures.');
 	assert(releaseSource.includes('(setenv "GOWORK" "off")'), 'Release graph must disable Go workspaces.');
 	assert(releaseSource.includes('(setenv "CGO_ENABLED" "0")'), 'Release graph must disable CGO.');
 		assert(releaseSource.includes('(invoke "go" "mod" "verify")'), 'Release graph must verify hydrated Go modules offline.');
