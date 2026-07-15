@@ -34,9 +34,16 @@ type Secret struct {
 }
 
 type InstallInput struct {
-	Identity       *identity.Material
-	QuoteBase64URL string
-	Release        *provision.SecretReleaseResponse
+	Bundle   *provision.SecretBundle
+	Identity *identity.Material
+}
+
+var requiredSecretNames = []string{
+	"ANTHROPIC_API_KEY",
+	"AUTH_SECRET",
+	"DATABASE_SCHEMA",
+	"DATABASE_URL",
+	"OPENAI_API_KEY",
 }
 
 func NewStore() *Store {
@@ -67,7 +74,25 @@ func (s *Store) Ready() bool {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return len(s.secrets) > 0
+	for _, name := range requiredSecretNames {
+		if _, ok := s.secrets[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Store) Versions() map[string]string {
+	versions := map[string]string{}
+	if s == nil {
+		return versions
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for name, secret := range s.secrets {
+		versions[name] = secret.Version
+	}
+	return versions
 }
 
 func (s *Store) Get(name string) (Secret, bool) {
@@ -88,18 +113,12 @@ func DecryptRelease(input InstallInput) ([]Secret, error) {
 	if input.Identity == nil || input.Identity.HPKEPrivateKey == nil {
 		return nil, errors.New("identity HPKE private key is required")
 	}
-	if input.Release == nil {
+	if input.Bundle == nil {
 		return nil, errors.New("secret release is required")
 	}
-	if input.Release.HPKEPublicKey != input.Identity.HPKEPublicKey {
-		return nil, errors.New("secret release HPKE public key mismatch")
-	}
-	if input.QuoteBase64URL == "" {
-		return nil, errors.New("quote is required to reconstruct secret AAD")
-	}
-	out := make([]Secret, 0, len(input.Release.Secrets))
-	for _, encrypted := range input.Release.Secrets {
-		aad, err := secretReleaseAAD(input.Release, encrypted, input.QuoteBase64URL)
+	out := make([]Secret, 0, len(input.Bundle.Secrets))
+	for _, encrypted := range input.Bundle.Secrets {
+		aad, err := secretReleaseAAD(input.Bundle, encrypted)
 		if err != nil {
 			return nil, err
 		}
@@ -165,23 +184,17 @@ func decryptSecret(privateKey *ecdh.PrivateKey, encrypted provision.SecretCipher
 	return plaintext, nil
 }
 
-func secretReleaseAAD(release *provision.SecretReleaseResponse, secret provision.SecretCiphertext, quoteBase64URL string) ([]byte, error) {
+func secretReleaseAAD(bundle *provision.SecretBundle, secret provision.SecretCiphertext) ([]byte, error) {
 	payload := struct {
 		GenerationID     string `json:"generation_id"`
-		NodeID           string `json:"node_id"`
-		Quote            string `json:"quote"`
-		QuoteVerifiedAt  string `json:"quote_verified_at"`
 		ReportDataSHA512 string `json:"report_data_sha512"`
 		Schema           string `json:"schema"`
 		SecretKeyID      string `json:"secret_key_id"`
 		SecretName       string `json:"secret_name"`
 		SecretVersion    string `json:"secret_version"`
 	}{
-		GenerationID:     release.GenerationID,
-		NodeID:           release.NodeID,
-		Quote:            quoteBase64URL,
-		QuoteVerifiedAt:  release.QuoteVerifiedAt.UTC().Format("2006-01-02T15:04:05.000Z07:00"),
-		ReportDataSHA512: release.ReportDataSHA512,
+		GenerationID:     bundle.GenerationID,
+		ReportDataSHA512: bundle.ReportDataSHA512,
 		Schema:           provision.SecretReleaseSchemaV1,
 		SecretKeyID:      secret.KeyID,
 		SecretName:       secret.Name,

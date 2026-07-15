@@ -449,14 +449,17 @@ func (s *Server) notFound(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) shutdown() {
+	if s.readinessServer != nil {
+		_ = s.readinessServer.Shutdown()
+	}
+	if s.server != nil {
+		_ = s.server.Shutdown()
+	}
 	if s.runtime != nil {
 		s.runtime.Close()
 	}
 	if s.secure != nil {
 		s.secure.Close()
-	}
-	if s.server != nil {
-		_ = s.server.Shutdown()
 	}
 	if s.logger != nil {
 		s.logger.Info("gateway shutdown complete")

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/readiness"
 )
 
 const (
@@ -42,37 +41,18 @@ type HeartbeatInput struct {
 }
 
 type NodeHealth struct {
-	LastQuoteError string `json:"last_quote_error,omitempty"`
-	Ready          bool   `json:"ready"`
+	LastQuoteError string            `json:"last_quote_error,omitempty"`
+	Ready          bool              `json:"ready"`
+	SecretVersions map[string]string `json:"secret_versions"`
 }
 
 type HeartbeatResponse struct {
-	Bundle                 HeartbeatBundleAdmission `json:"bundle"`
 	CertificateInstruction *CertificateInstruction  `json:"certificate_instruction"`
 	GenerationID           string                   `json:"generation_id"`
-	NodeID                 string                   `json:"node_id"`
 	OK                     bool                     `json:"ok"`
-	QuoteVerifiedAt        time.Time                `json:"quote_verified_at"`
-}
-
-type HeartbeatBundleAdmission struct {
-	ActiveCertAccepted   bool `json:"active_cert_accepted"`
-	LatestBundleVerified bool `json:"latest_bundle_verified"`
-	NodeInLatestBundle   bool `json:"node_in_latest_bundle"`
-	Sequence             *int `json:"sequence"`
-}
-
-type ReadinessInput struct {
-	Address      string
-	GenerationID string
-	ObservedAt   time.Time
-	Port         int
-	Result       readiness.Result
-}
-
-type ReadinessResponse struct {
-	GenerationID string `json:"generation_id"`
-	OK           bool   `json:"ok"`
+	Ready                  bool                     `json:"ready"`
+	ReadyUntil             *time.Time               `json:"ready_until"`
+	Secrets                *SecretBundle            `json:"secrets"`
 }
 
 type CertificateInstruction struct {
@@ -101,19 +81,8 @@ type CertificateCSRSubmissionResponse struct {
 	OrderID      string `json:"order_id"`
 }
 
-type SecretReleaseRequest struct {
-	GenerationID     string
-	ReportDataSHA512 string
-}
-
-type SecretReleaseResponse struct {
-	AttesterMode     string             `json:"attester_mode"`
-	CreatedAt        time.Time          `json:"created_at"`
-	Environment      string             `json:"environment"`
+type SecretBundle struct {
 	GenerationID     string             `json:"generation_id"`
-	HPKEPublicKey    string             `json:"hpke_public_key"`
-	NodeID           string             `json:"node_id"`
-	QuoteVerifiedAt  time.Time          `json:"quote_verified_at"`
 	ReportDataSHA512 string             `json:"report_data_sha512"`
 	Schema           string             `json:"schema"`
 	Secrets          []SecretCiphertext `json:"secrets"`
@@ -167,45 +136,7 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	if err := c.postJSON(ctx, "/api/fleet/heartbeat", body, &response); err != nil {
 		return nil, err
 	}
-	return parseHeartbeatResponse(response)
-}
-
-func (c Client) SendReadiness(ctx context.Context, input ReadinessInput) (*ReadinessResponse, error) {
-	if input.Address == "" {
-		return nil, errors.New("readiness address is required")
-	}
-	if input.GenerationID == "" {
-		return nil, errors.New("readiness generation id is required")
-	}
-	if input.Port < 1 || input.Port > 65535 {
-		return nil, errors.New("readiness port must be between 1 and 65535")
-	}
-	if input.ObservedAt.IsZero() {
-		input.ObservedAt = time.Now().UTC()
-	}
-	reason := strings.Join(input.Result.Reasons, "; ")
-	body := map[string]any{
-		"address":       input.Address,
-		"generation_id": strings.ToLower(input.GenerationID),
-		"local_ready":   input.Result.Ready,
-		"observed_at":   formatTime(input.ObservedAt),
-		"port":          input.Port,
-	}
-	if reason != "" {
-		body["reason"] = reason
-	}
-
-	var response readinessResponseJSON
-	if err := c.postJSON(ctx, "/api/fleet/readiness", body, &response); err != nil {
-		return nil, err
-	}
-	if !response.OK {
-		return nil, errors.New("control readiness response did not confirm ok")
-	}
-	if response.GenerationID == "" {
-		return nil, errors.New("control readiness response missing generation id")
-	}
-	return &ReadinessResponse{GenerationID: response.GenerationID, OK: response.OK}, nil
+	return parseHeartbeatResponse(response, input)
 }
 
 func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSubmission) (*CertificateCSRSubmissionResponse, error) {
@@ -254,24 +185,6 @@ func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSu
 		OK:           response.OK,
 		OrderID:      response.OrderID,
 	}, nil
-}
-
-func (c Client) RequestSecrets(ctx context.Context, input SecretReleaseRequest) (*SecretReleaseResponse, error) {
-	if input.GenerationID == "" {
-		return nil, errors.New("secret release generation id is required")
-	}
-	if input.ReportDataSHA512 == "" {
-		return nil, errors.New("secret release report-data hash is required")
-	}
-	body := map[string]any{
-		"generation_id":      strings.ToLower(input.GenerationID),
-		"report_data_sha512": strings.ToLower(input.ReportDataSHA512),
-	}
-	var response secretReleaseResponseJSON
-	if err := c.postJSON(ctx, "/api/fleet/secrets", body, &response); err != nil {
-		return nil, err
-	}
-	return parseSecretReleaseResponse(response, input)
 }
 
 func (c Client) postJSON(ctx context.Context, path string, body any, out any) error {
@@ -353,24 +266,12 @@ func (c Client) endpoint(path string) (string, error) {
 }
 
 type heartbeatResponseJSON struct {
-	Bundle                 heartbeatBundleAdmissionJSON `json:"bundle"`
-	CertificateInstruction *certificateInstructionJSON  `json:"certificate_instruction"`
-	GenerationID           string                       `json:"generation_id"`
-	NodeID                 string                       `json:"node_id"`
-	OK                     bool                         `json:"ok"`
-	QuoteVerifiedAt        string                       `json:"quote_verified_at"`
-}
-
-type heartbeatBundleAdmissionJSON struct {
-	ActiveCertAccepted   *bool `json:"active_cert_accepted"`
-	LatestBundleVerified *bool `json:"latest_bundle_verified"`
-	NodeInLatestBundle   *bool `json:"node_in_latest_bundle"`
-	Sequence             *int  `json:"sequence"`
-}
-
-type readinessResponseJSON struct {
-	GenerationID string `json:"generation_id"`
-	OK           bool   `json:"ok"`
+	CertificateInstruction *certificateInstructionJSON `json:"certificate_instruction"`
+	GenerationID           string                      `json:"generation_id"`
+	OK                     bool                        `json:"ok"`
+	Ready                  bool                        `json:"ready"`
+	ReadyUntil             *string                     `json:"ready_until"`
+	Secrets                *secretBundleJSON           `json:"secrets"`
 }
 
 type certificateInstructionJSON struct {
@@ -390,48 +291,46 @@ type certificateCSRSubmissionResponseJSON struct {
 	OrderID      string `json:"order_id"`
 }
 
-type secretReleaseResponseJSON struct {
-	AttesterMode     string             `json:"attester_mode"`
-	CreatedAt        string             `json:"created_at"`
-	Environment      string             `json:"environment"`
+type secretBundleJSON struct {
 	GenerationID     string             `json:"generation_id"`
-	HPKEPublicKey    string             `json:"hpke_public_key"`
-	NodeID           string             `json:"node_id"`
-	QuoteVerifiedAt  string             `json:"quote_verified_at"`
 	ReportDataSHA512 string             `json:"report_data_sha512"`
 	Schema           string             `json:"schema"`
 	Secrets          []SecretCiphertext `json:"secrets"`
 }
 
-func parseHeartbeatResponse(response heartbeatResponseJSON) (*HeartbeatResponse, error) {
+func parseHeartbeatResponse(response heartbeatResponseJSON, request HeartbeatInput) (*HeartbeatResponse, error) {
 	if !response.OK {
 		return nil, errors.New("control heartbeat response did not confirm ok")
 	}
 	if response.GenerationID == "" {
 		return nil, errors.New("control heartbeat response missing generation id")
 	}
-	if response.NodeID == "" {
-		return nil, errors.New("control heartbeat response missing node id")
+	var readyUntil *time.Time
+	if response.ReadyUntil != nil {
+		parsed, err := parseTime("ready_until", *response.ReadyUntil)
+		if err != nil {
+			return nil, err
+		}
+		readyUntil = &parsed
 	}
-	bundle, err := parseHeartbeatBundleAdmission(response.Bundle)
-	if err != nil {
-		return nil, err
-	}
-	verifiedAt, err := parseTime("quote_verified_at", response.QuoteVerifiedAt)
-	if err != nil {
-		return nil, err
+	if response.Ready != (readyUntil != nil) {
+		return nil, errors.New("control heartbeat readiness lease is inconsistent")
 	}
 	certificateInstruction, err := parseCertificateInstruction(response.CertificateInstruction)
 	if err != nil {
 		return nil, err
 	}
+	secrets, err := parseSecretBundle(response.Secrets, response.GenerationID, request.Quote.ReportDataHex)
+	if err != nil {
+		return nil, err
+	}
 	return &HeartbeatResponse{
-		Bundle:                 bundle,
 		CertificateInstruction: certificateInstruction,
 		GenerationID:           response.GenerationID,
-		NodeID:                 response.NodeID,
 		OK:                     response.OK,
-		QuoteVerifiedAt:        verifiedAt,
+		Ready:                  response.Ready,
+		ReadyUntil:             readyUntil,
+		Secrets:                secrets,
 	}, nil
 }
 
@@ -478,35 +377,18 @@ func parseCertificateInstruction(input *certificateInstructionJSON) (*Certificat
 	return instruction, nil
 }
 
-func parseHeartbeatBundleAdmission(response heartbeatBundleAdmissionJSON) (HeartbeatBundleAdmission, error) {
-	if response.ActiveCertAccepted == nil ||
-		response.LatestBundleVerified == nil ||
-		response.NodeInLatestBundle == nil {
-		return HeartbeatBundleAdmission{}, errors.New("control heartbeat response missing bundle admission")
+func parseSecretBundle(response *secretBundleJSON, generationID, reportDataSHA512 string) (*SecretBundle, error) {
+	if response == nil {
+		return nil, nil
 	}
-	if response.Sequence != nil && *response.Sequence <= 0 {
-		return HeartbeatBundleAdmission{}, errors.New("control heartbeat response invalid bundle sequence")
-	}
-	return HeartbeatBundleAdmission{
-		ActiveCertAccepted:   *response.ActiveCertAccepted,
-		LatestBundleVerified: *response.LatestBundleVerified,
-		NodeInLatestBundle:   *response.NodeInLatestBundle,
-		Sequence:             response.Sequence,
-	}, nil
-}
-
-func parseSecretReleaseResponse(response secretReleaseResponseJSON, request SecretReleaseRequest) (*SecretReleaseResponse, error) {
 	if response.Schema != SecretReleaseSchemaV1 {
 		return nil, fmt.Errorf("unsupported secret release schema %q", response.Schema)
 	}
-	if response.GenerationID != strings.ToLower(request.GenerationID) {
+	if response.GenerationID != strings.ToLower(generationID) {
 		return nil, errors.New("secret release generation id mismatch")
 	}
-	if response.ReportDataSHA512 != strings.ToLower(request.ReportDataSHA512) {
+	if response.ReportDataSHA512 != strings.ToLower(reportDataSHA512) {
 		return nil, errors.New("secret release report-data hash mismatch")
-	}
-	if response.NodeID == "" || response.HPKEPublicKey == "" || response.AttesterMode == "" || response.Environment == "" {
-		return nil, errors.New("secret release response missing required identity fields")
 	}
 	if len(response.Secrets) == 0 {
 		return nil, errors.New("secret release response contains no secrets")
@@ -516,22 +398,8 @@ func parseSecretReleaseResponse(response secretReleaseResponseJSON, request Secr
 			return nil, err
 		}
 	}
-	createdAt, err := parseTime("created_at", response.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	verifiedAt, err := parseTime("quote_verified_at", response.QuoteVerifiedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &SecretReleaseResponse{
-		AttesterMode:     response.AttesterMode,
-		CreatedAt:        createdAt,
-		Environment:      response.Environment,
+	return &SecretBundle{
 		GenerationID:     response.GenerationID,
-		HPKEPublicKey:    response.HPKEPublicKey,
-		NodeID:           response.NodeID,
-		QuoteVerifiedAt:  verifiedAt,
 		ReportDataSHA512: response.ReportDataSHA512,
 		Schema:           response.Schema,
 		Secrets:          append([]SecretCiphertext(nil), response.Secrets...),
@@ -623,30 +491,4 @@ func normalizeStringSet(values []string) []string {
 
 func bytesReader(data []byte) *bytes.Reader {
 	return bytes.NewReader(data)
-}
-
-func BuildHealth(result readiness.Result, lastQuoteErr error) NodeHealth {
-	health := NodeHealth{Ready: result.Ready}
-	if lastQuoteErr != nil {
-		health.LastQuoteError = lastQuoteErr.Error()
-	}
-	return health
-}
-
-func BuildHeartbeatInput(
-	nodeID string,
-	chipID string,
-	region string,
-	certExpiresAt time.Time,
-	snapshot *quote.Snapshot,
-	ready readiness.Result,
-	lastQuoteErr error,
-) HeartbeatInput {
-	return HeartbeatInput{
-		CertExpiresAt: certExpiresAt,
-		Health:        BuildHealth(ready, lastQuoteErr),
-		NodeID:        nodeID,
-		ObservedAt:    time.Now().UTC(),
-		Quote:         snapshot,
-	}
 }

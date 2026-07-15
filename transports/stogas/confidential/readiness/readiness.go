@@ -1,9 +1,7 @@
 package readiness
 
 type State struct {
-	BundleAcceptsActiveCert    bool
-	BundleContainsNode         bool
-	BundleLatestVerified       bool
+	ControlAdmitted            bool
 	CertificateReady           bool
 	CertificateSafe            bool
 	Draining                   bool
@@ -22,7 +20,7 @@ type Result struct {
 }
 
 func Evaluate(state State) Result {
-	reasons := make([]string, 0, 12)
+	reasons := make([]string, 0, 10)
 	if !state.Serving {
 		reasons = append(reasons, "node is not serving")
 	}
@@ -50,14 +48,8 @@ func Evaluate(state State) Result {
 	if !state.QuoteForwardSafe {
 		reasons = append(reasons, "quote is not forward-safe")
 	}
-	if !state.BundleLatestVerified {
-		reasons = append(reasons, "latest bundle is not verified")
-	}
-	if !state.BundleContainsNode {
-		reasons = append(reasons, "node is not in latest bundle")
-	}
-	if !state.BundleAcceptsActiveCert {
-		reasons = append(reasons, "latest bundle does not accept active certificate")
+	if !state.ControlAdmitted {
+		reasons = append(reasons, "control admission lease is absent or expired")
 	}
 	if !state.RuntimeDependenciesHealthy {
 		reasons = append(reasons, "runtime dependencies are unhealthy")

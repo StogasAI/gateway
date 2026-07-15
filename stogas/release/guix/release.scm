@@ -193,30 +193,24 @@
 		            (let ((policy (string-append out "/gateway-launch-policy.json")))
 		              (call-with-output-file policy
 		                (lambda (port)
-		                  (display "{\n" port)
-		                  (display "  \"schema\": \"stogas.gateway.launch-policy.v1\",\n" port)
-		                  (format port "  \"sequence\": ~a,\n" #$(release-sequence %release-tag))
-		                  (display "  \"git\": {\n" port)
-		                  (format port "    \"commit\": ~a,\n" (json-string #$%release-commit))
-		                  (format port "    \"ref\": ~a,\n"
-		                          (json-string (string-append "refs/tags/" #$%release-tag)))
-		                  (display "    \"repository\": \"https://github.com/StogasAI/gateway\",\n" port)
-		                  (format port "    \"tag\": ~a,\n" (json-string #$%release-tag))
-		                  (format port "    \"tree\": ~a\n" (json-string #$%release-tree))
-		                  (display "  },\n" port)
-		                  (format port "  \"igvm_sha256\": ~a,\n" (json-string (sha256 igvm)))
-		                  (format port "  \"measurement\": ~a,\n"
-		                          (json-string (string-trim-both measurement)))
-		                  (display "  \"launch\": {\n" port)
-		                  (display "    \"policy\": \"0x0000000000030000\",\n" port)
-		                  (display "    \"host_data\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n" port)
-		                  (display "    \"vmpl\": 0,\n" port)
-		                  (display "    \"family_id\": \"00000000000000000000000000000000\",\n" port)
-		                  (display "    \"image_id\": \"00000000000000000000000000000000\",\n" port)
-		                  (display "    \"id_key_digest\": \"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\",\n" port)
-		                  (display "    \"author_key_digest\": \"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"\n" port)
-		                  (display "  }\n" port)
-		                  (display "}\n" port)))))
+		                  (format port "{\"igvm_sha256\":~a," (json-string (sha256 igvm)))
+		                  (display "\"launch\":{" port)
+		                  (display "\"author_key_digest\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"," port)
+		                  (display "\"family_id\":\"00000000000000000000000000000000\"," port)
+		                  (display "\"host_data\":\"0000000000000000000000000000000000000000000000000000000000000000\"," port)
+		                  (display "\"id_key_digest\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"," port)
+		                  (display "\"image_id\":\"00000000000000000000000000000000\"," port)
+		                  (display "\"policy\":\"0x0000000000030000\",\"vmpl\":0}," port)
+		                  (format port "\"measurement\":~a," (json-string (string-trim-both measurement)))
+		                  (display "\"name\":\"relay-4c\"," port)
+		                  (format port "\"release_tag\":~a," (json-string #$%release-tag))
+		                  (display "\"schema\":\"stogas.gateway.launch-policy.v1\"," port)
+		                  (format port "\"sequence\":~a," #$(release-sequence %release-tag))
+		                  (display "\"source\":{" port)
+		                  (format port "\"commit\":~a," (json-string #$%release-commit))
+		                  (display "\"repository\":\"https://github.com/StogasAI/gateway\"," port)
+		                  (format port "\"tree\":~a}," (json-string #$%release-tree))
+		                  (display "\"vcpu_count\":4}\n" port)))))
 
 		          (define (write-artifact-manifest out igvm efi init kernel initramfs launch-policy ca-bundle measurement
 		                                           vendor-modules build-inputs
@@ -272,10 +266,10 @@
 	                          (json-string "/etc/ssl/certs/ca-certificates.crt"))
 	                  (format port "    \"guestCaBundleSha256\": ~a,\n"
 	                          (json-string (sha256 ca-bundle)))
-                  (display "    \"guixChannelCommit\": \"d1e9e23fd441fce828fa74616271b00b90853cee\",\n" port)
+                  (display "    \"guixChannelCommit\": \"058701d7ad329cfa7292998699baa3dfb8955752\",\n" port)
                   (format port "    \"kernelConfigSha256\": ~a,\n"
                           (json-string (sha256 (string-append #$stogas-linux-6-18 "/.config"))))
-                  (display "    \"kernelVersion\": \"6.18.35\",\n" port)
+                  (display "    \"kernelVersion\": \"6.18.38\",\n" port)
                   (format port "    \"linuxBzImageSha256\": ~a,\n" (json-string (sha256 kernel)))
                   (format port "    \"osReleaseSha256\": ~a,\n" (json-string (sha256 os-release)))
 	                  (format port "    \"ovmfSha256\": ~a,\n" (json-string (sha256 ovmf)))
@@ -320,10 +314,11 @@
                           (json-string #$(package-version stogas-igvmmeasure)))
                   (format port "    \"measurementToolSha256\": ~a,\n"
                           (json-string (sha256 igvmmeasure)))
-                  (display "    \"measurementCommand\": \"igvmmeasure --check-kvm gateway.igvm measure\",\n" port)
-                  (display "    \"checkKvm\": true,\n" port)
-                  (format port "    \"launchMeasurement\": ~a\n"
-                          (json-string (string-trim-both measurement)))
+	                  (display "    \"measurementCommand\": \"igvmmeasure --check-kvm gateway.igvm measure\",\n" port)
+	                  (display "    \"checkKvm\": true,\n" port)
+	                  (format port "    \"launchMeasurement\": ~a,\n"
+	                          (json-string (string-trim-both measurement)))
+	                  (display "    \"vcpuCount\": 4\n" port)
                   (display "  }\n" port)
                   (display "}\n" port)))))
 
@@ -394,9 +389,18 @@
 	             (cons "stogas/release/patches/virt-firmware-rs-kvm-vmsa-last.patch"
 	                   #$(source-file "patches/virt-firmware-rs-kvm-vmsa-last.patch"
 	                                  "virt-firmware-rs-kvm-vmsa-last.patch"))
+	             (cons "stogas/release/patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch"
+	                   #$(source-file "patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch"
+	                                  "virt-firmware-rs-kvm-real-mode-cr0-ne.patch"))
+	             (cons "stogas/release/patches/virt-firmware-rs-snp-cpu-count.patch"
+	                   #$(source-file "patches/virt-firmware-rs-snp-cpu-count.patch"
+	                                  "virt-firmware-rs-snp-cpu-count.patch"))
 	             (cons "stogas/release/locks/igvmmeasure.Cargo.lock"
 	                   #$(source-file "locks/igvmmeasure.Cargo.lock"
 	                                  "igvmmeasure.Cargo.lock"))
+	             (cons "stogas/release/patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch"
+	                   #$(source-file "patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch"
+	                                  "svsm-igvmmeasure-kvm-vmsa-normalization.patch"))
 	             (cons "stogas/release/locks/virt-firmware-rs.Cargo.lock"
 	                   #$(source-file "locks/virt-firmware-rs.Cargo.lock"
 	                                  "virt-firmware-rs.Cargo.lock"))
@@ -432,7 +436,7 @@
                                  #$(file-append (pkg "cpio") "/bin") ":"
                                  #$(file-append (pkg "findutils") "/bin") ":"
                                  #$(file-append (pkg "grep") "/bin") ":"
-                                 #$(file-append (pkg "go@1.26") "/bin") ":"
+                                 #$(file-append stogas-go-1-26 "/bin") ":"
                                  #$(file-append (pkg "gzip") "/bin") ":"
                                  #$(file-append (pkg "sed") "/bin") ":"
                                  #$(file-append (pkg "tar") "/bin") ":"
@@ -503,7 +507,7 @@
                   "--linux" kernel
                   "--initrd" initramfs
                   "--os-release" (string-append "@" os-release)
-                  "--uname" "6.18.35-stogas"
+                  "--uname" "6.18.38-stogas"
 	                  "--cmdline" (string-append "@" #$(source-file "guix/cmdline.txt"
 	                                                                 "cmdline.txt"))
 	                  "--output" efi)
@@ -511,9 +515,10 @@
 	            (lambda (port)
 	              (display (command-output ukify "inspect" efi) port)))
 	          (invoke "igvm-wrap"
-                  "--input" ovmf
-                  "--snp"
-                  "--real16"
+                   "--input" ovmf
+                   "--snp"
+	                  "--cpus" "4"
+                   "--real16"
                   "--output" (string-append work "/base.igvm"))
           (invoke "igvm-update"
                   "--input" (string-append work "/base.igvm")
@@ -575,7 +580,7 @@
          (pkg "coreutils")
          (pkg "cpio")
          (pkg "findutils")
-         (pkg "go@1.26")
+         stogas-go-1-26
          (pkg "grep")
          (pkg "gzip")
          (pkg "nss-certs")

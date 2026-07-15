@@ -128,24 +128,18 @@ func TestStartSEVSNPFailsClosedWithoutHardwareQuoteDevice(t *testing.T) {
 	}
 }
 
-func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
+func TestStartSendsInitialHeartbeatAndTracksAdmissionLease(t *testing.T) {
 	heartbeatCh := make(chan map[string]any, 1)
-	readinessCh := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		switch r.URL.Path {
-		case "/api/fleet/heartbeat":
-			heartbeatCh <- body
-			writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
-		case "/api/fleet/readiness":
-			readinessCh <- body
-			_, _ = w.Write([]byte(`{"generation_id":"` + strings.Repeat("9", 64) + `","ok":true}`))
-		default:
+		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
+		heartbeatCh <- body
+		writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
 	}))
 	defer server.Close()
 
@@ -154,7 +148,6 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 	config.ControlAllowHTTP = true
 	config.ControlURL = server.URL
 	config.HeartbeatInterval = time.Hour
-	config.ReadinessInterval = time.Hour
 
 	runtime, err := Start(context.Background(), config)
 	if err != nil {
@@ -177,116 +170,30 @@ func TestStartSendsInitialHeartbeatAndBackgroundReadiness(t *testing.T) {
 		t.Fatal("initial heartbeat was not sent")
 	}
 
-	select {
-	case body := <-readinessCh:
-		if body["generation_id"] != strings.Repeat("9", 64) ||
-			body["address"] != "gateway.local" ||
-			body["port"] != float64(5185) ||
-			body["local_ready"] != false {
-			t.Fatalf("unexpected readiness body: %#v", body)
-		}
-		reason, _ := body["reason"].(string)
-		if strings.Contains(reason, "latest bundle") || !strings.Contains(reason, "secrets are not ready") {
-			t.Fatalf("readiness did not use heartbeat bundle admission: %#v", body)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("readiness observation was not sent")
-	}
-
 	if runtime.Control.GenerationID() != strings.Repeat("9", 64) {
 		t.Fatalf("generation id not recorded: %q", runtime.Control.GenerationID())
+	}
+	runtime.Control.mu.RLock()
+	readyUntil := runtime.Control.admissionReadyUntil
+	runtime.Control.mu.RUnlock()
+	if readyUntil.IsZero() {
+		t.Fatal("initial heartbeat admission lease was not recorded")
+	}
+	if result := runtime.Control.readinessResultAt(readyUntil.Add(-time.Second)); hasReason(result.Reasons, "control admission lease is absent or expired") {
+		t.Fatalf("successful startup heartbeat should admit readiness: %#v", result)
+	}
+	runtime.Control.recordHeartbeatError(errors.New("transient control failure"))
+	if result := runtime.Control.readinessResultAt(readyUntil.Add(-time.Nanosecond)); hasReason(result.Reasons, "control admission lease is absent or expired") {
+		t.Fatalf("one transient heartbeat failure should retain admission: %#v", result)
+	}
+	if result := runtime.Control.readinessResultAt(readyUntil); !hasReason(result.Reasons, "control admission lease is absent or expired") {
+		t.Fatalf("expired admission lease should fail readiness: %#v", result)
 	}
 
 	runtime.Control.entropyReady = false
 	result := runtime.Control.readinessResult()
 	if !hasReason(result.Reasons, "entropy is not ready") {
 		t.Fatalf("readiness did not include entropy failure: %#v", result)
-	}
-}
-
-func TestReadinessUnknownGenerationTriggersRecoveryHeartbeat(t *testing.T) {
-	const firstGenerationID = "9999999999999999999999999999999999999999999999999999999999999999"
-	const secondGenerationID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-	heartbeatCh := make(chan map[string]any, 2)
-	readinessCh := make(chan map[string]any, 2)
-	var mu sync.Mutex
-	rejectReadiness := false
-	heartbeatCount := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		switch r.URL.Path {
-		case "/api/fleet/heartbeat":
-			mu.Lock()
-			heartbeatCount++
-			count := heartbeatCount
-			mu.Unlock()
-			heartbeatCh <- body
-			generationID := firstGenerationID
-			if count > 1 {
-				generationID = secondGenerationID
-			}
-			writeHeartbeatResponse(t, w, generationID, "")
-		case "/api/fleet/readiness":
-			readinessCh <- body
-			mu.Lock()
-			shouldReject := rejectReadiness
-			mu.Unlock()
-			if shouldReject {
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"message":"Rejected confidential gateway readiness observation","reason":"unknown generation_id"}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"generation_id":"` + firstGenerationID + `","ok":true}`))
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	config := testConfig("mock")
-	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
-	config.ControlAllowHTTP = true
-	config.ControlURL = server.URL
-	config.HeartbeatInterval = time.Hour
-	config.ReadinessInterval = time.Hour
-
-	runtime, err := Start(context.Background(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtime.Close()
-
-	select {
-	case <-heartbeatCh:
-	case <-time.After(time.Second):
-		t.Fatal("initial heartbeat was not sent")
-	}
-	select {
-	case <-readinessCh:
-	case <-time.After(time.Second):
-		t.Fatal("initial readiness was not sent")
-	}
-
-	mu.Lock()
-	rejectReadiness = true
-	mu.Unlock()
-
-	err = runtime.Control.sendReadiness(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "unknown generation_id") {
-		t.Fatalf("expected unknown generation readiness failure, got %v", err)
-	}
-
-	select {
-	case <-heartbeatCh:
-	case <-time.After(time.Second):
-		t.Fatal("unknown generation did not trigger a recovery heartbeat")
-	}
-	if runtime.Control.GenerationID() != secondGenerationID {
-		t.Fatalf("recovery heartbeat did not refresh generation id: %q", runtime.Control.GenerationID())
 	}
 }
 
@@ -366,10 +273,6 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	var instruction string
 	var heartbeatBodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/fleet/readiness" {
-			_, _ = w.Write([]byte(`{"generation_id":"` + generationID + `","ok":true}`))
-			return
-		}
 		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -663,6 +566,7 @@ func testConfig(mode string) stogas.ConfidentialConfig {
 		AttesterMode:       mode,
 		Enabled:            true,
 		EntropyTimeout:     time.Second,
+		Environment:        "local",
 		QuoteRefresh:       time.Hour,
 	}
 }
@@ -700,7 +604,8 @@ func writeHeartbeatResponse(t *testing.T, w http.ResponseWriter, generationID st
 	if certificateInstructionJSON == "" {
 		certificateInstructionJSON = "null"
 	}
-	_, _ = w.Write([]byte(`{"bundle":{"active_cert_accepted":true,"latest_bundle_verified":true,"node_in_latest_bundle":true,"sequence":3},"certificate_instruction":` + certificateInstructionJSON + `,"generation_id":"` + generationID + `","node_id":"` + strings.Repeat("8", 64) + `","ok":true,"quote_verified_at":"2026-07-01T12:00:00Z"}`))
+	readyUntil := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339Nano)
+	_, _ = w.Write([]byte(`{"certificate_instruction":` + certificateInstructionJSON + `,"generation_id":"` + generationID + `","ok":true,"ready":true,"ready_until":"` + readyUntil + `","secrets":null}`))
 }
 
 func jsonArrayContains(values []any, want string) bool {

@@ -35,7 +35,11 @@ bun run release:build -- v0.0.0 dist/gateway/v0.0.0
 
 Go unit tests use conventional `*_test.go` filenames beside their package sources under `transports/**` when they cover package-private behavior. Public gateway behavior coverage is centralized in the private monorepo test harness under `apps/tests`.
 
-The release artifact is the measured `gateway.igvm` built by `stogas/release`. Outputs should be written under this repository's `dist/` directory. See `stogas/release/BUILD_AUDIT.md` for the public reproducible-build audit map.
+The inference listener defaults to port `5185`. Readiness is not part of that public router: a separate HTTP listener on port `5186` serves only `GET /ready` and must remain on the private guest/host network. Local callers can select another readiness port with `-private-readiness-port`.
+
+The release artifact is the measured `gateway.igvm` built by `stogas/release`; launch policy v1 binds the IGVM and SNP launch fields, while the release manifest records four measured VPs. Host memory and topology remain infrastructure configuration. Outputs should be written under this repository's `dist/` directory. See `stogas/release/BUILD_AUDIT.md` for the public reproducible-build audit map.
+
+Host SMT is allowed. Host CPU pinning is a performance-only placement choice, not a hostile-hypervisor control; the SEV-SNP security boundary does not rely on dedicated physical cores.
 
 GitHub draft releases use official GitHub artifact attestation and a faster
 single-build path so release candidates do not spend CI time doing a redundant

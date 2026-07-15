@@ -10,7 +10,7 @@
       "name": "guix",
       "url": "https://git.guix.gnu.org/guix.git",
       "branch": "master",
-      "commit": "d1e9e23fd441fce828fa74616271b00b90853cee",
+      "commit": "058701d7ad329cfa7292998699baa3dfb8955752",
       "introductionCommit": "9edb3f66fd807b096b48283debdcddccfea34bad",
       "introductionOpenpgpFingerprint": "BBB0 2DDF 2CEA F6A8 0D1D  E643 A2A0 6DF2 A33A 54FA"
     }
@@ -44,9 +44,9 @@
   },
   "releaseSources": {
     "linux": {
-      "version": "6.18.35-gnu",
+	  "version": "6.18.38-gnu",
       "guixPackage": "stogas-linux-6.18",
-      "baseGuixPackage": "linux-libre@6.18.35",
+	  "baseGuixPackage": "linux-libre@6.18.38",
       "requiredBuiltIns": [
         "ACPI",
         "AMD_MEM_ENCRYPT",
@@ -106,19 +106,24 @@
         "VIRTIO_PCI",
         "VIRTIO_VSOCKETS_COMMON",
         "VIRTIO_VSOCKETS"
-      ]
+      ],
+      "requiredValues": {
+        "NR_CPUS": "4"
+      }
     },
     "go": {
-      "version": "1.26.4",
-      "guixPackage": "go-1.26",
-      "guixSourceBase32": "143qz6hikkh08gfm9md7r1na8mj404a27a4cidq3zkj6qc54jrm1"
+	  "version": "1.26.5",
+	  "guixPackage": "stogas-go-1.26",
+	  "url": "https://go.dev/dl/go1.26.5.src.tar.gz",
+	  "sha256": "495be4bc87176ac567392e5b4116abd98466d33d7b49d41e764ccc6976b2dc42",
+	  "guixSourceBase32": "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"
     },
     "systemdUkify": {
-      "version": "260",
-      "tag": "v260",
-      "commit": "55393e3cecf6f2b274c379c39d2375a136474e8e",
-      "url": "https://github.com/systemd/systemd/archive/55393e3cecf6f2b274c379c39d2375a136474e8e.tar.gz",
-      "sha256": "fc38bcef1012e0fb0bee661a961628e0bf0dc86ffb69c4178d060f253a983bb8"
+	  "version": "261",
+	  "tag": "v261",
+	  "commit": "de9dbc37ad4aa637e200ac02a0545095997055df",
+	  "url": "https://github.com/systemd/systemd/archive/de9dbc37ad4aa637e200ac02a0545095997055df.tar.gz",
+	  "sha256": "32586695dbde6a7ef3b1c7fdda80148ae9e2cf1b7b8b036db0f929334de32d52"
     },
     "edk2": {
       "tag": "edk2-stable202605",
@@ -139,11 +144,15 @@
       "patches": [
         {
           "file": "virt-firmware-rs-kvm-vmsa-last.patch",
-          "sha256": "221daa69fe4b1aa639e8778fd912f60bbe869c9729d403e5e4c58f43c3ddfba6"
+          "sha256": "3b7bb647d9c295e680eb345b4755fd1f66bfc532830ee8df829e256387c5a33b"
         },
         {
           "file": "virt-firmware-rs-kvm-real-mode-cr0-ne.patch",
           "sha256": "c2da9afa49c5e44e3388e0c1a978a784f89ea289b4d37851263022062b6d33b6"
+        },
+        {
+          "file": "virt-firmware-rs-snp-cpu-count.patch",
+          "sha256": "1f7fd096eaa17ae04d667a63a44e90ed9e65ad9ef75c1666a57f7bffdd6fec5b"
         }
       ]
     },
@@ -162,7 +171,7 @@
         },
         {
           "file": "svsm-igvmmeasure-kvm-vmsa-normalization.patch",
-          "sha256": "9ea759156540925e03e8d76025cad20e58de191fa55121af8f4e2443e89f3c9a"
+          "sha256": "03808b9016b36c850033970d50713f92c43cd6d6454aa2cc1cd380b20277bb98"
         }
       ]
     }

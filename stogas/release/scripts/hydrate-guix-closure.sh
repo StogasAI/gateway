@@ -63,7 +63,7 @@ if grep -Eiq 'gcc|glibc|binutils|rust-[0-9]|go-[0-9]|python-[0-9]|meson|ninja|ba
   exit 70
 fi
 
-allowed='stogas-(gateway-igvm-release|linux-6\.18|systemd-uki-tools|edk2-amdsev-ovmf|virt-firmware-rs-tools|igvmmeasure)'
+allowed='stogas-(gateway-igvm-release|go|linux-6\.18|systemd-uki-tools|edk2-amdsev-ovmf|virt-firmware-rs-tools|igvmmeasure)'
 if grep -E 'would be built|The following derivations would be built' "$dry_run" >/dev/null; then
   unexpected="$(grep -E '\.drv|would be built' "$dry_run" | grep -Ev "$allowed|The following derivations would be built|would be built:" || true)"
   if [ -n "$unexpected" ]; then

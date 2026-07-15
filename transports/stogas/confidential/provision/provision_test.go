@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/readiness"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
@@ -52,8 +51,12 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		if !ok || health["ready"] != false || health["last_quote_error"] != "drand fetch failed" {
 			t.Fatalf("unexpected health payload: %#v", body["health"])
 		}
+		versions, ok := health["secret_versions"].(map[string]any)
+		if !ok || versions["OPENAI_API_KEY"] != "1" {
+			t.Fatalf("unexpected secret versions: %#v", health["secret_versions"])
+		}
 		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"bundle":{"active_cert_accepted":true,"latest_bundle_verified":true,"node_in_latest_bundle":true,"sequence":7},"certificate_instruction":null,"generation_id":"` + strings.Repeat("b", 64) + `","node_id":"node-1","ok":true,"quote_verified_at":"2026-07-01T12:00:01Z"}`))
+		_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("b", 64) + `","ok":true,"ready":true,"ready_until":"2026-07-01T12:10:00Z","secrets":null}`))
 	}))
 	defer server.Close()
 
@@ -65,7 +68,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
 		CertExpiresAt:    now.Add(90 * 24 * time.Hour),
-		Health:           NodeHealth{Ready: false, LastQuoteError: "drand fetch failed"},
+		Health:           NodeHealth{Ready: false, LastQuoteError: "drand fetch failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
 		NodeID:           "node-1",
 		ObservedAt:       now,
 		Quote:            snapshot,
@@ -75,11 +78,8 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.GenerationID != strings.Repeat("b", 64) || !result.QuoteVerifiedAt.Equal(now.Add(time.Second)) {
+	if result.GenerationID != strings.Repeat("b", 64) || !result.Ready || result.ReadyUntil == nil || !result.ReadyUntil.Equal(now.Add(10*time.Minute)) {
 		t.Fatalf("unexpected heartbeat response: %#v", result)
-	}
-	if !result.Bundle.LatestBundleVerified || !result.Bundle.NodeInLatestBundle || !result.Bundle.ActiveCertAccepted || result.Bundle.Sequence == nil || *result.Bundle.Sequence != 7 {
-		t.Fatalf("unexpected heartbeat bundle admission: %#v", result.Bundle)
 	}
 	if result.CertificateInstruction != nil {
 		t.Fatalf("unexpected certificate instruction: %#v", result.CertificateInstruction)
@@ -89,7 +89,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 func TestSendHeartbeatParsesCertificateInstruction(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
-		_, _ = w.Write([]byte(`{"bundle":{"active_cert_accepted":true,"latest_bundle_verified":true,"node_in_latest_bundle":true,"sequence":7},"certificate_instruction":{"action":"request_csr","common_name":"Gateway.Stogas.AI","dns_names":["Gateway.Stogas.AI","API.Stogas.AI","api.stogas.ai"],"order_id":"order-1"},"generation_id":"` + strings.Repeat("b", 64) + `","node_id":"node-1","ok":true,"quote_verified_at":"2026-07-01T12:00:01Z"}`))
+		_, _ = w.Write([]byte(`{"certificate_instruction":{"action":"request_csr","common_name":"Gateway.Stogas.AI","dns_names":["Gateway.Stogas.AI","API.Stogas.AI","api.stogas.ai"],"order_id":"order-1"},"generation_id":"` + strings.Repeat("b", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null}`))
 	}))
 	defer server.Close()
 
@@ -148,84 +148,45 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 	}
 }
 
-func TestSendReadinessPostsPrivateHealthObservation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/fleet/readiness" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body["local_ready"] != false || !strings.Contains(body["reason"].(string), "latest bundle is not verified") {
-			t.Fatalf("unexpected readiness payload: %#v", body)
-		}
-		_, _ = w.Write([]byte(`{"generation_id":"` + strings.Repeat("c", 64) + `","ok":true}`))
-	}))
-	defer server.Close()
-
-	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
-	result, err := client.SendReadiness(context.Background(), ReadinessInput{
-		Address:      "10.0.0.10",
-		GenerationID: strings.Repeat("C", 64),
-		ObservedAt:   time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
-		Port:         8443,
-		Result:       readiness.Result{Ready: false, Reasons: []string{"latest bundle is not verified"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.GenerationID != strings.Repeat("c", 64) || !result.OK {
-		t.Fatalf("unexpected readiness response: %#v", result)
-	}
-}
-
-func TestRequestSecretsValidatesPlaintextFreeRelease(t *testing.T) {
+func TestSendHeartbeatValidatesInlineSecretBundle(t *testing.T) {
 	generationID := strings.Repeat("d", 64)
 	reportHash := strings.Repeat("e", 128)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/fleet/secrets" {
+		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		var body map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		if body["generation_id"] != generationID || body["report_data_sha512"] != reportHash {
-			t.Fatalf("unexpected secret request: %#v", body)
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"attester_mode":      "sev-snp",
-			"created_at":         "2026-07-01T12:00:00Z",
-			"environment":        "staging",
-			"generation_id":      generationID,
-			"hpke_public_key":    "aHBrZQ",
-			"node_id":            "node-1",
-			"quote_verified_at":  "2026-07-01T12:00:01Z",
-			"report_data_sha512": reportHash,
-			"schema":             SecretReleaseSchemaV1,
-			"secrets": []map[string]string{{
-				"aad_sha256":       strings.Repeat("f", 64),
-				"ciphertext":       "Y2lwaGVydGV4dA",
-				"encapsulated_key": "ZW5j",
-				"key_id":           "provider",
-				"name":             "OPENAI_API_KEY",
-				"version":          "1",
-			}},
+			"certificate_instruction": nil,
+			"generation_id": generationID,
+			"ok": true,
+			"ready": false,
+			"ready_until": nil,
+			"secrets": map[string]any{
+				"generation_id": generationID,
+				"report_data_sha512": reportHash,
+				"schema": SecretReleaseSchemaV1,
+				"secrets": []map[string]string{{
+					"aad_sha256": strings.Repeat("f", 64),
+					"ciphertext": "Y2lwaGVydGV4dA",
+					"encapsulated_key": "ZW5j",
+					"key_id": "provider",
+					"name": "OPENAI_API_KEY",
+					"version": "1",
+				}},
+			},
 		})
 	}))
 	defer server.Close()
 
 	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
-	result, err := client.RequestSecrets(context.Background(), SecretReleaseRequest{
-		GenerationID:     strings.ToUpper(generationID),
-		ReportDataSHA512: strings.ToUpper(reportHash),
-	})
+	input := testHeartbeatInput(t)
+	input.Quote.ReportDataHex = reportHash
+	result, err := client.SendHeartbeat(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Schema != SecretReleaseSchemaV1 || len(result.Secrets) != 1 {
+	if result.Secrets == nil || result.Secrets.Schema != SecretReleaseSchemaV1 || len(result.Secrets.Secrets) != 1 {
 		t.Fatalf("unexpected secret response: %#v", result)
 	}
 }
@@ -264,7 +225,7 @@ func TestClientFailsClosedForUnsafeOrMalformedControlResponses(t *testing.T) {
 		{
 			name: "unknown response field rejected",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`{"bundle":{"active_cert_accepted":false,"latest_bundle_verified":false,"node_in_latest_bundle":false,"sequence":null},"generation_id":"` + strings.Repeat("b", 64) + `","node_id":"node-1","ok":true,"quote_verified_at":"2026-07-01T12:00:01Z","extra":true}`))
+				_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("b", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null,"extra":true}`))
 			},
 			call: func(client Client) error {
 				_, err := client.SendHeartbeat(context.Background(), testHeartbeatInput(t))
@@ -273,20 +234,20 @@ func TestClientFailsClosedForUnsafeOrMalformedControlResponses(t *testing.T) {
 			want: "unknown field",
 		},
 		{
-			name: "missing bundle admission rejected",
+			name: "inconsistent admission lease rejected",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`{"generation_id":"` + strings.Repeat("b", 64) + `","node_id":"node-1","ok":true,"quote_verified_at":"2026-07-01T12:00:01Z"}`))
+				_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("b", 64) + `","ok":true,"ready":true,"ready_until":null,"secrets":null}`))
 			},
 			call: func(client Client) error {
 				_, err := client.SendHeartbeat(context.Background(), testHeartbeatInput(t))
 				return err
 			},
-			want: "missing bundle admission",
+			want: "readiness lease is inconsistent",
 		},
 		{
 			name: "malformed certificate instruction rejected",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`{"bundle":{"active_cert_accepted":false,"latest_bundle_verified":false,"node_in_latest_bundle":false,"sequence":null},"certificate_instruction":{"action":"activate_staged","cert_sha256":"not-hex","order_id":"order-1"},"generation_id":"` + strings.Repeat("b", 64) + `","node_id":"node-1","ok":true,"quote_verified_at":"2026-07-01T12:00:01Z"}`))
+				_, _ = w.Write([]byte(`{"certificate_instruction":{"action":"activate_staged","cert_sha256":"not-hex","order_id":"order-1"},"generation_id":"` + strings.Repeat("b", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null}`))
 			},
 			call: func(client Client) error {
 				_, err := client.SendHeartbeat(context.Background(), testHeartbeatInput(t))
@@ -297,13 +258,12 @@ func TestClientFailsClosedForUnsafeOrMalformedControlResponses(t *testing.T) {
 		{
 			name: "secret plaintext-shaped response rejected",
 			handler: func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(`{"schema":"` + SecretReleaseSchemaV1 + `","attester_mode":"sev-snp","created_at":"2026-07-01T12:00:00Z","environment":"staging","generation_id":"` + strings.Repeat("d", 64) + `","hpke_public_key":"aHBrZQ","node_id":"node-1","quote_verified_at":"2026-07-01T12:00:01Z","report_data_sha512":"` + strings.Repeat("e", 128) + `","secrets":[{"aad_sha256":"` + strings.Repeat("f", 64) + `","ciphertext":"","encapsulated_key":"ZW5j","key_id":"provider","name":"OPENAI_API_KEY","version":"1"}]}`))
+				_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("d", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":{"generation_id":"` + strings.Repeat("d", 64) + `","report_data_sha512":"` + strings.Repeat("e", 128) + `","schema":"` + SecretReleaseSchemaV1 + `","secrets":[{"aad_sha256":"` + strings.Repeat("f", 64) + `","ciphertext":"","encapsulated_key":"ZW5j","key_id":"provider","name":"OPENAI_API_KEY","version":"1"}]}}`))
 			},
 			call: func(client Client) error {
-				_, err := client.RequestSecrets(context.Background(), SecretReleaseRequest{
-					GenerationID:     strings.Repeat("d", 64),
-					ReportDataSHA512: strings.Repeat("e", 128),
-				})
+				input := testHeartbeatInput(t)
+				input.Quote.ReportDataHex = strings.Repeat("e", 128)
+				_, err := client.SendHeartbeat(context.Background(), input)
 				return err
 			},
 			want: "secret ciphertext missing ciphertext",
@@ -328,7 +288,7 @@ func testHeartbeatInput(t *testing.T) HeartbeatInput {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	return HeartbeatInput{
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		Health:        NodeHealth{Ready: true},
+		Health:        NodeHealth{Ready: true, SecretVersions: map[string]string{}},
 		NodeID:        "node-1",
 		ObservedAt:    now,
 		Quote:         testSnapshot(t, now),

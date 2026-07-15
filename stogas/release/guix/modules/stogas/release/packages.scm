@@ -12,6 +12,7 @@
   #:use-module (ice-9 match)
   #:export (pkg
             stogas-edk2-amdsev-ovmf
+            stogas-go-1-26
             stogas-igvmmeasure
             stogas-linux-6-18
             stogas-systemd-uki-tools
@@ -40,13 +41,28 @@
   (release-file (string-append "patches/" path) path))
 
 (define %linux-6-18
-  (specification->package "linux-libre@6.18.35"))
+  (specification->package "linux-libre@6.18.38"))
+
+(define %go-1-26
+  (specification->package "go@1.26.4"))
+
+(define stogas-go-1-26
+  (package
+    (inherit %go-1-26)
+    (name "stogas-go")
+    (version "1.26.5")
+    (source
+     (origin
+       (method url-fetch)
+       (uri "https://go.dev/dl/go1.26.5.src.tar.gz")
+       (sha256
+        (base32 "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"))))))
 
 (define stogas-linux-6-18
   (package
     (inherit %linux-6-18)
     (name "stogas-linux-6.18")
-    (version "6.18.35")
+    (version "6.18.38")
     (arguments
      (substitute-keyword-arguments (package-arguments %linux-6-18)
        ((#:phases phases)
@@ -144,6 +160,7 @@
                    (lambda (option)
                      (invoke "scripts/config" "--enable" option))
                    built-ins)
+                  (invoke "scripts/config" "--set-val" "NR_CPUS" "4")
                   (invoke "make" "ARCH=x86_64" "olddefconfig")
                   (define (assert-enabled option)
                     (invoke "grep" "-q"
@@ -157,10 +174,11 @@
                   (for-each assert-enabled built-ins)
 	                  (invoke "grep" "-q" "^# CONFIG_MODULES is not set$"
 	                          ".config")
+                  (invoke "grep" "-q" "^CONFIG_NR_CPUS=4$" ".config")
 	                  (for-each assert-disabled disabled))))))))
     (synopsis "Stogas SEV-SNP guest Linux kernel")
     (description
-     "Linux 6.18.35 with the virtio, EFI secret, configfs/TSM, and SEV-SNP
+     "Linux 6.18.38 with the virtio, EFI secret, configfs/TSM, and SEV-SNP
 guest-report paths built into the kernel for a diskless Go initramfs.")
     (home-page "https://stogas.ai")
     (license (package-license %linux-6-18))))
@@ -168,13 +186,13 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
 (define stogas-systemd-uki-tools
   (package
     (name "stogas-systemd-uki-tools")
-    (version "260")
+    (version "261")
     (source
      (origin
        (method url-fetch)
-       (uri "https://github.com/systemd/systemd/archive/55393e3cecf6f2b274c379c39d2375a136474e8e.tar.gz")
+       (uri "https://github.com/systemd/systemd/archive/de9dbc37ad4aa637e200ac02a0545095997055df.tar.gz")
        (sha256
-        (base32 "1f1vk0x2a3q6ilbw8sgvdz40vgz050b9c6k6xq5zpq0j23pvqf7w"))))
+         (base32 "0lidwd6k6agrn1nh72vv3g7y5sca2j0dmzf7n7rpwsnyvfancn1j"))))
     (build-system meson-build-system)
     (arguments
      (list
@@ -229,7 +247,7 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
             "python-pefile"
             "python-pyelftools")))
     (synopsis "Pinned systemd ukify and EFI stub")
-    (description "Deterministic systemd v260 ukify and linuxx64.efi.stub.")
+    (description "Deterministic systemd v261 ukify and linuxx64.efi.stub.")
     (home-page "https://systemd.io")
     (license #f)))
 
@@ -411,7 +429,8 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
       (base32 "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph"))
      (patches
       (list (patch-file "virt-firmware-rs-kvm-vmsa-last.patch")
-            (patch-file "virt-firmware-rs-kvm-real-mode-cr0-ne.patch"))))
+            (patch-file "virt-firmware-rs-kvm-real-mode-cr0-ne.patch")
+            (patch-file "virt-firmware-rs-snp-cpu-count.patch"))))
    "."
    (release-file "vendor/virt-firmware-rs/vendor"
                  "virt-firmware-rs-vendor"

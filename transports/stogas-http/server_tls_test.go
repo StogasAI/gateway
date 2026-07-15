@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +83,28 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	}
 	if secondHash != state.ActiveCertSHA256 {
 		t.Fatalf("expected active cert hash %s, got %s", state.ActiveCertSHA256, secondHash)
+	}
+}
+
+func TestStartFailsWhenPrivateReadinessListenerCannotBind(t *testing.T) {
+	occupied := testListener(t)
+	defer occupied.Close()
+	_, occupiedPort, err := net.SplitHostPort(occupied.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{config: stogas.Config{
+		Host:                 "127.0.0.1",
+		MaxRequestBodyMiB:    1,
+		Port:                 "0",
+		PrivateReadinessPort: occupiedPort,
+	}}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Start(); err == nil || !strings.Contains(err.Error(), "listen for private readiness") {
+		t.Fatalf("expected private readiness bind failure, got %v", err)
 	}
 }
 
