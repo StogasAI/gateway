@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -17,7 +19,12 @@ import (
 
 const defaultGuestCaBundlePath = "/etc/ssl/certs/ca-certificates.crt"
 
+const requiredOpenFiles = 65536
+
 func main() {
+	if err := ensureOpenFileLimit(syscall.Getrlimit, syscall.Setrlimit); err != nil {
+		fatal("gateway startup: " + err.Error())
+	}
 	setDefaultGuestCertFile()
 	_, _ = maxprocs.Set()
 
@@ -28,6 +35,7 @@ func main() {
 
 	flag.StringVar(&config.Host, "host", config.Host, "Host to bind the gateway to")
 	flag.StringVar(&config.Port, "port", config.Port, "Port to bind the gateway to")
+	flag.StringVar(&config.PrivateReadinessPort, "private-readiness-port", config.PrivateReadinessPort, "Port to bind the private readiness listener to")
 	flag.StringVar(&config.LogLevel, "log-level", config.LogLevel, "Logger level (debug, info, warn, error)")
 	flag.StringVar(&config.LogOutputStyle, "log-style", config.LogOutputStyle, "Logger output type (json or pretty)")
 	flag.IntVar(&config.MaxRequestBodyMiB, "max-request-body-mib", config.MaxRequestBodyMiB, "Maximum request body size in MiB")
@@ -44,6 +52,28 @@ func main() {
 	if err := server.Start(); err != nil {
 		fatal(err.Error())
 	}
+}
+
+func ensureOpenFileLimit(
+	getrlimit func(int, *syscall.Rlimit) error,
+	setrlimit func(int, *syscall.Rlimit) error,
+) error {
+	var limit syscall.Rlimit
+	if err := getrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
+		return fmt.Errorf("read RLIMIT_NOFILE: %w", err)
+	}
+	if limit.Cur >= requiredOpenFiles {
+		return nil
+	}
+	if limit.Max < requiredOpenFiles {
+		limit.Max = requiredOpenFiles
+	}
+
+	limit.Cur = requiredOpenFiles
+	if err := setrlimit(syscall.RLIMIT_NOFILE, &limit); err != nil {
+		return fmt.Errorf("raise RLIMIT_NOFILE to %d: %w", requiredOpenFiles, err)
+	}
+	return nil
 }
 
 func setDefaultGuestCertFile() {

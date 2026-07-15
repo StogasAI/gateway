@@ -48,16 +48,13 @@ type ControlLoop struct {
 	quotes       *quote.Manager
 	secrets      *secretstore.Store
 
-	heartbeatMu          sync.Mutex
-	mu                   sync.RWMutex
-	generationID         string
-	lastHeartbeatQuote   string
-	lastHeartbeatReport  string
-	lastBundleAdmission  provision.HeartbeatBundleAdmission
-	lastHeartbeatError   error
-	lastReadinessError   error
-	lastSecretError      error
-	lastCertificateError error
+	heartbeatMu             sync.Mutex
+	mu                      sync.RWMutex
+	generationID            string
+	admissionReadyUntil     time.Time
+	lastHeartbeatError      error
+	lastSecretError         error
+	lastCertificateError    error
 }
 
 var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
@@ -70,6 +67,7 @@ var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
 }
 
 const controlRequestTimeout = 25 * time.Second
+const localQuoteReadyWindow = 10 * time.Minute
 
 func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
 	if !config.Enabled {
@@ -153,15 +151,6 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("initial confidential heartbeat failed: %w", err)
-		}
-		if config.RequestSecrets {
-			secretsCtx, secretsCancel := controlLoop.controlAttemptContext(runtimeCtx)
-			err := controlLoop.requestSecrets(secretsCtx)
-			secretsCancel()
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("initial confidential secret release failed: %w", err)
-			}
 		}
 		controlLoop.Start(runtimeCtx)
 	}
@@ -302,9 +291,6 @@ func (l *ControlLoop) Start(ctx context.Context) {
 		return
 	}
 	go l.runHeartbeats(ctx)
-	if l.config.ReadinessConfigured() {
-		go l.runReadiness(ctx)
-	}
 }
 
 func (l *ControlLoop) GenerationID() string {
@@ -317,12 +303,6 @@ func (l *ControlLoop) LastHeartbeatError() error {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.lastHeartbeatError
-}
-
-func (l *ControlLoop) LastReadinessError() error {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.lastReadinessError
 }
 
 func (l *ControlLoop) LastSecretError() error {
@@ -355,30 +335,6 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 	}
 }
 
-func (l *ControlLoop) runReadiness(ctx context.Context) {
-	ticker := time.NewTicker(l.config.ReadinessInterval)
-	defer ticker.Stop()
-	readinessCtx, cancel := l.controlAttemptContext(ctx)
-	err := l.sendReadiness(readinessCtx)
-	cancel()
-	if err != nil {
-		log.Printf("stogas confidential readiness observation failed: %v", err)
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			readinessCtx, cancel := l.controlAttemptContext(ctx)
-			err := l.sendReadiness(readinessCtx)
-			cancel()
-			if err != nil {
-				log.Printf("stogas confidential readiness observation failed: %v", err)
-			}
-		}
-	}
-}
-
 func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -394,11 +350,24 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	changed, err := l.handleCertificateInstruction(ctx, response.CertificateInstruction)
+	changed := false
+	if response.Secrets != nil {
+		if err := l.secrets.Install(secretstore.InstallInput{
+			Bundle:   response.Secrets,
+			Identity: l.identity,
+		}); err != nil {
+			l.recordSecretError(err)
+			return err
+		}
+		l.recordSecretError(nil)
+		changed = true
+	}
+	certificateChanged, err := l.handleCertificateInstruction(ctx, response.CertificateInstruction)
 	if err != nil {
 		l.recordCertificateError(err)
 		return err
 	}
+	changed = changed || certificateChanged
 	if changed {
 		if _, err := l.sendHeartbeatOnce(ctx); err != nil {
 			return err
@@ -418,7 +387,8 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		CertExpiresAt: l.certs.State().ExpiresAt,
 		Health: provision.NodeHealth{
 			LastQuoteError: lastErrorString(l.quotes.LastError()),
-			Ready:          l.quotes.LastError() == nil,
+			Ready:          l.localReadinessResultAt(time.Now()).Ready,
+			SecretVersions: l.secrets.Versions(),
 		},
 		NodeID:     l.nodeID,
 		ObservedAt: time.Now().UTC(),
@@ -431,9 +401,11 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 	}
 	l.mu.Lock()
 	l.generationID = response.GenerationID
-	l.lastHeartbeatQuote = base64.RawURLEncoding.EncodeToString(snapshot.Quote)
-	l.lastHeartbeatReport = snapshot.ReportDataHex
-	l.lastBundleAdmission = response.Bundle
+	if response.ReadyUntil != nil {
+		l.admissionReadyUntil = response.ReadyUntil.UTC()
+	} else {
+		l.admissionReadyUntil = time.Time{}
+	}
 	l.lastHeartbeatError = nil
 	l.mu.Unlock()
 	return response, nil
@@ -548,98 +520,37 @@ func (l *ControlLoop) refreshQuoteAfterCertificateChange(ctx context.Context) er
 	return nil
 }
 
-func (l *ControlLoop) sendReadiness(ctx context.Context) error {
-	generationID := l.GenerationID()
-	if generationID == "" {
-		err := errors.New("generation id is not available")
-		l.recordReadinessError(err)
-		return err
-	}
-	result := l.readinessResult()
-	_, err := l.client.SendReadiness(ctx, provision.ReadinessInput{
-		Address:      l.config.EndpointAddress,
-		GenerationID: generationID,
-		ObservedAt:   time.Now().UTC(),
-		Port:         l.config.EndpointPort,
-		Result:       result,
-	})
-	if err != nil {
-		l.recordReadinessError(err)
-		if isUnknownGenerationError(err) {
-			log.Printf("stogas confidential readiness generation is unknown to control; sending registration heartbeat")
-			if heartbeatErr := l.sendHeartbeat(ctx); heartbeatErr != nil {
-				log.Printf("stogas confidential recovery heartbeat failed after unknown generation: %v", heartbeatErr)
-			}
-		}
-		return err
-	}
-	l.mu.Lock()
-	l.lastReadinessError = nil
-	l.mu.Unlock()
-	return nil
-}
-
-func isUnknownGenerationError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unknown generation_id")
-}
-
-func (l *ControlLoop) requestSecrets(ctx context.Context) error {
-	generationID, quoteBase64URL, reportDataSHA512 := l.lastHeartbeatBinding()
-	if generationID == "" {
-		err := errors.New("generation id is not available")
-		l.recordSecretError(err)
-		return err
-	}
-	if quoteBase64URL == "" || reportDataSHA512 == "" {
-		err := errors.New("last verified heartbeat quote is not available")
-		l.recordSecretError(err)
-		return err
-	}
-	release, err := l.client.RequestSecrets(ctx, provision.SecretReleaseRequest{
-		GenerationID:     generationID,
-		ReportDataSHA512: reportDataSHA512,
-	})
-	if err != nil {
-		l.recordSecretError(err)
-		return err
-	}
-	if err := l.secrets.Install(secretstore.InstallInput{
-		Identity:       l.identity,
-		QuoteBase64URL: quoteBase64URL,
-		Release:        release,
-	}); err != nil {
-		l.recordSecretError(err)
-		return err
-	}
-	l.mu.Lock()
-	l.lastSecretError = nil
-	l.mu.Unlock()
-	return nil
-}
-
-func (l *ControlLoop) lastHeartbeatBinding() (string, string, string) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.generationID, l.lastHeartbeatQuote, l.lastHeartbeatReport
-}
-
 func (l *ControlLoop) readinessResult() readiness.Result {
+	return l.readinessResultAt(time.Now())
+}
+
+func (l *ControlLoop) readinessResultAt(now time.Time) readiness.Result {
+	local := l.localReadinessStateAt(now)
+	l.mu.RLock()
+	admissionReadyUntil := l.admissionReadyUntil
+	l.mu.RUnlock()
+	local.ControlAdmitted = !admissionReadyUntil.IsZero() && now.Before(admissionReadyUntil)
+	return readiness.Evaluate(local)
+}
+
+func (l *ControlLoop) localReadinessResultAt(now time.Time) readiness.Result {
+	state := l.localReadinessStateAt(now)
+	state.ControlAdmitted = true
+	return readiness.Evaluate(state)
+}
+
+func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
 	quoteReady := false
 	quoteForwardSafe := false
 	if snapshot, err := l.quotes.Current(context.Background()); err == nil && snapshot != nil {
 		quoteReady = len(snapshot.Quote) > 0
-		quoteForwardSafe = l.quotes.LastError() == nil
+		quoteAge := now.Sub(snapshot.GeneratedAt)
+		quoteForwardSafe = quoteAge >= 0 && quoteAge <= localQuoteReadyWindow
 	}
-	l.mu.RLock()
-	admission := l.lastBundleAdmission
-	l.mu.RUnlock()
 	certState := l.certs.State()
-	return readiness.Evaluate(readiness.State{
-		BundleAcceptsActiveCert:    admission.ActiveCertAccepted,
-		BundleContainsNode:         admission.NodeInLatestBundle,
-		BundleLatestVerified:       admission.LatestBundleVerified,
+	return readiness.State{
 		CertificateReady:           !certState.ExpiresAt.IsZero(),
-		CertificateSafe:            time.Until(certState.ExpiresAt) > 48*time.Hour,
+		CertificateSafe:            certState.ExpiresAt.Sub(now) > 48*time.Hour,
 		Draining:                   false,
 		EntropyReady:               l.entropyReady,
 		IdentityReady:              true,
@@ -648,18 +559,12 @@ func (l *ControlLoop) readinessResult() readiness.Result {
 		RuntimeDependenciesHealthy: true,
 		SecretsReady:               l.secrets != nil && l.secrets.Ready(),
 		Serving:                    true,
-	})
+	}
 }
 
 func (l *ControlLoop) recordHeartbeatError(err error) {
 	l.mu.Lock()
 	l.lastHeartbeatError = err
-	l.mu.Unlock()
-}
-
-func (l *ControlLoop) recordReadinessError(err error) {
-	l.mu.Lock()
-	l.lastReadinessError = err
 	l.mu.Unlock()
 }
 

@@ -119,11 +119,16 @@ func mustCatalogPath(t *testing.T, route catalog.Route) string {
 	return path
 }
 
-func TestReadinessProbeIsHealthyWhenConfidentialRuntimeIsDisabled(t *testing.T) {
-	server := &Server{}
+func TestPrivateReadinessProbeIsHealthyWhenConfidentialRuntimeIsDisabled(t *testing.T) {
+	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
+	ctx.Request.SetRequestURI("/ready")
 
-	server.readiness(ctx)
+	server.readinessServer.Handler(ctx)
 
 	if ctx.Response.StatusCode() != fasthttp.StatusNoContent {
 		t.Fatalf("expected 204 readiness, got %d", ctx.Response.StatusCode())
@@ -133,17 +138,56 @@ func TestReadinessProbeIsHealthyWhenConfidentialRuntimeIsDisabled(t *testing.T) 
 	}
 }
 
-func TestReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *testing.T) {
-	server := &Server{secure: &confidentialruntime.Runtime{EntropyReady: true}}
+func TestPrivateReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{MaxRequestBodyMiB: 1},
+		secure: &confidentialruntime.Runtime{EntropyReady: true},
+	}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
+	ctx.Request.SetRequestURI("/ready")
 
-	server.readiness(ctx)
+	server.readinessServer.Handler(ctx)
 
 	if ctx.Response.StatusCode() != fasthttp.StatusServiceUnavailable {
 		t.Fatalf("expected 503 readiness, got %d", ctx.Response.StatusCode())
 	}
 	if got := string(ctx.Response.Body()); got != `{"ok":false}` {
 		t.Fatalf("readiness probe should not leak private reasons, got %q", got)
+	}
+}
+
+func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
+	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
+
+	public := &fasthttp.RequestCtx{}
+	public.Request.Header.SetMethod(fasthttp.MethodGet)
+	public.Request.SetRequestURI("/ready")
+	server.server.Handler(public)
+	if public.Response.StatusCode() != fasthttp.StatusNotFound {
+		t.Fatalf("public GET /ready status = %d, want 404", public.Response.StatusCode())
+	}
+
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{method: fasthttp.MethodGet, path: "/v1/models"},
+		{method: fasthttp.MethodPost, path: "/ready"},
+	} {
+		ctx := &fasthttp.RequestCtx{}
+		ctx.Request.Header.SetMethod(request.method)
+		ctx.Request.SetRequestURI(request.path)
+		server.readinessServer.Handler(ctx)
+		if ctx.Response.StatusCode() == fasthttp.StatusNoContent {
+			t.Fatalf("private %s %s unexpectedly served readiness", request.method, request.path)
+		}
 	}
 }
 
@@ -1177,12 +1221,53 @@ func publicPayloadObject(t *testing.T, payload any) map[string]any {
 	return object
 }
 
-func TestServerDisablesStreamRequestBody(t *testing.T) {
+func TestServerConnectionPolicy(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
 	server.routes()
 
+	if server.server.Concurrency != 2048 {
+		t.Fatalf("Concurrency = %d, want 2048", server.server.Concurrency)
+	}
+	if server.server.ReadTimeout != 30*time.Second {
+		t.Fatalf("ReadTimeout = %s, want 30s", server.server.ReadTimeout)
+	}
+	if server.server.IdleTimeout != 60*time.Second {
+		t.Fatalf("IdleTimeout = %s, want 60s", server.server.IdleTimeout)
+	}
+	if server.server.WriteTimeout != 0 {
+		t.Fatalf("WriteTimeout = %s, want unlimited", server.server.WriteTimeout)
+	}
+	if !server.server.TCPKeepalive || server.server.TCPKeepalivePeriod != 30*time.Second {
+		t.Fatalf("TCP keepalive = %t period=%s, want enabled with 30s period", server.server.TCPKeepalive, server.server.TCPKeepalivePeriod)
+	}
+	if server.server.ReadBufferSize != 16*1024 {
+		t.Fatalf("ReadBufferSize = %d, want 16384", server.server.ReadBufferSize)
+	}
 	if server.server.StreamRequestBody {
 		t.Fatal("Stogas HTTP server should not stream request bodies")
+	}
+}
+
+func TestShutdownDrainsHTTPBeforeClosingRuntimeDependencies(t *testing.T) {
+	source, err := os.ReadFile("http.go")
+	if err != nil {
+		t.Fatalf("read HTTP transport source: %v", err)
+	}
+	shutdown := string(source)
+	shutdownIndex := strings.Index(shutdown, "func (s *Server) shutdown()")
+	if shutdownIndex < 0 {
+		t.Fatal("shutdown lifecycle function missing")
+	}
+	shutdown = shutdown[shutdownIndex:]
+	readinessIndex := strings.Index(shutdown, "s.readinessServer.Shutdown()")
+	httpIndex := strings.Index(shutdown, "s.server.Shutdown()")
+	runtimeIndex := strings.Index(shutdown, "s.runtime.Close()")
+	secureIndex := strings.Index(shutdown, "s.secure.Close()")
+	if readinessIndex < 0 || httpIndex < 0 || runtimeIndex < 0 || secureIndex < 0 {
+		t.Fatalf("shutdown lifecycle calls missing: readiness=%d HTTP=%d runtime=%d secure=%d", readinessIndex, httpIndex, runtimeIndex, secureIndex)
+	}
+	if readinessIndex > runtimeIndex || readinessIndex > secureIndex || httpIndex > runtimeIndex || httpIndex > secureIndex {
+		t.Fatal("both HTTP servers must stop accepting and drain before runtime dependencies close")
 	}
 }
 

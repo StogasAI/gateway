@@ -58,12 +58,15 @@ function verifyLockShape() {
 			}
 		}
 	}
-	assert(pins.releaseSources.linux.version === '6.18.35-gnu', 'Linux release pin must be 6.18.35.');
+	assert(pins.releaseSources.linux.version === '6.18.38-gnu', 'Linux release pin must be 6.18.38.');
 	assert(pins.releaseSources.linux.guixPackage === 'stogas-linux-6.18', 'Linux release package must be Stogas custom 6.18.');
+	assert(pins.releaseSources.go.version === '1.26.5', 'Go release pin must be 1.26.5.');
+	assertBase32(pins.releaseSources.go.guixSourceBase32, 'Go Guix source hash');
 	assert(
 		!pins.releaseSources.linux.requiredBuiltIns.includes('STRICT_MODULE_RWX'),
 		'Module RWX hardening must not be claimed while CONFIG_MODULES is disabled.'
 	);
+	assert(pins.releaseSources.linux.requiredValues?.NR_CPUS === '4', 'Linux release pin must require CONFIG_NR_CPUS=4.');
 	assert(
 		pins.releaseSources.edk2.target === 'OvmfPkg/AmdSev/AmdSevX64.dsc',
 		'edk2 target must be AmdSevX64.'
@@ -152,6 +155,10 @@ function verifyWorkflows() {
 		assert(releaseWorkflow.includes('actions/download-artifact@'), 'Publish job must download build assets before release upload.');
 		assert(releaseWorkflow.includes('actions/attest@'), 'Release workflow must use official GitHub artifact attestation.');
 		assert(releaseWorkflow.includes('gateway-launch-policy.json'), 'Release workflow must attest and publish gateway-launch-policy.json.');
+		assert(releaseWorkflow.includes('Verify measured vCPU count'), 'Release workflow must verify the measured vCPU count.');
+		assert(releaseWorkflow.includes("assert.equal(policy.schema, 'stogas.gateway.launch-policy.v1')"), 'Release workflow must require launch policy v1.');
+		assert(releaseWorkflow.includes('assert.equal(manifest.sevSnp.vcpuCount, 4)'), 'Release workflow must require four measured VPs.');
+		assert(!releaseWorkflow.includes('policy.profile'), 'Release workflow must not treat host resources as launch evidence.');
 		assert(
 			releaseWorkflow.includes('dist/gateway/${{ github.ref_name }}/gateway.igvm') &&
 				releaseWorkflow.includes('dist/gateway/${{ github.ref_name }}/gateway-launch-policy.json'),
@@ -198,8 +205,11 @@ function verifyWorkflows() {
 function verifyReleaseSources() {
 	const releaseSource = releaseSchemePaths.map((path) => readFileSync(path, 'utf8')).join('\n');
 	const cmdlineSource = readFileSync(resolve(releaseRoot, 'guix/cmdline.txt'), 'utf8');
-	assert(releaseSource.includes('linux-libre@6.18.35'), 'Release graph must inherit linux-libre@6.18.35.');
+	assert(releaseSource.includes('linux-libre@6.18.38'), 'Release graph must inherit linux-libre@6.18.38.');
 	assert(releaseSource.includes('stogas-linux-6.18'), 'Release graph must use the Stogas kernel derivation.');
+	assert(releaseSource.includes(pins.releaseSources.go.url), 'Go source URL is stale.');
+	assert(releaseSource.includes(pins.releaseSources.go.guixSourceBase32), 'Go source hash is stale.');
+	assert(releaseSource.includes(pins.releaseSources.systemdUkify.url), 'systemd source URL is stale.');
 	assert(releaseSource.includes('OvmfPkg/AmdSev/AmdSevX64.dsc'), 'Release graph must build AmdSevX64 OVMF.');
 	assert(releaseSource.includes(pins.releaseSources.edk2.recursiveGitBase32), 'edk2 recursive source hash is stale.');
 	assert(releaseSource.includes(pins.releaseSources.virtFirmwareRs.guixBase32), 'virt-firmware-rs source hash is stale.');
@@ -216,7 +226,10 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('build-inputs.sha256'), 'Release graph must emit build input hashes.');
 		assert(releaseSource.includes('gateway.init'), 'Release graph must emit the Go init binary.');
 		assert(releaseSource.includes('gateway-launch-policy.json'), 'Release graph must emit the launch policy artifact.');
-		assert(releaseSource.includes('stogas.gateway.launch-policy.v1'), 'Release graph must stamp the launch policy schema.');
+		assert(releaseSource.includes('stogas.gateway.launch-policy.v1'), 'Release graph must stamp launch policy v1.');
+		assert(!releaseSource.includes('stogas.gateway.launch-policy.v2'), 'Release graph must not emit launch policy v2.');
+		assert(!releaseSource.includes('\\"memory_mib\\"'), 'Launch policy must not claim host memory as attested evidence.');
+		assert(releaseSource.includes('\\"vcpuCount\\": 4'), 'Release manifest must record four measured VPs.');
 		assert(releaseSource.includes('\\"policy\\": \\"0x0000000000030000\\"'), 'Launch policy must record the expected SNP policy.');
 		assert(releaseSource.includes('\\"vmpl\\": 0'), 'Launch policy must record VMPL 0.');
 		assert(releaseSource.includes('gateway.kernel'), 'Release graph must emit the kernel image.');
@@ -230,8 +243,10 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('coreGoSumSha256'), 'Release manifest must record core/go.sum hash.');
 		assert(releaseSource.includes('(cons "core/go.mod"'), 'Build input hashes must include core/go.mod.');
 		assert(releaseSource.includes('(cons "core/go.sum"'), 'Build input hashes must include core/go.sum.');
+		assert(releaseSource.includes('(cons "stogas/release/patches/virt-firmware-rs-snp-cpu-count.patch"'), 'Build input hashes must include the SNP CPU-count patch.');
 		assert(releaseSource.includes('igvmmeasure-check-kvm.txt'), 'Release graph must emit KVM measurement output.');
 		assert(releaseSource.includes('"--real16"'), 'Release graph must wrap OVMF with real-mode IGVM entry for QEMU SEV-SNP boot.');
+		assert(releaseSource.includes('"--cpus" "4"'), 'Release graph must wrap exactly four SNP virtual processors.');
 		assert(!releaseSource.includes('"--flat32"'), 'Release graph must not force flat32 OVMF IGVM entry.');
 		assert(!releaseSource.includes('igvm-inspect.txt'), 'Release graph must not publish measurement output as IGVM inspection output.');
 		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
@@ -276,6 +291,8 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('"SECCOMP_FILTER"'), 'Kernel config must explicitly enable seccomp filters.');
 		assert(releaseSource.includes('"PACKET"'), 'Kernel config must explicitly disable raw packet sockets.');
 		assert(releaseSource.includes('"VIRTIO_PCI_LEGACY"'), 'Kernel config must explicitly disable legacy virtio PCI.');
+		assert(releaseSource.includes('(invoke "scripts/config" "--set-val" "NR_CPUS" "4")'), 'Kernel config must set CONFIG_NR_CPUS=4.');
+		assert(releaseSource.includes('"^CONFIG_NR_CPUS=4$"'), 'Kernel build must assert CONFIG_NR_CPUS=4.');
 
 		const buildScript = readFileSync(resolve(releaseRoot, 'scripts/build-release.sh'), 'utf8');
 	const hydrateScript = readFileSync(resolve(releaseRoot, 'scripts/hydrate-guix-closure.sh'), 'utf8');
@@ -295,7 +312,7 @@ function verifyReleaseSources() {
 		assert(!hydrateScript.includes('2>&1 || true'), 'Hydration dry run must fail closed on unexpected Guix errors.');
 		assert(hydrateScript.includes('cat "$dry_run" >&2'), 'Hydration dry-run failure must print Guix output.');
 		assert(!hydrateScript.includes('--no-grafts'), 'Hydration must keep Guix grafts enabled.');
-	assert(hydrateScript.includes('stogas-(gateway-igvm-release|linux-6\\.18'), 'Hydration allow-list must include only Stogas builds.');
+	assert(hydrateScript.includes('stogas-(gateway-igvm-release|go|linux-6\\.18'), 'Hydration allow-list must include only Stogas builds.');
 	assert(hydrateScript.includes('hydrate-go-vendor.sh'), 'Closure hydration must refresh Go vendor cache first.');
 	assert(hydrateScript.includes('hydrate-rust-vendor.sh'), 'Closure hydration must refresh Rust vendor cache first.');
 	assert(goHydrateScript.includes('go mod tidy'), 'Go hydration must tidy the module graph.');
@@ -324,6 +341,7 @@ function verifyReleaseSources() {
 		resolve(releaseRoot, 'locks/igvmmeasure.Cargo.lock'),
 		resolve(releaseRoot, 'patches/virt-firmware-rs-kvm-vmsa-last.patch'),
 		resolve(releaseRoot, 'patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch'),
+		resolve(releaseRoot, 'patches/virt-firmware-rs-snp-cpu-count.patch'),
 		resolve(releaseRoot, 'patches/svsm-igvmmeasure-standalone-cargo.patch'),
 		resolve(releaseRoot, 'patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch')
 	]) {

@@ -1,7 +1,94 @@
 --- a/tools/igvmmeasure/src/igvm_measure.rs
 +++ b/tools/igvmmeasure/src/igvm_measure.rs
-@@ -414,6 +414,26 @@
-         self.check_vmsa(gpa, vmsa)?;
+@@ -56,6 +56,6 @@ impl From<KvmCheckError> for IgvmMeasureError {
+ #[derive(Copy, Clone)]
+ pub enum KvmCheckError {
+-    InvalidVmsaCount,
++    InvalidVmsaVpIndex(u32, u16),
+     InvalidVmsaGpa(u64),
+     InvalidVmsaCr0(u64),
+     InvalidVmsaOrder,
+@@ -64,12 +64,11 @@ pub enum KvmCheckError {
+ impl std::fmt::Display for KvmCheckError {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         match self {
+-            KvmCheckError::InvalidVmsaCount => {
++            KvmCheckError::InvalidVmsaVpIndex(expected, actual) => {
+                 write!(
+                     f,
+-                    "More than one VMSA has been provided \
+-                    in the IGVM file. QEMU/KVM only supports setting of the \
+-                    VMSA for the first virtual CPU."
++                    "VMSA VP index {actual} is out of order; expected contiguous \
++                    VP index {expected}."
+                 )
+             }
+             KvmCheckError::InvalidVmsaGpa(addr) => {
+@@ -94,13 +93,12 @@ impl std::fmt::Display for KvmCheckError {
+             KvmCheckError::InvalidVmsaOrder => {
+                 write!(
+                     f,
+-                    "The VMSA must be the final page \
+-                    directive in the IGVM file. \
+-                    This is because QEMU/KVM measures the VMSA page \
+-                    when the measurement is finalized and not in the \
+-                    order specified in the IGVM file. Make sure your \
+-                    IGVM file places the VMSA directive after any other \
+-                    measured or unmeasured page directives."
++                    "VMSAs must form the final page-directive suffix in the \
++                    IGVM file. This is because QEMU/KVM measures all VMSA pages \
++                    when the measurement is finalized and not in the order \
++                    specified in the IGVM file. Make sure your IGVM file places \
++                    every VMSA directive after all other measured or unmeasured \
++                    page directives."
+                 )
+             }
+         }
+@@ -231,6 +230,11 @@ impl IgvmMeasure {
+                     data,
+                 } => {
+                     if (*compatibility_mask & self.compatibility_mask) != 0 {
++                        if self.check_kvm && (self.vmsa_count > 0) {
++                            return Err(
++                                IgvmMeasureError::from(KvmCheckError::InvalidVmsaOrder).into()
++                            );
++                        }
+                         self.measure_page(&mut ctx, *gpa, flags, *data_type, data)?;
+                     }
+                 }
+@@ -254,10 +258,10 @@ impl IgvmMeasure {
+                 IgvmDirectiveHeader::SnpVpContext {
+                     gpa,
+                     compatibility_mask,
+-                    vp_index: _vp_index,
++                    vp_index,
+                     vmsa,
+                 } => {
+-                    self.measure_vmsa(&mut ctx, *gpa, *compatibility_mask, vmsa)?;
++                    self.measure_vmsa(&mut ctx, *gpa, *compatibility_mask, *vp_index, vmsa)?;
+                 }
+                 IgvmDirectiveHeader::SnpIdBlock {
+                     compatibility_mask,
+@@ -391,7 +395,7 @@ impl IgvmMeasure {
+-    fn check_vmsa(&self, gpa: u64, vmsa: &SevVmsa) -> Result<(), KvmCheckError> {
++    fn check_vmsa(&self, gpa: u64, vp_index: u16, vmsa: &SevVmsa) -> Result<(), KvmCheckError> {
+         if self.check_kvm {
+-            if self.vmsa_count > 0 {
+-                return Err(KvmCheckError::InvalidVmsaCount);
++            if u32::from(vp_index) != self.vmsa_count {
++                return Err(KvmCheckError::InvalidVmsaVpIndex(self.vmsa_count, vp_index));
+             }
+             if gpa != 0xFFFFFFFFF000 {
+                 return Err(KvmCheckError::InvalidVmsaGpa(gpa));
+@@ -408,11 +412,34 @@ impl IgvmMeasure {
+         ctx: &mut IgvmMeasureContext,
+         gpa: u64,
+         _compatibility_mask: u32,
++        vp_index: u16,
+         vmsa: &SevVmsa,
+     ) -> Result<(), Box<dyn Error>> {
+-        self.check_vmsa(gpa, vmsa)?;
++        self.check_vmsa(gpa, vp_index, vmsa)?;
  
          let mut vmsa_page = vmsa.as_bytes().to_vec();
 +        if self.check_kvm {
@@ -19,9 +106,11 @@
 +                | CR4_MCE;
 +            vmsa_page[CR4_OFFSET..CR4_OFFSET + 8].copy_from_slice(&cr4.to_le_bytes());
 +
-+            let rflags =
-+                u64::from_le_bytes(vmsa_page[RFLAGS_OFFSET..RFLAGS_OFFSET + 8].try_into().unwrap())
-+                    | RFLAGS_FIXED_BIT;
++            let rflags = u64::from_le_bytes(
++                vmsa_page[RFLAGS_OFFSET..RFLAGS_OFFSET + 8]
++                    .try_into()
++                    .unwrap(),
++            ) | RFLAGS_FIXED_BIT;
 +            vmsa_page[RFLAGS_OFFSET..RFLAGS_OFFSET + 8].copy_from_slice(&rflags.to_le_bytes());
 +        }
          vmsa_page.resize(PAGE_SIZE_4K as usize, 0);

@@ -4,11 +4,9 @@ import "testing"
 
 func readyState() State {
 	return State{
-		BundleAcceptsActiveCert:    true,
-		BundleContainsNode:         true,
-		BundleLatestVerified:       true,
 		CertificateReady:           true,
 		CertificateSafe:            true,
+		ControlAdmitted:            true,
 		EntropyReady:               true,
 		IdentityReady:              true,
 		QuoteForwardSafe:           true,
@@ -58,20 +56,14 @@ func TestEvaluateFailsClosedWhenQuoteIsMissingOrNotForwardSafe(t *testing.T) {
 	assertReasons(t, result.Reasons, "quote is not ready", "quote is not forward-safe")
 }
 
-func TestEvaluateFailsClosedUntilLatestBundleContainsCurrentCertState(t *testing.T) {
+func TestEvaluateFailsClosedWithoutControlAdmission(t *testing.T) {
 	state := readyState()
-	state.BundleLatestVerified = false
-	state.BundleContainsNode = false
-	state.BundleAcceptsActiveCert = false
+	state.ControlAdmitted = false
 	result := Evaluate(state)
 	if result.Ready {
 		t.Fatal("expected not ready")
 	}
-	assertReasons(t, result.Reasons,
-		"latest bundle is not verified",
-		"node is not in latest bundle",
-		"latest bundle does not accept active certificate",
-	)
+	assertReasons(t, result.Reasons, "control admission lease is absent or expired")
 }
 
 func TestEvaluateFailsClosedForUnsafeCertificate(t *testing.T) {
@@ -119,9 +111,7 @@ func TestEvaluateReasonOrderIsStableForHealthProbesAndDiagnostics(t *testing.T) 
 		"secrets are not ready",
 		"quote is not ready",
 		"quote is not forward-safe",
-		"latest bundle is not verified",
-		"node is not in latest bundle",
-		"latest bundle does not accept active certificate",
+		"control admission lease is absent or expired",
 		"runtime dependencies are unhealthy",
 	)
 }

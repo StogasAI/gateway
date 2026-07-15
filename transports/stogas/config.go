@@ -17,21 +17,19 @@ import (
 )
 
 const (
-	defaultHost               = "127.0.0.1"
-	defaultPort               = "5185"
-	defaultReadinessAddress   = "gateway.local"
-	defaultReadinessPort      = 5185
-	defaultMaxRequestBodyMiB  = 16
-	defaultInfisicalSiteURL   = "https://secrets.stogas.ai"
-	defaultFleetAPIURLLocal   = "http://127.0.0.1:5184/api/fleet"
-	defaultFleetAPIURLStaging = "https://staging.stogas.ai/api/fleet"
-	defaultFleetAPIURLProd    = "https://stogas.ai/api/fleet"
-	defaultConfidentialRegion = "global"
+	defaultHost                   = "127.0.0.1"
+	defaultPort                   = "5185"
+	defaultPrivateReadinessPort   = "5186"
+	defaultMaxRequestBodyMiB      = 16
+	defaultInfisicalSiteURL       = "https://secrets.stogas.ai"
+	defaultFleetAPIURLLocal       = "http://127.0.0.1:5184/api/fleet"
+	defaultFleetAPIURLStaging     = "https://staging.stogas.ai/api/fleet"
+	defaultFleetAPIURLProd        = "https://stogas.ai/api/fleet"
+	defaultConfidentialRegion     = "global"
 
 	confidentialEntropyTimeout    = 10 * time.Second
 	confidentialHeartbeatInterval = 60 * time.Second
 	confidentialQuoteRefresh      = 10 * time.Second
-	confidentialReadinessInterval = 60 * time.Second
 
 	defaultDatabasePoolMaxConns     int32 = 32
 	defaultDatabasePoolMinConns     int32 = 4
@@ -63,6 +61,7 @@ type Config struct {
 	OpenAIAPIKey                string
 	OpenAIBaseURL               string
 	Port                        string
+	PrivateReadinessPort        string
 	TinybirdHost                string
 	TinybirdToken               string
 }
@@ -76,15 +75,11 @@ type ConfidentialConfig struct {
 	CertExpiresAt      time.Time
 	ControlAllowHTTP   bool
 	ControlURL         string
-	EndpointAddress    string
-	EndpointPort       int
 	Enabled            bool
 	EntropyTimeout     time.Duration
 	Environment        string
 	HeartbeatInterval  time.Duration
 	QuoteRefresh       time.Duration
-	ReadinessInterval  time.Duration
-	RequestSecrets     bool
 }
 
 func LoadFromEnv() (Config, error) {
@@ -121,11 +116,12 @@ func LoadFromEnv() (Config, error) {
 		OpenAIAPIKey:                strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
 		OpenAIBaseURL:               strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:                        defaultPort,
+		PrivateReadinessPort:        defaultPrivateReadinessPort,
 		TinybirdHost:                strings.TrimSpace(os.Getenv("TB_HOST_URL")),
 		TinybirdToken:               strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
 	}
 
-	if config.Confidential.RequestSecrets {
+	if config.Confidential.ControlConfigured() {
 		if err := config.Confidential.Validate(); err != nil {
 			return Config{}, err
 		}
@@ -139,7 +135,7 @@ func LoadFromEnv() (Config, error) {
 func loadConfidentialConfigFromEnv() ConfidentialConfig {
 	environment := loadRuntimeEnvironment()
 	confidentialDeployment := environment == "staging" || environment == "production"
-	requestSecrets := confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_REQUEST_SECRETS") == "true"
+	enabled := confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_ENABLED") == "true"
 	activeCertSHA256 := strings.ToLower(strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ACTIVE_CERT_SHA256")))
 	acceptedCertSHA256 := splitCSV(os.Getenv("STOGAS_CONFIDENTIAL_ACCEPTED_CERT_SHA256"))
 	certExpiresAt := time.Time{}
@@ -148,7 +144,7 @@ func loadConfidentialConfigFromEnv() ConfidentialConfig {
 			certExpiresAt = parsed.UTC()
 		}
 	}
-	controlURL := fleetAPIURLForEnvironment(environment, requestSecrets, activeCertSHA256, acceptedCertSHA256)
+	controlURL := fleetAPIURLForEnvironment(environment, enabled)
 	config := ConfidentialConfig{
 		AcceptedCertSHA256: acceptedCertSHA256,
 		AccessClientID:     strings.TrimSpace(os.Getenv("STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID")),
@@ -157,15 +153,11 @@ func loadConfidentialConfigFromEnv() ConfidentialConfig {
 		CertExpiresAt:      certExpiresAt,
 		ControlAllowHTTP:   environment == "local" || os.Getenv("STOGAS_CONFIDENTIAL_CONTROL_ALLOW_INSECURE_LOCAL") == "true",
 		ControlURL:         controlURL,
-		EndpointAddress:    strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS")),
-		EndpointPort:       envInt("STOGAS_CONFIDENTIAL_ENDPOINT_PORT", 0),
-		Enabled:            confidentialDeployment || os.Getenv("STOGAS_CONFIDENTIAL_ENABLED") == "true",
+		Enabled:            enabled,
 		EntropyTimeout:     confidentialEntropyTimeout,
 		Environment:        environment,
 		HeartbeatInterval:  confidentialHeartbeatInterval,
 		QuoteRefresh:       confidentialQuoteRefresh,
-		ReadinessInterval:  confidentialReadinessInterval,
-		RequestSecrets:     requestSecrets,
 	}
 	config.AttesterMode = config.DerivedAttesterMode()
 	return config.WithRuntimeDefaults()
@@ -199,15 +191,15 @@ func defaultFleetAPIURLForEnvironment(environment string) string {
 	}
 }
 
-func fleetAPIURLForEnvironment(environment string, requestSecrets bool, activeCertSHA256 string, acceptedCertSHA256 []string) string {
+func fleetAPIURLForEnvironment(environment string, confidentialEnabled bool) string {
 	if environment == "local" {
+		if !confidentialEnabled {
+			return ""
+		}
 		if override := strings.TrimSpace(os.Getenv("STOGAS_FLEET_API_URL")); override != "" {
 			return override
 		}
-		if requestSecrets || (strings.TrimSpace(activeCertSHA256) == "" && len(acceptedCertSHA256) == 0) {
-			return defaultFleetAPIURLLocal
-		}
-		return ""
+		return defaultFleetAPIURLLocal
 	}
 	return defaultFleetAPIURLForEnvironment(environment)
 }
@@ -264,9 +256,12 @@ func rejectUnsupportedConfidentialKnobs() error {
 		"STOGAS_IGVM_MODE",
 		"STOGAS_CONFIDENTIAL_ENTROPY_TIMEOUT_SECONDS",
 		"STOGAS_CONFIDENTIAL_HEARTBEAT_SECONDS",
+		"STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS",
+		"STOGAS_CONFIDENTIAL_ENDPOINT_PORT",
 		"STOGAS_CONFIDENTIAL_QUOTE_REFRESH_SECONDS",
 		"STOGAS_CONFIDENTIAL_READINESS_SECONDS",
 		"STOGAS_CONFIDENTIAL_RELEASE_ENCRYPTOR",
+		"STOGAS_CONFIDENTIAL_REQUEST_SECRETS",
 	} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return fmt.Errorf("%s is not supported; confidential timing, attestation, and release behavior are fixed by the IGVM and Control policy", name)
@@ -362,10 +357,10 @@ func (c Config) Validate() error {
 	if err := billing.ValidateDatabaseSchema(c.DatabaseSchema); err != nil {
 		return err
 	}
-	if !c.Confidential.RequestSecrets && c.OpenAIAPIKey == "" {
+	if !c.Confidential.ControlConfigured() && c.OpenAIAPIKey == "" {
 		return fmt.Errorf("OPENAI_API_KEY is required")
 	}
-	if !c.Confidential.RequestSecrets && c.AnthropicAPIKey == "" {
+	if !c.Confidential.ControlConfigured() && c.AnthropicAPIKey == "" {
 		return fmt.Errorf("ANTHROPIC_API_KEY is required")
 	}
 	if strings.TrimSpace(c.Host) == "" {
@@ -373,6 +368,9 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Port) == "" {
 		return fmt.Errorf("port is required")
+	}
+	if strings.TrimSpace(c.PrivateReadinessPort) == "" {
+		return fmt.Errorf("private readiness port is required")
 	}
 	if c.MaxRequestBodyMiB <= 0 {
 		return fmt.Errorf("max request body size must be positive")
@@ -388,7 +386,7 @@ type ConfidentialSecretLookup interface {
 }
 
 func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretLookup) error {
-	if config == nil || !config.Confidential.RequestSecrets {
+	if config == nil || !config.Confidential.ControlConfigured() {
 		return nil
 	}
 	if secrets == nil {
@@ -438,9 +436,6 @@ func applyRuntimeSecretsFromEnv(config *Config) {
 
 func (c ConfidentialConfig) Validate() error {
 	if !c.Enabled {
-		if c.RequestSecrets {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_ENABLED=true is required before secret release")
-		}
 		return nil
 	}
 	attesterMode := c.AttesterMode
@@ -455,8 +450,8 @@ func (c ConfidentialConfig) Validate() error {
 	default:
 		return fmt.Errorf("unsupported confidential attester mode %q", attesterMode)
 	}
-	if c.Environment != "local" && c.RequestSecrets && attesterMode != "sev-snp" {
-		return fmt.Errorf("confidential secret release requires sev-snp attestation")
+	if c.Environment != "local" && c.ControlConfigured() && attesterMode != "sev-snp" {
+		return fmt.Errorf("confidential Control provisioning requires sev-snp attestation")
 	}
 	hasConfiguredCertificate := strings.TrimSpace(c.ActiveCertSHA256) != "" || len(c.AcceptedCertSHA256) > 0
 	if hasConfiguredCertificate {
@@ -499,23 +494,6 @@ func (c ConfidentialConfig) Validate() error {
 			return fmt.Errorf("STOGAS_CONFIDENTIAL_HEARTBEAT_SECONDS must be positive")
 		}
 	}
-	if c.ReadinessConfigured() {
-		if !c.ControlConfigured() {
-			return fmt.Errorf("Control heartbeats must be configured before readiness observations")
-		}
-		if strings.TrimSpace(c.EndpointAddress) == "" {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_ENDPOINT_ADDRESS is required when readiness observations are configured")
-		}
-		if c.EndpointPort < 1 || c.EndpointPort > 65535 {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_ENDPOINT_PORT must be between 1 and 65535")
-		}
-		if c.ReadinessInterval <= 0 {
-			return fmt.Errorf("STOGAS_CONFIDENTIAL_READINESS_SECONDS must be positive")
-		}
-	}
-	if c.RequestSecrets && !c.ControlConfigured() {
-		return fmt.Errorf("Control heartbeats must be configured before secret release")
-	}
 	return nil
 }
 
@@ -526,7 +504,7 @@ func (c ConfidentialConfig) DerivedAttesterMode() string {
 	if c.Environment == "local" {
 		return "igvm-native"
 	}
-	if c.ControlConfigured() || c.RequestSecrets {
+	if c.ControlConfigured() {
 		return "sev-snp"
 	}
 	return "igvm-native"
@@ -534,10 +512,6 @@ func (c ConfidentialConfig) DerivedAttesterMode() string {
 
 func (c ConfidentialConfig) ControlConfigured() bool {
 	return strings.TrimSpace(c.ControlURL) != ""
-}
-
-func (c ConfidentialConfig) ReadinessConfigured() bool {
-	return c.ControlConfigured() || strings.TrimSpace(c.EndpointAddress) != "" || c.EndpointPort != 0
 }
 
 func (c ConfidentialConfig) WithRuntimeDefaults() ConfidentialConfig {
@@ -549,17 +523,6 @@ func (c ConfidentialConfig) WithRuntimeDefaults() ConfidentialConfig {
 	}
 	if c.QuoteRefresh == 0 {
 		c.QuoteRefresh = confidentialQuoteRefresh
-	}
-	if c.ReadinessInterval == 0 {
-		c.ReadinessInterval = confidentialReadinessInterval
-	}
-	if c.ControlConfigured() {
-		if strings.TrimSpace(c.EndpointAddress) == "" {
-			c.EndpointAddress = defaultReadinessAddress
-		}
-		if c.EndpointPort == 0 {
-			c.EndpointPort = defaultReadinessPort
-		}
 	}
 	return c
 }

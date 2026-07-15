@@ -11,7 +11,6 @@ import (
 	"io"
 	"strings"
 	"testing"
-	"time"
 
 	"golang.org/x/crypto/hkdf"
 
@@ -24,16 +23,17 @@ func TestStoreInstallsDecryptedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quote := "cXVvdGU"
-	release := testRelease(material)
-	encrypted, err := encryptForTest(material, release, quote, "provider-secret")
-	if err != nil {
-		t.Fatal(err)
+	bundle := testBundle()
+	for _, name := range requiredSecretNames {
+		encrypted, err := encryptForTest(material, bundle, name, "secret-for-"+name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bundle.Secrets = append(bundle.Secrets, encrypted)
 	}
-	release.Secrets = []provision.SecretCiphertext{encrypted}
 
 	store := NewStore()
-	if err := store.Install(InstallInput{Identity: material, QuoteBase64URL: quote, Release: release}); err != nil {
+	if err := store.Install(InstallInput{Bundle: bundle, Identity: material}); err != nil {
 		t.Fatal(err)
 	}
 	if !store.Ready() {
@@ -43,7 +43,7 @@ func TestStoreInstallsDecryptedSecrets(t *testing.T) {
 	if !ok {
 		t.Fatal("secret not found")
 	}
-	if string(secret.Value) != "provider-secret" || secret.Version != "2026-07-01" {
+	if string(secret.Value) != "secret-for-OPENAI_API_KEY" || secret.Version != "2026-07-01" {
 		t.Fatalf("unexpected secret: %#v", secret)
 	}
 }
@@ -53,43 +53,37 @@ func TestDecryptReleaseFailsClosedOnBindingMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := testRelease(material)
-	encrypted, err := encryptForTest(material, release, "cXVvdGU", "provider-secret")
+	bundle := testBundle()
+	encrypted, err := encryptForTest(material, bundle, "OPENAI_API_KEY", "provider-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	release.Secrets = []provision.SecretCiphertext{encrypted}
+	bundle.Secrets = []provision.SecretCiphertext{encrypted}
 
-	if _, err := DecryptRelease(InstallInput{Identity: material, QuoteBase64URL: "different", Release: release}); err == nil {
-		t.Fatal("expected quote/AAD mismatch to fail")
+	if _, err := DecryptRelease(InstallInput{Bundle: bundle, Identity: material}); err != nil {
+		t.Fatal(err)
 	}
-	release.HPKEPublicKey = "wrong"
-	if _, err := DecryptRelease(InstallInput{Identity: material, QuoteBase64URL: "cXVvdGU", Release: release}); err == nil {
-		t.Fatal("expected HPKE public key mismatch to fail")
+	bundle.ReportDataSHA512 = strings.Repeat("4", 128)
+	if _, err := DecryptRelease(InstallInput{Bundle: bundle, Identity: material}); err == nil {
+		t.Fatal("expected report-data/AAD mismatch to fail")
 	}
 }
 
-func testRelease(material *identity.Material) *provision.SecretReleaseResponse {
-	return &provision.SecretReleaseResponse{
-		AttesterMode:     "sev-snp",
-		CreatedAt:        time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
-		Environment:      "staging",
+func testBundle() *provision.SecretBundle {
+	return &provision.SecretBundle{
 		GenerationID:     strings.Repeat("1", 64),
-		HPKEPublicKey:    material.HPKEPublicKey,
-		NodeID:           strings.Repeat("2", 64),
-		QuoteVerifiedAt:  time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
 		ReportDataSHA512: strings.Repeat("3", 128),
 		Schema:           provision.SecretReleaseSchemaV1,
 	}
 }
 
-func encryptForTest(material *identity.Material, release *provision.SecretReleaseResponse, quote string, plaintext string) (provision.SecretCiphertext, error) {
+func encryptForTest(material *identity.Material, bundle *provision.SecretBundle, name string, plaintext string) (provision.SecretCiphertext, error) {
 	secret := provision.SecretCiphertext{
-		KeyID:   "provider",
-		Name:    "OPENAI_API_KEY",
+		KeyID:   "gateway-" + strings.ToLower(name),
+		Name:    name,
 		Version: "2026-07-01",
 	}
-	aad, err := secretReleaseAAD(release, secret, quote)
+	aad, err := secretReleaseAAD(bundle, secret)
 	if err != nil {
 		return provision.SecretCiphertext{}, err
 	}

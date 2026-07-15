@@ -1,0 +1,155 @@
+diff --git a/igvm-tools/src/bin/igvm-wrap.rs b/igvm-tools/src/bin/igvm-wrap.rs
+index f540f9f..d4a7f89 100644
+--- a/igvm-tools/src/bin/igvm-wrap.rs
++++ b/igvm-tools/src/bin/igvm-wrap.rs
+@@ -9,7 +9,7 @@ use std::process::ExitCode;
+ use virtfw_igvm_tools::builder::Builder;
+ use virtfw_igvm_tools::inspect::inspect_igvm;
+ use virtfw_igvm_tools::ovmfmeta::OvmfMeta;
+-use virtfw_igvm_tools::x86regs::{flat32_mode_regs, real_mode_regs};
++use virtfw_igvm_tools::x86regs::{flat32_mode_regs, real_mode_regs, sev_ap_reset_regs};
+ 
+ #[derive(Parser, Debug)]
+ #[command(version, author, name = "igvm-wrap",
+@@ -56,6 +56,15 @@ struct Args {
+     #[arg(long, help_heading = "IGVM build options", conflicts_with = "real16")]
+     flat32: bool,
+ 
++    /// number of SNP virtual processors
++    #[arg(
++        long,
++        value_name = "COUNT",
++        default_value_t = 1,
++        value_parser = clap::value_parser!(u16).range(1..)
++    )]
++    cpus: u16,
++
+     /// print ovmf metadata
+     #[arg(long, help_heading = "Print informations")]
+     meta: bool,
+@@ -177,7 +186,19 @@ fn main() -> ExitCode {
+                 real_mode_regs()
+             };
+             builder.add_snp_platform();
+-            builder.add_snp_vmsa_context(&regs, false);
++            builder.add_snp_vmsa_context(&regs, 0, false);
++            if cfg.cpus > 1 {
++                let Some(reset_addr) = ovmfmeta.as_ref().and_then(|meta| meta.sev_reset) else {
++                    error!(
++                        "OVMF SEV reset metadata is required for more than one SNP virtual processor"
++                    );
++                    return ExitCode::from(1);
++                };
++                let ap_regs = sev_ap_reset_regs(reset_addr);
++                for vp_index in 1..cfg.cpus {
++                    builder.add_snp_vmsa_context(&ap_regs, vp_index, false);
++                }
++            }
+             if let Some(m) = ovmfmeta.as_ref() {
+                 builder.add_ovmf_snp_pages(m);
+             }
+diff --git a/igvm-tools/src/bin/igvm-elfis.rs b/igvm-tools/src/bin/igvm-elfis.rs
+index cc2b27c..c59fcdd 100644
+--- a/igvm-tools/src/bin/igvm-elfis.rs
++++ b/igvm-tools/src/bin/igvm-elfis.rs
+@@ -287 +287 @@
+-        builder.add_snp_vmsa_context(&regs, false);
++        builder.add_snp_vmsa_context(&regs, 0, false);
+diff --git a/igvm-tools/src/builder.rs b/igvm-tools/src/builder.rs
+index 55076ba..630cf38 100644
+--- a/igvm-tools/src/builder.rs
++++ b/igvm-tools/src/builder.rs
+@@ -83,14 +83,19 @@ impl Builder {
+         self
+     }
+ 
+-    pub fn add_snp_vmsa_context(&mut self, regs: &[X86Register], debug: bool) -> &mut Builder {
++    pub fn add_snp_vmsa_context(
++        &mut self,
++        regs: &[X86Register],
++        vp_index: u16,
++        debug: bool,
++    ) -> &mut Builder {
+         let features = SevFeatures::new().with_snp(true).with_debug_swap(debug);
+         let vmsa = vmsa_context(regs, features);
+         let gpa = 0xFFFFFFFFF000;
+         let ctx = IgvmDirectiveHeader::SnpVpContext {
+             gpa,
+             compatibility_mask: SEV_SNP_COMPAT,
+-            vp_index: 0,
++            vp_index,
+             vmsa: Box::new(vmsa),
+         };
+         self.directives.push(ctx);
+diff --git a/igvm-tools/src/ovmfmeta.rs b/igvm-tools/src/ovmfmeta.rs
+index 54e30b3..59e676b 100644
+--- a/igvm-tools/src/ovmfmeta.rs
++++ b/igvm-tools/src/ovmfmeta.rs
+@@ -166,6 +166,7 @@ impl fmt::Display for OvmfRegion {
+ pub struct OvmfMeta<'f> {
+     firmware: &'f [u8],
+     pub regions: Vec<OvmfRegion>,
++    pub sev_reset: Option<u32>,
+ }
+ 
+ impl OvmfMeta<'_> {
+@@ -183,6 +184,7 @@ impl OvmfMeta<'_> {
+         match guid {
+             OVMF_META_SEV_RESET => {
+                 let (addr, _) = u32::read_from_prefix(blk).ok()?;
++                self.sev_reset = Some(addr);
+                 debug!("  sev reset: 0x{addr:x}");
+             }
+             OVMF_META_SEV_SECRET => {
+@@ -251,6 +253,7 @@ impl OvmfMeta<'_> {
+         let mut ovmfmeta = OvmfMeta {
+             firmware,
+             regions: Vec::new(),
++            sev_reset: None,
+         };
+ 
+         let s = firmware.len().checked_sub(0x20)?;
+diff --git a/igvm-tools/src/x86regs.rs b/igvm-tools/src/x86regs.rs
+index d5c9c3a..e09ecef 100644
+--- a/igvm-tools/src/x86regs.rs
++++ b/igvm-tools/src/x86regs.rs
+@@ -202,12 +202,10 @@ fn common_regs() -> Vec<X86Register> {
+     ]
+ }
+ 
+-pub fn real_mode_regs() -> Vec<X86Register> {
++fn reset_regs(reset_addr: u32) -> Vec<X86Register> {
+-    let cr0 = ControlRegister0::reset_fast()
+-        .with_ne(true)
+-        .into();
++    let cr0 = ControlRegister0::reset_fast().with_ne(true).into();
+     let code = SegmentRegister {
+-        base: 0xffff0000,
++        base: u64::from(reset_addr & 0xffff0000),
+         limit: 0xffff,
+         selector: 0xf000,
+         attributes: SegmentAttributes::code16().into(),
+@@ -226,7 +224,7 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+     };
+     let mut regs = vec![
+         X86Register::Cr0(cr0),
+-        X86Register::Rip(0xfff0),
++        X86Register::Rip(u64::from(reset_addr & 0xffff)),
+         X86Register::Cs(code),
+         X86Register::Ss(data),
+         X86Register::Ds(data),
+@@ -240,6 +238,14 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+     regs
+ }
+ 
++pub fn real_mode_regs() -> Vec<X86Register> {
++    reset_regs(0xfffffff0)
++}
++
++pub fn sev_ap_reset_regs(reset_addr: u32) -> Vec<X86Register> {
++    reset_regs(reset_addr)
++}
++
+ pub fn flat32_mode_regs(rip: Option<u64>) -> Vec<X86Register> {
+     let cr0 = ControlRegister0::reset_fast()
+         .with_pe(true)
