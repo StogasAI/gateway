@@ -74,11 +74,11 @@ jobs:
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { readFileSync } from 'node:fs';
-		  const releaseDir = `dist/gateway/${process.env.GITHUB_REF_NAME}`;
-		  const policy = JSON.parse(readFileSync(`${releaseDir}/gateway-launch-policy.json`, 'utf8'));
-		  const manifest = JSON.parse(readFileSync(`${releaseDir}/release-manifest.json`, 'utf8'));
-		  assert.equal(policy.schema, 'stogas.gateway.launch-policy.v1');
-		  assert.equal(manifest.sevSnp.vcpuCount, 4);
+          const releaseDir = `dist/gateway/${process.env.GITHUB_REF_NAME}`;
+          const policy = JSON.parse(readFileSync(`${releaseDir}/gateway-launch-policy.json`, 'utf8'));
+          const manifest = JSON.parse(readFileSync(`${releaseDir}/release-manifest.json`, 'utf8'));
+          assert.equal(policy.schema, 'stogas.gateway.launch-policy.v1');
+          assert.equal(manifest.sevSnp.vcpuCount, 4);
           NODE
 
       - name: Generate GitHub artifact attestation
