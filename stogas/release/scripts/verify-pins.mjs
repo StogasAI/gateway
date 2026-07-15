@@ -230,8 +230,8 @@ function verifyReleaseSources() {
 		assert(!releaseSource.includes('stogas.gateway.launch-policy.v2'), 'Release graph must not emit launch policy v2.');
 		assert(!releaseSource.includes('\\"memory_mib\\"'), 'Launch policy must not claim host memory as attested evidence.');
 		assert(releaseSource.includes('\\"vcpuCount\\": 4'), 'Release manifest must record four measured VPs.');
-		assert(releaseSource.includes('\\"policy\\": \\"0x0000000000030000\\"'), 'Launch policy must record the expected SNP policy.');
-		assert(releaseSource.includes('\\"vmpl\\": 0'), 'Launch policy must record VMPL 0.');
+		assert(releaseSource.includes('\\"policy\\":\\"0x0000000000030000\\"'), 'Launch policy must record the expected SNP policy.');
+		assert(releaseSource.includes('\\"vmpl\\":0'), 'Launch policy must record VMPL 0.');
 		assert(releaseSource.includes('gateway.kernel'), 'Release graph must emit the kernel image.');
 		assert(releaseSource.includes('gateway.initramfs.cpio.zst'), 'Release graph must emit the compressed initramfs.');
 		assert(!releaseSource.includes('gateway.ca-certificates.crt'), 'Release graph must not emit a standalone CA bundle artifact.');
