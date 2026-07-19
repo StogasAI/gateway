@@ -29,7 +29,7 @@ func baseHoldEstimate(state *State) HoldEstimate {
 	if inputTokenLimit > 0 {
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterInputTokens, inputTokenLimit, true, billing.TokenRateHighest)
 	}
-	meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, outputTokenLimit, true, billing.TokenRateHighest)
+	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
 	return HoldEstimate{
 		MaxUSDAtoms: sumMeterAmounts(meters),
 		ProductKey:  resolution.Deployment.ID,
@@ -48,6 +48,14 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 	}
 	promptTokens := state.Signals.PromptTokens()
 	completionTokens := state.Signals.CompletionTokens()
+	reasoningTokens := state.Signals.ReasoningTokens()
+	if reasoningTokens < 0 {
+		reasoningTokens = 0
+	}
+	if reasoningTokens > completionTokens {
+		reasoningTokens = completionTokens
+	}
+	outputTokens := completionTokens - reasoningTokens
 	cachedInputTokens := state.Signals.CachedInputTokens()
 	cacheWrite5mTokens := state.Signals.CacheWrite5mInputTokens()
 	cacheWrite1hTokens := state.Signals.CacheWrite1hInputTokens()
@@ -68,7 +76,8 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCachedInputTokens, cachedInputTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite5mInputTokens, cacheWrite5mTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite1hInputTokens, cacheWrite1hTokens, false, rateMode)
-		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, completionTokens, false, rateMode)
+		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, outputTokens, false, rateMode)
+		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterReasoningTokens, reasoningTokens, false, rateMode)
 	}
 	meters = append(meters, extraMeters...)
 	meters = compactMeterEstimates(meters, pricing)
@@ -80,7 +89,19 @@ func effectivePricingForState(state *State) catalog.Pricing {
 	if state == nil || state.Resolution == nil {
 		return nil
 	}
-	return mergePricing(catalog.ProviderPricing(state.Resolution.Provider), pricingDeploymentForState(state).Pricing)
+	return billing.WithReasoningTokenFallback(mergePricing(catalog.ProviderPricing(state.Resolution.Provider), pricingDeploymentForState(state).Pricing))
+}
+
+func appendOutputTokenHoldCost(meters []catalog.MeterEstimate, pricing catalog.Pricing, quantity int) []catalog.MeterEstimate {
+	_, outputRate, hasOutputRate := billing.PricingRate(pricing, billing.MeterOutputTokens, billing.TokenRateHighest)
+	_, reasoningRate, hasReasoningRate := billing.PricingRate(pricing, billing.MeterReasoningTokens, billing.TokenRateHighest)
+	if hasReasoningRate && (!hasOutputRate || reasoningRate.Cmp(outputRate) > 0) {
+		return billing.AppendTokenMeterCost(meters, pricing, billing.MeterReasoningTokens, quantity, true, billing.TokenRateHighest)
+	}
+	if hasOutputRate {
+		return billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, quantity, true, billing.TokenRateHighest)
+	}
+	return meters
 }
 
 func mergePricing(base catalog.Pricing, overrides catalog.Pricing) catalog.Pricing {
@@ -136,7 +157,7 @@ func pricingDeploymentForState(state *State) catalog.Deployment {
 }
 
 func noUsageFinalPrice(state *State) string {
-	if state == nil || state.BifrostError == nil || billing.ProviderErrorIsInsured(state.BifrostError) {
+	if state == nil || (state.BifrostError != nil && billing.ProviderErrorIsInsured(state.BifrostError)) {
 		return billing.ZeroChargeUSDAtoms
 	}
 	if state.Authorization != nil && state.Authorization.AuthorizedAmount != nil {

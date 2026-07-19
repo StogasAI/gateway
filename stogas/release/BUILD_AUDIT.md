@@ -69,7 +69,7 @@ guix time-machine -C stogas/release/guix/channels.scm -- build \
 
 The final build has no network substitute path and no offload path. Guix grafts remain enabled so pinned-channel security grafts are applied deterministically for that Guix revision. The hydration preflight fails if the final dry run would compile compiler/toolchain/base packages locally. In normal release operation, the final release-authority derivation compiles only the gateway Go payload and assembles already hydrated Guix store inputs. Product-specific Stogas derivations, such as the kernel, OVMF, UKI tools, and IGVM tools, are fixed-source, hash-pinned Guix inputs; they may be built during hydration if no substitute is available, but they are not unpinned fallback work.
 
-Local publish builds keep `guix build --check` enabled so Guix rebuilds the derivation and fails on nondeterministic output before Stogas countersigns. The GitHub draft-release workflow may skip that duplicate rebuild for speed because it only produces a draft artifact; `bun stogas gateway release publish` independently rebuilds the same source locally, compares the IGVM hash and launch measurement against the GitHub artifact, signs only on an exact match, and then publishes the release.
+Stogas authorization rebuilds with `guix build --check`, compares the IGVM hash and launch measurement with the GitHub-attested artifact, and signs the launch policy only on an exact match. This makes the GitHub build and the Stogas authorization independent evidence lanes.
 
 The wrapper keeps an exact output allowlist and fails if the final release directory contains any file beyond the listed artifacts. Do not add release files unless they are required for verification, reproducibility audit, or IGVM smoke/debug.
 
@@ -81,7 +81,7 @@ Release graph files:
 | `stogas/release/guix/modules/stogas/release/packages.scm` | Defines Stogas-local Guix packages for the custom kernel, UKI tooling, OVMF, and IGVM measurement/update tools. |
 | `stogas/release/guix/cmdline.txt` | Fixed guest kernel command line; requests DHCP for the QEMU user-mode guest network. |
 | `stogas/release/guix/os-release` | Fixed UKI OS release metadata. |
-| `.github/workflows/gateway-igvm-release.yml` | Builds the draft release in GitHub Actions from the same deterministic build script. |
+| `.github/workflows/gateway-igvm-release.yml` | Builds and attests the release in GitHub Actions from the same deterministic build script. |
 | `.github/workflows/pr-dependencies.yml` | Verifies that Go dependencies hydrate from `go.mod`/`go.sum` without checked-in vendor code. |
 
 Build flow by file:
@@ -97,7 +97,7 @@ Build flow by file:
 | Final Guix derivation | `stogas/release/guix/release.scm` | Defines the measured release output: copies gateway source without vendor caches, imports the hydrated Go module cache, sets offline Go mode with `GOPROXY=off`/`GOSUMDB=off`, checks `go.mod`/`go.sum` before and after vendoring, runs offline `go mod verify`, regenerates vendor inside the sandbox, checks the vendor source-tree hash, builds the Go `/init`, adds the pinned Guix `nss-certs` bundle at `/etc/ssl/certs/ca-certificates.crt`, creates the deterministic initramfs with single-threaded zstd, builds the UKI, wraps four SNP VPs with `igvm-wrap --cpus 4`, injects the UKI, measures `gateway.igvm` with KVM semantics, and writes policy-v1 launch evidence plus build metadata. |
 | Fixed UKI inputs | `stogas/release/guix/cmdline.txt`, `stogas/release/guix/os-release` | Provide deterministic kernel command line and UKI OS metadata consumed by `release.scm`; the cmdline requests DHCP for the QEMU user-mode guest network. |
 | PR workflow | `.github/workflows/pr-dependencies.yml` | Verifies release pins and Go dependency hydration on dependency/source changes without relying on committed vendor code. |
-| Draft release workflow | `.github/workflows/gateway-igvm-release.yml` | Runs from pushed `v*.*.*` tags, builds with read-only repository authority, packages advanced evidence into `gateway-evidence.tar.zst`, deletes stale draft assets, then publishes the clean draft release from a separate contents-write job after verifying the tag points at the checked-out commit. |
+| GitHub release workflow | `.github/workflows/gateway-igvm-release.yml` | Runs from pushed `v*.*.*` tags, builds with read-only repository authority, packages advanced evidence into `gateway-evidence.tar.zst`, and publishes from a separate contents-write job after verifying the tag points at the checked-out commit. |
 
 ## Package And Toolchain Pins
 
@@ -112,7 +112,7 @@ All direct compiler/build-tool inputs come from the pinned Guix channel. The ful
 | `stogas-edk2-amdsev-ovmf` | Builds AMD SEV OVMF from `OvmfPkg/AmdSev/AmdSevX64.dsc`. | `https://github.com/tianocore/edk2`, commit `b03a21a63e3bd001f52c527e5a57feddb53a690b`, recursive submodules. | Guix recursive base32 `0mpfs9vd9fy6103k83jwd58xcy1j908m6b27bclxmbrc9vim9l8n`; inherits `ovmf-x86-64` inputs and adds `dosfstools`, `grub-efi`, and `mtools`. The AmdSev target currently expects GRUB helper script tooling during the OVMF build, but the final IGVM authorizes the UKI by injected hash; simplifying this target remains an audit focus. |
 | `stogas-virt-firmware-rs-tools` | Builds `igvm-wrap` and `igvm-update`. | `https://gitlab.com/kraxel/virt-firmware-rs/-/archive/e01dffc463934547a42506df656becd9061926f7/virt-firmware-rs-e01dffc463934547a42506df656becd9061926f7.tar.gz` | SHA-256 `f0d242cb0952724f3147ab5c51f6135ef1fdc4b6b634f92acd4f68240f86ea25`; Guix base32 `09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph`; Cargo vendor hash `f255fd2e4b39db99e7c8127d4bcac6b0f06565aa2bd2f1c59669cee8280dd3a5`; inputs include `rust`, `bash-minimal`, `coreutils`, and `findutils`. |
 | `stogas-igvmmeasure` | Builds SVSM `igvmmeasure` for launch measurement calculation. | `https://github.com/coconut-svsm/svsm/archive/8850f7bd766e0b592d01efb67c615a9d8f171269.tar.gz` | SHA-256 `301e0f90615c1d01cf6ca21c0fc3aee477af649b07b82b7a1be402c2d79b960e`; Guix base32 `03lnkgbw40p43dx2pf07kdjayxz4mv1hy752dk7h27awc680y7ih`; Cargo vendor hash `a8e661722a66994ceee5fb73be70acbefcfec0524e81e1c37dc3612527c8618d`; inputs include `rust`, `bash-minimal`, `coreutils`, and `findutils`. |
-| `stogas-gateway-igvm-release` | Assembles the final IGVM release directory. | Local gateway repository source at the release tag. | Direct inputs include `bash-minimal`, `coreutils`, `cpio`, `findutils`, `grep`, `go@1.26`, `gzip`, `nss-certs`, `sed`, `tar`, `zstd`, and the Stogas-built kernel/UKI/OVMF/IGVM tools. |
+| `stogas-gateway-igvm-release` | Assembles the final IGVM release directory, including the root `LICENSE` and `NOTICE`. | Local gateway repository source at the release tag. | Direct inputs include `bash-minimal`, `coreutils`, `cpio`, `findutils`, `grep`, `go@1.26`, `gzip`, `nss-certs`, `sed`, `tar`, `zstd`, and the Stogas-built kernel/UKI/OVMF/IGVM tools. |
 
 ## Patches
 

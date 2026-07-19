@@ -118,9 +118,13 @@ jobs:
             --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
             -I 'zstd -19 --threads=0' \
             -cf gateway-evidence.tar.zst \
+            LICENSE \
+            NOTICE \
             "${evidence_files[@]}"
           rm "${evidence_files[@]}"
           sha256sum \
+            LICENSE \
+            NOTICE \
             gateway.igvm \
             gateway-launch-policy.json \
             launch-measurement.txt \
@@ -135,6 +139,8 @@ jobs:
           set -euo pipefail
           cd "dist/gateway/$GITHUB_REF_NAME"
           expected_files=(
+            LICENSE
+            NOTICE
             gateway.igvm
             gateway-launch-policy.json
             launch-measurement.txt
@@ -201,6 +207,8 @@ jobs:
           release_commit="$(git rev-parse HEAD)"
           test "$(git rev-list -n1 "$tag")" = "$release_commit"
           ASSETS=(
+            "dist/gateway/$tag/LICENSE"
+            "dist/gateway/$tag/NOTICE"
             "dist/gateway/$tag/gateway.igvm"
             "dist/gateway/$tag/gateway-launch-policy.json"
             "dist/gateway/$tag/launch-measurement.txt"

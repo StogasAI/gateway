@@ -251,6 +251,8 @@ function verifyReleaseSources() {
 		assert(!releaseSource.includes('igvm-inspect.txt'), 'Release graph must not publish measurement output as IGVM inspection output.');
 		assert(releaseSource.includes('ukify-inspect.txt'), 'Release graph must emit UKI inspection output.');
 		assert(releaseSource.includes('kernel-config.txt'), 'Release graph must emit the kernel config.');
+		assert(releaseSource.includes('(gateway-file "LICENSE" "LICENSE")'), 'Release graph must package the root LICENSE.');
+		assert(releaseSource.includes('(gateway-file "NOTICE" "NOTICE")'), 'Release graph must package the root NOTICE.');
 		assert(cmdlineSource.includes('ip=dhcp'), 'Kernel cmdline must request DHCP for the stateless QEMU guest network.');
 		assert(releaseSource.includes('\\"platform\\": \\"SEV_SNP\\"'), 'Release manifest must record measured SNP platform.');
 		assert(releaseSource.includes('\\"vmm\\": \\"qemu-kvm\\"'), 'Release manifest must record measured VMM path.');
@@ -307,6 +309,8 @@ function verifyReleaseSources() {
 		assert(buildScript.includes('guix-describe.txt'), 'Build script must add Guix describe evidence.');
 		assert(buildScript.includes('guix-store-requisites.txt'), 'Build script must add Guix store requisite evidence.');
 		assert(buildScript.includes('expected_files=('), 'Build script must keep a tight release output allow-list.');
+		assert(buildScript.includes('    LICENSE'), 'Build script must allow-list the root LICENSE.');
+		assert(buildScript.includes('    NOTICE'), 'Build script must allow-list the root NOTICE.');
 		assert(buildScript.includes('release output contains unexpected files'), 'Build script must fail on clutter files.');
 		assert(buildScript.includes('sha256sum -c SHA256SUMS'), 'Build script must verify generated release checksums.');
 		assert(buildScript.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK'), 'Build script must gate CI no-check builds explicitly.');

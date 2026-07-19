@@ -21,21 +21,16 @@ const (
 
 	apiKeyPrefix       = "sk_stogas_v1_"
 	apiKeyVersion      = uint32(1)
-	apiKeyPayloadBytes = 85
+	apiKeyPayloadBytes = 84
 	apiKeyMACBytes     = 24
 	apiKeyBodyBytes    = apiKeyPayloadBytes + apiKeyMACBytes
-
-	apiKeyTypePersonal    = byte(1)
-	apiKeyTypeExternal    = byte(2)
-	apiKeyTypeProvisioned = byte(3)
 )
 
 var errInvalidAPIKeyShape = errors.New("invalid API key")
 
 type APIKeyClaims struct {
 	KeyID          string
-	KeyType        byte
-	KeyVersion     uint32
+	FormatVersion  uint32
 	OrganizationID string
 	ProvisioningID *string
 	ResponsibleID  string
@@ -69,8 +64,8 @@ func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error)
 		return nil, errInvalidAPIKeyShape
 	}
 
-	keyVersion := binary.BigEndian.Uint32(payload[0:4])
-	if keyVersion != apiKeyVersion {
+	formatVersion := binary.BigEndian.Uint32(payload[0:4])
+	if formatVersion != apiKeyVersion {
 		return nil, errInvalidAPIKeyShape
 	}
 
@@ -91,31 +86,19 @@ func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error)
 		return nil, errInvalidAPIKeyShape
 	}
 
-	keyType := payload[68]
-	provisioningID, err := uuid.FromBytes(payload[69:85])
+	provisioningID, err := uuid.FromBytes(payload[68:84])
 	if err != nil {
 		return nil, errInvalidAPIKeyShape
 	}
 	var provisioningIDString *string
-	switch keyType {
-	case apiKeyTypePersonal, apiKeyTypeExternal:
-		if provisioningID != uuid.Nil {
-			return nil, errInvalidAPIKeyShape
-		}
-	case apiKeyTypeProvisioned:
-		if provisioningID == uuid.Nil {
-			return nil, errInvalidAPIKeyShape
-		}
+	if provisioningID != uuid.Nil {
 		value := provisioningID.String()
 		provisioningIDString = &value
-	default:
-		return nil, errInvalidAPIKeyShape
 	}
 
 	return &APIKeyClaims{
 		KeyID:          keyID.String(),
-		KeyType:        keyType,
-		KeyVersion:     keyVersion,
+		FormatVersion:  formatVersion,
 		OrganizationID: organizationID.String(),
 		ProvisioningID: provisioningIDString,
 		ResponsibleID:  responsibleID.String(),
