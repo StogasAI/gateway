@@ -11,7 +11,7 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
@@ -331,10 +331,6 @@ function stogasEndpointProviderEndpoints(graph) {
 			.map(([endpointId]) => endpointId);
 	}
 	return index;
-}
-
-function unique(items) {
-	return [...new Set(items)];
 }
 
 if (args.has('--clean')) {

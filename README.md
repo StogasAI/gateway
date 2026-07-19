@@ -2,7 +2,7 @@
 
 Public Stogas AI gateway fork built on Maxim Bifrost `core` and provider translation logic.
 
-This repository intentionally keeps only the runtime Go surface and Stogas-owned release tooling:
+This repository contains the runtime Go surface and the reproducible release evidence needed to audit a gateway build:
 
 - `core/`: upstream Bifrost Go module, synced from `maximhq/bifrost` by allowlist.
 - `transports/`: Stogas public HTTP transport and gateway entrypoint.
@@ -11,29 +11,12 @@ This repository intentionally keeps only the runtime Go surface and Stogas-owned
 
 License and attribution:
 
-- The upstream Bifrost-derived work is Apache-2.0. The upstream license text and
-  copyright notice are preserved in `LICENSE`.
-- Stogas changes and repository-scope notes are summarized in `NOTICE`.
+- The repository is Apache-2.0 under the canonical root `LICENSE`.
+- Upstream Bifrost attribution, Stogas LLC ownership, and repository-scope notes are preserved in
+  `NOTICE`.
 - Only `core/` is treated as imported Bifrost runtime code. The remaining
   repository surface is Stogas-owned runtime/release tooling; upstream Bifrost
   deployment, application, and non-runtime artifacts are intentionally unused.
-
-This fork does not support full upstream merges. Import upstream changes by applying only the approved runtime allowlist:
-
-```bash
-git diff --binary <last-synced-upstream-commit>..upstream/main -- .editorconfig .gitattributes LICENSE core | git apply --3way
-```
-
-## Local Commands
-
-```bash
-bun run build
-bun run check
-bun run release:verify-pins
-bun run release:build -- v0.0.0 dist/gateway/v0.0.0
-```
-
-Go unit tests use conventional `*_test.go` filenames beside their package sources under `transports/**` when they cover package-private behavior. Public gateway behavior coverage is centralized in the private monorepo test harness under `apps/tests`.
 
 The inference listener defaults to port `5185`. Readiness is not part of that public router: a separate HTTP listener on port `5186` serves only `GET /ready` and must remain on the private guest/host network. Local callers can select another readiness port with `-private-readiness-port`.
 
@@ -41,8 +24,4 @@ The release artifact is the measured `gateway.igvm` built by `stogas/release`; l
 
 Host SMT is allowed. Host CPU pinning is a performance-only placement choice, not a hostile-hypervisor control; the SEV-SNP security boundary does not rely on dedicated physical cores.
 
-GitHub draft releases use official GitHub artifact attestation and a faster
-single-build path so release candidates do not spend CI time doing a redundant
-Guix rebuild check. The GitHub build still uses pinned public inputs and the
-final no-substitutes Guix build. The Stogas publish/signing step independently
-rebuilds and compares locally before any measurement is accepted into Control.
+Published releases include official GitHub artifact attestations. Stogas independently rebuilds the same pinned Guix derivation and authorizes a launch measurement only when the IGVM hash and measurement match the GitHub artifact exactly.

@@ -25,7 +25,7 @@ func TestParseSignedAPIKey(t *testing.T) {
 	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
 	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apiKeyTypeExternal, "", apiKeyVersion)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, "", apiKeyVersion)
 
 	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
@@ -34,11 +34,11 @@ func TestParseSignedAPIKey(t *testing.T) {
 	if claims.KeyID != keyID || claims.OrganizationID != organizationID || claims.WorkspaceID != workspaceID || claims.ResponsibleID != userID {
 		t.Fatalf("claims = %#v", claims)
 	}
-	if claims.KeyType != apiKeyTypeExternal || claims.ProvisioningID != nil {
-		t.Fatalf("key type/provisioning = %#v", claims)
+	if claims.ProvisioningID != nil {
+		t.Fatalf("provisioning = %#v", claims)
 	}
-	if claims.KeyVersion != 1 {
-		t.Fatalf("KeyVersion = %d, want 1", claims.KeyVersion)
+	if claims.FormatVersion != 1 {
+		t.Fatalf("FormatVersion = %d, want 1", claims.FormatVersion)
 	}
 
 	tamperedIndex := len(apiKeyPrefix) + 10
@@ -59,13 +59,13 @@ func TestParseProvisionedSignedAPIKey(t *testing.T) {
 	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
 	provisioningID := "019de516-c9ac-79cf-b701-4cf1b21f0a8c"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, apiKeyTypeProvisioned, provisioningID, apiKeyVersion)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, provisioningID, apiKeyVersion)
 
 	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
 		t.Fatalf("parseSignedAPIKey returned error: %v", err)
 	}
-	if claims.KeyType != apiKeyTypeProvisioned || claims.ProvisioningID == nil || *claims.ProvisioningID != provisioningID {
+	if claims.ProvisioningID == nil || *claims.ProvisioningID != provisioningID {
 		t.Fatalf("claims = %#v", claims)
 	}
 }
@@ -79,7 +79,6 @@ func TestParseSignedAPIKeyRejectsWrongVersion(t *testing.T) {
 		"019de516-7df8-71d6-80e4-3c62090d4e94",
 		"019de516-9c1b-7061-a9f0-bbdcaa8946e5",
 		"019de516-b10f-786f-97f8-b95c71dfe1b6",
-		apiKeyTypeExternal,
 		"",
 		apiKeyVersion+1,
 	)
@@ -89,7 +88,7 @@ func TestParseSignedAPIKeyRejectsWrongVersion(t *testing.T) {
 	}
 }
 
-func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, keyType byte, provisioningID string, version uint32) string {
+func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, provisioningID string, version uint32) string {
 	t.Helper()
 	payload := make([]byte, apiKeyPayloadBytes)
 	binary.BigEndian.PutUint32(payload[0:4], version)
@@ -101,10 +100,9 @@ func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID 
 	copy(payload[20:36], organizationUUID[:])
 	copy(payload[36:52], workspaceUUID[:])
 	copy(payload[52:68], userUUID[:])
-	payload[68] = keyType
 	if provisioningID != "" {
 		provisioningUUID := uuid.MustParse(provisioningID)
-		copy(payload[69:85], provisioningUUID[:])
+		copy(payload[68:84], provisioningUUID[:])
 	}
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(payload)

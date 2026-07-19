@@ -68,6 +68,8 @@ guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
 (
   cd "$out_dir"
   expected_files=(
+    LICENSE
+    NOTICE
     gateway.igvm
     gateway-launch-policy.json
     gateway.efi
@@ -86,6 +88,8 @@ guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
     SHA256SUMS
   )
   sha256sum \
+    LICENSE \
+    NOTICE \
     gateway.igvm \
     gateway-launch-policy.json \
     gateway.efi \

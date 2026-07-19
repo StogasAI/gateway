@@ -330,16 +330,14 @@ func (s *Service) retrySettle(authorization *Authorization, paramsHash string, a
 	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
-	var lastErr error
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
-		if err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox); err == nil {
+		err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox)
+		if err == nil {
 			return
-		} else {
-			if isPermanentSettleError(err) {
-				return
-			}
-			lastErr = err
+		}
+		if isPermanentSettleError(err) {
+			return
 		}
 		if delay < maxDelay {
 			delay *= 2
@@ -349,9 +347,6 @@ func (s *Service) retrySettle(authorization *Authorization, paramsHash string, a
 		}
 	}
 
-	if lastErr == nil {
-		lastErr = errors.New("postgres settlement did not commit after retry window")
-	}
 	if writeOutbox {
 		s.publishUncommittedFallback(authorization, event)
 	}

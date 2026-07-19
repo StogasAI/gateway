@@ -2,6 +2,7 @@ package attest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"unsafe"
@@ -20,7 +21,7 @@ type SEVGuestDevice struct {
 	CertBufferBytes int
 }
 
-func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) ([]byte, error) {
+func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) (quote []byte, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -32,7 +33,12 @@ func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("open SEV guest device: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			quote = nil
+			err = errors.Join(err, fmt.Errorf("close SEV guest device: %w", closeErr))
+		}
+	}()
 
 	report, certs, err := a.getExtReport(file.Fd(), reportData)
 	if err != nil {

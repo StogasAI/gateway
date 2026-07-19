@@ -2,6 +2,7 @@
   #:use-module (gnu packages)
   #:use-module (guix build-system trivial)
   #:use-module (guix gexp)
+  #:use-module ((guix licenses) #:prefix license:)
   #:use-module (guix packages)
   #:use-module (ice-9 match)
   #:use-module (ice-9 textual-ports)
@@ -73,6 +74,9 @@
 
 (define (source-file path name)
   (local-file (string-append %release-root "/" path) name))
+
+(define (gateway-file path name)
+  (local-file (string-append %gateway-root "/" path) name))
 
 (define (source-directory path name)
   (local-file (string-append %release-root "/" path)
@@ -341,6 +345,8 @@
 	          (define ukify-inspect (string-append out "/ukify-inspect.txt"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
 	          (define build-inputs-sha256 (string-append out "/build-inputs.sha256"))
+	          (define license #$(gateway-file "LICENSE" "LICENSE"))
+	          (define notice #$(gateway-file "NOTICE" "NOTICE"))
 	          (define pins #$(source-file "pins.lock.json" "pins.lock.json"))
 	          (define expected-go-vendor-tree-sha256
 	            (string-trim-both
@@ -543,6 +549,8 @@
 		           (call-with-input-file measurement-path get-string-all))
 		          (copy-file pins (string-append out "/pins.lock.json"))
 	          (copy-file (string-append #$stogas-linux-6-18 "/.config") kernel-config)
+	          (copy-file license (string-append out "/LICENSE"))
+	          (copy-file notice (string-append out "/NOTICE"))
 	          (write-sha256-lines build-inputs-sha256 build-inputs)
 	          (write-artifact-manifest
 	           out
@@ -563,6 +571,8 @@
                (lambda (file)
                  (format port "~a  ~a~%" (sha256 (string-append out "/" file)) file))
 		               '("gateway.igvm"
+		                 "LICENSE"
+		                 "NOTICE"
 		                 "gateway-launch-policy.json"
 		                 "gateway.efi"
 	                 "gateway.init"
@@ -596,4 +606,4 @@
   (description "Builds the gateway Go payload, initramfs, UKI, AmdSev IGVM,
 SEV-SNP launch measurement, manifest, and checksums as one Guix derivation.")
   (home-page "https://stogas.ai")
-  (license #f))
+  (license license:asl2.0))

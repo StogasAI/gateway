@@ -40,8 +40,11 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		if body["quote"] != base64.RawURLEncoding.EncodeToString([]byte("quote-bytes")) {
 			t.Fatalf("quote was not base64url encoded: %#v", body["quote"])
 		}
-		if body["quote_verifier"] != "amd-verifier" || body["quote_verifier_jwt"] != "verifier.jwt" {
-			t.Fatalf("verifier evidence was not sent: %#v", body)
+		if _, ok := body["quote_verifier"]; ok {
+			t.Fatalf("heartbeat must not send legacy verifier metadata: %#v", body)
+		}
+		if _, ok := body["quote_verifier_jwt"]; ok {
+			t.Fatalf("heartbeat must not send legacy verifier JWTs: %#v", body)
 		}
 		reportData, ok := body["report_data"].(map[string]any)
 		if !ok || reportData["schema"] != reportdata.SchemaV1 {
@@ -67,13 +70,11 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		AllowInsecureLocal: true,
 	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
-		CertExpiresAt:    now.Add(90 * 24 * time.Hour),
-		Health:           NodeHealth{Ready: false, LastQuoteError: "drand fetch failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
-		NodeID:           "node-1",
-		ObservedAt:       now,
-		Quote:            snapshot,
-		QuoteVerifier:    "amd-verifier",
-		QuoteVerifierJWT: "verifier.jwt",
+		CertExpiresAt: now.Add(90 * 24 * time.Hour),
+		Health:        NodeHealth{Ready: false, LastQuoteError: "drand fetch failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
+		NodeID:        "node-1",
+		ObservedAt:    now,
+		Quote:         snapshot,
 	})
 	if err != nil {
 		t.Fatal(err)

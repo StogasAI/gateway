@@ -11,6 +11,7 @@ const (
 	MeterCacheWrite5mInputTokens = "cache_write_5m_input_tokens"
 	MeterCacheWrite1hInputTokens = "cache_write_1h_input_tokens"
 	MeterOutputTokens            = "output_tokens"
+	MeterReasoningTokens         = "reasoning_tokens"
 
 	RatePerMillionTokens         = "per_mill_tokens"
 	RatePerMillionContextLTE272K = "per_mill_context_lte_272k"
@@ -23,6 +24,21 @@ const (
 )
 
 type Pricing map[string]map[string]string
+
+// WithReasoningTokenFallback makes reasoning a canonical meter without forcing
+// every provider deployment to duplicate its output rates. An explicitly
+// cataloged reasoning rate always wins.
+func WithReasoningTokenFallback(pricing Pricing) Pricing {
+	if len(pricing) == 0 || len(pricing[MeterReasoningTokens]) > 0 || len(pricing[MeterOutputTokens]) == 0 {
+		return pricing
+	}
+	withFallback := make(Pricing, len(pricing)+1)
+	for meterKey, rates := range pricing {
+		withFallback[meterKey] = rates
+	}
+	withFallback[MeterReasoningTokens] = pricing[MeterOutputTokens]
+	return withFallback
+}
 
 type MeterEstimate struct {
 	MeterKey       string

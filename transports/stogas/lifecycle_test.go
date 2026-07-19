@@ -217,7 +217,7 @@ func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
 	}
 }
 
-func TestFinalPriceUsesAggregateOutputTokensWithoutDoubleCountingDetails(t *testing.T) {
+func TestFinalPricePartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
@@ -243,11 +243,60 @@ func TestFinalPriceUsesAggregateOutputTokensWithoutDoubleCountingDetails(t *test
 	if state.FinalCostUSDAtoms != "1500" {
 		t.Fatalf("expected aggregate-token final cost 1500, got %s", state.FinalCostUSDAtoms)
 	}
-	if len(state.FinalMeters) != 2 {
-		t.Fatalf("expected two final meters, got %#v", state.FinalMeters)
+	if len(state.FinalMeters) != 3 {
+		t.Fatalf("expected three final meters, got %#v", state.FinalMeters)
 	}
-	if state.FinalMeters[1].Quantity != "250" || state.FinalMeters[1].AmountUSDAtoms != "500" {
-		t.Fatalf("expected output meter to price aggregate completion tokens once, got %#v", state.FinalMeters[1])
+	output := findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens)
+	if output == nil || output.Quantity != "70" || output.AmountUSDAtoms != "140" {
+		t.Fatalf("expected non-reasoning output partition, got %#v", state.FinalMeters)
+	}
+	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
+	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSDAtoms != "360" {
+		t.Fatalf("expected reasoning partition at the output fallback rate, got %#v", state.FinalMeters)
+	}
+}
+
+func TestFinalPriceUsesExplicitReasoningRateAndHoldReservesTheHigherOutputRate(t *testing.T) {
+	pricing := catalog.Pricing{
+		billing.MeterOutputTokens:    {billing.RatePerMillionTokens: "2000000"},
+		billing.MeterReasoningTokens: {billing.RatePerMillionTokens: "5000000"},
+	}
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+	}
+	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
+		CompletionTokens: 250,
+		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+			ReasoningTokens: 180,
+		},
+	})
+	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
+		t.Fatalf("FinalPrice returned error: %v", err)
+	}
+	if state.FinalCostUSDAtoms != "1040" {
+		t.Fatalf("expected distinct output and reasoning rates to cost 1040, got %s", state.FinalCostUSDAtoms)
+	}
+	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
+	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSDAtoms != "900" {
+		t.Fatalf("expected explicit reasoning rate, got %#v", state.FinalMeters)
+	}
+	holdMeters := appendOutputTokenHoldCost(nil, pricing, 250)
+	if len(holdMeters) != 1 || holdMeters[0].MeterKey != billing.MeterReasoningTokens || holdMeters[0].AmountUSDAtoms != "1250" {
+		t.Fatalf("expected the output cap held at the higher reasoning rate, got %#v", holdMeters)
+	}
+	outputOnly := catalog.Pricing{
+		billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+	}
+	withFallback := billing.WithReasoningTokenFallback(outputOnly)
+	if _, exists := outputOnly[billing.MeterReasoningTokens]; exists {
+		t.Fatal("reasoning fallback mutated catalog pricing")
+	}
+	if withFallback[billing.MeterReasoningTokens][billing.RatePerMillionTokens] != "2000000" {
+		t.Fatalf("reasoning fallback did not inherit output pricing: %#v", withFallback)
+	}
+	fallbackHold := appendOutputTokenHoldCost(nil, withFallback, 250)
+	if len(fallbackHold) != 1 || fallbackHold[0].MeterKey != billing.MeterOutputTokens || fallbackHold[0].AmountUSDAtoms != "500" {
+		t.Fatalf("equal fallback rates should retain the output hold meter, got %#v", fallbackHold)
 	}
 }
 
@@ -260,8 +309,8 @@ func TestSignalsFromUsageFallsBackWhenProviderAggregateUsageIsPartial(t *testing
 				ReasoningTokens: 50,
 			},
 		})
-		if signals == nil || signals.Prompt != 100 || signals.Completion != 75 {
-			t.Fatalf("signalsFromUsage() = %#v, want prompt=100 completion=75", signals)
+		if signals == nil || signals.Prompt != 100 || signals.Completion != 75 || signals.Reasoning != 50 {
+			t.Fatalf("signalsFromUsage() = %#v, want prompt=100 completion=75 reasoning=50", signals)
 		}
 	})
 
@@ -274,10 +323,34 @@ func TestSignalsFromUsageFallsBackWhenProviderAggregateUsageIsPartial(t *testing
 				RejectedPredictionTokens: 6,
 			},
 		})
-		if signals == nil || signals.Prompt != 100 || signals.Completion != 60 {
-			t.Fatalf("signalsFromUsage() = %#v, want prompt=100 completion=60", signals)
+		if signals == nil || signals.Prompt != 100 || signals.Completion != 60 || signals.Reasoning != 50 {
+			t.Fatalf("signalsFromUsage() = %#v, want prompt=100 completion=60 reasoning=50", signals)
 		}
 	})
+}
+
+func TestFinalPriceClampsInvalidReasoningBreakdownToAggregateCompletion(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+		}}},
+	}
+	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
+		CompletionTokens: 10,
+		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
+			ReasoningTokens: 20,
+		},
+	})
+	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
+		t.Fatalf("FinalPrice returned error: %v", err)
+	}
+	if findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens) != nil {
+		t.Fatalf("invalid provider detail produced negative/non-reasoning output: %#v", state.FinalMeters)
+	}
+	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
+	if reasoning == nil || reasoning.Quantity != "10" || reasoning.AmountUSDAtoms != "20" {
+		t.Fatalf("reasoning detail was not clamped to aggregate completion: %#v", state.FinalMeters)
+	}
 }
 
 func TestDefaultAdapterFinalPriceClassifiesNoUsageErrors(t *testing.T) {
@@ -324,6 +397,28 @@ func TestDefaultAdapterFinalPriceClassifiesNoUsageErrors(t *testing.T) {
 				t.Fatalf("FinalCostUSDAtoms = %s, want %s", state.FinalCostUSDAtoms, tt.wantCost)
 			}
 		})
+	}
+}
+
+func TestDefaultAdapterFinalPriceCapturesHoldForSuccessfulResponseWithoutUsage(t *testing.T) {
+	state := &State{
+		Authorization: &billing.Authorization{AuthorizedAmount: big.NewInt(123)},
+		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
+			MeterKey:       billing.MeterOutputTokens,
+			RateKey:        billing.RatePerMillionTokens,
+			Quantity:       "123",
+			AmountUSDAtoms: "123",
+			HoldRequired:   true,
+		}}},
+	}
+	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
+		t.Fatalf("FinalPrice returned error: %v", err)
+	}
+	if state.FinalCostUSDAtoms != "123" {
+		t.Fatalf("FinalCostUSDAtoms = %s, want captured hold 123", state.FinalCostUSDAtoms)
+	}
+	if len(state.FinalMeters) != 1 || state.FinalMeters[0].HoldRequired {
+		t.Fatalf("expected captured hold meter as a settled final meter, got %#v", state.FinalMeters)
 	}
 }
 

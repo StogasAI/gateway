@@ -1,8 +1,12 @@
 Stogas Gateway
+Copyright 2026 Stogas LLC
 
 This product includes software derived from Maxim Bifrost
 (https://github.com/maximhq/bifrost), licensed under the Apache License,
-Version 2.0. The upstream copyright notice in LICENSE is preserved.
+Version 2.0.
+
+Maxim Bifrost
+Copyright 2025 H3 Labs Inc.
 
 Stogas modifications:
 

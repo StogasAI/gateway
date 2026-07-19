@@ -31,13 +31,11 @@ type Client struct {
 }
 
 type HeartbeatInput struct {
-	CertExpiresAt    time.Time
-	Health           NodeHealth
-	NodeID           string
-	ObservedAt       time.Time
-	Quote            *quote.Snapshot
-	QuoteVerifier    string
-	QuoteVerifierJWT string
+	CertExpiresAt time.Time
+	Health        NodeHealth
+	NodeID        string
+	ObservedAt    time.Time
+	Quote         *quote.Snapshot
 }
 
 type NodeHealth struct {
@@ -47,12 +45,12 @@ type NodeHealth struct {
 }
 
 type HeartbeatResponse struct {
-	CertificateInstruction *CertificateInstruction  `json:"certificate_instruction"`
-	GenerationID           string                   `json:"generation_id"`
-	OK                     bool                     `json:"ok"`
-	Ready                  bool                     `json:"ready"`
-	ReadyUntil             *time.Time               `json:"ready_until"`
-	Secrets                *SecretBundle            `json:"secrets"`
+	CertificateInstruction *CertificateInstruction `json:"certificate_instruction"`
+	GenerationID           string                  `json:"generation_id"`
+	OK                     bool                    `json:"ok"`
+	Ready                  bool                    `json:"ready"`
+	ReadyUntil             *time.Time              `json:"ready_until"`
+	Secrets                *SecretBundle           `json:"secrets"`
 }
 
 type CertificateInstruction struct {
@@ -125,13 +123,6 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 		"report_data":        input.Quote.Payload,
 		"report_data_sha512": strings.ToLower(input.Quote.ReportDataHex),
 	}
-	if strings.TrimSpace(input.QuoteVerifier) != "" {
-		body["quote_verifier"] = strings.TrimSpace(input.QuoteVerifier)
-	}
-	if strings.TrimSpace(input.QuoteVerifierJWT) != "" {
-		body["quote_verifier_jwt"] = strings.TrimSpace(input.QuoteVerifierJWT)
-	}
-
 	var response heartbeatResponseJSON
 	if err := c.postJSON(ctx, "/api/fleet/heartbeat", body, &response); err != nil {
 		return nil, err

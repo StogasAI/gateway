@@ -9,6 +9,7 @@ import (
 type Signals interface {
 	PromptTokens() int
 	CompletionTokens() int
+	ReasoningTokens() int
 	CachedInputTokens() int
 	CacheWrite5mInputTokens() int
 	CacheWrite1hInputTokens() int
@@ -21,6 +22,7 @@ type SearchUsageSignals interface {
 type StandardSignals struct {
 	Prompt            int
 	Completion        int
+	Reasoning         int
 	Cached            int
 	CacheWrite5m      int
 	CacheWrite1h      int
@@ -44,6 +46,13 @@ func (s *StandardSignals) CompletionTokens() int {
 		return 0
 	}
 	return s.Completion
+}
+
+func (s *StandardSignals) ReasoningTokens() int {
+	if s == nil {
+		return 0
+	}
+	return s.Reasoning
 }
 
 func (s *StandardSignals) CachedInputTokens() int {
@@ -97,7 +106,9 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 		}
 	}
 	webSearch := 0
+	reasoningTokens := 0
 	if usage.CompletionTokensDetails != nil {
+		reasoningTokens = usage.CompletionTokensDetails.ReasoningTokens
 		if usage.CompletionTokensDetails.NumSearchQueries != nil {
 			webSearch = *usage.CompletionTokensDetails.NumSearchQueries
 		}
@@ -116,7 +127,7 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	if completionTokens == 0 && usage.CompletionTokensDetails != nil {
 		completionTokens = completionTokenFallback(usage.CompletionTokensDetails)
 	}
-	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
 }
 
 func promptTokenFallback(details *schemas.ChatPromptTokensDetails) int {
@@ -169,6 +180,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	}
 	current.Prompt = next.Prompt
 	current.Completion = next.Completion
+	current.Reasoning = next.Reasoning
 	current.Cached = next.Cached
 	current.CacheWrite5m = next.CacheWrite5m
 	current.CacheWrite1h = next.CacheWrite1h
