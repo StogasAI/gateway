@@ -371,6 +371,37 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	}
 }
 
+func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T) {
+	server := &Server{proofs: &proofhttp.Service{}}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	completed := make(chan struct{})
+	state := &stogas.State{
+		Resolution:           testResolution(),
+		ProcessedRequestJSON: []byte(`{"processed":true}`),
+	}
+
+	server.writeSSEStream(
+		ctx,
+		bifrostCtx,
+		state,
+		make(chan *schemas.BifrostStreamChunk),
+		true,
+		false,
+		cancel,
+		func() { close(completed) },
+	)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
+		t.Fatalf("expected proof failure to return 500, got %d", ctx.Response.StatusCode())
+	}
+	select {
+	case <-completed:
+	case <-time.After(time.Second):
+		t.Fatal("proof failure left request drain tracking active")
+	}
+}
+
 type staticProofQuotes struct {
 	snapshot *quote.Snapshot
 }

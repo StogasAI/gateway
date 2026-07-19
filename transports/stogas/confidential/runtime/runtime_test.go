@@ -197,6 +197,33 @@ func TestStartSendsInitialHeartbeatAndTracksAdmissionLease(t *testing.T) {
 	}
 }
 
+func TestControlShutdownInstructionFailsReadinessAndSignalsOnce(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("9", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null,"shutdown":true}`))
+	}))
+	defer server.Close()
+
+	config := testConfig("mock")
+	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
+	config.ControlAllowHTTP = true
+	config.ControlURL = server.URL
+	config.HeartbeatInterval = time.Hour
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	select {
+	case <-runtime.ShutdownRequested():
+	case <-time.After(time.Second):
+		t.Fatal("shutdown instruction was not delivered")
+	}
+	if runtime.Readiness().Ready {
+		t.Fatal("draining guest remained ready")
+	}
+}
+
 func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 	generationID := strings.Repeat("9", 64)
 	csrCh := make(chan map[string]any, 1)

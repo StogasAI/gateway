@@ -19,13 +19,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
       - name: Restore Stogas release vendor cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: stogas/release/vendor
           key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}

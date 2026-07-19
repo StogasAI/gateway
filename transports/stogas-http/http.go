@@ -48,6 +48,22 @@ func (s *Server) models(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) inference(ctx *fasthttp.RequestCtx) {
+	if s.requests == nil {
+		s.requests = newRequestDrain()
+	}
+	if !s.requests.begin() {
+		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
+			"error": map[string]any{"message": "Gateway is draining", "type": "service_unavailable"},
+		})
+		return
+	}
+	requestComplete := true
+	defer func() {
+		if requestComplete {
+			s.requests.end()
+		}
+	}()
+
 	credential, ok := s.requireInferenceEnvelope(ctx)
 	if !ok {
 		return
@@ -123,7 +139,8 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			s.writeBifrostError(ctx, bifrostErr)
 			return
 		}
-		s.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+		requestComplete = false
+		s.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel, s.requests.end)
 		return
 	case schemas.ResponsesStreamRequest:
 		stream, bifrostErr := s.runtime.Client().ResponsesStreamRequest(bifrostCtx, bifrostReq.ResponsesRequest)
@@ -135,7 +152,8 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			s.writeBifrostError(ctx, bifrostErr)
 			return
 		}
-		s.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel)
+		requestComplete = false
+		s.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel, s.requests.end)
 		return
 	case schemas.ChatCompletionRequest:
 		defer cancel()
@@ -244,7 +262,13 @@ func invalidProviderRequest() error {
 	return catalog.APIError{StatusCode: fasthttp.StatusBadRequest, Type: catalog.ErrorTypeInvalidRequest, Message: "Invalid request for selected provider"}
 }
 
-func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc) {
+func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc, completion ...func()) {
+	completedAsync := false
+	defer func() {
+		if !completedAsync && len(completion) > 0 && completion[0] != nil {
+			completion[0]()
+		}
+	}()
 	streamProof, proofErr := s.newStreamProof(bifrostCtx, state)
 	if proofErr != nil {
 		s.writeProofError(ctx)
@@ -257,8 +281,12 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 	ctx.Response.Header.Set("Connection", "keep-alive")
 	reader := newSSEStreamReader()
 	ctx.Response.SetBodyStream(reader, -1)
+	completedAsync = true
 
 	go func() {
+		if len(completion) > 0 && completion[0] != nil {
+			defer completion[0]()
+		}
 		defer reader.done()
 		defer stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		defer cancel()
