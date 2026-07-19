@@ -7,18 +7,3 @@ Version 2.0.
 
 Maxim Bifrost
 Copyright 2025 H3 Labs Inc.
-
-Stogas modifications:
-
-- `core/` contains the imported Bifrost runtime/provider code. Stogas changes to
-  this directory are gateway-runtime changes only: provider compatibility,
-  request/response behavior, tests, and the minimal adjustments needed by the
-  Stogas public API gateway.
-- `transports/` contains the Stogas public gateway transport, catalog routing,
-  confidential proof/provisioning code, and runtime entrypoints.
-- `stogas/` contains Stogas release tooling, catalog tooling, and deterministic
-  SEV-SNP IGVM build inputs.
-- `.github/` contains Stogas-owned CI and release workflows.
-
-Upstream Bifrost application, deployment, and non-runtime artifacts are not part
-of this public runtime fork and are unused by Stogas Gateway.
