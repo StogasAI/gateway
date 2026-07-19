@@ -15,21 +15,21 @@
       "introductionOpenpgpFingerprint": "BBB0 2DDF 2CEA F6A8 0D1D  E643 A2A0 6DF2 A33A 54FA"
     }
   },
-  "githubActions": {
-    "actions/checkout": {
-      "tag": "v4.2.2",
-      "commit": "11bd71901bbe5b1630ceea73d27597364c9af683",
-      "sourceSha256": "d208694f0c6bafcc85c43bf998637d17c10ff2a09d807325ed8f31a1d86e299d"
+	"githubActions": {
+		"actions/checkout": {
+			"tag": "v7.0.0",
+			"commit": "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
+			"sourceSha256": "a736b8912597917d1e1fde2173e65aa1dc4e3fa509abf0264013870948a1c7c6"
     },
     "actions/attest": {
       "tag": "v4.0.0",
       "commit": "c32b4b8b198b65d0bd9d63490e847ff7b53989d4",
       "sourceSha256": "37935650def6c6b6a3c4e558720ed192a1daea9041a49a82bd1f5a3fb02d181c"
     },
-    "actions/cache": {
-      "tag": "v4.3.0",
-      "commit": "0057852bfaa89a56745cba8c7296529d2fc39830",
-      "sourceSha256": "be6686f05c5415b735c22b64f32e27de9c6fb98f9d25421efff087ac99089e39"
+		"actions/cache": {
+			"tag": "v6.1.0",
+			"commit": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+			"sourceSha256": "a1cba4f9b8125ca18bfd117aefcd97ac16a3e57489ed1a3c26eb32f8fec2124d"
     },
     "actions/upload-artifact": {
       "tag": "v7.0.1",

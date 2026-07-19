@@ -55,6 +55,9 @@ type ControlLoop struct {
 	lastHeartbeatError      error
 	lastSecretError         error
 	lastCertificateError    error
+	draining                bool
+	shutdownOnce            sync.Once
+	shutdownRequested       chan struct{}
 }
 
 var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
@@ -199,6 +202,13 @@ func (r *Runtime) Readiness() readiness.Result {
 	return r.Control.Readiness()
 }
 
+func (r *Runtime) ShutdownRequested() <-chan struct{} {
+	if r == nil || r.Control == nil {
+		return nil
+	}
+	return r.Control.ShutdownRequested()
+}
+
 func (r *Runtime) CreateCertificateCSR(input identity.CSRInput) ([]byte, error) {
 	if r == nil || r.Certs == nil {
 		return nil, errors.New("confidential certificate store is not initialized")
@@ -283,7 +293,15 @@ func newControlLoop(config stogas.ConfidentialConfig, material *identity.Materia
 		nodeID:       deriveNodeID(config, material, catalogHash),
 		quotes:       manager,
 		secrets:      secrets,
+		shutdownRequested: make(chan struct{}),
 	}
+}
+
+func (l *ControlLoop) ShutdownRequested() <-chan struct{} {
+	if l == nil {
+		return nil
+	}
+	return l.shutdownRequested
 }
 
 func (l *ControlLoop) Start(ctx context.Context) {
@@ -350,6 +368,9 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if response.Shutdown {
+		return nil
+	}
 	changed := false
 	if response.Secrets != nil {
 		if err := l.secrets.Install(secretstore.InstallInput{
@@ -401,13 +422,19 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 	}
 	l.mu.Lock()
 	l.generationID = response.GenerationID
-	if response.ReadyUntil != nil {
+	if response.Shutdown {
+		l.draining = true
+		l.admissionReadyUntil = time.Time{}
+	} else if response.ReadyUntil != nil {
 		l.admissionReadyUntil = response.ReadyUntil.UTC()
 	} else {
 		l.admissionReadyUntil = time.Time{}
 	}
 	l.lastHeartbeatError = nil
 	l.mu.Unlock()
+	if response.Shutdown {
+		l.shutdownOnce.Do(func() { close(l.shutdownRequested) })
+	}
 	return response, nil
 }
 
@@ -540,6 +567,9 @@ func (l *ControlLoop) localReadinessResultAt(now time.Time) readiness.Result {
 }
 
 func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
+	l.mu.RLock()
+	draining := l.draining
+	l.mu.RUnlock()
 	quoteReady := false
 	quoteForwardSafe := false
 	if snapshot, err := l.quotes.Current(context.Background()); err == nil && snapshot != nil {
@@ -551,7 +581,7 @@ func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
 	return readiness.State{
 		CertificateReady:           !certState.ExpiresAt.IsZero(),
 		CertificateSafe:            certState.ExpiresAt.Sub(now) > 48*time.Hour,
-		Draining:                   false,
+		Draining:                   draining,
 		EntropyReady:               l.entropyReady,
 		IdentityReady:              true,
 		QuoteForwardSafe:           quoteForwardSafe,

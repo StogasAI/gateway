@@ -15,6 +15,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 	"github.com/valyala/fasthttp"
@@ -37,6 +38,7 @@ type Server struct {
 	readinessServer *fasthttp.Server
 	proofs          *proofhttp.Service
 	secure          *confidentialruntime.Runtime
+	requests        *requestDrain
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
@@ -73,6 +75,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 	s := &Server{
 		config:  config,
 		logger:  logger,
+		requests: newRequestDrain(),
 		runtime: runtime,
 		secure:  secure,
 	}
@@ -167,7 +170,45 @@ func (s *Server) Start() error {
 	case err := <-errCh:
 		s.shutdown()
 		return err
+	case <-s.secureShutdownRequested():
+		s.logger.Info("confidential guest drain requested")
+		idle := s.requests.start()
+		timer := time.NewTimer(guestDrainTimeout())
+		select {
+		case <-idle:
+		case <-timer.C:
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		s.shutdown()
+		return s.powerOffGuest()
 	}
+}
+
+func (s *Server) secureShutdownRequested() <-chan struct{} {
+	if s == nil || s.secure == nil {
+		return nil
+	}
+	return s.secure.ShutdownRequested()
+}
+
+func guestDrainTimeout() time.Duration {
+	const hardCap = 65 * time.Minute
+	if billing.GatewayRequestLifetime < hardCap {
+		return billing.GatewayRequestLifetime
+	}
+	return hardCap
+}
+
+func (s *Server) powerOffGuest() error {
+	if os.Getpid() != 1 || (s.config.Confidential.Environment != "staging" && s.config.Confidential.Environment != "production") {
+		return nil
+	}
+	return syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
 }
 
 func (s *Server) wrapListener(listener net.Listener) net.Listener {

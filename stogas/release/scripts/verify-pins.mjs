@@ -411,6 +411,14 @@ function verifyFileHash(path, expected, label) {
 }
 
 async function verifyNetworkHashes() {
+	for (const [name, action] of Object.entries(pins.githubActions)) {
+		const bytes = await fetchBytes(`https://github.com/${name}/archive/${action.commit}.tar.gz`, name);
+		const actual = createHash('sha256').update(bytes).digest('hex');
+		assert(
+			actual === action.sourceSha256,
+			`${name} source hash mismatch: expected ${action.sourceSha256}, received ${actual}.`
+		);
+	}
 	for (const [name, source] of [
 		['guix-bootstrap', pins.guix.bootstrapBinary],
 		...Object.entries(pins.releaseSources)
@@ -418,7 +426,10 @@ async function verifyNetworkHashes() {
 		if (!source.url || !source.sha256) continue;
 		const bytes = await fetchBytes(source.url, name);
 		const actual = createHash('sha256').update(bytes).digest('hex');
-		assert(actual === source.sha256, `${name} source hash mismatch.`);
+		assert(
+			actual === source.sha256,
+			`${name} source hash mismatch: expected ${source.sha256}, received ${actual}.`
+		);
 	}
 }
 

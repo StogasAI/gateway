@@ -51,6 +51,7 @@ type HeartbeatResponse struct {
 	Ready                  bool                    `json:"ready"`
 	ReadyUntil             *time.Time              `json:"ready_until"`
 	Secrets                *SecretBundle           `json:"secrets"`
+	Shutdown               bool                    `json:"shutdown"`
 }
 
 type CertificateInstruction struct {
@@ -263,6 +264,7 @@ type heartbeatResponseJSON struct {
 	Ready                  bool                        `json:"ready"`
 	ReadyUntil             *string                     `json:"ready_until"`
 	Secrets                *secretBundleJSON           `json:"secrets"`
+	Shutdown               bool                        `json:"shutdown"`
 }
 
 type certificateInstructionJSON struct {
@@ -322,6 +324,7 @@ func parseHeartbeatResponse(response heartbeatResponseJSON, request HeartbeatInp
 		Ready:                  response.Ready,
 		ReadyUntil:             readyUntil,
 		Secrets:                secrets,
+		Shutdown:               response.Shutdown,
 	}, nil
 }
 
