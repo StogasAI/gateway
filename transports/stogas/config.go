@@ -28,7 +28,7 @@ const (
 	defaultConfidentialRegion     = "global"
 
 	confidentialEntropyTimeout    = 10 * time.Second
-	confidentialHeartbeatInterval = 30 * time.Second
+	confidentialHeartbeatInterval = 10 * time.Second
 	confidentialQuoteRefresh      = 10 * time.Second
 
 	defaultDatabasePoolMaxConns     int32 = 32

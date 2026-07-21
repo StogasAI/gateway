@@ -95,6 +95,22 @@ func TestRefreshFailureKeepsLastValidQuote(t *testing.T) {
 	if manager.LastError() == nil {
 		t.Fatal("expected last error to be recorded")
 	}
+	if manager.ConsecutiveFailures() != 1 {
+		t.Fatalf("consecutive failures = %d, want 1", manager.ConsecutiveFailures())
+	}
+	if err := manager.Refresh(context.Background()); err == nil {
+		t.Fatal("expected second refresh failure")
+	}
+	if manager.ConsecutiveFailures() != 2 {
+		t.Fatalf("consecutive failures = %d, want 2", manager.ConsecutiveFailures())
+	}
+	fail.Store(false)
+	if err := manager.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if manager.ConsecutiveFailures() != 0 || manager.LastError() != nil {
+		t.Fatal("successful refresh did not clear failure state")
+	}
 }
 
 func TestRefreshSkipsQuoteGenerationWhenReportDataIsUnchanged(t *testing.T) {

@@ -71,6 +71,9 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, err
 	}
+	if secure != nil {
+		secure.SetRuntimeDependencyProbe(runtime.ProbeDependencies)
+	}
 
 	s := &Server{
 		config:  config,

@@ -170,6 +170,13 @@ func (s *Service) Close() {
 	}
 }
 
+func (s *Service) ProbeDatabase(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("gateway database is unavailable")
+	}
+	return s.db.Ping(ctx)
+}
+
 func (s *Service) ValidateAPIKeyFormat(rawAPIKey string) error {
 	if _, err := s.ParseAPIKey(rawAPIKey); err != nil {
 		return err

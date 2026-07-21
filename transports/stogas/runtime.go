@@ -76,6 +76,13 @@ func (r *Runtime) Billing() *billing.Service {
 	return r.billing
 }
 
+func (r *Runtime) ProbeDependencies(ctx context.Context) error {
+	if r == nil || r.billing == nil {
+		return billing.ErrGatewayUnavailable
+	}
+	return r.billing.ProbeDatabase(ctx)
+}
+
 func (r *Runtime) Close() {
 	if r == nil {
 		return
