@@ -40,6 +40,7 @@ type Manager struct {
 	mu       sync.RWMutex
 	current  *Snapshot
 	lastErr  error
+	failures int
 	running  bool
 	stopOnce sync.Once
 }
@@ -112,6 +113,7 @@ func (m *Manager) Refresh(ctx context.Context) error {
 	m.mu.Lock()
 	m.current = next
 	m.lastErr = nil
+	m.failures = 0
 	m.mu.Unlock()
 	return nil
 }
@@ -147,9 +149,20 @@ func (m *Manager) LastError() error {
 	return m.lastErr
 }
 
+func (m *Manager) ConsecutiveFailures() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.failures
+}
+
 func (m *Manager) recordErr(err error) {
 	m.mu.Lock()
 	m.lastErr = err
+	if err == nil {
+		m.failures = 0
+	} else {
+		m.failures++
+	}
 	m.mu.Unlock()
 }
 

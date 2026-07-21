@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
@@ -194,6 +195,70 @@ func TestStartSendsInitialHeartbeatAndTracksAdmissionLease(t *testing.T) {
 	result := runtime.Control.readinessResult()
 	if !hasReason(result.Reasons, "entropy is not ready") {
 		t.Fatalf("readiness did not include entropy failure: %#v", result)
+	}
+}
+
+func TestLocalReadinessExpiresBeforeControlRejectsStaleQuoteEvidence(t *testing.T) {
+	config := testConfig("mock")
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	snapshot, err := runtime.Quotes.Current(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop := newControlLoop(
+		config,
+		runtime.Identity,
+		runtime.Certs,
+		runtime.Quotes,
+		runtime.Secrets,
+		strings.Repeat("a", 64),
+		true,
+	)
+	if state := loop.localReadinessStateAt(snapshot.GeneratedAt.Add(localQuoteReadyWindow)); !state.QuoteForwardSafe {
+		t.Fatalf("quote should remain locally forward-safe through the configured window: %#v", state)
+	}
+	if state := loop.localReadinessStateAt(snapshot.GeneratedAt.Add(localQuoteReadyWindow + time.Nanosecond)); state.QuoteForwardSafe {
+		t.Fatalf("stale quote remained locally forward-safe: %#v", state)
+	}
+}
+
+func TestRuntimeDependencyProbeFailsLocalReadiness(t *testing.T) {
+	config := testConfig("mock")
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	loop := newControlLoop(
+		config,
+		runtime.Identity,
+		runtime.Certs,
+		runtime.Quotes,
+		runtime.Secrets,
+		strings.Repeat("a", 64),
+		true,
+	)
+	loop.runtimeDependencyProbe = func(context.Context) error {
+		return errors.New("database unavailable")
+	}
+	result := loop.localReadinessResultAt(time.Now())
+	if !hasReason(result.Reasons, "runtime dependencies are unhealthy") {
+		t.Fatalf("database probe failure did not fail local readiness: %#v", result)
+	}
+}
+
+func TestHeartbeatErrorIsBoundedToContractLimit(t *testing.T) {
+	message := lastErrorString(errors.New(strings.Repeat("é", 700)))
+	if characters := len([]rune(message)); characters != 500 {
+		t.Fatalf("heartbeat error length = %d, want 500", characters)
+	}
+	if !utf8.ValidString(message) {
+		t.Fatal("heartbeat error truncation produced invalid UTF-8")
 	}
 }
 

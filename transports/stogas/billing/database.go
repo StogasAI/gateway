@@ -82,6 +82,13 @@ func (db *GatewayDB) Close() {
 	}
 }
 
+func (db *GatewayDB) Ping(ctx context.Context) error {
+	if db == nil || db.pool == nil {
+		return fmt.Errorf("postgres pool is unavailable")
+	}
+	return db.pool.Ping(ctx)
+}
+
 func queryExecMode(mode string) pgx.QueryExecMode {
 	switch mode {
 	case "cache_describe":

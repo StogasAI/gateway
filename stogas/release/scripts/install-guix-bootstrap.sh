@@ -38,13 +38,30 @@ for key in "$guix_root"/share/guix/*.pub; do
   fi
 done
 
-sudo nohup "$guix_bin/guix-daemon" --build-users-group=guixbuild >/tmp/stogas-guix-daemon.log 2>&1 &
+if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
+	sudo tee /etc/systemd/system/guix-daemon.service >/dev/null <<EOF
+[Unit]
+Description=GNU Guix build daemon
+After=network.target
+
+[Service]
+ExecStart=$guix_bin/guix-daemon --build-users-group=guixbuild
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now guix-daemon.service
+else
+	sudo nohup "$guix_bin/guix-daemon" --build-users-group=guixbuild >/tmp/stogas-guix-daemon.log 2>&1 &
+fi
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   echo "PATH=$guix_bin:$PATH" >> "$GITHUB_ENV"
 fi
 
 for _ in $(seq 1 30); do
-  if "$guix_bin/guix" describe >/dev/null 2>&1; then
+	if "$guix_bin/guix" gc --list-roots >/dev/null 2>&1; then
     exit 0
   fi
   sleep 1

@@ -55,6 +55,7 @@ type ControlLoop struct {
 	lastHeartbeatError      error
 	lastSecretError         error
 	lastCertificateError    error
+	runtimeDependencyProbe  func(context.Context) error
 	draining                bool
 	shutdownOnce            sync.Once
 	shutdownRequested       chan struct{}
@@ -69,8 +70,10 @@ var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
 	return entropy.Wait(ctx, nil)
 }
 
-const controlRequestTimeout = 25 * time.Second
-const localQuoteReadyWindow = 10 * time.Minute
+const controlRequestTimeout = 5 * time.Second
+const localQuoteReadyWindow = 45 * time.Second
+const maxConsecutiveQuoteRefreshFailures = 2
+const runtimeDependencyTimeout = time.Second
 
 func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
 	if !config.Enabled {
@@ -109,9 +112,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 			return reportdata.Payload{}, catalog.ErrCatalogUnavailable
 		}
 		if err := drandSource.Refresh(ctx); err != nil {
-			if _, currentErr := drandSource.Current(ctx); currentErr != nil {
-				return reportdata.Payload{}, err
-			}
+			return reportdata.Payload{}, err
 		}
 		beacon, err := drandSource.Current(ctx)
 		if err != nil {
@@ -200,6 +201,15 @@ func (r *Runtime) Readiness() readiness.Result {
 		return readiness.Result{Ready: false, Reasons: []string{"control loop is not configured"}}
 	}
 	return r.Control.Readiness()
+}
+
+func (r *Runtime) SetRuntimeDependencyProbe(probe func(context.Context) error) {
+	if r == nil || r.Control == nil {
+		return
+	}
+	r.Control.mu.Lock()
+	r.Control.runtimeDependencyProbe = probe
+	r.Control.mu.Unlock()
 }
 
 func (r *Runtime) ShutdownRequested() <-chan struct{} {
@@ -575,7 +585,9 @@ func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
 	if snapshot, err := l.quotes.Current(context.Background()); err == nil && snapshot != nil {
 		quoteReady = len(snapshot.Quote) > 0
 		quoteAge := now.Sub(snapshot.GeneratedAt)
-		quoteForwardSafe = quoteAge >= 0 && quoteAge <= localQuoteReadyWindow
+		quoteForwardSafe = quoteAge >= 0 &&
+			quoteAge <= localQuoteReadyWindow &&
+			l.quotes.ConsecutiveFailures() < maxConsecutiveQuoteRefreshFailures
 	}
 	certState := l.certs.State()
 	return readiness.State{
@@ -586,10 +598,22 @@ func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
 		IdentityReady:              true,
 		QuoteForwardSafe:           quoteForwardSafe,
 		QuoteReady:                 quoteReady,
-		RuntimeDependenciesHealthy: true,
+		RuntimeDependenciesHealthy: l.runtimeDependenciesHealthy(),
 		SecretsReady:               l.secrets != nil && l.secrets.Ready(),
 		Serving:                    true,
 	}
+}
+
+func (l *ControlLoop) runtimeDependenciesHealthy() bool {
+	l.mu.RLock()
+	probe := l.runtimeDependencyProbe
+	l.mu.RUnlock()
+	if probe == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), runtimeDependencyTimeout)
+	defer cancel()
+	return probe(ctx) == nil
 }
 
 func (l *ControlLoop) recordHeartbeatError(err error) {
@@ -625,7 +649,12 @@ func lastErrorString(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	const maxHeartbeatErrorCharacters = 500
+	message := []rune(err.Error())
+	if len(message) <= maxHeartbeatErrorCharacters {
+		return string(message)
+	}
+	return string(message[:maxHeartbeatErrorCharacters])
 }
 
 func containsString(values []string, want string) bool {
