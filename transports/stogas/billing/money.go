@@ -22,10 +22,8 @@ func settlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actual
 	actual := parseMoneyOrZeroString(actualCost)
 	refund := new(big.Int).Sub(authorized, actual)
 	switch {
-	case refund.Sign() == 0:
+	case refund.Sign() >= 0:
 		return "complete"
-	case refund.Sign() > 0:
-		return "over_reserved"
 	default:
 		if new(big.Int).Add(available, refund).Sign() < 0 {
 			return "negative_balance"
