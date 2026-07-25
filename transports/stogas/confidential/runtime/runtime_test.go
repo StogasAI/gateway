@@ -34,6 +34,33 @@ func TestStartDisabledIsNoop(t *testing.T) {
 	}
 }
 
+func TestControlDiagnosticsTrackFailureAndRecovery(t *testing.T) {
+	loop := &ControlLoop{}
+	startedAt := time.Now().UTC().Add(-25 * time.Millisecond)
+	loop.recordHeartbeatAttempt(startedAt, context.DeadlineExceeded)
+
+	failed := loop.Diagnostics()
+	if failed.ConsecutiveFailures != 1 ||
+		failed.LastAttemptAt == nil ||
+		failed.LastFailureAt == nil ||
+		failed.LastSuccessAt != nil ||
+		failed.LastDurationMS < 0 ||
+		failed.LastFailureClass != "deadline_exceeded" ||
+		failed.LastFailureMessage == "" {
+		t.Fatalf("unexpected failed heartbeat diagnostics: %#v", failed)
+	}
+
+	loop.recordHeartbeatAttempt(time.Now().UTC(), nil)
+	recovered := loop.Diagnostics()
+	if recovered.ConsecutiveFailures != 0 ||
+		recovered.LastSuccessAt == nil ||
+		recovered.LastFailureAt == nil ||
+		recovered.LastFailureClass != "" ||
+		recovered.LastFailureMessage != "" {
+		t.Fatalf("unexpected recovered heartbeat diagnostics: %#v", recovered)
+	}
+}
+
 func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	config := testConfig("mock")
 	runtime, err := Start(context.Background(), config)
