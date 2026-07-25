@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -20,6 +21,7 @@ import (
 const defaultGuestCaBundlePath = "/etc/ssl/certs/ca-certificates.crt"
 
 const requiredOpenFiles = 65536
+const defaultGoMemoryLimitBytes = 10 * 1024 * 1024 * 1024
 
 func main() {
 	if err := ensureOpenFileLimit(syscall.Getrlimit, syscall.Setrlimit); err != nil {
@@ -27,6 +29,9 @@ func main() {
 	}
 	setDefaultGuestCertFile()
 	_, _ = maxprocs.Set()
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(defaultGoMemoryLimitBytes)
+	}
 
 	config, err := stogas.LoadFromEnv()
 	if err != nil {

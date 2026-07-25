@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -17,6 +18,10 @@ import (
 func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	snapshot := testSnapshot(t, now)
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/fleet/heartbeat" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -39,6 +44,9 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		}
 		if body["quote"] != base64.RawURLEncoding.EncodeToString([]byte("quote-bytes")) {
 			t.Fatalf("quote was not base64url encoded: %#v", body["quote"])
+		}
+		if signature, ok := body["signature"].(string); !ok || signature == "" {
+			t.Fatalf("heartbeat signature was not sent: %#v", body["signature"])
 		}
 		if _, ok := body["quote_verifier"]; ok {
 			t.Fatalf("heartbeat must not send legacy verifier metadata: %#v", body)
@@ -75,6 +83,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		NodeID:        "node-1",
 		ObservedAt:    now,
 		Quote:         snapshot,
+		SigningKey:    signingKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +119,10 @@ func TestSendHeartbeatParsesCertificateInstruction(t *testing.T) {
 
 func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 	generationID := strings.Repeat("a", 64)
-	spkiHash := strings.Repeat("b", 64)
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/fleet/cert/csr" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -119,14 +131,19 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["generation_id"] != generationID || body["order_id"] != "order-1" || body["tls_spki_sha256"] != spkiHash {
+		if body["generation_id"] != generationID || body["order_id"] != "order-1" {
 			t.Fatalf("unexpected CSR submission identity: %#v", body)
 		}
 		if body["csr_der"] != base64.RawURLEncoding.EncodeToString([]byte("csr-der")) {
 			t.Fatalf("CSR DER was not base64url encoded: %#v", body)
 		}
-		if names := body["dns_names"].([]any); len(names) != 2 || names[0] != "gateway.stogas.ai" || names[1] != "api.stogas.ai" {
-			t.Fatalf("unexpected normalized DNS names: %#v", body["dns_names"])
+		if signature, ok := body["signature"].(string); !ok || signature == "" {
+			t.Fatalf("CSR submission signature was not sent: %#v", body["signature"])
+		}
+		for _, removed := range []string{"common_name", "dns_names", "tls_spki_sha256"} {
+			if _, ok := body[removed]; ok {
+				t.Fatalf("CSR submission included client-claimed %s: %#v", removed, body)
+			}
 		}
 		_, _ = w.Write([]byte(`{"generation_id":"` + generationID + `","ok":true,"order_id":"order-1"}`))
 	}))
@@ -134,12 +151,10 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 
 	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.SubmitCertificateCSR(context.Background(), CertificateCSRSubmission{
-		CommonName:    "Gateway.Stogas.AI",
-		CSRDER:        []byte("csr-der"),
-		DNSNames:      []string{"Gateway.Stogas.AI", "api.stogas.ai", "gateway.stogas.ai"},
-		GenerationID:  strings.ToUpper(generationID),
-		OrderID:       "order-1",
-		TLSSPKISHA256: strings.ToUpper(spkiHash),
+		CSRDER:       []byte("csr-der"),
+		GenerationID: strings.ToUpper(generationID),
+		OrderID:      "order-1",
+		SigningKey:   signingKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -287,12 +302,17 @@ func TestClientFailsClosedForUnsafeOrMalformedControlResponses(t *testing.T) {
 func testHeartbeatInput(t *testing.T) HeartbeatInput {
 	t.Helper()
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return HeartbeatInput{
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
 		Health:        NodeHealth{Ready: true, SecretVersions: map[string]string{}},
 		NodeID:        "node-1",
 		ObservedAt:    now,
 		Quote:         testSnapshot(t, now),
+		SigningKey:    signingKey,
 	}
 }
 

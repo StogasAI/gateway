@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -19,32 +21,46 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
-	output, err := service.Build(context.Background(), Input{
-		CatalogNodeIDs:       []string{"stogas_endpoint:responses", "provider:openai", "deployment:gpt-5"},
-		ProcessedRequestJSON: []byte(`{"request":true}`),
-		ResponseJSON:         []byte(`{"response":true}`),
-	})
+	input := Input{
+		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:           "/v1/responses",
+		RequestBody:           []byte(`{"request":true}`),
+		CatalogNodeIDs:        []string{"stogas_endpoint:responses", "provider:openai", "deployment:gpt-5"},
+		ResponseBody:          []byte(`{"response":true}`),
+		E2EETranscriptSHA256: strings.Repeat("a", 64),
+	}
+	output, err := service.Build(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Headers[HeaderQuote] != base64.RawURLEncoding.EncodeToString([]byte("quote")) {
-		t.Fatalf("quote header mismatch: %#v", output.Headers)
+	if len(output.Headers) != 1 || output.Headers[HeaderProof] == "" {
+		t.Fatalf("expected one compact proof header: %#v", output.Headers)
 	}
-	if output.Headers[HeaderResolvedCatalogNodeID] != "stogas_endpoint:responses,provider:openai,deployment:gpt-5" {
-		t.Fatalf("catalog node header mismatch: %#v", output.Headers)
-	}
-	reportDataBytes, err := base64.RawURLEncoding.DecodeString(output.Headers[HeaderReportData])
+	encoded, err := base64.RawURLEncoding.DecodeString(output.Headers[HeaderProof])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(reportDataBytes), `"schema":"stogas.node-report.v1"`) {
-		t.Fatalf("report data header did not contain canonical report data: %s", reportDataBytes)
+	var object Object
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatal(err)
 	}
-	if !proof.Verify(publicKey, output.Headers[HeaderProcessedHash], output.Headers[HeaderProcessedSignature]) {
-		t.Fatal("processed proof signature did not verify")
+	if !reflect.DeepEqual(object, output.Object) {
+		t.Fatalf("proof header and output object diverged: %#v %#v", object, output.Object)
 	}
-	if output.Object.ProcessedHash != output.Headers[HeaderProcessedHash] || output.Object.Quote != output.Headers[HeaderQuote] {
-		t.Fatalf("object and headers diverged: %#v %#v", output.Object, output.Headers)
+	if object.Schema != proof.DomainV1 || object.DrandRound != 1 ||
+		object.SigningPublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
+		t.Fatalf("proof identity context mismatch: %#v", object)
+	}
+	if !proof.VerifyInput(publicKey, proof.Input{
+		RequestID:             input.RequestID,
+		RequestPath:           input.RequestPath,
+		RequestBody:           input.RequestBody,
+		ResponseBody:          input.ResponseBody,
+		CatalogNodeIDs:        input.CatalogNodeIDs,
+		DrandRound:            1,
+		E2EETranscriptSHA256: input.E2EETranscriptSHA256,
+	}, object.ProofHash, object.Signature) {
+		t.Fatal("response proof did not bind its complete receipt")
 	}
 }
 
@@ -55,8 +71,11 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
 	stream, err := service.NewStream(context.Background(), Input{
-		CatalogNodeIDs:       []string{"node-a"},
-		ProcessedRequestJSON: []byte(`{"request":true}`),
+		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:           "/v1/responses",
+		RequestBody:           []byte(`{"request":true}`),
+		CatalogNodeIDs:        []string{"node-a"},
+		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -67,12 +86,16 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !proof.Verify(publicKey, output.Object.ProcessedHash, output.Object.ProcessedSignature) {
+	if !proof.Verify(publicKey, output.Object.ProofHash, output.Object.Signature) {
 		t.Fatal("stream proof signature did not verify")
 	}
 	expected := proof.NewStreamHasher(proof.StreamingInput{
-		ProcessedRequestJSON: []byte(`{"request":true}`),
-		CatalogNodeIDs:       []string{"node-a"},
+		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:           "/v1/responses",
+		RequestBody:           []byte(`{"request":true}`),
+		CatalogNodeIDs:        []string{"node-a"},
+		DrandRound:            1,
+		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	})
 	expected.WriteChunk([]byte(`{"delta":"a"}`))
 	expected.WriteChunk([]byte(`{"delta":"b"}`))
@@ -80,8 +103,8 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Object.ProcessedHash != expectedHash {
-		t.Fatalf("stream hash mismatch: got %s want %s", output.Object.ProcessedHash, expectedHash)
+	if output.Object.ProofHash != expectedHash {
+		t.Fatalf("stream hash mismatch: got %s want %s", output.Object.ProofHash, expectedHash)
 	}
 }
 
@@ -111,9 +134,11 @@ func TestEnabledServiceFailsClosedWhenSignerDoesNotMatchReportData(t *testing.T)
 		Signer: otherPrivateKey,
 	}
 	_, err = service.Build(context.Background(), Input{
-		CatalogNodeIDs:       []string{"node-a"},
-		ProcessedRequestJSON: []byte(`{"request":true}`),
-		ResponseJSON:         []byte(`{"response":true}`),
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"request":true}`),
+		ResponseBody:   []byte(`{"response":true}`),
+		CatalogNodeIDs: []string{"node-a"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not match report-data ed25519 key") {
 		t.Fatalf("expected mismatched signer failure, got %v", err)
@@ -132,9 +157,11 @@ func TestEnabledServiceFailsClosedWhenSnapshotReportDataHashDoesNotMatchPayload(
 		Signer: privateKey,
 	}
 	_, err = service.Build(context.Background(), Input{
-		CatalogNodeIDs:       []string{"node-a"},
-		ProcessedRequestJSON: []byte(`{"request":true}`),
-		ResponseJSON:         []byte(`{"response":true}`),
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"request":true}`),
+		ResponseBody:   []byte(`{"response":true}`),
+		CatalogNodeIDs: []string{"node-a"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "report-data hash mismatch") {
 		t.Fatalf("expected report-data mismatch failure, got %v", err)

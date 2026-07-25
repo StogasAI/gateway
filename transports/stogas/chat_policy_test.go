@@ -23,6 +23,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 	}{
 		{"audio", `{"model":"gpt-5.5","messages":[],"audio":{}}`, "audio is not supported"},
 		{"message audio", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","audio":{"data":"abc"}}]}`, "Only text message content"},
+		{"empty prompt", `{"model":"gpt-5.5","messages":[{"role":"user","content":"  "}]}`, "messages must contain non-empty text"},
 		{"message file id", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_id":"file_123"}]}`, "file_id inputs are not supported"},
 		{"message file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_url":"https://example.com/a.pdf"}]}`, "file_url inputs are not supported"},
 		{"message file data", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_data":"data:text/plain;base64,aGk="}]}`, "file inputs are not supported"},
@@ -80,6 +81,8 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"bad reasoning max tokens", `{"model":"gpt-5.5","messages":[],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
 		{"bad nested reasoning max tokens", `{"model":"gpt-5.5","messages":[],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
 		{"bad reasoning enabled", `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
+		{"unknown reasoning effort", `{"model":"gpt-5.5","messages":[],"reasoning_effort":"ultra"}`, "must be one of"},
+		{"cannot disable always reasoning model", `{"model":"gpt-5-nano","messages":[],"reasoning_effort":"none"}`, "cannot be disabled"},
 		{"chat reasoning summary", `{"model":"gpt-5.5","messages":[],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
 		{"unknown reasoning field", `{"model":"gpt-5.5","messages":[],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
 		{"client user", `{"model":"gpt-5.5","messages":[],"user":"u"}`, "user is not supported"},
@@ -1071,11 +1074,11 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 	}
 }
 
-func TestResponsesReasoningEffortAliasStaysTyped(t *testing.T) {
+func TestResponsesReasoningEffortAliasNormalizesToModelCapability(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","reasoning.effort":"future_effort"}`),
+		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","reasoning.effort":"max"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1092,8 +1095,8 @@ func TestResponsesReasoningEffortAliasStaysTyped(t *testing.T) {
 		t.Fatalf("ToBifrost returned error: %v", err)
 	}
 	reasoning := bifrostReq.ResponsesRequest.Params.Reasoning
-	if reasoning == nil || reasoning.Effort == nil || *reasoning.Effort != "future_effort" {
-		t.Fatalf("expected typed reasoning.effort=future_effort, got %#v", reasoning)
+	if reasoning == nil || reasoning.Effort == nil || *reasoning.Effort != "max" {
+		t.Fatalf("expected canonical reasoning.effort=max before provider conversion, got %#v", reasoning)
 	}
 	if _, ok := bifrostReq.ResponsesRequest.Params.ExtraParams["reasoning.effort"]; ok {
 		t.Fatalf("reasoning.effort must not be forwarded as ExtraParams: %#v", bifrostReq.ResponsesRequest.Params.ExtraParams)
@@ -1111,8 +1114,63 @@ func TestResponsesReasoningEffortAliasStaysTyped(t *testing.T) {
 	if err := json.Unmarshal(wire["reasoning"], &wireReasoning); err != nil {
 		t.Fatalf("wire reasoning not present: body=%s err=%v", wireBytes, err)
 	}
-	if wireReasoning["effort"] != "future_effort" {
-		t.Fatalf("expected wire reasoning.effort=future_effort, got %#v body=%s", wireReasoning, wireBytes)
+	if wireReasoning["effort"] != "high" {
+		t.Fatalf("expected wire reasoning.effort=high, got %#v body=%s", wireReasoning, wireBytes)
+	}
+}
+
+func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+		want string
+	}{
+		{
+			name: "OpenAI explicit minimal mapping",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.5","messages":[],"reasoning_effort":"minimal"}`,
+			want: "minimal",
+		},
+		{
+			name: "Anthropic explicit xhigh mapping",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[],"reasoning":{"effort":"xhigh"}}`,
+			want: "high",
+		},
+		{
+			name: "Anthropic Opus preserves xhigh",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-opus-4-8","input":"hi","reasoning":{"effort":"xhigh"}}`,
+			want: "xhigh",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   tc.path,
+				Body:   []byte(tc.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			request, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+			if err != nil {
+				t.Fatalf("ToBifrost returned error: %v", err)
+			}
+			var effort *string
+			if request.ChatRequest != nil && request.ChatRequest.Params.Reasoning != nil {
+				effort = request.ChatRequest.Params.Reasoning.Effort
+			}
+			if request.ResponsesRequest != nil && request.ResponsesRequest.Params.Reasoning != nil {
+				effort = request.ResponsesRequest.Params.Reasoning.Effort
+			}
+			if effort == nil || *effort != tc.want {
+				t.Fatalf("expected normalized effort %q, got %#v", tc.want, effort)
+			}
+		})
 	}
 }
 

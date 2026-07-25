@@ -33,6 +33,12 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	if !nanoDeployment.ReasoningSupported {
 		t.Fatalf("expected gpt-5-nano reasoning support")
 	}
+	if got := strings.Join(nanoDeployment.ReasoningEfforts, ","); got != "minimal,low,medium,high" {
+		t.Fatalf("expected exact gpt-5-nano reasoning efforts, got %q", got)
+	}
+	if len(nanoDeployment.ReasoningEffortOverrides) != 0 {
+		t.Fatalf("expected Bifrost to own gpt-5-nano effort conversion, got %#v", nanoDeployment.ReasoningEffortOverrides)
+	}
 	if nanoDeployment.ContextWindowTokens != 272000 || nanoDeployment.MaxOutputTokens != 128000 {
 		t.Fatalf("expected gpt-5-nano limits, got context=%d output=%d", nanoDeployment.ContextWindowTokens, nanoDeployment.MaxOutputTokens)
 	}
@@ -225,6 +231,78 @@ func TestCompiledCatalogDrivesRouteDeploymentResolution(t *testing.T) {
 	requestedTierPtr := &requestedTier
 	if applyResolvedDeployment(schemas.OpenAI, &model, &requestedTierPtr, flexDeployment) {
 		t.Fatalf("expected conflicting explicit service tier to be rejected")
+	}
+}
+
+func TestReasoningEffortAdmissionDelegatesProviderConversion(t *testing.T) {
+	tests := []struct {
+		name       string
+		requested  string
+		supported  []string
+		overrides  map[string]string
+		want       string
+		wantError  string
+	}{
+		{
+			name:      "exact model effort passes through",
+			requested: "xhigh",
+			supported: []string{"low", "medium", "high", "xhigh"},
+			want:      "xhigh",
+		},
+		{
+			name:      "standard provider conversion stays with Bifrost",
+			requested: "minimal",
+			supported: []string{"low", "medium", "high"},
+			want:      "minimal",
+		},
+		{
+			name:      "model exception overrides Bifrost default",
+			requested: "xhigh",
+			supported: []string{"low", "medium", "high", "max"},
+			overrides: map[string]string{"xhigh": "high"},
+			want:      "high",
+		},
+		{
+			name:      "none is never approximated",
+			requested: "none",
+			supported: []string{"minimal", "low"},
+			wantError: "cannot be disabled",
+		},
+		{
+			name:      "none passes only when model supports it",
+			requested: "none",
+			supported: []string{"none", "low"},
+			want:      "none",
+		},
+		{
+			name:      "ui default is omission not a wire value",
+			requested: "default",
+			supported: []string{"low"},
+			wantError: "must be one of",
+		},
+		{
+			name:      "non reasoning model",
+			requested: "medium",
+			wantError: "not supported",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normalizeReasoningEffort(tc.requested, tc.supported, tc.overrides)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("expected %q error, got %v", tc.wantError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeReasoningEffort returned error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
 	}
 }
 

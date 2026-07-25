@@ -49,7 +49,8 @@ from authorize_gateway_hold(
   $5::text,
   $6::numeric,
   $7::timestamptz,
-  $8::text
+  $8::text,
+  $9::boolean
 );
 `
 
@@ -200,6 +201,14 @@ func (s *Service) AuthorizeRequest(ctx context.Context, rawAPIKey string, reques
 }
 
 func (s *Service) AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*Authorization, error) {
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, requestLifetime, false)
+}
+
+func (s *Service) AuthorizeSingleUseRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*Authorization, error) {
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, requestLifetime, true)
+}
+
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
 	if err := s.ValidateAPIKeyFormat(rawAPIKey); err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
@@ -218,7 +227,7 @@ func (s *Service) AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 	row := authorizeRow{}
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
 	defer cancel()
-	err = s.db.pool.QueryRow(queryCtx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, amountUSDAtoms, expiresAt, paramsHash).Scan(
+	err = s.db.pool.QueryRow(queryCtx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, amountUSDAtoms, expiresAt, paramsHash, singleUse).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
 	)
 	if err != nil {
@@ -232,6 +241,8 @@ func (s *Service) AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 		return nil, &billingError{err: ErrRequestAlreadyUsed, statusCode: 409}
 	case "params_mismatch":
 		return nil, &billingError{err: ErrParamsMismatch, statusCode: 409}
+	case "authorization_closed":
+		return nil, &billingError{err: ErrAuthorizationClosed, statusCode: 409}
 	case "expired":
 		return nil, &billingError{err: ErrRequestAlreadyUsed, statusCode: 409}
 	case "insufficient_balance":

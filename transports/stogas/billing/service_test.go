@@ -37,8 +37,8 @@ func TestParseSignedAPIKey(t *testing.T) {
 	if claims.ProvisioningID != nil {
 		t.Fatalf("provisioning = %#v", claims)
 	}
-	if claims.FormatVersion != 1 {
-		t.Fatalf("FormatVersion = %d, want 1", claims.FormatVersion)
+	if claims.FormatVersion != apiKeyVersion {
+		t.Fatalf("FormatVersion = %d, want %d", claims.FormatVersion, apiKeyVersion)
 	}
 
 	tamperedIndex := len(apiKeyPrefix) + 10
@@ -88,6 +88,32 @@ func TestParseSignedAPIKeyRejectsWrongVersion(t *testing.T) {
 	}
 }
 
+func TestParseSignedAPIKeyRejectsZeroIssuanceEntropy(t *testing.T) {
+	secret := "test-token-pepper"
+	rawKey := testSignedAPIKey(
+		t,
+		secret,
+		"019de515-eabf-7c0e-89bd-400629a79580",
+		"019de516-7df8-71d6-80e4-3c62090d4e94",
+		"019de516-9c1b-7061-a9f0-bbdcaa8946e5",
+		"019de516-b10f-786f-97f8-b95c71dfe1b6",
+		"",
+		apiKeyVersion,
+	)
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
+	if err != nil {
+		t.Fatalf("decode key: %v", err)
+	}
+	clear(body[84:100])
+	hasher := hmac.New(sha256.New, []byte(secret))
+	_, _ = hasher.Write(body[:apiKeyPayloadBytes])
+	copy(body[apiKeyPayloadBytes:], hasher.Sum(nil)[:apiKeyMACBytes])
+
+	if _, err := parseSignedAPIKey(apiKeyPrefix+base64.RawURLEncoding.EncodeToString(body), secret); err == nil {
+		t.Fatal("expected zero issuance entropy to be rejected")
+	}
+}
+
 func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, provisioningID string, version uint32) string {
 	t.Helper()
 	payload := make([]byte, apiKeyPayloadBytes)
@@ -103,6 +129,9 @@ func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID 
 	if provisioningID != "" {
 		provisioningUUID := uuid.MustParse(provisioningID)
 		copy(payload[68:84], provisioningUUID[:])
+	}
+	for index := 84; index < 100; index++ {
+		payload[index] = byte(index - 83)
 	}
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(payload)

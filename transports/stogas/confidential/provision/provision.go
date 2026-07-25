@@ -3,6 +3,7 @@ package provision
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ type HeartbeatInput struct {
 	NodeID        string
 	ObservedAt    time.Time
 	Quote         *quote.Snapshot
+	SigningKey    ed25519.PrivateKey
 }
 
 type NodeHealth struct {
@@ -66,12 +68,10 @@ type CertificateInstruction struct {
 }
 
 type CertificateCSRSubmission struct {
-	CommonName    string
-	CSRDER        []byte
-	DNSNames      []string
-	GenerationID  string
-	OrderID       string
-	TLSSPKISHA256 string
+	CSRDER       []byte
+	GenerationID string
+	OrderID      string
+	SigningKey   ed25519.PrivateKey
 }
 
 type CertificateCSRSubmissionResponse struct {
@@ -114,6 +114,10 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	if input.ObservedAt.IsZero() {
 		input.ObservedAt = time.Now().UTC()
 	}
+	signature, err := signHeartbeat(input)
+	if err != nil {
+		return nil, err
+	}
 	body := map[string]any{
 		"cert_expires_at":    formatTime(input.CertExpiresAt),
 		"health":             input.Health,
@@ -123,6 +127,7 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 		"quote_generated_at": formatTime(input.Quote.GeneratedAt),
 		"report_data":        input.Quote.Payload,
 		"report_data_sha512": strings.ToLower(input.Quote.ReportDataHex),
+		"signature":           signature,
 	}
 	var response heartbeatResponseJSON
 	if err := c.postJSON(ctx, "/api/fleet/heartbeat", body, &response); err != nil {
@@ -141,22 +146,15 @@ func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSu
 	if len(input.CSRDER) == 0 {
 		return nil, errors.New("certificate CSR DER is required")
 	}
-	if input.TLSSPKISHA256 == "" {
-		return nil, errors.New("certificate CSR TLS SPKI hash is required")
-	}
-	dnsNames := normalizeStringSet(input.DNSNames)
-	if len(dnsNames) == 0 {
-		return nil, errors.New("certificate CSR DNS names are required")
+	signature, err := signCertificateCSRSubmission(input)
+	if err != nil {
+		return nil, err
 	}
 	body := map[string]any{
-		"csr_der":         base64.RawURLEncoding.EncodeToString(input.CSRDER),
-		"dns_names":       dnsNames,
-		"generation_id":   strings.ToLower(input.GenerationID),
-		"order_id":        input.OrderID,
-		"tls_spki_sha256": strings.ToLower(input.TLSSPKISHA256),
-	}
-	if strings.TrimSpace(input.CommonName) != "" {
-		body["common_name"] = strings.TrimSpace(input.CommonName)
+		"csr_der":       base64.RawURLEncoding.EncodeToString(input.CSRDER),
+		"generation_id": strings.ToLower(input.GenerationID),
+		"order_id":      input.OrderID,
+		"signature":     signature,
 	}
 
 	var response certificateCSRSubmissionResponseJSON

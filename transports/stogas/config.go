@@ -21,6 +21,7 @@ const (
 	defaultPort                   = "5185"
 	defaultPrivateReadinessPort   = "5186"
 	defaultMaxRequestBodyMiB      = 16
+	maxRequestBodyMiB             = 128
 	defaultInfisicalSiteURL       = "https://secrets.stogas.ai"
 	defaultFleetAPIURLLocal       = "http://127.0.0.1:5184/api/fleet"
 	defaultFleetAPIURLStaging     = "https://staging.stogas.ai/api/fleet"
@@ -374,6 +375,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxRequestBodyMiB <= 0 {
 		return fmt.Errorf("max request body size must be positive")
+	}
+	if c.MaxRequestBodyMiB > maxRequestBodyMiB {
+		return fmt.Errorf("max request body size cannot exceed %d MiB", maxRequestBodyMiB)
 	}
 	if err := c.Confidential.Validate(); err != nil {
 		return err

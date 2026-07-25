@@ -6,7 +6,7 @@ models:
   series: GPT-4o
   snapshot: 2025-03-11
   flavors: [search, preview]
-  reasoning: false
+  reasoningEfforts: []
   contextWindowTokens: 128000
   maxOutputTokens: 16384
   inputModalities: [text, image]

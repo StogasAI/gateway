@@ -398,6 +398,7 @@ func validateChatMessagesTextOnly(raw json.RawMessage) error {
 	if err := sonic.Unmarshal(raw, &messages); err != nil {
 		return invalidRequest("messages must be an array")
 	}
+	hasText := false
 	for _, message := range messages {
 		if err := validateTextOnlyMediaFields(message, "Only text message content is supported"); err != nil {
 			return err
@@ -407,7 +408,15 @@ func validateChatMessagesTextOnly(raw json.RawMessage) error {
 			continue
 		}
 		trimmed := strings.TrimSpace(string(contentRaw))
-		if trimmed == "" || trimmed == "null" || trimmed[0] == '"' {
+		if trimmed == "" || trimmed == "null" {
+			continue
+		}
+		if trimmed[0] == '"' {
+			var content string
+			if err := sonic.Unmarshal(contentRaw, &content); err != nil {
+				return invalidRequest("message content must be text")
+			}
+			hasText = hasText || strings.TrimSpace(content) != ""
 			continue
 		}
 		var blocks []map[string]json.RawMessage
@@ -421,7 +430,15 @@ func validateChatMessagesTextOnly(raw json.RawMessage) error {
 			if rawString(block["type"]) != "text" {
 				return invalidRequest("Only text message content is supported")
 			}
+			var text string
+			if err := sonic.Unmarshal(block["text"], &text); err != nil {
+				return invalidRequest("text content must be a string")
+			}
+			hasText = hasText || strings.TrimSpace(text) != ""
 		}
+	}
+	if len(messages) > 0 && !hasText {
+		return invalidRequest("messages must contain non-empty text")
 	}
 	return nil
 }

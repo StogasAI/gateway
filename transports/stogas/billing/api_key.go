@@ -21,7 +21,7 @@ const (
 
 	apiKeyPrefix       = "sk_stogas_v1_"
 	apiKeyVersion      = uint32(1)
-	apiKeyPayloadBytes = 84
+	apiKeyPayloadBytes = 100
 	apiKeyMACBytes     = 24
 	apiKeyBodyBytes    = apiKeyPayloadBytes + apiKeyMACBytes
 )
@@ -94,6 +94,16 @@ func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error)
 	if provisioningID != uuid.Nil {
 		value := provisioningID.String()
 		provisioningIDString = &value
+	}
+	issuanceEntropyIsZero := true
+	for _, value := range payload[84:100] {
+		if value != 0 {
+			issuanceEntropyIsZero = false
+			break
+		}
+	}
+	if issuanceEntropyIsZero {
+		return nil, errInvalidAPIKeyShape
 	}
 
 	return &APIKeyClaims{

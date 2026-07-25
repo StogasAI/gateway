@@ -50,6 +50,10 @@ func (f *fakeBillingAuthorizer) AuthorizeRequestWithDuration(ctx context.Context
 	return nil, nil
 }
 
+func (f *fakeBillingAuthorizer) AuthorizeSingleUseRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*billing.Authorization, error) {
+	return f.AuthorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, requestLifetime)
+}
+
 func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent) error {
 	f.finalEvents = append(f.finalEvents, event)
 	return nil
@@ -128,6 +132,33 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
 	if currentRequestID != initialRequestID {
 		t.Fatalf("expected request ID to remain unchanged, got %q", currentRequestID)
+	}
+}
+
+func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
+	requestID := "11111111-1111-1111-1111-111111111111"
+	replayErr := &statusError{err: billing.ErrAuthorizationClosed, statusCode: 409}
+	authorizer := &fakeBillingAuthorizer{errors: []error{replayErr}}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
+	state := NewState(&catalog.ResolvedRequest{
+		Route:       catalog.RouteChat,
+		RequestType: schemas.ChatCompletionRequest,
+		Provider:    schemas.OpenAI,
+		Model:       "gpt-5",
+	}, "sk-user", nil, DefaultAdapter{})
+	state.SingleUseRequestID = true
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}
+
+	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrAuthorizationClosed) {
+		t.Fatalf("AuthorizeState error = %v, want authorization closed", err)
+	}
+	if len(authorizer.attempts) != 1 || authorizer.attempts[0] != requestID {
+		t.Fatalf("authorization attempts = %#v, want the bound request id exactly once", authorizer.attempts)
+	}
+	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
+	if currentRequestID != requestID {
+		t.Fatalf("encrypted request ID changed to %q", currentRequestID)
 	}
 }
 

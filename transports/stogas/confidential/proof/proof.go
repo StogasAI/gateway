@@ -9,36 +9,56 @@ import (
 	"hash"
 )
 
-const DomainV1 = "stogas.processed-proof.v1"
+const DomainV1 = "stogas.response-proof.v1"
 
 type Input struct {
-	ProcessedRequestJSON []byte
-	ResponseJSON         []byte
-	CatalogNodeIDs       []string
+	RequestID             string
+	RequestPath           string
+	RequestBody           []byte
+	ResponseBody          []byte
+	CatalogNodeIDs        []string
+	DrandRound            uint64
+	E2EETranscriptSHA256 string
 }
 
 type StreamingInput struct {
-	ProcessedRequestJSON []byte
-	CatalogNodeIDs       []string
+	RequestID             string
+	RequestPath           string
+	RequestBody           []byte
+	CatalogNodeIDs        []string
+	DrandRound            uint64
+	E2EETranscriptSHA256 string
 }
 
 type Payload struct {
-	Domain         string   `json:"domain"`
-	RequestSHA256  string   `json:"request_sha256"`
-	ResponseSHA256 string   `json:"response_sha256"`
-	CatalogNodeIDs []string `json:"catalog_node_ids"`
-	Streaming      bool     `json:"streaming"`
+	Schema                string   `json:"schema"`
+	RequestID             string   `json:"request_id"`
+	RequestPath           string   `json:"request_path"`
+	RequestSHA256         string   `json:"request_sha256"`
+	ResponseSHA256        string   `json:"response_sha256"`
+	CatalogNodeIDs        []string `json:"catalog_node_ids"`
+	DrandRound            uint64   `json:"drand_round"`
+	Streaming             bool     `json:"streaming"`
+	E2EETranscriptSHA256 string   `json:"e2ee_transcript_sha256,omitempty"`
 }
 
 func Hash(input Input) (string, error) {
-	payload := Payload{
-		Domain:         DomainV1,
-		RequestSHA256:  sha256Hex(input.ProcessedRequestJSON),
-		ResponseSHA256: sha256Hex(input.ResponseJSON),
-		CatalogNodeIDs: append([]string(nil), input.CatalogNodeIDs...),
-		Streaming:      false,
+	payload := PayloadFor(input)
+	return HashPayload(payload)
+}
+
+func PayloadFor(input Input) Payload {
+	return Payload{
+		Schema:                DomainV1,
+		RequestID:             input.RequestID,
+		RequestPath:           input.RequestPath,
+		RequestSHA256:         sha256Hex(input.RequestBody),
+		ResponseSHA256:        sha256Hex(input.ResponseBody),
+		CatalogNodeIDs:        append([]string(nil), input.CatalogNodeIDs...),
+		DrandRound:            input.DrandRound,
+		Streaming:             false,
+		E2EETranscriptSHA256: input.E2EETranscriptSHA256,
 	}
-	return hashPayload(payload)
 }
 
 type StreamHasher struct {
@@ -58,17 +78,29 @@ func (h *StreamHasher) WriteChunk(chunk []byte) {
 }
 
 func (h *StreamHasher) FinalHash() (string, error) {
+	payload, err := h.FinalPayload()
+	if err != nil {
+		return "", err
+	}
+	return HashPayload(payload)
+}
+
+func (h *StreamHasher) FinalPayload() (Payload, error) {
 	if h == nil || h.hash == nil {
-		return "", nil
+		return Payload{}, nil
 	}
 	payload := Payload{
-		Domain:         DomainV1,
-		RequestSHA256:  sha256Hex(h.base.ProcessedRequestJSON),
-		ResponseSHA256: hex.EncodeToString(h.hash.Sum(nil)),
-		CatalogNodeIDs: append([]string(nil), h.base.CatalogNodeIDs...),
-		Streaming:      true,
+		Schema:                DomainV1,
+		RequestID:             h.base.RequestID,
+		RequestPath:           h.base.RequestPath,
+		RequestSHA256:         sha256Hex(h.base.RequestBody),
+		ResponseSHA256:        hex.EncodeToString(h.hash.Sum(nil)),
+		CatalogNodeIDs:        append([]string(nil), h.base.CatalogNodeIDs...),
+		DrandRound:            h.base.DrandRound,
+		Streaming:             true,
+		E2EETranscriptSHA256: h.base.E2EETranscriptSHA256,
 	}
-	return hashPayload(payload)
+	return payload, nil
 }
 
 func Sign(privateKey ed25519.PrivateKey, processedHashHex string) string {
@@ -104,7 +136,7 @@ func VerifyStreamingInput(publicKey ed25519.PublicKey, input StreamingInput, chu
 	return Verify(publicKey, processedHashHex, signatureBase64URL)
 }
 
-func hashPayload(payload Payload) (string, error) {
+func HashPayload(payload Payload) (string, error) {
 	bytes, err := json.Marshal(payload)
 	if err != nil {
 		return "", err

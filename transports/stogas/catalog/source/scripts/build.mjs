@@ -225,6 +225,25 @@ function validateCatalogReferences(catalog) {
 			}
 		}
 	}
+	const canonicalEfforts = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+	for (const [modelId, model] of Object.entries(graph.models ?? {})) {
+		const preferred = new Set(model.reasoningEfforts ?? []);
+		for (const effort of preferred) {
+			if (!canonicalEfforts.has(effort)) {
+				throw new Error(`${modelId}: invalid reasoning effort ${effort}`);
+			}
+		}
+		for (const [requested, target] of Object.entries(model.reasoningEffortOverrides ?? {})) {
+			if (!canonicalEfforts.has(requested)) {
+				throw new Error(`${modelId}: invalid Stogas reasoning effort ${requested}`);
+			}
+			if (!preferred.has(target)) {
+				throw new Error(
+					`${modelId}: reasoning effort ${requested} targets undeclared provider-adapter effort ${target}`
+				);
+			}
+		}
+	}
 }
 
 function applyCompiledDerivations(catalog) {

@@ -32,16 +32,24 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 		context.Background(),
 		lifetime,
 	)
-	requestID, err := uuid.NewV7()
-	if err != nil {
-		cancel()
-		return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
+	requestID := ""
+	if session := encryptedSession(ctx); session != nil {
+		requestID = session.RequestID
+	} else {
+		generated, err := uuid.NewV7()
+		if err != nil {
+			cancel()
+			return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
+		}
+		requestID = generated.String()
 	}
-	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID.String())
+	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	state.RequestID = requestID
 	state.RequestLifetime = lifetime
+	state.SingleUseRequestID = encryptedSession(ctx) != nil
 	stogas.SetState(bifrostCtx, state)
 
 	extraFields, err := extraFieldsHeader(ctx)

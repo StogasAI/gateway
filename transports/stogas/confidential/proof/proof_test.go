@@ -2,18 +2,22 @@ package proof
 
 import (
 	"crypto/ed25519"
+	"strings"
 	"testing"
 )
 
-func TestNonStreamingProofSignsProcessedRequestResponseAndReleasePath(t *testing.T) {
+func TestNonStreamingProofSignsRequestResponseAndReleasePath(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := Input{
-		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
-		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogNodeIDs:       []string{"root", "openai", "gpt-5-mini"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"model":"gpt-5-mini"}`),
+		ResponseBody:   []byte(`{"id":"resp_1"}`),
+		CatalogNodeIDs: []string{"root", "openai", "gpt-5-mini"},
+		DrandRound:     12_345,
 	}
 	hash, err := Hash(input)
 	if err != nil {
@@ -28,19 +32,44 @@ func TestNonStreamingProofSignsProcessedRequestResponseAndReleasePath(t *testing
 	}
 	for name, tampered := range map[string]Input{
 		"request": {
-			ProcessedRequestJSON: []byte(`{"model":"other"}`),
-			ResponseJSON:         input.ResponseJSON,
-			CatalogNodeIDs:       input.CatalogNodeIDs,
+			RequestID:      input.RequestID,
+			RequestPath:    input.RequestPath,
+			RequestBody:    []byte(`{"model":"other"}`),
+			ResponseBody:   input.ResponseBody,
+			CatalogNodeIDs: input.CatalogNodeIDs,
+			DrandRound:     input.DrandRound,
 		},
 		"response": {
-			ProcessedRequestJSON: input.ProcessedRequestJSON,
-			ResponseJSON:         []byte(`{"id":"resp_2"}`),
-			CatalogNodeIDs:       input.CatalogNodeIDs,
+			RequestID:      input.RequestID,
+			RequestPath:    input.RequestPath,
+			RequestBody:    input.RequestBody,
+			ResponseBody:   []byte(`{"id":"resp_2"}`),
+			CatalogNodeIDs: input.CatalogNodeIDs,
+			DrandRound:     input.DrandRound,
 		},
 		"catalog path": {
-			ProcessedRequestJSON: input.ProcessedRequestJSON,
-			ResponseJSON:         input.ResponseJSON,
-			CatalogNodeIDs:       []string{"root", "anthropic", "claude"},
+			RequestID:      input.RequestID,
+			RequestPath:    input.RequestPath,
+			RequestBody:    input.RequestBody,
+			ResponseBody:   input.ResponseBody,
+			CatalogNodeIDs: []string{"root", "anthropic", "claude"},
+			DrandRound:     input.DrandRound,
+		},
+		"request id": {
+			RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf614",
+			RequestPath:    input.RequestPath,
+			RequestBody:    input.RequestBody,
+			ResponseBody:   input.ResponseBody,
+			CatalogNodeIDs: input.CatalogNodeIDs,
+			DrandRound:     input.DrandRound,
+		},
+		"drand round": {
+			RequestID:      input.RequestID,
+			RequestPath:    input.RequestPath,
+			RequestBody:    input.RequestBody,
+			ResponseBody:   input.ResponseBody,
+			CatalogNodeIDs: input.CatalogNodeIDs,
+			DrandRound:     input.DrandRound + 1,
 		},
 	} {
 		if VerifyInput(publicKey, tampered, hash, signature) {
@@ -59,9 +88,12 @@ func TestProofSignatureRejectsWrongKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := Input{
-		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
-		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogNodeIDs:       []string{"root", "openai"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"model":"gpt-5-mini"}`),
+		ResponseBody:   []byte(`{"id":"resp_1"}`),
+		CatalogNodeIDs: []string{"root", "openai"},
+		DrandRound:     12_345,
 	}
 	hash, err := Hash(input)
 	if err != nil {
@@ -74,9 +106,12 @@ func TestProofSignatureRejectsWrongKey(t *testing.T) {
 
 func TestCatalogNodeChainChangesProofHash(t *testing.T) {
 	base := Input{
-		ProcessedRequestJSON: []byte(`{"model":"gpt-5-mini"}`),
-		ResponseJSON:         []byte(`{"id":"resp_1"}`),
-		CatalogNodeIDs:       []string{"root", "openai"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"model":"gpt-5-mini"}`),
+		ResponseBody:   []byte(`{"id":"resp_1"}`),
+		CatalogNodeIDs: []string{"root", "openai"},
+		DrandRound:     12_345,
 	}
 	first, err := Hash(base)
 	if err != nil {
@@ -92,14 +127,41 @@ func TestCatalogNodeChainChangesProofHash(t *testing.T) {
 	}
 }
 
+func TestE2EETranscriptChannelBindingChangesProofHash(t *testing.T) {
+	base := Input{
+		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:           "/v1/responses",
+		RequestBody:           []byte(`{"model":"gpt-5-mini"}`),
+		ResponseBody:          []byte(`{"id":"resp_1"}`),
+		CatalogNodeIDs:        []string{"root", "openai"},
+		DrandRound:            12_345,
+		E2EETranscriptSHA256: strings.Repeat("a", 64),
+	}
+	first, err := Hash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.E2EETranscriptSHA256 = strings.Repeat("b", 64)
+	second, err := Hash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("E2EE transcript channel binding should affect proof hash")
+	}
+}
+
 func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stream := NewStreamHasher(StreamingInput{
-		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogNodeIDs:       []string{"root", "openai", "stream"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"stream":true}`),
+		CatalogNodeIDs: []string{"root", "openai", "stream"},
+		DrandRound:     12_345,
 	})
 	stream.WriteChunk([]byte("data: one\n\n"))
 	stream.WriteChunk([]byte("data: two\n\n"))
@@ -112,15 +174,21 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 		t.Fatal("expected streaming proof signature to verify")
 	}
 	if !VerifyStreamingInput(publicKey, StreamingInput{
-		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogNodeIDs:       []string{"root", "openai", "stream"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"stream":true}`),
+		CatalogNodeIDs: []string{"root", "openai", "stream"},
+		DrandRound:     12_345,
 	}, [][]byte{[]byte("data: one\n\n"), []byte("data: two\n\n")}, hash, signature) {
 		t.Fatal("expected recomputed streaming input to verify")
 	}
 
 	other := NewStreamHasher(StreamingInput{
-		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogNodeIDs:       []string{"root", "openai", "stream"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"stream":true}`),
+		CatalogNodeIDs: []string{"root", "openai", "stream"},
+		DrandRound:     12_345,
 	})
 	other.WriteChunk([]byte("data: one\n\n"))
 	other.WriteChunk([]byte("data: changed\n\n"))
@@ -132,8 +200,11 @@ func TestStreamingProofUsesRunningChunkHash(t *testing.T) {
 		t.Fatal("stream chunk content should affect proof hash")
 	}
 	if VerifyStreamingInput(publicKey, StreamingInput{
-		ProcessedRequestJSON: []byte(`{"stream":true}`),
-		CatalogNodeIDs:       []string{"root", "openai", "stream"},
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"stream":true}`),
+		CatalogNodeIDs: []string{"root", "openai", "stream"},
+		DrandRound:     12_345,
 	}, [][]byte{[]byte("data: one\n\n"), []byte("data: changed\n\n")}, hash, signature) {
 		t.Fatal("tampered stream chunks should not verify")
 	}

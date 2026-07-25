@@ -67,7 +67,7 @@ func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
 		ctx.Response.Header.Set("Access-Control-Expose-Headers", "*")
-		ctx.Response.Header.Set("Access-Control-Allow-Headers", catalog.AllClientHeadersValue())
+		ctx.Response.Header.Set("Access-Control-Allow-Headers", corsAllowedHeaders(ctx))
 
 		if string(ctx.Method()) == fasthttp.MethodOptions {
 			ctx.SetStatusCode(fasthttp.StatusNoContent)
@@ -76,6 +76,44 @@ func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 
 		next(ctx)
 	}
+}
+
+func corsAllowedHeaders(ctx *fasthttp.RequestCtx) string {
+	requested := strings.TrimSpace(string(ctx.Request.Header.Peek("Access-Control-Request-Headers")))
+	if requested == "" {
+		return catalog.AllClientHeadersValue()
+	}
+	names := make([]string, 0, strings.Count(requested, ",")+1)
+	seen := make(map[string]bool, cap(names))
+	for _, raw := range strings.Split(requested, ",") {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if !validHTTPFieldName(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return catalog.AllClientHeadersValue()
+	}
+	ctx.Response.Header.Add("Vary", "Access-Control-Request-Headers")
+	return strings.Join(names, ", ")
+}
+
+func validHTTPFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index := range len(name) {
+		char := name[index]
+		if (char >= 'a' && char <= 'z') ||
+			(char >= '0' && char <= '9') ||
+			strings.ContainsRune("!#$%&'*+-.^_`|~", rune(char)) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.RequestHandler {
