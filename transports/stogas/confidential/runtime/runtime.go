@@ -414,6 +414,10 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		l.recordHeartbeatError(err)
 		return nil, err
 	}
+	nodeID := l.GenerationID()
+	if nodeID == "" {
+		nodeID = l.nodeID
+	}
 	input := provision.HeartbeatInput{
 		CertExpiresAt: l.certs.State().ExpiresAt,
 		Health: provision.NodeHealth{
@@ -421,9 +425,10 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 			Ready:          l.localReadinessResultAt(time.Now()).Ready,
 			SecretVersions: l.secrets.Versions(),
 		},
-		NodeID:     l.nodeID,
+		NodeID:     nodeID,
 		ObservedAt: time.Now().UTC(),
 		Quote:      snapshot,
+		SigningKey: l.identity.Ed25519PrivateKey,
 	}
 	response, err := l.client.SendHeartbeat(ctx, input)
 	if err != nil {
@@ -466,12 +471,10 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 			return false, errors.New("generation id is not available for certificate CSR")
 		}
 		if _, err := l.client.SubmitCertificateCSR(ctx, provision.CertificateCSRSubmission{
-			CommonName:    instruction.CommonName,
-			CSRDER:        csr,
-			DNSNames:      instruction.DNSNames,
-			GenerationID:  generationID,
-			OrderID:       instruction.OrderID,
-			TLSSPKISHA256: l.identity.TLSSPKISHA256,
+			CSRDER:       csr,
+			GenerationID: generationID,
+			OrderID:      instruction.OrderID,
+			SigningKey:   l.identity.Ed25519PrivateKey,
 		}); err != nil {
 			return false, fmt.Errorf("submit certificate CSR: %w", err)
 		}

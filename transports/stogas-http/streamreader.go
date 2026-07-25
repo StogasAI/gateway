@@ -46,6 +46,10 @@ func (r *sseStreamReader) closed() <-chan struct{} {
 }
 
 func (r *sseStreamReader) sendEvent(eventType string, data []byte) bool {
+	return r.send(frameSSEEvent(eventType, data))
+}
+
+func frameSSEEvent(eventType string, data []byte) []byte {
 	var event []byte
 	if eventType == "" {
 		event = make([]byte, 0, 6+len(data)+2)
@@ -58,11 +62,15 @@ func (r *sseStreamReader) sendEvent(eventType string, data []byte) bool {
 	}
 	event = append(event, data...)
 	event = append(event, '\n', '\n')
-	return r.send(event)
+	return event
 }
 
 func (r *sseStreamReader) sendDone() bool {
-	return r.send([]byte("data: [DONE]\n\n"))
+	return r.send(frameSSEDone())
+}
+
+func frameSSEDone() []byte {
+	return []byte("data: [DONE]\n\n")
 }
 
 func (r *sseStreamReader) send(event []byte) bool {

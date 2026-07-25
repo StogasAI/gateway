@@ -160,6 +160,35 @@ func TestPrivateReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *tes
 	}
 }
 
+func TestPrivateReadinessDetailsExposeActionableReasons(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{MaxRequestBodyMiB: 1},
+		secure: &confidentialruntime.Runtime{EntropyReady: true},
+	}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
+	ctx.Request.SetRequestURI("/ready/details")
+
+	server.readinessServer.Handler(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusOK {
+		t.Fatalf("expected 200 readiness details, got %d", ctx.Response.StatusCode())
+	}
+	var payload struct {
+		Ready   bool     `json:"ready"`
+		Reasons []string `json:"reasons"`
+	}
+	if err := json.Unmarshal(ctx.Response.Body(), &payload); err != nil {
+		t.Fatalf("decode readiness details: %v", err)
+	}
+	if payload.Ready || len(payload.Reasons) == 0 {
+		t.Fatalf("expected actionable non-ready reasons, got %#v", payload)
+	}
+}
+
 func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
 	if err := server.routes(); err != nil {
@@ -172,6 +201,13 @@ func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 	server.server.Handler(public)
 	if public.Response.StatusCode() != fasthttp.StatusNotFound {
 		t.Fatalf("public GET /ready status = %d, want 404", public.Response.StatusCode())
+	}
+	publicDetails := &fasthttp.RequestCtx{}
+	publicDetails.Request.Header.SetMethod(fasthttp.MethodGet)
+	publicDetails.Request.SetRequestURI("/ready/details")
+	server.server.Handler(publicDetails)
+	if publicDetails.Response.StatusCode() != fasthttp.StatusNotFound {
+		t.Fatalf("public GET /ready/details status = %d, want 404", publicDetails.Response.StatusCode())
 	}
 
 	for _, request := range []struct {
@@ -313,11 +349,12 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{proofs: &proofhttp.Service{
+	server, material := encryptedTestServer(t)
+	server.proofs = &proofhttp.Service{
 		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
 		Signer: privateKey,
-	}}
-	ctx := &fasthttp.RequestCtx{}
+	}
+	ctx, clientSession := encryptedRequestContext(t, server, material)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &stogas.State{
 		Resolution: &catalog.ResolvedRequest{
@@ -330,7 +367,7 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 				ProviderEndpointIDs: []string{"provider-endpoint-node"},
 			},
 		},
-		ProcessedRequestJSON: []byte(`{"processed":true}`),
+		RequestID: clientSession.RequestID,
 	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
@@ -338,17 +375,38 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	if ctx.Response.StatusCode() != fasthttp.StatusOK {
 		t.Fatalf("expected status 200, got %d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
 	}
-	if got := string(ctx.Response.Header.Peek(proofhttp.HeaderQuote)); got != base64.RawURLEncoding.EncodeToString([]byte("quote")) {
-		t.Fatalf("unexpected quote header: %q", got)
+	encodedProof, err := base64.RawURLEncoding.DecodeString(string(ctx.Response.Header.Peek(proofhttp.HeaderProof)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	nodeIDs := string(ctx.Response.Header.Peek(proofhttp.HeaderResolvedCatalogNodeID))
-	if !strings.Contains(nodeIDs, "deployment:deployment-node") || !strings.Contains(nodeIDs, "provider_endpoint:provider-endpoint-node") {
-		t.Fatalf("proof did not bind resolved catalog chain: %q", nodeIDs)
+	var proofObject proofhttp.Object
+	if err := json.Unmarshal(encodedProof, &proofObject); err != nil {
+		t.Fatal(err)
 	}
-	processedHash := string(ctx.Response.Header.Peek(proofhttp.HeaderProcessedHash))
-	signature := string(ctx.Response.Header.Peek(proofhttp.HeaderProcessedSignature))
-	if processedHash == "" || !proof.Verify(publicKey, processedHash, signature) {
-		t.Fatalf("proof signature did not verify: hash=%q signature=%q", processedHash, signature)
+	if !containsString(proofObject.CatalogNodeIDs, "deployment:deployment-node") ||
+		!containsString(proofObject.CatalogNodeIDs, "provider_endpoint:provider-endpoint-node") {
+		t.Fatalf("proof did not bind resolved catalog chain: %#v", proofObject.CatalogNodeIDs)
+	}
+	if !proof.VerifyInput(publicKey, proof.Input{
+		RequestID:             state.RequestID,
+		RequestPath:           string(ctx.Path()),
+		RequestBody:           ctx.Request.Body(),
+		ResponseBody:          ctx.Response.Body(),
+		CatalogNodeIDs:        state.Resolution.CatalogNodeIDs(),
+		DrandRound:            1,
+		E2EETranscriptSHA256: encryptedSession(ctx).TranscriptSHA256(),
+	}, proofObject.ProofHash, proofObject.Signature) {
+		t.Fatal("proof did not bind the E2EE request transcript")
+	}
+	if proof.VerifyInput(publicKey, proof.Input{
+		RequestID:      state.RequestID,
+		RequestPath:    string(ctx.Path()),
+		RequestBody:    ctx.Request.Body(),
+		ResponseBody:   ctx.Response.Body(),
+		CatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
+		DrandRound:     1,
+	}, proofObject.ProofHash, proofObject.Signature) {
+		t.Fatal("E2EE proof verified without its request transcript")
 	}
 }
 
@@ -356,10 +414,7 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	server := &Server{proofs: &proofhttp.Service{}}
 	ctx := &fasthttp.RequestCtx{}
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	state := &stogas.State{
-		Resolution:           testResolution(),
-		ProcessedRequestJSON: []byte(`{"processed":true}`),
-	}
+	state := &stogas.State{Resolution: testResolution()}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
 
@@ -374,12 +429,11 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T) {
 	server := &Server{proofs: &proofhttp.Service{}}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.SetRequestURI("/v1/chat/completions")
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	completed := make(chan struct{})
-	state := &stogas.State{
-		Resolution:           testResolution(),
-		ProcessedRequestJSON: []byte(`{"processed":true}`),
-	}
+	state := &stogas.State{Resolution: testResolution()}
 
 	server.writeSSEStream(
 		ctx,
@@ -843,7 +897,7 @@ func TestCorsAllowsAnyOrigin(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.SetMethod(fasthttp.MethodOptions)
 	ctx.Request.Header.Set("Origin", "https://example.com")
-	ctx.Request.Header.Set("Access-Control-Request-Headers", "authorization,content-type")
+	ctx.Request.Header.Set("Access-Control-Request-Headers", "authorization,content-type,dnt,x-future-ai-sdk-feature")
 
 	called := false
 	cors(func(ctx *fasthttp.RequestCtx) { called = true })(ctx)
@@ -861,16 +915,15 @@ func TestCorsAllowsAnyOrigin(t *testing.T) {
 	for _, expected := range []string{
 		"authorization",
 		"content-type",
-		"api-key",
-		"x-api-key",
-		"x-goog-api-key",
-		"accept-language",
-		"x-stainless-retry-count",
-		"x-stainless-timeout",
+		"dnt",
+		"x-future-ai-sdk-feature",
 	} {
 		if !strings.Contains(strings.ToLower(allowedHeaders), expected) {
 			t.Fatalf("expected CORS headers to include %q, got %q", expected, allowedHeaders)
 		}
+	}
+	if got := string(ctx.Response.Header.Peek("Vary")); !strings.Contains(strings.ToLower(got), "access-control-request-headers") {
+		t.Fatalf("expected dynamic CORS response to vary by requested headers, got %q", got)
 	}
 }
 
@@ -972,7 +1025,7 @@ func TestInferenceHeadersRejectConflictingAuthAliases(t *testing.T) {
 	}
 }
 
-func TestInferenceHeadersIgnoreBenignSDKAndTracingHeaders(t *testing.T) {
+func TestInferenceHeadersIgnoreClientMetadata(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.SetRequestURI("/v1/responses")
 	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
@@ -980,9 +1033,15 @@ func TestInferenceHeadersIgnoreBenignSDKAndTracingHeaders(t *testing.T) {
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.Header.Set("Accept", "text/event-stream")
 	ctx.Request.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	ctx.Request.Header.Set("DNT", "1")
+	ctx.Request.Header.Set("HTTP-Referer", "https://client.example")
 	ctx.Request.Header.Set("Origin", "https://app.stogas.ai")
+	ctx.Request.Header.Set("Anthropic-Beta", "future-feature")
+	ctx.Request.Header.Set("Anthropic-Version", "2023-06-01")
 	ctx.Request.Header.Set("OpenAI-Organization", "org_client")
 	ctx.Request.Header.Set("OpenAI-Project", "proj_client")
+	ctx.Request.Header.Set("Priority", "u=1, i")
+	ctx.Request.Header.Set("Sec-GPC", "1")
 	ctx.Request.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
 	ctx.Request.Header.Set("X-Datadog-Trace-Id", "123")
 	ctx.Request.Header.Set("X-Request-ID", "client-controlled")
@@ -993,10 +1052,12 @@ func TestInferenceHeadersIgnoreBenignSDKAndTracingHeaders(t *testing.T) {
 	ctx.Request.Header.Set("X-Stainless-Runtime", "node")
 	ctx.Request.Header.Set("X-Stainless-Runtime-Version", "24.0.0")
 	ctx.Request.Header.Set("X-Stainless-Timeout", "600")
+	ctx.Request.Header.Set("X-Future-AI-SDK-Feature", "client-controlled")
+	ctx.Request.Header.Set("X-OpenRouter-Title", "client")
 
 	server := &Server{}
 	if _, ok := server.requireInferenceHeaders(ctx); !ok {
-		t.Fatalf("expected benign compatibility headers to be ignored, got status %d body %s", ctx.Response.StatusCode(), string(ctx.Response.Body()))
+		t.Fatalf("expected client metadata headers to be ignored, got status %d body %s", ctx.Response.StatusCode(), string(ctx.Response.Body()))
 	}
 }
 
@@ -1489,6 +1550,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		Signer: privateKey,
 	}}
 	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetBodyString(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
@@ -1502,14 +1564,14 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 				ProviderEndpointIDs: []string{"stream-provider-endpoint"},
 			},
 		},
-		ProcessedRequestJSON: []byte(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`),
+		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
 	}
 
 	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
 	defer ctx.Response.CloseBodyStream()
 
-	if got := string(ctx.Response.Header.Peek(proofhttp.HeaderQuote)); got != "" {
-		t.Fatalf("streaming proof must not be sent as an initial header, got quote header %q", got)
+	if got := string(ctx.Response.Header.Peek(proofhttp.HeaderProof)); got != "" {
+		t.Fatalf("streaming proof must not be sent as an initial header, got proof header %q", got)
 	}
 
 	go func() {
@@ -1537,28 +1599,25 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		t.Fatalf("expected final proof before [DONE], got %q", body)
 	}
 
-	var proofObject map[string]any
+	var proofObject proofhttp.Object
 	if err := json.Unmarshal([]byte(proofJSON), &proofObject); err != nil {
 		t.Fatalf("failed to parse proof event: %v", err)
 	}
-	if proofObject["quote"] != base64.RawURLEncoding.EncodeToString([]byte("quote")) {
-		t.Fatalf("unexpected proof quote: %#v", proofObject["quote"])
+	if proofObject.SigningPublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
+		t.Fatalf("proof did not expose the bound signer key: %q", proofObject.SigningPublicKey)
 	}
-	reportData, ok := proofObject["report_data"].(map[string]any)
-	if !ok || reportData["ed25519_public_key"] != base64.RawURLEncoding.EncodeToString(publicKey) {
-		t.Fatalf("proof report data did not expose the bound signer key: %#v", proofObject["report_data"])
+	if !containsString(proofObject.CatalogNodeIDs, "deployment:stream-deployment") ||
+		!containsString(proofObject.CatalogNodeIDs, "provider_endpoint:stream-provider-endpoint") {
+		t.Fatalf("proof did not bind resolved catalog node ids: %#v", proofObject.CatalogNodeIDs)
 	}
-	nodeIDs := stringSliceFromJSON(t, proofObject["resolved_catalog_node_ids"])
-	if !containsString(nodeIDs, "deployment:stream-deployment") || !containsString(nodeIDs, "provider_endpoint:stream-provider-endpoint") {
-		t.Fatalf("proof did not bind resolved catalog node ids: %#v", nodeIDs)
-	}
-	processedHash, _ := proofObject["processed_hash"].(string)
-	signature, _ := proofObject["processed_signature"].(string)
 	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
-		ProcessedRequestJSON: state.ProcessedRequestJSON,
-		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
-	}, [][]byte{[]byte(chunkJSON)}, processedHash, signature) {
-		t.Fatalf("streaming proof did not verify: hash=%q signature=%q body=%q", processedHash, signature, body)
+		RequestID:      state.RequestID,
+		RequestPath:    string(ctx.Path()),
+		RequestBody:    ctx.Request.Body(),
+		CatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
+		DrandRound:     1,
+	}, [][]byte{frameSSEEvent("", []byte(chunkJSON)), frameSSEDone()}, proofObject.ProofHash, proofObject.Signature) {
+		t.Fatalf("streaming proof did not verify: hash=%q signature=%q body=%q", proofObject.ProofHash, proofObject.Signature, body)
 	}
 }
 

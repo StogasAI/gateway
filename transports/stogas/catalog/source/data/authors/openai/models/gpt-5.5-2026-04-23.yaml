@@ -5,7 +5,7 @@ models:
   series: GPT-5
   snapshot: 2026-04-23
   flavors: [unknown]
-  reasoning: true
+  reasoningEfforts: [none, low, medium, high, xhigh]
   contextWindowTokens: 1050000
   maxOutputTokens: 128000
   inputModalities: [text, image]

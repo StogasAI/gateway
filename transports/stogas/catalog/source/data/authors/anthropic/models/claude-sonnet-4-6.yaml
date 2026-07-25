@@ -6,7 +6,9 @@ models:
   series: Claude Sonnet
   snapshot: null
   flavors: [base]
-  reasoning: true
+  reasoningEfforts: [low, medium, high, max]
+  reasoningEffortOverrides:
+    xhigh: high
   contextWindowTokens: 1000000
   maxOutputTokens: 64000
   inputModalities: [text, image]

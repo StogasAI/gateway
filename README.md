@@ -10,6 +10,8 @@ The repository contains:
 
 The public inference listener uses port `5185`. A separate private `GET /ready` listener uses port `5186`; it is not part of the public API.
 
+The normal `/v1/responses` and `/v1/chat/completions` routes also accept Stogas E2EE envelopes addressed to every node in a verified fleet bundle. Decryption, provider dispatch, signed response proof generation, and authenticated response streaming all remain inside the confidential guest; no plaintext-aware router or separate E2EE endpoint is required.
+
 ## Build and test
 
 Install Bun and Go, then run:

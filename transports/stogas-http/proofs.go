@@ -17,7 +17,7 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 		return
 	}
 	if s.proofs != nil {
-		input, err := s.proofInput(state, data)
+		input, err := s.proofInput(ctx, state, data)
 		if err != nil {
 			s.writeProofError(ctx)
 			return
@@ -34,26 +34,44 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 	_, _ = ctx.Write(data)
 }
 
-func (s *Server) newStreamProof(ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
+func (s *Server) newStreamProof(requestCtx *fasthttp.RequestCtx, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
 	if s.proofs == nil {
 		return nil, nil
 	}
-	input, err := s.proofInput(state, nil)
+	input, err := s.proofInput(requestCtx, state, nil)
 	if err != nil {
 		return nil, err
 	}
 	return s.proofs.NewStream(ctx, input)
 }
 
-func (s *Server) proofInput(state *stogas.State, responseJSON []byte) (proofhttp.Input, error) {
+func (s *Server) proofInput(ctx *fasthttp.RequestCtx, state *stogas.State, responseJSON []byte) (proofhttp.Input, error) {
 	if state == nil || state.Resolution == nil {
 		return proofhttp.Input{}, catalog.ErrUnsupportedRequest
 	}
+	var transcriptSHA256 string
+	if session := encryptedSession(ctx); session != nil {
+		transcriptSHA256 = session.TranscriptSHA256()
+	}
+	requestID := stateRequestID(state)
 	return proofhttp.Input{
-		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
-		ProcessedRequestJSON: append([]byte(nil), state.ProcessedRequestJSON...),
-		ResponseJSON:         append([]byte(nil), responseJSON...),
+		RequestID:             requestID,
+		RequestPath:           string(ctx.Path()),
+		RequestBody:           append([]byte(nil), ctx.Request.Body()...),
+		CatalogNodeIDs:        state.Resolution.CatalogNodeIDs(),
+		ResponseBody:          append([]byte(nil), responseJSON...),
+		E2EETranscriptSHA256: transcriptSHA256,
 	}, nil
+}
+
+func stateRequestID(state *stogas.State) string {
+	if state == nil {
+		return ""
+	}
+	if state.Authorization != nil && state.Authorization.RequestID != "" {
+		return state.Authorization.RequestID
+	}
+	return state.RequestID
 }
 
 func applyProofHeaders(ctx *fasthttp.RequestCtx, output *proofhttp.Output) {

@@ -522,6 +522,17 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	if request.ChatParameters.Reasoning != nil && request.ChatParameters.Reasoning.Effort != nil {
+			effort, err := normalizeReasoningEffort(
+				*request.ChatParameters.Reasoning.Effort,
+				resolution.Deployment.ReasoningEfforts,
+				resolution.Deployment.ReasoningEffortOverrides,
+			)
+		if err != nil {
+			return nil, err
+		}
+		request.ChatParameters.Reasoning.Effort = &effort
+	}
 	resolution.chat = &request
 	return resolution, nil
 }
@@ -578,8 +589,66 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 	if err != nil {
 		return nil, err
 	}
+	if request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
+			effort, err := normalizeReasoningEffort(
+				*request.ResponsesParameters.Reasoning.Effort,
+				resolution.Deployment.ReasoningEfforts,
+				resolution.Deployment.ReasoningEffortOverrides,
+			)
+		if err != nil {
+			return nil, err
+		}
+		request.ResponsesParameters.Reasoning.Effort = &effort
+	}
 	resolution.responses = &request
 	return resolution, nil
+}
+
+var canonicalReasoningEfforts = map[string]struct{}{
+	"none": {}, "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
+}
+
+func normalizeReasoningEffort(
+	requested string,
+	supported []string,
+	overrides map[string]string,
+) (string, error) {
+	if _, canonical := canonicalReasoningEfforts[requested]; !canonical {
+		return "", APIError{
+			StatusCode: http.StatusBadRequest,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    "reasoning effort must be one of: none, minimal, low, medium, high, xhigh, max",
+		}
+	}
+	if len(supported) == 0 {
+		return "", APIError{
+			StatusCode: http.StatusBadRequest,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    "reasoning effort is not supported for the selected model",
+		}
+	}
+	if target, ok := overrides[requested]; ok {
+		return target, nil
+	}
+	if requested == "none" && !containsReasoningEffort(supported, requested) {
+		return "", APIError{
+			StatusCode: http.StatusBadRequest,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    "reasoning cannot be disabled for the selected model",
+		}
+	}
+	// Bifrost owns the normal provider conversion (for example minimal → low or
+	// max → xhigh/high). Stogas only applies cataloged model exceptions above.
+	return requested, nil
+}
+
+func containsReasoningEffort(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveOpenAIRequest(

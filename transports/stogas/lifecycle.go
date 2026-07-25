@@ -25,6 +25,7 @@ type PublicBillingError struct {
 type billingAuthorizer interface {
 	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*gatewaybilling.Authorization, error)
 	AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	AuthorizeSingleUseRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
@@ -83,8 +84,14 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 		state.Hold = hold
 	}
 
-	authorization, err := billing.AuthorizeRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
-	if err != nil {
+	var authorization *gatewaybilling.Authorization
+	var err error
+	if state.SingleUseRequestID {
+		authorization, err = billing.AuthorizeSingleUseRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
+	} else {
+		authorization, err = billing.AuthorizeRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
+	}
+	if err != nil && !state.SingleUseRequestID {
 		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, requestID, hold, state.RequestLifetime, err)
 	}
 	if err != nil {

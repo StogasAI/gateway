@@ -23,7 +23,9 @@ type State struct {
 	APIKeyClaims      *billing.APIKeyClaims
 	Authorization     *billing.Authorization
 	BillingFinalized  bool
+	SingleUseRequestID bool
 	RequestLifetime   time.Duration
+	RequestID         string
 	StartedAt         time.Time
 	RequestType       string
 	Model             string
@@ -36,7 +38,6 @@ type State struct {
 	ReleaseMeasurement string
 
 	ProviderResponseHeaders map[string]string
-	ProcessedRequestJSON    []byte
 }
 
 type HoldEstimate struct {

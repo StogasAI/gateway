@@ -109,8 +109,7 @@ func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredentia
 		})
 		return apiCredential{}, false
 	}
-	route, _ := ctx.UserValue(inferenceRouteContextKey).(catalog.Route)
-	if unsupported := unsupportedInferenceHeader(ctx, route); unsupported != "" {
+	if unsupported := unsupportedInferenceHeader(ctx); unsupported != "" {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Unsupported request header: " + unsupported, "type": "invalid_request_error"},
 		})
@@ -132,18 +131,14 @@ func isJSONContentType(raw []byte) bool {
 	return strings.TrimSpace(mediaType) == "application/json"
 }
 
-func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx, route catalog.Route) string {
-	allowed := map[string]bool{}
-	for _, name := range catalog.ClientHeaderNames(route) {
-		allowed[strings.ToLower(strings.TrimSpace(name))] = true
-	}
+func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx) string {
 	unsupported := ""
 	ctx.Request.Header.VisitAll(func(key []byte, _ []byte) {
 		if unsupported != "" {
 			return
 		}
 		normalized := strings.ToLower(strings.TrimSpace(string(key)))
-		if normalized == "" || allowed[normalized] || ignoredClientHeader(normalized) {
+		if normalized == "" || !internalOrProviderControlHeader(normalized) {
 			return
 		}
 		unsupported = normalized
@@ -151,83 +146,9 @@ func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx, route catalog.Route) s
 	return unsupported
 }
 
-func ignoredClientHeader(name string) bool {
-	if benignClientHeader(name) {
-		return true
-	}
-	if internalOrProviderControlHeader(name) {
-		return false
-	}
-	return transportOnlyHeader(name)
-}
-
-func benignClientHeader(name string) bool {
-	if strings.HasPrefix(name, "x-stainless-") ||
-		strings.HasPrefix(name, "x-datadog-") ||
-		strings.HasPrefix(name, "x-amzn-trace-id") {
-		return true
-	}
-	switch name {
-	case "openai-organization",
-		"openai-project",
-		"x-request-id",
-		"x-correlation-id",
-		"x-client-request-id",
-		"request-id",
-		"traceparent",
-		"tracestate",
-		"baggage",
-		"sentry-trace":
-		return true
-	default:
-		return false
-	}
-}
-
 func internalOrProviderControlHeader(name string) bool {
 	return strings.HasPrefix(name, "x-bf-") ||
 		(strings.HasPrefix(name, "x-stogas-") && name != "x-stogas-return-extra-fields")
-}
-
-func transportOnlyHeader(name string) bool {
-	switch name {
-	case "host",
-		"content-length",
-		"content-encoding",
-		"accept-encoding",
-		"accept-language",
-		"access-control-request-headers",
-		"access-control-request-method",
-		"connection",
-		"user-agent",
-		"origin",
-		"referer",
-		"forwarded",
-		"te",
-		"trailer",
-		"transfer-encoding",
-		"upgrade",
-		"via",
-		"cf-worker",
-		"cf-ray",
-		"cf-connecting-ip",
-		"cf-ipcountry",
-		"cf-visitor",
-		"x-forwarded-for",
-		"x-forwarded-host",
-		"x-forwarded-proto",
-		"x-forwarded-port",
-		"x-real-ip",
-		"sec-fetch-site",
-		"sec-fetch-mode",
-		"sec-fetch-dest",
-		"sec-ch-ua",
-		"sec-ch-ua-mobile",
-		"sec-ch-ua-platform":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateAcceptHeader(raw []byte) bool {

@@ -7,7 +7,12 @@ package catalog
 	series:        string
 	snapshot:      #MaybeDate
 	flavors:       [...#Flavor]
-	reasoning?: #ClaimBool
+	// Exact controls shown to clients. Bifrost owns normal provider conversion;
+	// overrides are only for model exceptions the provider adapter does not own.
+	reasoningEfforts: [...#ReasoningEffort]
+	reasoningEffortOverrides?: {
+		[#ReasoningEffort]: #ReasoningEffort
+	}
 	contextWindowTokens: int & >=0
 	maxOutputTokens:     int & >=0
 	inputModalities:     [...#Modality]

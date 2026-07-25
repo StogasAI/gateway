@@ -23,7 +23,9 @@ type Deployment struct {
 	MaxOutputTokens     int
 	Pricing             Pricing
 	ProviderEndpointIDs []string
-	ReasoningSupported  bool
+	ReasoningEffortOverrides map[string]string
+	ReasoningEfforts         []string
+	ReasoningSupported       bool
 	RegionID            string
 	ServiceTier         string
 }
@@ -95,7 +97,8 @@ type compiledModel struct {
 	Name                string   `json:"name"`
 	OutputModalities    []string `json:"outputModalities"`
 	ReleaseDate         *string  `json:"releaseDate"`
-	ReasoningSupport    bool     `json:"reasoning"`
+	ReasoningEffortOverrides map[string]string `json:"reasoningEffortOverrides,omitempty"`
+	ReasoningEfforts         []string          `json:"reasoningEfforts"`
 	Series              string   `json:"series"`
 	Snapshot            *string  `json:"snapshot"`
 }

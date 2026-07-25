@@ -61,17 +61,19 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 		t.Fatal("expected initial mock quote")
 	}
 	output, err := runtime.Proofs.Build(context.Background(), proofhttp.Input{
-		CatalogNodeIDs:       []string{"node-a"},
-		ProcessedRequestJSON: []byte(`{"request":true}`),
-		ResponseJSON:         []byte(`{"response":true}`),
+		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		RequestPath:    "/v1/responses",
+		RequestBody:    []byte(`{"request":true}`),
+		ResponseBody:   []byte(`{"response":true}`),
+		CatalogNodeIDs: []string{"node-a"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Headers[proofhttp.HeaderQuote] != base64.RawURLEncoding.EncodeToString(snapshot.Quote) {
-		t.Fatalf("proof header did not use current quote: %#v", output.Headers)
+	if output.Headers[proofhttp.HeaderProof] == "" || output.Object.DrandRound != snapshot.Payload.Drand.Round {
+		t.Fatalf("proof did not use current quote context: %#v", output)
 	}
-	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.ProcessedHash, output.Object.ProcessedSignature) {
+	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.ProofHash, output.Object.Signature) {
 		t.Fatal("proof signature was not produced by runtime identity")
 	}
 }
@@ -324,16 +326,16 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 	select {
 	case body := <-csrCh:
 		if body["generation_id"] != generationID ||
-			body["order_id"] != "order-1" ||
-			body["tls_spki_sha256"] != runtime.Identity.TLSSPKISHA256 {
+			body["order_id"] != "order-1" {
 			t.Fatalf("unexpected CSR submission body: %#v", body)
 		}
-		if body["common_name"] != "gateway.stogas.ai" {
-			t.Fatalf("unexpected CSR common name: %#v", body)
+		for _, removed := range []string{"common_name", "dns_names", "tls_spki_sha256"} {
+			if _, ok := body[removed]; ok {
+				t.Fatalf("CSR submission included client-claimed %s: %#v", removed, body)
+			}
 		}
-		dnsNames, ok := body["dns_names"].([]any)
-		if !ok || len(dnsNames) != 1 || dnsNames[0] != "gateway.stogas.ai" {
-			t.Fatalf("CSR DNS names were not normalized: %#v", body["dns_names"])
+		if signature, ok := body["signature"].(string); !ok || signature == "" {
+			t.Fatalf("CSR submission did not include node authorization: %#v", body)
 		}
 		csrEncoded, _ := body["csr_der"].(string)
 		csrDER, err := base64.RawURLEncoding.DecodeString(csrEncoded)

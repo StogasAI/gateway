@@ -39,6 +39,7 @@ type Server struct {
 	proofs          *proofhttp.Service
 	secure          *confidentialruntime.Runtime
 	requests        *requestDrain
+	memory          *requestMemoryAdmission
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
@@ -79,6 +80,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		config:  config,
 		logger:  logger,
 		requests: newRequestDrain(),
+		memory:   &requestMemoryAdmission{},
 		runtime: runtime,
 		secure:  secure,
 	}
@@ -118,9 +120,13 @@ func (s *Server) routes() error {
 		TCPKeepalive:          true,
 		TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
 		StreamRequestBody:     false,
+		ReduceMemoryUsage:     true,
+		SecureErrorLogMessage: true,
+		DisablePreParseMultipartForm: true,
 	}
 	readinessRouter := router.New()
 	readinessRouter.GET("/ready", s.readiness)
+	readinessRouter.GET("/ready/details", s.readinessDetails)
 	s.readinessServer = &fasthttp.Server{
 		Handler:               readinessRouter.Handler,
 		GetOnly:               true,

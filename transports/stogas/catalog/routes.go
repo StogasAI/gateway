@@ -195,8 +195,10 @@ func compatibilityClientHeaders() []string {
 	return []string{
 		"accept-language",
 		"baggage",
+		"cache-control",
 		"openai-organization",
 		"openai-project",
+		"pragma",
 		"request-id",
 		"sentry-trace",
 		"traceparent",

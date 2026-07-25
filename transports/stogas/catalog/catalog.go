@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	"maps"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -656,7 +657,9 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledPro
 		MaxOutputTokens:     effectiveMaxOutputTokens(deployment, modelNode),
 		Pricing:             deployment.Pricing,
 		ProviderEndpointIDs: []string{route.ID},
-		ReasoningSupported:  modelNode.ReasoningSupport,
+		ReasoningEffortOverrides: maps.Clone(modelNode.ReasoningEffortOverrides),
+		ReasoningEfforts:         append([]string(nil), modelNode.ReasoningEfforts...),
+		ReasoningSupported:       len(modelNode.ReasoningEfforts) > 0,
 		RegionID:            route.RegionID,
 		ServiceTier:         deployment.ServiceTier,
 	}, true

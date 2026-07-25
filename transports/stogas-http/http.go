@@ -15,6 +15,12 @@ import (
 )
 
 func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
+	if s != nil && s.memory.pressured() {
+		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+		ctx.SetContentType("application/json")
+		_, _ = ctx.WriteString(`{"ok":false}`)
+		return
+	}
 	if s == nil || s.secure == nil {
 		ctx.SetStatusCode(fasthttp.StatusNoContent)
 		return
@@ -27,6 +33,24 @@ func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
 	ctx.SetContentType("application/json")
 	_, _ = ctx.WriteString(`{"ok":false}`)
+}
+
+func (s *Server) readinessDetails(ctx *fasthttp.RequestCtx) {
+	ready := true
+	reasons := []string{}
+	if s != nil && s.memory.pressured() {
+		ready = false
+		reasons = append(reasons, "memory_pressure")
+	}
+	if s != nil && s.secure != nil {
+		result := s.secure.Readiness()
+		ready = ready && result.Ready
+		reasons = append(reasons, result.Reasons...)
+	}
+	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
+		"ready":   ready,
+		"reasons": reasons,
+	})
 }
 
 func (s *Server) catalog(ctx *fasthttp.RequestCtx) {
@@ -48,6 +72,32 @@ func (s *Server) models(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) inference(ctx *fasthttp.RequestCtx) {
+	if s.memory == nil {
+		s.memory = &requestMemoryAdmission{}
+	}
+	releaseMemory, admitted := s.memory.acquire(len(ctx.Request.Body()))
+	if !admitted {
+		ctx.Response.Header.Set("Retry-After", "1")
+		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
+			"error": map[string]any{"message": "Gateway is at request memory capacity", "type": "service_unavailable"},
+		})
+		return
+	}
+	requestComplete := true
+	defer func() {
+		if requestComplete {
+			releaseMemory()
+		}
+	}()
+
+	session, ok := s.openEncryptedInference(ctx)
+	if !ok {
+		return
+	}
+	defer clear(ctx.Request.Body())
+	if session != nil {
+		defer s.sealBufferedEncryptedResponse(ctx, session)
+	}
 	if s.requests == nil {
 		s.requests = newRequestDrain()
 	}
@@ -57,7 +107,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		})
 		return
 	}
-	requestComplete := true
 	defer func() {
 		if requestComplete {
 			s.requests.end()
@@ -109,13 +158,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeCatalogError(ctx, err)
 		return
 	}
-	processedRequestJSON, err := sonic.Marshal(bifrostReq)
-	if err != nil {
-		cancel()
-		s.writeCatalogError(ctx, invalidProviderRequest())
-		return
-	}
-	state.ProcessedRequestJSON = processedRequestJSON
 	if err := adapter.EstimateHold(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
@@ -140,7 +182,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			return
 		}
 		requestComplete = false
-		s.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel, s.requests.end)
+		s.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel, func() {
+			s.requests.end()
+			releaseMemory()
+		})
 		return
 	case schemas.ResponsesStreamRequest:
 		stream, bifrostErr := s.runtime.Client().ResponsesStreamRequest(bifrostCtx, bifrostReq.ResponsesRequest)
@@ -153,7 +198,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			return
 		}
 		requestComplete = false
-		s.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel, s.requests.end)
+		s.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel, func() {
+			s.requests.end()
+			releaseMemory()
+		})
 		return
 	case schemas.ChatCompletionRequest:
 		defer cancel()
@@ -269,18 +317,13 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			completion[0]()
 		}
 	}()
-	streamProof, proofErr := s.newStreamProof(bifrostCtx, state)
+	streamProof, proofErr := s.newStreamProof(ctx, bifrostCtx, state)
 	if proofErr != nil {
 		s.writeProofError(ctx)
 		cancel()
 		return
 	}
-	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetContentType("text/event-stream")
-	ctx.Response.Header.Set("Cache-Control", "no-cache")
-	ctx.Response.Header.Set("Connection", "keep-alive")
 	reader := newSSEStreamReader()
-	ctx.Response.SetBodyStream(reader, -1)
 	completedAsync = true
 
 	go func() {
@@ -341,11 +384,18 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 					}
 					if meta := metadata.metadata(bifrostCtx); len(meta) > 0 {
 						encoded, err := marshalPayload(meta)
-						if err != nil || !reader.sendEvent("stogas.meta", encoded) {
+						frame := frameSSEEvent("stogas.meta", encoded)
+						if err != nil || !reader.send(frame) {
 							return
+						}
+						if streamProof != nil {
+							streamProof.WriteSentChunk(frame)
 						}
 					}
 					if streamProof != nil {
+						if sendDone {
+							streamProof.WriteSentChunk(frameSSEDone())
+						}
 						output, err := s.proofs.FinishStream(bifrostCtx, streamProof)
 						if err != nil {
 							encoded, encodeErr := marshalPayload(map[string]any{
@@ -431,19 +481,35 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				state.MarkFirstByte()
 			}
 
-			if !reader.sendEvent(streamEventName(includeEventName, eventName), encoded) {
+			frame := frameSSEEvent(streamEventName(includeEventName, eventName), encoded)
+			if !reader.send(frame) {
 				clientConnected = false
 				clientClosed = nil
 				continue
 			}
 			if streamProof != nil {
-				streamProof.WriteSentChunk(encoded)
+				streamProof.WriteSentChunk(frame)
 			}
 		}
 	}()
 
 	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string); ok {
 		s.forwardProviderHeaders(ctx, bifrostCtx, schemas.BifrostResponseExtraFields{ProviderResponseHeaders: headers})
+	}
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("text/event-stream")
+	ctx.Response.Header.Set("Cache-Control", "no-cache")
+	ctx.Response.Header.Set("Connection", "keep-alive")
+	if session := encryptedSession(ctx); session != nil {
+		if err := s.sealStreamingEncryptedResponse(ctx, session, reader); err != nil {
+			reader.done()
+			s.writeError(ctx, fasthttp.StatusInternalServerError, map[string]any{
+				"error": map[string]any{"message": "Failed to encrypt response", "type": "internal_error"},
+			})
+			return
+		}
+	} else {
+		ctx.Response.SetBodyStream(reader, -1)
 	}
 }
 

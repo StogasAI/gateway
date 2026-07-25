@@ -22,6 +22,7 @@ package catalog
 #SupportStatus:    "supported" | "unsupported" | "unknown"
 #LocationKind:     "world" | "multi_region" | "continent" | "macro_region" | "economic_region" | "country" | "state" | "city" | "datacenter_region"
 #ServiceTier: "auto" | "default" | "standard" | "standard_only" | "flex" | "priority"
+#ReasoningEffort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
 
 #OpenAPIValue: null | bool | number | string | [...#OpenAPIValue] | {
 	[string]: #OpenAPIValue
