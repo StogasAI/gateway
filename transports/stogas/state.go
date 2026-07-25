@@ -15,27 +15,28 @@ const stateContextKey contextKey = "stogas.state"
 const localDevReleaseMeasurement = "0000000000000000000000000000000000000000000000000000000000000000"
 
 type State struct {
-	Resolution        *catalog.ResolvedRequest
-	Adapter           Adapter
-	Signals           Signals
-	Hold              HoldEstimate
-	RawAPIKey         string
-	APIKeyClaims      *billing.APIKeyClaims
-	Authorization     *billing.Authorization
-	BillingFinalized  bool
+	Resolution         *catalog.ResolvedRequest
+	Adapter            Adapter
+	Signals            Signals
+	Hold               HoldEstimate
+	RawAPIKey          string
+	APIKeyClaims       *billing.APIKeyClaims
+	Authorization      *billing.Authorization
+	BillingFinalized   bool
 	SingleUseRequestID bool
-	RequestLifetime   time.Duration
-	RequestID         string
-	StartedAt         time.Time
-	RequestType       string
-	Model             string
-	Response          *schemas.BifrostResponse
-	BifrostError      *schemas.BifrostError
-	FinalCostUSDAtoms string
-	FinalMeters       []catalog.MeterEstimate
-	FirstByteAt       time.Time
-	ProviderTTFBMS    *uint32
+	RequestLifetime    time.Duration
+	RequestID          string
+	StartedAt          time.Time
+	RequestType        string
+	Model              string
+	Response           *schemas.BifrostResponse
+	BifrostError       *schemas.BifrostError
+	FinalCostUSDAtoms  string
+	FinalMeters        []catalog.MeterEstimate
+	FirstByteAt        time.Time
+	ProviderTTFBMS     *uint32
 	ReleaseMeasurement string
+	GatewayNodeID      string
 
 	ProviderResponseHeaders map[string]string
 }
@@ -49,10 +50,10 @@ type HoldEstimate struct {
 
 func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *billing.APIKeyClaims, adapter Adapter) *State {
 	return &State{
-		Resolution:   resolution,
-		Adapter:      adapter,
-		RawAPIKey:    rawAPIKey,
-		APIKeyClaims: claims,
+		Resolution:         resolution,
+		Adapter:            adapter,
+		RawAPIKey:          rawAPIKey,
+		APIKeyClaims:       claims,
 		ReleaseMeasurement: localDevReleaseMeasurement,
 	}
 }

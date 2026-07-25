@@ -108,6 +108,30 @@ func TestNormalizeReportBlobDoesNotUnwrapInvalidFirmwarePayload(t *testing.T) {
 	}
 }
 
+func TestMeasurementHexReadsSNPReportMeasurement(t *testing.T) {
+	report := make([]byte, snpReportSize)
+	binary.LittleEndian.PutUint32(report[0:4], snpReportVersionMin)
+	binary.LittleEndian.PutUint32(report[0x34:0x38], snpReportSigAlgo)
+	for index := snpMeasurementStart; index < snpMeasurementEnd; index++ {
+		report[index] = byte(index - snpMeasurementStart + 1)
+	}
+	envelope, err := EncodeEnvelope(Envelope{
+		Provider: ProviderSEVGuest,
+		Report:   base64.RawURLEncoding.EncodeToString(report),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	measurement, err := MeasurementHex(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measurement != "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30" {
+		t.Fatalf("unexpected measurement: %s", measurement)
+	}
+}
+
 func TestConfigFSRejectsUnsupportedProviderAndCleansUp(t *testing.T) {
 	fs := newFakeConfigFS()
 	fs.provider = "tdx_guest"

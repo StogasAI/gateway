@@ -25,6 +25,8 @@ const (
 	snpReportVersionMin  = 2
 	snpReportVersionMax  = 5
 	snpReportSigAlgo     = 1
+	snpMeasurementStart  = 0x90
+	snpMeasurementEnd    = 0xc0
 )
 
 type Attester interface {
@@ -254,6 +256,25 @@ func EncodeEnvelope(envelope Envelope) ([]byte, error) {
 		return nil, errors.New("quote envelope report is required")
 	}
 	return json.Marshal(envelope)
+}
+
+func MeasurementHex(envelopeBytes []byte) (string, error) {
+	var envelope Envelope
+	if err := json.Unmarshal(envelopeBytes, &envelope); err != nil {
+		return "", fmt.Errorf("decode quote envelope: %w", err)
+	}
+	if envelope.Schema != EnvelopeSchemaV1 {
+		return "", fmt.Errorf("unsupported quote envelope schema %q", envelope.Schema)
+	}
+	report, err := base64.RawURLEncoding.DecodeString(envelope.Report)
+	if err != nil {
+		return "", fmt.Errorf("decode SNP report: %w", err)
+	}
+	report = NormalizeReportBlob(report)
+	if !isSNPReport(report) {
+		return "", errors.New("quote envelope does not contain a valid SNP report")
+	}
+	return hex.EncodeToString(report[snpMeasurementStart:snpMeasurementEnd]), nil
 }
 
 func (a ConfigFS) reportName() (string, error) {
