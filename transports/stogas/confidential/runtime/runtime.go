@@ -52,6 +52,11 @@ type ControlLoop struct {
 	mu                      sync.RWMutex
 	generationID            string
 	admissionReadyUntil     time.Time
+	lastHeartbeatAttemptAt  time.Time
+	lastHeartbeatSuccessAt  time.Time
+	lastHeartbeatFailureAt  time.Time
+	lastHeartbeatDuration   time.Duration
+	consecutiveHeartbeatFailures uint32
 	lastHeartbeatError      error
 	lastSecretError         error
 	lastCertificateError    error
@@ -59,6 +64,17 @@ type ControlLoop struct {
 	draining                bool
 	shutdownOnce            sync.Once
 	shutdownRequested       chan struct{}
+}
+
+type ControlDiagnostics struct {
+	AdmissionReadyUntil *time.Time `json:"admission_ready_until"`
+	ConsecutiveFailures uint32     `json:"consecutive_failures"`
+	LastAttemptAt       *time.Time `json:"last_attempt_at"`
+	LastDurationMS      int64      `json:"last_duration_ms"`
+	LastFailureAt       *time.Time `json:"last_failure_at"`
+	LastFailureClass    string     `json:"last_failure_class,omitempty"`
+	LastFailureMessage  string     `json:"last_failure_message,omitempty"`
+	LastSuccessAt       *time.Time `json:"last_success_at"`
 }
 
 var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
@@ -70,7 +86,9 @@ var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
 	return entropy.Wait(ctx, nil)
 }
 
-const controlRequestTimeout = 5 * time.Second
+// Keep the request below the ten-second heartbeat cadence while allowing ordinary
+// cross-region Control and Postgres tail latency to renew the short admission lease.
+const controlRequestTimeout = 8 * time.Second
 const localQuoteReadyWindow = 45 * time.Second
 const maxConsecutiveQuoteRefreshFailures = 2
 const runtimeDependencyTimeout = time.Second
@@ -212,6 +230,13 @@ func (r *Runtime) SetRuntimeDependencyProbe(probe func(context.Context) error) {
 	r.Control.mu.Unlock()
 }
 
+func (r *Runtime) ControlDiagnostics() *ControlDiagnostics {
+	if r == nil || r.Control == nil {
+		return nil
+	}
+	return r.Control.Diagnostics()
+}
+
 func (r *Runtime) ShutdownRequested() <-chan struct{} {
 	if r == nil || r.Control == nil {
 		return nil
@@ -333,6 +358,27 @@ func (l *ControlLoop) LastHeartbeatError() error {
 	return l.lastHeartbeatError
 }
 
+func (l *ControlLoop) Diagnostics() *ControlDiagnostics {
+	if l == nil {
+		return nil
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	result := &ControlDiagnostics{
+		AdmissionReadyUntil: timePointer(l.admissionReadyUntil),
+		ConsecutiveFailures: l.consecutiveHeartbeatFailures,
+		LastAttemptAt:       timePointer(l.lastHeartbeatAttemptAt),
+		LastDurationMS:      l.lastHeartbeatDuration.Milliseconds(),
+		LastFailureAt:       timePointer(l.lastHeartbeatFailureAt),
+		LastSuccessAt:       timePointer(l.lastHeartbeatSuccessAt),
+	}
+	if l.lastHeartbeatError != nil {
+		result.LastFailureClass = heartbeatFailureClass(l.lastHeartbeatError)
+		result.LastFailureMessage = lastErrorString(l.lastHeartbeatError)
+	}
+	return result
+}
+
 func (l *ControlLoop) LastSecretError() error {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -373,9 +419,15 @@ func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Contex
 func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	l.heartbeatMu.Lock()
 	defer l.heartbeatMu.Unlock()
+	startedAt := time.Now()
+	var attemptErr error
+	defer func() {
+		l.recordHeartbeatAttempt(startedAt, attemptErr)
+	}()
 
 	response, err := l.sendHeartbeatOnce(ctx)
 	if err != nil {
+		attemptErr = err
 		return err
 	}
 	if response.Shutdown {
@@ -388,6 +440,7 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 			Identity: l.identity,
 		}); err != nil {
 			l.recordSecretError(err)
+			attemptErr = err
 			return err
 		}
 		l.recordSecretError(nil)
@@ -396,11 +449,13 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	certificateChanged, err := l.handleCertificateInstruction(ctx, response.CertificateInstruction)
 	if err != nil {
 		l.recordCertificateError(err)
+		attemptErr = err
 		return err
 	}
 	changed = changed || certificateChanged
 	if changed {
 		if _, err := l.sendHeartbeatOnce(ctx); err != nil {
+			attemptErr = err
 			return err
 		}
 	}
@@ -625,6 +680,23 @@ func (l *ControlLoop) recordHeartbeatError(err error) {
 	l.mu.Unlock()
 }
 
+func (l *ControlLoop) recordHeartbeatAttempt(startedAt time.Time, err error) {
+	completedAt := time.Now().UTC()
+	l.mu.Lock()
+	l.lastHeartbeatAttemptAt = startedAt.UTC()
+	l.lastHeartbeatDuration = completedAt.Sub(startedAt)
+	if err == nil {
+		l.lastHeartbeatSuccessAt = completedAt
+		l.consecutiveHeartbeatFailures = 0
+		l.lastHeartbeatError = nil
+	} else {
+		l.lastHeartbeatFailureAt = completedAt
+		l.consecutiveHeartbeatFailures++
+		l.lastHeartbeatError = err
+	}
+	l.mu.Unlock()
+}
+
 func (l *ControlLoop) recordSecretError(err error) {
 	l.mu.Lock()
 	l.lastSecretError = err
@@ -658,6 +730,39 @@ func lastErrorString(err error) string {
 		return string(message)
 	}
 	return string(message[:maxHeartbeatErrorCharacters])
+}
+
+func heartbeatFailureClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "rejected request"):
+		return "control_rejected"
+	case strings.Contains(message, "decode control"):
+		return "invalid_control_response"
+	case strings.Contains(message, "certificate"):
+		return "certificate"
+	case strings.Contains(message, "secret"):
+		return "secret_release"
+	default:
+		return "transport"
+	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copy := value.UTC()
+	return &copy
 }
 
 func containsString(values []string, want string) bool {

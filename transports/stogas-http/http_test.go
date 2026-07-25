@@ -178,14 +178,18 @@ func TestPrivateReadinessDetailsExposeActionableReasons(t *testing.T) {
 		t.Fatalf("expected 200 readiness details, got %d", ctx.Response.StatusCode())
 	}
 	var payload struct {
-		Ready   bool     `json:"ready"`
-		Reasons []string `json:"reasons"`
+		Control *confidentialruntime.ControlDiagnostics `json:"control"`
+		Ready   bool                                    `json:"ready"`
+		Reasons []string                                `json:"reasons"`
 	}
 	if err := json.Unmarshal(ctx.Response.Body(), &payload); err != nil {
 		t.Fatalf("decode readiness details: %v", err)
 	}
 	if payload.Ready || len(payload.Reasons) == 0 {
 		t.Fatalf("expected actionable non-ready reasons, got %#v", payload)
+	}
+	if payload.Control != nil {
+		t.Fatalf("runtime without a Control loop should report null diagnostics, got %#v", payload.Control)
 	}
 }
 

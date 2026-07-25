@@ -48,6 +48,7 @@ func (s *Server) readinessDetails(ctx *fasthttp.RequestCtx) {
 		reasons = append(reasons, result.Reasons...)
 	}
 	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
+		"control": s.secure.ControlDiagnostics(),
 		"ready":   ready,
 		"reasons": reasons,
 	})
