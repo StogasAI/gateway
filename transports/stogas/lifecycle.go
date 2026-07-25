@@ -121,17 +121,18 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		state.FinalCostUSDAtoms = sumMeterAmounts(state.FinalMeters)
 	}
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-		ActualCostUSDAtoms: state.FinalCostUSDAtoms,
-		Authorization:      state.Authorization,
-		Error:              state.BifrostError,
-		FirstByteAt:        state.FirstByteAt,
-		Pricing:            pricingForState(state),
-		ProviderTTFBMS:     state.ProviderTTFBMS,
-		ReleaseMeasurement: state.ReleaseMeasurement,
-		RequestType:        state.RequestType,
+		ActualCostUSDAtoms:     state.FinalCostUSDAtoms,
+		Authorization:          state.Authorization,
+		Error:                  state.BifrostError,
+		FirstByteAt:            state.FirstByteAt,
+		Pricing:                pricingForState(state),
+		ProviderTTFBMS:         state.ProviderTTFBMS,
+		GatewayNodeID:          state.GatewayNodeID,
+		ReleaseMeasurement:     state.ReleaseMeasurement,
+		RequestType:            state.RequestType,
 		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
-		Response:           state.Response,
-		StartedAt:          state.StartedAt,
+		Response:               state.Response,
+		StartedAt:              state.StartedAt,
 	})
 	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, event); err != nil {
 		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)

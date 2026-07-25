@@ -28,14 +28,15 @@ import (
 )
 
 type Runtime struct {
-	Identity     *identity.Material
-	Certs        *identity.CertificateStore
-	Proofs       *proofhttp.Service
-	Quotes       *quote.Manager
-	Secrets      *secretstore.Store
-	Control      *ControlLoop
-	EntropyReady bool
-	cancel       context.CancelFunc
+	Identity           *identity.Material
+	Certs              *identity.CertificateStore
+	Proofs             *proofhttp.Service
+	Quotes             *quote.Manager
+	Secrets            *secretstore.Store
+	Control            *ControlLoop
+	EntropyReady       bool
+	ReleaseMeasurement string
+	cancel             context.CancelFunc
 }
 
 type ControlLoop struct {
@@ -48,22 +49,22 @@ type ControlLoop struct {
 	quotes       *quote.Manager
 	secrets      *secretstore.Store
 
-	heartbeatMu             sync.Mutex
-	mu                      sync.RWMutex
-	generationID            string
-	admissionReadyUntil     time.Time
-	lastHeartbeatAttemptAt  time.Time
-	lastHeartbeatSuccessAt  time.Time
-	lastHeartbeatFailureAt  time.Time
-	lastHeartbeatDuration   time.Duration
+	heartbeatMu                  sync.Mutex
+	mu                           sync.RWMutex
+	generationID                 string
+	admissionReadyUntil          time.Time
+	lastHeartbeatAttemptAt       time.Time
+	lastHeartbeatSuccessAt       time.Time
+	lastHeartbeatFailureAt       time.Time
+	lastHeartbeatDuration        time.Duration
 	consecutiveHeartbeatFailures uint32
-	lastHeartbeatError      error
-	lastSecretError         error
-	lastCertificateError    error
-	runtimeDependencyProbe  func(context.Context) error
-	draining                bool
-	shutdownOnce            sync.Once
-	shutdownRequested       chan struct{}
+	lastHeartbeatError           error
+	lastSecretError              error
+	lastCertificateError         error
+	runtimeDependencyProbe       func(context.Context) error
+	draining                     bool
+	shutdownOnce                 sync.Once
+	shutdownRequested            chan struct{}
 }
 
 type ControlDiagnostics struct {
@@ -157,6 +158,19 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		cancel()
 		return nil, fmt.Errorf("initial confidential quote refresh failed: %w", err)
 	}
+	releaseMeasurement := stogas.ReleaseMeasurementForLog("")
+	if config.AttesterMode == "sev-snp" {
+		initialQuote, err := manager.Current(runtimeCtx)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("read initial confidential quote: %w", err)
+		}
+		releaseMeasurement, err = attest.MeasurementHex(initialQuote.Quote)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("read confidential release measurement: %w", err)
+		}
+	}
 	manager.Start(runtimeCtx)
 	secrets := secretstore.NewStore()
 	var controlLoop *ControlLoop
@@ -184,11 +198,12 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 			Quotes: manager,
 			Signer: material.Ed25519PrivateKey,
 		},
-		Quotes:       manager,
-		Secrets:      secrets,
-		Control:      controlLoop,
-		EntropyReady: true,
-		cancel:       cancel,
+		Quotes:             manager,
+		Secrets:            secrets,
+		Control:            controlLoop,
+		EntropyReady:       true,
+		ReleaseMeasurement: releaseMeasurement,
+		cancel:             cancel,
 	}, nil
 }
 
@@ -321,13 +336,13 @@ func newControlLoop(config stogas.ConfidentialConfig, material *identity.Materia
 			AllowInsecureLocal: config.ControlAllowHTTP,
 			BaseURL:            config.ControlURL,
 		},
-		config:       config,
-		certs:        certs,
-		entropyReady: entropyReady,
-		identity:     material,
-		nodeID:       deriveNodeID(config, material, catalogHash),
-		quotes:       manager,
-		secrets:      secrets,
+		config:            config,
+		certs:             certs,
+		entropyReady:      entropyReady,
+		identity:          material,
+		nodeID:            deriveNodeID(config, material, catalogHash),
+		quotes:            manager,
+		secrets:           secrets,
 		shutdownRequested: make(chan struct{}),
 	}
 }

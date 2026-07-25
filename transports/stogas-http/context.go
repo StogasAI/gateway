@@ -26,7 +26,7 @@ const (
 
 var chatStreamIdleTimeout = 2 * time.Minute
 
-func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
+func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, releaseMeasurement string, gatewayNodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := requestLifetime(resolution)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
@@ -47,6 +47,8 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	state.ReleaseMeasurement = stogas.ReleaseMeasurementForLog(releaseMeasurement)
+	state.GatewayNodeID = strings.ToLower(strings.TrimSpace(gatewayNodeID))
 	state.RequestID = requestID
 	state.RequestLifetime = lifetime
 	state.SingleUseRequestID = encryptedSession(ctx) != nil

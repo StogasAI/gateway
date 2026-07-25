@@ -130,7 +130,22 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	}
 
 	adapter := stogas.AdapterFor(resolution.Provider)
-	bifrostCtx, state, cancel, err := newRequestContext(ctx, resolution, credential, adapter)
+	releaseMeasurement := ""
+	gatewayNodeID := ""
+	if s.secure != nil {
+		releaseMeasurement = s.secure.ReleaseMeasurement
+		if s.secure.Control != nil {
+			gatewayNodeID = s.secure.Control.GenerationID()
+		}
+	}
+	bifrostCtx, state, cancel, err := newRequestContext(
+		ctx,
+		resolution,
+		credential,
+		adapter,
+		releaseMeasurement,
+		gatewayNodeID,
+	)
 	if err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": err.Error(), "type": "invalid_request_error"},

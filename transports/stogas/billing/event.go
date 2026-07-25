@@ -8,17 +8,18 @@ import (
 )
 
 type EventInput struct {
-	ActualCostUSDAtoms string
-	Authorization      *Authorization
-	Error              *schemas.BifrostError
-	FirstByteAt        time.Time
-	Pricing            map[string]any
-	ProviderTTFBMS     *uint32
-	ReleaseMeasurement string
-	RequestType        string
+	ActualCostUSDAtoms     string
+	Authorization          *Authorization
+	Error                  *schemas.BifrostError
+	FirstByteAt            time.Time
+	Pricing                map[string]any
+	ProviderTTFBMS         *uint32
+	GatewayNodeID          string
+	ReleaseMeasurement     string
+	RequestType            string
 	ResolvedCatalogNodeIDs []string
-	Response           *schemas.BifrostResponse
-	StartedAt          time.Time
+	Response               *schemas.BifrostResponse
+	StartedAt              time.Time
 }
 
 func NewRequestEvent(input EventInput) RequestEvent {
@@ -62,6 +63,7 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
 		UpstreamProviderFinishReason: finishReason(input.Response),
 		ProviderRequestID:            upstreamRequestID(input.Response),
+		GatewayNodeID:                strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
 		TotalTimeMS:                  totalTimeMS,
 		UpstreamProviderTimeMS:       upstreamTimeMS,
 		TTFBMS:                       ttfbMS,

@@ -31,7 +31,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer sk-secret")
 	ctx.Request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestNewRequestContextUsesResponsesLifetime(t *testing.T) {
 	resolution.Route = catalog.RouteResponses
 	resolution.RequestType = schemas.ResponsesStreamRequest
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI))
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -392,12 +392,12 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 		t.Fatalf("proof did not bind resolved catalog chain: %#v", proofObject.CatalogNodeIDs)
 	}
 	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestID:             state.RequestID,
-		RequestPath:           string(ctx.Path()),
-		RequestBody:           ctx.Request.Body(),
-		ResponseBody:          ctx.Response.Body(),
-		CatalogNodeIDs:        state.Resolution.CatalogNodeIDs(),
-		DrandRound:            1,
+		RequestID:            state.RequestID,
+		RequestPath:          string(ctx.Path()),
+		RequestBody:          ctx.Request.Body(),
+		ResponseBody:         ctx.Response.Body(),
+		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
+		DrandRound:           1,
 		E2EETranscriptSHA256: encryptedSession(ctx).TranscriptSHA256(),
 	}, proofObject.ProofHash, proofObject.Signature) {
 		t.Fatal("proof did not bind the E2EE request transcript")

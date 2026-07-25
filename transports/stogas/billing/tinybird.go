@@ -42,6 +42,7 @@ type RequestEvent struct {
 	StogasBillingStatus          string            `json:"stogas_billing_status"`
 	UpstreamProviderFinishReason string            `json:"upstream_provider_finish_reason"`
 	ProviderRequestID            string            `json:"provider_request_id"`
+	GatewayNodeID                string            `json:"gateway_node_id"`
 	TotalTimeMS                  uint32            `json:"total_time_ms"`
 	UpstreamProviderTimeMS       uint32            `json:"upstream_provider_time_ms"`
 	TTFBMS                       uint32            `json:"ttfb_ms"`
@@ -126,6 +127,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	StogasBillingStatus          string `json:"stogas_billing_status"`
 	UpstreamProviderFinishReason string `json:"upstream_provider_finish_reason"`
 	ProviderRequestID            string `json:"provider_request_id"`
+	GatewayNodeID                string `json:"gateway_node_id"`
 	TotalTimeMS                  uint32 `json:"total_time_ms"`
 	UpstreamProviderTimeMS       uint32 `json:"upstream_provider_time_ms"`
 	TTFBMS                       uint32 `json:"ttfb_ms"`
@@ -149,6 +151,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
 		ProviderRequestID:            event.ProviderRequestID,
+		GatewayNodeID:                strings.ToLower(strings.TrimSpace(event.GatewayNodeID)),
 		ReleaseMeasurement:           strings.ToLower(strings.TrimSpace(event.ReleaseMeasurement)),
 		RequestID:                    event.RequestID,
 		RequestType:                  event.RequestType,
