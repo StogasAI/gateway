@@ -148,7 +148,7 @@ func TestSettlementStatuses(t *testing.T) {
 		wantStatus     string
 	}{
 		{name: "exact", availableAfter: "9000", authorized: "1000", actual: "1000", wantStatus: "complete"},
-		{name: "refund", availableAfter: "9000", authorized: "1000", actual: "400", wantStatus: "over_reserved"},
+		{name: "refund", availableAfter: "9000", authorized: "1000", actual: "400", wantStatus: "complete"},
 		{name: "extra debit positive", availableAfter: "2000", authorized: "1000", actual: "1500", wantStatus: "under_reserved"},
 		{name: "extra debit negative", availableAfter: "0", authorized: "1000", actual: "1500", wantStatus: "negative_balance"},
 	}
@@ -195,8 +195,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
 	event := tinybirdGatewayRequestEvent(RequestEvent{
 		Pricing: map[string]any{
-			"usageMetrics": map[string]any{"prompt_tokens": 1},
-			"tokens":       map[string]any{"prompt": 1},
+			"usageMetrics":         map[string]any{"prompt_tokens": 1},
+			"tokens":               map[string]any{"prompt": 1},
 			"basis":                "metered_usage",
 			"final":                map[string]any{"input_tokens": "legacy"},
 			"final_meters":         []any{},
@@ -212,8 +212,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			Status:     "success",
 			StatusCode: &status,
 		}},
-		ReleaseMeasurement:     strings.Repeat("a", 64),
-		ResolvedCatalogNodeIDs: []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
+		ReleaseMeasurement:      strings.Repeat("a", 64),
+		ResolvedCatalogNodeIDs:  []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
 	})
 
@@ -251,14 +251,14 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	firstByteAt := startedAt.Add(10 * time.Millisecond)
 	providerTTFB := uint32(8)
 	event := NewRequestEvent(EventInput{
-		Authorization: &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
-		FirstByteAt:   firstByteAt,
+		Authorization:  &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
+		FirstByteAt:    firstByteAt,
 		ProviderTTFBMS: &providerTTFB,
 		Pricing: map[string]any{
-			"model":        "gpt-5",
-			"tokens":       map[string]any{"prompt": 1},
-			"usageMetrics": map[string]any{"prompt_tokens": 1},
-			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
+			"model":                "gpt-5",
+			"tokens":               map[string]any{"prompt": 1},
+			"usageMetrics":         map[string]any{"prompt_tokens": 1},
+			"input_tokens":         map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
 			"total_cost_usd_atoms": "2",
 		},
 		StartedAt: startedAt,

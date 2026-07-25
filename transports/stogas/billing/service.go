@@ -331,7 +331,7 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	}
 
 	switch row.Result {
-	case "complete", "over_reserved", "under_reserved", "negative_balance", "already_settled":
+	case "complete", "under_reserved", "negative_balance", "already_settled":
 		return nil
 	case "hold_not_found":
 		return &settleResultError{err: ErrAuthorizationAbsent, result: row.Result, statusCode: 404}
