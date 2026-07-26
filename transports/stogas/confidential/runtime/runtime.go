@@ -414,14 +414,24 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			heartbeatCtx, cancel := l.controlAttemptContext(ctx)
-			err := l.sendHeartbeat(heartbeatCtx)
-			cancel()
-			if err != nil {
-				log.Printf("stogas confidential heartbeat failed: %v", err)
+			if err := l.sendScheduledHeartbeat(ctx); err != nil {
+				log.Printf("stogas confidential heartbeat failed after retry: %v", err)
 			}
 		}
 	}
+}
+
+func (l *ControlLoop) sendScheduledHeartbeat(ctx context.Context) error {
+	var lastErr error
+	for range 2 {
+		heartbeatCtx, cancel := l.controlAttemptContext(ctx)
+		lastErr = l.sendHeartbeat(heartbeatCtx)
+		cancel()
+		if lastErr == nil || ctx.Err() != nil {
+			return lastErr
+		}
+	}
+	return lastErr
 }
 
 func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Context, context.CancelFunc) {

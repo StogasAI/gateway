@@ -253,11 +253,11 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
 	firstByteAt := startedAt.Add(10 * time.Millisecond)
-	providerTTFB := uint32(8)
+	providerFirstOutput := uint32(8)
 	event := NewRequestEvent(EventInput{
 		Authorization:  &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
 		FirstByteAt:    firstByteAt,
-		ProviderTTFBMS: &providerTTFB,
+		ProviderFirstOutputMS: &providerFirstOutput,
 		Pricing: map[string]any{
 			"model":                "gpt-5",
 			"tokens":               map[string]any{"prompt": 1},
@@ -284,8 +284,8 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	if event.TTFBMS == 0 {
 		t.Fatalf("expected gateway ttfb to be measured")
 	}
-	if event.ProviderAttempts[0].ProviderTTFBMS == nil || *event.ProviderAttempts[0].ProviderTTFBMS != providerTTFB {
-		t.Fatalf("expected provider ttfb on provider attempt, got %#v", event.ProviderAttempts)
+	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
+		t.Fatalf("expected provider first output on provider attempt, got %#v", event.ProviderAttempts)
 	}
 }
 

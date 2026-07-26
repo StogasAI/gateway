@@ -35,7 +35,7 @@ type State struct {
 	FinalMeters        []catalog.MeterEstimate
 	FirstByteAt        time.Time
 	ProviderStartedAt  time.Time
-	ProviderTTFBMS     *uint32
+	ProviderFirstOutputMS *uint32
 	ReleaseMeasurement string
 	GatewayNodeID      string
 
@@ -81,19 +81,29 @@ func (s *State) MarkProviderStarted() {
 	s.ProviderStartedAt = time.Now().UTC()
 }
 
-func (s *State) ObserveProviderTTFB(latencyMS int64) {
-	if s == nil || s.ProviderTTFBMS != nil || latencyMS < 0 {
+// ObserveProviderFirstOutput records the elapsed provider time until Bifrost
+// yields the first usable content, reasoning, tool, audio, or terminal output.
+// Supported providers attach their provider-clock latency to that output; the
+// outer clock is a provider-agnostic fallback for future adapters that do not.
+func (s *State) ObserveProviderFirstOutput(latencyMS int64) {
+	if s == nil || s.ProviderFirstOutputMS != nil {
+		return
+	}
+	if latencyMS <= 0 && !s.ProviderStartedAt.IsZero() {
+		latencyMS = time.Since(s.ProviderStartedAt).Milliseconds()
+	}
+	if latencyMS < 0 {
 		return
 	}
 	value := uint32(latencyMS)
 	if latencyMS > int64(^uint32(0)) {
 		value = ^uint32(0)
 	}
-	s.ProviderTTFBMS = &value
+	s.ProviderFirstOutputMS = &value
 }
 
 func (s *State) ObserveUnaryProviderLatency(extra schemas.BifrostResponseExtraFields) {
-	s.ObserveProviderTTFB(extra.Latency)
+	s.ObserveProviderFirstOutput(extra.Latency)
 }
 
 func SetState(ctx *schemas.BifrostContext, state *State) {
