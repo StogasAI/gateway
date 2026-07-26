@@ -13,6 +13,7 @@ type EventInput struct {
 	Error                  *schemas.BifrostError
 	FirstByteAt            time.Time
 	Pricing                map[string]any
+	ProviderStartedAt      time.Time
 	ProviderTTFBMS         *uint32
 	GatewayNodeID          string
 	ReleaseMeasurement     string
@@ -37,8 +38,14 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	}
 	totalTimeMS := uint32Duration(time.Since(startedAt))
 	upstreamTimeMS := totalTimeMS
+	if !input.ProviderStartedAt.IsZero() && input.ProviderStartedAt.After(startedAt) {
+		upstreamTimeMS = uint32Duration(time.Since(input.ProviderStartedAt))
+	}
 	if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
 		upstreamTimeMS = uint32FromInt64(extra.Latency)
+	}
+	if upstreamTimeMS > totalTimeMS {
+		upstreamTimeMS = totalTimeMS
 	}
 	ttfbMS := uint32(0)
 	if !input.FirstByteAt.IsZero() && input.FirstByteAt.After(startedAt) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -123,6 +124,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	StogasWorkspaceID            string `json:"stogas_workspace_id"`
 	RequestType                  string `json:"request_type"`
 	ProviderAttempts             string `json:"provider_attempts"`
+	AnalyticsProviderStatus      string `json:"analytics_provider_status"`
 	StogasProcessingSuccess      uint8  `json:"stogas_processing_success"`
 	StogasBillingStatus          string `json:"stogas_billing_status"`
 	UpstreamProviderFinishReason string `json:"upstream_provider_finish_reason"`
@@ -133,6 +135,10 @@ type tinybirdGatewayRequestEventPayload struct {
 	TTFBMS                       uint32 `json:"ttfb_ms"`
 	TotalCostUSDAtoms            string `json:"total_cost_usd_atoms"`
 	Pricing                      string `json:"pricing"`
+	AnalyticsInputTokens         uint64 `json:"analytics_input_tokens"`
+	AnalyticsCachedInputTokens   uint64 `json:"analytics_cached_input_tokens"`
+	AnalyticsOutputTokens        uint64 `json:"analytics_output_tokens"`
+	AnalyticsReasoningTokens     uint64 `json:"analytics_reasoning_tokens"`
 	ReleaseMeasurement           string `json:"release_measurement"`
 	ResolvedCatalogNodeIDs       string `json:"resolved_catalog_node_ids"`
 }
@@ -146,7 +152,16 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	if event.StogasProcessingSuccess {
 		processed = 1
 	}
+	providerStatus := ""
+	if len(event.ProviderAttempts) > 0 {
+		providerStatus = event.ProviderAttempts[0].Status
+	}
 	return tinybirdGatewayRequestEventPayload{
+		AnalyticsCachedInputTokens:   analyticsMeterQuantity(pricing, MeterCachedInputTokens),
+		AnalyticsInputTokens:         analyticsMeterQuantity(pricing, MeterInputTokens),
+		AnalyticsOutputTokens:        analyticsMeterQuantity(pricing, MeterOutputTokens),
+		AnalyticsProviderStatus:      providerStatus,
+		AnalyticsReasoningTokens:     analyticsMeterQuantity(pricing, MeterReasoningTokens),
 		CreatedAt:                    event.CreatedAt,
 		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
@@ -168,6 +183,18 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		UpstreamProviderFinishReason: event.UpstreamProviderFinishReason,
 		UpstreamProviderTimeMS:       event.UpstreamProviderTimeMS,
 	}
+}
+
+func analyticsMeterQuantity(pricing map[string]any, meter string) uint64 {
+	entry, ok := pricing[meter].(map[string]any)
+	if !ok {
+		return 0
+	}
+	quantity, err := strconv.ParseUint(fmt.Sprint(entry["quantity"]), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return quantity
 }
 
 func mustJSONString(value any, fallback string) string {
