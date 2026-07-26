@@ -473,7 +473,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				eventName = ""
 				extra := chunk.BifrostChatResponse.ExtraFields
 				if state != nil {
-					state.ObserveProviderTTFB(extra.Latency)
+					state.ObserveProviderFirstOutput(extra.Latency)
 				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostChatResponse, extra)
@@ -481,7 +481,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
 				extra := chunk.BifrostResponsesStreamResponse.ExtraFields
 				if state != nil {
-					state.ObserveProviderTTFB(extra.Latency)
+					state.ObserveProviderFirstOutput(extra.Latency)
 				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostResponsesStreamResponse.WithDefaults(), extra)

@@ -14,7 +14,7 @@ type EventInput struct {
 	FirstByteAt            time.Time
 	Pricing                map[string]any
 	ProviderStartedAt      time.Time
-	ProviderTTFBMS         *uint32
+	ProviderFirstOutputMS  *uint32
 	GatewayNodeID          string
 	ReleaseMeasurement     string
 	RequestType            string
@@ -65,7 +65,7 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
 		RequestType:                  normalizeRequestType(input.RequestType),
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderTTFBMS: input.ProviderTTFBMS, IsBYOK: false}},
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: input.ProviderFirstOutputMS, IsBYOK: false}},
 		StogasProcessingSuccess:      true,
 		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
 		UpstreamProviderFinishReason: finishReason(input.Response),

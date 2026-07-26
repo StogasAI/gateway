@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -58,6 +59,41 @@ func TestControlDiagnosticsTrackFailureAndRecovery(t *testing.T) {
 		recovered.LastFailureClass != "" ||
 		recovered.LastFailureMessage != "" {
 		t.Fatalf("unexpected recovered heartbeat diagnostics: %#v", recovered)
+	}
+}
+
+func TestScheduledHeartbeatRetriesOneTransientFailureImmediately(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		if call == 2 {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
+	}))
+	defer server.Close()
+
+	config := testConfig("mock")
+	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
+	config.ControlAllowHTTP = true
+	config.ControlURL = server.URL
+	config.HeartbeatInterval = time.Hour
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.Control.sendScheduledHeartbeat(context.Background()); err != nil {
+		t.Fatalf("scheduled heartbeat did not recover on its bounded retry: %v", err)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("expected initial heartbeat plus failed attempt and retry, got %d calls", calls.Load())
+	}
+	diagnostics := runtime.Control.Diagnostics()
+	if diagnostics.ConsecutiveFailures != 0 || diagnostics.LastFailureAt == nil {
+		t.Fatalf("expected recovered diagnostics to retain the transient failure: %#v", diagnostics)
 	}
 }
 

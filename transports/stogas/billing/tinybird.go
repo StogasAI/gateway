@@ -26,7 +26,7 @@ type ProviderAttempt struct {
 	Status         string  `json:"status"`
 	StatusCode     *int    `json:"status_code"`
 	LatencyMS      uint32  `json:"latency_ms"`
-	ProviderTTFBMS *uint32 `json:"provider_ttfb_ms"`
+	ProviderFirstOutputMS *uint32 `json:"provider_first_output_ms"`
 	IsBYOK         bool    `json:"is_byok"`
 }
 
@@ -137,6 +137,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	Pricing                      string `json:"pricing"`
 	AnalyticsInputTokens         uint64 `json:"analytics_input_tokens"`
 	AnalyticsCachedInputTokens   uint64 `json:"analytics_cached_input_tokens"`
+	AnalyticsCacheWriteTokens    uint64 `json:"analytics_cache_write_input_tokens"`
 	AnalyticsOutputTokens        uint64 `json:"analytics_output_tokens"`
 	AnalyticsReasoningTokens     uint64 `json:"analytics_reasoning_tokens"`
 	ReleaseMeasurement           string `json:"release_measurement"`
@@ -156,8 +157,12 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	if len(event.ProviderAttempts) > 0 {
 		providerStatus = event.ProviderAttempts[0].Status
 	}
+	cacheWriteTokens :=
+		analyticsMeterQuantity(pricing, MeterCacheWrite5mInputTokens) +
+			analyticsMeterQuantity(pricing, MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
 		AnalyticsCachedInputTokens:   analyticsMeterQuantity(pricing, MeterCachedInputTokens),
+		AnalyticsCacheWriteTokens:    cacheWriteTokens,
 		AnalyticsInputTokens:         analyticsMeterQuantity(pricing, MeterInputTokens),
 		AnalyticsOutputTokens:        analyticsMeterQuantity(pricing, MeterOutputTokens),
 		AnalyticsProviderStatus:      providerStatus,

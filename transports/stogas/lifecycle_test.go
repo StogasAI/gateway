@@ -262,10 +262,10 @@ func TestFinalPricePartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t
 		CompletionTokens: 250,
 		TotalTokens:      1250,
 		CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{
-			TextTokens:                40,
-			ReasoningTokens:           180,
-			RejectedPredictionTokens:  20,
-			AcceptedPredictionTokens:  10,
+			TextTokens:               40,
+			ReasoningTokens:          180,
+			RejectedPredictionTokens: 20,
+			AcceptedPredictionTokens: 10,
 		},
 	})
 	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
@@ -463,7 +463,7 @@ func TestDefaultAdapterFinalPriceChargesUsageEvenWhenProviderErrorIsInsured(t *t
 		},
 		BifrostError: &schemas.BifrostError{
 			StatusCode: lifecycleIntPtr(500),
-			Error:     &schemas.ErrorField{Message: "provider failed after returning usage"},
+			Error:      &schemas.ErrorField{Message: "provider failed after returning usage"},
 		},
 		Signals: &StandardSignals{Prompt: 1000, Completion: 250},
 	}
@@ -500,7 +500,7 @@ func TestNoUsageClientErrorLogsCapturedHoldMetersAsFinalMeters(t *testing.T) {
 		},
 		BifrostError: &schemas.BifrostError{
 			StatusCode: lifecycleIntPtr(400),
-			Error:     &schemas.ErrorField{Message: "messages.0.content is required"},
+			Error:      &schemas.ErrorField{Message: "messages.0.content is required"},
 		},
 	}
 
@@ -1225,7 +1225,7 @@ func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
 	if attempt.LatencyMS != 81 {
 		t.Fatalf("expected provider total latency 81, got %#v", attempt)
 	}
-	if attempt.ProviderTTFBMS == nil || *attempt.ProviderTTFBMS != 81 {
+	if attempt.ProviderFirstOutputMS == nil || *attempt.ProviderFirstOutputMS != 81 {
 		t.Fatalf("expected unary provider ttfb to use provider latency, got %#v", attempt)
 	}
 	if authorizer.finalEvents[0].TTFBMS == 0 {
@@ -1233,12 +1233,20 @@ func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
 	}
 }
 
-func TestProviderTTFBAcceptsSubMillisecondFirstEvent(t *testing.T) {
-	state := &State{}
-	state.ObserveProviderTTFB(0)
-	state.ObserveProviderTTFB(12)
-	if state.ProviderTTFBMS == nil || *state.ProviderTTFBMS != 0 {
-		t.Fatalf("first provider event must remain authoritative, got %#v", state.ProviderTTFBMS)
+func TestProviderFirstOutputAcceptsSubMillisecondEvent(t *testing.T) {
+	state := &State{ProviderStartedAt: time.Now().UTC()}
+	state.ObserveProviderFirstOutput(0)
+	state.ObserveProviderFirstOutput(12)
+	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS != 0 {
+		t.Fatalf("first provider output must remain authoritative, got %#v", state.ProviderFirstOutputMS)
+	}
+}
+
+func TestProviderFirstOutputFallsBackToOuterProviderClock(t *testing.T) {
+	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
+	state.ObserveProviderFirstOutput(0)
+	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 || *state.ProviderFirstOutputMS > 100 {
+		t.Fatalf("expected outer provider clock fallback, got %#v", state.ProviderFirstOutputMS)
 	}
 }
 

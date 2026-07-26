@@ -129,7 +129,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		FirstByteAt:            state.FirstByteAt,
 		Pricing:                pricingForState(state),
 		ProviderStartedAt:      state.ProviderStartedAt,
-		ProviderTTFBMS:         state.ProviderTTFBMS,
+		ProviderFirstOutputMS:  state.ProviderFirstOutputMS,
 		GatewayNodeID:          state.GatewayNodeID,
 		ReleaseMeasurement:     state.ReleaseMeasurement,
 		RequestType:            state.RequestType,
