@@ -194,26 +194,20 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 
 func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
+	firstOutput := uint32(46)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
 		Pricing: map[string]any{
-			"usageMetrics":         map[string]any{"prompt_tokens": 1},
-			"tokens":               map[string]any{"prompt": 1},
-			"basis":                "metered_usage",
-			"final":                map[string]any{"input_tokens": "legacy"},
-			"final_meters":         []any{},
-			"hold":                 map[string]any{"output_tokens": "legacy"},
-			"hold_meters":          []any{},
-			"input_tokens":         map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "usdAtoms": "34"},
-			"total_cost_usd_atoms": "123",
+			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "usdAtoms": "34"},
 		},
 		ProviderAttempts: []ProviderAttempt{{
 			IsBYOK:     false,
 			LatencyMS:  12,
 			Provider:   "openai",
+			ProviderFirstOutputMS: &firstOutput,
 			Status:     "success",
 			StatusCode: &status,
 		}},
-		ReleaseMeasurement:      strings.Repeat("a", 64),
+		GatewayVersion:          "v1.5.13",
 		ResolvedCatalogNodeIDs:  []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
 	})
@@ -224,8 +218,11 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
 		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
 	}
-	if event.ReleaseMeasurement != strings.Repeat("a", 64) {
-		t.Fatalf("release_measurement = %q", event.ReleaseMeasurement)
+	if event.AnalyticsTimeToFirstOutputMS != firstOutput {
+		t.Fatalf("analytics_time_to_first_output_ms = %d", event.AnalyticsTimeToFirstOutputMS)
+	}
+	if event.GatewayVersion != "v1.5.13" {
+		t.Fatalf("gateway_version = %q", event.GatewayVersion)
 	}
 	var nodeIDs []string
 	if err := json.Unmarshal([]byte(event.ResolvedCatalogNodeIDs), &nodeIDs); err != nil || len(nodeIDs) != 3 {
@@ -239,11 +236,6 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if err := json.Unmarshal([]byte(event.Pricing), &pricing); err != nil {
 		t.Fatalf("pricing = %q, err=%v", event.Pricing, err)
 	}
-	for _, key := range []string{"usageMetrics", "hold_meters", "final_meters", "hold", "final", "basis", "hold_usd_atoms", "total_cost_usd_atoms"} {
-		if _, ok := pricing[key]; ok {
-			t.Fatalf("pricing must not expose legacy metric key %q: %#v", key, pricing)
-		}
-	}
 	input, ok := pricing["input_tokens"].(map[string]any)
 	if !ok || input["quantity"] != "12" || input["rateKey"] != "per_mill_tokens" || input["usdAtoms"] != "34" {
 		t.Fatalf("pricing should keep dynamic meter keys: %#v", pricing)
@@ -255,31 +247,18 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	firstByteAt := startedAt.Add(10 * time.Millisecond)
 	providerFirstOutput := uint32(8)
 	event := NewRequestEvent(EventInput{
-		Authorization:  &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
-		FirstByteAt:    firstByteAt,
+		Authorization:         &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
+		FirstByteAt:           firstByteAt,
 		ProviderFirstOutputMS: &providerFirstOutput,
 		Pricing: map[string]any{
-			"model":                "gpt-5",
-			"tokens":               map[string]any{"prompt": 1},
-			"usageMetrics":         map[string]any{"prompt_tokens": 1},
-			"input_tokens":         map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
-			"total_cost_usd_atoms": "2",
+			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
 		},
 		StartedAt: startedAt,
 	})
 
 	pricing := event.Pricing
-	if _, ok := pricing["total_cost_usd_atoms"]; ok {
-		t.Fatalf("pricing must not duplicate top-level total cost: %#v", pricing)
-	}
-	if _, ok := pricing["basis"]; ok {
-		t.Fatalf("pricing must not expose fixed basis: %#v", pricing)
-	}
-	if _, ok := pricing["hold_usd_atoms"]; ok {
-		t.Fatalf("pricing must not expose fixed hold total: %#v", pricing)
-	}
-	if _, ok := pricing["usageMetrics"]; ok {
-		t.Fatalf("pricing must not contain usageMetrics: %#v", pricing)
+	if len(pricing) != 1 {
+		t.Fatalf("pricing must contain only the supplied canonical meter: %#v", pricing)
 	}
 	if event.TTFBMS == 0 {
 		t.Fatalf("expected gateway ttfb to be measured")
@@ -293,17 +272,35 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	now := time.Now()
 	startedAt := now.Add(-100 * time.Millisecond)
 	providerStartedAt := now.Add(-60 * time.Millisecond)
+	providerCompletedAt := now.Add(-20 * time.Millisecond)
 	event := NewRequestEvent(EventInput{
-		Authorization:     &Authorization{RequestID: "request-1"},
-		ProviderStartedAt: providerStartedAt,
-		StartedAt:         startedAt,
+		Authorization:       &Authorization{RequestID: "request-1"},
+		ProviderCompletedAt: providerCompletedAt,
+		ProviderStartedAt:   providerStartedAt,
+		StartedAt:           startedAt,
 	})
 	if event.TotalTimeMS < 90 {
 		t.Fatalf("total time should begin at request admission, got %dms", event.TotalTimeMS)
 	}
 	providerTime := event.UpstreamProviderTimeMS
-	if providerTime < 50 || providerTime > 80 {
-		t.Fatalf("provider fallback should begin at provider dispatch, got %dms", providerTime)
+	if providerTime < 35 || providerTime > 45 {
+		t.Fatalf("provider time should end at observed provider completion, got %dms", providerTime)
+	}
+
+	event = NewRequestEvent(EventInput{
+		Authorization:       &Authorization{RequestID: "request-provider-clock"},
+		ProviderCompletedAt: providerCompletedAt,
+		ProviderStartedAt:   providerStartedAt,
+		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
+			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 2},
+		}},
+		StartedAt: startedAt,
+	})
+	if event.UpstreamProviderTimeMS < 35 || event.UpstreamProviderTimeMS > 45 {
+		t.Fatalf(
+			"provider metadata must not replace the gateway provider clock, got %dms",
+			event.UpstreamProviderTimeMS,
+		)
 	}
 
 	event = NewRequestEvent(EventInput{

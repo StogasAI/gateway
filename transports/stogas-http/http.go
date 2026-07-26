@@ -73,7 +73,7 @@ func (s *Server) models(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) inference(ctx *fasthttp.RequestCtx) {
-	requestStartedAt := time.Now().UTC()
+	requestStartedAt := time.Now()
 	if s.memory == nil {
 		s.memory = &requestMemoryAdmission{}
 	}
@@ -131,10 +131,8 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	}
 
 	adapter := stogas.AdapterFor(resolution.Provider)
-	releaseMeasurement := ""
 	gatewayNodeID := ""
 	if s.secure != nil {
-		releaseMeasurement = s.secure.ReleaseMeasurement
 		if s.secure.Control != nil {
 			gatewayNodeID = s.secure.Control.GenerationID()
 		}
@@ -144,7 +142,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		resolution,
 		credential,
 		adapter,
-		releaseMeasurement,
 		gatewayNodeID,
 	)
 	if err != nil {
@@ -193,6 +190,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	case schemas.ChatCompletionStreamRequest:
 		stream, bifrostErr := s.runtime.Client().ChatCompletionStreamRequest(bifrostCtx, bifrostReq.ChatRequest)
 		if bifrostErr != nil {
+			state.MarkProviderCompleted()
 			_ = adapter.IngestResponse(state, nil, bifrostErr)
 			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 			cancel()
@@ -209,6 +207,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	case schemas.ResponsesStreamRequest:
 		stream, bifrostErr := s.runtime.Client().ResponsesStreamRequest(bifrostCtx, bifrostReq.ResponsesRequest)
 		if bifrostErr != nil {
+			state.MarkProviderCompleted()
 			_ = adapter.IngestResponse(state, nil, bifrostErr)
 			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 			cancel()
@@ -225,6 +224,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	case schemas.ChatCompletionRequest:
 		defer cancel()
 		response, bifrostErr := s.runtime.Client().ChatCompletionRequest(bifrostCtx, bifrostReq.ChatRequest)
+		state.MarkProviderCompleted()
 		stateResponse := &schemas.BifrostResponse{ChatResponse: response}
 		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
 		_ = adapter.SanitizeResponse(state)
@@ -244,6 +244,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	case schemas.ResponsesRequest:
 		defer cancel()
 		response, bifrostErr := s.runtime.Client().ResponsesRequest(bifrostCtx, bifrostReq.ResponsesRequest)
+		state.MarkProviderCompleted()
 		if response != nil {
 			response = response.WithDefaults()
 		}
@@ -338,6 +339,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 	}()
 	streamProof, proofErr := s.newStreamProof(ctx, bifrostCtx, state)
 	if proofErr != nil {
+		state.MarkProviderCompleted()
 		s.writeProofError(ctx)
 		cancel()
 		return
@@ -385,6 +387,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				clientClosed = nil
 				continue
 			case <-idleC:
+				state.MarkProviderCompleted()
 				bifrostErr := streamIdleTimeoutError()
 				if state != nil {
 					state.BifrostError = bifrostErr
@@ -398,6 +401,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				return
 			case next, ok := <-stream:
 				if !ok {
+					state.MarkProviderCompleted()
 					if !clientConnected {
 						return
 					}
@@ -451,6 +455,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			}
 
 			if chunk.BifrostError != nil {
+				state.MarkProviderCompleted()
 				if !clientConnected {
 					return
 				}
@@ -473,7 +478,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				eventName = ""
 				extra := chunk.BifrostChatResponse.ExtraFields
 				if state != nil {
-					state.ObserveProviderFirstOutput(extra.Latency)
+					state.ObserveChatProviderOutput(chunk.BifrostChatResponse)
 				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostChatResponse, extra)
@@ -481,7 +486,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
 				extra := chunk.BifrostResponsesStreamResponse.ExtraFields
 				if state != nil {
-					state.ObserveProviderFirstOutput(extra.Latency)
+					state.ObserveResponsesProviderOutput(chunk.BifrostResponsesStreamResponse)
 				}
 				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostResponsesStreamResponse.WithDefaults(), extra)

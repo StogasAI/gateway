@@ -174,21 +174,21 @@ func TestSendHeartbeatValidatesInlineSecretBundle(t *testing.T) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"certificate_instruction": nil,
-			"generation_id": generationID,
-			"ok": true,
-			"ready": false,
-			"ready_until": nil,
+			"generation_id":           generationID,
+			"ok":                      true,
+			"ready":                   false,
+			"ready_until":             nil,
 			"secrets": map[string]any{
-				"generation_id": generationID,
+				"generation_id":      generationID,
 				"report_data_sha512": reportHash,
-				"schema": SecretReleaseSchemaV1,
+				"schema":             SecretReleaseSchemaV1,
 				"secrets": []map[string]string{{
-					"aad_sha256": strings.Repeat("f", 64),
-					"ciphertext": "Y2lwaGVydGV4dA",
+					"aad_sha256":       strings.Repeat("f", 64),
+					"ciphertext":       "Y2lwaGVydGV4dA",
 					"encapsulated_key": "ZW5j",
-					"key_id": "provider",
-					"name": "OPENAI_API_KEY",
-					"version": "1",
+					"key_id":           "provider",
+					"name":             "OPENAI_API_KEY",
+					"version":          "1",
 				}},
 			},
 		})
@@ -313,6 +313,35 @@ func testHeartbeatInput(t *testing.T) HeartbeatInput {
 		ObservedAt:    now,
 		Quote:         testSnapshot(t, now),
 		SigningKey:    signingKey,
+	}
+}
+
+func TestAuthoritativeRejectionClassification(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		want   bool
+	}{
+		{status: http.StatusBadRequest, want: true},
+		{status: http.StatusUnauthorized, want: true},
+		{status: http.StatusForbidden, want: true},
+		{status: http.StatusConflict, want: true},
+		{status: http.StatusRequestTimeout, want: false},
+		{status: http.StatusTooEarly, want: false},
+		{status: http.StatusTooManyRequests, want: false},
+		{status: http.StatusInternalServerError, want: false},
+		{status: http.StatusServiceUnavailable, want: false},
+	} {
+		err := &HTTPResponseError{
+			Message:    "heartbeat failed",
+			Path:       "/api/fleet/heartbeat",
+			StatusCode: test.status,
+		}
+		if got := IsAuthoritativeRejection(err); got != test.want {
+			t.Fatalf("status %d authoritative = %t, want %t", test.status, got, test.want)
+		}
+	}
+	if IsAuthoritativeRejection(context.DeadlineExceeded) {
+		t.Fatal("transport deadline must not be an authoritative rejection")
 	}
 }
 

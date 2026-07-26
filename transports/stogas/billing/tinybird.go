@@ -22,12 +22,12 @@ type TinybirdClient struct {
 }
 
 type ProviderAttempt struct {
-	Provider       string  `json:"provider"`
-	Status         string  `json:"status"`
-	StatusCode     *int    `json:"status_code"`
-	LatencyMS      uint32  `json:"latency_ms"`
+	Provider              string  `json:"provider"`
+	Status                string  `json:"status"`
+	StatusCode            *int    `json:"status_code"`
+	LatencyMS             uint32  `json:"latency_ms"`
 	ProviderFirstOutputMS *uint32 `json:"provider_first_output_ms"`
-	IsBYOK         bool    `json:"is_byok"`
+	IsBYOK                bool    `json:"is_byok"`
 }
 
 type RequestEvent struct {
@@ -49,7 +49,7 @@ type RequestEvent struct {
 	TTFBMS                       uint32            `json:"ttfb_ms"`
 	TotalCostUSDAtoms            string            `json:"total_cost_usd_atoms"`
 	Pricing                      map[string]any    `json:"pricing"`
-	ReleaseMeasurement           string            `json:"release_measurement"`
+	GatewayVersion               string            `json:"gateway_version"`
 	ResolvedCatalogNodeIDs       []string          `json:"resolved_catalog_node_ids"`
 }
 
@@ -140,13 +140,14 @@ type tinybirdGatewayRequestEventPayload struct {
 	AnalyticsCacheWriteTokens    uint64 `json:"analytics_cache_write_input_tokens"`
 	AnalyticsOutputTokens        uint64 `json:"analytics_output_tokens"`
 	AnalyticsReasoningTokens     uint64 `json:"analytics_reasoning_tokens"`
-	ReleaseMeasurement           string `json:"release_measurement"`
+	AnalyticsTimeToFirstOutputMS uint32 `json:"analytics_time_to_first_output_ms"`
+	GatewayVersion               string `json:"gateway_version"`
 	ResolvedCatalogNodeIDs       string `json:"resolved_catalog_node_ids"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
-	pricing := canonicalPricing(event.Pricing)
+	pricing := clonePricing(event.Pricing)
 	pricingJSON := mustJSONString(pricing, "{}")
 	resolvedCatalogNodeIDsJSON := mustJSONString(event.ResolvedCatalogNodeIDs, "[]")
 	processed := uint8(0)
@@ -160,6 +161,10 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	cacheWriteTokens :=
 		analyticsMeterQuantity(pricing, MeterCacheWrite5mInputTokens) +
 			analyticsMeterQuantity(pricing, MeterCacheWrite1hInputTokens)
+	timeToFirstOutputMS := uint32(0)
+	if len(event.ProviderAttempts) > 0 && event.ProviderAttempts[0].ProviderFirstOutputMS != nil {
+		timeToFirstOutputMS = *event.ProviderAttempts[0].ProviderFirstOutputMS
+	}
 	return tinybirdGatewayRequestEventPayload{
 		AnalyticsCachedInputTokens:   analyticsMeterQuantity(pricing, MeterCachedInputTokens),
 		AnalyticsCacheWriteTokens:    cacheWriteTokens,
@@ -167,12 +172,13 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		AnalyticsOutputTokens:        analyticsMeterQuantity(pricing, MeterOutputTokens),
 		AnalyticsProviderStatus:      providerStatus,
 		AnalyticsReasoningTokens:     analyticsMeterQuantity(pricing, MeterReasoningTokens),
+		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
 		CreatedAt:                    event.CreatedAt,
 		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
 		ProviderRequestID:            event.ProviderRequestID,
 		GatewayNodeID:                strings.ToLower(strings.TrimSpace(event.GatewayNodeID)),
-		ReleaseMeasurement:           strings.ToLower(strings.TrimSpace(event.ReleaseMeasurement)),
+		GatewayVersion:               strings.TrimSpace(event.GatewayVersion),
 		RequestID:                    event.RequestID,
 		RequestType:                  event.RequestType,
 		ResolvedCatalogNodeIDs:       resolvedCatalogNodeIDsJSON,

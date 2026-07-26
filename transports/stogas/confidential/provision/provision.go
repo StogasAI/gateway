@@ -101,6 +101,42 @@ type controlError struct {
 	Reason  string `json:"reason,omitempty"`
 }
 
+type HTTPResponseError struct {
+	Message    string
+	Path       string
+	Reason     string
+	StatusCode int
+}
+
+func (e *HTTPResponseError) Error() string {
+	if e.Reason != "" {
+		return fmt.Sprintf("control %s rejected request: %s: %s", e.Path, e.Message, e.Reason)
+	}
+	if e.Message != "" {
+		return fmt.Sprintf("control %s rejected request: %s", e.Path, e.Message)
+	}
+	return fmt.Sprintf("control %s rejected request with status %d", e.Path, e.StatusCode)
+}
+
+// IsAuthoritativeRejection distinguishes a definitive Control policy/validation response from
+// transport failures and explicitly retryable HTTP responses. Only definitive responses may
+// revoke a still-valid admission lease immediately.
+func IsAuthoritativeRejection(err error) bool {
+	var responseError *HTTPResponseError
+	if !errors.As(err, &responseError) {
+		return false
+	}
+	if responseError.StatusCode < 400 || responseError.StatusCode >= 500 {
+		return false
+	}
+	switch responseError.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	default:
+		return true
+	}
+}
+
 func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*HeartbeatResponse, error) {
 	if input.Quote == nil {
 		return nil, errors.New("heartbeat quote snapshot is required")
@@ -127,7 +163,7 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 		"quote_generated_at": formatTime(input.Quote.GeneratedAt),
 		"report_data":        input.Quote.Payload,
 		"report_data_sha512": strings.ToLower(input.Quote.ReportDataHex),
-		"signature":           signature,
+		"signature":          signature,
 	}
 	var response heartbeatResponseJSON
 	if err := c.postJSON(ctx, "/api/fleet/heartbeat", body, &response); err != nil {
@@ -220,13 +256,12 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		controlErr := parseControlError(bytes)
-		if controlErr.Reason != "" {
-			return fmt.Errorf("control %s rejected request: %s: %s", path, controlErr.Message, controlErr.Reason)
+		return &HTTPResponseError{
+			Message:    controlErr.Message,
+			Path:       path,
+			Reason:     controlErr.Reason,
+			StatusCode: resp.StatusCode,
 		}
-		if controlErr.Message != "" {
-			return fmt.Errorf("control %s rejected request: %s", path, controlErr.Message)
-		}
-		return fmt.Errorf("control %s rejected request with status %d", path, resp.StatusCode)
 	}
 	decoder := json.NewDecoder(bytesReader(bytes))
 	decoder.DisallowUnknownFields()

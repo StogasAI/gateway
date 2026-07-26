@@ -158,7 +158,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		cancel()
 		return nil, fmt.Errorf("initial confidential quote refresh failed: %w", err)
 	}
-	releaseMeasurement := stogas.ReleaseMeasurementForLog("")
+	releaseMeasurement := strings.Repeat("0", 64)
 	if config.AttesterMode == "sev-snp" {
 		initialQuote, err := manager.Current(runtimeCtx)
 		if err != nil {
@@ -452,6 +452,9 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 
 	response, err := l.sendHeartbeatOnce(ctx)
 	if err != nil {
+		if provision.IsAuthoritativeRejection(err) {
+			l.revokeAdmission()
+		}
 		attemptErr = err
 		return err
 	}
@@ -486,6 +489,12 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	}
 	l.recordCertificateError(nil)
 	return nil
+}
+
+func (l *ControlLoop) revokeAdmission() {
+	l.mu.Lock()
+	l.admissionReadyUntil = time.Time{}
+	l.mu.Unlock()
 }
 
 func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.HeartbeatResponse, error) {
@@ -761,6 +770,9 @@ func heartbeatFailureClass(err error) string {
 	if err == nil {
 		return ""
 	}
+	if provision.IsAuthoritativeRejection(err) {
+		return "control_rejected"
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline_exceeded"
 	}
@@ -769,8 +781,6 @@ func heartbeatFailureClass(err error) string {
 	}
 	message := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(message, "rejected request"):
-		return "control_rejected"
 	case strings.Contains(message, "decode control"):
 		return "invalid_control_response"
 	case strings.Contains(message, "certificate"):

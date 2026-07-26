@@ -68,7 +68,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 		return catalog.ErrUnsupportedRequest
 	}
 	if state.StartedAt.IsZero() {
-		state.StartedAt = time.Now().UTC()
+		state.StartedAt = time.Now()
 	}
 	state.RequestType = string(state.Resolution.RequestType)
 	state.Model = state.Resolution.Model
@@ -128,10 +128,11 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		Error:                  state.BifrostError,
 		FirstByteAt:            state.FirstByteAt,
 		Pricing:                pricingForState(state),
+		ProviderCompletedAt:    state.ProviderCompletedAt,
 		ProviderStartedAt:      state.ProviderStartedAt,
 		ProviderFirstOutputMS:  state.ProviderFirstOutputMS,
 		GatewayNodeID:          state.GatewayNodeID,
-		ReleaseMeasurement:     state.ReleaseMeasurement,
+		GatewayVersion:         state.GatewayVersion,
 		RequestType:            state.RequestType,
 		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
 		Response:               state.Response,

@@ -484,7 +484,9 @@
 	            (invoke "go" "build"
                     "-trimpath"
                     "-buildvcs=false"
-                    "-ldflags=-buildid= -s -w"
+                    (string-append
+                      "-ldflags=-buildid= -s -w -X github.com/maximhq/bifrost/transports/stogas.GatewayVersion="
+                      #$%release-tag)
                     "-mod=vendor"
                     "-o" (string-append rootfs "/stogas/gateway.init")
                     "./cmd/stogas-gateway")
