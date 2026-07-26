@@ -1233,6 +1233,15 @@ func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
 	}
 }
 
+func TestProviderTTFBAcceptsSubMillisecondFirstEvent(t *testing.T) {
+	state := &State{}
+	state.ObserveProviderTTFB(0)
+	state.ObserveProviderTTFB(12)
+	if state.ProviderTTFBMS == nil || *state.ProviderTTFBMS != 0 {
+		t.Fatalf("first provider event must remain authoritative, got %#v", state.ProviderTTFBMS)
+	}
+}
+
 func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{

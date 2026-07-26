@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 func TestParseSignedAPIKey(t *testing.T) {
@@ -220,6 +221,9 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if event.StogasProcessingSuccess != 1 {
 		t.Fatalf("stogas_processing_success = %d, want 1", event.StogasProcessingSuccess)
 	}
+	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
+		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
+	}
 	if event.ReleaseMeasurement != strings.Repeat("a", 64) {
 		t.Fatalf("release_measurement = %q", event.ReleaseMeasurement)
 	}
@@ -282,6 +286,39 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	}
 	if event.ProviderAttempts[0].ProviderTTFBMS == nil || *event.ProviderAttempts[0].ProviderTTFBMS != providerTTFB {
 		t.Fatalf("expected provider ttfb on provider attempt, got %#v", event.ProviderAttempts)
+	}
+}
+
+func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
+	now := time.Now()
+	startedAt := now.Add(-100 * time.Millisecond)
+	providerStartedAt := now.Add(-60 * time.Millisecond)
+	event := NewRequestEvent(EventInput{
+		Authorization:     &Authorization{RequestID: "request-1"},
+		ProviderStartedAt: providerStartedAt,
+		StartedAt:         startedAt,
+	})
+	if event.TotalTimeMS < 90 {
+		t.Fatalf("total time should begin at request admission, got %dms", event.TotalTimeMS)
+	}
+	providerTime := event.UpstreamProviderTimeMS
+	if providerTime < 50 || providerTime > 80 {
+		t.Fatalf("provider fallback should begin at provider dispatch, got %dms", providerTime)
+	}
+
+	event = NewRequestEvent(EventInput{
+		Authorization: &Authorization{RequestID: "request-2"},
+		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
+			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 500},
+		}},
+		StartedAt: startedAt,
+	})
+	if event.UpstreamProviderTimeMS != event.TotalTimeMS {
+		t.Fatalf(
+			"provider time must not exceed total time: provider=%d total=%d",
+			event.UpstreamProviderTimeMS,
+			event.TotalTimeMS,
+		)
 	}
 }
 

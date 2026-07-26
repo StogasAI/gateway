@@ -34,6 +34,7 @@ type State struct {
 	FinalCostUSDAtoms  string
 	FinalMeters        []catalog.MeterEstimate
 	FirstByteAt        time.Time
+	ProviderStartedAt  time.Time
 	ProviderTTFBMS     *uint32
 	ReleaseMeasurement string
 	GatewayNodeID      string
@@ -73,8 +74,15 @@ func (s *State) MarkFirstByte() {
 	s.FirstByteAt = time.Now().UTC()
 }
 
+func (s *State) MarkProviderStarted() {
+	if s == nil || !s.ProviderStartedAt.IsZero() {
+		return
+	}
+	s.ProviderStartedAt = time.Now().UTC()
+}
+
 func (s *State) ObserveProviderTTFB(latencyMS int64) {
-	if s == nil || s.ProviderTTFBMS != nil || latencyMS <= 0 {
+	if s == nil || s.ProviderTTFBMS != nil || latencyMS < 0 {
 		return
 	}
 	value := uint32(latencyMS)

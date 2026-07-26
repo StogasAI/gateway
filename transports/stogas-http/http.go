@@ -73,6 +73,7 @@ func (s *Server) models(ctx *fasthttp.RequestCtx) {
 }
 
 func (s *Server) inference(ctx *fasthttp.RequestCtx) {
+	requestStartedAt := time.Now().UTC()
 	if s.memory == nil {
 		s.memory = &requestMemoryAdmission{}
 	}
@@ -152,6 +153,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		})
 		return
 	}
+	state.StartedAt = requestStartedAt
 	if err := adapter.ValidateRequest(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
@@ -185,6 +187,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeBillingError(ctx, err)
 		return
 	}
+	state.MarkProviderStarted()
 
 	switch resolution.RequestType {
 	case schemas.ChatCompletionStreamRequest:
