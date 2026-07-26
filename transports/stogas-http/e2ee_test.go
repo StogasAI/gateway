@@ -61,7 +61,7 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 	}
 
 	resolution := testResolution()
-	bifrostCtx, state, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-encrypted"}, stogas.AdapterFor(resolution.Provider), "", "")
+	bifrostCtx, state, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-encrypted"}, stogas.AdapterFor(resolution.Provider), "")
 	if err != nil {
 		t.Fatal(err)
 	}

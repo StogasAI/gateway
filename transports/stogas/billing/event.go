@@ -13,10 +13,11 @@ type EventInput struct {
 	Error                  *schemas.BifrostError
 	FirstByteAt            time.Time
 	Pricing                map[string]any
+	ProviderCompletedAt    time.Time
 	ProviderStartedAt      time.Time
 	ProviderFirstOutputMS  *uint32
 	GatewayNodeID          string
-	ReleaseMeasurement     string
+	GatewayVersion         string
 	RequestType            string
 	ResolvedCatalogNodeIDs []string
 	Response               *schemas.BifrostResponse
@@ -39,9 +40,12 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	totalTimeMS := uint32Duration(time.Since(startedAt))
 	upstreamTimeMS := totalTimeMS
 	if !input.ProviderStartedAt.IsZero() && input.ProviderStartedAt.After(startedAt) {
-		upstreamTimeMS = uint32Duration(time.Since(input.ProviderStartedAt))
-	}
-	if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
+		providerCompletedAt := input.ProviderCompletedAt
+		if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
+			providerCompletedAt = time.Now().UTC()
+		}
+		upstreamTimeMS = uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt))
+	} else if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
 		upstreamTimeMS = uint32FromInt64(extra.Latency)
 	}
 	if upstreamTimeMS > totalTimeMS {
@@ -75,8 +79,8 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		UpstreamProviderTimeMS:       upstreamTimeMS,
 		TTFBMS:                       ttfbMS,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		Pricing:                      canonicalPricing(input.Pricing),
-		ReleaseMeasurement:           strings.ToLower(strings.TrimSpace(input.ReleaseMeasurement)),
+		Pricing:                      clonePricing(input.Pricing),
+		GatewayVersion:               strings.TrimSpace(input.GatewayVersion),
 		ResolvedCatalogNodeIDs:       append([]string(nil), input.ResolvedCatalogNodeIDs...),
 	}
 }
@@ -294,24 +298,12 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
-func canonicalPricing(pricing map[string]any) map[string]any {
-	canonicalPricing := make(map[string]any, len(pricing))
+func clonePricing(pricing map[string]any) map[string]any {
+	cloned := make(map[string]any, len(pricing))
 	for key, value := range pricing {
-		if isLegacyPricingMetricKey(key) {
-			continue
-		}
-		canonicalPricing[key] = value
+		cloned[key] = value
 	}
-	return canonicalPricing
-}
-
-func isLegacyPricingMetricKey(key string) bool {
-	switch key {
-	case "usageMetrics", "hold_meters", "final_meters", "hold", "final", "basis", "hold_usd_atoms", "total_cost_usd_atoms":
-		return true
-	default:
-		return false
-	}
+	return cloned
 }
 
 func uint32Duration(value time.Duration) uint32 {

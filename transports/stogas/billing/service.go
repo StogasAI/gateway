@@ -277,7 +277,7 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		actualCost = ZeroChargeUSDAtoms
 		event.TotalCostUSDAtoms = actualCost
 	}
-	event.Pricing = canonicalPricing(event.Pricing)
+	event.Pricing = clonePricing(event.Pricing)
 	pricingJSON := pricingJSONString(event.Pricing)
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
@@ -383,7 +383,7 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 }
 
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
-	event.Pricing = canonicalPricing(event.Pricing)
+	event.Pricing = clonePricing(event.Pricing)
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
@@ -404,7 +404,7 @@ func (s *Service) publishUncommittedFallback(authorization *Authorization, event
 }
 
 func pricingJSONString(pricing map[string]any) string {
-	encoded, err := json.Marshal(canonicalPricing(pricing))
+	encoded, err := json.Marshal(clonePricing(pricing))
 	if err != nil {
 		return "{}"
 	}

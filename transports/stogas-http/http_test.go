@@ -31,7 +31,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx.Request.Header.Set("Authorization", "Bearer sk-secret")
 	ctx.Request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestNewRequestContextUsesResponsesLifetime(t *testing.T) {
 	resolution.Route = catalog.RouteResponses
 	resolution.RequestType = schemas.ResponsesStreamRequest
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "", "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -157,6 +157,27 @@ func TestPrivateReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *tes
 	}
 	if got := string(ctx.Response.Body()); got != `{"ok":false}` {
 		t.Fatalf("readiness probe should not leak private reasons, got %q", got)
+	}
+}
+
+func TestInferenceAttemptsWorkWhenPrivateReadinessIsUnhealthy(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{MaxRequestBodyMiB: 1},
+		secure: &confidentialruntime.Runtime{EntropyReady: true},
+	}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.Header.Set("Authorization", "Bearer sk-test")
+	ctx.Request.Header.SetContentType("application/json")
+	ctx.Request.SetRequestURI("/v1/chat/completions")
+
+	server.inference(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+		t.Fatalf("expected request processing to reach body validation, got %d", ctx.Response.StatusCode())
+	}
+	if !strings.Contains(string(ctx.Response.Body()), "Request body is required") {
+		t.Fatalf("unexpected inference response %q", ctx.Response.Body())
 	}
 }
 

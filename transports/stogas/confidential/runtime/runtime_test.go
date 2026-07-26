@@ -97,6 +97,75 @@ func TestScheduledHeartbeatRetriesOneTransientFailureImmediately(t *testing.T) {
 	}
 }
 
+func TestAuthoritativeHeartbeatRejectionRevokesAdmissionImmediately(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Rejected confidential gateway heartbeat","reason":"release revoked"}`))
+	}))
+	defer server.Close()
+
+	config := testConfig("mock")
+	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
+	config.ControlAllowHTTP = true
+	config.ControlURL = server.URL
+	config.HeartbeatInterval = time.Hour
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.Control.sendHeartbeat(context.Background()); err == nil {
+		t.Fatal("expected authoritative heartbeat rejection")
+	}
+	result := runtime.Control.Readiness()
+	if !hasReason(result.Reasons, "control admission lease is absent or expired") {
+		t.Fatalf("authoritative rejection retained admission: %#v", result)
+	}
+	if got := runtime.Control.Diagnostics().LastFailureClass; got != "control_rejected" {
+		t.Fatalf("failure class = %q, want control_rejected", got)
+	}
+}
+
+func TestTransientControlFailureRetainsExistingAdmission(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			writeHeartbeatResponse(t, w, strings.Repeat("9", 64), "")
+			return
+		}
+		http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	config := testConfig("mock")
+	config.CertExpiresAt = time.Now().UTC().Add(90 * 24 * time.Hour)
+	config.ControlAllowHTTP = true
+	config.ControlURL = server.URL
+	config.HeartbeatInterval = time.Hour
+	runtime, err := Start(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+
+	if err := runtime.Control.sendHeartbeat(context.Background()); err == nil {
+		t.Fatal("expected transient heartbeat failure")
+	}
+	result := runtime.Control.Readiness()
+	if hasReason(result.Reasons, "control admission lease is absent or expired") {
+		t.Fatalf("transient Control failure revoked admission: %#v", result)
+	}
+	if got := runtime.Control.Diagnostics().LastFailureClass; got != "transport" {
+		t.Fatalf("failure class = %q, want transport", got)
+	}
+}
+
 func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	config := testConfig("mock")
 	runtime, err := Start(context.Background(), config)

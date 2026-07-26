@@ -1117,11 +1117,11 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 				HoldRequired:   true,
 			}},
 		},
-		RequestType:        string(schemas.ChatCompletionRequest),
-		Model:              "gpt-5",
-		ReleaseMeasurement: strings.Repeat("a", 64),
-		StartedAt:          time.Now().UTC(),
-		FinalCostUSDAtoms:  "1000",
+		RequestType:       string(schemas.ChatCompletionRequest),
+		Model:             "gpt-5",
+		GatewayVersion:    "v1.5.13",
+		StartedAt:         time.Now().UTC(),
+		FinalCostUSDAtoms: "1000",
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:       billing.MeterInputTokens,
 			RateKey:        billing.RatePerMillionTokens,
@@ -1167,8 +1167,8 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	if event.TotalCostUSDAtoms != "1000" {
 		t.Fatalf("total cost must match final meter sum, got %s", event.TotalCostUSDAtoms)
 	}
-	if event.ReleaseMeasurement != strings.Repeat("a", 64) {
-		t.Fatalf("release measurement = %q", event.ReleaseMeasurement)
+	if event.GatewayVersion != "v1.5.13" {
+		t.Fatalf("gateway version = %q", event.GatewayVersion)
 	}
 	wantNodeIDs := []string{"stogas_endpoint:chat-completions", "provider:openai", "model:gpt-5", "model_node:gpt-5-2026-01-01", "deployment:gpt-5-standard", "provider_endpoint:openai-chat-completions"}
 	if strings.Join(event.ResolvedCatalogNodeIDs, ",") != strings.Join(wantNodeIDs, ",") {
@@ -1242,12 +1242,50 @@ func TestProviderFirstOutputAcceptsSubMillisecondEvent(t *testing.T) {
 	}
 }
 
+func TestProviderFirstOutputUsesGatewayClockAcrossProviderEvents(t *testing.T) {
+	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
+	state.ObserveProviderFirstOutput(2)
+	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 || *state.ProviderFirstOutputMS > 100 {
+		t.Fatalf("expected the gateway provider clock, got %#v", state.ProviderFirstOutputMS)
+	}
+}
+
+func TestProviderFirstOutputIgnoresProtocolMetadata(t *testing.T) {
+	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
+	state.ObserveChatProviderOutput(&schemas.BifrostChatResponse{
+		Choices: []schemas.BifrostResponseChoice{{
+			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+				Delta: &schemas.ChatStreamResponseChoiceDelta{Role: stringPointer("assistant")},
+			},
+		}},
+	})
+	state.ObserveResponsesProviderOutput(&schemas.BifrostResponsesStreamResponse{
+		Type: schemas.ResponsesStreamResponseTypeCreated,
+	})
+	if state.ProviderFirstOutputMS != nil {
+		t.Fatalf("protocol metadata must not count as provider output, got %#v", state.ProviderFirstOutputMS)
+	}
+
+	text := "hello"
+	state.ObserveResponsesProviderOutput(&schemas.BifrostResponsesStreamResponse{
+		Delta: &text,
+		Type:  schemas.ResponsesStreamResponseTypeOutputTextDelta,
+	})
+	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 {
+		t.Fatalf("output delta did not record first provider output: %#v", state.ProviderFirstOutputMS)
+	}
+}
+
 func TestProviderFirstOutputFallsBackToOuterProviderClock(t *testing.T) {
 	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
 	state.ObserveProviderFirstOutput(0)
 	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 || *state.ProviderFirstOutputMS > 100 {
 		t.Fatalf("expected outer provider clock fallback, got %#v", state.ProviderFirstOutputMS)
 	}
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T) {
