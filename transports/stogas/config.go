@@ -17,16 +17,16 @@ import (
 )
 
 const (
-	defaultHost                   = "127.0.0.1"
-	defaultPort                   = "5185"
-	defaultPrivateReadinessPort   = "5186"
-	defaultMaxRequestBodyMiB      = 16
-	maxRequestBodyMiB             = 128
-	defaultInfisicalSiteURL       = "https://secrets.stogas.ai"
-	defaultFleetAPIURLLocal       = "http://127.0.0.1:5184/api/fleet"
-	defaultFleetAPIURLStaging     = "https://staging.stogas.ai/api/fleet"
-	defaultFleetAPIURLProd        = "https://stogas.ai/api/fleet"
-	defaultConfidentialRegion     = "global"
+	defaultHost                 = "127.0.0.1"
+	defaultPort                 = "5185"
+	defaultPrivateReadinessPort = "5186"
+	defaultMaxRequestBodyMiB    = 16
+	maxRequestBodyMiB           = 128
+	defaultInfisicalSiteURL     = "https://secrets.stogas.ai"
+	defaultFleetAPIURLLocal     = "http://127.0.0.1:5184/api/fleet"
+	defaultFleetAPIURLStaging   = "https://staging.stogas.ai/api/fleet"
+	defaultFleetAPIURLProd      = "https://stogas.ai/api/fleet"
+	defaultConfidentialRegion   = "global"
 
 	confidentialEntropyTimeout    = 10 * time.Second
 	confidentialHeartbeatInterval = 10 * time.Second
@@ -39,21 +39,23 @@ const (
 )
 
 var confidentialRuntimeSecretNames = []string{
-	"AUTH_SECRET",
+	"API_KEY_PEPPER",
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
+	"INFERENCE_TOKEN_PUBLIC_KEY",
 	"OPENAI_API_KEY",
 	"ANTHROPIC_API_KEY",
 }
 
 type Config struct {
 	AllowPrivateProviderNetwork bool
-	AuthSecret                  string
+	APIKeyPepper                string
 	Confidential                ConfidentialConfig
 	DatabasePool                billing.DatabasePoolConfig
 	DatabaseSchema              string
 	DatabaseURL                 string
 	Host                        string
+	InferenceTokenPublicKey     string
 	LogLevel                    string
 	LogOutputStyle              string
 	MaxRequestBodyMiB           int
@@ -103,12 +105,13 @@ func LoadFromEnv() (Config, error) {
 
 	config := Config{
 		AllowPrivateProviderNetwork: os.Getenv("STOGAS_ALLOW_PRIVATE_PROVIDER_NETWORK") == "true",
-		AuthSecret:                  strings.TrimSpace(os.Getenv("AUTH_SECRET")),
+		APIKeyPepper:                strings.TrimSpace(os.Getenv("API_KEY_PEPPER")),
 		Confidential:                loadConfidentialConfigFromEnv(),
 		DatabasePool:                databasePool,
 		DatabaseSchema:              strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
 		DatabaseURL:                 strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		Host:                        defaultHost,
+		InferenceTokenPublicKey:     strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY")),
 		LogLevel:                    string(schemas.LogLevelInfo),
 		LogOutputStyle:              string(schemas.LoggerOutputTypeJSON),
 		MaxRequestBodyMiB:           defaultMaxRequestBodyMiB,
@@ -218,7 +221,8 @@ func rejectUnsupportedConfidentialHostOverrides() error {
 	}
 	for _, name := range []string{
 		"ANTHROPIC_API_KEY",
-		"AUTH_SECRET",
+		"API_KEY_PEPPER",
+		"INFERENCE_TOKEN_PUBLIC_KEY",
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
 		"INFISICAL_PROJECT_ID",
@@ -295,9 +299,9 @@ func loadInfisicalRuntimeSecrets() {
 		return
 	}
 
-	required := []string{"AUTH_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+	required := []string{"API_KEY_PEPPER", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" || os.Getenv("DATABASE_URL") != "" {
-		required = []string{"AUTH_SECRET", "DATABASE_SCHEMA", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+		required = []string{"API_KEY_PEPPER", "DATABASE_SCHEMA", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	}
 	for _, secretName := range required {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
@@ -340,11 +344,14 @@ func resolveInfisicalSecret(client infisical.InfisicalClientInterface, projectID
 }
 
 func (c Config) Validate() error {
-	if c.AuthSecret == "" {
-		return fmt.Errorf("AUTH_SECRET is required")
+	if c.APIKeyPepper == "" {
+		return fmt.Errorf("API_KEY_PEPPER is required")
 	}
-	if len(c.AuthSecret) < 32 {
-		return fmt.Errorf("AUTH_SECRET must be at least 32 characters (got %d characters)", len(c.AuthSecret))
+	if len(c.APIKeyPepper) < 32 {
+		return fmt.Errorf("API_KEY_PEPPER must be at least 32 characters (got %d characters)", len(c.APIKeyPepper))
+	}
+	if c.InferenceTokenPublicKey == "" {
+		return fmt.Errorf("INFERENCE_TOKEN_PUBLIC_KEY is required")
 	}
 	if err := c.DatabasePool.Validate(); err != nil {
 		return err
@@ -429,9 +436,10 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 }
 
 func applyRuntimeSecretsFromEnv(config *Config) {
-	config.AuthSecret = strings.TrimSpace(os.Getenv("AUTH_SECRET"))
+	config.APIKeyPepper = strings.TrimSpace(os.Getenv("API_KEY_PEPPER"))
 	config.DatabaseSchema = strings.TrimSpace(os.Getenv("DATABASE_SCHEMA"))
 	config.DatabaseURL = strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	config.InferenceTokenPublicKey = strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY"))
 	config.OpenAIAPIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	config.AnthropicAPIKey = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	config.TinybirdHost = strings.TrimSpace(os.Getenv("TB_HOST_URL"))

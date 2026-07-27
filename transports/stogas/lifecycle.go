@@ -26,6 +26,7 @@ type billingAuthorizer interface {
 	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*gatewaybilling.Authorization, error)
 	AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	AuthorizeSingleUseRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
@@ -73,7 +74,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	state.RequestType = string(state.Resolution.RequestType)
 	state.Model = state.Resolution.Model
 
-	if state.RawAPIKey == "" {
+	if state.RawAPIKey == "" && state.DashboardCredential == nil {
 		return gatewaybilling.ErrInvalidAPIKey
 	}
 	requestID, ok := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
@@ -88,7 +89,17 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 
 	var authorization *gatewaybilling.Authorization
 	var err error
-	if state.SingleUseRequestID {
+	if state.DashboardCredential != nil {
+		authorization, err = billing.AuthorizeDashboardRequestWithDuration(
+			ctx,
+			state.DashboardCredential,
+			requestID,
+			hold.ProviderKey,
+			hold.ProductKey,
+			hold.MaxUSDAtoms,
+			state.RequestLifetime,
+		)
+	} else if state.SingleUseRequestID {
 		authorization, err = billing.AuthorizeSingleUseRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
 	} else {
 		authorization, err = billing.AuthorizeRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)

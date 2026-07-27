@@ -29,7 +29,15 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
 	tinybird := billing.NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
-	billingService, err := billing.NewService(runtimeCtx, config.DatabaseURL, config.DatabaseSchema, config.AuthSecret, config.DatabasePool, tinybird)
+	billingService, err := billing.NewService(
+		runtimeCtx,
+		config.DatabaseURL,
+		config.DatabaseSchema,
+		config.APIKeyPepper,
+		config.InferenceTokenPublicKey,
+		config.DatabasePool,
+		tinybird,
+	)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -58,8 +66,10 @@ func (r *Runtime) Client() *bifrost.Bifrost {
 }
 
 func (r *Runtime) ValidateAPIKeyFormat(rawAPIKey string) error {
-	_, err := r.ParseAPIKey(rawAPIKey)
-	return err
+	if r == nil || r.billing == nil {
+		return billing.ErrInvalidAPIKey
+	}
+	return r.billing.ValidateAPIKeyFormat(rawAPIKey)
 }
 
 func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
@@ -67,6 +77,13 @@ func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
 		return nil, billing.ErrInvalidAPIKey
 	}
 	return r.billing.ParseAPIKey(rawAPIKey)
+}
+
+func (r *Runtime) ParseDashboardCredential(raw string) (*billing.DashboardCredential, error) {
+	if r == nil || r.billing == nil {
+		return nil, billing.ErrInvalidAPIKey
+	}
+	return r.billing.ParseDashboardCredential(raw)
 }
 
 func (r *Runtime) Billing() *billing.Service {

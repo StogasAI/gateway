@@ -8,17 +8,12 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
 	"strings"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/hkdf"
 )
 
 const (
-	apiKeyPepperInfo = "stogas:token:pepper"
-
 	apiKeyPrefix       = "sk_stogas_v1_"
 	apiKeyVersion      = uint32(1)
 	apiKeyPayloadBytes = 100
@@ -37,16 +32,7 @@ type APIKeyClaims struct {
 	WorkspaceID    string
 }
 
-func deriveTokenPepper(authSecret string) (string, error) {
-	reader := hkdf.New(sha256.New, []byte(authSecret), nil, []byte(apiKeyPepperInfo))
-	derived := make([]byte, 32)
-	if _, err := io.ReadFull(reader, derived); err != nil {
-		return "", fmt.Errorf("derive token pepper: %w", err)
-	}
-	return hex.EncodeToString(derived), nil
-}
-
-func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error) {
+func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error) {
 	if !strings.HasPrefix(rawKey, apiKeyPrefix) {
 		return nil, errInvalidAPIKeyShape
 	}
@@ -57,7 +43,7 @@ func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error)
 
 	payload := body[:apiKeyPayloadBytes]
 	actualMAC := body[apiKeyPayloadBytes:]
-	hasher := hmac.New(sha256.New, []byte(tokenPepper))
+	hasher := hmac.New(sha256.New, []byte(apiKeyPepper))
 	_, _ = hasher.Write(payload)
 	expectedMAC := hasher.Sum(nil)[:apiKeyMACBytes]
 	if !hmac.Equal(actualMAC, expectedMAC) {
@@ -116,8 +102,8 @@ func parseSignedAPIKey(rawKey string, tokenPepper string) (*APIKeyClaims, error)
 	}, nil
 }
 
-func hashAPIKey(token string, tokenPepper string) string {
-	hasher := hmac.New(sha512.New, []byte(tokenPepper))
+func hashAPIKey(token string, apiKeyPepper string) string {
+	hasher := hmac.New(sha512.New, []byte(apiKeyPepper))
 	_, _ = hasher.Write([]byte(token))
 	return hex.EncodeToString(hasher.Sum(nil))
 }
