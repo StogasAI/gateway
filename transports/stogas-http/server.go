@@ -14,8 +14,8 @@ import (
 	"github.com/fasthttp/router"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 	"github.com/valyala/fasthttp"
@@ -38,6 +38,7 @@ type Server struct {
 	readinessServer *fasthttp.Server
 	proofs          *proofhttp.Service
 	secure          *confidentialruntime.Runtime
+	catalogUpdater  *catalog.Updater
 	requests        *requestDrain
 	memory          *requestMemoryAdmission
 }
@@ -51,8 +52,16 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		return nil, err
 	}
 
+	catalogUpdater, err := catalog.StartUpdater(ctx, catalog.UpdaterConfig{
+		ReleaseURL:     config.CatalogURL,
+		RequireInitial: config.Confidential.Enabled,
+	})
+	if err != nil {
+		return nil, err
+	}
 	secure, err := confidentialruntime.Start(ctx, config.Confidential)
 	if err != nil {
+		catalogUpdater.Close()
 		return nil, err
 	}
 	var releasedSecrets stogas.ConfidentialSecretLookup
@@ -73,21 +82,27 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		return nil, err
 	}
 	if secure != nil {
-		secure.SetRuntimeDependencyProbe(runtime.ProbeDependencies)
+		secure.SetRuntimeDependencyProbe(func(ctx context.Context) error {
+			if ready, reason := catalogUpdater.Ready(time.Now().UTC()); !ready {
+				return fmt.Errorf("catalog is unhealthy: %s", reason)
+			}
+			return runtime.ProbeDependencies(ctx)
+		})
 	}
-
 	s := &Server{
-		config:  config,
-		logger:  logger,
-		requests: newRequestDrain(),
-		memory:   &requestMemoryAdmission{},
-		runtime: runtime,
-		secure:  secure,
+		catalogUpdater: catalogUpdater,
+		config:         config,
+		logger:         logger,
+		requests:       newRequestDrain(),
+		memory:         &requestMemoryAdmission{},
+		runtime:        runtime,
+		secure:         secure,
 	}
 	if secure != nil {
 		s.proofs = secure.Proofs
 	}
 	if err := s.routes(); err != nil {
+		catalogUpdater.Close()
 		if secure != nil {
 			secure.Close()
 		}
@@ -109,19 +124,19 @@ func (s *Server) routes() error {
 
 	s.router = r
 	s.server = &fasthttp.Server{
-		Handler:               chain(r.Handler, securityHeaders, cors, s.requestDecompression),
-		Concurrency:           serverConcurrency,
-		MaxRequestBodySize:    s.config.MaxRequestBodyMiB * 1024 * 1024,
-		NoDefaultServerHeader: true,
-		ReadBufferSize:        serverReadBufferSize,
-		ReadTimeout:           serverReadTimeout,
-		WriteTimeout:          0,
-		IdleTimeout:           serverIdleTimeout,
-		TCPKeepalive:          true,
-		TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
-		StreamRequestBody:     false,
-		ReduceMemoryUsage:     true,
-		SecureErrorLogMessage: true,
+		Handler:                      chain(r.Handler, securityHeaders, cors, s.requestDecompression),
+		Concurrency:                  serverConcurrency,
+		MaxRequestBodySize:           s.config.MaxRequestBodyMiB * 1024 * 1024,
+		NoDefaultServerHeader:        true,
+		ReadBufferSize:               serverReadBufferSize,
+		ReadTimeout:                  serverReadTimeout,
+		WriteTimeout:                 0,
+		IdleTimeout:                  serverIdleTimeout,
+		TCPKeepalive:                 true,
+		TCPKeepalivePeriod:           serverTCPKeepalivePeriod,
+		StreamRequestBody:            false,
+		ReduceMemoryUsage:            true,
+		SecureErrorLogMessage:        true,
 		DisablePreParseMultipartForm: true,
 	}
 	readinessRouter := router.New()

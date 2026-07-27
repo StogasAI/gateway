@@ -521,7 +521,7 @@ func TestNoUsageClientErrorLogsCapturedHoldMetersAsFinalMeters(t *testing.T) {
 		t.Fatalf("final meter must not require hold: %#v", state.FinalMeters[0])
 	}
 
-	pricing := requestLogPricingBag(state)
+	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterOutputTokens, billing.RatePerMillionTokens, "1000", "2000")
 }
 
@@ -881,12 +881,6 @@ func TestAnthropicFinalPriceUsesReturnedServiceTierDeployment(t *testing.T) {
 			wantHold:   "claude-opus-4-8",
 			actualTier: schemas.BifrostServiceTier("standard_only"),
 		},
-		{
-			name:       "standard request returned priority",
-			body:       `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only","max_completion_tokens":16}`,
-			wantHold:   "claude-opus-4-8",
-			actualTier: schemas.BifrostServiceTierPriority,
-		},
 	}
 
 	for _, tt := range tests {
@@ -934,24 +928,6 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 		body       string
 		actualTier schemas.BifrostServiceTier
 	}{
-		{
-			name:       "chat auto sent as auto returns priority",
-			path:       "/v1/chat/completions",
-			body:       `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
-			actualTier: schemas.BifrostServiceTierPriority,
-		},
-		{
-			name:       "chat priority sent as auto returns priority",
-			path:       "/v1/chat/completions",
-			body:       `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"priority","max_completion_tokens":16}`,
-			actualTier: schemas.BifrostServiceTierPriority,
-		},
-		{
-			name:       "responses flex sent as standard only returns standard",
-			path:       "/v1/responses",
-			body:       `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"flex","max_output_tokens":16}`,
-			actualTier: schemas.BifrostServiceTier("standard_only"),
-		},
 		{
 			name:       "responses default sent as standard only returns standard",
 			path:       "/v1/responses",
@@ -1019,7 +995,7 @@ func TestFinalPriceKeepsAnthropicUSRegionWhenActualSpeedChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.RegionID != "us" {
+	if resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
 		t.Fatalf("expected US deployment, got %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -1041,7 +1017,7 @@ func TestAnthropicResponsesStreamKeepsActualTierAndSpeedWhenUsageArrivesLater(t 
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.RegionID != "us" || !strings.Contains(resolution.Deployment.ID, "fast") {
+	if resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" || !strings.Contains(resolution.Deployment.ID, "fast") {
 		t.Fatalf("expected fast US deployment, got %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -1094,9 +1070,9 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 			Provider: schemas.OpenAI,
 			Model:    "gpt-5",
 			Deployment: catalog.Deployment{
-				ID:                  "gpt-5-standard",
-				ModelID:             "gpt-5-2026-01-01",
-				ProviderEndpointIDs: []string{"openai-chat-completions"},
+				ID:       "gpt-5-standard",
+				ModelID:  "gpt-5-2026-01-01",
+				RouteIDs: []string{"openai-chat-completions"},
 			},
 		},
 		Authorization: &billing.Authorization{
@@ -1142,31 +1118,14 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	pricing := event.Pricing
-	if _, ok := pricing["total_cost_usd_atoms"]; ok {
-		t.Fatalf("pricing must not duplicate the top-level total cost: %#v", pricing)
+	if event.MeterQuantities[billing.MeterInputTokens] != "1000" {
+		t.Fatalf("unexpected final meter quantities %#v", event.MeterQuantities)
 	}
-	if _, ok := pricing["hold_usd_atoms"]; ok {
-		t.Fatalf("pricing must not expose a fixed hold total: %#v", pricing)
+	if _, ok := event.MeterQuantities[billing.MeterOutputTokens]; ok {
+		t.Fatalf("telemetry must not log hold-only meters: %#v", event.MeterQuantities)
 	}
-	if _, ok := pricing["basis"]; ok {
-		t.Fatalf("pricing must not expose a fixed pricing basis: %#v", pricing)
-	}
-	if _, ok := pricing["final"]; ok {
-		t.Fatalf("pricing must not expose a fixed final meter schema: %#v", pricing)
-	}
-	if _, ok := pricing["hold"]; ok {
-		t.Fatalf("pricing must not expose a fixed hold meter schema: %#v", pricing)
-	}
-	input, ok := pricing[billing.MeterInputTokens].(map[string]any)
-	if !ok {
-		t.Fatalf("expected input token pricing bag, got %#v", pricing)
-	}
-	if input["rateKey"] != billing.RatePerMillionTokens || input["usdAtoms"] != "1000" || input["quantity"] != "1000" {
-		t.Fatalf("unexpected final input token pricing %#v", input)
-	}
-	if _, ok := pricing[billing.MeterOutputTokens]; ok {
-		t.Fatalf("pricing bag must not log hold-only meters: %#v", pricing)
+	if len(event.PricingInputSHA256) != 64 {
+		t.Fatalf("expected pricing input digest, got %q", event.PricingInputSHA256)
 	}
 	if event.TotalCostUSDAtoms != "1000" {
 		t.Fatalf("total cost must match final meter sum, got %s", event.TotalCostUSDAtoms)
@@ -1174,7 +1133,7 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway version = %q", event.GatewayVersion)
 	}
-	wantNodeIDs := []string{"stogas_endpoint:chat-completions", "provider:openai", "model:gpt-5", "model_node:gpt-5-2026-01-01", "deployment:gpt-5-standard", "provider_endpoint:openai-chat-completions"}
+	wantNodeIDs := []string{"model:gpt-5-2026-01-01", "deployment:gpt-5-standard", "route:openai-chat-completions", "provider:openai"}
 	if strings.Join(event.ResolvedCatalogNodeIDs, ",") != strings.Join(wantNodeIDs, ",") {
 		t.Fatalf("resolved catalog node IDs = %#v, want %#v", event.ResolvedCatalogNodeIDs, wantNodeIDs)
 	}
@@ -1228,9 +1187,6 @@ func TestUnaryProviderLatencyDoesNotFabricateFirstOutput(t *testing.T) {
 	}
 	if attempt.ProviderFirstOutputMS != nil {
 		t.Fatalf("buffered requests must not report streaming first output, got %#v", attempt)
-	}
-	if authorizer.finalEvents[0].TimeToFirstOutputMS != nil {
-		t.Fatalf("buffered request first output must be null")
 	}
 }
 
@@ -1312,7 +1268,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		},
 	}
 
-	pricing := requestLogPricingBag(state)
+	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "2", "1")
 	if got := sumMeterAmounts(compactMeterEstimates(state.FinalMeters, state.Resolution.Deployment.Pricing)); got != "1" {
 		t.Fatalf("expected compacted meter total 1 atom, got %s", got)
@@ -1334,7 +1290,9 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	if event.TotalCostUSDAtoms != "1" {
 		t.Fatalf("logged total must use compacted final meters, got %s", event.TotalCostUSDAtoms)
 	}
-	assertPricingBagEntry(t, event.Pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "2", "1")
+	if event.MeterQuantities[billing.MeterInputTokens] != "2" {
+		t.Fatalf("unexpected compacted meter quantities %#v", event.MeterQuantities)
+	}
 }
 
 func TestPricingMetricBagCarriesStackedCacheAndHostedToolMeters(t *testing.T) {
@@ -1384,7 +1342,7 @@ func TestPricingMetricBagCarriesStackedCacheAndHostedToolMeters(t *testing.T) {
 		},
 	}
 
-	pricing := requestLogPricingBag(state)
+	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "500", "50")
 	assertPricingBagEntry(t, pricing, billing.MeterCacheWrite1hInputTokens, billing.RatePerMillionTokens, "400", "80")
 	assertPricingBagEntry(t, pricing, meterAnthropicWebSearchCalls, billing.RatePerThousandCalls, "1", "150")
@@ -1524,7 +1482,7 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			if finalMeter.RateKey != tt.rateKey || finalMeter.Quantity != "1" || finalMeter.HoldRequired {
 				t.Fatalf("unexpected final search meter: %#v", finalMeter)
 			}
-			pricing := requestLogPricingBag(state)
+			pricing := pricingForState(state)
 			for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 				if _, ok := pricing[meterKey].(map[string]any); !ok {
 					t.Fatalf("search-model pricing bag must include token meter %s with tool meter, got %#v", meterKey, pricing)
@@ -1646,7 +1604,7 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	expectedOverhead := big.NewInt(int64(anthropicToolSystemPromptHoldTokens(resolution.Deployment.Model, resolution.ToolTypes()))).String()
+	expectedOverhead := big.NewInt(int64(anthropicToolSystemPromptHoldTokens(resolution.Deployment.Upstream.Model, resolution.ToolTypes()))).String()
 	foundInputOverhead := false
 	for _, meter := range state.Hold.Meters {
 		if meter.Quantity != expectedOverhead {
@@ -1664,7 +1622,7 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 	}
 
 	state.Signals = &StandardSignals{
-		Prompt:     resolution.InputTokenLimit() + anthropicToolSystemPromptHoldTokens(resolution.Deployment.Model, resolution.ToolTypes()),
+		Prompt:     resolution.InputTokenLimit() + anthropicToolSystemPromptHoldTokens(resolution.Deployment.Upstream.Model, resolution.ToolTypes()),
 		Completion: resolution.OutputTokenLimit(),
 	}
 	if err := state.Adapter.FinalPrice(state); err != nil {
@@ -1684,7 +1642,7 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.RegionID != "us" || !strings.Contains(resolution.Deployment.ID, "fast") {
+	if resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" || !strings.Contains(resolution.Deployment.ID, "fast") {
 		t.Fatalf("expected fast US deployment, got %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))

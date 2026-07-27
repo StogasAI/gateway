@@ -32,12 +32,18 @@ type Client struct {
 }
 
 type HeartbeatInput struct {
+	Catalog       CatalogIdentity
 	CertExpiresAt time.Time
 	Health        NodeHealth
 	NodeID        string
 	ObservedAt    time.Time
 	Quote         *quote.Snapshot
 	SigningKey    ed25519.PrivateKey
+}
+
+type CatalogIdentity struct {
+	Digest   string `json:"digest"`
+	Sequence uint64 `json:"sequence"`
 }
 
 type NodeHealth struct {
@@ -147,6 +153,9 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	if input.CertExpiresAt.IsZero() {
 		return nil, errors.New("heartbeat cert expiry is required")
 	}
+	if input.Catalog.Digest == "" {
+		return nil, errors.New("heartbeat catalog digest is required")
+	}
 	if input.ObservedAt.IsZero() {
 		input.ObservedAt = time.Now().UTC()
 	}
@@ -155,6 +164,7 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 		return nil, err
 	}
 	body := map[string]any{
+		"catalog":            input.Catalog,
 		"cert_expires_at":    formatTime(input.CertExpiresAt),
 		"health":             input.Health,
 		"node_id":            input.NodeID,

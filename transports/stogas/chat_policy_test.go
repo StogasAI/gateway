@@ -82,7 +82,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"bad nested reasoning max tokens", `{"model":"gpt-5.5","messages":[],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
 		{"bad reasoning enabled", `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
 		{"unknown reasoning effort", `{"model":"gpt-5.5","messages":[],"reasoning_effort":"ultra"}`, "must be one of"},
-		{"cannot disable always reasoning model", `{"model":"gpt-5-nano","messages":[],"reasoning_effort":"none"}`, "cannot be disabled"},
+		{"cannot disable always reasoning model", `{"model":"gpt-5-nano","messages":[],"reasoning_effort":"none"}`, "not supported"},
 		{"chat reasoning summary", `{"model":"gpt-5.5","messages":[],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
 		{"unknown reasoning field", `{"model":"gpt-5.5","messages":[],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
 		{"client user", `{"model":"gpt-5.5","messages":[],"user":"u"}`, "user is not supported"},
@@ -495,7 +495,7 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-fast-us" || resolution.Deployment.RegionID != "us" {
+	if resolution.Deployment.ID != "claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
 		t.Fatalf("unexpected US deployment resolution: %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -612,7 +612,7 @@ func TestAnthropicClientInferenceGeoSelectsUSDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-us" || resolution.Deployment.RegionID != "us" {
+	if resolution.Deployment.ID != "claude-opus-4-8-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
 		t.Fatalf("expected client inference_geo to select US deployment, got %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -661,7 +661,7 @@ func TestAnthropicClientInferenceGeoGlobalSelectsStandardDeployment(t *testing.T
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
-			if strings.Contains(resolution.Deployment.ID, "-us") || resolution.Deployment.RegionID != "multi-region" {
+			if strings.Contains(resolution.Deployment.ID, "-us") || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "global" {
 				t.Fatalf("expected global inference to select standard deployment, got %#v", resolution.Deployment)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -706,27 +706,9 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 			want: "standard_only",
 		},
 		{
-			name: "chat explicit auto",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"auto"}`,
-			want: "auto",
-		},
-		{
-			name: "chat priority",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"priority"}`,
-			want: "auto",
-		},
-		{
 			name: "chat default",
 			path: "/v1/chat/completions",
 			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default"}`,
-			want: "standard_only",
-		},
-		{
-			name: "chat flex",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"flex"}`,
 			want: "standard_only",
 		},
 		{
@@ -748,21 +730,9 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 			want: "standard_only",
 		},
 		{
-			name: "responses priority",
-			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"priority","max_output_tokens":16}`,
-			want: "auto",
-		},
-		{
 			name: "responses default",
 			path: "/v1/responses",
 			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
-			want: "standard_only",
-		},
-		{
-			name: "responses flex",
-			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"flex","max_output_tokens":16}`,
 			want: "standard_only",
 		},
 		{
@@ -822,6 +792,21 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 				if payload.ServiceTier != item.want {
 					t.Fatalf("expected Anthropic Responses service_tier %q, got %q in %s", item.want, payload.ServiceTier, body)
 				}
+			}
+		})
+	}
+}
+
+func TestAnthropicRejectsUncatalogedServiceTiers(t *testing.T) {
+	for _, tier := range []string{"auto", "priority", "flex"} {
+		t.Run(tier, func(t *testing.T) {
+			_, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(`{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"` + tier + `"}`),
+			})
+			if err == nil {
+				t.Fatalf("expected Anthropic service_tier %q to fail closed", tier)
 			}
 		})
 	}
@@ -1074,11 +1059,11 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 	}
 }
 
-func TestResponsesReasoningEffortAliasNormalizesToModelCapability(t *testing.T) {
+func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","reasoning.effort":"max"}`),
+		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","reasoning.effort":"high"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1095,8 +1080,8 @@ func TestResponsesReasoningEffortAliasNormalizesToModelCapability(t *testing.T) 
 		t.Fatalf("ToBifrost returned error: %v", err)
 	}
 	reasoning := bifrostReq.ResponsesRequest.Params.Reasoning
-	if reasoning == nil || reasoning.Effort == nil || *reasoning.Effort != "max" {
-		t.Fatalf("expected canonical reasoning.effort=max before provider conversion, got %#v", reasoning)
+	if reasoning == nil || reasoning.Effort == nil || *reasoning.Effort != "high" {
+		t.Fatalf("expected canonical reasoning.effort=high before provider conversion, got %#v", reasoning)
 	}
 	if _, ok := bifrostReq.ResponsesRequest.Params.ExtraParams["reasoning.effort"]; ok {
 		t.Fatalf("reasoning.effort must not be forwarded as ExtraParams: %#v", bifrostReq.ResponsesRequest.Params.ExtraParams)
@@ -1127,16 +1112,16 @@ func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
 		want string
 	}{
 		{
-			name: "OpenAI explicit minimal mapping",
+			name: "OpenAI accepted low effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[],"reasoning_effort":"minimal"}`,
-			want: "minimal",
+			body: `{"model":"gpt-5.5","messages":[],"reasoning_effort":"low"}`,
+			want: "low",
 		},
 		{
-			name: "Anthropic explicit xhigh mapping",
+			name: "Anthropic accepted max effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[],"reasoning":{"effort":"xhigh"}}`,
-			want: "high",
+			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[],"reasoning":{"effort":"max"}}`,
+			want: "max",
 		},
 		{
 			name: "Anthropic Opus preserves xhigh",
@@ -1171,6 +1156,76 @@ func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
 				t.Fatalf("expected normalized effort %q, got %#v", tc.want, effort)
 			}
 		})
+	}
+}
+
+func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
+	models := []struct {
+		alias    string
+		provider schemas.ModelProvider
+	}{
+		{alias: "gpt-5.5", provider: schemas.OpenAI},
+		{alias: "gpt-5-nano", provider: schemas.OpenAI},
+		{alias: "anthropic/claude-opus-4-8", provider: schemas.Anthropic},
+		{alias: "anthropic/claude-sonnet-4-6", provider: schemas.Anthropic},
+	}
+
+	for _, model := range models {
+		deployment, ok := catalog.DeploymentForRoute(model.provider, model.alias, catalog.RouteChat)
+		if !ok {
+			t.Fatalf("%s deployment is unavailable", model.alias)
+		}
+		for _, effort := range deployment.ReasoningEfforts {
+			t.Run(model.alias+"/"+effort, func(t *testing.T) {
+				body, err := json.Marshal(map[string]any{
+					"messages": []map[string]any{{"content": "hi", "role": "user"}},
+					"model":    model.alias,
+					"reasoning": map[string]any{
+						"effort": effort,
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+					Method: "POST",
+					Path:   "/v1/chat/completions",
+					Body:   body,
+				})
+				if err != nil {
+					t.Fatalf("resolve advertised effort: %v", err)
+				}
+				state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+				if err := state.Adapter.SanitizeRequest(state); err != nil {
+					t.Fatalf("sanitize advertised effort: %v", err)
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				request, err := resolution.ToBifrost(ctx)
+				if err != nil {
+					t.Fatalf("build Bifrost request: %v", err)
+				}
+
+				switch model.provider {
+				case schemas.OpenAI:
+					wire := openaiprovider.ToOpenAIChatRequest(ctx, request.ChatRequest)
+					if wire.Reasoning == nil ||
+						wire.Reasoning.Effort == nil ||
+						*wire.Reasoning.Effort != effort {
+						t.Fatalf("OpenAI wire effort = %#v, want %q", wire.Reasoning, effort)
+					}
+				case schemas.Anthropic:
+					wire, err := anthropicprovider.ToAnthropicChatRequest(ctx, request.ChatRequest)
+					if err != nil {
+						t.Fatalf("build Anthropic wire request: %v", err)
+					}
+					if wire.OutputConfig == nil ||
+						wire.OutputConfig.Effort == nil ||
+						*wire.OutputConfig.Effort != effort {
+						t.Fatalf("Anthropic wire effort = %#v, want %q", wire.OutputConfig, effort)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -2558,7 +2613,7 @@ func TestOpenAIResponsesFinalNonPreviewSearchCapsFixedContentTokens(t *testing.T
 	mutatedPricing := copyPricing(resolution.Deployment.Pricing)
 	mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "1000000"}
 	mutatedPricing[MeterOpenAIResponsesWebSearchCalls] = map[string]string{billing.RatePerThousandCalls: "10000000000000000000"}
-	resolution.Deployment.Model = "gpt-4o-mini"
+	resolution.Deployment.Upstream.Model = "gpt-4o-mini"
 	resolution.Deployment.Pricing = mutatedPricing
 
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -2581,7 +2636,7 @@ func TestOpenAIResponsesFinalNonPreviewSearchCapsFixedContentTokens(t *testing.T
 	if searchMeter == nil || searchMeter.Quantity != "1" || searchMeter.HoldRequired {
 		t.Fatalf("expected final non-preview search call capped to one call, got %#v in %#v", searchMeter, state.FinalMeters)
 	}
-	pricing := requestLogPricingBag(state)
+	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "8000", inputMeter.AmountUSDAtoms)
 	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "1", searchMeter.AmountUSDAtoms)
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
@@ -3159,7 +3214,7 @@ func TestAnthropicResponsesFinalHostedToolPriceIsCappedByMaxToolCalls(t *testing
 func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
-		Path: "/v1/responses",
+		Path:   "/v1/responses",
 		Body: []byte(`{
 			"model":"anthropic/claude-opus-4-8-fast-us",
 			"input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],
@@ -3215,7 +3270,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 	if finalSearch == nil || finalSearch.Quantity != "2" || finalSearch.HoldRequired {
 		t.Fatalf("expected final Anthropic web-search meter capped to two calls, got %#v in %#v", finalSearch, state.FinalMeters)
 	}
-	pricing := requestLogPricingBag(state)
+	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterCacheWrite1hInputTokens, billing.RatePerMillionTokens, finalCache.Quantity, finalCache.AmountUSDAtoms)
 	assertPricingBagEntry(t, pricing, meterAnthropicWebSearchCalls, billing.RatePerThousandCalls, "2", finalSearch.AmountUSDAtoms)
 	if actualWebSearchCalls(state) != 3 {

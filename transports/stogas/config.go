@@ -50,6 +50,7 @@ var confidentialRuntimeSecretNames = []string{
 type Config struct {
 	AllowPrivateProviderNetwork bool
 	APIKeyPepper                string
+	CatalogURL                  string
 	Confidential                ConfidentialConfig
 	DatabasePool                billing.DatabasePoolConfig
 	DatabaseSchema              string
@@ -106,6 +107,7 @@ func LoadFromEnv() (Config, error) {
 	config := Config{
 		AllowPrivateProviderNetwork: os.Getenv("STOGAS_ALLOW_PRIVATE_PROVIDER_NETWORK") == "true",
 		APIKeyPepper:                strings.TrimSpace(os.Getenv("API_KEY_PEPPER")),
+		CatalogURL:                  catalogURLForEnvironment(loadRuntimeEnvironment()),
 		Confidential:                loadConfidentialConfigFromEnv(),
 		DatabasePool:                databasePool,
 		DatabaseSchema:              strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
@@ -134,6 +136,20 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	return config, nil
+}
+
+func catalogURLForEnvironment(environment string) string {
+	if configured := strings.TrimSpace(os.Getenv("STOGAS_CATALOG_URL")); configured != "" {
+		return configured
+	}
+	switch environment {
+	case "staging":
+		return "https://evidence-staging.stogas.ai/catalog/latest.json"
+	case "production":
+		return "https://evidence.stogas.ai/catalog/latest.json"
+	default:
+		return ""
+	}
 }
 
 func loadConfidentialConfigFromEnv() ConfidentialConfig {

@@ -173,7 +173,7 @@ func TestSettlementStatuses(t *testing.T) {
 	}
 }
 
-func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
+func TestEncodeGatewayRequestEventDefaultsMeterQuantities(t *testing.T) {
 	payload, err := encodeGatewayRequestEvent(RequestEvent{RequestID: "request"})
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
@@ -183,12 +183,15 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		t.Fatalf("payload is not valid JSON: %v", err)
 	}
-	pricing, ok := decoded["pricing"].(map[string]any)
+	quantities, ok := decoded["meter_quantities"].(map[string]any)
 	if !ok {
-		t.Fatalf("pricing = %v, want pricing object", decoded["pricing"])
+		t.Fatalf("meter_quantities = %v, want object", decoded["meter_quantities"])
 	}
-	if len(pricing) != 0 {
-		t.Fatalf("pricing = %#v, want empty pricing bag when no meters are present", pricing)
+	if len(quantities) != 0 {
+		t.Fatalf("meter_quantities = %#v, want empty object", quantities)
+	}
+	if _, exists := decoded["pricing"]; exists {
+		t.Fatal("internal pricing input must not be written to request telemetry")
 	}
 }
 
@@ -196,21 +199,19 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
 	firstOutput := uint32(46)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		Pricing: map[string]any{
-			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "usdAtoms": "34"},
-		},
+		MeterQuantities: map[string]string{"input_tokens": "12"},
 		ProviderAttempts: []ProviderAttempt{{
 			IsBYOK:                false,
 			LatencyMS:             12,
 			Provider:              "openai",
 			ProviderFirstOutputMS: &firstOutput,
+			ProviderRequestID:     "provider-request",
+			FinishReason:          "stop",
 			Status:                "success",
 			StatusCode:            &status,
 		}},
-		Streamed:                true,
-		TimeToFirstOutputMS:     &firstOutput,
 		GatewayVersion:          "v1.5.13",
-		ResolvedCatalogNodeIDs:  []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
+		ResolvedCatalogNodeIDs:  []string{"route:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
 	})
 
@@ -220,8 +221,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
 		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
 	}
-	if event.TimeToFirstOutputMS == nil || *event.TimeToFirstOutputMS != firstOutput {
-		t.Fatalf("time_to_first_output_ms = %#v", event.TimeToFirstOutputMS)
+	if event.AnalyticsTimeToFirstOutputMS == nil || *event.AnalyticsTimeToFirstOutputMS != firstOutput {
+		t.Fatalf("analytics_time_to_first_output_ms = %#v", event.AnalyticsTimeToFirstOutputMS)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway_version = %q", event.GatewayVersion)
@@ -234,17 +235,16 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
-	var pricing map[string]any
-	if err := json.Unmarshal([]byte(event.Pricing), &pricing); err != nil {
-		t.Fatalf("pricing = %q, err=%v", event.Pricing, err)
+	var quantities map[string]string
+	if err := json.Unmarshal([]byte(event.MeterQuantities), &quantities); err != nil {
+		t.Fatalf("meter_quantities = %q, err=%v", event.MeterQuantities, err)
 	}
-	input, ok := pricing["input_tokens"].(map[string]any)
-	if !ok || input["quantity"] != "12" || input["rateKey"] != "per_mill_tokens" || input["usdAtoms"] != "34" {
-		t.Fatalf("pricing should keep dynamic meter keys: %#v", pricing)
+	if quantities["input_tokens"] != "12" {
+		t.Fatalf("meter quantities should keep dynamic meter keys: %#v", quantities)
 	}
 }
 
-func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
+func TestNewRequestEventSeparatesBillingInputFromTelemetry(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
 	providerFirstOutput := uint32(8)
 	provisioningKeyID := "019de515-eabf-7c0e-89bd-400629a79580"
@@ -258,12 +258,8 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 		StartedAt: startedAt,
 	})
 
-	pricing := event.Pricing
-	if len(pricing) != 1 {
-		t.Fatalf("pricing must contain only the supplied canonical meter: %#v", pricing)
-	}
-	if !event.Streamed || event.TimeToFirstOutputMS == nil || *event.TimeToFirstOutputMS != providerFirstOutput {
-		t.Fatalf("expected streaming first output timing, got %#v", event)
+	if event.MeterQuantities["input_tokens"] != "1" || len(event.PricingInputSHA256) != 64 {
+		t.Fatalf("expected compact metering telemetry, got %#v", event)
 	}
 	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
 		t.Fatalf("expected provider first output on provider attempt, got %#v", event.ProviderAttempts)
@@ -287,7 +283,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.TotalTimeMS < 90 {
 		t.Fatalf("total time should begin at request admission, got %dms", event.TotalTimeMS)
 	}
-	providerTime := event.UpstreamProviderTimeMS
+	providerTime := event.ProviderAttempts[0].LatencyMS
 	if providerTime < 35 || providerTime > 45 {
 		t.Fatalf("provider time should end at observed provider completion, got %dms", providerTime)
 	}
@@ -301,10 +297,10 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		}},
 		StartedAt: startedAt,
 	})
-	if event.UpstreamProviderTimeMS < 35 || event.UpstreamProviderTimeMS > 45 {
+	if event.ProviderAttempts[0].LatencyMS < 35 || event.ProviderAttempts[0].LatencyMS > 45 {
 		t.Fatalf(
 			"provider metadata must not replace the gateway provider clock, got %dms",
-			event.UpstreamProviderTimeMS,
+			event.ProviderAttempts[0].LatencyMS,
 		)
 	}
 
@@ -315,10 +311,10 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		}},
 		StartedAt: startedAt,
 	})
-	if event.UpstreamProviderTimeMS != event.TotalTimeMS {
+	if event.ProviderAttempts[0].LatencyMS != event.TotalTimeMS {
 		t.Fatalf(
 			"provider time must not exceed total time: provider=%d total=%d",
-			event.UpstreamProviderTimeMS,
+			event.ProviderAttempts[0].LatencyMS,
 			event.TotalTimeMS,
 		)
 	}
@@ -377,7 +373,7 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			attempts++
 			return errors.New("simulated postgres outage")
 		},
@@ -387,7 +383,6 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 		&Authorization{RequestID: "request-1"},
 		"params",
 		ZeroChargeUSDAtoms,
-		"{}",
 		`{"request_id":"request-1"}`,
 		RequestEvent{
 			RequestID:               "request-1",
@@ -504,7 +499,7 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 			}
 			var writeOutbox *bool
 			service := &Service{
-				settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, _ string, _ string, fallback bool) error {
+				settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, _ string, fallback bool) error {
 					writeOutbox = &fallback
 					return nil
 				},
@@ -589,7 +584,7 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			return errors.New("simulated postgres outage after tinybird commit")
 		},
 		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
@@ -598,7 +593,6 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 		testAuthorization(),
 		"params",
 		ZeroChargeUSDAtoms,
-		"{}",
 		`{"request_id":"request-1"}`,
 		testGatewayRequestEvent(),
 		false,
@@ -622,7 +616,7 @@ func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			attempts++
 			if attempts == 1 {
 				return errors.New("transient postgres failure")
@@ -655,7 +649,7 @@ func TestCloseWaitsForActiveSettlementRetry(t *testing.T) {
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       time.Second,
-		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			attempts++
 			if attempts == 1 {
 				return errors.New("transient postgres failure")
@@ -702,7 +696,7 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 		retryInitialDelay: time.Millisecond,
 		retryMaxDelay:     time.Millisecond,
 		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, string, bool) error {
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			return &settleResultError{
 				err:        errors.New("Invalid settlement payload"),
 				result:     "payload_mismatch",
@@ -715,7 +709,6 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 		testAuthorization(),
 		"params",
 		ZeroChargeUSDAtoms,
-		"{}",
 		`{"request_id":"request-1"}`,
 		testGatewayRequestEvent(),
 		true,
@@ -741,7 +734,6 @@ func testAuthorization() *Authorization {
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
 		CreatedAt:               time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		Pricing:                 map[string]any{},
 		RequestID:               "request-1",
 		StogasAPIKeyID:          "key-1",
 		StogasBillingStatus:     "complete",

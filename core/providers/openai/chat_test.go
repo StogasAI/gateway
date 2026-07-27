@@ -162,6 +162,12 @@ func TestToOpenAIChatRequest_NormalizesReasoningEffort(t *testing.T) {
 			expected: "low",
 		},
 		{
+			name:     "preserves minimal for GPT-5 nano snapshot",
+			model:    "gpt-5-nano-2025-08-07",
+			effort:   "minimal",
+			expected: "minimal",
+		},
+		{
 			name:     "maps max to xhigh for xhigh-capable model",
 			model:    "gpt-5.4",
 			effort:   "max",

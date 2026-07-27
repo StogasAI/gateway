@@ -9,54 +9,39 @@ import (
 	"hash"
 )
 
-const DomainV1 = "stogas.response-proof.v1"
+const DomainV4 = "stogas.response-proof.v4"
 
 type Input struct {
-	RequestID             string
-	RequestPath           string
-	RequestBody           []byte
-	ResponseBody          []byte
-	CatalogNodeIDs        []string
-	DrandRound            uint64
+	RequestBody          []byte
+	ResponseBody         []byte
+	CatalogDigest        string
+	CatalogNodeIDs       []string
 	E2EETranscriptSHA256 string
 }
 
 type StreamingInput struct {
-	RequestID             string
-	RequestPath           string
-	RequestBody           []byte
-	CatalogNodeIDs        []string
-	DrandRound            uint64
+	RequestBody          []byte
+	CatalogDigest        string
+	CatalogNodeIDs       []string
 	E2EETranscriptSHA256 string
 }
 
 type Payload struct {
-	Schema                string   `json:"schema"`
-	RequestID             string   `json:"request_id"`
-	RequestPath           string   `json:"request_path"`
-	RequestSHA256         string   `json:"request_sha256"`
-	ResponseSHA256        string   `json:"response_sha256"`
-	CatalogNodeIDs        []string `json:"catalog_node_ids"`
-	DrandRound            uint64   `json:"drand_round"`
-	Streaming             bool     `json:"streaming"`
+	Schema               string   `json:"schema"`
+	RequestSHA256        string   `json:"request_sha256"`
+	ResponseSHA256       string   `json:"response_sha256"`
+	CatalogDigest        string   `json:"catalog_digest"`
+	CatalogNodeIDs       []string `json:"catalog_node_ids"`
 	E2EETranscriptSHA256 string   `json:"e2ee_transcript_sha256,omitempty"`
-}
-
-func Hash(input Input) (string, error) {
-	payload := PayloadFor(input)
-	return HashPayload(payload)
 }
 
 func PayloadFor(input Input) Payload {
 	return Payload{
-		Schema:                DomainV1,
-		RequestID:             input.RequestID,
-		RequestPath:           input.RequestPath,
-		RequestSHA256:         sha256Hex(input.RequestBody),
-		ResponseSHA256:        sha256Hex(input.ResponseBody),
-		CatalogNodeIDs:        append([]string(nil), input.CatalogNodeIDs...),
-		DrandRound:            input.DrandRound,
-		Streaming:             false,
+		Schema:               DomainV4,
+		RequestSHA256:        sha256Hex(input.RequestBody),
+		ResponseSHA256:       sha256Hex(input.ResponseBody),
+		CatalogDigest:        input.CatalogDigest,
+		CatalogNodeIDs:       append([]string(nil), input.CatalogNodeIDs...),
 		E2EETranscriptSHA256: input.E2EETranscriptSHA256,
 	}
 }
@@ -77,71 +62,63 @@ func (h *StreamHasher) WriteChunk(chunk []byte) {
 	_, _ = h.hash.Write(chunk)
 }
 
-func (h *StreamHasher) FinalHash() (string, error) {
-	payload, err := h.FinalPayload()
+func (h *StreamHasher) FinalPayload() Payload {
+	if h == nil || h.hash == nil {
+		return Payload{}
+	}
+	return Payload{
+		Schema:               DomainV4,
+		RequestSHA256:        sha256Hex(h.base.RequestBody),
+		ResponseSHA256:       hex.EncodeToString(h.hash.Sum(nil)),
+		CatalogDigest:        h.base.CatalogDigest,
+		CatalogNodeIDs:       append([]string(nil), h.base.CatalogNodeIDs...),
+		E2EETranscriptSHA256: h.base.E2EETranscriptSHA256,
+	}
+}
+
+func Sign(privateKey ed25519.PrivateKey, payload Payload) (string, error) {
+	message, err := signingMessage(payload)
 	if err != nil {
 		return "", err
 	}
-	return HashPayload(payload)
+	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, message)), nil
 }
 
-func (h *StreamHasher) FinalPayload() (Payload, error) {
-	if h == nil || h.hash == nil {
-		return Payload{}, nil
-	}
-	payload := Payload{
-		Schema:                DomainV1,
-		RequestID:             h.base.RequestID,
-		RequestPath:           h.base.RequestPath,
-		RequestSHA256:         sha256Hex(h.base.RequestBody),
-		ResponseSHA256:        hex.EncodeToString(h.hash.Sum(nil)),
-		CatalogNodeIDs:        append([]string(nil), h.base.CatalogNodeIDs...),
-		DrandRound:            h.base.DrandRound,
-		Streaming:             true,
-		E2EETranscriptSHA256: h.base.E2EETranscriptSHA256,
-	}
-	return payload, nil
-}
-
-func Sign(privateKey ed25519.PrivateKey, processedHashHex string) string {
-	signature := ed25519.Sign(privateKey, []byte(DomainV1+"\x00"+processedHashHex))
-	return base64.RawURLEncoding.EncodeToString(signature)
-}
-
-func Verify(publicKey ed25519.PublicKey, processedHashHex string, signatureBase64URL string) bool {
+func Verify(publicKey ed25519.PublicKey, payload Payload, signatureBase64URL string) bool {
 	signature, err := base64.RawURLEncoding.DecodeString(signatureBase64URL)
 	if err != nil {
 		return false
 	}
-	return ed25519.Verify(publicKey, []byte(DomainV1+"\x00"+processedHashHex), signature)
+	message, err := signingMessage(payload)
+	return err == nil && ed25519.Verify(publicKey, message, signature)
 }
 
-func VerifyInput(publicKey ed25519.PublicKey, input Input, processedHashHex string, signatureBase64URL string) bool {
-	expected, err := Hash(input)
-	if err != nil || expected != processedHashHex {
-		return false
-	}
-	return Verify(publicKey, processedHashHex, signatureBase64URL)
+func VerifyInput(publicKey ed25519.PublicKey, input Input, signatureBase64URL string) bool {
+	return Verify(publicKey, PayloadFor(input), signatureBase64URL)
 }
 
-func VerifyStreamingInput(publicKey ed25519.PublicKey, input StreamingInput, chunks [][]byte, processedHashHex string, signatureBase64URL string) bool {
+func VerifyStreamingInput(
+	publicKey ed25519.PublicKey,
+	input StreamingInput,
+	chunks [][]byte,
+	signatureBase64URL string,
+) bool {
 	hasher := NewStreamHasher(input)
 	for _, chunk := range chunks {
 		hasher.WriteChunk(chunk)
 	}
-	expected, err := hasher.FinalHash()
-	if err != nil || expected != processedHashHex {
-		return false
-	}
-	return Verify(publicKey, processedHashHex, signatureBase64URL)
+	return Verify(publicKey, hasher.FinalPayload(), signatureBase64URL)
 }
 
-func HashPayload(payload Payload) (string, error) {
+func signingMessage(payload Payload) ([]byte, error) {
 	bytes, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return sha256Hex(bytes), nil
+	message := make([]byte, 0, len(DomainV4)+1+len(bytes))
+	message = append(message, DomainV4...)
+	message = append(message, 0)
+	return append(message, bytes...), nil
 }
 
 func sha256Hex(data []byte) string {

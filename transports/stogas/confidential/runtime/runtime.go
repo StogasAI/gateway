@@ -126,10 +126,6 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		return nil, err
 	}
 	builder := func(ctx context.Context) (reportdata.Payload, error) {
-		catalogHash, ok := catalog.PublicCatalogHash()
-		if !ok {
-			return reportdata.Payload{}, catalog.ErrCatalogUnavailable
-		}
 		if err := drandSource.Refresh(ctx); err != nil {
 			return reportdata.Payload{}, err
 		}
@@ -139,7 +135,6 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		}
 		certState := certs.State()
 		return reportdata.NewPayload(reportdata.Payload{
-			CatalogHash:        catalogHash,
 			TLSSPKISHA256:      material.TLSSPKISHA256,
 			ActiveCertSHA256:   certState.ActiveCertSHA256,
 			AcceptedCertSHA256: append([]string(nil), certState.AcceptedCertSHA256...),
@@ -175,12 +170,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 	secrets := secretstore.NewStore()
 	var controlLoop *ControlLoop
 	if config.ControlConfigured() {
-		catalogHash, ok := catalog.PublicCatalogHash()
-		if !ok {
-			cancel()
-			return nil, fmt.Errorf("confidential catalog hash unavailable: %w", catalog.ErrCatalogUnavailable)
-		}
-		controlLoop = newControlLoop(config, material, certs, manager, secrets, catalogHash, true)
+		controlLoop = newControlLoop(config, material, certs, manager, secrets, true)
 		heartbeatCtx, heartbeatCancel := controlLoop.controlAttemptContext(runtimeCtx)
 		err := controlLoop.sendHeartbeat(heartbeatCtx)
 		heartbeatCancel()
@@ -328,7 +318,7 @@ func (l *ControlLoop) Readiness() readiness.Result {
 	return l.readinessResult()
 }
 
-func newControlLoop(config stogas.ConfidentialConfig, material *identity.Material, certs *identity.CertificateStore, manager *quote.Manager, secrets *secretstore.Store, catalogHash string, entropyReady bool) *ControlLoop {
+func newControlLoop(config stogas.ConfidentialConfig, material *identity.Material, certs *identity.CertificateStore, manager *quote.Manager, secrets *secretstore.Store, entropyReady bool) *ControlLoop {
 	return &ControlLoop{
 		client: provision.Client{
 			AccessClientID:     config.AccessClientID,
@@ -340,7 +330,7 @@ func newControlLoop(config stogas.ConfidentialConfig, material *identity.Materia
 		certs:             certs,
 		entropyReady:      entropyReady,
 		identity:          material,
-		nodeID:            deriveNodeID(config, material, catalogHash),
+		nodeID:            deriveNodeID(material),
 		quotes:            manager,
 		secrets:           secrets,
 		shutdownRequested: make(chan struct{}),
@@ -508,6 +498,7 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		nodeID = l.nodeID
 	}
 	input := provision.HeartbeatInput{
+		Catalog:       catalogIdentity(),
 		CertExpiresAt: l.certs.State().ExpiresAt,
 		Health: provision.NodeHealth{
 			LastQuoteError: lastErrorString(l.quotes.LastError()),
@@ -743,15 +734,22 @@ func (l *ControlLoop) recordCertificateError(err error) {
 	l.mu.Unlock()
 }
 
-func deriveNodeID(config stogas.ConfidentialConfig, material *identity.Material, catalogHash string) string {
+func deriveNodeID(material *identity.Material) string {
 	preimage, _ := json.Marshal(map[string]string{
-		"catalog_hash":       catalogHash,
 		"ed25519_public_key": material.Ed25519PublicKey,
 		"hpke_public_key":    material.HPKEPublicKey,
 		"tls_spki_sha256":    material.TLSSPKISHA256,
 	})
 	sum := sha256.Sum256(preimage)
 	return hex.EncodeToString(sum[:])
+}
+
+func catalogIdentity() provision.CatalogIdentity {
+	identity, _ := catalog.ActiveIdentity()
+	return provision.CatalogIdentity{
+		Digest:   identity.Digest,
+		Sequence: identity.Sequence,
+	}
 }
 
 func lastErrorString(err error) string {

@@ -55,7 +55,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 			t.Fatalf("heartbeat must not send legacy verifier JWTs: %#v", body)
 		}
 		reportData, ok := body["report_data"].(map[string]any)
-		if !ok || reportData["schema"] != reportdata.SchemaV1 {
+		if !ok || reportData["schema"] != reportdata.SchemaV2 {
 			t.Fatalf("report data not sent as structured JSON: %#v", body["report_data"])
 		}
 		health, ok := body["health"].(map[string]any)
@@ -78,6 +78,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		AllowInsecureLocal: true,
 	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
+		Catalog:       CatalogIdentity{Digest: "sha256:" + strings.Repeat("1", 64), Sequence: 7},
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
 		Health:        NodeHealth{Ready: false, LastQuoteError: "drand fetch failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
 		NodeID:        "node-1",
@@ -307,6 +308,7 @@ func testHeartbeatInput(t *testing.T) HeartbeatInput {
 		t.Fatal(err)
 	}
 	return HeartbeatInput{
+		Catalog:       CatalogIdentity{Digest: "sha256:" + strings.Repeat("1", 64), Sequence: 7},
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
 		Health:        NodeHealth{Ready: true, SecretVersions: map[string]string{}},
 		NodeID:        "node-1",
@@ -348,7 +350,6 @@ func TestAuthoritativeRejectionClassification(t *testing.T) {
 func testSnapshot(t *testing.T, generatedAt time.Time) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		CatalogHash:        strings.Repeat("2", 64),
 		TLSSPKISHA256:      strings.Repeat("3", 64),
 		ActiveCertSHA256:   strings.Repeat("4", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("4", 64)},

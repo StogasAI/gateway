@@ -133,10 +133,13 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		state.FinalMeters = compactMeterEstimates(state.FinalMeters, effectivePricingForState(state))
 		state.FinalCostUSDAtoms = sumMeterAmounts(state.FinalMeters)
 	}
+	catalogIdentity := state.Resolution.CatalogIdentity()
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms:     state.FinalCostUSDAtoms,
 		Authorization:          state.Authorization,
 		Cancelled:              state.Cancelled,
+		CatalogDigest:          catalogIdentity.Digest,
+		CatalogSequence:        catalogIdentity.Sequence,
 		Error:                  state.BifrostError,
 		Pricing:                pricingForState(state),
 		ProviderCompletedAt:    state.ProviderCompletedAt,
@@ -161,10 +164,6 @@ func pricingForState(state *State) map[string]any {
 	}
 	mergePricingMeters(out, compactMeterEstimates(state.FinalMeters, effectivePricingForState(state)))
 	return out
-}
-
-func requestLogPricingBag(state *State) map[string]any {
-	return pricingForState(state)
 }
 
 func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate) {

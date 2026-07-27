@@ -412,7 +412,7 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 	return openAIAdapterContext{
 		Route: openAIAdapterRoute(resolution.Route),
 		Deployment: openAIAdapterDeployment{
-			Model:               deployment.Model,
+			Model:               deployment.Upstream.Model,
 			ContextWindowTokens: deployment.ContextWindowTokens,
 			Pricing:             pricing,
 			ReasoningSupported:  deployment.ReasoningSupported,

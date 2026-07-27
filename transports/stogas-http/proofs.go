@@ -53,25 +53,14 @@ func (s *Server) proofInput(ctx *fasthttp.RequestCtx, state *stogas.State, respo
 	if session := encryptedSession(ctx); session != nil {
 		transcriptSHA256 = session.TranscriptSHA256()
 	}
-	requestID := stateRequestID(state)
+	catalogIdentity := state.Resolution.CatalogIdentity()
 	return proofhttp.Input{
-		RequestID:             requestID,
-		RequestPath:           string(ctx.Path()),
-		RequestBody:           append([]byte(nil), ctx.Request.Body()...),
-		CatalogNodeIDs:        state.Resolution.CatalogNodeIDs(),
-		ResponseBody:          append([]byte(nil), responseJSON...),
+		RequestBody:          append([]byte(nil), ctx.Request.Body()...),
+		CatalogDigest:        catalogIdentity.Digest,
+		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
+		ResponseBody:         append([]byte(nil), responseJSON...),
 		E2EETranscriptSHA256: transcriptSHA256,
 	}, nil
-}
-
-func stateRequestID(state *stogas.State) string {
-	if state == nil {
-		return ""
-	}
-	if state.Authorization != nil && state.Authorization.RequestID != "" {
-		return state.Authorization.RequestID
-	}
-	return state.RequestID
 }
 
 func applyProofHeaders(ctx *fasthttp.RequestCtx, output *proofhttp.Output) {

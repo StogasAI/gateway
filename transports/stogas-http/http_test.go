@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -83,6 +84,19 @@ func testResolution() *catalog.ResolvedRequest {
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5.5",
 	}
+}
+
+func mustResolvedRequest(t *testing.T, path, body string) *catalog.ResolvedRequest {
+	t.Helper()
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: fasthttp.MethodPost,
+		Path:   path,
+		Body:   []byte(body),
+	})
+	if err != nil {
+		t.Fatalf("resolve catalog request: %v", err)
+	}
+	return resolution
 }
 
 func TestNewRequestContextUsesResponsesLifetime(t *testing.T) {
@@ -382,17 +396,8 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	ctx, clientSession := encryptedRequestContext(t, server, material)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &stogas.State{
-		Resolution: &catalog.ResolvedRequest{
-			Route:    catalog.RouteResponses,
-			Provider: schemas.OpenAI,
-			Model:    "gpt-5-nano",
-			Deployment: catalog.Deployment{
-				ID:                  "deployment-node",
-				ModelID:             "model-node",
-				ProviderEndpointIDs: []string{"provider-endpoint-node"},
-			},
-		},
-		RequestID: clientSession.RequestID,
+		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5"}`),
+		RequestID:  clientSession.RequestID,
 	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
@@ -408,29 +413,30 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	if err := json.Unmarshal(encodedProof, &proofObject); err != nil {
 		t.Fatal(err)
 	}
-	if !containsString(proofObject.CatalogNodeIDs, "deployment:deployment-node") ||
-		!containsString(proofObject.CatalogNodeIDs, "provider_endpoint:provider-endpoint-node") {
-		t.Fatalf("proof did not bind resolved catalog chain: %#v", proofObject.CatalogNodeIDs)
+	nodeIDs := state.Resolution.CatalogNodeIDs()
+	if !reflect.DeepEqual(proofObject.CatalogNodeIDs, nodeIDs) {
+		t.Fatalf(
+			"proof did not bind all resolved catalog nodes: got=%q want=%q",
+			proofObject.CatalogNodeIDs,
+			nodeIDs,
+		)
 	}
+	catalogIdentity := state.Resolution.CatalogIdentity()
 	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestID:            state.RequestID,
-		RequestPath:          string(ctx.Path()),
 		RequestBody:          ctx.Request.Body(),
 		ResponseBody:         ctx.Response.Body(),
-		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
-		DrandRound:           1,
+		CatalogDigest:        catalogIdentity.Digest,
+		CatalogNodeIDs:       nodeIDs,
 		E2EETranscriptSHA256: encryptedSession(ctx).TranscriptSHA256(),
-	}, proofObject.ProofHash, proofObject.Signature) {
+	}, proofObject.Signature) {
 		t.Fatal("proof did not bind the E2EE request transcript")
 	}
 	if proof.VerifyInput(publicKey, proof.Input{
-		RequestID:      state.RequestID,
-		RequestPath:    string(ctx.Path()),
 		RequestBody:    ctx.Request.Body(),
 		ResponseBody:   ctx.Response.Body(),
-		CatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
-		DrandRound:     1,
-	}, proofObject.ProofHash, proofObject.Signature) {
+		CatalogDigest:  catalogIdentity.Digest,
+		CatalogNodeIDs: nodeIDs,
+	}, proofObject.Signature) {
 		t.Fatal("E2EE proof verified without its request transcript")
 	}
 }
@@ -492,7 +498,6 @@ func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error)
 func testProofSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		CatalogHash:        strings.Repeat("b", 64),
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
@@ -1212,6 +1217,24 @@ func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicResponsePayloadUsesCatalogDeploymentIdentity(t *testing.T) {
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	defer cancel()
+	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"model_deployment": true})
+	stogas.SetState(bifrostCtx, &stogas.State{
+		Resolution: &catalog.ResolvedRequest{
+			Deployment: catalog.Deployment{ID: "gpt-5.5-priority"},
+		},
+	})
+
+	metadata := stogasMetadata(bifrostCtx, schemas.BifrostResponseExtraFields{
+		ResolvedModelUsed: "gpt-5.5-2026-04-23",
+	})
+	if metadata["model_deployment"] != "gpt-5.5-priority" {
+		t.Fatalf("expected catalog deployment identity, got %#v", metadata)
+	}
+}
+
 func TestPublicResponseProviderHeaderMetadataUsesSanitizedState(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
@@ -1579,17 +1602,8 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Resolution: &catalog.ResolvedRequest{
-			Route:    catalog.RouteChat,
-			Provider: schemas.OpenAI,
-			Model:    "gpt-5.5",
-			Deployment: catalog.Deployment{
-				ID:                  "stream-deployment",
-				ModelID:             "stream-model",
-				ProviderEndpointIDs: []string{"stream-provider-endpoint"},
-			},
-		},
-		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
 	}
 
 	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
@@ -1628,21 +1642,21 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	if err := json.Unmarshal([]byte(proofJSON), &proofObject); err != nil {
 		t.Fatalf("failed to parse proof event: %v", err)
 	}
-	if proofObject.SigningPublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
-		t.Fatalf("proof did not expose the bound signer key: %q", proofObject.SigningPublicKey)
+	nodeIDs := state.Resolution.CatalogNodeIDs()
+	if !reflect.DeepEqual(proofObject.CatalogNodeIDs, nodeIDs) {
+		t.Fatalf(
+			"proof did not bind all resolved catalog nodes: got=%q want=%q",
+			proofObject.CatalogNodeIDs,
+			nodeIDs,
+		)
 	}
-	if !containsString(proofObject.CatalogNodeIDs, "deployment:stream-deployment") ||
-		!containsString(proofObject.CatalogNodeIDs, "provider_endpoint:stream-provider-endpoint") {
-		t.Fatalf("proof did not bind resolved catalog node ids: %#v", proofObject.CatalogNodeIDs)
-	}
+	catalogIdentity := state.Resolution.CatalogIdentity()
 	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
-		RequestID:      state.RequestID,
-		RequestPath:    string(ctx.Path()),
 		RequestBody:    ctx.Request.Body(),
-		CatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
-		DrandRound:     1,
-	}, [][]byte{frameSSEEvent("", []byte(chunkJSON)), frameSSEDone()}, proofObject.ProofHash, proofObject.Signature) {
-		t.Fatalf("streaming proof did not verify: hash=%q signature=%q body=%q", proofObject.ProofHash, proofObject.Signature, body)
+		CatalogDigest:  catalogIdentity.Digest,
+		CatalogNodeIDs: nodeIDs,
+	}, [][]byte{frameSSEEvent("", []byte(chunkJSON)), frameSSEDone()}, proofObject.Signature) {
+		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Signature, body)
 	}
 }
 
@@ -1974,15 +1988,6 @@ func stringSliceFromJSON(t *testing.T, value any) []string {
 		out = append(out, text)
 	}
 	return out
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 func requireSSEErrorPayload(t *testing.T, body string) map[string]any {

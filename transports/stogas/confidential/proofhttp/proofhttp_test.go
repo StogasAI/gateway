@@ -15,6 +15,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
+const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("a", 128)))
 	if err != nil {
@@ -22,11 +24,10 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
 	input := Input{
-		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:           "/v1/responses",
-		RequestBody:           []byte(`{"request":true}`),
-		CatalogNodeIDs:        []string{"stogas_endpoint:responses", "provider:openai", "deployment:gpt-5"},
-		ResponseBody:          []byte(`{"response":true}`),
+		RequestBody:          []byte(`{"request":true}`),
+		CatalogDigest:        testCatalogDigest,
+		CatalogNodeIDs:       []string{"author:openai", "model:gpt-5", "deployment:gpt-5", "route:openai-responses", "provider:openai"},
+		ResponseBody:         []byte(`{"response":true}`),
 		E2EETranscriptSHA256: strings.Repeat("a", 64),
 	}
 	output, err := service.Build(context.Background(), input)
@@ -47,19 +48,16 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	if !reflect.DeepEqual(object, output.Object) {
 		t.Fatalf("proof header and output object diverged: %#v %#v", object, output.Object)
 	}
-	if object.Schema != proof.DomainV1 || object.DrandRound != 1 ||
-		object.SigningPublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
+	if object.Schema != proof.DomainV4 {
 		t.Fatalf("proof identity context mismatch: %#v", object)
 	}
 	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestID:             input.RequestID,
-		RequestPath:           input.RequestPath,
-		RequestBody:           input.RequestBody,
-		ResponseBody:          input.ResponseBody,
-		CatalogNodeIDs:        input.CatalogNodeIDs,
-		DrandRound:            1,
+		RequestBody:          input.RequestBody,
+		ResponseBody:         input.ResponseBody,
+		CatalogDigest:        input.CatalogDigest,
+		CatalogNodeIDs:       input.CatalogNodeIDs,
 		E2EETranscriptSHA256: input.E2EETranscriptSHA256,
-	}, object.ProofHash, object.Signature) {
+	}, object.Signature) {
 		t.Fatal("response proof did not bind its complete receipt")
 	}
 }
@@ -71,10 +69,9 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	}
 	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
 	stream, err := service.NewStream(context.Background(), Input{
-		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:           "/v1/responses",
-		RequestBody:           []byte(`{"request":true}`),
-		CatalogNodeIDs:        []string{"node-a"},
+		RequestBody:          []byte(`{"request":true}`),
+		CatalogDigest:        testCatalogDigest,
+		CatalogNodeIDs:       []string{"author:openai", "model:gpt-5", "deployment:gpt-5", "route:openai-responses", "provider:openai"},
 		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	})
 	if err != nil {
@@ -86,25 +83,19 @@ func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !proof.Verify(publicKey, output.Object.ProofHash, output.Object.Signature) {
+	if !proof.Verify(publicKey, output.Object.Payload, output.Object.Signature) {
 		t.Fatal("stream proof signature did not verify")
 	}
 	expected := proof.NewStreamHasher(proof.StreamingInput{
-		RequestID:             "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:           "/v1/responses",
-		RequestBody:           []byte(`{"request":true}`),
-		CatalogNodeIDs:        []string{"node-a"},
-		DrandRound:            1,
+		RequestBody:          []byte(`{"request":true}`),
+		CatalogDigest:        testCatalogDigest,
+		CatalogNodeIDs:       []string{"author:openai", "model:gpt-5", "deployment:gpt-5", "route:openai-responses", "provider:openai"},
 		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	})
 	expected.WriteChunk([]byte(`{"delta":"a"}`))
 	expected.WriteChunk([]byte(`{"delta":"b"}`))
-	expectedHash, err := expected.FinalHash()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if output.Object.ProofHash != expectedHash {
-		t.Fatalf("stream hash mismatch: got %s want %s", output.Object.ProofHash, expectedHash)
+	if !reflect.DeepEqual(output.Object.Payload, expected.FinalPayload()) {
+		t.Fatalf("stream payload mismatch: got %#v want %#v", output.Object.Payload, expected.FinalPayload())
 	}
 }
 
@@ -134,11 +125,10 @@ func TestEnabledServiceFailsClosedWhenSignerDoesNotMatchReportData(t *testing.T)
 		Signer: otherPrivateKey,
 	}
 	_, err = service.Build(context.Background(), Input{
-		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:    "/v1/responses",
 		RequestBody:    []byte(`{"request":true}`),
 		ResponseBody:   []byte(`{"response":true}`),
-		CatalogNodeIDs: []string{"node-a"},
+		CatalogDigest:  testCatalogDigest,
+		CatalogNodeIDs: []string{"author:openai", "model:gpt-5", "deployment:gpt-5", "route:openai-responses", "provider:openai"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not match report-data ed25519 key") {
 		t.Fatalf("expected mismatched signer failure, got %v", err)
@@ -157,11 +147,10 @@ func TestEnabledServiceFailsClosedWhenSnapshotReportDataHashDoesNotMatchPayload(
 		Signer: privateKey,
 	}
 	_, err = service.Build(context.Background(), Input{
-		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:    "/v1/responses",
 		RequestBody:    []byte(`{"request":true}`),
 		ResponseBody:   []byte(`{"response":true}`),
-		CatalogNodeIDs: []string{"node-a"},
+		CatalogDigest:  testCatalogDigest,
+		CatalogNodeIDs: []string{"author:openai", "model:gpt-5", "deployment:gpt-5", "route:openai-responses", "provider:openai"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "report-data hash mismatch") {
 		t.Fatalf("expected report-data mismatch failure, got %v", err)
@@ -179,7 +168,6 @@ func (s staticQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
 func testSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		CatalogHash:        strings.Repeat("b", 64),
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},

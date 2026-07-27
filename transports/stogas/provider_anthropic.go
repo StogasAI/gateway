@@ -359,15 +359,15 @@ func (a AnthropicAdapter) SanitizeRequest(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	state.Resolution.ApplyProviderSamplingParameters()
-	if anthropicFastDeploymentID(state.Resolution.Deployment.ID) {
+	if strings.EqualFold(strings.TrimSpace(state.Resolution.Deployment.Upstream.FixedRequest.Speed), "fast") {
 		state.Resolution.SetSpeed("fast")
 	} else {
 		state.Resolution.SetSpeed("standard")
 	}
-	switch state.Resolution.Deployment.RegionID {
+	switch state.Resolution.Deployment.Upstream.FixedRequest.InferenceGeo {
 	case "us":
 		state.Resolution.SetExtraParam("inference_geo", "us")
-	case "multi-region", "":
+	case "global", "":
 		state.Resolution.SetExtraParam("inference_geo", "global")
 	}
 	ensureAnthropicResponsesHostedToolCap(state)
@@ -477,7 +477,7 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 	pricing := mergePricing(catalog.ProviderPricing(state.Resolution.Provider), deployment.Pricing)
 	return anthropicAdapterContext{
 		Route:                 anthropicAdapterRoute(state.Resolution.Route),
-		Deployment:            anthropicAdapterDeployment{Model: deployment.Model, ContextWindowTokens: deployment.ContextWindowTokens, Pricing: pricing},
+		Deployment:            anthropicAdapterDeployment{Model: deployment.Upstream.Model, ContextWindowTokens: deployment.ContextWindowTokens, Pricing: pricing},
 		InputTokenLimit:       state.Resolution.InputTokenLimit(),
 		OutputTokenLimit:      state.Resolution.OutputTokenLimit(),
 		ToolChoiceAllowsCalls: responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()),
@@ -813,10 +813,6 @@ func anthropicResponsesWebFetchToolType(rawType string) bool {
 func anthropicResponsesCodeExecutionToolType(rawType string) bool {
 	rawType = strings.TrimSpace(rawType)
 	return rawType == "code_execution" || strings.HasPrefix(rawType, "code_execution_")
-}
-
-func anthropicFastDeploymentID(deploymentID string) bool {
-	return strings.Contains(strings.ToLower(deploymentID), "-fast")
 }
 
 func anthropicHostedToolHoldQuantity(req anthropicAdapterContext) int {
