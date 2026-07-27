@@ -47,6 +47,7 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	state.SetDashboardCredential(credential.Dashboard)
 	state.GatewayNodeID = strings.ToLower(strings.TrimSpace(gatewayNodeID))
 	state.RequestID = requestID
 	state.RequestLifetime = lifetime

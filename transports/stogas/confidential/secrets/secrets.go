@@ -40,9 +40,10 @@ type InstallInput struct {
 
 var requiredSecretNames = []string{
 	"ANTHROPIC_API_KEY",
-	"AUTH_SECRET",
+	"API_KEY_PEPPER",
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
+	"INFERENCE_TOKEN_PUBLIC_KEY",
 	"OPENAI_API_KEY",
 }
 

@@ -9,8 +9,9 @@ import (
 )
 
 type apiCredential struct {
-	Claims *billing.APIKeyClaims
-	Raw    string
+	Claims    *billing.APIKeyClaims
+	Dashboard *billing.DashboardCredential
+	Raw       string
 }
 
 const inferenceCredentialContextKey = "stogas.inference_credential"
@@ -71,11 +72,18 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 	if s.runtime == nil {
 		return apiCredential{Raw: token}, true
 	}
+	if encryptedSession(ctx) != nil && billing.IsDashboardCredential(token) {
+		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)
+		if dashboardErr != nil {
+			s.writeBillingError(ctx, dashboardErr)
+			return apiCredential{}, false
+		}
+		clearInferenceCredentials(ctx)
+		return apiCredential{Dashboard: dashboard}, true
+	}
 	claims, err := s.runtime.ParseAPIKey(token)
 	if err != nil {
-		s.writeError(ctx, fasthttp.StatusUnauthorized, map[string]any{
-			"error": map[string]any{"message": "Invalid API key", "type": "authentication_error"},
-		})
+		s.writeBillingError(ctx, err)
 		return apiCredential{}, false
 	}
 	return apiCredential{Raw: token, Claims: claims}, true

@@ -54,6 +54,10 @@ func (f *fakeBillingAuthorizer) AuthorizeSingleUseRequestWithDuration(ctx contex
 	return f.AuthorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, requestLifetime)
 }
 
+func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*billing.Authorization, error) {
+	return f.AuthorizeRequestWithDuration(ctx, "", requestID, providerKey, productKey, amountUSDAtoms, requestLifetime)
+}
+
 func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent) error {
 	f.finalEvents = append(f.finalEvents, event)
 	return nil

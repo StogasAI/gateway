@@ -23,6 +23,7 @@ type State struct {
 	Hold                  HoldEstimate
 	RawAPIKey             string
 	APIKeyClaims          *billing.APIKeyClaims
+	DashboardCredential   *billing.DashboardCredential
 	Authorization         *billing.Authorization
 	BillingFinalized      bool
 	SingleUseRequestID    bool
@@ -60,6 +61,10 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 		APIKeyClaims:   claims,
 		GatewayVersion: GatewayVersion,
 	}
+}
+
+func (s *State) SetDashboardCredential(credential *billing.DashboardCredential) {
+	s.DashboardCredential = credential
 }
 
 func (s *State) MarkProviderStarted() {
