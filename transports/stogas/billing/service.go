@@ -83,16 +83,17 @@ from settle_gateway_hold_with_outbox(
 `
 
 type authorizeRow struct {
-	Result           string
-	HoldID           *string
-	UserID           *string
-	KeyID            *string
-	OrganizationID   *string
-	WorkspaceID      *string
-	AuthorizedAmount *string
-	CreatedAt        *time.Time
-	ExpiresAt        *time.Time
-	AvailableAfter   *string
+	Result            string
+	HoldID            *string
+	UserID            *string
+	KeyID             *string
+	ProvisioningKeyID *string
+	OrganizationID    *string
+	WorkspaceID       *string
+	AuthorizedAmount  *string
+	CreatedAt         *time.Time
+	ExpiresAt         *time.Time
+	AvailableAfter    *string
 }
 
 type settleRow struct {
@@ -103,18 +104,19 @@ type settleRow struct {
 }
 
 type Authorization struct {
-	AuthorizedAmount *big.Int
-	AvailableAfter   *big.Int
-	CreatedAt        time.Time
-	ExpiresAt        time.Time
-	HoldID           string
-	KeyID            string
-	OrganizationID   string
-	ProductKey       string
-	ProviderKey      string
-	RequestID        string
-	UserID           string
-	WorkspaceID      string
+	AuthorizedAmount  *big.Int
+	AvailableAfter    *big.Int
+	CreatedAt         time.Time
+	ExpiresAt         time.Time
+	HoldID            string
+	KeyID             string
+	OrganizationID    string
+	ProvisioningKeyID *string
+	ProductKey        string
+	ProviderKey       string
+	RequestID         string
+	UserID            string
+	WorkspaceID       string
 }
 
 type Service struct {
@@ -209,7 +211,8 @@ func (s *Service) AuthorizeSingleUseRequestWithDuration(ctx context.Context, raw
 }
 
 func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
-	if err := s.ValidateAPIKeyFormat(rawAPIKey); err != nil {
+	claims, err := parseSignedAPIKey(rawAPIKey, s.tokenPepper)
+	if err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
 
@@ -228,7 +231,7 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
 	defer cancel()
 	err = s.db.pool.QueryRow(queryCtx, authorizeHoldQuery, apiKeyHash, requestID, holdID, providerKey, productKey, amountUSDAtoms, expiresAt, paramsHash, singleUse).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.ProvisioningKeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter,
 	)
 	if err != nil {
 		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
@@ -258,7 +261,19 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 	case "api_key_limit":
 		return nil, &billingError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "ok":
-		return &Authorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: derefString(row.KeyID), OrganizationID: derefString(row.OrganizationID), ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: derefString(row.UserID), WorkspaceID: derefString(row.WorkspaceID)}, nil
+		keyID := derefString(row.KeyID)
+		organizationID := derefString(row.OrganizationID)
+		userID := derefString(row.UserID)
+		workspaceID := derefString(row.WorkspaceID)
+		provisioningKeyID := row.ProvisioningKeyID
+		if keyID != claims.KeyID ||
+			organizationID != claims.OrganizationID ||
+			userID != claims.ResponsibleID ||
+			workspaceID != claims.WorkspaceID ||
+			!equalOptionalString(provisioningKeyID, claims.ProvisioningID) {
+			return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		}
+		return &Authorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: keyID, OrganizationID: organizationID, ProvisioningKeyID: provisioningKeyID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UserID: userID, WorkspaceID: workspaceID}, nil
 	case "invalid_amount":
 		return nil, &billingError{err: errors.New("Invalid authorization amount"), statusCode: 400}
 	default:
@@ -440,6 +455,13 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func equalOptionalString(left *string, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func parseMoneyOrZero(value *string) *big.Int {

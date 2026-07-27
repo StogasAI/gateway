@@ -65,6 +65,7 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		RequestID:                    authorization.RequestID,
 		CreatedAt:                    createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		StogasAPIKeyID:               authorization.KeyID,
+		StogasProvisioningKeyID:      authorization.ProvisioningKeyID,
 		StogasUserID:                 authorization.UserID,
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
