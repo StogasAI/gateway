@@ -69,8 +69,7 @@ from settle_gateway_hold(
   $4::text,
   $5::text,
   $6::numeric,
-  $7::jsonb,
-  $8::json
+  $7::json
 );
 `
 
@@ -83,8 +82,7 @@ from settle_gateway_hold_with_outbox(
   $4::text,
   $5::text,
   $6::numeric,
-  $7::jsonb,
-  $8::json
+  $7::json
 );
 `
 
@@ -134,7 +132,7 @@ type Service struct {
 	retryMaxDelay           time.Duration
 	retryWindow             time.Duration
 	retryWG                 sync.WaitGroup
-	settleFunc              func(context.Context, *Authorization, string, string, string, string, bool) error
+	settleFunc              func(context.Context, *Authorization, string, string, string, bool) error
 	tinybird                *TinybirdClient
 	apiKeyPepper            string
 	inferenceTokenPublicKey ed25519.PublicKey
@@ -468,8 +466,6 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		actualCost = ZeroChargeUSDAtoms
 		event.TotalCostUSDAtoms = actualCost
 	}
-	event.Pricing = clonePricing(event.Pricing)
-	pricingJSON := pricingJSONString(event.Pricing)
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		return err
@@ -480,11 +476,11 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
 	}
 
-	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, string(pricingJSON), payload, writeOutbox); err != nil {
+	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, payload, writeOutbox); err != nil {
 		s.retryWG.Add(1)
 		go func() {
 			defer s.retryWG.Done()
-			s.retrySettle(authorization, paramsHash, actualCost, string(pricingJSON), payload, event, writeOutbox)
+			s.retrySettle(authorization, paramsHash, actualCost, payload, event, writeOutbox)
 		}()
 		return nil
 	}
@@ -492,9 +488,9 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 	return nil
 }
 
-func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, pricingJSON string, payload string, writeOutbox bool) error {
+func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, payload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox)
+		return s.settleFunc(ctx, authorization, paramsHash, actualCost, payload, writeOutbox)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
@@ -514,7 +510,6 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 		authorization.ProductKey,
 		paramsHash,
 		actualCost,
-		pricingJSON,
 		payload,
 	).Scan(&row.Result, &row.FinalCost, &row.RefundAmount, &row.AvailableAfter)
 	if err != nil {
@@ -535,13 +530,13 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	}
 }
 
-func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, pricingJSON string, payload string, event RequestEvent, writeOutbox bool) {
+func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, payload string, event RequestEvent, writeOutbox bool) {
 	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
 	for time.Now().Before(deadline) {
 		time.Sleep(delay)
-		err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, pricingJSON, payload, writeOutbox)
+		err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, payload, writeOutbox)
 		if err == nil {
 			return
 		}
@@ -574,7 +569,9 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 }
 
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
-	event.Pricing = clonePricing(event.Pricing)
+	if event.MeterQuantities == nil {
+		event.MeterQuantities = map[string]string{}
+	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
@@ -592,14 +589,6 @@ func (s *Service) publishUncommittedFallback(authorization *Authorization, event
 	appendCtx, cancel := context.WithTimeout(context.Background(), tinybirdAppendTimeout)
 	defer cancel()
 	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
-}
-
-func pricingJSONString(pricing map[string]any) string {
-	encoded, err := json.Marshal(clonePricing(pricing))
-	if err != nil {
-		return "{}"
-	}
-	return string(encoded)
 }
 
 func ErrorStatus(err error) int {

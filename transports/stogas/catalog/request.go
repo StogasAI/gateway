@@ -98,6 +98,9 @@ type requestWithSettableExtraParams interface {
 }
 
 func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
+	activationMu.RLock()
+	defer activationMu.RUnlock()
+
 	route, ok, methodOK := routeForInput(input)
 	if !ok {
 		return nil, ErrRouteUnavailable
@@ -148,25 +151,39 @@ func (r *ResolvedRequest) CatalogNodeIDs() []string {
 	if r == nil {
 		return nil
 	}
-	ids := []string{
-		"stogas_endpoint:" + string(r.Route),
-		"provider:" + string(r.Provider),
+	ids := []string{}
+	snap := r.Deployment.snapshot
+	if snap != nil {
+		if model, ok := snap.graph.Models[r.Deployment.ModelID]; ok && model.AuthorID != "" {
+			ids = append(ids, "author:"+model.AuthorID)
+		}
 	}
-	if r.Model != "" {
-		ids = append(ids, "model:"+r.Model)
-	}
-	if r.Deployment.ModelID != "" && r.Deployment.ModelID != r.Model {
-		ids = append(ids, "model_node:"+r.Deployment.ModelID)
+	if r.Deployment.ModelID != "" {
+		ids = append(ids, "model:"+r.Deployment.ModelID)
 	}
 	if r.Deployment.ID != "" {
 		ids = append(ids, "deployment:"+r.Deployment.ID)
 	}
-	for _, endpointID := range sortedStrings(r.Deployment.ProviderEndpointIDs) {
-		if endpointID != "" {
-			ids = append(ids, "provider_endpoint:"+endpointID)
+	for _, routeID := range sortedStrings(r.Deployment.RouteIDs) {
+		if routeID != "" {
+			ids = append(ids, "route:"+routeID)
+			if snap != nil {
+				if route, ok := snap.graph.Routes[routeID]; ok && route.ProviderID != "" {
+					ids = append(ids, "provider:"+route.ProviderID)
+				}
+			} else if r.Provider != "" {
+				ids = append(ids, "provider:"+string(r.Provider))
+			}
 		}
 	}
 	return ids
+}
+
+func (r *ResolvedRequest) CatalogIdentity() Identity {
+	if r == nil || r.Deployment.snapshot == nil {
+		return Identity{}
+	}
+	return r.Deployment.snapshot.identity
 }
 
 func sortedStrings(values []string) []string {
@@ -523,11 +540,10 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 		return nil, err
 	}
 	if request.ChatParameters.Reasoning != nil && request.ChatParameters.Reasoning.Effort != nil {
-			effort, err := normalizeReasoningEffort(
-				*request.ChatParameters.Reasoning.Effort,
-				resolution.Deployment.ReasoningEfforts,
-				resolution.Deployment.ReasoningEffortOverrides,
-			)
+		effort, err := normalizeReasoningEffort(
+			*request.ChatParameters.Reasoning.Effort,
+			resolution.Deployment.ReasoningEfforts,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -590,11 +606,10 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 		return nil, err
 	}
 	if request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
-			effort, err := normalizeReasoningEffort(
-				*request.ResponsesParameters.Reasoning.Effort,
-				resolution.Deployment.ReasoningEfforts,
-				resolution.Deployment.ReasoningEffortOverrides,
-			)
+		effort, err := normalizeReasoningEffort(
+			*request.ResponsesParameters.Reasoning.Effort,
+			resolution.Deployment.ReasoningEfforts,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -611,7 +626,6 @@ var canonicalReasoningEfforts = map[string]struct{}{
 func normalizeReasoningEffort(
 	requested string,
 	supported []string,
-	overrides map[string]string,
 ) (string, error) {
 	if _, canonical := canonicalReasoningEfforts[requested]; !canonical {
 		return "", APIError{
@@ -627,18 +641,14 @@ func normalizeReasoningEffort(
 			Message:    "reasoning effort is not supported for the selected model",
 		}
 	}
-	if target, ok := overrides[requested]; ok {
-		return target, nil
-	}
-	if requested == "none" && !containsReasoningEffort(supported, requested) {
+	if !containsReasoningEffort(supported, requested) {
 		return "", APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning cannot be disabled for the selected model",
+			Message:    "reasoning effort is not supported for the selected model",
 		}
 	}
-	// Bifrost owns the normal provider conversion (for example minimal → low or
-	// max → xhigh/high). Stogas only applies cataloged model exceptions above.
+	// Bifrost owns provider wire conversion after exact catalog admission.
 	return requested, nil
 }
 
@@ -677,7 +687,7 @@ func resolveOpenAIRequest(
 	if !ok {
 		return nil, ErrModelUnavailable
 	}
-	if _, ok = providerEndpointForRoute(provider, route); !ok {
+	if _, ok = catalogRouteForRequest(provider, route); !ok {
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel
@@ -744,7 +754,7 @@ func requestedInferenceGeo(provider schemas.ModelProvider, rawData map[string]js
 	}
 	switch normalized {
 	case "global":
-		return "multi-region", nil
+		return normalized, nil
 	case "us":
 		return normalized, nil
 	default:
@@ -767,12 +777,6 @@ func requestedAnthropicSpeed(provider schemas.ModelProvider, rawData map[string]
 	}
 	switch normalized {
 	case "fast":
-		if requestedTier != nil {
-			switch strings.ToLower(strings.TrimSpace(string(*requestedTier))) {
-			case "auto", "priority":
-				return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic " + strings.ToLower(strings.TrimSpace(string(*requestedTier))) + " service_tier is not supported with speed fast"}
-			}
-		}
 		return "fast", nil
 	case "standard":
 		return "standard", nil
@@ -801,8 +805,12 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 		}
 	case schemas.Anthropic:
 		switch value {
-		case "auto", "priority", "default", "flex", "standard", "standard_only":
+		case "default", "standard", "standard_only":
 			return nil
+		case "auto", "priority":
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic " + value + " service_tier requires an uncataloged Priority Tier contract"}
+		case "flex":
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic flex service_tier does not exist"}
 		default:
 			return ErrUnsupportedServiceTier
 		}

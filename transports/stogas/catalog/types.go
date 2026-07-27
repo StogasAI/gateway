@@ -14,136 +14,135 @@ const (
 	canonicalAuthHeader = "authorization"
 )
 
+type Identity struct {
+	Sequence uint64 `json:"sequence"`
+	Digest   string `json:"digest"`
+}
+
 type Deployment struct {
 	ID                  string
 	ModelID             string
-	Model               string
+	Upstream            Upstream
 	ContextWindowTokens int
 	ImpliedServiceTier  *schemas.BifrostServiceTier
 	MaxOutputTokens     int
 	Pricing             Pricing
-	ProviderEndpointIDs []string
-	ReasoningEffortOverrides map[string]string
-	ReasoningEfforts         []string
-	ReasoningSupported       bool
-	RegionID            string
-	ServiceTier         string
+	RouteIDs            []string
+	ReasoningEfforts    []string
+	ReasoningSupported  bool
+	snapshot            *snapshot
+}
+
+type Upstream struct {
+	Model        string
+	FixedRequest UpstreamFixedRequest
+}
+
+type UpstreamFixedRequest struct {
+	InferenceGeo string
+	ServiceTier  string
+	Speed        string
 }
 
 type Pricing = billing.Pricing
 type MeterEstimate = billing.MeterEstimate
 
 type snapshot struct {
-	graph                        compiledGraph
-	providerEndpointRequestSlugs map[string]string
-	responseMetadataFields       map[string]struct{}
-	raw                          []byte
+	aliases          map[string]string
+	graph            compiledGraph
+	identity         Identity
+	publicDigest     string
+	publicRaw        []byte
+	raw              []byte
+	routeDeployments map[string][]string
 }
 
 type compiledCatalog struct {
-	Graph   compiledGraph   `json:"graph"`
-	Indexes compiledIndexes `json:"indexes"`
-}
-
-type compiledIndexes struct {
-	ProviderEndpointRequestSlugs map[string]string `json:"provider_endpoint_request_slugs"`
+	Schema string        `json:"schema"`
+	Graph  compiledGraph `json:"graph"`
 }
 
 type compiledGraph struct {
-	Authors           map[string]compiledAuthor           `json:"authors"`
-	Deployments       map[string]compiledDeployment       `json:"deployments"`
-	Locations         map[string]any                      `json:"locations"`
-	Models            map[string]compiledModel            `json:"models"`
-	ProviderEndpoints map[string]compiledProviderEndpoint `json:"providerEndpoints"`
-	Providers         map[string]compiledProvider         `json:"providers"`
-	StogasEndpoints   map[string]compiledStogasEndpoint   `json:"stogasEndpoints"`
-	Stogas            compiledStogas                      `json:"stogas"`
+	Authors     map[string]compiledAuthor     `json:"authors"`
+	Deployments map[string]compiledDeployment `json:"deployments"`
+	Models      map[string]compiledModel      `json:"models"`
+	Providers   map[string]compiledProvider   `json:"providers"`
+	Routes      map[string]compiledRoute      `json:"routes"`
 }
 
 type compiledAuthor struct {
-	AuthorSlugs []string       `json:"authorSlugs"`
-	Description string         `json:"description"`
-	Name        string         `json:"name"`
-	Region      map[string]any `json:"region"`
-}
-
-type compiledStogas struct {
-	ResponseMetadataFields []string `json:"responseMetadataFields"`
+	Name  string   `json:"name"`
+	Slugs []string `json:"slugs"`
 }
 
 type compiledDeployment struct {
-	AliasSlugs                  []string       `json:"aliasSlugs"`
-	ContextWindowTokens         *int           `json:"contextWindowTokens,omitempty"`
-	MaxOutputTokens             *int           `json:"maxOutputTokens,omitempty"`
-	ProviderID                  string         `json:"providerId"`
-	ParentProviderEndpointNodes []string       `json:"parentProviderEndpointNodes"`
-	ModelID                     string         `json:"modelId"`
-	ServiceTier                 string         `json:"serviceTier"`
-	Pricing                     Pricing        `json:"pricing"`
-	StreamCancellation          string         `json:"streamCancellation,omitempty"`
-	Streaming                   string         `json:"streaming,omitempty"`
-	TEE                         map[string]any `json:"tee,omitempty"`
-	UpstreamModelSlug           string         `json:"upstreamModelSlug"`
+	Aliases          []string             `json:"aliases"`
+	Capabilities     compiledCapabilities `json:"capabilities"`
+	Limits           compiledLimits       `json:"limits"`
+	ModelID          string               `json:"modelId"`
+	Pricing          Pricing              `json:"pricing"`
+	ReasoningEfforts []string             `json:"reasoningEfforts"`
+	RouteIDs         []string             `json:"routeIds"`
+	Status           string               `json:"status"`
+	Upstream         compiledUpstream     `json:"upstream"`
+}
+
+type compiledCapabilities struct {
+	FunctionCalling  bool     `json:"functionCalling"`
+	InputModalities  []string `json:"inputModalities"`
+	OutputModalities []string `json:"outputModalities"`
+	PromptCaching    bool     `json:"promptCaching"`
+	Streaming        bool     `json:"streaming"`
+	SystemMessages   bool     `json:"systemMessages"`
+	ToolChoice       bool     `json:"toolChoice"`
+	WebSearch        bool     `json:"webSearch"`
+}
+
+type compiledLimits struct {
+	ContextTokens int `json:"contextTokens"`
+	OutputTokens  int `json:"outputTokens"`
+}
+
+type compiledUpstream struct {
+	Model        string                       `json:"model"`
+	FixedRequest compiledUpstreamFixedRequest `json:"fixedRequest"`
+}
+
+type compiledUpstreamFixedRequest struct {
+	InferenceGeo string `json:"inference_geo,omitempty"`
+	ServiceTier  string `json:"service_tier,omitempty"`
+	Speed        string `json:"speed,omitempty"`
 }
 
 type compiledModel struct {
-	AuthorID            string   `json:"authorId"`
-	ContextWindowTokens int      `json:"contextWindowTokens"`
-	Family              string   `json:"family"`
-	Flavors             []string `json:"flavors"`
-	InputModalities     []string `json:"inputModalities"`
-	KnowledgeCutoff     *string  `json:"knowledgeCutoff"`
-	MaxOutputTokens     int      `json:"maxOutputTokens"`
-	Name                string   `json:"name"`
-	OutputModalities    []string `json:"outputModalities"`
-	ReleaseDate         *string  `json:"releaseDate"`
-	ReasoningEffortOverrides map[string]string `json:"reasoningEffortOverrides,omitempty"`
-	ReasoningEfforts         []string          `json:"reasoningEfforts"`
-	Series              string   `json:"series"`
-	Snapshot            *string  `json:"snapshot"`
-}
-
-type compiledProviderEndpoint struct {
-	ID                        string   `json:"-"`
-	Class                     string   `json:"class"`
-	DeploymentIDs             []string `json:"deploymentIds"`
-	E2EE                      string   `json:"e2ee"`
-	Endpoint                  string   `json:"endpoint"`
-	FallbackBehavior          string   `json:"fallbackBehavior"`
-	GDPR                      string   `json:"gdpr"`
-	ProviderID                string   `json:"providerId"`
-	Pricing                   Pricing  `json:"pricing"`
-	RegionID                  string   `json:"regionId"`
-	RegionalProcessingClaimed bool     `json:"regionalProcessingClaimed"`
-	RegionalStorageClaimed    bool     `json:"regionalStorageClaimed"`
-	StogasEndpoints           []string `json:"stogasEndpoints"`
+	AuthorID    string `json:"authorId"`
+	Name        string `json:"name"`
+	ReleaseDate string `json:"releaseDate"`
 }
 
 type compiledProvider struct {
-	CancellationSupported                         bool     `json:"cancellationSupported"`
-	CountTokensEndpoints                          []string `json:"countTokensEndpoints"`
-	DatacenterLocationIDs                         []string `json:"datacenterLocationIds"`
-	DataRetentionDaysClaimed                      int      `json:"dataRetentionDaysClaimed"`
-	DataSharedForCrossContextBehavioralAdsClaimed bool     `json:"dataSharedForCrossContextBehavioralAdsClaimed"`
-	DataSoldClaimed                               bool     `json:"dataSoldClaimed"`
-	DataStorageRegionPinnedByDefaultClaimed       bool     `json:"dataStorageRegionPinnedByDefaultClaimed"`
-	DataUsedForTrainingClaimed                    bool     `json:"dataUsedForTrainingClaimed"`
-	FunctionCallingSupported                      bool     `json:"functionCallingSupported"`
-	HeadquarteredLocationID                       string   `json:"headquarteredLocationId"`
-	Moderated                                     bool     `json:"moderated"`
-	Name                                          string   `json:"name"`
-	Pricing                                       Pricing  `json:"pricing"`
-	PromptCachingSupported                        bool     `json:"promptCachingSupported"`
-	ProviderSlugs                                 []string `json:"providerSlugs"`
-	StreamCancellationSupported                   bool     `json:"streamCancellationSupported"`
-	StreamingSupported                            bool     `json:"streamingSupported"`
-	SystemMessagesSupported                       bool     `json:"systemMessagesSupported"`
-	ToolChoiceSupported                           bool     `json:"toolChoiceSupported"`
-	UsesPseudoanonymousUserID                     bool     `json:"usesPseudoanonymousUserId"`
-	WebSearchSupported                            bool     `json:"webSearchSupported"`
+	Name  string   `json:"name"`
+	Slugs []string `json:"slugs"`
 }
 
-type compiledStogasEndpoint struct {
-	Method string `json:"method"`
-	Path   string `json:"path"`
+type compiledRoute struct {
+	ID            string   `json:"-"`
+	DeploymentIDs []string `json:"-"`
+	Interfaces    []string `json:"interfaces"`
+	ProviderID    string   `json:"providerId"`
+}
+
+type signedEnvelope struct {
+	Schema    string          `json:"schema"`
+	KeyID     string          `json:"keyId"`
+	Manifest  releaseManifest `json:"manifest"`
+	Signature string          `json:"signature"`
+}
+
+type releaseManifest struct {
+	Schema        string `json:"schema"`
+	Sequence      uint64 `json:"sequence"`
+	CatalogSchema int    `json:"catalogSchema"`
+	Runtime       string `json:"runtime"`
+	Public        string `json:"public"`
 }

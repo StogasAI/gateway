@@ -5,8 +5,8 @@ The public OpenAI-compatible Stogas gateway and its reproducible AMD SEV-SNP IGV
 The repository contains:
 
 - `core/`: the allowlisted Maxim Bifrost runtime/provider layer;
-- `transports/`: the Stogas API transport, catalog routing, and gateway entrypoint;
-- `stogas/`: catalog sources and the reproducible IGVM release pipeline.
+- `transports/`: the Stogas API transport, signed catalog loader, routing, and gateway entrypoint;
+- `stogas/`: the reproducible IGVM release pipeline.
 
 The public inference listener uses port `5185`. A separate private `GET /ready` listener uses port `5186`; it is not part of the public API.
 
@@ -22,7 +22,7 @@ bun run check
 bun run build
 ```
 
-`check` validates the compiled catalog and runs the complete transport Go test suite. Pull requests also verify dependency hydration, vulnerability data, release pins, and reproducible-build inputs.
+`check` validates the embedded emergency catalog and runs the complete transport Go test suite. Pull requests also verify dependency hydration, vulnerability data, release pins, and reproducible-build inputs.
 
 ## Confidential release
 

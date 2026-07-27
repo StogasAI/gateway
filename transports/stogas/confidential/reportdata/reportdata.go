@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaV1             = "stogas.node-report.v1"
+	SchemaV2             = "stogas.node-report.v2"
 	DrandNetworkQuicknet = "quicknet"
 	QuicknetChainHash    = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 )
@@ -27,7 +27,6 @@ type Drand struct {
 
 type Payload struct {
 	Schema             string   `json:"schema"`
-	CatalogHash        string   `json:"catalog_hash"`
 	TLSSPKISHA256      string   `json:"tls_spki_sha256"`
 	ActiveCertSHA256   string   `json:"active_cert_sha256"`
 	AcceptedCertSHA256 []string `json:"accepted_cert_sha256"`
@@ -39,7 +38,7 @@ type Payload struct {
 func NewPayload(input Payload) (Payload, error) {
 	payload := input
 	if payload.Schema == "" {
-		payload.Schema = SchemaV1
+		payload.Schema = SchemaV2
 	}
 	if payload.Drand.Network == "" {
 		payload.Drand.Network = DrandNetworkQuicknet
@@ -56,11 +55,10 @@ func NewPayload(input Payload) (Payload, error) {
 }
 
 func (p Payload) Validate() error {
-	if p.Schema != SchemaV1 {
+	if p.Schema != SchemaV2 {
 		return fmt.Errorf("unsupported report data schema %q", p.Schema)
 	}
 	for name, value := range map[string]string{
-		"catalog_hash":       p.CatalogHash,
 		"tls_spki_sha256":    p.TLSSPKISHA256,
 		"active_cert_sha256": p.ActiveCertSHA256,
 		"hpke_public_key":    p.HPKEPublicKey,
@@ -80,7 +78,6 @@ func (p Payload) Validate() error {
 		name string
 		hex  string
 	}{
-		{"catalog_hash", p.CatalogHash},
 		{"tls_spki_sha256", p.TLSSPKISHA256},
 		{"active_cert_sha256", p.ActiveCertSHA256},
 		{"drand.chain_hash", p.Drand.ChainHash},

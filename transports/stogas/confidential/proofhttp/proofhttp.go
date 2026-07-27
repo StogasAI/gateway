@@ -27,13 +27,11 @@ type Service struct {
 }
 
 type Input struct {
-	RequestID             string
-	RequestPath           string
-	RequestBody           []byte
-	CatalogNodeIDs        []string
-	ResponseBody          []byte
+	RequestBody          []byte
+	CatalogDigest        string
+	CatalogNodeIDs       []string
+	ResponseBody         []byte
 	E2EETranscriptSHA256 string
-	DrandRound            uint64
 }
 
 type Output struct {
@@ -43,9 +41,7 @@ type Output struct {
 
 type Object struct {
 	proof.Payload
-	ProofHash        string `json:"proof_hash"`
-	Signature        string `json:"signature"`
-	SigningPublicKey string `json:"signing_public_key"`
+	Signature string `json:"signature"`
 }
 
 func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
@@ -55,39 +51,30 @@ func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	if input.RequestID == "" {
-		return nil, errors.New("request id is required")
-	}
-	if input.RequestPath == "" {
-		return nil, errors.New("request path is required")
-	}
 	if len(input.RequestBody) == 0 {
 		return nil, errors.New("request body is required")
 	}
 	if len(input.ResponseBody) == 0 {
 		return nil, errors.New("response body is required")
 	}
-	if len(input.CatalogNodeIDs) == 0 {
-		return nil, errors.New("resolved catalog node ids are required")
+	if input.CatalogDigest == "" {
+		return nil, errors.New("catalog digest is required")
 	}
-	snapshot, err := s.currentValidatedSnapshot(ctx)
+	if len(input.CatalogNodeIDs) != 5 {
+		return nil, errors.New("all five resolved catalog nodes are required")
+	}
+	_, err := s.currentValidatedSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
 	proofInput := proof.Input{
-		RequestID:             input.RequestID,
-		RequestPath:           input.RequestPath,
-		RequestBody:           append([]byte(nil), input.RequestBody...),
-		ResponseBody:          append([]byte(nil), input.ResponseBody...),
-		CatalogNodeIDs:        append([]string(nil), input.CatalogNodeIDs...),
-		DrandRound:            snapshot.Payload.Drand.Round,
+		RequestBody:          append([]byte(nil), input.RequestBody...),
+		ResponseBody:         append([]byte(nil), input.ResponseBody...),
+		CatalogDigest:        input.CatalogDigest,
+		CatalogNodeIDs:       append([]string(nil), input.CatalogNodeIDs...),
 		E2EETranscriptSHA256: input.E2EETranscriptSHA256,
 	}
-	proofHash, err := proof.Hash(proofInput)
-	if err != nil {
-		return nil, err
-	}
-	return s.outputForPayload(snapshot, proof.PayloadFor(proofInput), proofHash)
+	return s.outputForPayload(proof.PayloadFor(proofInput))
 }
 
 func (s *Service) currentValidatedSnapshot(ctx context.Context) (*quote.Snapshot, error) {
@@ -115,13 +102,14 @@ func (s *Service) currentValidatedSnapshot(ctx context.Context) (*quote.Snapshot
 	return snapshot, nil
 }
 
-func (s *Service) outputForPayload(snapshot *quote.Snapshot, payload proof.Payload, proofHash string) (*Output, error) {
-	signature := proof.Sign(s.Signer, proofHash)
+func (s *Service) outputForPayload(payload proof.Payload) (*Output, error) {
+	signature, err := proof.Sign(s.Signer, payload)
+	if err != nil {
+		return nil, err
+	}
 	object := Object{
-		Payload:          payload,
-		ProofHash:        proofHash,
-		Signature:        signature,
-		SigningPublicKey: snapshot.Payload.Ed25519PublicKey,
+		Payload:   payload,
+		Signature: signature,
 	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
@@ -129,7 +117,7 @@ func (s *Service) outputForPayload(snapshot *quote.Snapshot, payload proof.Paylo
 	}
 	return &Output{
 		Headers: map[string]string{HeaderProof: base64.RawURLEncoding.EncodeToString(encoded)},
-		Object: object,
+		Object:  object,
 	}, nil
 }
 
@@ -155,32 +143,28 @@ func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if s == nil {
 		return nil, nil
 	}
-	snapshot, err := s.currentValidatedSnapshot(ctx)
-	if err != nil {
+	if _, err := s.currentValidatedSnapshot(ctx); err != nil {
 		return nil, err
 	}
-	input.DrandRound = snapshot.Payload.Drand.Round
 	return newStream(input)
 }
 
 func newStream(input Input) (*Stream, error) {
-	if input.RequestID == "" || input.RequestPath == "" || len(input.RequestBody) == 0 {
+	if len(input.RequestBody) == 0 {
 		return nil, errors.New("request proof context is incomplete")
 	}
-	if len(input.CatalogNodeIDs) == 0 {
-		return nil, errors.New("resolved catalog node ids are required")
+	if input.CatalogDigest == "" {
+		return nil, errors.New("catalog digest is required")
 	}
-	if input.DrandRound == 0 {
-		return nil, errors.New("drand round is required")
+	if len(input.CatalogNodeIDs) != 5 {
+		return nil, errors.New("all five resolved catalog nodes are required")
 	}
 	return &Stream{
 		base: input,
 		hasher: proof.NewStreamHasher(proof.StreamingInput{
-			RequestID:             input.RequestID,
-			RequestPath:           input.RequestPath,
-			RequestBody:           append([]byte(nil), input.RequestBody...),
-			CatalogNodeIDs:        append([]string(nil), input.CatalogNodeIDs...),
-			DrandRound:            input.DrandRound,
+			RequestBody:          append([]byte(nil), input.RequestBody...),
+			CatalogDigest:        input.CatalogDigest,
+			CatalogNodeIDs:       append([]string(nil), input.CatalogNodeIDs...),
 			E2EETranscriptSHA256: input.E2EETranscriptSHA256,
 		}),
 	}, nil
@@ -197,17 +181,8 @@ func (svc *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, 
 	if svc == nil || stream == nil {
 		return nil, nil
 	}
-	snapshot, err := svc.currentValidatedSnapshot(ctx)
-	if err != nil {
+	if _, err := svc.currentValidatedSnapshot(ctx); err != nil {
 		return nil, err
 	}
-	payload, err := stream.hasher.FinalPayload()
-	if err != nil {
-		return nil, err
-	}
-	hash, err := proof.HashPayload(payload)
-	if err != nil {
-		return nil, err
-	}
-	return svc.outputForPayload(snapshot, payload, hash)
+	return svc.outputForPayload(stream.hasher.FinalPayload())
 }

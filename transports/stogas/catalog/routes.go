@@ -148,6 +148,15 @@ var routeByPath = func() map[string]Route {
 var (
 	allClientHeaderNamesValue = buildAllClientHeaders()
 	allClientHeadersValue     = strings.Join(allClientHeaderNamesValue, ", ")
+	responseMetadataFields    = map[string]struct{}{
+		"latency":                   {},
+		"model_deployment":          {},
+		"model_requested":           {},
+		"provider":                  {},
+		"provider_response_headers": {},
+		"raw_request":               {},
+		"raw_response":              {},
+	}
 )
 
 func specForRoute(route Route) (routeSpec, bool) {

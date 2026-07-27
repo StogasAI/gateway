@@ -99,6 +99,9 @@ func isOpenAIReasoningModel(model string) bool {
 func normalizeOpenAIReasoningEffort(model string, effort string) string {
 	switch effort {
 	case "minimal":
+		if supportsOpenAIMinimalReasoningEffort(model) {
+			return effort
+		}
 		return "low"
 	case "max":
 		if supportsMaxReasoningEffort(model) {
@@ -116,6 +119,20 @@ func normalizeOpenAIReasoningEffort(model string, effort string) string {
 	default:
 		return effort
 	}
+}
+
+func supportsOpenAIMinimalReasoningEffort(model string) bool {
+	_, parsedModel := schemas.ParseModelString(model, schemas.OpenAI)
+	if parsedModel != "" {
+		model = parsedModel
+	}
+	model = strings.ToLower(strings.TrimSpace(model))
+	for _, base := range []string{"gpt-5", "gpt-5-mini", "gpt-5-nano"} {
+		if model == base || strings.HasPrefix(model, base+"-20") {
+			return true
+		}
+	}
+	return false
 }
 
 func supportsOpenAIXHighReasoningEffort(model string) bool {

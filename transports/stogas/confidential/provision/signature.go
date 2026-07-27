@@ -11,11 +11,12 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const (
-	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v1"
+	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v2"
 	csrSignatureDomain       = "stogas.gateway-csr-submission.v1"
 )
 
@@ -41,6 +42,8 @@ func heartbeatSignatureTranscript(input HeartbeatInput) ([]byte, error) {
 	quoteHash := sha256.Sum256(input.Quote.Quote)
 	fields := [][]byte{
 		[]byte(input.NodeID),
+		[]byte(input.Catalog.Digest),
+		[]byte(strconv.FormatUint(input.Catalog.Sequence, 10)),
 		[]byte(formatTime(input.CertExpiresAt)),
 		[]byte(formatTime(input.ObservedAt)),
 		[]byte(formatTime(input.Quote.GeneratedAt)),

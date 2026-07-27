@@ -1,4 +1,0 @@
----
-stogasEndpoints:
-  path: /v1/responses
-  method: POST

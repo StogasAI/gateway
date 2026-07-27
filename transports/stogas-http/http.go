@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/bytedance/sonic"
@@ -21,7 +22,17 @@ func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
 		_, _ = ctx.WriteString(`{"ok":false}`)
 		return
 	}
-	if s == nil || s.secure == nil {
+	if s == nil {
+		ctx.SetStatusCode(fasthttp.StatusNoContent)
+		return
+	}
+	if ready, _ := s.catalogUpdater.Ready(time.Now().UTC()); !ready {
+		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+		ctx.SetContentType("application/json")
+		_, _ = ctx.WriteString(`{"ok":false}`)
+		return
+	}
+	if s.secure == nil {
 		ctx.SetStatusCode(fasthttp.StatusNoContent)
 		return
 	}
@@ -47,7 +58,18 @@ func (s *Server) readinessDetails(ctx *fasthttp.RequestCtx) {
 		ready = ready && result.Ready
 		reasons = append(reasons, result.Reasons...)
 	}
+	if s != nil {
+		if catalogReady, reason := s.catalogUpdater.Ready(time.Now().UTC()); !catalogReady {
+			ready = false
+			reasons = append(reasons, reason)
+		}
+	}
+	var catalogStatus catalog.UpdateStatus
+	if s != nil {
+		catalogStatus = s.catalogUpdater.Status()
+	}
 	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
+		"catalog": catalogStatus,
 		"control": s.secure.ControlDiagnostics(),
 		"ready":   ready,
 		"reasons": reasons,
@@ -60,6 +82,8 @@ func (s *Server) catalog(ctx *fasthttp.RequestCtx) {
 		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
 		return
 	}
+	ctx.Response.Header.Set("X-Stogas-Catalog-Sequence", strconv.FormatUint(payload.Sequence, 10))
+	ctx.Response.Header.Set("X-Stogas-Catalog-Digest", payload.RuntimeDigest)
 	s.writeJSON(ctx, fasthttp.StatusOK, payload)
 }
 
@@ -129,6 +153,9 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeCatalogError(ctx, err)
 		return
 	}
+	catalogIdentity := resolution.CatalogIdentity()
+	ctx.Response.Header.Set("X-Stogas-Catalog-Sequence", strconv.FormatUint(catalogIdentity.Sequence, 10))
+	ctx.Response.Header.Set("X-Stogas-Catalog-Digest", catalogIdentity.Digest)
 
 	adapter := stogas.AdapterFor(resolution.Provider)
 	gatewayNodeID := ""
@@ -564,6 +591,7 @@ func (s *Server) shutdown() {
 	if s.server != nil {
 		_ = s.server.Shutdown()
 	}
+	s.catalogUpdater.Close()
 	if s.runtime != nil {
 		s.runtime.Close()
 	}

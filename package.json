@@ -2,11 +2,9 @@
 	"name": "@stogas/api",
 	"private": true,
 	"scripts": {
-		"build": "bun run catalog:check && cd transports && GOWORK=off go build -o ../dist/stogas-gateway ./cmd/stogas-gateway",
-		"catalog:build": "node transports/stogas/catalog/source/scripts/build.mjs",
-		"catalog:check": "node transports/stogas/catalog/source/scripts/build.mjs --check",
-		"check": "bun run catalog:check && cd transports && GOWORK=off go test ./...",
-		"clean": "rm -rf dist tmp transports/vendor stogas/release/vendor transports/stogas/catalog/source/.tmp-catalog-build",
+		"build": "cd transports && GOWORK=off go build -o ../dist/stogas-gateway ./cmd/stogas-gateway",
+		"check": "cd transports && GOWORK=off go test ./...",
+		"clean": "rm -rf dist tmp transports/vendor stogas/release/vendor",
 		"dev": "cd transports && GOWORK=off go run ./cmd/stogas-gateway",
 		"release:build": "stogas/release/scripts/build-release.sh",
 		"release:verify-pins": "node stogas/release/scripts/verify-pins.mjs"

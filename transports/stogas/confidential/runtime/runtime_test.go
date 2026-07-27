@@ -193,19 +193,18 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 		t.Fatal("expected initial mock quote")
 	}
 	output, err := runtime.Proofs.Build(context.Background(), proofhttp.Input{
-		RequestID:      "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		RequestPath:    "/v1/responses",
 		RequestBody:    []byte(`{"request":true}`),
 		ResponseBody:   []byte(`{"response":true}`),
-		CatalogNodeIDs: []string{"node-a"},
+		CatalogDigest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		CatalogNodeIDs: []string{"author:author-a", "model:model-a", "deployment:deployment-a", "route:route-a", "provider:provider-a"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Headers[proofhttp.HeaderProof] == "" || output.Object.DrandRound != snapshot.Payload.Drand.Round {
-		t.Fatalf("proof did not use current quote context: %#v", output)
+	if output.Headers[proofhttp.HeaderProof] == "" {
+		t.Fatalf("proof did not use the current attested signing identity: %#v", output)
 	}
-	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.ProofHash, output.Object.Signature) {
+	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.Payload, output.Object.Signature) {
 		t.Fatal("proof signature was not produced by runtime identity")
 	}
 }
@@ -350,7 +349,6 @@ func TestLocalReadinessExpiresBeforeControlRejectsStaleQuoteEvidence(t *testing.
 		runtime.Certs,
 		runtime.Quotes,
 		runtime.Secrets,
-		strings.Repeat("a", 64),
 		true,
 	)
 	if state := loop.localReadinessStateAt(snapshot.GeneratedAt.Add(localQuoteReadyWindow)); !state.QuoteForwardSafe {
@@ -374,7 +372,6 @@ func TestRuntimeDependencyProbeFailsLocalReadiness(t *testing.T) {
 		runtime.Certs,
 		runtime.Quotes,
 		runtime.Secrets,
-		strings.Repeat("a", 64),
 		true,
 	)
 	loop.runtimeDependencyProbe = func(context.Context) error {
@@ -701,29 +698,24 @@ func TestStartFailsClosedWhenInitialHeartbeatIsRejected(t *testing.T) {
 	}
 }
 
-func TestDeriveNodeIDUsesBootIdentityNotCertificateHash(t *testing.T) {
+func TestDeriveNodeIDUsesOnlyBootIdentity(t *testing.T) {
 	config := testConfig("mock")
 	material := &identity.Material{
 		TLSSPKISHA256:    strings.Repeat("2", 64),
 		HPKEPublicKey:    "aHBrZQ",
 		Ed25519PublicKey: "ZWRrZXk",
 	}
-	catalogHash := strings.Repeat("3", 64)
-
-	first := deriveNodeID(config, material, catalogHash)
+	first := deriveNodeID(material)
 	config.ActiveCertSHA256 = strings.Repeat("4", 64)
 	config.AcceptedCertSHA256 = []string{strings.Repeat("4", 64)}
-	if renewed := deriveNodeID(config, material, catalogHash); renewed != first {
+	if renewed := deriveNodeID(material); renewed != first {
 		t.Fatalf("certificate renewal changed node id: %s != %s", renewed, first)
 	}
 
 	changedIdentity := *material
 	changedIdentity.HPKEPublicKey = "aHBrZTI"
-	if next := deriveNodeID(config, &changedIdentity, catalogHash); next == first {
+	if next := deriveNodeID(&changedIdentity); next == first {
 		t.Fatal("identity key change should create a different node id")
-	}
-	if next := deriveNodeID(config, material, strings.Repeat("5", 64)); next == first {
-		t.Fatal("catalog change should create a different node id")
 	}
 }
 

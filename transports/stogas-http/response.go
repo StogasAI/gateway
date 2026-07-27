@@ -76,11 +76,19 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	if fields["provider"] && extra.Provider != "" {
 		metadata["provider"] = extra.Provider
 	}
-	if fields["model_requested"] && extra.OriginalModelRequested != "" {
-		metadata["model_requested"] = extra.OriginalModelRequested
+	if fields["model_requested"] {
+		if state, ok := stogas.StateFrom(ctx); ok && state.Resolution != nil {
+			metadata["model_requested"] = state.Resolution.RequestedModel
+		} else if extra.OriginalModelRequested != "" {
+			metadata["model_requested"] = extra.OriginalModelRequested
+		}
 	}
-	if fields["model_deployment"] && extra.ResolvedModelUsed != "" {
-		metadata["model_deployment"] = extra.ResolvedModelUsed
+	if fields["model_deployment"] {
+		if state, ok := stogas.StateFrom(ctx); ok && state.Resolution != nil {
+			metadata["model_deployment"] = state.Resolution.Deployment.ID
+		} else if extra.ResolvedModelUsed != "" {
+			metadata["model_deployment"] = extra.ResolvedModelUsed
+		}
 	}
 	if fields["latency"] {
 		metadata["latency"] = extra.Latency

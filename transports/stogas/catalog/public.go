@@ -1,24 +1,25 @@
 package catalog
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
-const PublicCatalogVersion = "stogas.gateway.catalog.v1"
+const PublicCatalogVersion = "stogas.gateway.catalog.v3"
 
 type PublicCatalog struct {
-	GeneratedAt string        `json:"generatedAt"`
-	Graph       compiledGraph `json:"graph"`
-	Indexes     PublicIndexes `json:"indexes"`
-	Version     string        `json:"version"`
+	Schema        string                     `json:"schema"`
+	Sequence      uint64                     `json:"sequence"`
+	RuntimeDigest string                     `json:"runtimeDigest"`
+	PublicDigest  string                     `json:"publicDigest"`
+	Graph         map[string]json.RawMessage `json:"graph"`
 }
 
-type PublicIndexes struct {
-	ProviderEndpointRequestSlugs map[string]string `json:"provider_endpoint_request_slugs"`
+type publicBundle struct {
+	Schema string                     `json:"schema"`
+	Graph  map[string]json.RawMessage `json:"graph"`
 }
 
 type PublicModelsResponse struct {
@@ -35,16 +36,19 @@ type PublicModel struct {
 
 func PublicCatalogPayload() (PublicCatalog, bool) {
 	snap := active.Load()
-	if snap == nil {
+	if snap == nil || len(snap.publicRaw) == 0 {
+		return PublicCatalog{}, false
+	}
+	bundle := publicBundle{}
+	if err := json.Unmarshal(snap.publicRaw, &bundle); err != nil || bundle.Schema != publicSchema {
 		return PublicCatalog{}, false
 	}
 	return PublicCatalog{
-		GeneratedAt: time.Unix(1, 0).UTC().Format(time.RFC3339),
-		Graph:       snap.graph,
-		Indexes: PublicIndexes{
-			ProviderEndpointRequestSlugs: snap.providerEndpointRequestSlugs,
-		},
-		Version: PublicCatalogVersion,
+		Schema:        PublicCatalogVersion,
+		Sequence:      snap.identity.Sequence,
+		RuntimeDigest: snap.identity.Digest,
+		PublicDigest:  snap.publicDigest,
+		Graph:         bundle.Graph,
 	}, true
 }
 
@@ -61,12 +65,19 @@ func PublicCatalogJSON() ([]byte, bool) {
 }
 
 func PublicCatalogHash() (string, bool) {
-	encoded, ok := PublicCatalogJSON()
+	identity, ok := ActiveIdentity()
 	if !ok {
 		return "", false
 	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:]), true
+	return strings.TrimPrefix(identity.Digest, "sha256:"), true
+}
+
+func ActiveIdentity() (Identity, bool) {
+	snap := active.Load()
+	if snap == nil || snap.identity.Digest == "" {
+		return Identity{}, false
+	}
+	return snap.identity, true
 }
 
 func PublicModelsPayload() (PublicModelsResponse, bool) {
@@ -74,19 +85,28 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	if snap == nil {
 		return PublicModelsResponse{}, false
 	}
-	ids := make([]string, 0, len(snap.providerEndpointRequestSlugs))
-	seen := map[string]bool{}
-	for _, id := range snap.providerEndpointRequestSlugs {
-		if id == "" || seen[id] {
+	ids := make([]string, 0, len(snap.aliases))
+	for alias := range snap.aliases {
+		if alias == "" {
 			continue
 		}
-		seen[id] = true
-		ids = append(ids, id)
+		ids = append(ids, alias)
 	}
 	sort.Strings(ids)
 	models := make([]PublicModel, 0, len(ids))
 	for _, id := range ids {
-		models = append(models, PublicModel{ID: id, Object: "model", Created: 1, OwnedBy: "stogas"})
+		deployment := snap.graph.Deployments[snap.aliases[id]]
+		model := snap.graph.Models[deployment.ModelID]
+		created := int64(1)
+		if released, err := time.Parse("2006-01-02", model.ReleaseDate); err == nil {
+			created = released.Unix()
+		}
+		models = append(models, PublicModel{
+			ID:      id,
+			Object:  "model",
+			Created: created,
+			OwnedBy: model.AuthorID,
+		})
 	}
 	return PublicModelsResponse{Object: "list", Data: models}, true
 }

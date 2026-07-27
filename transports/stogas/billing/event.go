@@ -1,6 +1,10 @@
 package billing
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +15,8 @@ type EventInput struct {
 	ActualCostUSDAtoms     string
 	Authorization          *Authorization
 	Cancelled              bool
+	CatalogDigest          string
+	CatalogSequence        uint64
 	Error                  *schemas.BifrostError
 	Pricing                map[string]any
 	ProviderCompletedAt    time.Time
@@ -55,11 +61,11 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	if actualCostUSDAtoms == "" {
 		actualCostUSDAtoms = ZeroChargeUSDAtoms
 	}
-	streamed := isStreamingRequest(input.RequestType)
 	firstOutputMS := input.ProviderFirstOutputMS
-	if !streamed {
+	if !isStreamingRequest(input.RequestType) {
 		firstOutputMS = nil
 	}
+	pricing := clonePricing(input.Pricing)
 
 	return RequestEvent{
 		RequestID:                    authorization.RequestID,
@@ -70,22 +76,45 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
 		RequestType:                  normalizeRequestType(input.RequestType),
-		Streamed:                     streamed,
 		Cancelled:                    input.Cancelled,
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, IsBYOK: false}},
+		CatalogDigest:                strings.TrimSpace(input.CatalogDigest),
+		CatalogSequence:              input.CatalogSequence,
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), IsBYOK: false}},
 		StogasProcessingSuccess:      true,
 		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
-		UpstreamProviderFinishReason: finishReason(input.Response),
-		ProviderRequestID:            upstreamRequestID(input.Response),
 		GatewayNodeID:                strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
 		TotalTimeMS:                  totalTimeMS,
-		UpstreamProviderTimeMS:       upstreamTimeMS,
-		TimeToFirstOutputMS:          firstOutputMS,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		Pricing:                      clonePricing(input.Pricing),
+		BillingBasis:                 "catalog",
+		MeterQuantities:              meterQuantities(pricing),
+		PricingInputSHA256:           pricingInputSHA256(pricing),
 		GatewayVersion:               strings.TrimSpace(input.GatewayVersion),
 		ResolvedCatalogNodeIDs:       append([]string(nil), input.ResolvedCatalogNodeIDs...),
 	}
+}
+
+func meterQuantities(pricing map[string]any) map[string]string {
+	quantities := make(map[string]string, len(pricing))
+	for meter, raw := range pricing {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		quantity := strings.TrimSpace(fmt.Sprint(entry["quantity"]))
+		if quantity != "" {
+			quantities[meter] = quantity
+		}
+	}
+	return quantities
+}
+
+func pricingInputSHA256(pricing map[string]any) string {
+	encoded, err := json.Marshal(pricing)
+	if err != nil {
+		encoded = []byte("{}")
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 func isStreamingRequest(requestType string) bool {
