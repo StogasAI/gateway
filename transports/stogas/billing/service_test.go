@@ -200,12 +200,12 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "usdAtoms": "34"},
 		},
 		ProviderAttempts: []ProviderAttempt{{
-			IsBYOK:     false,
-			LatencyMS:  12,
-			Provider:   "openai",
+			IsBYOK:                false,
+			LatencyMS:             12,
+			Provider:              "openai",
 			ProviderFirstOutputMS: &firstOutput,
-			Status:     "success",
-			StatusCode: &status,
+			Status:                "success",
+			StatusCode:            &status,
 		}},
 		GatewayVersion:          "v1.5.13",
 		ResolvedCatalogNodeIDs:  []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
@@ -246,8 +246,9 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
 	firstByteAt := startedAt.Add(10 * time.Millisecond)
 	providerFirstOutput := uint32(8)
+	provisioningKeyID := "019de515-eabf-7c0e-89bd-400629a79580"
 	event := NewRequestEvent(EventInput{
-		Authorization:         &Authorization{AuthorizedAmount: mustParseBigInt("10"), RequestID: "request-1"},
+		Authorization:         &Authorization{AuthorizedAmount: mustParseBigInt("10"), ProvisioningKeyID: &provisioningKeyID, RequestID: "request-1"},
 		FirstByteAt:           firstByteAt,
 		ProviderFirstOutputMS: &providerFirstOutput,
 		Pricing: map[string]any{
@@ -265,6 +266,9 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	}
 	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
 		t.Fatalf("expected provider first output on provider attempt, got %#v", event.ProviderAttempts)
+	}
+	if event.StogasProvisioningKeyID == nil || *event.StogasProvisioningKeyID != provisioningKeyID {
+		t.Fatalf("expected provisioning key attribution, got %#v", event.StogasProvisioningKeyID)
 	}
 }
 
