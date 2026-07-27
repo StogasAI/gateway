@@ -228,10 +228,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stateResponse := &schemas.BifrostResponse{ChatResponse: response}
 		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
 		_ = adapter.SanitizeResponse(state)
-		if response != nil {
-			state.ObserveUnaryProviderLatency(response.ExtraFields)
-		}
-		state.MarkFirstByte()
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -251,10 +247,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stateResponse := &schemas.BifrostResponse{ResponsesResponse: response}
 		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
 		_ = adapter.SanitizeResponse(state)
-		if response != nil {
-			state.ObserveUnaryProviderLatency(response.ExtraFields)
-		}
-		state.MarkFirstByte()
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -384,6 +376,9 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			select {
 			case <-clientClosed:
 				clientConnected = false
+				if state != nil {
+					state.Cancelled = true
+				}
 				clientClosed = nil
 				continue
 			case <-idleC:
@@ -501,10 +496,6 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			if err != nil {
 				return
 			}
-			if state != nil {
-				state.MarkFirstByte()
-			}
-
 			frame := frameSSEEvent(streamEventName(includeEventName, eventName), encoded)
 			if !reader.send(frame) {
 				clientConnected = false

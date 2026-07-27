@@ -35,10 +35,10 @@ type State struct {
 	BifrostError          *schemas.BifrostError
 	FinalCostUSDAtoms     string
 	FinalMeters           []catalog.MeterEstimate
-	FirstByteAt           time.Time
 	ProviderStartedAt     time.Time
 	ProviderCompletedAt   time.Time
 	ProviderFirstOutputMS *uint32
+	Cancelled             bool
 	GatewayVersion        string
 	GatewayNodeID         string
 
@@ -60,13 +60,6 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 		APIKeyClaims:   claims,
 		GatewayVersion: GatewayVersion,
 	}
-}
-
-func (s *State) MarkFirstByte() {
-	if s == nil || !s.FirstByteAt.IsZero() {
-		return
-	}
-	s.FirstByteAt = time.Now()
 }
 
 func (s *State) MarkProviderStarted() {
@@ -101,10 +94,6 @@ func (s *State) ObserveProviderFirstOutput(latencyMS int64) {
 		value = ^uint32(0)
 	}
 	s.ProviderFirstOutputMS = &value
-}
-
-func (s *State) ObserveUnaryProviderLatency(extra schemas.BifrostResponseExtraFields) {
-	s.ObserveProviderFirstOutput(extra.Latency)
 }
 
 func (s *State) ObserveChatProviderOutput(response *schemas.BifrostChatResponse) {

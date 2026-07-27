@@ -39,6 +39,8 @@ type RequestEvent struct {
 	StogasOrganizationID         string            `json:"stogas_organization_id"`
 	StogasWorkspaceID            string            `json:"stogas_workspace_id"`
 	RequestType                  string            `json:"request_type"`
+	Streamed                     bool              `json:"streamed"`
+	Cancelled                    bool              `json:"cancelled"`
 	ProviderAttempts             []ProviderAttempt `json:"provider_attempts"`
 	StogasProcessingSuccess      bool              `json:"stogas_processing_success"`
 	StogasBillingStatus          string            `json:"stogas_billing_status"`
@@ -47,7 +49,7 @@ type RequestEvent struct {
 	GatewayNodeID                string            `json:"gateway_node_id"`
 	TotalTimeMS                  uint32            `json:"total_time_ms"`
 	UpstreamProviderTimeMS       uint32            `json:"upstream_provider_time_ms"`
-	TTFBMS                       uint32            `json:"ttfb_ms"`
+	TimeToFirstOutputMS          *uint32           `json:"time_to_first_output_ms"`
 	TotalCostUSDAtoms            string            `json:"total_cost_usd_atoms"`
 	Pricing                      map[string]any    `json:"pricing"`
 	GatewayVersion               string            `json:"gateway_version"`
@@ -125,6 +127,8 @@ type tinybirdGatewayRequestEventPayload struct {
 	StogasOrganizationID         string  `json:"stogas_organization_id"`
 	StogasWorkspaceID            string  `json:"stogas_workspace_id"`
 	RequestType                  string  `json:"request_type"`
+	Streamed                     uint8   `json:"streamed"`
+	Cancelled                    uint8   `json:"cancelled"`
 	ProviderAttempts             string  `json:"provider_attempts"`
 	AnalyticsProviderStatus      string  `json:"analytics_provider_status"`
 	StogasProcessingSuccess      uint8   `json:"stogas_processing_success"`
@@ -134,7 +138,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	GatewayNodeID                string  `json:"gateway_node_id"`
 	TotalTimeMS                  uint32  `json:"total_time_ms"`
 	UpstreamProviderTimeMS       uint32  `json:"upstream_provider_time_ms"`
-	TTFBMS                       uint32  `json:"ttfb_ms"`
+	TimeToFirstOutputMS          *uint32 `json:"time_to_first_output_ms"`
 	TotalCostUSDAtoms            string  `json:"total_cost_usd_atoms"`
 	Pricing                      string  `json:"pricing"`
 	AnalyticsInputTokens         uint64  `json:"analytics_input_tokens"`
@@ -142,7 +146,6 @@ type tinybirdGatewayRequestEventPayload struct {
 	AnalyticsCacheWriteTokens    uint64  `json:"analytics_cache_write_input_tokens"`
 	AnalyticsOutputTokens        uint64  `json:"analytics_output_tokens"`
 	AnalyticsReasoningTokens     uint64  `json:"analytics_reasoning_tokens"`
-	AnalyticsTimeToFirstOutputMS uint32  `json:"analytics_time_to_first_output_ms"`
 	GatewayVersion               string  `json:"gateway_version"`
 	ResolvedCatalogNodeIDs       string  `json:"resolved_catalog_node_ids"`
 }
@@ -156,6 +159,14 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	if event.StogasProcessingSuccess {
 		processed = 1
 	}
+	streamed := uint8(0)
+	if event.Streamed {
+		streamed = 1
+	}
+	cancelled := uint8(0)
+	if event.Cancelled {
+		cancelled = 1
+	}
 	providerStatus := ""
 	if len(event.ProviderAttempts) > 0 {
 		providerStatus = event.ProviderAttempts[0].Status
@@ -163,10 +174,6 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	cacheWriteTokens :=
 		analyticsMeterQuantity(pricing, MeterCacheWrite5mInputTokens) +
 			analyticsMeterQuantity(pricing, MeterCacheWrite1hInputTokens)
-	timeToFirstOutputMS := uint32(0)
-	if len(event.ProviderAttempts) > 0 && event.ProviderAttempts[0].ProviderFirstOutputMS != nil {
-		timeToFirstOutputMS = *event.ProviderAttempts[0].ProviderFirstOutputMS
-	}
 	return tinybirdGatewayRequestEventPayload{
 		AnalyticsCachedInputTokens:   analyticsMeterQuantity(pricing, MeterCachedInputTokens),
 		AnalyticsCacheWriteTokens:    cacheWriteTokens,
@@ -174,7 +181,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		AnalyticsOutputTokens:        analyticsMeterQuantity(pricing, MeterOutputTokens),
 		AnalyticsProviderStatus:      providerStatus,
 		AnalyticsReasoningTokens:     analyticsMeterQuantity(pricing, MeterReasoningTokens),
-		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
+		Cancelled:                    cancelled,
 		CreatedAt:                    event.CreatedAt,
 		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
@@ -183,6 +190,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		GatewayVersion:               strings.TrimSpace(event.GatewayVersion),
 		RequestID:                    event.RequestID,
 		RequestType:                  event.RequestType,
+		Streamed:                     streamed,
 		ResolvedCatalogNodeIDs:       resolvedCatalogNodeIDsJSON,
 		StogasAPIKeyID:               event.StogasAPIKeyID,
 		StogasProvisioningKeyID:      event.StogasProvisioningKeyID,
@@ -193,7 +201,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		StogasWorkspaceID:            event.StogasWorkspaceID,
 		TotalCostUSDAtoms:            event.TotalCostUSDAtoms,
 		TotalTimeMS:                  event.TotalTimeMS,
-		TTFBMS:                       event.TTFBMS,
+		TimeToFirstOutputMS:          event.TimeToFirstOutputMS,
 		UpstreamProviderFinishReason: event.UpstreamProviderFinishReason,
 		UpstreamProviderTimeMS:       event.UpstreamProviderTimeMS,
 	}

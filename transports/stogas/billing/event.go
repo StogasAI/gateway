@@ -10,8 +10,8 @@ import (
 type EventInput struct {
 	ActualCostUSDAtoms     string
 	Authorization          *Authorization
+	Cancelled              bool
 	Error                  *schemas.BifrostError
-	FirstByteAt            time.Time
 	Pricing                map[string]any
 	ProviderCompletedAt    time.Time
 	ProviderStartedAt      time.Time
@@ -51,14 +51,14 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	if upstreamTimeMS > totalTimeMS {
 		upstreamTimeMS = totalTimeMS
 	}
-	ttfbMS := uint32(0)
-	if !input.FirstByteAt.IsZero() && input.FirstByteAt.After(startedAt) {
-		ttfbMS = uint32Duration(input.FirstByteAt.Sub(startedAt))
-	}
-
 	actualCostUSDAtoms := input.ActualCostUSDAtoms
 	if actualCostUSDAtoms == "" {
 		actualCostUSDAtoms = ZeroChargeUSDAtoms
+	}
+	streamed := isStreamingRequest(input.RequestType)
+	firstOutputMS := input.ProviderFirstOutputMS
+	if !streamed {
+		firstOutputMS = nil
 	}
 
 	return RequestEvent{
@@ -70,7 +70,9 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasOrganizationID:         authorization.OrganizationID,
 		StogasWorkspaceID:            authorization.WorkspaceID,
 		RequestType:                  normalizeRequestType(input.RequestType),
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: input.ProviderFirstOutputMS, IsBYOK: false}},
+		Streamed:                     streamed,
+		Cancelled:                    input.Cancelled,
+		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, IsBYOK: false}},
 		StogasProcessingSuccess:      true,
 		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
 		UpstreamProviderFinishReason: finishReason(input.Response),
@@ -78,11 +80,20 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		GatewayNodeID:                strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
 		TotalTimeMS:                  totalTimeMS,
 		UpstreamProviderTimeMS:       upstreamTimeMS,
-		TTFBMS:                       ttfbMS,
+		TimeToFirstOutputMS:          firstOutputMS,
 		TotalCostUSDAtoms:            actualCostUSDAtoms,
 		Pricing:                      clonePricing(input.Pricing),
 		GatewayVersion:               strings.TrimSpace(input.GatewayVersion),
 		ResolvedCatalogNodeIDs:       append([]string(nil), input.ResolvedCatalogNodeIDs...),
+	}
+}
+
+func isStreamingRequest(requestType string) bool {
+	switch requestType {
+	case string(schemas.ChatCompletionStreamRequest), string(schemas.ResponsesStreamRequest):
+		return true
+	default:
+		return false
 	}
 }
 

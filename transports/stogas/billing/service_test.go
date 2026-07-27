@@ -207,6 +207,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			Status:                "success",
 			StatusCode:            &status,
 		}},
+		Streamed:                true,
+		TimeToFirstOutputMS:     &firstOutput,
 		GatewayVersion:          "v1.5.13",
 		ResolvedCatalogNodeIDs:  []string{"stogas_endpoint:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
@@ -218,8 +220,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
 		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
 	}
-	if event.AnalyticsTimeToFirstOutputMS != firstOutput {
-		t.Fatalf("analytics_time_to_first_output_ms = %d", event.AnalyticsTimeToFirstOutputMS)
+	if event.TimeToFirstOutputMS == nil || *event.TimeToFirstOutputMS != firstOutput {
+		t.Fatalf("time_to_first_output_ms = %#v", event.TimeToFirstOutputMS)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway_version = %q", event.GatewayVersion)
@@ -244,13 +246,12 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 
 func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
-	firstByteAt := startedAt.Add(10 * time.Millisecond)
 	providerFirstOutput := uint32(8)
 	provisioningKeyID := "019de515-eabf-7c0e-89bd-400629a79580"
 	event := NewRequestEvent(EventInput{
 		Authorization:         &Authorization{AuthorizedAmount: mustParseBigInt("10"), ProvisioningKeyID: &provisioningKeyID, RequestID: "request-1"},
-		FirstByteAt:           firstByteAt,
 		ProviderFirstOutputMS: &providerFirstOutput,
+		RequestType:           string(schemas.ChatCompletionStreamRequest),
 		Pricing: map[string]any{
 			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
 		},
@@ -261,8 +262,8 @@ func TestNewRequestEventKeepsOnlyPricing(t *testing.T) {
 	if len(pricing) != 1 {
 		t.Fatalf("pricing must contain only the supplied canonical meter: %#v", pricing)
 	}
-	if event.TTFBMS == 0 {
-		t.Fatalf("expected gateway ttfb to be measured")
+	if !event.Streamed || event.TimeToFirstOutputMS == nil || *event.TimeToFirstOutputMS != providerFirstOutput {
+		t.Fatalf("expected streaming first output timing, got %#v", event)
 	}
 	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
 		t.Fatalf("expected provider first output on provider attempt, got %#v", event.ProviderAttempts)

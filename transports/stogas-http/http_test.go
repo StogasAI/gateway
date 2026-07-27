@@ -1667,6 +1667,13 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	if err := closer.Close(); err != nil {
 		t.Fatalf("closing body stream failed: %v", err)
 	}
+	deadline := time.Now().Add(time.Second)
+	for !state.Cancelled && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !state.Cancelled {
+		t.Fatal("client stream closure must be recorded as cancellation")
+	}
 
 	select {
 	case <-cancelled:
