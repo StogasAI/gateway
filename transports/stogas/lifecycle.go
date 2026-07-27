@@ -125,8 +125,8 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms:     state.FinalCostUSDAtoms,
 		Authorization:          state.Authorization,
+		Cancelled:              state.Cancelled,
 		Error:                  state.BifrostError,
-		FirstByteAt:            state.FirstByteAt,
 		Pricing:                pricingForState(state),
 		ProviderCompletedAt:    state.ProviderCompletedAt,
 		ProviderStartedAt:      state.ProviderStartedAt,

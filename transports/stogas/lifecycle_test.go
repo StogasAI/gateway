@@ -1198,7 +1198,7 @@ func TestPricingMetricBagAggregatesDuplicateMeterRateKeys(t *testing.T) {
 	}
 }
 
-func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
+func TestUnaryProviderLatencyDoesNotFabricateFirstOutput(t *testing.T) {
 	state := &State{
 		Authorization: &billing.Authorization{
 			AuthorizedAmount: big.NewInt(0),
@@ -1212,9 +1212,6 @@ func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
 		}},
 		StartedAt: time.Now().UTC().Add(-100 * time.Millisecond),
 	}
-	state.ObserveUnaryProviderLatency(state.Response.ChatResponse.ExtraFields)
-	state.MarkFirstByte()
-
 	authorizer := &fakeBillingAuthorizer{}
 	FinalizeState(context.Background(), authorizer, state)
 
@@ -1225,11 +1222,11 @@ func TestUnaryProviderLatencyPopulatesProviderAttemptTTFB(t *testing.T) {
 	if attempt.LatencyMS != 81 {
 		t.Fatalf("expected provider total latency 81, got %#v", attempt)
 	}
-	if attempt.ProviderFirstOutputMS == nil || *attempt.ProviderFirstOutputMS != 81 {
-		t.Fatalf("expected unary provider ttfb to use provider latency, got %#v", attempt)
+	if attempt.ProviderFirstOutputMS != nil {
+		t.Fatalf("buffered requests must not report streaming first output, got %#v", attempt)
 	}
-	if authorizer.finalEvents[0].TTFBMS == 0 {
-		t.Fatalf("expected Stogas/client ttfb to be measured separately")
+	if authorizer.finalEvents[0].TimeToFirstOutputMS != nil {
+		t.Fatalf("buffered request first output must be null")
 	}
 }
 
