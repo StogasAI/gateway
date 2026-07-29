@@ -2,8 +2,10 @@ package stogas
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -533,7 +535,7 @@ func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testin
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -544,8 +546,57 @@ func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testin
 	if err := state.Adapter.FinalPrice(state); err != nil {
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2500000000000000" {
+	if state.FinalCostUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected priority input pricing from actual service tier, got %s", state.FinalCostUSDAtoms)
+	}
+}
+
+func TestOpenAIPriorityDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing.T) {
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	actualTier := schemas.BifrostServiceTierDefault
+	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	state.Signals = &StandardSignals{Prompt: 1000, ActualServiceTier: &actualTier}
+	if err := state.Adapter.FinalPrice(state); err != nil {
+		t.Fatalf("FinalPrice returned error: %v", err)
+	}
+	if state.FinalCostUSDAtoms != "5000000000000000" {
+		t.Fatalf("expected downgraded standard pricing, got %s", state.FinalCostUSDAtoms)
+	}
+	actual := ExecutionDeployment(state)
+	if actual.ID != "openai-gpt-5.5-2026-04-23" {
+		t.Fatalf("actual deployment = %q, want standard", actual.ID)
+	}
+
+	authorizer := &fakeBillingAuthorizer{}
+	state.Authorization = &billing.Authorization{
+		AuthorizedAmount: big.NewInt(12500000000000000),
+		CreatedAt:        time.Now().UTC(),
+		ProviderKey:      "openai",
+		ProductKey:       resolution.Deployment.ID,
+		RequestID:        "priority-downgrade",
+	}
+	state.RequestType = string(schemas.ChatCompletionRequest)
+	state.StartedAt = time.Now().UTC()
+	FinalizeState(context.Background(), authorizer, state)
+	if len(authorizer.finalEvents) != 1 {
+		t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
+	}
+	wantNodeIDs := []string{
+		"author:openai",
+		"model:gpt-5.5-2026-04-23",
+		"deployment:openai-gpt-5.5-2026-04-23",
+		"route:openai-chat-completions",
+		"provider:openai",
+	}
+	if got := authorizer.finalEvents[0].ResolvedCatalogNodeIDs; strings.Join(got, ",") != strings.Join(wantNodeIDs, ",") {
+		t.Fatalf("resolved catalog node IDs = %#v, want %#v", got, wantNodeIDs)
 	}
 }
 
@@ -553,7 +604,7 @@ func TestOpenAIPriorityHoldCoversActualPriorityServiceTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -574,7 +625,7 @@ func TestOpenAIPriorityHoldCoversActualPriorityServiceTier(t *testing.T) {
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
 		t.Fatalf("hold must cover actual priority final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
-	if state.Hold.ProductKey != "gpt-5-nano-priority" {
+	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23-priority" {
 		t.Fatalf("expected priority deployment hold product key, got %#v", state.Hold)
 	}
 }
@@ -583,7 +634,7 @@ func TestOpenAIDefaultAndAutoHoldUseSelectedDefaultDeployment(t *testing.T) {
 	priorityResolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest priority returned error: %v", err)
@@ -605,32 +656,32 @@ func TestOpenAIDefaultAndAutoHoldUseSelectedDefaultDeployment(t *testing.T) {
 		{
 			name: "chat omitted",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 		},
 		{
 			name: "chat auto",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
 		},
 		{
 			name: "chat default",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses omitted",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","max_output_tokens":16}`,
+			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":16}`,
 		},
 		{
 			name: "responses auto",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","service_tier":"auto","max_output_tokens":16}`,
+			body: `{"model":"gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`,
 		},
 		{
 			name: "responses default",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","service_tier":"default","max_output_tokens":16}`,
+			body: `{"model":"gpt-5.5","input":"hi","service_tier":"default","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -666,7 +717,7 @@ func TestOpenAIDefaultAndAutoHoldUseSelectedDefaultDeployment(t *testing.T) {
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
-			if state.Hold.ProductKey != "gpt-5-nano" {
+			if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23" {
 				t.Fatalf("expected default deployment hold product key, got %#v", state.Hold)
 			}
 			defaultInput := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
@@ -736,6 +787,189 @@ func TestOpenAICacheReadFinalPriceStaysCoveredByNoCacheHold(t *testing.T) {
 	}
 }
 
+func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) {
+	type matrixDeployment struct {
+		RouteIDs []string `json:"routeIds"`
+	}
+	type matrixRoute struct {
+		Interfaces []string `json:"interfaces"`
+		ProviderID string   `json:"providerId"`
+	}
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	routes := map[string]matrixRoute{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode catalog routes: %v", err)
+	}
+	deploymentIDs := make([]string, 0, len(deployments))
+	for id := range deployments {
+		deploymentIDs = append(deploymentIDs, id)
+	}
+	slices.Sort(deploymentIDs)
+
+	for _, deploymentID := range deploymentIDs {
+		for _, routeID := range deployments[deploymentID].RouteIDs {
+			routeSpec := routes[routeID]
+			provider := schemas.ModelProvider(routeSpec.ProviderID)
+			for _, interfaceName := range routeSpec.Interfaces {
+				var (
+					path  string
+					route catalog.Route
+				)
+				requestBody := map[string]any{"model": deploymentID}
+				switch interfaceName {
+				case "chat_completions":
+					path = "/v1/chat/completions"
+					route = catalog.RouteChat
+					requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+					requestBody["max_completion_tokens"] = 16
+				case "responses":
+					path = "/v1/responses"
+					route = catalog.RouteResponses
+					requestBody["input"] = "hi"
+					requestBody["max_output_tokens"] = 16
+				default:
+					t.Fatalf("%s: unsupported catalog interface %q", routeID, interfaceName)
+				}
+				if _, active := catalog.DeploymentForRoute(provider, deploymentID, route); !active {
+					continue
+				}
+				if provider == schemas.Anthropic {
+					requestBody["cache_control"] = map[string]any{"type": "ephemeral", "ttl": "1h"}
+				}
+				body, err := json.Marshal(requestBody)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+					Method: "POST",
+					Path:   path,
+					Body:   body,
+				})
+				if err != nil {
+					t.Fatalf("%s/%s: resolve request: %v", deploymentID, interfaceName, err)
+				}
+				state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+				if err := state.Adapter.ValidateRequest(state); err != nil {
+					t.Fatalf("%s/%s: validate request: %v", deploymentID, interfaceName, err)
+				}
+				if err := state.Adapter.SanitizeRequest(state); err != nil {
+					t.Fatalf("%s/%s: sanitize request: %v", deploymentID, interfaceName, err)
+				}
+				if err := state.Adapter.EstimateHold(state); err != nil {
+					t.Fatalf("%s/%s: estimate hold: %v", deploymentID, interfaceName, err)
+				}
+				if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == billing.ZeroChargeUSDAtoms {
+					t.Fatalf("%s/%s: token hold is empty", deploymentID, interfaceName)
+				}
+
+				inputTokens := resolution.InputTokenLimit()
+				outputTokens := resolution.OutputTokenLimit()
+				scenarios := []struct {
+					name    string
+					meter   string
+					signals *StandardSignals
+				}{
+					{
+						name:  "uncached",
+						meter: billing.MeterInputTokens,
+						signals: &StandardSignals{
+							Prompt:     inputTokens,
+							Completion: outputTokens,
+							Reasoning:  outputTokens,
+						},
+					},
+					{
+						name:  "cache-read",
+						meter: billing.MeterCachedInputTokens,
+						signals: &StandardSignals{
+							Prompt:     inputTokens,
+							Cached:     inputTokens,
+							Completion: outputTokens,
+						},
+					},
+				}
+				if len(resolution.Deployment.Pricing[billing.MeterCacheWriteInputTokens]) > 0 {
+					scenarios = append(scenarios, struct {
+						name    string
+						meter   string
+						signals *StandardSignals
+					}{
+						name:  "cache-write",
+						meter: billing.MeterCacheWriteInputTokens,
+						signals: &StandardSignals{
+							Prompt:     inputTokens,
+							CacheWrite: inputTokens,
+							Completion: outputTokens,
+						},
+					})
+				}
+				if provider == schemas.Anthropic {
+					scenarios = append(
+						scenarios,
+						struct {
+							name    string
+							meter   string
+							signals *StandardSignals
+						}{
+							name:  "cache-write-5m",
+							meter: billing.MeterCacheWrite5mInputTokens,
+							signals: &StandardSignals{
+								Prompt:       inputTokens,
+								CacheWrite5m: inputTokens,
+								Completion:   outputTokens,
+							},
+						},
+						struct {
+							name    string
+							meter   string
+							signals *StandardSignals
+						}{
+							name:  "cache-write-1h",
+							meter: billing.MeterCacheWrite1hInputTokens,
+							signals: &StandardSignals{
+								Prompt:       inputTokens,
+								CacheWrite1h: inputTokens,
+								Completion:   outputTokens,
+							},
+						},
+					)
+				}
+
+				for _, scenario := range scenarios {
+					t.Run(deploymentID+"/"+interfaceName+"/"+scenario.name, func(t *testing.T) {
+						state.Signals = scenario.signals
+						if err := state.Adapter.FinalPrice(state); err != nil {
+							t.Fatalf("calculate final price: %v", err)
+						}
+						if state.FinalCostUSDAtoms == billing.ZeroChargeUSDAtoms {
+							t.Fatalf("final token price is zero: meters=%#v", state.FinalMeters)
+						}
+						if findMeterEstimate(state.FinalMeters, scenario.meter) == nil {
+							t.Fatalf("final price omitted %s: %#v", scenario.meter, state.FinalMeters)
+						}
+						if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
+							t.Fatalf(
+								"hold does not cover final price: hold=%s final=%s holdMeters=%#v finalMeters=%#v",
+								state.Hold.MaxUSDAtoms,
+								state.FinalCostUSDAtoms,
+								state.Hold.Meters,
+								state.FinalMeters,
+							)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
 func TestFinalPriceUsesSelectedDeploymentForUnknownActualTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
@@ -760,7 +994,7 @@ func TestOpenAIDefaultHoldCanSettleAtReturnedPriorityTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -769,7 +1003,7 @@ func TestOpenAIDefaultHoldCanSettleAtReturnedPriorityTier(t *testing.T) {
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	if state.Hold.ProductKey != "gpt-5-nano" {
+	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23" {
 		t.Fatalf("expected auto/default request to hold selected default deployment, got %#v", state.Hold)
 	}
 	actualTier := schemas.BifrostServiceTierPriority
@@ -777,14 +1011,14 @@ func TestOpenAIDefaultHoldCanSettleAtReturnedPriorityTier(t *testing.T) {
 	if err := state.Adapter.FinalPrice(state); err != nil {
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2500000000000000" {
+	if state.FinalCostUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected returned priority tier to drive final price, got %s", state.FinalCostUSDAtoms)
 	}
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) >= 0 {
 		t.Fatalf("default/auto hold should not reserve unrequested priority capacity: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "2500000000000000" {
+	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected final input meter to use priority pricing, got %#v", state.FinalMeters)
 	}
 }
@@ -793,7 +1027,7 @@ func TestOpenAIResponsesFinalPriceUsesReturnedServiceTierFromUsage(t *testing.T)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","service_tier":"auto","max_output_tokens":16}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -802,7 +1036,7 @@ func TestOpenAIResponsesFinalPriceUsesReturnedServiceTierFromUsage(t *testing.T)
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	if state.Hold.ProductKey != "gpt-5-nano" {
+	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23" {
 		t.Fatalf("expected auto request to hold selected default deployment, got %#v", state.Hold)
 	}
 
@@ -818,11 +1052,11 @@ func TestOpenAIResponsesFinalPriceUsesReturnedServiceTierFromUsage(t *testing.T)
 	if err := state.Adapter.FinalPrice(state); err != nil {
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2500000000000000" {
+	if state.FinalCostUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected returned priority tier to drive OpenAI Responses final price, got %s", state.FinalCostUSDAtoms)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "2500000000000000" {
+	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected final input meter to use priority pricing, got %#v", state.FinalMeters)
 	}
 }
@@ -831,7 +1065,7 @@ func TestOpenAIResponsesStreamKeepsActualTierWhenUsageArrivesLater(t *testing.T)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","service_tier":"auto","max_output_tokens":16,"stream":true}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16,"stream":true}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -863,7 +1097,7 @@ func TestOpenAIResponsesStreamKeepsActualTierWhenUsageArrivesLater(t *testing.T)
 	if err := state.Adapter.FinalPrice(state); err != nil {
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2500000000000000" {
+	if state.FinalCostUSDAtoms != "12500000000000000" {
 		t.Fatalf("expected earlier streamed priority tier to drive final price, got %s", state.FinalCostUSDAtoms)
 	}
 }
@@ -878,7 +1112,7 @@ func TestAnthropicFinalPriceUsesReturnedServiceTierDeployment(t *testing.T) {
 		{
 			name:       "auto request returned standard",
 			body:       `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
-			wantHold:   "claude-opus-4-8",
+			wantHold:   "anthropic-claude-opus-4-8",
 			actualTier: schemas.BifrostServiceTier("standard_only"),
 		},
 	}
@@ -971,7 +1205,7 @@ func TestFinalPriceUsesActualAnthropicSpeedWhenReturned(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -990,7 +1224,7 @@ func TestFinalPriceKeepsAnthropicUSRegionWhenActualSpeedChanges(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast-us","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1012,7 +1246,7 @@ func TestAnthropicResponsesStreamKeepsActualTierAndSpeedWhenUsageArrivesLater(t 
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast-us","input":"hi","max_output_tokens":16,"stream":true}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","input":"hi","max_output_tokens":16,"stream":true}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1118,14 +1352,12 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	if event.MeterQuantities[billing.MeterInputTokens] != "1000" {
-		t.Fatalf("unexpected final meter quantities %#v", event.MeterQuantities)
+	inputPricing := event.Pricing[billing.MeterInputTokens].(map[string]any)
+	if inputPricing["quantity"] != "1000" {
+		t.Fatalf("unexpected final pricing %#v", event.Pricing)
 	}
-	if _, ok := event.MeterQuantities[billing.MeterOutputTokens]; ok {
-		t.Fatalf("telemetry must not log hold-only meters: %#v", event.MeterQuantities)
-	}
-	if len(event.PricingInputSHA256) != 64 {
-		t.Fatalf("expected pricing input digest, got %q", event.PricingInputSHA256)
+	if _, ok := event.Pricing[billing.MeterOutputTokens]; ok {
+		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Pricing)
 	}
 	if event.TotalCostUSDAtoms != "1000" {
 		t.Fatalf("total cost must match final meter sum, got %s", event.TotalCostUSDAtoms)
@@ -1154,10 +1386,17 @@ func TestPricingMetricBagAggregatesDuplicateMeterRateKeys(t *testing.T) {
 			Quantity:       "5",
 			RateKey:        billing.RatePerMillionTokens,
 		},
+	}, catalog.Pricing{
+		billing.MeterInputTokens: {
+			billing.RatePerMillionTokens: "1000000000000000000",
+		},
 	})
 	input := bag[billing.MeterInputTokens].(map[string]any)
 	if input["quantity"] != "15" || input["usdAtoms"] != "10" || input["rateKey"] != billing.RatePerMillionTokens {
 		t.Fatalf("unexpected aggregated pricing bag %#v", bag)
+	}
+	if input["rateUsdAtoms"] != "1000000000000000000" {
+		t.Fatalf("unexpected pricing rate %#v", bag)
 	}
 }
 
@@ -1290,8 +1529,8 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	if event.TotalCostUSDAtoms != "1" {
 		t.Fatalf("logged total must use compacted final meters, got %s", event.TotalCostUSDAtoms)
 	}
-	if event.MeterQuantities[billing.MeterInputTokens] != "2" {
-		t.Fatalf("unexpected compacted meter quantities %#v", event.MeterQuantities)
+	if event.Pricing[billing.MeterInputTokens].(map[string]any)["quantity"] != "2" {
+		t.Fatalf("unexpected compacted pricing %#v", event.Pricing)
 	}
 }
 
@@ -1380,7 +1619,7 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{"search_context_size":"low"},"max_completion_tokens":100}`),
+		Body:   []byte(`{"model":"gpt-5-search-api","messages":[],"web_search_options":{"search_context_size":"low"},"max_completion_tokens":100}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1393,8 +1632,8 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 		t.Fatalf("expected token meters plus search call meter, got %#v", state.Hold.Meters)
 	}
 	searchMeter := state.Hold.Meters[2]
-	if searchMeter.MeterKey != MeterOpenAIChatCompletionSearchPreviewModelCalls || searchMeter.RateKey != RatePerThousandSearchContextLowCalls {
-		t.Fatalf("expected low-context search preview meter, got %#v", searchMeter)
+	if searchMeter.MeterKey != MeterOpenAIChatCompletionSearchModelCalls || searchMeter.RateKey != billing.RatePerThousandCalls {
+		t.Fatalf("expected search model call meter, got %#v", searchMeter)
 	}
 	if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == "0" {
 		t.Fatalf("expected non-zero hold after search meter, got %#v", state.Hold)
@@ -1413,30 +1652,6 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			body:     `{"model":"gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"high"},"max_completion_tokens":100}`,
 			meterKey: MeterOpenAIChatCompletionSearchModelCalls,
 			rateKey:  billing.RatePerThousandCalls,
-		},
-		{
-			name:     "omitted defaults medium",
-			body:     `{"model":"gpt-4o-search-preview","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":100}`,
-			meterKey: MeterOpenAIChatCompletionSearchPreviewModelCalls,
-			rateKey:  RatePerThousandSearchContextMediumCalls,
-		},
-		{
-			name:     "low",
-			body:     `{"model":"gpt-4o-search-preview","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"},"max_completion_tokens":100}`,
-			meterKey: MeterOpenAIChatCompletionSearchPreviewModelCalls,
-			rateKey:  RatePerThousandSearchContextLowCalls,
-		},
-		{
-			name:     "medium",
-			body:     `{"model":"gpt-4o-search-preview","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"medium"},"max_completion_tokens":100}`,
-			meterKey: MeterOpenAIChatCompletionSearchPreviewModelCalls,
-			rateKey:  RatePerThousandSearchContextMediumCalls,
-		},
-		{
-			name:     "high",
-			body:     `{"model":"gpt-4o-search-preview","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"high"},"max_completion_tokens":100}`,
-			meterKey: MeterOpenAIChatCompletionSearchPreviewModelCalls,
-			rateKey:  RatePerThousandSearchContextHighCalls,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1494,6 +1709,78 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			}
 			if searchPricing["quantity"] != "1" || searchPricing["rateKey"] != tt.rateKey || searchPricing["usdAtoms"] == "" {
 				t.Fatalf("unexpected search pricing bag: %#v", searchPricing)
+			}
+		})
+	}
+}
+
+func TestOpenAIPromptCacheHoldCoversAllPossibleWrites(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		meterKey    string
+		writeCopies int
+	}{
+		{
+			name:        "implicit breakpoint",
+			body:        `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
+			meterKey:    billing.MeterCacheWriteInputTokens,
+			writeCopies: 1,
+		},
+		{
+			name:        "explicit mode without breakpoints",
+			body:        `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			meterKey:    billing.MeterInputTokens,
+			writeCopies: 1,
+		},
+		{
+			name:        "two explicit writes",
+			body:        `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			meterKey:    billing.MeterCacheWriteInputTokens,
+			writeCopies: 2,
+		},
+		{
+			name:        "implicit write plus explicit writes caps at four",
+			body:        `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":16}`,
+			meterKey:    billing.MeterCacheWriteInputTokens,
+			writeCopies: 4,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(tt.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatalf("ValidateRequest returned error: %v", err)
+			}
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatalf("EstimateHold returned error: %v", err)
+			}
+			meter := findMeterEstimate(state.Hold.Meters, tt.meterKey)
+			if meter == nil {
+				t.Fatalf("missing %s hold meter: %#v", tt.meterKey, state.Hold.Meters)
+			}
+			expectedQuantity := big.NewInt(int64(resolution.InputTokenLimit() * tt.writeCopies)).String()
+			if meter.Quantity != expectedQuantity {
+				t.Fatalf("hold quantity = %s, want %s", meter.Quantity, expectedQuantity)
+			}
+			signals := &StandardSignals{Prompt: resolution.InputTokenLimit()}
+			if tt.meterKey == billing.MeterCacheWriteInputTokens {
+				signals.CacheWrite = resolution.InputTokenLimit() * tt.writeCopies
+			}
+			state.Signals = signals
+			if err := state.Adapter.FinalPrice(state); err != nil {
+				t.Fatalf("FinalPrice returned error: %v", err)
+			}
+			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover all cache writes: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
 			}
 		})
 	}
@@ -1637,7 +1924,7 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1721,6 +2008,7 @@ func TestSignalsFromUsageDoesNotDropInconsistentCacheWriteDetails(t *testing.T) 
 		split5m          int
 		split1h          int
 		wantPrompt       int
+		wantCacheWrite   int
 		wantCacheWrite5m int
 		wantCacheWrite1h int
 	}{
@@ -1730,8 +2018,9 @@ func TestSignalsFromUsageDoesNotDropInconsistentCacheWriteDetails(t *testing.T) 
 			split5m:          200,
 			split1h:          300,
 			wantPrompt:       700,
+			wantCacheWrite:   100,
 			wantCacheWrite5m: 200,
-			wantCacheWrite1h: 400,
+			wantCacheWrite1h: 300,
 		},
 		{
 			name:             "split details exceed aggregate",
@@ -1760,14 +2049,14 @@ func TestSignalsFromUsageDoesNotDropInconsistentCacheWriteDetails(t *testing.T) 
 			if signals == nil {
 				t.Fatal("expected signals")
 			}
-			if signals.Prompt != tt.wantPrompt || signals.CacheWrite5m != tt.wantCacheWrite5m || signals.CacheWrite1h != tt.wantCacheWrite1h {
+			if signals.Prompt != tt.wantPrompt || signals.CacheWrite != tt.wantCacheWrite || signals.CacheWrite5m != tt.wantCacheWrite5m || signals.CacheWrite1h != tt.wantCacheWrite1h {
 				t.Fatalf("unexpected cache-write mapping: %#v", signals)
 			}
 		})
 	}
 }
 
-func TestSignalsFromUsageMapsLegacyCacheWriteTokensAsFiveMinute(t *testing.T) {
+func TestSignalsFromUsageKeepsProviderUnspecifiedCacheWritesGeneric(t *testing.T) {
 	usage := &schemas.BifrostLLMUsage{
 		PromptTokens:     1000,
 		CompletionTokens: 20,
@@ -1779,8 +2068,8 @@ func TestSignalsFromUsageMapsLegacyCacheWriteTokensAsFiveMinute(t *testing.T) {
 	if signals == nil {
 		t.Fatal("expected signals")
 	}
-	if signals.CacheWrite5m != 200 || signals.CacheWrite1h != 0 {
-		t.Fatalf("expected legacy cache write tokens to map to 5m bucket, got %#v", signals)
+	if signals.CacheWrite != 200 || signals.CacheWrite5m != 0 || signals.CacheWrite1h != 0 {
+		t.Fatalf("expected unspecified cache write tokens to remain generic, got %#v", signals)
 	}
 }
 

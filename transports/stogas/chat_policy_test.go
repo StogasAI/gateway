@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
@@ -42,7 +43,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"hosted tool", `{"model":"gpt-5.5","messages":[],"tools":[{"type":"web_search"}]}`, "Only function and custom tools"},
 		{"local shell tool", `{"model":"gpt-5.5","messages":[],"tools":[{"type":"local_shell"}]}`, "Only function and custom tools"},
 		{"apply patch tool", `{"model":"gpt-5.5","messages":[],"tools":[{"type":"apply_patch"}]}`, "Only function and custom tools"},
-		{"fallbacks", `{"model":"gpt-5.5","messages":[],"fallbacks":["gpt-5.5-flex"]}`, "Fallbacks are not supported"},
+		{"fallbacks", `{"model":"gpt-5.5","messages":[],"fallbacks":["openai-gpt-5.5-2026-04-23-flex"]}`, "Fallbacks are not supported"},
 		{"tool choice any string", `{"model":"gpt-5.5","messages":[],"tool_choice":"any"}`, "tool_choice must be auto, none, required"},
 		{"tool choice required without tools", `{"model":"gpt-5.5","messages":[],"tool_choice":"required"}`, "tool_choice requires supported tools"},
 		{"tool choice without tools", `{"model":"gpt-5.5","messages":[],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, "tool_choice requires supported tools"},
@@ -56,7 +57,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"metadata non-string", `{"model":"gpt-5.5","messages":[],"metadata":{"a":1}}`, "metadata values"},
 		{"anthropic-only cache control on openai", `{"model":"gpt-5.5","messages":[],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
 		{"nested cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
-		{"prompt cache retention anthropic", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"prompt_cache_retention":"24h"}`, "prompt_cache_retention is only supported for OpenAI"},
+		{"prompt cache options anthropic", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic cache control bad type", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
 		{"openai task budget", `{"model":"gpt-5.5","messages":[],"task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
@@ -428,12 +429,12 @@ func TestAnthropicFastDeploymentUsesModelSlugAndRequestedAutoTier(t *testing.T) 
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}]}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-fast" || resolution.Model != "claude-opus-4-8" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast" || resolution.Model != "claude-opus-4-8" {
 		t.Fatalf("unexpected fast deployment resolution: %#v", resolution)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -459,12 +460,12 @@ func TestAnthropicStandardDeploymentUsesStandardOnlyRequestTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-fast" || resolution.Model != "claude-opus-4-8" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast" || resolution.Model != "claude-opus-4-8" {
 		t.Fatalf("unexpected standard fast deployment resolution: %#v", resolution)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -490,12 +491,12 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast-us","messages":[{"role":"user","content":"hi"}]}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","messages":[{"role":"user","content":"hi"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
 		t.Fatalf("unexpected US deployment resolution: %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -520,173 +521,45 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	}
 }
 
-func TestAnthropicClientSpeedSelectsAndSanitizesDeployment(t *testing.T) {
-	tests := []struct {
-		name           string
-		path           string
-		body           string
-		wantDeployment string
-		wantChatSpeed  *string
-		wantExtraSpeed any
+func TestAnthropicExecutionAxesRequireDeploymentSlug(t *testing.T) {
+	for _, item := range []struct {
+		name      string
+		path      string
+		body      string
+		parameter string
 	}{
 		{
-			name:           "chat fast from base slug",
-			path:           "/v1/chat/completions",
-			body:           `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`,
-			wantDeployment: "claude-opus-4-8-fast",
-			wantChatSpeed:  schemas.Ptr("fast"),
+			name:      "chat speed",
+			path:      "/v1/chat/completions",
+			body:      `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`,
+			parameter: "speed",
 		},
 		{
-			name:           "chat standard overrides fast slug",
-			path:           "/v1/chat/completions",
-			body:           `{"model":"anthropic/claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"speed":"standard"}`,
-			wantDeployment: "claude-opus-4-8",
+			name:      "responses speed",
+			path:      "/v1/responses",
+			body:      `{"model":"anthropic/claude-opus-4-8","input":"hi","speed":"fast","max_output_tokens":16}`,
+			parameter: "speed",
 		},
 		{
-			name:           "responses fast from base slug",
-			path:           "/v1/responses",
-			body:           `{"model":"anthropic/claude-opus-4-8","input":"hi","speed":"fast","max_output_tokens":16}`,
-			wantDeployment: "claude-opus-4-8-fast",
-			wantExtraSpeed: "fast",
+			name:      "chat inference geography",
+			path:      "/v1/chat/completions",
+			body:      `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`,
+			parameter: "inference_geo",
 		},
 		{
-			name:           "responses standard overrides fast slug",
-			path:           "/v1/responses",
-			body:           `{"model":"anthropic/claude-opus-4-8-fast","input":"hi","speed":"standard","max_output_tokens":16}`,
-			wantDeployment: "claude-opus-4-8",
+			name:      "responses inference geography",
+			path:      "/v1/responses",
+			body:      `{"model":"anthropic/claude-sonnet-4-6","input":"hi","inference_geo":"global","max_output_tokens":16}`,
+			parameter: "inference_geo",
 		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			if _, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST",
-				Path:   tc.path,
-				Body:   []byte(tc.body),
-			})
-			if err != nil {
-				t.Fatalf("ResolveRequest returned error: %v", err)
-			}
-			if resolution.Deployment.ID != tc.wantDeployment {
-				t.Fatalf("expected deployment %q, got %#v", tc.wantDeployment, resolution.Deployment)
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err != nil {
-				t.Fatalf("ValidateRequest returned error: %v", err)
-			}
-			if err := state.Adapter.SanitizeRequest(state); err != nil {
-				t.Fatalf("SanitizeRequest returned error: %v", err)
-			}
-			bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
-			if err != nil {
-				t.Fatalf("ToBifrost returned error: %v", err)
-			}
-			switch tc.path {
-			case "/v1/chat/completions":
-				if tc.wantChatSpeed == nil {
-					if bifrostReq.ChatRequest.Params.Speed != nil {
-						t.Fatalf("expected standard speed to be omitted, got %#v", bifrostReq.ChatRequest.Params.Speed)
-					}
-				} else if bifrostReq.ChatRequest.Params.Speed == nil || *bifrostReq.ChatRequest.Params.Speed != *tc.wantChatSpeed {
-					t.Fatalf("expected chat speed %q, got %#v", *tc.wantChatSpeed, bifrostReq.ChatRequest.Params.Speed)
-				}
-			case "/v1/responses":
-				got := bifrostReq.ResponsesRequest.Params.ExtraParams["speed"]
-				if tc.wantExtraSpeed == nil {
-					if got != nil {
-						t.Fatalf("expected standard speed extra param to be omitted, got %#v", got)
-					}
-				} else if got != tc.wantExtraSpeed {
-					t.Fatalf("expected responses speed extra param %#v, got %#v", tc.wantExtraSpeed, got)
-				}
-			}
-		})
-	}
-}
-
-func TestAnthropicClientInferenceGeoSelectsUSDeployment(t *testing.T) {
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`),
-	})
-	if err != nil {
-		t.Fatalf("ResolveRequest returned error: %v", err)
-	}
-	if resolution.Deployment.ID != "claude-opus-4-8-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
-		t.Fatalf("expected client inference_geo to select US deployment, got %#v", resolution.Deployment)
-	}
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("ValidateRequest returned error: %v", err)
-	}
-	if err := state.Adapter.SanitizeRequest(state); err != nil {
-		t.Fatalf("SanitizeRequest returned error: %v", err)
-	}
-	bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
-	if err != nil {
-		t.Fatalf("ToBifrost returned error: %v", err)
-	}
-	if got := bifrostReq.ChatRequest.Params.InferenceGeo; got == nil || *got != "us" {
-		t.Fatalf("expected typed Anthropic inference_geo to reach Bifrost, got %#v", got)
-	}
-	if got := bifrostReq.ChatRequest.Params.ExtraParams["inference_geo"]; got != "us" {
-		t.Fatalf("expected adapter to preserve provider-native inference_geo extra param, got %#v", got)
-	}
-}
-
-func TestAnthropicClientInferenceGeoGlobalSelectsStandardDeployment(t *testing.T) {
-	tests := []struct {
-		name string
-		path string
-		body string
-	}{
-		{
-			name: "chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8-us","messages":[{"role":"user","content":"hi"}],"inference_geo":"global"}`,
-		},
-		{
-			name: "responses",
-			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6-us","input":"hi","inference_geo":"global","max_output_tokens":16}`,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   tc.path,
-				Body:   []byte(tc.body),
-			})
-			if err != nil {
-				t.Fatalf("ResolveRequest returned error: %v", err)
-			}
-			if strings.Contains(resolution.Deployment.ID, "-us") || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "global" {
-				t.Fatalf("expected global inference to select standard deployment, got %#v", resolution.Deployment)
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err != nil {
-				t.Fatalf("ValidateRequest returned error: %v", err)
-			}
-			if err := state.Adapter.SanitizeRequest(state); err != nil {
-				t.Fatalf("SanitizeRequest returned error: %v", err)
-			}
-			bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
-			if err != nil {
-				t.Fatalf("ToBifrost returned error: %v", err)
-			}
-			switch tc.path {
-			case "/v1/chat/completions":
-				if got := bifrostReq.ChatRequest.Params.InferenceGeo; got == nil || *got != "global" {
-					t.Fatalf("expected typed Anthropic inference_geo global to reach Bifrost, got %#v", got)
-				}
-				if got := bifrostReq.ChatRequest.Params.ExtraParams["inference_geo"]; got != "global" {
-					t.Fatalf("expected adapter to preserve global inference_geo extra param, got %#v", got)
-				}
-			case "/v1/responses":
-				if got := bifrostReq.ResponsesRequest.Params.ExtraParams["inference_geo"]; got != "global" {
-					t.Fatalf("expected Anthropic Responses inference_geo global extra param, got %#v", got)
-				}
+				Path:   item.path,
+				Body:   []byte(item.body),
+			}); err == nil || err.Error() != item.parameter+" is not supported by Stogas API" {
+				t.Fatalf("expected provider-specific execution axis to be rejected, got %v", err)
 			}
 		})
 	}
@@ -968,12 +841,12 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"missing input", `{"model":"gpt-5-nano"}`, "input is required"},
 		{"background", `{"model":"gpt-5-nano","input":"hi","background":true}`, "background is not supported"},
 		{"conversation", `{"model":"gpt-5-nano","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
-		{"fallbacks", `{"model":"gpt-5-nano","input":"hi","fallbacks":["gpt-5-nano-flex"]}`, "Fallbacks are not supported"},
+		{"fallbacks", `{"model":"gpt-5-nano","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
 		{"top-level mcp servers", `{"model":"gpt-5-nano","input":"hi","mcp_servers":[{"type":"url","url":"https://example.com/mcp","name":"remote"}]}`, "mcp_servers is not supported"},
 		{"previous response", `{"model":"gpt-5-nano","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
 		{"reasoning input item without encrypted content", `{"model":"gpt-5-nano","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
 		{"reasoning input item on Anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
-		{"prompt cache retention anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_retention":"24h"}`, "prompt_cache_retention is only supported for OpenAI"},
+		{"prompt cache options anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
 		{"openai cache control", `{"model":"gpt-5-nano","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
 		{"openai input cache control", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
 		{"openai tool cache control", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never","cache_control":{"type":"ephemeral"}}]}`, "cache_control is only supported for Anthropic"},
@@ -1086,7 +959,10 @@ func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *test
 	if _, ok := bifrostReq.ResponsesRequest.Params.ExtraParams["reasoning.effort"]; ok {
 		t.Fatalf("reasoning.effort must not be forwarded as ExtraParams: %#v", bifrostReq.ResponsesRequest.Params.ExtraParams)
 	}
-	wireReq := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+	wireReq := openaiprovider.ToOpenAIResponsesRequest(
+		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+		bifrostReq.ResponsesRequest,
+	)
 	wireBytes, err := json.Marshal(wireReq)
 	if err != nil {
 		t.Fatalf("marshal OpenAI wire request: %v", err)
@@ -1160,71 +1036,235 @@ func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
 }
 
 func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
-	models := []struct {
-		alias    string
-		provider schemas.ModelProvider
-	}{
-		{alias: "gpt-5.5", provider: schemas.OpenAI},
-		{alias: "gpt-5-nano", provider: schemas.OpenAI},
-		{alias: "anthropic/claude-opus-4-8", provider: schemas.Anthropic},
-		{alias: "anthropic/claude-sonnet-4-6", provider: schemas.Anthropic},
+	type matrixDeployment struct {
+		ReasoningEfforts []string `json:"reasoningEfforts"`
+		DeprecationDate  *string  `json:"deprecationDate"`
+		RouteIDs         []string `json:"routeIds"`
+		Upstream         struct {
+			Model        string `json:"model"`
+			FixedRequest struct {
+				InferenceGeo string `json:"inference_geo"`
+				ServiceTier  string `json:"service_tier"`
+				Speed        string `json:"speed"`
+			} `json:"fixedRequest"`
+		} `json:"upstream"`
+	}
+	type matrixRoute struct {
+		Interfaces []string `json:"interfaces"`
+		ProviderID string   `json:"providerId"`
+	}
+	type wirePayload struct {
+		InferenceGeo    string `json:"inference_geo"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoning_effort"`
+		ServiceTier     string `json:"service_tier"`
+		Speed           string `json:"speed"`
+		Reasoning       struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		OutputConfig struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
+		Thinking struct {
+			Type string `json:"type"`
+		} `json:"thinking"`
 	}
 
-	for _, model := range models {
-		deployment, ok := catalog.DeploymentForRoute(model.provider, model.alias, catalog.RouteChat)
-		if !ok {
-			t.Fatalf("%s deployment is unavailable", model.alias)
-		}
-		for _, effort := range deployment.ReasoningEfforts {
-			t.Run(model.alias+"/"+effort, func(t *testing.T) {
-				body, err := json.Marshal(map[string]any{
-					"messages": []map[string]any{{"content": "hi", "role": "user"}},
-					"model":    model.alias,
-					"reasoning": map[string]any{
-						"effort": effort,
-					},
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-					Method: "POST",
-					Path:   "/v1/chat/completions",
-					Body:   body,
-				})
-				if err != nil {
-					t.Fatalf("resolve advertised effort: %v", err)
-				}
-				state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-				if err := state.Adapter.SanitizeRequest(state); err != nil {
-					t.Fatalf("sanitize advertised effort: %v", err)
-				}
-				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-				request, err := resolution.ToBifrost(ctx)
-				if err != nil {
-					t.Fatalf("build Bifrost request: %v", err)
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	routes := map[string]matrixRoute{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode catalog routes: %v", err)
+	}
+
+	deploymentIDs := make([]string, 0, len(deployments))
+	for id := range deployments {
+		deploymentIDs = append(deploymentIDs, id)
+	}
+	slices.Sort(deploymentIDs)
+
+	for _, deploymentID := range deploymentIDs {
+		source := deployments[deploymentID]
+		for _, routeID := range source.RouteIDs {
+			route := routes[routeID]
+			provider := schemas.ModelProvider(route.ProviderID)
+			for _, interfaceName := range route.Interfaces {
+				var (
+					path  string
+					route catalog.Route
+				)
+				switch interfaceName {
+				case "chat_completions":
+					path = "/v1/chat/completions"
+					route = catalog.RouteChat
+				case "responses":
+					path = "/v1/responses"
+					route = catalog.RouteResponses
+				default:
+					t.Fatalf("%s: unsupported catalog interface %q", routeID, interfaceName)
 				}
 
-				switch model.provider {
-				case schemas.OpenAI:
-					wire := openaiprovider.ToOpenAIChatRequest(ctx, request.ChatRequest)
-					if wire.Reasoning == nil ||
-						wire.Reasoning.Effort == nil ||
-						*wire.Reasoning.Effort != effort {
-						t.Fatalf("OpenAI wire effort = %#v, want %q", wire.Reasoning, effort)
+				if _, active := catalog.DeploymentForRoute(provider, deploymentID, route); !active {
+					if source.DeprecationDate == nil {
+						t.Fatalf("%s is unavailable without a deprecation date", deploymentID)
 					}
-				case schemas.Anthropic:
-					wire, err := anthropicprovider.ToAnthropicChatRequest(ctx, request.ChatRequest)
-					if err != nil {
-						t.Fatalf("build Anthropic wire request: %v", err)
+					deprecatedAt, err := time.Parse(time.DateOnly, *source.DeprecationDate)
+					if err != nil || deprecatedAt.After(time.Now().UTC()) {
+						t.Fatalf("%s has an invalid active deprecation cutoff %q", deploymentID, *source.DeprecationDate)
 					}
-					if wire.OutputConfig == nil ||
-						wire.OutputConfig.Effort == nil ||
-						*wire.OutputConfig.Effort != effort {
-						t.Fatalf("Anthropic wire effort = %#v, want %q", wire.OutputConfig, effort)
-					}
+					continue
 				}
-			})
+
+				efforts := source.ReasoningEfforts
+				if len(efforts) == 0 {
+					efforts = []string{""}
+				}
+				for _, effort := range efforts {
+					name := deploymentID + "/" + interfaceName
+					if effort != "" {
+						name += "/" + effort
+					}
+					t.Run(name, func(t *testing.T) {
+						requestBody := map[string]any{"model": deploymentID}
+						if interfaceName == "chat_completions" {
+							requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+							requestBody["max_completion_tokens"] = 2048
+						} else {
+							requestBody["input"] = "hi"
+							requestBody["max_output_tokens"] = 2048
+						}
+						if effort != "" {
+							requestBody["reasoning"] = map[string]any{"effort": effort}
+						}
+						body, err := json.Marshal(requestBody)
+						if err != nil {
+							t.Fatal(err)
+						}
+						resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+							Method: "POST",
+							Path:   path,
+							Body:   body,
+						})
+						if err != nil {
+							t.Fatalf("resolve catalog deployment: %v", err)
+						}
+						if resolution.Deployment.ID != deploymentID {
+							t.Fatalf("resolved %q, want %q", resolution.Deployment.ID, deploymentID)
+						}
+						state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+						validationErr := state.Adapter.ValidateRequest(state)
+						if provider == schemas.OpenAI &&
+							interfaceName == "chat_completions" &&
+							strings.HasPrefix(source.Upstream.Model, "gpt-5.6-") &&
+							effort == "max" {
+							if validationErr == nil || !strings.Contains(validationErr.Error(), "Responses API") {
+								t.Fatalf("expected GPT-5.6 Chat max effort to be rejected, got %v", validationErr)
+							}
+							return
+						}
+						if validationErr != nil {
+							t.Fatalf("validate catalog deployment: %v", validationErr)
+						}
+						if err := state.Adapter.SanitizeRequest(state); err != nil {
+							t.Fatalf("sanitize catalog deployment: %v", err)
+						}
+						ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+						request, err := resolution.ToBifrost(ctx)
+						if err != nil {
+							t.Fatalf("build Bifrost request: %v", err)
+						}
+
+						var wireBytes []byte
+						switch {
+						case provider == schemas.OpenAI && interfaceName == "chat_completions":
+							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIChatRequest(ctx, request.ChatRequest))
+						case provider == schemas.OpenAI && interfaceName == "responses":
+							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIResponsesRequest(ctx, request.ResponsesRequest))
+						case provider == schemas.Anthropic && interfaceName == "chat_completions":
+							var wire any
+							wire, err = anthropicprovider.ToAnthropicChatRequest(ctx, request.ChatRequest)
+							if err == nil {
+								wireBytes, err = json.Marshal(wire)
+							}
+						case provider == schemas.Anthropic && interfaceName == "responses":
+							var bifrostErr *schemas.BifrostError
+							wireBytes, bifrostErr = anthropicprovider.BuildAnthropicResponsesRequestBody(
+								ctx,
+								request.ResponsesRequest,
+								anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
+							)
+							if bifrostErr != nil {
+								t.Fatalf("build Anthropic provider wire request: %v", bifrostErr)
+							}
+						default:
+							t.Fatalf("unsupported provider/interface %s/%s", provider, interfaceName)
+						}
+						if err != nil {
+							t.Fatalf("build provider wire request: %v", err)
+						}
+						wire := wirePayload{}
+						if err := json.Unmarshal(wireBytes, &wire); err != nil {
+							t.Fatalf("decode provider wire request: %v\n%s", err, wireBytes)
+						}
+						if wire.Model != source.Upstream.Model {
+							t.Fatalf("wire model = %q, want %q", wire.Model, source.Upstream.Model)
+						}
+						if provider == schemas.OpenAI {
+							if wire.ServiceTier != source.Upstream.FixedRequest.ServiceTier {
+								t.Fatalf("wire service_tier = %q, want %q", wire.ServiceTier, source.Upstream.FixedRequest.ServiceTier)
+							}
+						} else {
+							wantInferenceGeo := source.Upstream.FixedRequest.InferenceGeo
+							if wantInferenceGeo == "" {
+								wantInferenceGeo = "global"
+							}
+							if wire.ServiceTier != "standard_only" ||
+								wire.InferenceGeo != wantInferenceGeo {
+								t.Fatalf(
+									"wire Anthropic axes = tier:%q geo:%q, want tier:standard_only geo:%q",
+									wire.ServiceTier,
+									wire.InferenceGeo,
+									wantInferenceGeo,
+								)
+							}
+							wantSpeed := ""
+							if source.Upstream.FixedRequest.Speed == "fast" {
+								wantSpeed = "fast"
+							}
+							if wire.Speed != wantSpeed {
+								t.Fatalf("wire speed = %q, want %q", wire.Speed, wantSpeed)
+							}
+						}
+						if effort == "" {
+							return
+						}
+						if provider == schemas.Anthropic && effort == "none" {
+							if wire.Thinking.Type != "disabled" || wire.OutputConfig.Effort != "" {
+								t.Fatalf("wire reasoning was not disabled\n%s", wireBytes)
+							}
+							return
+						}
+						var wireEffort string
+						switch {
+						case provider == schemas.OpenAI && interfaceName == "chat_completions":
+							wireEffort = wire.ReasoningEffort
+						case provider == schemas.OpenAI:
+							wireEffort = wire.Reasoning.Effort
+						default:
+							wireEffort = wire.OutputConfig.Effort
+						}
+						if wireEffort != effort {
+							t.Fatalf("wire reasoning effort = %q, want %q\n%s", wireEffort, effort, wireBytes)
+						}
+					})
+				}
+			}
 		}
 	}
 }
@@ -1296,7 +1336,6 @@ func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"gpt-5-nano","input":"hi","stream":false,"instructions":"be brief","temperature":1,"top_p":1,"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"},"strict":true},"verbosity":"future-verbosity"},"truncation":"future-truncation","prompt_cache_key":"tenant-cache"}`,
 		`{"model":"gpt-5-nano","input":"hi","reasoning":{"summary":"future-summary","generate_summary":"future-generate-summary"}}`,
-		`{"model":"gpt-5-nano","input":"hi","prompt_cache_retention":"24h"}`,
 		`{"model":"gpt-5-nano","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":3}`,
 		`{"model":"gpt-5-nano","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`,
 		`{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"max_tool_calls":1,"parallel_tool_calls":false}`,
@@ -1406,7 +1445,10 @@ func TestResponsesMCPToolsReachProviderWireRequest(t *testing.T) {
 			}
 			switch tc.name {
 			case "openai":
-				wire := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+				wire := openaiprovider.ToOpenAIResponsesRequest(
+					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+					bifrostReq.ResponsesRequest,
+				)
 				wireBytes, err := json.Marshal(wire)
 				if err != nil {
 					t.Fatalf("marshal OpenAI Responses wire request: %v", err)
@@ -1457,7 +1499,7 @@ func TestResponsesMCPToolsReachProviderWireRequest(t *testing.T) {
 
 func TestOpenAIChatWebSearchOptionsReachProviderWireRequest(t *testing.T) {
 	body := `{
-		"model":"gpt-4o-search-preview",
+		"model":"gpt-5-search-api",
 		"messages":[{"role":"user","content":"hi"}],
 		"web_search_options":{
 			"search_context_size":"low",
@@ -1545,7 +1587,10 @@ func TestOpenAIResponsesMCPAllowedToolsFilterReachesProviderWireRequest(t *testi
 		mcp.ServerDescription == nil || *mcp.ServerDescription != "Docs search" {
 		t.Fatalf("expected Bifrost MCP filter and server_description, got %#v", bifrostReq.ResponsesRequest.Params.Tools)
 	}
-	wire := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+	wire := openaiprovider.ToOpenAIResponsesRequest(
+		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+		bifrostReq.ResponsesRequest,
+	)
 	wireBytes, err := json.Marshal(wire)
 	if err != nil {
 		t.Fatalf("marshal OpenAI Responses wire request: %v", err)
@@ -1599,7 +1644,10 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 	if bifrostReq.ResponsesRequest.Params.TopLogProbs == nil || *bifrostReq.ResponsesRequest.Params.TopLogProbs != 3 {
 		t.Fatalf("expected Bifrost top_logprobs=3, got %#v", bifrostReq.ResponsesRequest.Params.TopLogProbs)
 	}
-	wireRequest := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+	wireRequest := openaiprovider.ToOpenAIResponsesRequest(
+		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+		bifrostReq.ResponsesRequest,
+	)
 	wireBytes, err := json.Marshal(wireRequest)
 	if err != nil {
 		t.Fatalf("marshal OpenAI Responses request: %v", err)
@@ -1634,17 +1682,17 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 		{
 			name:        "standard reasoning model",
 			body:        `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
-			wantContext: 272000,
+			wantContext: 400000,
 		},
 		{
 			name:        "priority deployment context cap",
-			body:        `{"model":"gpt-5.5-priority","input":[{"type":"input_text","text":"continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			body:        `{"model":"openai-gpt-5.5-2026-04-23-priority","input":[{"type":"input_text","text":"continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
 			wantContext: 272000,
 		},
 		{
 			name:          "hosted tool content headroom is already reserved",
 			body:          `{"model":"gpt-5-nano","input":[{"type":"input_text","text":"search and continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
-			wantContext:   272000,
+			wantContext:   400000,
 			wantSearchCap: true,
 		},
 	}
@@ -1694,7 +1742,10 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
 			}
-			wireRequest := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+			wireRequest := openaiprovider.ToOpenAIResponsesRequest(
+				schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+				bifrostReq.ResponsesRequest,
+			)
 			wireBytes, err := json.Marshal(wireRequest)
 			if err != nil {
 				t.Fatalf("marshal OpenAI Responses request: %v", err)
@@ -1755,7 +1806,10 @@ func TestResponsesTextFormatReachesProviderWireRequest(t *testing.T) {
 			}
 			switch resolution.Provider {
 			case schemas.OpenAI:
-				wire := openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+				wire := openaiprovider.ToOpenAIResponsesRequest(
+					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+					bifrostReq.ResponsesRequest,
+				)
 				wireBytes, err := json.Marshal(wire)
 				if err != nil {
 					t.Fatalf("marshal OpenAI responses request: %v", err)
@@ -1786,30 +1840,21 @@ func TestResponsesTextFormatReachesProviderWireRequest(t *testing.T) {
 	}
 }
 
-func TestOpenAIPromptCacheRetentionNormalizesAndReachesWireRequest(t *testing.T) {
+func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
 		body string
-		want string
 	}{
 		{
-			name: "chat underscore alias",
+			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_retention":"in_memory"}`,
-			want: "in-memory",
+			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`,
 		},
 		{
-			name: "responses hyphen value",
+			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_retention":"in-memory"}`,
-			want: "in-memory",
-		},
-		{
-			name: "responses extended value",
-			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_retention":"24h"}`,
-			want: "24h",
+			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`,
 		},
 	}
 	for _, tc := range tests {
@@ -1829,13 +1874,6 @@ func TestOpenAIPromptCacheRetentionNormalizesAndReachesWireRequest(t *testing.T)
 			if err := state.Adapter.SanitizeRequest(state); err != nil {
 				t.Fatalf("SanitizeRequest returned error: %v", err)
 			}
-			var rawRetention string
-			if err := json.Unmarshal(resolution.RawBody()["prompt_cache_retention"], &rawRetention); err != nil {
-				t.Fatalf("raw prompt_cache_retention missing after sanitize: %v", err)
-			}
-			if rawRetention != tc.want {
-				t.Fatalf("expected normalized raw prompt_cache_retention %q, got %q", tc.want, rawRetention)
-			}
 			bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
@@ -1843,35 +1881,117 @@ func TestOpenAIPromptCacheRetentionNormalizesAndReachesWireRequest(t *testing.T)
 			var wire any
 			switch tc.path {
 			case "/v1/chat/completions":
-				if bifrostReq.ChatRequest.Params.PromptCacheRetention == nil || *bifrostReq.ChatRequest.Params.PromptCacheRetention != tc.want {
-					t.Fatalf("expected Bifrost chat prompt_cache_retention %q, got %#v", tc.want, bifrostReq.ChatRequest.Params.PromptCacheRetention)
+				options := bifrostReq.ChatRequest.Params.PromptCacheOptions
+				if options == nil || options.Mode == nil || *options.Mode != "explicit" ||
+					options.TTL == nil || *options.TTL != "30m" {
+					t.Fatalf("expected typed chat prompt_cache_options, got %#v", options)
 				}
 				wire = openaiprovider.ToOpenAIChatRequest(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), bifrostReq.ChatRequest)
 			case "/v1/responses":
-				if bifrostReq.ResponsesRequest.Params.PromptCacheRetention == nil || *bifrostReq.ResponsesRequest.Params.PromptCacheRetention != tc.want {
-					t.Fatalf("expected Bifrost responses prompt_cache_retention %q, got %#v", tc.want, bifrostReq.ResponsesRequest.Params.PromptCacheRetention)
+				options := bifrostReq.ResponsesRequest.Params.PromptCacheOptions
+				if options == nil || options.Mode == nil || *options.Mode != "explicit" ||
+					options.TTL == nil || *options.TTL != "30m" {
+					t.Fatalf("expected typed Responses prompt_cache_options, got %#v", options)
 				}
-				if _, ok := bifrostReq.ResponsesRequest.Params.ExtraParams["prompt_cache_retention"]; ok {
-					t.Fatalf("prompt_cache_retention must stay typed, not ExtraParams: %#v", bifrostReq.ResponsesRequest.Params.ExtraParams)
-				}
-				wire = openaiprovider.ToOpenAIResponsesRequest(bifrostReq.ResponsesRequest)
+				wire = openaiprovider.ToOpenAIResponsesRequest(
+					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+					bifrostReq.ResponsesRequest,
+				)
 			}
 			wireBytes, err := json.Marshal(wire)
 			if err != nil {
 				t.Fatalf("marshal OpenAI wire request: %v", err)
 			}
-			var wireMap map[string]json.RawMessage
-			if err := json.Unmarshal(wireBytes, &wireMap); err != nil {
-				t.Fatalf("unmarshal wire request: %v", err)
-			}
-			var wireRetention string
-			if err := json.Unmarshal(wireMap["prompt_cache_retention"], &wireRetention); err != nil {
-				t.Fatalf("wire prompt_cache_retention not preserved: body=%s err=%v", wireBytes, err)
-			}
-			if wireRetention != tc.want {
-				t.Fatalf("expected wire prompt_cache_retention %q, got %q body=%s", tc.want, wireRetention, wireBytes)
+			if !strings.Contains(string(wireBytes), `"prompt_cache_options":{"mode":"explicit","ttl":"30m"}`) ||
+				!strings.Contains(string(wireBytes), `"prompt_cache_breakpoint":{"mode":"explicit"}`) {
+				t.Fatalf("wire prompt cache fields were not preserved: %s", wireBytes)
 			}
 		})
+	}
+}
+
+func TestOpenAIPromptCachingRejectsLegacyAndInvalidShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+		want string
+	}{
+		{
+			name: "older model",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_options":{"mode":"implicit"}}`,
+			want: "require a GPT-5.6 deployment",
+		},
+		{
+			name: "invalid mode",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"auto"}}`,
+			want: "mode must be implicit or explicit",
+		},
+		{
+			name: "invalid ttl",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"24h"}}`,
+			want: "ttl must be 30m",
+		},
+		{
+			name: "extra option",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"explicit","future":true}}`,
+			want: "supports only mode and ttl",
+		},
+		{
+			name: "breakpoint wrong block",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","prompt_cache_breakpoint":{"mode":"explicit"},"content":"hi"}]}`,
+			want: "only supported on text prompt blocks",
+		},
+		{
+			name: "breakpoint wrong shape",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"implicit"}}]}]}`,
+			want: "must contain only mode: explicit",
+		},
+		{
+			name: "anthropic breakpoint",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic/claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`,
+			want: "only supported for OpenAI deployments",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   tc.path,
+				Body:   []byte(tc.body),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			err = state.Adapter.ValidateRequest(state)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q, got %v", tc.want, err)
+			}
+		})
+	}
+
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		body := `{"model":"gpt-5.6-luna","prompt_cache_retention":"24h"`
+		if path == "/v1/chat/completions" {
+			body += `,"messages":[{"role":"user","content":"hi"}]}`
+		} else {
+			body += `,"input":"hi"}`
+		}
+		if _, err := catalog.ResolveRequest(catalog.RequestInput{
+			Method: "POST",
+			Path:   path,
+			Body:   []byte(body),
+		}); err == nil {
+			t.Fatalf("%s accepted deprecated prompt_cache_retention", path)
+		}
 	}
 }
 
@@ -3143,7 +3263,7 @@ func TestAnthropicResponsesWebSearchFinalPriceUsesActualExecutionDeployment(t *t
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-opus-4-8-fast","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":1,"max_output_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":1,"max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3216,7 +3336,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body: []byte(`{
-			"model":"anthropic/claude-opus-4-8-fast-us",
+			"model":"anthropic/anthropic-claude-opus-4-8-fast-us",
 			"input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],
 			"cache_control":{"type":"ephemeral","ttl":"1h"},
 			"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":2}],
@@ -3227,7 +3347,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "claude-opus-4-8-fast-us" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" {
 		t.Fatalf("expected fast standard-only US deployment, got %s", resolution.Deployment.ID)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))

@@ -18,18 +18,17 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable      = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON             = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous          = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrProviderUnavailable     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrRouteUnavailable        = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod       = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrParameterTooLarge       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrUnsupportedTool         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
-	ErrUnsupportedServiceTier  = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
-	ErrUnsupportedInferenceGeo = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo is not supported by Stogas"}
+	ErrCatalogUnavailable     = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable       = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod      = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrUnsupportedTool        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
+	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
 )
 
 type APIError struct {
@@ -151,20 +150,30 @@ func (r *ResolvedRequest) CatalogNodeIDs() []string {
 	if r == nil {
 		return nil
 	}
+	return r.CatalogNodeIDsForDeployment(r.Deployment)
+}
+
+func (r *ResolvedRequest) CatalogNodeIDsForDeployment(deployment Deployment) []string {
+	if r == nil {
+		return nil
+	}
 	ids := []string{}
-	snap := r.Deployment.snapshot
+	snap := deployment.snapshot
+	if snap == nil {
+		snap = r.Deployment.snapshot
+	}
 	if snap != nil {
-		if model, ok := snap.graph.Models[r.Deployment.ModelID]; ok && model.AuthorID != "" {
+		if model, ok := snap.graph.Models[deployment.ModelID]; ok && model.AuthorID != "" {
 			ids = append(ids, "author:"+model.AuthorID)
 		}
 	}
-	if r.Deployment.ModelID != "" {
-		ids = append(ids, "model:"+r.Deployment.ModelID)
+	if deployment.ModelID != "" {
+		ids = append(ids, "model:"+deployment.ModelID)
 	}
-	if r.Deployment.ID != "" {
-		ids = append(ids, "deployment:"+r.Deployment.ID)
+	if deployment.ID != "" {
+		ids = append(ids, "deployment:"+deployment.ID)
 	}
-	for _, routeID := range sortedStrings(r.Deployment.RouteIDs) {
+	for _, routeID := range sortedStrings(deployment.RouteIDs) {
 		if routeID != "" {
 			ids = append(ids, "route:"+routeID)
 			if snap != nil {
@@ -291,25 +300,6 @@ func (r *ResolvedRequest) RequireUpstreamUsage() {
 		r.chat.ChatParameters.StreamOptions = &schemas.ChatStreamOptions{}
 	}
 	r.chat.ChatParameters.StreamOptions.IncludeUsage = schemas.Ptr(true)
-}
-
-func (r *ResolvedRequest) NormalizePromptCacheRetention() {
-	if r == nil {
-		return
-	}
-	if r.chat != nil {
-		if normalized, ok := normalizePromptCacheRetention(r.chat.ChatParameters.PromptCacheRetention); ok {
-			r.chat.ChatParameters.PromptCacheRetention = &normalized
-			setRawString(r.pricing.RawBody, "prompt_cache_retention", normalized)
-		}
-		return
-	}
-	if r.responses != nil {
-		if normalized, ok := normalizePromptCacheRetention(r.responses.ResponsesParameters.PromptCacheRetention); ok {
-			r.responses.ResponsesParameters.PromptCacheRetention = &normalized
-			setRawString(r.pricing.RawBody, "prompt_cache_retention", normalized)
-		}
-	}
 }
 
 func (r *ResolvedRequest) ApplyProviderSamplingParameters() {
@@ -448,31 +438,6 @@ func setRawIntIfMissing(raw map[string]json.RawMessage, name string, value int) 
 		return
 	}
 	raw[name] = encoded
-}
-
-func setRawString(raw map[string]json.RawMessage, name string, value string) {
-	if raw == nil {
-		return
-	}
-	encoded, err := sonic.Marshal(value)
-	if err != nil {
-		return
-	}
-	raw[name] = encoded
-}
-
-func normalizePromptCacheRetention(value *string) (string, bool) {
-	if value == nil {
-		return "", false
-	}
-	switch strings.TrimSpace(*value) {
-	case "24h":
-		return "24h", true
-	case "in-memory", "in_memory":
-		return "in-memory", true
-	default:
-		return "", false
-	}
 }
 
 func rawIntValue(raw json.RawMessage) (int, bool) {
@@ -698,15 +663,7 @@ func resolveOpenAIRequest(
 	if err := validateRequestedServiceTier(provider, requestedServiceTier); err != nil {
 		return nil, err
 	}
-	requestedRegion, err := requestedInferenceGeo(provider, rawData)
-	if err != nil {
-		return nil, err
-	}
-	requestedSpeed, err := requestedAnthropicSpeed(provider, rawData, requestedServiceTier)
-	if err != nil {
-		return nil, err
-	}
-	deployment, ok := DeploymentForRouteServiceTierRegionSpeed(provider, model, route, requestedServiceTier, requestedRegion, requestedSpeed)
+	deployment, ok := DeploymentForRouteServiceTier(provider, model, route, requestedServiceTier)
 	if !ok {
 		return nil, ErrModelUnavailable
 	}
@@ -734,55 +691,6 @@ func resolveOpenAIRequest(
 	}
 	inputTokenEstimate := inputTokenHoldEstimate(body, rawData, provider, *modelField, route, deployment.ContextWindowTokens)
 	return resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing), nil
-}
-
-func requestedInferenceGeo(provider schemas.ModelProvider, rawData map[string]json.RawMessage) (string, error) {
-	raw, ok := rawData["inference_geo"]
-	if !ok || len(raw) == 0 || string(raw) == "null" {
-		return "", nil
-	}
-	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo must be a string"}
-	}
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if normalized == "" {
-		return "", ErrUnsupportedInferenceGeo
-	}
-	if provider != schemas.Anthropic {
-		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "inference_geo is only supported for Anthropic deployments"}
-	}
-	switch normalized {
-	case "global":
-		return normalized, nil
-	case "us":
-		return normalized, nil
-	default:
-		return "", ErrUnsupportedInferenceGeo
-	}
-}
-
-func requestedAnthropicSpeed(provider schemas.ModelProvider, rawData map[string]json.RawMessage, requestedTier *schemas.BifrostServiceTier) (string, error) {
-	raw, ok := rawData["speed"]
-	if !ok || len(raw) == 0 || string(raw) == "null" {
-		return "", nil
-	}
-	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed must be a string"}
-	}
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	if provider != schemas.Anthropic {
-		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed is only supported for Anthropic deployments"}
-	}
-	switch normalized {
-	case "fast":
-		return "fast", nil
-	case "standard":
-		return "standard", nil
-	default:
-		return "", APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "speed is not supported by Stogas"}
-	}
 }
 
 func validateRequestedServiceTier(provider schemas.ModelProvider, requested *schemas.BifrostServiceTier) error {
@@ -1123,7 +1031,6 @@ func typedOpenAIRequestFields(route Route) map[string]bool {
 	delete(fields, "cache_control")
 	delete(fields, "context_management")
 	delete(fields, "reasoning.effort")
-	delete(fields, "speed")
 	delete(fields, "task_budget")
 	return fields
 }

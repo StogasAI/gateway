@@ -177,6 +177,13 @@ func (s *Stream) WriteSentChunk(chunk []byte) {
 	s.hasher.WriteChunk(chunk)
 }
 
+func (s *Stream) SetCatalogNodeIDs(nodeIDs []string) {
+	if s == nil || s.hasher == nil {
+		return
+	}
+	s.hasher.SetCatalogNodeIDs(nodeIDs)
+}
+
 func (svc *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, error) {
 	if svc == nil || stream == nil {
 		return nil, nil

@@ -8,6 +8,7 @@ import (
 const (
 	MeterInputTokens             = "input_tokens"
 	MeterCachedInputTokens       = "cached_input_tokens"
+	MeterCacheWriteInputTokens   = "cache_write_input_tokens"
 	MeterCacheWrite5mInputTokens = "cache_write_5m_input_tokens"
 	MeterCacheWrite1hInputTokens = "cache_write_1h_input_tokens"
 	MeterOutputTokens            = "output_tokens"
@@ -43,6 +44,7 @@ func WithReasoningTokenFallback(pricing Pricing) Pricing {
 type MeterEstimate struct {
 	MeterKey       string
 	RateKey        string
+	RateUSDAtoms   string
 	Quantity       string
 	AmountUSDAtoms string
 	HoldRequired   bool
@@ -71,6 +73,7 @@ func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey stri
 	return append(meters, MeterEstimate{
 		MeterKey:       meterKey,
 		RateKey:        rateKey,
+		RateUSDAtoms:   rateAtoms.String(),
 		Quantity:       big.NewInt(int64(quantity)).String(),
 		AmountUSDAtoms: amount.String(),
 		HoldRequired:   holdRequired,
@@ -100,6 +103,7 @@ func AppendCallMeterCostWithRate(meters []MeterEstimate, pricing Pricing, meterK
 	return append(meters, MeterEstimate{
 		MeterKey:       meterKey,
 		RateKey:        rateKey,
+		RateUSDAtoms:   rateAtoms.String(),
 		Quantity:       big.NewInt(int64(quantity)).String(),
 		AmountUSDAtoms: amount.String(),
 		HoldRequired:   holdRequired,

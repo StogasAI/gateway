@@ -81,13 +81,18 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 		"prediction",
 		"presence_penalty",
 		"prompt_cache_key",
-		"prompt_cache_retention",
+		"prompt_cache_options",
 		"seed",
 		"top_logprobs",
 		"verbosity",
 		"web_search_options",
 	); err != nil {
 		return err
+	}
+	if count, err := validatePromptCacheBreakpoints(raw["messages"], catalog.RouteChat); err != nil {
+		return err
+	} else if count > 0 {
+		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
 	}
 	if err := validateAnthropicChatCacheControls(raw); err != nil {
 		return err
@@ -121,10 +126,15 @@ func validateAnthropicResponsesPolicy(state *State) error {
 		"include",
 		"presence_penalty",
 		"prompt_cache_key",
-		"prompt_cache_retention",
+		"prompt_cache_options",
 		"top_logprobs",
 	); err != nil {
 		return err
+	}
+	if count, err := validatePromptCacheBreakpoints(raw["input"], catalog.RouteResponses); err != nil {
+		return err
+	} else if count > 0 {
+		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
 	}
 	if err := validateAnthropicResponsesCacheControls(raw); err != nil {
 		return err

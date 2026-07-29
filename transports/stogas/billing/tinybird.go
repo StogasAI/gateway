@@ -33,28 +33,26 @@ type ProviderAttempt struct {
 }
 
 type RequestEvent struct {
-	RequestID                    string            `json:"request_id"`
-	CreatedAt                    string            `json:"created_at"`
-	StogasAPIKeyID               string            `json:"stogas_api_key_id"`
-	StogasProvisioningKeyID      *string           `json:"stogas_provisioning_key_id"`
-	StogasUserID                 string            `json:"stogas_user_id"`
-	StogasOrganizationID         string            `json:"stogas_organization_id"`
-	StogasWorkspaceID            string            `json:"stogas_workspace_id"`
-	RequestType                  string            `json:"request_type"`
-	Cancelled                    bool              `json:"cancelled"`
-	CatalogDigest                string            `json:"catalog_digest"`
-	CatalogSequence              uint64            `json:"catalog_sequence"`
-	ProviderAttempts             []ProviderAttempt `json:"provider_attempts"`
-	StogasProcessingSuccess      bool              `json:"stogas_processing_success"`
-	StogasBillingStatus          string            `json:"stogas_billing_status"`
-	GatewayNodeID                string            `json:"gateway_node_id"`
-	TotalTimeMS                  uint32            `json:"total_time_ms"`
-	TotalCostUSDAtoms            string            `json:"total_cost_usd_atoms"`
-	BillingBasis                 string            `json:"billing_basis"`
-	MeterQuantities              map[string]string `json:"meter_quantities"`
-	PricingInputSHA256           string            `json:"pricing_input_sha256"`
-	GatewayVersion               string            `json:"gateway_version"`
-	ResolvedCatalogNodeIDs       []string          `json:"resolved_catalog_node_ids"`
+	RequestID               string            `json:"request_id"`
+	CreatedAt               string            `json:"created_at"`
+	StogasAPIKeyID          string            `json:"stogas_api_key_id"`
+	StogasProvisioningKeyID *string           `json:"stogas_provisioning_key_id"`
+	StogasUserID            string            `json:"stogas_user_id"`
+	StogasOrganizationID    string            `json:"stogas_organization_id"`
+	StogasWorkspaceID       string            `json:"stogas_workspace_id"`
+	RequestType             string            `json:"request_type"`
+	Cancelled               bool              `json:"cancelled"`
+	CatalogDigest           string            `json:"catalog_digest"`
+	CatalogSequence         uint64            `json:"catalog_sequence"`
+	ProviderAttempts        []ProviderAttempt `json:"provider_attempts"`
+	StogasProcessingSuccess bool              `json:"stogas_processing_success"`
+	StogasBillingStatus     string            `json:"stogas_billing_status"`
+	GatewayNodeID           string            `json:"gateway_node_id"`
+	TotalTimeMS             uint32            `json:"total_time_ms"`
+	TotalCostUSDAtoms       string            `json:"total_cost_usd_atoms"`
+	Pricing                 map[string]any    `json:"pricing"`
+	GatewayVersion          string            `json:"gateway_version"`
+	ResolvedCatalogNodeIDs  []string          `json:"resolved_catalog_node_ids"`
 }
 
 type tinybirdEventsResponse struct {
@@ -140,9 +138,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	GatewayNodeID                string  `json:"gateway_node_id"`
 	TotalTimeMS                  uint32  `json:"total_time_ms"`
 	TotalCostUSDAtoms            string  `json:"total_cost_usd_atoms"`
-	BillingBasis                 string  `json:"billing_basis"`
-	MeterQuantities              string  `json:"meter_quantities"`
-	PricingInputSHA256           string  `json:"pricing_input_sha256"`
+	Pricing                      string  `json:"pricing"`
 	AnalyticsInputTokens         uint64  `json:"analytics_input_tokens"`
 	AnalyticsCachedInputTokens   uint64  `json:"analytics_cached_input_tokens"`
 	AnalyticsCacheWriteTokens    uint64  `json:"analytics_cache_write_input_tokens"`
@@ -154,7 +150,7 @@ type tinybirdGatewayRequestEventPayload struct {
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
-	meterQuantitiesJSON := mustJSONString(event.MeterQuantities, "{}")
+	pricingJSON := mustJSONString(event.Pricing, "{}")
 	resolvedCatalogNodeIDsJSON := mustJSONString(event.ResolvedCatalogNodeIDs, "[]")
 	processed := uint8(0)
 	if event.StogasProcessingSuccess {
@@ -173,24 +169,23 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		timeToFirstOutputMS = event.ProviderAttempts[0].ProviderFirstOutputMS
 	}
 	cacheWriteTokens :=
-		analyticsMeterQuantity(event.MeterQuantities, MeterCacheWrite5mInputTokens) +
-			analyticsMeterQuantity(event.MeterQuantities, MeterCacheWrite1hInputTokens)
+		analyticsPricingQuantity(event.Pricing, MeterCacheWriteInputTokens) +
+			analyticsPricingQuantity(event.Pricing, MeterCacheWrite5mInputTokens) +
+			analyticsPricingQuantity(event.Pricing, MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
-		AnalyticsCachedInputTokens:   analyticsMeterQuantity(event.MeterQuantities, MeterCachedInputTokens),
+		AnalyticsCachedInputTokens:   analyticsPricingQuantity(event.Pricing, MeterCachedInputTokens),
 		AnalyticsCacheWriteTokens:    cacheWriteTokens,
-		AnalyticsInputTokens:         analyticsMeterQuantity(event.MeterQuantities, MeterInputTokens),
-		AnalyticsOutputTokens:        analyticsMeterQuantity(event.MeterQuantities, MeterOutputTokens),
+		AnalyticsInputTokens:         analyticsPricingQuantity(event.Pricing, MeterInputTokens),
+		AnalyticsOutputTokens:        analyticsPricingQuantity(event.Pricing, MeterOutputTokens),
 		AnalyticsProviderLatencyMS:   providerLatencyMS,
 		AnalyticsProviderStatus:      providerStatus,
-		AnalyticsReasoningTokens:     analyticsMeterQuantity(event.MeterQuantities, MeterReasoningTokens),
+		AnalyticsReasoningTokens:     analyticsPricingQuantity(event.Pricing, MeterReasoningTokens),
 		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
-		BillingBasis:                 event.BillingBasis,
 		Cancelled:                    cancelled,
 		CatalogDigest:                strings.TrimSpace(event.CatalogDigest),
 		CatalogSequence:              event.CatalogSequence,
 		CreatedAt:                    event.CreatedAt,
-		MeterQuantities:              meterQuantitiesJSON,
-		PricingInputSHA256:           event.PricingInputSHA256,
+		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
 		GatewayNodeID:                strings.ToLower(strings.TrimSpace(event.GatewayNodeID)),
 		GatewayVersion:               strings.TrimSpace(event.GatewayVersion),
@@ -209,8 +204,12 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	}
 }
 
-func analyticsMeterQuantity(quantities map[string]string, meter string) uint64 {
-	quantity, err := strconv.ParseUint(quantities[meter], 10, 64)
+func analyticsPricingQuantity(pricing map[string]any, meter string) uint64 {
+	entry, ok := pricing[meter].(map[string]any)
+	if !ok {
+		return 0
+	}
+	quantity, err := strconv.ParseUint(strings.TrimSpace(fmt.Sprint(entry["quantity"])), 10, 64)
 	if err != nil {
 		return 0
 	}

@@ -2,6 +2,8 @@ package schemas
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -48,6 +50,98 @@ func (r *BifrostResponsesRequest) GetRawRequestBody() []byte {
 	return r.RawRequestBody
 }
 
+// BifrostResponsesRetrieveRequest retrieves a stored response by ID (OpenAI GET /v1/responses/{id}).
+//
+// Multi-key note: when multiple API keys are configured for the same provider, pin
+// key selection (for example x-bf-api-key-id) on lifecycle calls so they hit the same
+// upstream account as the create that produced response_id.
+type BifrostResponsesRetrieveRequest struct {
+	Provider           ModelProvider `json:"provider"`
+	ResponseID         string        `json:"response_id"`
+	Include            []string      `json:"include,omitempty"`
+	StartingAfter      *int          `json:"starting_after,omitempty"`
+	IncludeObfuscation *bool         `json:"include_obfuscation,omitempty"`
+	RawRequestBody     []byte        `json:"-"`
+}
+
+// GetRawRequestBody implements raw body passthrough when enabled on context.
+func (r *BifrostResponsesRetrieveRequest) GetRawRequestBody() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.RawRequestBody
+}
+
+// BifrostResponsesDeleteRequest deletes a stored response (OpenAI DELETE /v1/responses/{id}).
+// See BifrostResponsesRetrieveRequest for multi-key pinning guidance.
+type BifrostResponsesDeleteRequest struct {
+	Provider       ModelProvider `json:"provider"`
+	ResponseID     string        `json:"response_id"`
+	RawRequestBody []byte        `json:"-"`
+}
+
+// GetRawRequestBody implements raw body passthrough when enabled on context.
+func (r *BifrostResponsesDeleteRequest) GetRawRequestBody() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.RawRequestBody
+}
+
+// BifrostResponsesCancelRequest cancels an in-flight stored response (OpenAI POST /v1/responses/{id}/cancel).
+// See BifrostResponsesRetrieveRequest for multi-key pinning guidance.
+type BifrostResponsesCancelRequest struct {
+	Provider       ModelProvider `json:"provider"`
+	ResponseID     string        `json:"response_id"`
+	RawRequestBody []byte        `json:"-"`
+}
+
+// GetRawRequestBody implements raw body passthrough when enabled on context.
+func (r *BifrostResponsesCancelRequest) GetRawRequestBody() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.RawRequestBody
+}
+
+// BifrostResponsesInputItemsRequest lists input items for a response (OpenAI GET /v1/responses/{id}/input_items).
+// See BifrostResponsesRetrieveRequest for multi-key pinning guidance.
+type BifrostResponsesInputItemsRequest struct {
+	Provider       ModelProvider `json:"provider"`
+	ResponseID     string        `json:"response_id"`
+	After          string        `json:"after,omitempty"`
+	Include        []string      `json:"include,omitempty"`
+	Limit          *int          `json:"limit,omitempty"`
+	Order          string        `json:"order,omitempty"`
+	RawRequestBody []byte        `json:"-"`
+}
+
+// GetRawRequestBody implements raw body passthrough when enabled on context.
+func (r *BifrostResponsesInputItemsRequest) GetRawRequestBody() []byte {
+	if r == nil {
+		return nil
+	}
+	return r.RawRequestBody
+}
+
+// BifrostResponsesDeleteResponse is the wire shape for a successful delete of a stored response.
+type BifrostResponsesDeleteResponse struct {
+	ID          string                     `json:"id"`
+	Object      string                     `json:"object,omitempty"`
+	Deleted     bool                       `json:"deleted"`
+	ExtraFields BifrostResponseExtraFields `json:"extra_fields"`
+}
+
+// BifrostResponsesInputItemsResponse is the list payload for response input items.
+type BifrostResponsesInputItemsResponse struct {
+	Object      string                     `json:"object"`
+	Data        []ResponsesMessage         `json:"data"`
+	HasMore     bool                       `json:"has_more"`
+	FirstID     string                     `json:"first_id,omitempty"`
+	LastID      string                     `json:"last_id,omitempty"`
+	ExtraFields BifrostResponseExtraFields `json:"extra_fields"`
+}
+
 // BifrostCompactionRequest is the request for the context compaction endpoint (POST /v1/responses/compact).
 // It is a strict subset of BifrostResponsesRequest — tools, sampling params, and streaming are not supported.
 type BifrostCompactionRequest struct {
@@ -58,6 +152,7 @@ type BifrostCompactionRequest struct {
 	PreviousResponseID   *string                `json:"previous_response_id,omitempty"`
 	PromptCacheKey       *string                `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention *string                `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   *PromptCacheOptions    `json:"prompt_cache_options,omitempty"`
 	ServiceTier          *BifrostServiceTier    `json:"service_tier,omitempty"`
 	Fallbacks            []Fallback             `json:"fallbacks,omitempty"`
 	ExtraParams          map[string]interface{} `json:"-"`
@@ -71,12 +166,12 @@ func (r *BifrostCompactionRequest) GetRawRequestBody() []byte {
 // BifrostCompactionResponse is the response from the context compaction endpoint.
 // object is always "response.compaction". output contains user messages plus one encrypted compaction item.
 type BifrostCompactionResponse struct {
-	ID        *string            `json:"id,omitempty"`
-	Object    string             `json:"object"` // always "response.compaction"
-	Model     string             `json:"model,omitempty"`
-	CreatedAt int                `json:"created_at"`
-	Output    []ResponsesMessage `json:"output"`
-	Usage     *ResponsesResponseUsage    `json:"usage,omitempty"`
+	ID          *string                    `json:"id,omitempty"`
+	Object      string                     `json:"object"` // always "response.compaction"
+	Model       string                     `json:"model,omitempty"`
+	CreatedAt   int                        `json:"created_at"`
+	Output      []ResponsesMessage         `json:"output"`
+	Usage       *ResponsesResponseUsage    `json:"usage,omitempty"`
 	ExtraFields BifrostResponseExtraFields `json:"extra_fields"`
 }
 
@@ -103,6 +198,14 @@ func (resp *BifrostCompactionResponse) WithDefaults() *BifrostCompactionResponse
 	return result
 }
 
+// ResponsesResponseContainer is the code-execution sandbox container returned on
+// a response that used the code execution tool. The id can be passed back to
+// reuse the sandbox across turns.
+type ResponsesResponseContainer struct {
+	ID        string  `json:"id"`
+	ExpiresAt *string `json:"expires_at,omitempty"`
+}
+
 type BifrostResponsesResponse struct {
 	ID     *string `json:"id,omitempty"` // used for internal conversions
 	Object string  `json:"object"`       // "response"
@@ -125,16 +228,20 @@ type BifrostResponsesResponse struct {
 	Prompt               *ResponsesPrompt                    `json:"prompt,omitempty"` // Reference to a prompt template and variables
 	PromptCacheKey       *string                             `json:"prompt_cache_key"` // Prompt cache key
 	PromptCacheRetention *string                             `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   *PromptCacheOptions                 `json:"prompt_cache_options,omitempty"` // Prompt-caching options applied to the response (OpenAI gpt-5.6+)
 	PresencePenalty      *float64                            `json:"presence_penalty,omitempty"`
 	FrequencyPenalty     *float64                            `json:"frequency_penalty,omitempty"`
 	Reasoning            *ResponsesParametersReasoning       `json:"reasoning"`         // Configuration options for reasoning models
 	SafetyIdentifier     *string                             `json:"safety_identifier"` // Safety identifier
 	ServiceTier          *BifrostServiceTier                 `json:"service_tier"`
-	Speed                *string                             `json:"speed,omitempty"` // "fast" | "standard" — speed actually served (Anthropic fast mode); drives fast-mode billing
-	Diagnostics          *CacheDiagnostics                   `json:"diagnostics,omitempty"` // Anthropic cache diagnostics (cache-diagnosis-2026-04-07); first prompt-cache prefix divergence point
-	Status               *string                             `json:"status,omitempty"` // completed, failed, in_progress, cancelled, queued, or incomplete
+	Speed                *string                             `json:"speed,omitempty"`         // "fast" | "standard" — speed actually served (Anthropic fast mode); drives fast-mode billing
+	InferenceGeo         *string                             `json:"inference_geo,omitempty"` // "us" | "global" — inference geography served (Anthropic data residency); drives the 1.1x US multiplier
+	Diagnostics          *CacheDiagnostics                   `json:"diagnostics,omitempty"`   // Anthropic cache diagnostics (cache-diagnosis-2026-04-07); first prompt-cache prefix divergence point
+	Container            *ResponsesResponseContainer         `json:"container,omitempty"`     // Code-execution sandbox container (Anthropic surfaces it on the response / final streaming message_delta). The neutral per-call id also lives on ResponsesCodeInterpreterToolCall.ContainerID.
+	Status               *string                             `json:"status,omitempty"`        // completed, failed, in_progress, cancelled, queued, or incomplete
 	StreamOptions        *ResponsesStreamOptions             `json:"stream_options,omitempty"`
-	StopReason           *string                             `json:"stop_reason,omitempty"` // Not in OpenAI's spec, but sent by other providers
+	StopReason           *string                             `json:"stop_reason,omitempty"`  // Not in OpenAI's spec, but sent by other providers
+	StopDetails          *ResponsesStopDetails               `json:"stop_details,omitempty"` // Anthropic refusal detail; null unless stop_reason is "refusal"
 	Store                *bool                               `json:"store,omitempty"`
 	Temperature          *float64                            `json:"temperature,omitempty"`
 	Text                 *ResponsesTextConfig                `json:"text,omitempty"`
@@ -238,6 +345,7 @@ func (resp *BifrostResponsesResponse) WithDefaults() *BifrostResponsesResponse {
 	result.PreviousResponseID = resp.PreviousResponseID
 	result.PromptCacheKey = resp.PromptCacheKey
 	result.PromptCacheRetention = resp.PromptCacheRetention
+	result.PromptCacheOptions = resp.PromptCacheOptions
 	result.SafetyIdentifier = resp.SafetyIdentifier
 	result.MaxToolCalls = resp.MaxToolCalls
 	result.Instructions = resp.Instructions
@@ -252,9 +360,24 @@ func (resp *BifrostResponsesResponse) WithDefaults() *BifrostResponsesResponse {
 		result.Status = Ptr("completed")
 	}
 
-	// Output array - default: empty array
+	// Output array - default: empty array. Strip the Anthropic-only code-execution
+	// fidelity carry from the normalized output: code_interpreter_call is a real
+	// OpenAI type an OpenAI client drives, so the extra code_execution_* fields are
+	// a contract leak on provider-format converters (e.g. openai/v1/responses). The
+	// neutral view (code/container_id/outputs) is untouched, and the raw Bifrost
+	// superset response keeps the carry. Done on copies so the source response (and
+	// the superset path that returns it raw) is not mutated. (Advisor has no OpenAI
+	// surface to leak onto, so its carry is left as-is.)
 	if resp.Output != nil {
-		result.Output = resp.Output
+		result.Output = make([]ResponsesMessage, len(resp.Output))
+		for i := range resp.Output {
+			result.Output[i] = resp.Output[i]
+			if tm := resp.Output[i].ResponsesToolMessage; tm != nil && tm.ResponsesCodeExecutionCall != nil {
+				tmCopy := *tm
+				tmCopy.ResponsesCodeExecutionCall = nil
+				result.Output[i].ResponsesToolMessage = &tmCopy
+			}
+		}
 	} else {
 		result.Output = []ResponsesMessage{}
 	}
@@ -351,6 +474,21 @@ func orDefault[T any](src *T, defaultVal T) *T {
 	return Ptr(defaultVal)
 }
 
+// PromptCacheOptions is the request-wide prompt-caching configuration OpenAI
+// added with the gpt-5.6 family (echoed back on the response). Mode is
+// "implicit" or "explicit"; TTL is the minimum breakpoint lifetime (currently
+// "30m"). Values are passed through untouched.
+type PromptCacheOptions struct {
+	Mode *string `json:"mode,omitempty"`
+	TTL  *string `json:"ttl,omitempty"`
+}
+
+// PromptCacheBreakpoint marks the end of a cacheable prompt prefix on a content
+// block (OpenAI gpt-5.6+). Only "explicit" is valid for Mode.
+type PromptCacheBreakpoint struct {
+	Mode *string `json:"mode,omitempty"`
+}
+
 type ResponsesParameters struct {
 	Background           *bool                         `json:"background,omitempty"`
 	Conversation         *string                       `json:"conversation,omitempty"`
@@ -363,10 +501,11 @@ type ResponsesParameters struct {
 	PreviousResponseID   *string                       `json:"previous_response_id,omitempty"`
 	PromptCacheKey       *string                       `json:"prompt_cache_key,omitempty"` // Prompt cache key
 	PromptCacheRetention *string                       `json:"prompt_cache_retention,omitempty"`
+	PromptCacheOptions   *PromptCacheOptions           `json:"prompt_cache_options,omitempty"` // Request-wide prompt cache options (OpenAI gpt-5.6+)
 	PresencePenalty      *float64                      `json:"presence_penalty,omitempty"`
 	FrequencyPenalty     *float64                      `json:"frequency_penalty,omitempty"`
-	Reasoning            *ResponsesParametersReasoning `json:"reasoning,omitempty"`         // Configuration options for reasoning models
-	SafetyIdentifier     *string                       `json:"safety_identifier,omitempty"` // Safety identifier
+	Reasoning            *ResponsesParametersReasoning `json:"reasoning,omitempty"`            // Configuration options for reasoning models
+	SafetyIdentifier     *string                       `json:"safety_identifier,omitempty"`    // Safety identifier
 	ServiceTier          *BifrostServiceTier           `json:"service_tier,omitempty"`
 	StreamOptions        *ResponsesStreamOptions       `json:"stream_options,omitempty"`
 	Store                *bool                         `json:"store,omitempty"`
@@ -402,30 +541,34 @@ type ResponsesTextConfigFormat struct {
 
 // ResponsesTextConfigFormatJSONSchema represents a JSON schema specification
 // It supports JSON Schema fields used by various providers for structured outputs.
+// Schema-bearing fields use OrderedMap (mirroring ToolFunctionParameters) because
+// structured-output generation is sensitive to JSON schema property order: providers
+// like OpenAI follow the literal key order of the schema, so decoding into plain Go
+// maps (and re-marshaling them sorted) degrades output quality.
 type ResponsesTextConfigFormatJSONSchema struct {
 	Name                 *string                     `json:"name,omitempty"`
-	Schema               *any                        `json:"schema,omitempty"`
+	Schema               *JSONSchemaOrBool           `json:"schema,omitempty"`
 	Description          *string                     `json:"description,omitempty"`
 	Strict               *bool                       `json:"strict,omitempty"`
 	AdditionalProperties *AdditionalPropertiesStruct `json:"additionalProperties,omitempty"`
-	Properties           *map[string]any             `json:"properties,omitempty"`
+	Properties           *OrderedMap                 `json:"properties,omitempty"`
 	Required             []string                    `json:"required,omitempty"`
 	Type                 *string                     `json:"type,omitempty"`
 
 	// JSON Schema definition fields
-	Defs        *map[string]any `json:"$defs,omitempty"`       // JSON Schema draft 2019-09+ definitions
-	Definitions *map[string]any `json:"definitions,omitempty"` // Legacy JSON Schema draft-07 definitions
-	Ref         *string         `json:"$ref,omitempty"`        // Reference to definition
+	Defs        *OrderedMap `json:"$defs,omitempty"`       // JSON Schema draft 2019-09+ definitions
+	Definitions *OrderedMap `json:"definitions,omitempty"` // Legacy JSON Schema draft-07 definitions
+	Ref         *string     `json:"$ref,omitempty"`        // Reference to definition
 
 	// Array schema fields
-	Items    *map[string]any `json:"items,omitempty"`    // Array element schema
-	MinItems *int64          `json:"minItems,omitempty"` // Minimum array length
-	MaxItems *int64          `json:"maxItems,omitempty"` // Maximum array length
+	Items    *OrderedMap `json:"items,omitempty"`    // Array element schema
+	MinItems *int64      `json:"minItems,omitempty"` // Minimum array length
+	MaxItems *int64      `json:"maxItems,omitempty"` // Maximum array length
 
 	// Composition fields (union types)
-	AnyOf []map[string]any `json:"anyOf,omitempty"` // Union types (any of these schemas)
-	OneOf []map[string]any `json:"oneOf,omitempty"` // Exclusive union types (exactly one of these)
-	AllOf []map[string]any `json:"allOf,omitempty"` // Schema intersection (all of these)
+	AnyOf []OrderedMap `json:"anyOf,omitempty"` // Union types (any of these schemas)
+	OneOf []OrderedMap `json:"oneOf,omitempty"` // Exclusive union types (exactly one of these)
+	AllOf []OrderedMap `json:"allOf,omitempty"` // Schema intersection (all of these)
 
 	// String validation fields
 	Format    *string `json:"format,omitempty"`    // String format (email, date, uri, etc.)
@@ -445,19 +588,107 @@ type ResponsesTextConfigFormatJSONSchema struct {
 	PropertyOrdering []string    `json:"propertyOrdering,omitempty"` // Ordering of properties, specific to Gemini
 }
 
+// JSONSchemaOrBool holds a JSON Schema value that is either a boolean schema
+// (true/false, valid per JSON Schema draft 6+) or an object schema with key
+// order preserved. Mirrors AdditionalPropertiesStruct.
+type JSONSchemaOrBool struct {
+	SchemaBool *bool
+	SchemaMap  *OrderedMap
+}
+
+// MarshalJSON implements custom JSON marshalling for JSONSchemaOrBool.
+// It marshals either SchemaBool or SchemaMap based on which is set.
+func (s JSONSchemaOrBool) MarshalJSON() ([]byte, error) {
+	if s.SchemaBool != nil && s.SchemaMap != nil {
+		return nil, fmt.Errorf("both SchemaBool and SchemaMap are set; only one should be non-nil")
+	}
+	if s.SchemaBool != nil {
+		return MarshalSorted(*s.SchemaBool)
+	}
+	if s.SchemaMap != nil {
+		return MarshalSorted(s.SchemaMap)
+	}
+	return nil, fmt.Errorf("schema cannot be null; omit the field instead")
+}
+
+// UnmarshalJSON implements custom JSON unmarshalling for JSONSchemaOrBool.
+// It handles both boolean and object JSON Schemas.
+func (s *JSONSchemaOrBool) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		s.SchemaBool = nil
+		s.SchemaMap = nil
+		return nil
+	}
+
+	var boolValue bool
+	if err := Unmarshal(data, &boolValue); err == nil {
+		s.SchemaMap = nil
+		s.SchemaBool = &boolValue
+		return nil
+	}
+
+	var mapValue OrderedMap
+	if err := Unmarshal(data, &mapValue); err == nil {
+		s.SchemaBool = nil
+		s.SchemaMap = &mapValue
+		return nil
+	}
+
+	return fmt.Errorf("schema must be either a boolean or an object")
+}
+
+// ErrUnsatisfiableSchema is returned when a request carries the boolean JSON
+// Schema `false`, which no value can satisfy.
+var ErrUnsatisfiableSchema = errors.New("json schema is the boolean schema 'false', which no output can satisfy")
+
+// CompositeSchema resolves the composite Schema field (the wrapped
+// `format.schema.schema` position). Returns (schemaMap, acceptAll, err):
+//   - schemaMap non-nil: an object schema was provided; it takes precedence over
+//     the decomposed typed fields
+//   - acceptAll true: the boolean schema `true` (accept any value); providers
+//     that must re-encode the schema should emit their widest representable form
+//   - err non-nil: the boolean schema `false` (ErrUnsatisfiableSchema)
+//
+// The zero return (nil, false, nil) means no composite schema is set; callers
+// should build from the decomposed typed fields (Type, Properties, ...).
+func (s *ResponsesTextConfigFormatJSONSchema) CompositeSchema() (*OrderedMap, bool, error) {
+	if s == nil || s.Schema == nil {
+		return nil, false, nil
+	}
+	if s.Schema.SchemaMap != nil {
+		return s.Schema.SchemaMap, false, nil
+	}
+	if s.Schema.SchemaBool != nil {
+		if *s.Schema.SchemaBool {
+			return nil, true, nil
+		}
+		return nil, false, ErrUnsatisfiableSchema
+	}
+	return nil, false, nil
+}
+
 // JSONSchemaFromMap builds a ResponsesTextConfigFormatJSONSchema from a raw interface{}
 func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
-	m, ok := v.(map[string]interface{})
-	if !ok {
+	var m map[string]interface{}
+	switch src := v.(type) {
+	case map[string]interface{}:
+		m = src
+	case *OrderedMap:
+		if src == nil {
+			return nil
+		}
+		m = src.ToMap() // shallow: nested *OrderedMap values keep their order
+	case OrderedMap:
+		m = src.ToMap()
+	default:
 		return nil
 	}
 	s := &ResponsesTextConfigFormatJSONSchema{}
 	if t, ok := m["type"].(string); ok {
 		s.Type = Ptr(t)
 	}
-	if props, ok := m["properties"].(map[string]interface{}); ok {
-		p := map[string]any(props)
-		s.Properties = &p
+	if props, ok := SafeExtractOrderedMap(m["properties"]); ok {
+		s.Properties = props
 	}
 	if req, ok := m["required"].([]interface{}); ok {
 		strs := make([]string, 0, len(req))
@@ -479,22 +710,19 @@ func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 	if ref, ok := m["$ref"].(string); ok {
 		s.Ref = Ptr(ref)
 	}
-	if defs, ok := m["$defs"].(map[string]interface{}); ok {
-		d := map[string]any(defs)
-		s.Defs = &d
+	if defs, ok := SafeExtractOrderedMap(m["$defs"]); ok {
+		s.Defs = defs
 	}
-	if defs, ok := m["definitions"].(map[string]interface{}); ok {
-		d := map[string]any(defs)
-		s.Definitions = &d
+	if defs, ok := SafeExtractOrderedMap(m["definitions"]); ok {
+		s.Definitions = defs
 	}
-	if items, ok := m["items"].(map[string]interface{}); ok {
-		it := map[string]any(items)
-		s.Items = &it
+	if items, ok := SafeExtractOrderedMap(m["items"]); ok {
+		s.Items = items
 	}
 	if b, ok := m["additionalProperties"].(bool); ok {
 		s.AdditionalProperties = &AdditionalPropertiesStruct{AdditionalPropertiesBool: Ptr(b)}
-	} else if ap, ok := m["additionalProperties"].(map[string]interface{}); ok {
-		s.AdditionalProperties = &AdditionalPropertiesStruct{AdditionalPropertiesMap: OrderedMapFromMap(ap)}
+	} else if ap, ok := SafeExtractOrderedMap(m["additionalProperties"]); ok {
+		s.AdditionalProperties = &AdditionalPropertiesStruct{AdditionalPropertiesMap: ap}
 	}
 	if f, ok := m["format"].(string); ok {
 		s.Format = Ptr(f)
@@ -514,18 +742,20 @@ func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 	if n, ok := m["nullable"].(bool); ok {
 		s.Nullable = Ptr(n)
 	}
-	if extractSliceOfMaps := func(key string) []map[string]any {
-		raw, ok := m[key].([]interface{})
-		if !ok {
-			return nil
-		}
-		out := make([]map[string]any, 0, len(raw))
-		for _, item := range raw {
-			if mp, ok := item.(map[string]interface{}); ok {
-				out = append(out, mp)
+	if extractSliceOfMaps := func(key string) []OrderedMap {
+		switch raw := m[key].(type) {
+		case []interface{}:
+			out := make([]OrderedMap, 0, len(raw))
+			for _, item := range raw {
+				if om, ok := SafeExtractOrderedMap(item); ok {
+					out = append(out, *om)
+				}
 			}
+			return out
+		case []OrderedMap:
+			return raw
 		}
-		return out
+		return nil
 	}; true {
 		if ao := extractSliceOfMaps("anyOf"); len(ao) > 0 {
 			s.AnyOf = ao
@@ -581,14 +811,19 @@ func (s *ResponsesTextConfigFormatJSONSchema) ToMap() interface{} {
 		return nil
 	}
 	if s.Schema != nil {
-		return *s.Schema
+		if s.Schema.SchemaMap != nil {
+			return s.Schema.SchemaMap
+		}
+		if s.Schema.SchemaBool != nil {
+			return *s.Schema.SchemaBool
+		}
 	}
 	m := make(map[string]interface{})
 	if s.Type != nil {
 		m["type"] = *s.Type
 	}
 	if s.Properties != nil {
-		m["properties"] = *s.Properties
+		m["properties"] = s.Properties
 	}
 	if len(s.Required) > 0 {
 		m["required"] = s.Required
@@ -603,13 +838,13 @@ func (s *ResponsesTextConfigFormatJSONSchema) ToMap() interface{} {
 		m["$ref"] = *s.Ref
 	}
 	if s.Defs != nil {
-		m["$defs"] = *s.Defs
+		m["$defs"] = s.Defs
 	}
 	if s.Definitions != nil {
-		m["definitions"] = *s.Definitions
+		m["definitions"] = s.Definitions
 	}
 	if s.Items != nil {
-		m["items"] = *s.Items
+		m["items"] = s.Items
 	}
 	if s.AdditionalProperties != nil {
 		if s.AdditionalProperties.AdditionalPropertiesBool != nil {
@@ -761,8 +996,10 @@ type ResponsesPrompt struct {
 }
 
 type ResponsesParametersReasoning struct {
-	Effort          *string `json:"effort"`                     // "none" | "minimal" | "low" | "medium" | "high" (any value other than "none" will enable reasoning)
+	Context         *string `json:"context,omitempty"`          // "auto" | "current_turn" | "all_turns" (which reasoning items are rendered back to the model on later turns)
+	Effort          *string `json:"effort"`                     // "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" (any value other than "none" will enable reasoning)
 	GenerateSummary *string `json:"generate_summary,omitempty"` // Deprecated: use summary instead
+	Mode            *string `json:"mode,omitempty"`             // "standard" | "pro" (reasoning execution mode)
 	Summary         *string `json:"summary"`                    // "auto" | "concise" | "detailed"
 	MaxTokens       *int    `json:"max_tokens,omitempty"`       // Maximum number of tokens to generate for the reasoning output (required for anthropic)
 }
@@ -780,8 +1017,41 @@ type ResponsesResponseIncompleteDetails struct {
 	Reason string `json:"reason"` // The reason why the response is incomplete
 }
 
+// ResponsesResponse.Status values (OpenAI Responses API).
+const (
+	ResponsesResponseStatusInProgress = "in_progress"
+	ResponsesResponseStatusCompleted  = "completed"
+	ResponsesResponseStatusIncomplete = "incomplete"
+	ResponsesResponseStatusFailed     = "failed"
+	ResponsesResponseStatusCancelled  = "cancelled"
+	ResponsesResponseStatusQueued     = "queued"
+)
+
+// ResponsesResponseIncompleteDetails.Reason values.
+const (
+	ResponsesResponseIncompleteReasonMaxOutputTokens = "max_output_tokens"
+	ResponsesResponseIncompleteReasonContentFilter   = "content_filter"
+)
+
+// ResponsesStopDetails carries Anthropic's stop_details for a "refusal" stop_reason.
+// Category and Explanation are null when the refusal maps to no named category;
+// RecommendedModel names a model to retry directly when a fallback attempt was skipped.
+type ResponsesStopDetails struct {
+	Type             string  `json:"type"`
+	Category         *string `json:"category,omitempty"`
+	Explanation      *string `json:"explanation,omitempty"`
+	RecommendedModel *string `json:"recommended_model,omitempty"`
+	// FallbackCreditToken is the one-time credit redeemable on a manual retry to
+	// avoid re-paying cache-write rates; null when no credit was minted.
+	FallbackCreditToken *string `json:"fallback_credit_token,omitempty"`
+	// FallbackHasPrefillClaim selects the retry body shape; absent means "unknown",
+	// which callers must not collapse to false.
+	FallbackHasPrefillClaim *bool `json:"fallback_has_prefill_claim,omitempty"`
+}
+
 type ResponsesResponseUsage struct {
 	Type                *string                        `json:"type,omitempty"`        // type field is sent by anthropic
+	Model               *string                        `json:"model,omitempty"`       // model that produced this (iteration) attempt; sent on iterations[] for Anthropic server-side fallback
 	InputTokens         int                            `json:"input_tokens"`          // Number of input tokens (prompt tokens + cached tokens)
 	InputTokensDetails  *ResponsesResponseInputTokens  `json:"input_tokens_details"`  // Detailed breakdown of input tokens
 	OutputTokens        int                            `json:"output_tokens"`         // Number of output tokens (completion tokens + reasoning tokens)
@@ -835,6 +1105,7 @@ func (d *ResponsesResponseInputTokens) UnmarshalJSON(data []byte) error {
 		CachedWriteTokens       int                          `json:"cached_write_tokens"`
 		CachedWriteTokenDetails *ChatCachedWriteTokenDetails `json:"cached_write_token_details"`
 		CachedTokens            *int                         `json:"cached_tokens"`
+		CacheWriteTokens        *int                         `json:"cache_write_tokens"`
 	}
 	if err := Unmarshal(data, &raw); err != nil {
 		return err
@@ -849,10 +1120,16 @@ func (d *ResponsesResponseInputTokens) UnmarshalJSON(data []byte) error {
 	if raw.CachedTokens != nil && raw.CachedReadTokens == 0 && raw.CachedWriteTokens == 0 {
 		d.CachedReadTokens = *raw.CachedTokens
 	}
+	// OpenAI's Responses API reports cache writes under cache_write_tokens (distinct from Bifrost's cached_write_tokens).
+	if raw.CacheWriteTokens != nil && d.CachedWriteTokens == 0 {
+		d.CachedWriteTokens = *raw.CacheWriteTokens
+	}
 	return nil
 }
 
-// MarshalJSON emits cached_tokens (read+write) alongside the individual fields for OpenAI spec compatibility.
+// MarshalJSON emits cached_tokens (reads only, per the OpenAI spec and mirroring UnmarshalJSON above) alongside the individual fields.
+// Cache writes are reported separately via cached_write_tokens and are excluded from cached_tokens so that
+// OpenAI-spec consumers do not price cache writes as cache reads.
 func (d ResponsesResponseInputTokens) MarshalJSON() ([]byte, error) {
 	type raw struct {
 		TextTokens              int                          `json:"text_tokens,omitempty"`
@@ -862,6 +1139,9 @@ func (d ResponsesResponseInputTokens) MarshalJSON() ([]byte, error) {
 		CachedWriteTokens       int                          `json:"cached_write_tokens"`
 		CachedWriteTokenDetails *ChatCachedWriteTokenDetails `json:"cached_write_token_details,omitempty"`
 		CachedTokens            int                          `json:"cached_tokens"`
+		// OpenAI's field name for cache writes (mirrors cached_tokens for reads) so the
+		// OpenAI SDK — which reads cache_write_tokens, not cached_write_tokens — finds it.
+		CacheWriteTokens int `json:"cache_write_tokens"`
 	}
 	return MarshalSorted(raw{
 		TextTokens:              d.TextTokens,
@@ -870,7 +1150,8 @@ func (d ResponsesResponseInputTokens) MarshalJSON() ([]byte, error) {
 		CachedReadTokens:        d.CachedReadTokens,
 		CachedWriteTokens:       d.CachedWriteTokens,
 		CachedWriteTokenDetails: d.CachedWriteTokenDetails,
-		CachedTokens:            d.CachedReadTokens + d.CachedWriteTokens,
+		CachedTokens:            d.CachedReadTokens,
+		CacheWriteTokens:        d.CachedWriteTokens,
 	})
 }
 
@@ -914,7 +1195,17 @@ const (
 	ResponsesMessageTypeItemReference        ResponsesMessageType = "item_reference"
 	ResponsesMessageTypeRefusal              ResponsesMessageType = "refusal"
 	ResponsesMessageTypeCompaction           ResponsesMessageType = "compaction"
-	ResponsesMessageTypeAdvisorCall          ResponsesMessageType = "advisor_call" // Anthropic advisor server tool (server_tool_use + advisor_tool_result)
+	// Codex deferred-tool discovery (tool_search) and code-mode tool
+	// declarations (additional_tools). OpenAI's Responses API supports these
+	// item types natively; Bifrost preserves them verbatim because its typed
+	// schema doesn't model them (tool_search_call's `arguments` is a JSON
+	// object — unlike function_call's string — and tool_search_output /
+	// additional_tools carry `tools` arrays whose entries don't fit any typed
+	// tool shape). See ResponsesMessage's (Un)MarshalJSON.
+	ResponsesMessageTypeToolSearchCall   ResponsesMessageType = "tool_search_call"
+	ResponsesMessageTypeToolSearchOutput ResponsesMessageType = "tool_search_output"
+	ResponsesMessageTypeAdditionalTools  ResponsesMessageType = "additional_tools"
+	ResponsesMessageTypeAdvisorCall      ResponsesMessageType = "advisor_call" // Anthropic advisor server tool (server_tool_use + advisor_tool_result)
 )
 
 // ResponsesMessage is a union type that can contain different types of input items
@@ -931,6 +1222,14 @@ type ResponsesMessage struct {
 	Role    *ResponsesMessageRoleType `json:"role,omitempty"`
 	Content *ResponsesMessageContent  `json:"content,omitempty"`
 
+	// Author and Recipient are required on multi-agent collab_tool_call items.
+	// Preserved as raw JSON to survive bifrost round-trip without schema coupling.
+	Author    json.RawMessage `json:"author,omitempty"`
+	Recipient json.RawMessage `json:"recipient,omitempty"`
+	// ToolSearchOutputTools preserves the provider-native tools array carried by
+	// tool_search_output items without forcing it into another tool schema.
+	ToolSearchOutputTools json.RawMessage `json:"tools,omitempty"`
+
 	*ResponsesToolMessage // For Tool calls and outputs
 
 	CacheControl *CacheControl `json:"cache_control,omitempty"` // Carries cache_control for function_call and function_call_output message types
@@ -938,6 +1237,132 @@ type ResponsesMessage struct {
 	// Reasoning
 	// gpt-oss models include only reasoning_text content blocks in a message, while other openai models include summaries+encrypted_content
 	*ResponsesReasoning
+
+	// rawPreserved preserves codex `tool_search_call` / `tool_search_output` /
+	// `additional_tools` items verbatim. OpenAI's Responses API accepts these
+	// natively, but Bifrost's typed schema doesn't model them:
+	// tool_search_call's `arguments` is a JSON object — unlike function_call's
+	// string — and tool_search_output / additional_tools carry `tools` arrays
+	// whose entries (per-entry `type` discriminators, function parameters,
+	// nested namespace tool lists) don't fit any typed tool shape; a typed
+	// decode promotes them into the embedded mcp_list_tools fields and strips
+	// required fields. Rather than fail to deserialize the whole input array
+	// or drop/mangle these items, we round-trip the original bytes unchanged.
+	// Set by UnmarshalJSON, emitted by MarshalJSON; nil for every other type.
+	rawPreserved []byte
+}
+
+// isRawPreservedItem reports whether t is an item type that Bifrost preserves
+// verbatim rather than modelling field-by-field (see rawPreserved).
+func isRawPreservedItem(t string) bool {
+	return t == string(ResponsesMessageTypeToolSearchCall) ||
+		t == string(ResponsesMessageTypeToolSearchOutput) ||
+		t == string(ResponsesMessageTypeAdditionalTools)
+}
+
+// UnmarshalJSON preserves codex tool_search/additional_tools items verbatim
+// (see rawPreserved) and otherwise normalizes function/tool-call arguments
+// before decoding the rest of the item. OpenAI's Responses API serializes
+// `function_call` `arguments` as a JSON string, but `tool_search_call` items
+// serialize `arguments` as a JSON object — e.g. {} while in_progress and
+// {"query":"...","limit":10} when completed. The embedded
+// ResponsesToolMessage.Arguments field is a *string, so an object value makes
+// a plain decode fail with "Mismatch type string with value object", which
+// silently drops the item mid-stream and hangs streaming clients. We shadow
+// `arguments` as raw JSON, decode everything else as usual, then store the
+// canonical stringified form.
+func (m *ResponsesMessage) UnmarshalJSON(data []byte) error {
+	// Clear the receiver first so a reused instance never retains a stale
+	// rawPreserved (or other fields) from a prior decode — unmarshalling a
+	// non-preserved payload must not leave preserved bytes that MarshalJSON
+	// would then re-emit.
+	*m = ResponsesMessage{}
+	if t := gjson.GetBytes(data, "type").String(); isRawPreservedItem(t) {
+		mt := ResponsesMessageType(t)
+		m.Type = &mt
+		// Also surface `arguments` (a JSON object for tool_search_call) so downstream
+		// consumers that read Arguments keep working; MarshalJSON still re-emits the
+		// preserved bytes verbatim, so this is additive and does not affect round-trip.
+		m.setToolArguments(json.RawMessage(gjson.GetBytes(data, "arguments").Raw))
+		if execution := gjson.GetBytes(data, "execution"); execution.Exists() {
+			if m.ResponsesToolMessage == nil {
+				m.ResponsesToolMessage = &ResponsesToolMessage{}
+			}
+			value := execution.String()
+			m.Execution = &value
+		}
+		if tools := gjson.GetBytes(data, "tools"); tools.Exists() {
+			m.ToolSearchOutputTools = append(json.RawMessage(nil), tools.Raw...)
+		}
+		m.rawPreserved = append([]byte(nil), data...)
+		return nil
+	}
+
+	type Alias ResponsesMessage
+	aux := &struct {
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(m),
+	}
+
+	if err := Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	m.setToolArguments(aux.Arguments)
+
+	return nil
+}
+
+// setToolArguments normalizes a raw tool-call `arguments` value and records it on
+// the message when present and non-null, initializing the tool-message wrapper as
+// needed. Shared by the tool_search and function/tool-call decode paths so their
+// null handling can't drift apart.
+func (m *ResponsesMessage) setToolArguments(raw json.RawMessage) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	args := responsesToolArgumentsToString(raw)
+	if m.ResponsesToolMessage == nil {
+		m.ResponsesToolMessage = &ResponsesToolMessage{}
+	}
+	m.Arguments = &args
+}
+
+// MarshalJSON re-emits preserved tool_search items verbatim and defers every
+// other item type to the default (sorted-key) struct encoding.
+
+func (m ResponsesMessage) MarshalJSON() ([]byte, error) {
+	if m.rawPreserved != nil {
+		return m.rawPreserved, nil
+	}
+	type alias ResponsesMessage
+	data, err := MarshalSorted(alias(m))
+	if err != nil || m.Type == nil || m.ResponsesToolMessage == nil || m.Arguments == nil {
+		return data, err
+	}
+	if *m.Type != ResponsesMessageTypeToolSearchCall &&
+		*m.Type != ResponsesMessageTypeToolSearchOutput {
+		return data, nil
+	}
+	arguments := bytes.TrimSpace([]byte(*m.Arguments))
+	if len(arguments) == 0 || arguments[0] != '{' || !json.Valid(arguments) {
+		return data, nil
+	}
+	return sjson.SetRawBytes(data, "arguments", arguments)
+}
+
+// responsesToolArgumentsToString normalizes a function/tool-call `arguments`
+// value into the stringified-JSON form expected downstream. function_call items
+// send a JSON string; tool_search_call items send a JSON object. Both are
+// accepted, with the object preserved as its raw JSON text.
+func responsesToolArgumentsToString(raw json.RawMessage) string {
+	var str string
+	if err := Unmarshal(raw, &str); err == nil {
+		return str
+	}
+	return string(raw)
 }
 
 type ResponsesMessageRoleType string
@@ -1000,10 +1425,12 @@ func (rc *ResponsesMessageContent) UnmarshalJSON(data []byte) error {
 type ResponsesMessageContentBlockType string
 
 const (
-	ResponsesInputMessageContentBlockTypeText  ResponsesMessageContentBlockType = "input_text"
-	ResponsesInputMessageContentBlockTypeImage ResponsesMessageContentBlockType = "input_image"
-	ResponsesInputMessageContentBlockTypeFile  ResponsesMessageContentBlockType = "input_file"
-	ResponsesInputMessageContentBlockTypeAudio ResponsesMessageContentBlockType = "input_audio"
+	ResponsesInputMessageContentBlockTypeText      ResponsesMessageContentBlockType = "input_text"
+	ResponsesInputMessageContentBlockTypeImage     ResponsesMessageContentBlockType = "input_image"
+	ResponsesInputMessageContentBlockTypeFile      ResponsesMessageContentBlockType = "input_file"
+	ResponsesInputMessageContentBlockTypeAudio     ResponsesMessageContentBlockType = "input_audio"
+	ResponsesInputMessageContentBlockTypeContainer ResponsesMessageContentBlockType = "input_container" // Anthropic-only: file staged into the code-execution container input dir
+
 	ResponsesOutputMessageContentTypeText      ResponsesMessageContentBlockType = "output_text"
 	ResponsesOutputMessageContentTypeRefusal   ResponsesMessageContentBlockType = "refusal"
 	ResponsesOutputMessageContentTypeReasoning ResponsesMessageContentBlockType = "reasoning_text"
@@ -1012,6 +1439,10 @@ const (
 	ResponsesOutputMessageContentTypeRenderedContent ResponsesMessageContentBlockType = "rendered_content"
 
 	ResponsesOutputMessageContentTypeCompaction ResponsesMessageContentBlockType = "compaction"
+
+	// ResponsesOutputMessageContentTypeFallback marks a server-side fallback handoff
+	// boundary in the output (Anthropic server-side-fallback-2026-06-01).
+	ResponsesOutputMessageContentTypeFallback ResponsesMessageContentBlockType = "fallback"
 )
 
 // ResponsesMessageContentBlock represents different types of content (text, image, file, audio)
@@ -1021,6 +1452,9 @@ type ResponsesMessageContentBlock struct {
 	FileID    *string                          `json:"file_id,omitempty"` // Reference to uploaded file
 	Text      *string                          `json:"text,omitempty"`
 	Signature *string                          `json:"signature,omitempty"` // Signature of the content (for reasoning)
+	// EncryptedContent is required on reasoning content blocks during history replay.
+	// OpenAI returns it alongside summary_text blocks; it must be echoed back verbatim.
+	EncryptedContent *string `json:"encrypted_content,omitempty"`
 
 	*ResponsesInputMessageContentBlockImage
 	*ResponsesInputMessageContentBlockFile
@@ -1030,14 +1464,29 @@ type ResponsesMessageContentBlock struct {
 	*ResponsesOutputMessageContentRefusal         // Model refusal to answer
 	*ResponsesOutputMessageContentRenderedContent // Rendered content from search entry point
 	*ResponsesOutputMessageContentCompaction      // Compaction content from the model
+	*ResponsesOutputMessageContentFallback        // Server-side fallback handoff boundary (from/to model)
 
 	// Not in OpenAI's schemas, but sent by a few providers (Anthropic, Bedrock are some of them)
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 	Citations    *Citations    `json:"citations,omitempty"`
+
+	// PromptCacheBreakpoint marks an explicit prompt-cache breakpoint on this block (OpenAI gpt-5.6+).
+	PromptCacheBreakpoint *PromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
 }
 
 type ResponsesOutputMessageContentCompaction struct {
 	Summary string `json:"summary,omitempty"` // The compaction summary text
+}
+
+// ResponsesOutputMessageContentFallback carries the model boundary of a server-side
+// fallback handoff (Anthropic's fallback content block: from/to model).
+type ResponsesOutputMessageContentFallback struct {
+	FromModel string `json:"from_model,omitempty"` // model that declined
+	ToModel   string `json:"to_model,omitempty"`   // model that continues
+	// TriggerType names why the handoff happened (e.g. "refusal"); TriggerCategory
+	// is the policy area ("cyber", "bio", ...), absent when unnamed.
+	TriggerType     string  `json:"trigger_type,omitempty"`
+	TriggerCategory *string `json:"trigger_category,omitempty"`
 }
 type ResponsesOutputMessageContentRenderedContent struct {
 	RenderedContent string `json:"rendered_content"` // HTML/styled content from search entry point
@@ -1110,10 +1559,13 @@ type ResponsesToolMessage struct {
 	CallID    *string                           `json:"call_id,omitempty"`   // Common call ID for tool calls and outputs
 	Name      *string                           `json:"name,omitempty"`      // Common name field for tool calls
 	Namespace *string                           `json:"namespace,omitempty"` // Namespace for function_call items (set by OpenAI when namespace tools are used)
+	Execution *string                           `json:"execution,omitempty"` // Execution target for tool_search_call items
 	Arguments *string                           `json:"arguments,omitempty"`
 	Output    *ResponsesToolMessageOutputStruct `json:"output,omitempty"`
 	Action    *ResponsesToolMessageActionStruct `json:"action,omitempty"`
 	Error     *string                           `json:"error,omitempty"`
+	// Caller is the neutral form of Anthropic's "caller" union on server-tool blocks
+	Caller *ResponsesToolCaller `json:"tool_caller,omitempty"`
 
 	// Tool calls and outputs
 	*ResponsesFileSearchToolCall
@@ -1130,16 +1582,131 @@ type ResponsesToolMessage struct {
 
 	// Anthropic advisor-specific (advisor_call): carries the advisor_tool_result payload
 	*ResponsesAdvisorCall
+
+	// Anthropic tool_search-specific (tool_search_call): carries the discovered tool references
+	*ResponsesToolSearchCall
+
+	// Anthropic web-fetch-specific (web_fetch_call): carries the web_fetch_tool_result payload
+	*ResponsesWebFetchCall
+
+	// Anthropic code-execution-specific (code_interpreter_call): carries the
+	// server_tool_use input + *_code_execution_tool_result payload that the
+	// neutral ResponsesCodeInterpreterToolCall cannot represent.
+	*ResponsesCodeExecutionCall
 }
 
 // ResponsesAdvisorCall carries the Anthropic advisor_tool_result content
 // (a discriminated union) alongside an advisor_call. Anthropic-only.
 type ResponsesAdvisorCall struct {
-	ResultType       string  `json:"result_type,omitempty"`       // "advisor_result" | "advisor_redacted_result" | "advisor_tool_result_error"
-	Text             *string `json:"advisor_text,omitempty"`      // advisor_result variant
+	ResultType       string  `json:"result_type,omitempty"`               // "advisor_result" | "advisor_redacted_result" | "advisor_tool_result_error"
+	Text             *string `json:"advisor_text,omitempty"`              // advisor_result variant
 	EncryptedContent *string `json:"advisor_encrypted_content,omitempty"` // advisor_redacted_result variant
 	ErrorCode        *string `json:"advisor_error_code,omitempty"`        // advisor_tool_result_error variant
 	StopReason       *string `json:"advisor_stop_reason,omitempty"`       // present when max_tokens is set on the tool
+}
+
+// ResponsesToolSearchCall carries the payload of an Anthropic server-side
+// tool_search (server_tool_use + tool_search_tool_result). ToolReferences holds
+// the names of the deferred tools the search discovered (from the result block's
+// tool_references); the model then emits a normal tool_use to call one of them.
+type ResponsesToolSearchCall struct {
+	ToolReferences []string `json:"tool_references,omitempty"` // names of discovered (deferred) tools
+}
+
+// ResponsesWebFetchCall carries the Anthropic web_fetch_tool_result payload
+// alongside a web_fetch_call. Anthropic-only; the request URL lives on
+// ResponsesWebFetchToolCallAction.
+type ResponsesWebFetchCall struct {
+	ResultType  string                     `json:"web_fetch_result_type,omitempty"` // "web_fetch_result" | "web_fetch_tool_result_error"
+	URL         *string                    `json:"web_fetch_result_url,omitempty"`
+	RetrievedAt *string                    `json:"web_fetch_retrieved_at,omitempty"`
+	Document    *ResponsesWebFetchDocument `json:"web_fetch_document,omitempty"`
+	ErrorCode   *string                    `json:"web_fetch_error_code,omitempty"`
+}
+
+type ResponsesWebFetchDocument struct {
+	Type      string                   `json:"type,omitempty"` // "document"
+	Text      *string                  `json:"text,omitempty"`
+	Title     *string                  `json:"title,omitempty"`
+	Source    *ResponsesWebFetchSource `json:"source,omitempty"`
+	Citations *Citations               `json:"citations,omitempty"`
+	Context   *string                  `json:"context,omitempty"`
+}
+
+type ResponsesWebFetchSource struct {
+	Type      string  `json:"type,omitempty"` // "text" | "base64" | "url" | "file"
+	MediaType *string `json:"media_type,omitempty"`
+	Data      *string `json:"data,omitempty"`
+	URL       *string `json:"url,omitempty"`
+	FileID    *string `json:"file_id,omitempty"`
+}
+
+// ResponsesToolCaller is the neutral form of Anthropic's "caller" union on
+// server_tool_use / *_tool_result blocks. It links a tool call to the agentic
+// caller that produced it (e.g. programmatic tool calling from inside the code
+// execution sandbox). Nil for direct top-level calls.
+type ResponsesToolCaller struct {
+	Type   string  `json:"type"`              // "direct" | "code_execution_20250825" | "code_execution_20260120"
+	ToolID *string `json:"tool_id,omitempty"` // required for code_execution_* caller types
+}
+
+// ResponsesCodeExecutionFileOutput is a file produced during a code execution
+// run, referenced by Files API id. Mirrors Anthropic's *_code_execution_output block.
+type ResponsesCodeExecutionFileOutput struct {
+	FileID string `json:"file_id"`
+}
+
+// ResponsesCodeExecutionCall carries the Anthropic code-execution fidelity that
+// the neutral ResponsesCodeInterpreterToolCall (code/container_id/outputs) cannot
+// represent, so an Anthropic -> Bifrost -> Anthropic round trip can reconstruct
+// the original server_tool_use + *_code_execution_tool_result blocks exactly.
+// Sibling to ResponsesAdvisorCall; Anthropic-only. The code string and container
+// id live on the neutral ResponsesCodeInterpreterToolCall.
+type ResponsesCodeExecutionCall struct {
+	// ToolName is the sub-tool that produced the call:
+	// "code_execution" (legacy Python) | "bash_code_execution" | "text_editor_code_execution".
+	ToolName string `json:"code_execution_tool_name,omitempty"`
+	// Input is the verbatim server_tool_use input JSON (code / command / path /
+	// file_text / old_str / new_str), kept as a string to preserve key ordering.
+	Input *string `json:"code_execution_input,omitempty"`
+	// ResultType is the inner result-content discriminator, e.g.
+	// "bash_code_execution_result" | "code_execution_result" |
+	// "text_editor_code_execution_result" | "*_tool_result_error".
+	ResultType string `json:"code_execution_result_type,omitempty"`
+
+	// Execution result fields (bash / python variants).
+	Stdout          *string `json:"code_execution_stdout,omitempty"`
+	Stderr          *string `json:"code_execution_stderr,omitempty"`
+	ReturnCode      *int    `json:"code_execution_return_code,omitempty"`
+	EncryptedStdout *string `json:"code_execution_encrypted_stdout,omitempty"`
+
+	// File-operation result fields (text_editor variant).
+	FileType     *string  `json:"code_execution_file_type,omitempty"`      // view: "text" | "image" | "pdf"
+	FileContent  *string  `json:"code_execution_file_content,omitempty"`   // view: file contents
+	StartLine    *int     `json:"code_execution_start_line,omitempty"`     // view
+	NumLines     *int     `json:"code_execution_num_lines,omitempty"`      // view
+	TotalLines   *int     `json:"code_execution_total_lines,omitempty"`    // view
+	IsFileUpdate *bool    `json:"code_execution_is_file_update,omitempty"` // create
+	OldStart     *int     `json:"code_execution_old_start,omitempty"`      // str_replace
+	OldLines     *int     `json:"code_execution_old_lines,omitempty"`      // str_replace
+	NewStart     *int     `json:"code_execution_new_start,omitempty"`      // str_replace
+	NewLines     *int     `json:"code_execution_new_lines,omitempty"`      // str_replace
+	Lines        []string `json:"code_execution_lines,omitempty"`          // str_replace diff
+
+	// ErrorCode is set for *_tool_result_error variants (e.g. "unavailable",
+	// "execution_time_exceeded", "container_expired", "file_not_found").
+	ErrorCode *string `json:"code_execution_error_code,omitempty"`
+
+	// Files lists outputs created during execution (charts, generated files).
+	Files []ResponsesCodeExecutionFileOutput `json:"code_execution_files,omitempty"`
+
+	// ContainerExpiresAt is the sandbox container expiry; its id lives on the
+	// neutral ResponsesCodeInterpreterToolCall.ContainerID.
+	ContainerExpiresAt *string `json:"code_execution_container_expires_at,omitempty"`
+
+	// Caller links this call to the agentic caller that produced it (programmatic
+	// tool calling). Nil for direct top-level calls.
+	Caller *ResponsesToolCaller `json:"code_execution_caller,omitempty"`
 }
 
 type ResponsesToolMessageActionStruct struct {
@@ -1247,7 +1814,11 @@ func (output ResponsesToolMessageOutputStruct) MarshalJSON() ([]byte, error) {
 	if output.ResponsesComputerToolCallOutput != nil {
 		return MarshalSorted(output.ResponsesComputerToolCallOutput)
 	}
-	return nil, fmt.Errorf("responses tool message output struct is neither a string nor an array of responses message content blocks nor a computer tool call output data nor an image generation call output")
+	// All variants nil: a tool legitimately produced no output (e.g. an
+	// Anthropic tool_result with empty content). Serialize as an empty string
+	// rather than erroring, since an error here aborts marshaling of any
+	// enclosing structure (conversation histories, log rows).
+	return MarshalSorted("")
 }
 
 func (output *ResponsesToolMessageOutputStruct) UnmarshalJSON(data []byte) error {
@@ -1754,6 +2325,12 @@ const (
 	ResponsesToolTypeXSearch            ResponsesToolType = "x_search"
 	ResponsesToolTypeAdvisor            ResponsesToolType = "advisor"
 )
+
+// ResponsesToolTypeOpenRouterPrefix is the namespace prefix for OpenRouter server
+// tools (e.g. "openrouter:web_search", "openrouter:web_fetch", "openrouter:datetime",
+// "openrouter:image_generation", "openrouter:apply_patch", "openrouter:subagent").
+// These are executed server-side by OpenRouter and are not part of the OpenAI spec.
+const ResponsesToolTypeOpenRouterPrefix = "openrouter:"
 
 // normalizeResponsesToolType maps versioned/provider-specific tool type strings
 // to their canonical ResponsesToolType. For example, "web_search_20250305" → "web_search".
@@ -2569,6 +3146,11 @@ type ResponsesToolMCPAllowedToolsApprovalFilter struct {
 // ResponsesToolCodeInterpreter represents a tool code interpreter
 type ResponsesToolCodeInterpreter struct {
 	Container interface{} `json:"container"` // Container ID or object with file IDs
+	// Anthropic code_execution tool version (code_execution_20250825 |
+	// _20260120 | _20260521 | legacy _20250522). Preserved verbatim so the
+	// requested capability tier round-trips; ignored by other providers and
+	// stripped before any OpenAI-compatible request (see openai/types.go).
+	Version *string `json:"code_execution_version,omitempty"`
 }
 
 // ResponsesToolImageGeneration represents a tool image generation
@@ -2635,9 +3217,11 @@ type ResponsesToolToolSearch struct {
 
 // ResponsesToolWebFetch represents a web fetch tool
 type ResponsesToolWebFetch struct {
-	MaxUses          *int                           `json:"max_uses,omitempty"`
-	Filters          *ResponsesToolWebSearchFilters `json:"filters,omitempty"`
-	MaxContentTokens *int                           `json:"max_content_tokens,omitempty"`
+	MaxUses           *int                           `json:"max_uses,omitempty"`
+	Filters           *ResponsesToolWebSearchFilters `json:"filters,omitempty"`
+	MaxContentTokens  *int                           `json:"max_content_tokens,omitempty"`
+	UseCache          *bool                          `json:"use_cache,omitempty"`
+	ResponseInclusion *string                        `json:"response_inclusion,omitempty"` // "full" | "excluded" (web_fetch_20260318+)
 }
 
 // ResponsesToolAdvisorCaching toggles advisor-side prompt caching.
@@ -2796,9 +3380,10 @@ type BifrostResponsesStreamResponse struct {
 	Annotation      *ResponsesOutputMessageContentTextAnnotation `json:"annotation,omitempty"`
 	AnnotationIndex *int                                         `json:"annotation_index,omitempty"`
 
-	Code    *string `json:"code,omitempty"`
-	Message *string `json:"message,omitempty"`
-	Param   *string `json:"param,omitempty"`
+	Error   *ResponsesResponseError `json:"error,omitempty"`
+	Code    *string                 `json:"code,omitempty"`
+	Message *string                 `json:"message,omitempty"`
+	Param   *string                 `json:"param,omitempty"`
 
 	ExtraFields BifrostResponseExtraFields `json:"extra_fields"`
 
@@ -2833,6 +3418,19 @@ func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStre
 	// Copy all streaming-specific fields
 	result.OutputIndex = resp.OutputIndex
 	result.Item = resp.Item
+	// Strip the Anthropic-only code-execution carry from the streamed item, matching
+	// the non-streaming Output path: it must not leak onto the code_interpreter_call
+	// items of output_item.added / output_item.done on provider-format converters
+	// (e.g. openai/v1/responses). Done on a copy so the source item is not mutated
+	// (the raw Bifrost superset stream keeps the carry).
+	if result.Item != nil && result.Item.ResponsesToolMessage != nil &&
+		result.Item.ResponsesToolMessage.ResponsesCodeExecutionCall != nil {
+		itemCopy := *result.Item
+		tmCopy := *result.Item.ResponsesToolMessage
+		tmCopy.ResponsesCodeExecutionCall = nil
+		itemCopy.ResponsesToolMessage = &tmCopy
+		result.Item = &itemCopy
+	}
 	result.SummaryIndex = resp.SummaryIndex
 	result.ContentIndex = resp.ContentIndex
 	result.ItemID = resp.ItemID
@@ -2847,6 +3445,7 @@ func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStre
 	result.PartialImageIndex = resp.PartialImageIndex
 	result.Annotation = resp.Annotation
 	result.AnnotationIndex = resp.AnnotationIndex
+	result.Error = resp.Error
 	result.Code = resp.Code
 	result.Message = resp.Message
 	result.Param = resp.Param

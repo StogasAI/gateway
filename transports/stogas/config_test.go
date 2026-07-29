@@ -21,14 +21,14 @@ func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFromEnv returned error: %v", err)
 	}
-	if config.DatabasePool.MaxConns != defaultDatabasePoolMaxConns {
-		t.Fatalf("MaxConns = %d, want %d", config.DatabasePool.MaxConns, defaultDatabasePoolMaxConns)
+	if config.DatabasePool.MaxConns != 6 {
+		t.Fatalf("MaxConns = %d, want 6", config.DatabasePool.MaxConns)
 	}
-	if config.DatabasePool.MinConns != defaultDatabasePoolMinConns {
-		t.Fatalf("MinConns = %d, want %d", config.DatabasePool.MinConns, defaultDatabasePoolMinConns)
+	if config.DatabasePool.MinConns != 1 {
+		t.Fatalf("MinConns = %d, want 1", config.DatabasePool.MinConns)
 	}
-	if config.DatabasePool.MinIdleConns != defaultDatabasePoolMinIdleConns {
-		t.Fatalf("MinIdleConns = %d, want %d", config.DatabasePool.MinIdleConns, defaultDatabasePoolMinIdleConns)
+	if config.DatabasePool.MinIdleConns != 1 {
+		t.Fatalf("MinIdleConns = %d, want 1", config.DatabasePool.MinIdleConns)
 	}
 	if config.DatabasePool.QueryExecMode != defaultDatabaseQueryExecMode {
 		t.Fatalf("QueryExecMode = %s, want %s", config.DatabasePool.QueryExecMode, defaultDatabaseQueryExecMode)

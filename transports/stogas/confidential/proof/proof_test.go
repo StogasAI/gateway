@@ -33,7 +33,7 @@ func TestProofSignsOnlyTheMinimalResolvedExchange(t *testing.T) {
 		"catalog":  func(value *Input) { value.CatalogDigest = "sha256:" + strings.Repeat("c", 64) },
 		"nodes": func(value *Input) {
 			value.CatalogNodeIDs = append([]string(nil), value.CatalogNodeIDs...)
-			value.CatalogNodeIDs[2] = "deployment:gpt-5.5-flex"
+			value.CatalogNodeIDs[2] = "deployment:openai-gpt-5.5-2026-04-23-flex"
 		},
 		"transcript": func(value *Input) { value.E2EETranscriptSHA256 = strings.Repeat("d", 64) },
 	} {

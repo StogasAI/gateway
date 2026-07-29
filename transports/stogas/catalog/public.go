@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const PublicCatalogVersion = "stogas.gateway.catalog.v3"
+const PublicCatalogVersion = "stogas.gateway.catalog.v4"
 
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`
@@ -85,18 +85,32 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	if snap == nil {
 		return PublicModelsResponse{}, false
 	}
-	ids := make([]string, 0, len(snap.aliases))
-	for alias := range snap.aliases {
-		if alias == "" {
-			continue
+	modelIDsBySelector := make(map[string]string, len(snap.modelSelectors)+len(snap.deploymentSelectors))
+	availableModelIDs := make(map[string]bool)
+	for _, deployment := range snap.graph.Deployments {
+		if deploymentAvailableNow(deployment) {
+			availableModelIDs[deployment.ModelID] = true
 		}
-		ids = append(ids, alias)
+	}
+	for selector, modelID := range snap.modelSelectors {
+		if availableModelIDs[modelID] {
+			modelIDsBySelector[selector] = modelID
+		}
+	}
+	for selector, deploymentID := range snap.deploymentSelectors {
+		if deployment, ok := snap.graph.Deployments[deploymentID]; ok &&
+			deploymentAvailableNow(deployment) {
+			modelIDsBySelector[selector] = deployment.ModelID
+		}
+	}
+	ids := make([]string, 0, len(modelIDsBySelector))
+	for selector := range modelIDsBySelector {
+		ids = append(ids, selector)
 	}
 	sort.Strings(ids)
 	models := make([]PublicModel, 0, len(ids))
 	for _, id := range ids {
-		deployment := snap.graph.Deployments[snap.aliases[id]]
-		model := snap.graph.Models[deployment.ModelID]
+		model := snap.graph.Models[modelIDsBySelector[id]]
 		created := int64(1)
 		if released, err := time.Parse("2006-01-02", model.ReleaseDate); err == nil {
 			created = released.Unix()

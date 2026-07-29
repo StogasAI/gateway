@@ -1,10 +1,6 @@
 package billing
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -68,53 +64,27 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	pricing := clonePricing(input.Pricing)
 
 	return RequestEvent{
-		RequestID:                    authorization.RequestID,
-		CreatedAt:                    createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		StogasAPIKeyID:               authorization.KeyID,
-		StogasProvisioningKeyID:      authorization.ProvisioningKeyID,
-		StogasUserID:                 authorization.UserID,
-		StogasOrganizationID:         authorization.OrganizationID,
-		StogasWorkspaceID:            authorization.WorkspaceID,
-		RequestType:                  normalizeRequestType(input.RequestType),
-		Cancelled:                    input.Cancelled,
-		CatalogDigest:                strings.TrimSpace(input.CatalogDigest),
-		CatalogSequence:              input.CatalogSequence,
-		ProviderAttempts:             []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), IsBYOK: false}},
-		StogasProcessingSuccess:      true,
-		StogasBillingStatus:          settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
-		GatewayNodeID:                strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
-		TotalTimeMS:                  totalTimeMS,
-		TotalCostUSDAtoms:            actualCostUSDAtoms,
-		BillingBasis:                 "catalog",
-		MeterQuantities:              meterQuantities(pricing),
-		PricingInputSHA256:           pricingInputSHA256(pricing),
-		GatewayVersion:               strings.TrimSpace(input.GatewayVersion),
-		ResolvedCatalogNodeIDs:       append([]string(nil), input.ResolvedCatalogNodeIDs...),
+		RequestID:               authorization.RequestID,
+		CreatedAt:               createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		StogasAPIKeyID:          authorization.KeyID,
+		StogasProvisioningKeyID: authorization.ProvisioningKeyID,
+		StogasUserID:            authorization.UserID,
+		StogasOrganizationID:    authorization.OrganizationID,
+		StogasWorkspaceID:       authorization.WorkspaceID,
+		RequestType:             normalizeRequestType(input.RequestType),
+		Cancelled:               input.Cancelled,
+		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
+		CatalogSequence:         input.CatalogSequence,
+		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), IsBYOK: false}},
+		StogasProcessingSuccess: true,
+		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
+		GatewayNodeID:           strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
+		TotalTimeMS:             totalTimeMS,
+		TotalCostUSDAtoms:       actualCostUSDAtoms,
+		Pricing:                 pricing,
+		GatewayVersion:          strings.TrimSpace(input.GatewayVersion),
+		ResolvedCatalogNodeIDs:  append([]string(nil), input.ResolvedCatalogNodeIDs...),
 	}
-}
-
-func meterQuantities(pricing map[string]any) map[string]string {
-	quantities := make(map[string]string, len(pricing))
-	for meter, raw := range pricing {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		quantity := strings.TrimSpace(fmt.Sprint(entry["quantity"]))
-		if quantity != "" {
-			quantities[meter] = quantity
-		}
-	}
-	return quantities
-}
-
-func pricingInputSHA256(pricing map[string]any) string {
-	encoded, err := json.Marshal(pricing)
-	if err != nil {
-		encoded = []byte("{}")
-	}
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:])
 }
 
 func isStreamingRequest(requestType string) bool {

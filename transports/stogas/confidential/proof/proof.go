@@ -62,6 +62,13 @@ func (h *StreamHasher) WriteChunk(chunk []byte) {
 	_, _ = h.hash.Write(chunk)
 }
 
+func (h *StreamHasher) SetCatalogNodeIDs(nodeIDs []string) {
+	if h == nil {
+		return
+	}
+	h.base.CatalogNodeIDs = append([]string(nil), nodeIDs...)
+}
+
 func (h *StreamHasher) FinalPayload() Payload {
 	if h == nil || h.hash == nil {
 		return Payload{}

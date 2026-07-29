@@ -1223,14 +1223,14 @@ func TestPublicResponsePayloadUsesCatalogDeploymentIdentity(t *testing.T) {
 	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"model_deployment": true})
 	stogas.SetState(bifrostCtx, &stogas.State{
 		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{ID: "gpt-5.5-priority"},
+			Deployment: catalog.Deployment{ID: "openai-gpt-5.5-2026-04-23-priority"},
 		},
 	})
 
 	metadata := stogasMetadata(bifrostCtx, schemas.BifrostResponseExtraFields{
 		ResolvedModelUsed: "gpt-5.5-2026-04-23",
 	})
-	if metadata["model_deployment"] != "gpt-5.5-priority" {
+	if metadata["model_deployment"] != "openai-gpt-5.5-2026-04-23-priority" {
 		t.Fatalf("expected catalog deployment identity, got %#v", metadata)
 	}
 }

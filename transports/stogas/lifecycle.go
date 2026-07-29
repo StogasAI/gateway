@@ -134,6 +134,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		state.FinalCostUSDAtoms = sumMeterAmounts(state.FinalMeters)
 	}
 	catalogIdentity := state.Resolution.CatalogIdentity()
+	executionDeployment := ExecutionDeployment(state)
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms:     state.FinalCostUSDAtoms,
 		Authorization:          state.Authorization,
@@ -148,7 +149,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		GatewayNodeID:          state.GatewayNodeID,
 		GatewayVersion:         state.GatewayVersion,
 		RequestType:            state.RequestType,
-		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDs(),
+		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
 		Response:               state.Response,
 		StartedAt:              state.StartedAt,
 	})
@@ -162,11 +163,12 @@ func pricingForState(state *State) map[string]any {
 	if state == nil {
 		return out
 	}
-	mergePricingMeters(out, compactMeterEstimates(state.FinalMeters, effectivePricingForState(state)))
+	pricing := effectivePricingForState(state)
+	mergePricingMeters(out, compactMeterEstimates(state.FinalMeters, pricing), pricing)
 	return out
 }
 
-func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate) {
+func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate, pricing catalog.Pricing) {
 	for _, meter := range meters {
 		if meter.MeterKey == "" || meter.RateKey == "" {
 			continue
@@ -177,22 +179,28 @@ func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate) {
 				key = meter.MeterKey + ":" + meter.RateKey
 			}
 		}
-		out[key] = mergeMeterMetric(out[key], meter)
+		rateUSDAtoms := meter.RateUSDAtoms
+		if rateUSDAtoms == "" {
+			rateUSDAtoms = pricing[meter.MeterKey][meter.RateKey]
+		}
+		out[key] = mergeMeterMetric(out[key], meter, rateUSDAtoms)
 	}
 }
 
-func mergeMeterMetric(existing any, meter catalog.MeterEstimate) map[string]any {
+func mergeMeterMetric(existing any, meter catalog.MeterEstimate, rateUSDAtoms string) map[string]any {
 	metric, _ := existing.(map[string]any)
 	if metric == nil {
 		return map[string]any{
-			"quantity": meter.Quantity,
-			"rateKey":  meter.RateKey,
-			"usdAtoms": meter.AmountUSDAtoms,
+			"quantity":     meter.Quantity,
+			"rateKey":      meter.RateKey,
+			"rateUsdAtoms": rateUSDAtoms,
+			"usdAtoms":     meter.AmountUSDAtoms,
 		}
 	}
 	metric["quantity"] = addDecimalStrings(fmt.Sprint(metric["quantity"]), meter.Quantity)
 	metric["usdAtoms"] = addDecimalStrings(fmt.Sprint(metric["usdAtoms"]), meter.AmountUSDAtoms)
 	metric["rateKey"] = meter.RateKey
+	metric["rateUsdAtoms"] = rateUSDAtoms
 	return metric
 }
 
