@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ func TestUpdaterBuildsCandidateBeforeAtomicActivation(t *testing.T) {
 	previous := active.Load()
 	defer active.Store(previous)
 	fallback := loadTestCatalog(t)
+	active.Store(fallback)
 
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -82,8 +84,8 @@ func TestUpdaterBuildsCandidateBeforeAtomicActivation(t *testing.T) {
 	if !ok || identity.Sequence != manifest.Sequence || identity.Digest != manifest.Runtime {
 		t.Fatalf("active identity = %#v", identity)
 	}
-	if updater.etag != `"release-1"` {
-		t.Fatalf("etag = %q", updater.etag)
+	if updater.etags[server.URL+"/catalog/latest.json"] != `"release-1"` {
+		t.Fatalf("etags = %#v", updater.etags)
 	}
 	if err := updater.pollOnce(context.Background()); err != nil {
 		t.Fatalf("idempotent poll: %v", err)
@@ -94,6 +96,70 @@ func TestUpdaterBuildsCandidateBeforeAtomicActivation(t *testing.T) {
 	if err := updater.pollOnce(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "different public content") {
 		t.Fatalf("same-sequence public equivocation was accepted: %v", err)
+	}
+}
+
+func TestUpdaterSelectsFreshestFullyVerifiedOrigin(t *testing.T) {
+	previous := active.Load()
+	defer active.Store(previous)
+	fallback := loadTestCatalog(t)
+	active.Store(fallback)
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primary := testReleaseManifest(fallback.identity.Sequence + 1)
+	primary.Runtime = testDigest(embeddedRuntimeCatalogJSON)
+	primary.Public = testDigest(embeddedPublicCatalogJSON)
+	backup := primary
+	backup.Sequence++
+	envelopes := map[string][]byte{
+		"/primary/latest.json": signTestManifest(t, primary, "test", privateKey),
+		"/backup/latest.json":  signTestManifest(t, backup, "test", privateKey),
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if envelope, ok := envelopes[request.URL.Path]; ok {
+			_, _ = response.Write(envelope)
+			return
+		}
+		switch path := request.URL.Path; {
+		case strings.HasSuffix(path, strings.TrimPrefix(primary.Runtime, "sha256:")+".json"):
+			_, _ = response.Write(embeddedRuntimeCatalogJSON)
+		case strings.HasSuffix(path, strings.TrimPrefix(primary.Public, "sha256:")+".json"):
+			_, _ = response.Write(embeddedPublicCatalogJSON)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	primaryURL, _ := url.Parse(server.URL + "/primary/latest.json")
+	backupURL, _ := url.Parse(server.URL + "/backup/latest.json")
+	updater := &Updater{
+		client:      server.Client(),
+		config:      UpdaterConfig{ReleaseURL: primaryURL.String()},
+		etags:       map[string]string{},
+		keys:        map[string]ed25519.PublicKey{"test": publicKey},
+		releaseURLs: []*url.URL{primaryURL, backupURL},
+	}
+	if err := updater.pollOnce(context.Background()); err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	identity, ok := ActiveIdentity()
+	if !ok || identity.Sequence != backup.Sequence {
+		t.Fatalf("active identity = %#v", identity)
+	}
+}
+
+func TestCatalogReleaseURLsAddIndependentOriginOnlyForOfficialURLs(t *testing.T) {
+	production, err := catalogReleaseURLs("https://evidence.stogas.ai/catalog/latest.json")
+	if err != nil || len(production) != 2 ||
+		production[1].Host != "evidence2.stogas.ai" {
+		t.Fatalf("production URLs = %#v err=%v", production, err)
+	}
+	custom, err := catalogReleaseURLs("https://evidence.example/catalog/latest.json")
+	if err != nil || len(custom) != 1 {
+		t.Fatalf("custom URLs = %#v err=%v", custom, err)
 	}
 }
 

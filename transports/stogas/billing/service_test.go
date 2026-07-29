@@ -335,7 +335,7 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := &Service{tinybird: NewTinybirdClient(server.URL, "gateway-requests-token")}
+	service := &Service{tinybird: newTestTinybirdClient(t, server.URL)}
 	service.publishUncommittedFallback(
 		&Authorization{RequestID: "request-1"},
 		RequestEvent{
@@ -376,7 +376,7 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 			attempts++
 			return errors.New("simulated postgres outage")
 		},
-		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
+		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 	service.retrySettle(
 		&Authorization{RequestID: "request-1"},
@@ -454,7 +454,7 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 		{
 			name: "network failure falls back to outbox",
 			tinybird: func(*httptest.Server) *TinybirdClient {
-				return NewTinybirdClient("http://127.0.0.1:1", "gateway-requests-token")
+				return newTestTinybirdClient(t, "http://127.0.0.1:1")
 			},
 			wantOutbox: true,
 		},
@@ -465,7 +465,7 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 				_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
 			},
 			tinybird: func(server *httptest.Server) *TinybirdClient {
-				client := NewTinybirdClient(server.URL, "gateway-requests-token")
+				client := newTestTinybirdClient(t, server.URL)
 				client.client.Timeout = time.Millisecond
 				return client
 			},
@@ -492,7 +492,7 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 			}))
 			defer server.Close()
 
-			tinybird := NewTinybirdClient(server.URL, "gateway-requests-token")
+			tinybird := newTestTinybirdClient(t, server.URL)
 			if tt.tinybird != nil {
 				tinybird = tt.tinybird(server)
 			}
@@ -560,7 +560,7 @@ func TestTinybirdAppendRequiresCommittedSingleRowAcknowledgement(t *testing.T) {
 			}))
 			defer server.Close()
 
-			err := NewTinybirdClient(server.URL, "gateway-requests-token").AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
+			err := newTestTinybirdClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("AppendGatewayRequest error = %v, wantErr=%t", err, tt.wantErr)
 			}
@@ -586,7 +586,7 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
 			return errors.New("simulated postgres outage after tinybird commit")
 		},
-		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
+		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 	service.retrySettle(
 		testAuthorization(),
@@ -622,7 +622,7 @@ func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend
 			}
 			return nil
 		},
-		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
+		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 
 	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
@@ -702,7 +702,7 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 				statusCode: 400,
 			}
 		},
-		tinybird: NewTinybirdClient(server.URL, "gateway-requests-token"),
+		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 	service.retrySettle(
 		testAuthorization(),
