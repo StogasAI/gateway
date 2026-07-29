@@ -48,13 +48,14 @@ type Pricing = billing.Pricing
 type MeterEstimate = billing.MeterEstimate
 
 type snapshot struct {
-	aliases          map[string]string
-	graph            compiledGraph
-	identity         Identity
-	publicDigest     string
-	publicRaw        []byte
-	raw              []byte
-	routeDeployments map[string][]string
+	deploymentSelectors map[string]string
+	graph               compiledGraph
+	identity            Identity
+	modelSelectors      map[string]string
+	publicDigest        string
+	publicRaw           []byte
+	raw                 []byte
+	routeDeployments    map[string][]string
 }
 
 type compiledCatalog struct {
@@ -71,31 +72,37 @@ type compiledGraph struct {
 }
 
 type compiledAuthor struct {
-	Name  string   `json:"name"`
-	Slugs []string `json:"slugs"`
+	Aliases []string `json:"aliases"`
+	Name    string   `json:"name"`
 }
 
 type compiledDeployment struct {
 	Aliases          []string             `json:"aliases"`
 	Capabilities     compiledCapabilities `json:"capabilities"`
+	Default          bool                 `json:"default"`
 	Limits           compiledLimits       `json:"limits"`
 	ModelID          string               `json:"modelId"`
 	Pricing          Pricing              `json:"pricing"`
 	ReasoningEfforts []string             `json:"reasoningEfforts"`
+	DeprecationDate  *string              `json:"deprecationDate"`
 	RouteIDs         []string             `json:"routeIds"`
-	Status           string               `json:"status"`
 	Upstream         compiledUpstream     `json:"upstream"`
 }
 
 type compiledCapabilities struct {
-	FunctionCalling  bool     `json:"functionCalling"`
-	InputModalities  []string `json:"inputModalities"`
-	OutputModalities []string `json:"outputModalities"`
-	PromptCaching    bool     `json:"promptCaching"`
-	Streaming        bool     `json:"streaming"`
-	SystemMessages   bool     `json:"systemMessages"`
-	ToolChoice       bool     `json:"toolChoice"`
-	WebSearch        bool     `json:"webSearch"`
+	Cancellation            bool     `json:"cancellation"`
+	FunctionCalling         bool     `json:"functionCalling"`
+	InputModalities         []string `json:"inputModalities"`
+	OutputModalities        []string `json:"outputModalities"`
+	ParallelFunctionCalling bool     `json:"parallelFunctionCalling"`
+	PDFInput                bool     `json:"pdfInput"`
+	PromptCaching           bool     `json:"promptCaching"`
+	Streaming               bool     `json:"streaming"`
+	StructuredOutputs       bool     `json:"structuredOutputs"`
+	SystemMessages          bool     `json:"systemMessages"`
+	ToolChoice              bool     `json:"toolChoice"`
+	URLContext              bool     `json:"urlContext"`
+	WebSearch               bool     `json:"webSearch"`
 }
 
 type compiledLimits struct {
@@ -115,14 +122,15 @@ type compiledUpstreamFixedRequest struct {
 }
 
 type compiledModel struct {
-	AuthorID    string `json:"authorId"`
-	Name        string `json:"name"`
-	ReleaseDate string `json:"releaseDate"`
+	Aliases     []string `json:"aliases"`
+	AuthorID    string   `json:"authorId"`
+	Name        string   `json:"name"`
+	ReleaseDate string   `json:"releaseDate"`
 }
 
 type compiledProvider struct {
-	Name  string   `json:"name"`
-	Slugs []string `json:"slugs"`
+	Aliases []string `json:"aliases"`
+	Name    string   `json:"name"`
 }
 
 type compiledRoute struct {

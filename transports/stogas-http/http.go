@@ -320,7 +320,7 @@ func dryRunProviderRequestMarshal(ctx *schemas.BifrostContext, req *schemas.Bifr
 	case req.ResponsesRequest != nil:
 		switch req.ResponsesRequest.Provider {
 		case schemas.OpenAI:
-			converted := openaiprovider.ToOpenAIResponsesRequest(req.ResponsesRequest)
+			converted := openaiprovider.ToOpenAIResponsesRequest(ctx, req.ResponsesRequest)
 			if converted == nil {
 				return invalidProviderRequest()
 			}
@@ -440,6 +440,11 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 					if streamProof != nil {
 						if sendDone {
 							streamProof.WriteSentChunk(frameSSEDone())
+						}
+						if state != nil && state.Resolution != nil {
+							streamProof.SetCatalogNodeIDs(
+								state.Resolution.CatalogNodeIDsForDeployment(stogas.ExecutionDeployment(state)),
+							)
 						}
 						output, err := s.proofs.FinishStream(bifrostCtx, streamProof)
 						if err != nil {

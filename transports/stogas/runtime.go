@@ -130,7 +130,7 @@ func newAccount(config Config) *account {
 			schemas.OpenAI: {
 				ID:      openAIProviderKeyID,
 				Name:    openAIProviderKeyID,
-				Value:   *schemas.NewEnvVar(config.OpenAIAPIKey),
+				Value:   *schemas.NewSecretVar(config.OpenAIAPIKey),
 				Models:  schemas.WhiteList{"*"},
 				Weight:  1,
 				Enabled: schemas.Ptr(true),
@@ -138,7 +138,7 @@ func newAccount(config Config) *account {
 			schemas.Anthropic: {
 				ID:      anthropicProviderKeyID,
 				Name:    anthropicProviderKeyID,
-				Value:   *schemas.NewEnvVar(config.AnthropicAPIKey),
+				Value:   *schemas.NewSecretVar(config.AnthropicAPIKey),
 				Models:  schemas.WhiteList{"*"},
 				Weight:  1,
 				Enabled: schemas.Ptr(true),

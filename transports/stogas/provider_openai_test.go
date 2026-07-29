@@ -312,7 +312,7 @@ func TestValidateRequestAllowsWebSearchOptionsOnlyForChatSearchModels(t *testing
 
 func TestValidateOpenAIChatWebSearchOptionsPreservesTypedShape(t *testing.T) {
 	if err := validateResolvedChat(t, `{
-		"model":"gpt-4o-search-preview",
+		"model":"gpt-5-search-api",
 		"messages":[],
 		"web_search_options":{
 			"search_context_size":"low",
@@ -338,22 +338,22 @@ func TestValidateOpenAIChatWebSearchOptionsPreservesTypedShape(t *testing.T) {
 	}{
 		{
 			name: "unknown option",
-			body: `{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{"future_option":true},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"future_option":true},"max_completion_tokens":100}`,
 			want: "web_search_options.future_option is not supported",
 		},
 		{
 			name: "unknown location field",
-			body: `{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{"user_location":{"type":"approximate","future_field":true}},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"user_location":{"type":"approximate","future_field":true}},"max_completion_tokens":100}`,
 			want: "web_search_options.user_location.future_field is not supported",
 		},
 		{
 			name: "unknown approximate field",
-			body: `{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{"user_location":{"type":"approximate","approximate":{"postal_code":"94107"}}},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"user_location":{"type":"approximate","approximate":{"postal_code":"94107"}}},"max_completion_tokens":100}`,
 			want: "web_search_options.user_location.approximate.postal_code is not supported",
 		},
 		{
 			name: "unpriced search context size",
-			body: `{"model":"gpt-4o-search-preview","messages":[],"web_search_options":{"search_context_size":"future"},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"search_context_size":"future"},"max_completion_tokens":100}`,
 			want: "web_search_options.search_context_size must be low, medium, or high",
 		},
 	} {
@@ -465,9 +465,9 @@ func TestResponsesPreviewSearchHoldDoesNotEmitNegativeRemainingContextMeter(t *t
 	req := openAIAdapterContext{
 		Route: openAIAdapterRouteResponses,
 		Deployment: openAIAdapterDeployment{
-			Model:                 "gpt-5.5",
-			ContextWindowTokens:   100,
-			ReasoningSupported:    true,
+			Model:               "gpt-5.5",
+			ContextWindowTokens: 100,
+			ReasoningSupported:  true,
 			Pricing: billing.Pricing{
 				billing.MeterInputTokens:                  {billing.RatePerMillionTokens: "1000000"},
 				MeterOpenAIResponsesWebSearchPreviewCalls: {billing.RatePerThousandCalls: "1000"},

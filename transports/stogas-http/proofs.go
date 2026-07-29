@@ -54,10 +54,11 @@ func (s *Server) proofInput(ctx *fasthttp.RequestCtx, state *stogas.State, respo
 		transcriptSHA256 = session.TranscriptSHA256()
 	}
 	catalogIdentity := state.Resolution.CatalogIdentity()
+	executionDeployment := stogas.ExecutionDeployment(state)
 	return proofhttp.Input{
 		RequestBody:          append([]byte(nil), ctx.Request.Body()...),
 		CatalogDigest:        catalogIdentity.Digest,
-		CatalogNodeIDs:       state.Resolution.CatalogNodeIDs(),
+		CatalogNodeIDs:       state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
 		ResponseBody:         append([]byte(nil), responseJSON...),
 		E2EETranscriptSHA256: transcriptSHA256,
 	}, nil

@@ -173,7 +173,7 @@ func TestSettlementStatuses(t *testing.T) {
 	}
 }
 
-func TestEncodeGatewayRequestEventDefaultsMeterQuantities(t *testing.T) {
+func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	payload, err := encodeGatewayRequestEvent(RequestEvent{RequestID: "request"})
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
@@ -183,15 +183,15 @@ func TestEncodeGatewayRequestEventDefaultsMeterQuantities(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
 		t.Fatalf("payload is not valid JSON: %v", err)
 	}
-	quantities, ok := decoded["meter_quantities"].(map[string]any)
-	if !ok {
-		t.Fatalf("meter_quantities = %v, want object", decoded["meter_quantities"])
+	if _, exists := decoded["meter_quantities"]; exists {
+		t.Fatal("meter_quantities must not duplicate pricing quantities")
 	}
-	if len(quantities) != 0 {
-		t.Fatalf("meter_quantities = %#v, want empty object", quantities)
+	if _, exists := decoded["pricing_input_sha256"]; exists {
+		t.Fatal("pricing_input_sha256 must not duplicate the catalog-bound pricing record")
 	}
-	if _, exists := decoded["pricing"]; exists {
-		t.Fatal("internal pricing input must not be written to request telemetry")
+	pricing, ok := decoded["pricing"].(map[string]any)
+	if !ok || len(pricing) != 0 {
+		t.Fatalf("pricing = %#v, want empty object", decoded["pricing"])
 	}
 }
 
@@ -199,7 +199,9 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	status := 200
 	firstOutput := uint32(46)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		MeterQuantities: map[string]string{"input_tokens": "12"},
+		Pricing: map[string]any{
+			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "rateUsdAtoms": "1", "usdAtoms": "1"},
+		},
 		ProviderAttempts: []ProviderAttempt{{
 			IsBYOK:                false,
 			LatencyMS:             12,
@@ -235,16 +237,13 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
-	var quantities map[string]string
-	if err := json.Unmarshal([]byte(event.MeterQuantities), &quantities); err != nil {
-		t.Fatalf("meter_quantities = %q, err=%v", event.MeterQuantities, err)
-	}
-	if quantities["input_tokens"] != "12" {
-		t.Fatalf("meter quantities should keep dynamic meter keys: %#v", quantities)
+	var pricing map[string]map[string]string
+	if err := json.Unmarshal([]byte(event.Pricing), &pricing); err != nil || pricing["input_tokens"]["quantity"] != "12" {
+		t.Fatalf("pricing = %q, err=%v", event.Pricing, err)
 	}
 }
 
-func TestNewRequestEventSeparatesBillingInputFromTelemetry(t *testing.T) {
+func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
 	providerFirstOutput := uint32(8)
 	provisioningKeyID := "019de515-eabf-7c0e-89bd-400629a79580"
@@ -253,13 +252,13 @@ func TestNewRequestEventSeparatesBillingInputFromTelemetry(t *testing.T) {
 		ProviderFirstOutputMS: &providerFirstOutput,
 		RequestType:           string(schemas.ChatCompletionStreamRequest),
 		Pricing: map[string]any{
-			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "usdAtoms": "2"},
+			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "rateUsdAtoms": "2000000", "usdAtoms": "2"},
 		},
 		StartedAt: startedAt,
 	})
 
-	if event.MeterQuantities["input_tokens"] != "1" || len(event.PricingInputSHA256) != 64 {
-		t.Fatalf("expected compact metering telemetry, got %#v", event)
+	if event.Pricing["input_tokens"].(map[string]any)["rateUsdAtoms"] != "2000000" {
+		t.Fatalf("expected settled pricing audit, got %#v", event.Pricing)
 	}
 	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
 		t.Fatalf("expected provider first output on provider attempt, got %#v", event.ProviderAttempts)

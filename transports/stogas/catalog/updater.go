@@ -302,7 +302,7 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	}
 	if manifest.Schema != "stogas.catalog.release.v2" ||
 		manifest.Sequence == 0 ||
-		manifest.CatalogSchema != 3 {
+		manifest.CatalogSchema != catalogSchema {
 		return releaseManifest{}, fmt.Errorf("catalog manifest is unsupported")
 	}
 	if _, err := parseSHA256(manifest.Runtime); err != nil {

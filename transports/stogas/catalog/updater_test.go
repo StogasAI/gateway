@@ -179,7 +179,7 @@ func testReleaseManifest(sequence uint64) releaseManifest {
 	return releaseManifest{
 		Schema:        "stogas.catalog.release.v2",
 		Sequence:      sequence,
-		CatalogSchema: 3,
+		CatalogSchema: catalogSchema,
 		Runtime:       testDigest(embeddedRuntimeCatalogJSON),
 		Public:        testDigest(embeddedPublicCatalogJSON),
 	}

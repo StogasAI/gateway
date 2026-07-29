@@ -5,25 +5,26 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-func TestEmbeddedCatalogV3LoadsFiveNodeGraph(t *testing.T) {
+func TestEmbeddedCatalogV5LoadsFiveNodeGraph(t *testing.T) {
 	snap := loadTestCatalog(t)
 	if snap.identity.Sequence != 0 || !strings.HasPrefix(snap.identity.Digest, "sha256:") {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
 	if len(snap.graph.Authors) != 2 ||
-		len(snap.graph.Models) != 7 ||
+		len(snap.graph.Models) < 10 ||
 		len(snap.graph.Providers) != 2 ||
 		len(snap.graph.Routes) != 3 ||
-		len(snap.graph.Deployments) != 19 {
-		t.Fatalf("unexpected v3 graph sizes: %#v", snap.graph)
+		len(snap.graph.Deployments) < 30 {
+		t.Fatalf("unexpected v4 graph sizes: %#v", snap.graph)
 	}
-	if len(snap.aliases) != 36 {
-		t.Fatalf("aliases = %d, want 36 explicit records", len(snap.aliases))
+	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; !exists {
+		t.Fatal("historical search preview deployment must remain reproducible")
 	}
 }
 
@@ -31,8 +32,10 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	loadTestCatalog(t)
 	for _, requested := range []string{
 		"gpt-5.5",
+		"openai/gpt-5.5",
+		"openai/openai/gpt-5.5",
 		"open-ai/gpt-5.5",
-		"openai/open-ai/gpt-5.5",
+		"open-ai/open-ai/gpt-5.5",
 	} {
 		provider, ok, err := ProviderForRouteModel(RouteResponses, requested)
 		if err != nil || !ok || provider != schemas.OpenAI {
@@ -42,6 +45,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	for _, requested := range []string{
 		"anthropic/gpt-5.5",
 		"anthropic/openai/gpt-5.5",
+		"open_ai/gpt-5.5",
 		"openai/openai/openai/gpt-5.5",
 		"gpt-5.5-latest",
 	} {
@@ -51,9 +55,34 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	}
 }
 
+func TestDeploymentLifecycleCutoffsFailClosed(t *testing.T) {
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	for name, deployment := range map[string]compiledDeployment{
+		"active": {
+			DeprecationDate: nil,
+		},
+		"future retirement": {
+			DeprecationDate: stringPointer("2026-07-28"),
+		},
+	} {
+		if !deploymentAvailableAt(deployment, now) {
+			t.Fatalf("%s deployment was unavailable", name)
+		}
+	}
+	for name, deployment := range map[string]compiledDeployment{
+		"retired": {
+			DeprecationDate: stringPointer("2026-07-23"),
+		},
+	} {
+		if deploymentAvailableAt(deployment, now) {
+			t.Fatalf("%s deployment remained available", name)
+		}
+	}
+}
+
 func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	loadTestCatalog(t)
-	flex, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5-flex", RouteResponses)
+	flex, ok := DeploymentForRoute(schemas.OpenAI, "openai-gpt-5.5-2026-04-23-flex", RouteResponses)
 	if !ok || flex.Upstream.FixedRequest.ServiceTier != "flex" ||
 		flex.ImpliedServiceTier == nil ||
 		*flex.ImpliedServiceTier != schemas.BifrostServiceTierFlex {
@@ -66,29 +95,34 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 		RouteResponses,
 		&requestedFlex,
 	)
-	if !ok || flex.ID != "gpt-5.5-flex" {
+	if !ok || flex.ID != "openai-gpt-5.5-2026-04-23-flex" {
 		t.Fatalf("OpenAI service_tier did not select the concrete flex deployment: %#v", flex)
 	}
 	requestedPriority := schemas.BifrostServiceTierPriority
 	flex, ok = DeploymentForRouteServiceTier(
 		schemas.OpenAI,
-		"gpt-5.5-flex",
+		"openai-gpt-5.5-2026-04-23-flex",
 		RouteResponses,
 		&requestedPriority,
 	)
-	if !ok || flex.ID != "gpt-5.5-flex" {
-		t.Fatalf("explicit tier alias was retargeted by request service_tier: %#v", flex)
+	if ok {
+		t.Fatalf("conflicting request tier accepted for exact flex deployment: %#v", flex)
 	}
-	fastUS, ok := DeploymentForRouteServiceTierRegionSpeed(
-		schemas.Anthropic,
-		"claude-opus-4-8",
+	if _, ok = DeploymentForRouteServiceTier(
+		schemas.OpenAI,
+		"openai-gpt-5.5-2026-04-23",
 		RouteResponses,
-		nil,
-		"us",
-		"fast",
+		&requestedFlex,
+	); ok {
+		t.Fatal("conflicting axes must not retarget an exact deployment selector")
+	}
+	fastUS, ok := DeploymentForRoute(
+		schemas.Anthropic,
+		"anthropic-claude-opus-4-8-fast-us",
+		RouteResponses,
 	)
 	if !ok ||
-		fastUS.ID != "claude-opus-4-8-fast-us" ||
+		fastUS.ID != "anthropic-claude-opus-4-8-fast-us" ||
 		fastUS.Upstream.FixedRequest.Speed != "fast" ||
 		fastUS.Upstream.FixedRequest.InferenceGeo != "us" ||
 		len(fastUS.RouteIDs) != 1 ||
@@ -126,7 +160,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 	want := []string{
 		"author:openai",
 		"model:gpt-5.5-2026-04-23",
-		"deployment:gpt-5.5",
+		"deployment:openai-gpt-5.5-2026-04-23",
 		"route:openai-responses",
 		"provider:openai",
 	}
@@ -152,17 +186,14 @@ func TestPublicCatalogDisclosesEffectiveModerationAndDataHandling(t *testing.T) 
 	rawDeployments := payload.Graph["deployments"]
 	var deployments map[string]struct {
 		DataHandling map[string]any `json:"dataHandling"`
-		Moderation   struct {
-			Input  string `json:"input"`
-			Output string `json:"output"`
-		} `json:"moderation"`
+		Moderated    bool           `json:"moderated"`
 	}
 	if err := json.Unmarshal(rawDeployments, &deployments); err != nil {
 		t.Fatalf("decode public deployments: %v", err)
 	}
 	for id, deployment := range deployments {
-		if deployment.Moderation.Input != "provider" || deployment.Moderation.Output != "provider" {
-			t.Fatalf("%s moderation actor is not explicit: %#v", id, deployment.Moderation)
+		if !deployment.Moderated {
+			t.Fatalf("%s moderation fact is not explicit", id)
 		}
 		if deployment.DataHandling["processingRegions"] == nil || deployment.DataHandling["storageRegions"] == nil {
 			t.Fatalf("%s data handling is incomplete: %#v", id, deployment.DataHandling)
@@ -177,7 +208,7 @@ func TestFlattenedPricingNeedsNoProviderOverlay(t *testing.T) {
 		t.Fatal("gpt-5.5 deployment unavailable")
 	}
 	if ProviderPricing(schemas.OpenAI) != nil {
-		t.Fatal("v3 pricing must be fully materialized on deployments")
+		t.Fatal("v4 pricing must be fully materialized on deployments")
 	}
 	if deployment.Pricing["openai_responses_web_search_calls"][billing.RatePerThousandCalls] == "" {
 		t.Fatalf("route pricing was not materialized: %#v", deployment.Pricing)
@@ -191,7 +222,7 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	}
 	graph := runtime["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	deployment := deployments["gpt-5.5"].(map[string]any)
+	deployment := deployments["openai-gpt-5.5-2026-04-23"].(map[string]any)
 	deployment["routeIds"] = []any{"missing-route"}
 	broken, err := json.Marshal(runtime)
 	if err != nil {
@@ -200,6 +231,42 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
 		!strings.Contains(err.Error(), "unknown route") {
 		t.Fatalf("broken route reference was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	deployments := graph["deployments"].(map[string]any)
+	deployment := deployments["openai-gpt-5.5-2026-04-23"].(map[string]any)
+	pricing := deployment["pricing"].(map[string]any)
+	delete(pricing, billing.MeterInputTokens)
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "missing required pricing meter") {
+		t.Fatalf("catalog without input pricing was accepted: %v", err)
+	}
+
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph = runtime["graph"].(map[string]any)
+	deployments = graph["deployments"].(map[string]any)
+	deployment = deployments["openai-gpt-5.5-2026-04-23"].(map[string]any)
+	deployment["reasoningEfforts"] = []any{"low", "future"}
+	broken, err = json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "unsupported reasoning effort") {
+		t.Fatalf("catalog with unknown reasoning effort was accepted: %v", err)
 	}
 }
 
@@ -231,7 +298,7 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 	}
 	graph := public["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	delete(deployments, "gpt-5.5")
+	delete(deployments, "openai-gpt-5.5-2026-04-23")
 	broken, err := json.Marshal(public)
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +307,11 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("mismatched public projection was accepted: %v", err)
 	}
+
+}
+
+func stringPointer(value string) *string {
+	return &value
 }
 
 func TestCatalogErrorsRemainPubliclyStable(t *testing.T) {

@@ -21,10 +21,10 @@ const (
 	webSearchFixedContentInputTokens = 8000
 	searchCallQuantity               = 1
 
-	MeterOpenAIChatCompletionSearchModelCalls        = "openai_chat_completion_search_model_calls"
-	MeterOpenAIChatCompletionSearchPreviewModelCalls = "openai_chat_completion_search_preview_model_calls"
-	MeterOpenAIResponsesWebSearchCalls               = "openai_responses_web_search_calls"
-	MeterOpenAIResponsesWebSearchPreviewCalls        = "openai_responses_web_search_preview_calls"
+	MeterOpenAIChatCompletionSearchModelCalls             = "openai_chat_completion_search_model_calls"
+	MeterOpenAIChatCompletionSearchPreviewModelCalls      = "openai_chat_completion_search_preview_model_calls"
+	MeterOpenAIResponsesWebSearchCalls                    = "openai_responses_web_search_calls"
+	MeterOpenAIResponsesWebSearchPreviewCalls             = "openai_responses_web_search_preview_calls"
 	MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls = "openai_responses_web_search_preview_non_reasoning_calls"
 
 	RatePerThousandSearchContextHighCalls   = "per_1k_search_context_high_calls"
@@ -69,7 +69,6 @@ func (a OpenAIAdapter) SanitizeRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	state.Resolution.NormalizePromptCacheRetention()
 	ensureOpenAIResponsesHostedToolCap(state)
 	return nil
 }
@@ -81,6 +80,9 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if state != nil && state.Resolution != nil {
 		state.Resolution.NormalizeMinimumOutputTokenLimit(openaiprovider.MinMaxCompletionTokens)
 	}
+	if err := validateOpenAIPromptCaching(state); err != nil {
+		return err
+	}
 	if err := validateOpenAIChatCompletionPolicy(state); err != nil {
 		return err
 	}
@@ -90,11 +92,102 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(state)))
 }
 
+func validateOpenAIPromptCaching(state *State) error {
+	if state == nil || state.Resolution == nil {
+		return catalog.ErrUnsupportedRequest
+	}
+	raw := state.Resolution.RawBody()
+	optionsSet := rawJSONValueSet(raw["prompt_cache_options"])
+	breakpoints, err := validatePromptCacheBreakpoints(
+		rawPromptContent(state.Resolution.Route, raw),
+		state.Resolution.Route,
+	)
+	if err != nil {
+		return err
+	}
+	if !optionsSet && breakpoints == 0 {
+		return nil
+	}
+	if !strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") {
+		return invalidRequest("prompt cache options and breakpoints require a GPT-5.6 deployment")
+	}
+	if !optionsSet {
+		return nil
+	}
+	options, ok := rawObject(raw["prompt_cache_options"])
+	if !ok {
+		return invalidRequest("prompt_cache_options must be an object")
+	}
+	if !onlyRawKeysOptional(options, "mode", "ttl") {
+		return invalidRequest("prompt_cache_options supports only mode and ttl")
+	}
+	if modeRaw, exists := options["mode"]; exists {
+		mode, ok := rawStringValue(modeRaw)
+		if !ok || (mode != "implicit" && mode != "explicit") {
+			return invalidRequest("prompt_cache_options.mode must be implicit or explicit")
+		}
+	}
+	if ttlRaw, exists := options["ttl"]; exists {
+		ttl, ok := rawStringValue(ttlRaw)
+		if !ok || ttl != "30m" {
+			return invalidRequest("prompt_cache_options.ttl must be 30m")
+		}
+	}
+	return nil
+}
+
+func rawPromptContent(route catalog.Route, raw map[string]json.RawMessage) json.RawMessage {
+	if route == catalog.RouteChat {
+		return raw["messages"]
+	}
+	return raw["input"]
+}
+
+func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (int, error) {
+	count := 0
+	err := openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
+		breakpointRaw, exists := object["prompt_cache_breakpoint"]
+		if !exists {
+			return nil
+		}
+		blockType := rawStringField(object, "type")
+		allowed := (route == catalog.RouteChat && (blockType == "text" || blockType == "refusal")) ||
+			(route == catalog.RouteResponses && blockType == "input_text")
+		if !allowed {
+			return invalidRequest("prompt_cache_breakpoint is only supported on text prompt blocks")
+		}
+		breakpoint, ok := rawObject(breakpointRaw)
+		if !ok || !onlyRawKeys(breakpoint, "mode") || rawString(breakpoint["mode"]) != "explicit" {
+			return invalidRequest("prompt_cache_breakpoint must contain only mode: explicit")
+		}
+		count++
+		return nil
+	})
+	return count, err
+}
+
+func onlyRawKeysOptional(object map[string]json.RawMessage, keys ...string) bool {
+	allowed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		allowed[key] = true
+	}
+	for key := range object {
+		if !allowed[key] {
+			return false
+		}
+	}
+	return true
+}
+
 func validateOpenAIChatCompletionPolicy(state *State) error {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteChat {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
+	if strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") &&
+		rawReasoningEffort(raw) == "max" {
+		return invalidRequest("reasoning effort max requires the Responses API for GPT-5.6")
+	}
 	for _, name := range []string{"cache_control", "context_management", "mcp_servers", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is only supported for Anthropic deployments")
@@ -114,6 +207,17 @@ func validateOpenAIChatCompletionPolicy(state *State) error {
 		return err
 	}
 	return nil
+}
+
+func rawReasoningEffort(raw map[string]json.RawMessage) string {
+	if effort := rawString(raw["reasoning_effort"]); effort != "" {
+		return effort
+	}
+	reasoning, ok := rawObject(raw["reasoning"])
+	if !ok {
+		return ""
+	}
+	return rawString(reasoning["effort"])
 }
 
 func validateOpenAIResponsesPolicy(state *State) error {

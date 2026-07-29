@@ -11,6 +11,7 @@ type Signals interface {
 	CompletionTokens() int
 	ReasoningTokens() int
 	CachedInputTokens() int
+	CacheWriteInputTokens() int
 	CacheWrite5mInputTokens() int
 	CacheWrite1hInputTokens() int
 }
@@ -24,6 +25,7 @@ type StandardSignals struct {
 	Completion        int
 	Reasoning         int
 	Cached            int
+	CacheWrite        int
 	CacheWrite5m      int
 	CacheWrite1h      int
 	WebSearch         int
@@ -69,6 +71,13 @@ func (s *StandardSignals) CacheWrite5mInputTokens() int {
 	return s.CacheWrite5m
 }
 
+func (s *StandardSignals) CacheWriteInputTokens() int {
+	if s == nil {
+		return 0
+	}
+	return s.CacheWrite
+}
+
 func (s *StandardSignals) CacheWrite1hInputTokens() int {
 	if s == nil {
 		return 0
@@ -91,6 +100,7 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	completionTokens := usage.CompletionTokens
 
 	cached := 0
+	cacheWrite := 0
 	cacheWrite5m := 0
 	cacheWrite1h := 0
 	if usage.PromptTokensDetails != nil {
@@ -98,11 +108,12 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 		if usage.PromptTokensDetails.CachedWriteTokenDetails != nil {
 			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens5m
 			cacheWrite1h = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h
-			if residual := usage.PromptTokensDetails.CachedWriteTokens - cacheWrite5m - cacheWrite1h; residual > 0 {
-				cacheWrite1h += residual
+			cacheWrite = usage.PromptTokensDetails.CachedWriteTokens - cacheWrite5m - cacheWrite1h
+			if cacheWrite < 0 {
+				cacheWrite = 0
 			}
 		} else {
-			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokens
+			cacheWrite = usage.PromptTokensDetails.CachedWriteTokens
 		}
 	}
 	webSearch := 0
@@ -127,7 +138,7 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	if completionTokens == 0 && usage.CompletionTokensDetails != nil {
 		completionTokens = completionTokenFallback(usage.CompletionTokensDetails)
 	}
-	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
 }
 
 func promptTokenFallback(details *schemas.ChatPromptTokensDetails) int {
@@ -173,6 +184,12 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next == nil {
 		return
 	}
+	if state.Resolution != nil &&
+		state.Resolution.Provider == schemas.Anthropic &&
+		next.CacheWrite > 0 {
+		next.CacheWrite5m += next.CacheWrite
+		next.CacheWrite = 0
+	}
 	current, ok := state.Signals.(*StandardSignals)
 	if !ok || current == nil {
 		state.Signals = next
@@ -182,6 +199,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	current.Completion = next.Completion
 	current.Reasoning = next.Reasoning
 	current.Cached = next.Cached
+	current.CacheWrite = next.CacheWrite
 	current.CacheWrite5m = next.CacheWrite5m
 	current.CacheWrite1h = next.CacheWrite1h
 	if next.WebSearch > current.WebSearch {

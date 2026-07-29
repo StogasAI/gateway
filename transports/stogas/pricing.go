@@ -27,7 +27,12 @@ func baseHoldEstimate(state *State) HoldEstimate {
 	meters := []catalog.MeterEstimate{}
 	pricing := effectivePricingForState(state)
 	if inputTokenLimit > 0 {
-		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterInputTokens, inputTokenLimit, true, billing.TokenRateHighest)
+		meters = appendInputTokenHoldCost(
+			meters,
+			pricing,
+			inputTokenLimit,
+			openAICacheWriteHoldCopies(state),
+		)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
 	return HoldEstimate{
@@ -57,9 +62,10 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 	}
 	outputTokens := completionTokens - reasoningTokens
 	cachedInputTokens := state.Signals.CachedInputTokens()
+	cacheWriteTokens := state.Signals.CacheWriteInputTokens()
 	cacheWrite5mTokens := state.Signals.CacheWrite5mInputTokens()
 	cacheWrite1hTokens := state.Signals.CacheWrite1hInputTokens()
-	inputTokens := promptTokens - cachedInputTokens - cacheWrite5mTokens - cacheWrite1hTokens
+	inputTokens := promptTokens - cachedInputTokens - cacheWriteTokens - cacheWrite5mTokens - cacheWrite1hTokens
 	if inputTokens < 0 {
 		inputTokens = 0
 	}
@@ -74,6 +80,7 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		pricing = effectivePricingForState(state)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterInputTokens, inputTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCachedInputTokens, cachedInputTokens, false, rateMode)
+		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWriteInputTokens, cacheWriteTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite5mInputTokens, cacheWrite5mTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterCacheWrite1hInputTokens, cacheWrite1hTokens, false, rateMode)
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, outputTokens, false, rateMode)
@@ -83,6 +90,61 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 	meters = compactMeterEstimates(meters, pricing)
 	state.FinalMeters = meters
 	return sumMeterAmounts(meters)
+}
+
+func appendInputTokenHoldCost(
+	meters []catalog.MeterEstimate,
+	pricing catalog.Pricing,
+	quantity int,
+	cacheWriteCopies int,
+) []catalog.MeterEstimate {
+	meterKey := billing.MeterInputTokens
+	_, inputRate, hasInputRate := billing.PricingRate(pricing, meterKey, billing.TokenRateHighest)
+	_, cacheWriteRate, hasCacheWriteRate := billing.PricingRate(
+		pricing,
+		billing.MeterCacheWriteInputTokens,
+		billing.TokenRateHighest,
+	)
+	cacheWriteMoreExpensive := false
+	if cacheWriteCopies > 0 && hasCacheWriteRate {
+		cacheWriteTotalRate := new(big.Int).Mul(
+			cacheWriteRate,
+			big.NewInt(int64(cacheWriteCopies)),
+		)
+		cacheWriteMoreExpensive = !hasInputRate || cacheWriteTotalRate.Cmp(inputRate) > 0
+	}
+	if cacheWriteMoreExpensive {
+		meterKey = billing.MeterCacheWriteInputTokens
+		quantity *= cacheWriteCopies
+	}
+	return billing.AppendTokenMeterCost(meters, pricing, meterKey, quantity, true, billing.TokenRateHighest)
+}
+
+func openAICacheWriteHoldCopies(state *State) int {
+	if state == nil ||
+		state.Resolution == nil ||
+		state.Resolution.Provider != "openai" ||
+		!strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") {
+		return 0
+	}
+	raw := state.Resolution.RawBody()
+	breakpoints, err := validatePromptCacheBreakpoints(
+		rawPromptContent(state.Resolution.Route, raw),
+		state.Resolution.Route,
+	)
+	if err != nil {
+		return 4
+	}
+	mode := "implicit"
+	if options, ok := rawObject(raw["prompt_cache_options"]); ok {
+		if configured := rawString(options["mode"]); configured != "" {
+			mode = configured
+		}
+	}
+	if mode == "explicit" {
+		return min(breakpoints, 4)
+	}
+	return min(breakpoints+1, 4)
 }
 
 func effectivePricingForState(state *State) catalog.Pricing {
@@ -154,6 +216,12 @@ func pricingDeploymentForState(state *State) catalog.Deployment {
 		return deployment
 	}
 	return actual
+}
+
+// ExecutionDeployment returns the concrete deployment reported by the provider
+// when it differs from the requested deployment.
+func ExecutionDeployment(state *State) catalog.Deployment {
+	return pricingDeploymentForState(state)
 }
 
 func noUsageFinalPrice(state *State) string {

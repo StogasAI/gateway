@@ -85,7 +85,7 @@ func stogasMetadata(ctx *schemas.BifrostContext, extra schemas.BifrostResponseEx
 	}
 	if fields["model_deployment"] {
 		if state, ok := stogas.StateFrom(ctx); ok && state.Resolution != nil {
-			metadata["model_deployment"] = state.Resolution.Deployment.ID
+			metadata["model_deployment"] = stogas.ExecutionDeployment(state).ID
 		} else if extra.ResolvedModelUsed != "" {
 			metadata["model_deployment"] = extra.ResolvedModelUsed
 		}

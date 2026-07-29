@@ -569,8 +569,8 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 }
 
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
-	if event.MeterQuantities == nil {
-		event.MeterQuantities = map[string]string{}
+	if event.Pricing == nil {
+		event.Pricing = map[string]any{}
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {

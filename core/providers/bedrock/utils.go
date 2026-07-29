@@ -28,6 +28,22 @@ var bedrockUnsafeToolNameCharRegex = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 // bedrockToolNameAliasKey stores Bedrock wire-name aliases on the request context.
 type bedrockToolNameAliasKey struct{}
 
+// resolveMantleProjectID returns the Bedrock project configured for the mantle sub-surface of the
+// Bedrock provider, or "" when none is set (AWS then routes to the account's default project).
+// Priority: per-alias AliasConfig.ProjectID > key-level BedrockKeyConfig.ProjectID. The per-alias
+// override lets one Bedrock credential scope different aliased models to different projects.
+func resolveMantleProjectID(ctx *schemas.BifrostContext, key schemas.Key) string {
+	if ra := schemas.GetResolvedAlias(ctx); ra != nil && ra.Config != nil && ra.Config.ProjectID != nil {
+		if v := ra.Config.ProjectID.GetValue(); v != "" {
+			return v
+		}
+	}
+	if key.BedrockKeyConfig != nil && key.BedrockKeyConfig.ProjectID != nil {
+		return key.BedrockKeyConfig.ProjectID.GetValue()
+	}
+	return ""
+}
+
 // parseBedrockRegionAndModel splits a model string that optionally carries an AWS region prefix
 // into its region and bare model ID components.
 // If no region prefix is present the returned region is empty and bareModel equals model.
@@ -223,8 +239,11 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 	if bifrostReq.Params == nil {
 		return nil
 	}
+
+	// capModel is the canonical model used only for Anthropic capability gating
+	capModel := schemas.ResolveCanonicalModel(ctx, bifrostReq.Model)
 	// Convert inference config
-	if inferenceConfig := convertInferenceConfig(bifrostReq.Params); inferenceConfig != nil {
+	if inferenceConfig := convertInferenceConfig(bifrostReq.Params, capModel); inferenceConfig != nil {
 		bedrockReq.InferenceConfig = inferenceConfig
 	}
 
@@ -292,7 +311,7 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 				tokenBudget = anthropic.MinimumReasoningMaxTokens
 			}
 			if schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model) {
-				if anthropic.IsAdaptiveOnlyThinkingModel(bifrostReq.Model) {
+				if anthropic.IsAdaptiveOnlyThinkingModel(capModel) {
 					bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{
 						"type": "adaptive",
 					})
@@ -371,7 +390,9 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 				effort := *bifrostReq.Params.Reasoning.Effort
 				typeStr := "enabled"
 				switch effort {
-				case "high":
+				case "high", "xhigh", "max":
+					// Nova's maxReasoningEffort enum tops out at "high"; clamp xhigh/max.
+					effort = "high"
 					if bedrockReq.InferenceConfig != nil {
 						bedrockReq.InferenceConfig.MaxTokens = nil
 						bedrockReq.InferenceConfig.Temperature = nil
@@ -392,7 +413,7 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 
 				bedrockReq.AdditionalModelRequestFields.Set("reasoningConfig", config)
 			} else if schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model) {
-				if anthropic.SupportsAdaptiveThinking(bifrostReq.Model) {
+				if anthropic.SupportsAdaptiveThinking(capModel) {
 					// Opus 4.6+: adaptive thinking + output_config.effort
 					effort := anthropic.MapBifrostEffortToAnthropic(*bifrostReq.Params.Reasoning.Effort)
 					thinkingConfig := map[string]any{
@@ -400,7 +421,7 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 					}
 					if bifrostReq.Params.Reasoning.Display != nil {
 						thinkingConfig["display"] = *bifrostReq.Params.Reasoning.Display
-					} else if anthropic.IsAdaptiveOnlyThinkingModel(bifrostReq.Model) {
+					} else if anthropic.IsAdaptiveOnlyThinkingModel(capModel) {
 						thinkingConfig["display"] = "summarized"
 					}
 					bedrockReq.AdditionalModelRequestFields.Set("thinking", thinkingConfig)
@@ -419,7 +440,7 @@ func convertChatParameters(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifr
 			}
 		} else {
 			if schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model) {
-				if !anthropic.IsFableFamily(bifrostReq.Model) {
+				if !anthropic.IsFableFamily(capModel) {
 					bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{
 						"type": "disabled",
 					})
@@ -786,6 +807,20 @@ func convertMessages(ctx context.Context, bifrostMessages []schemas.ChatMessage)
 	return messages, systemMessages, nil
 }
 
+// reasoningSignatureForBedrock returns sig only when it is a non-empty string.
+// A valid reasoning signature is a non-empty crypto token (Anthropic always emits
+// one, and Bedrock requires it on those reasoning blocks). Other families emit an
+// empty signature (MiniMax sends "") or none (Nova); echoing
+// reasoningContent.reasoningText.signature:"" back 400s with "This model doesn't
+// support the reasoningContent.reasoningText.signature field". Returning nil lets
+// omitempty drop the field (a non-nil *string to "" would still serialize as "").
+func reasoningSignatureForBedrock(sig *string) *string {
+	if sig == nil || *sig == "" {
+		return nil
+	}
+	return sig
+}
+
 // newBedrockCachePoint builds a default cache point, attaching the TTL only for the values
 // Bedrock accepts ("5m" | "1h"); anything else (e.g. Anthropic's "1m") is dropped to the default.
 func newBedrockCachePoint(ttl *string) *BedrockCachePoint {
@@ -851,7 +886,7 @@ func convertMessage(ctx context.Context, msg schemas.ChatMessage) (BedrockMessag
 					ReasoningContent: &BedrockReasoningContent{
 						ReasoningText: &BedrockReasoningContentText{
 							Text:      detail.Text,
-							Signature: detail.Signature,
+							Signature: reasoningSignatureForBedrock(detail.Signature),
 						},
 					},
 				})
@@ -1440,14 +1475,14 @@ func extractJSONSchemaObject(s *schemas.ResponsesTextConfigFormatJSONSchema) jso
 
 // convertTextFormatToTool converts a Responses text.format config to either a
 // synthetic Bedrock tool or an Anthropic-native output_config.format value.
-func convertTextFormatToTool(ctx *schemas.BifrostContext, model string, textConfig *schemas.ResponsesTextConfig) (*BedrockTool, any) {
+func convertTextFormatToTool(ctx *schemas.BifrostContext, model string, textConfig *schemas.ResponsesTextConfig) (*BedrockTool, any, error) {
 	if textConfig == nil || textConfig.Format == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	format := textConfig.Format
 	if format.Type != "json_schema" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	toolName := "json_response"
@@ -1457,11 +1492,24 @@ func convertTextFormatToTool(ctx *schemas.BifrostContext, model string, textConf
 
 	description := "Returns structured JSON output"
 	if format.JSONSchema == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	schemaObj := extractJSONSchemaObject(format.JSONSchema)
+	_, acceptAll, err := format.JSONSchema.CompositeSchema()
+	if err != nil {
+		return nil, nil, err
+	}
+	var schemaObj json.RawMessage
+	if acceptAll {
+		// Boolean schema `true` accepts any value. Tool input schemas must be
+		// JSON Schema objects, so the widest representable form is an
+		// unconstrained object.
+		schemaObj = json.RawMessage(`{"type":"object"}`)
+	} else {
+		// Composite object schemas are handled inside extractJSONSchemaObject.
+		schemaObj = extractJSONSchemaObject(format.JSONSchema)
+	}
 	if schemaObj == nil {
-		return nil, nil // No schema info — neither composite Schema nor decomposed fields set
+		return nil, nil, nil // No schema info — neither composite Schema nor decomposed fields set
 	}
 	if format.JSONSchema.Description != nil {
 		description = *format.JSONSchema.Description
@@ -1475,7 +1523,7 @@ func convertTextFormatToTool(ctx *schemas.BifrostContext, model string, textConf
 
 	schemaObjBytes2, err := providerUtils.MarshalSorted(schemaObj)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	return &BedrockTool{
 		ToolSpec: &BedrockToolSpec{
@@ -1485,11 +1533,11 @@ func convertTextFormatToTool(ctx *schemas.BifrostContext, model string, textConf
 				JSON: json.RawMessage(schemaObjBytes2),
 			},
 		},
-	}, nil
+	}, nil, nil
 }
 
 // convertInferenceConfig converts Bifrost parameters to Bedrock inference config
-func convertInferenceConfig(params *schemas.ChatParameters) *BedrockInferenceConfig {
+func convertInferenceConfig(params *schemas.ChatParameters, model string) *BedrockInferenceConfig {
 	var config BedrockInferenceConfig
 	if params.MaxCompletionTokens != nil {
 		config.MaxTokens = params.MaxCompletionTokens
@@ -1503,7 +1551,8 @@ func convertInferenceConfig(params *schemas.ChatParameters) *BedrockInferenceCon
 		config.TopP = params.TopP
 	}
 
-	if params.Stop != nil {
+	// GLM models on Bedrock reject the stopSequences field.
+	if params.Stop != nil && !schemas.IsGLMModel(model) {
 		config.StopSequences = params.Stop
 	}
 
@@ -2334,5 +2383,35 @@ func stripCachePointsFromBedrockRequest(req *BedrockConverseRequest) {
 			}
 		}
 		req.ToolConfig.Tools = req.ToolConfig.Tools[:nt]
+	}
+}
+
+// downgradeExtendedCacheTTLInBedrockRequest drops the 1h (extended) cache TTL to
+// the default for models that support cache points but not extended TTL (e.g. Nova),
+// which otherwise 400 with "Extended TTL prompt caching is only supported for
+// Anthropic models". Only 1h TTLs are touched; cache points themselves are kept.
+func downgradeExtendedCacheTTLInBedrockRequest(req *BedrockConverseRequest) {
+	downgrade := func(cp *BedrockCachePoint) {
+		if cp != nil && cp.TTL != nil && *cp.TTL == string(BedrockCacheWriteTTL1h) {
+			cp.TTL = nil
+		}
+	}
+	for i := range req.Messages {
+		for j := range req.Messages[i].Content {
+			downgrade(req.Messages[i].Content[j].CachePoint)
+			if req.Messages[i].Content[j].ToolResult != nil {
+				for k := range req.Messages[i].Content[j].ToolResult.Content {
+					downgrade(req.Messages[i].Content[j].ToolResult.Content[k].CachePoint)
+				}
+			}
+		}
+	}
+	for i := range req.System {
+		downgrade(req.System[i].CachePoint)
+	}
+	if req.ToolConfig != nil {
+		for i := range req.ToolConfig.Tools {
+			downgrade(req.ToolConfig.Tools[i].CachePoint)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -25,38 +26,23 @@ func DeploymentForRoute(provider schemas.ModelProvider, model string, route Rout
 }
 
 func DeploymentForRouteServiceTier(provider schemas.ModelProvider, model string, route Route, requestedTier *schemas.BifrostServiceTier) (Deployment, bool) {
-	return DeploymentForRouteServiceTierRegionSpeed(provider, model, route, requestedTier, "", "")
-}
-
-func DeploymentForRouteServiceTierRegion(provider schemas.ModelProvider, model string, route Route, requestedTier *schemas.BifrostServiceTier, requestedRegion string) (Deployment, bool) {
-	return DeploymentForRouteServiceTierRegionSpeed(provider, model, route, requestedTier, requestedRegion, "")
-}
-
-func DeploymentForRouteServiceTierRegionSpeed(provider schemas.ModelProvider, model string, route Route, requestedTier *schemas.BifrostServiceTier, requestedRegion string, requestedSpeed string) (Deployment, bool) {
 	snap := active.Load()
 	if snap == nil {
 		return Deployment{}, false
 	}
 
-	requestedRegion = strings.ToLower(strings.TrimSpace(requestedRegion))
-	requestedSpeed = strings.ToLower(strings.TrimSpace(requestedSpeed))
 	for _, routeNode := range snap.routes(provider, route) {
-		deploymentID := snap.deploymentIDFor(routeNode, model)
+		deploymentID, pinned := snap.deploymentIDFor(routeNode, model)
 		if deploymentID == "" {
 			continue
 		}
-		deploymentID = snap.deploymentIDForRequestedServiceTier(provider, routeNode, deploymentID, requestedTier)
-		if requestedSpeed != "" {
-			deploymentID = snap.deploymentIDForRequestedSpeed(routeNode, deploymentID, requestedSpeed)
-			if deploymentID == "" {
+		if pinned {
+			deployment, ok := snap.graph.Deployments[deploymentID]
+			if !ok || !deploymentMatchesRequestedTier(provider, deployment, requestedTier) {
 				continue
 			}
-		}
-		if requestedRegion != "" {
-			deploymentID, routeNode = snap.deploymentIDForRequestedRegion(provider, route, deploymentID, requestedRegion)
-			if deploymentID == "" {
-				continue
-			}
+		} else {
+			deploymentID = snap.deploymentIDForRequestedServiceTier(provider, routeNode, deploymentID, requestedTier)
 		}
 		deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
 		if ok {
@@ -66,13 +52,39 @@ func DeploymentForRouteServiceTierRegionSpeed(provider schemas.ModelProvider, mo
 	return Deployment{}, false
 }
 
+func deploymentMatchesRequestedTier(
+	provider schemas.ModelProvider,
+	deployment compiledDeployment,
+	requestedTier *schemas.BifrostServiceTier,
+) bool {
+	if requestedTier != nil {
+		target := deploymentServiceTierForRequest(provider, requestedTier)
+		if target == "" || deployment.Upstream.FixedRequest.ServiceTier != target {
+			return false
+		}
+	}
+	return true
+}
+
+func deploymentAvailableAt(deployment compiledDeployment, now time.Time) bool {
+	return deployment.DeprecationDate == nil ||
+		*deployment.DeprecationDate > now.UTC().Format(time.DateOnly)
+}
+
+func deploymentAvailableNow(deployment compiledDeployment) bool {
+	return deploymentAvailableAt(deployment, time.Now())
+}
+
 func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelProvider, routeNode compiledRoute, currentID string, requestedTier *schemas.BifrostServiceTier) string {
 	targetTier := deploymentServiceTierForRequest(provider, requestedTier)
 	if targetTier == "" {
 		return currentID
 	}
 	current, ok := s.graph.Deployments[currentID]
-	if !ok || current.Upstream.FixedRequest.ServiceTier == targetTier {
+	if !ok || !deploymentAvailableNow(current) {
+		return ""
+	}
+	if current.Upstream.FixedRequest.ServiceTier == targetTier {
 		return currentID
 	}
 	if impliedServiceTierForDeployment(provider, current) != nil {
@@ -82,6 +94,7 @@ func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelPro
 	for _, candidateID := range routeNode.DeploymentIDs {
 		candidate, ok := s.graph.Deployments[candidateID]
 		if !ok ||
+			!deploymentAvailableNow(candidate) ||
 			candidate.ModelID != current.ModelID ||
 			candidate.Upstream.FixedRequest.ServiceTier != targetTier ||
 			deploymentIsFast(candidate) != currentFast {
@@ -90,53 +103,6 @@ func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelPro
 		return candidateID
 	}
 	return currentID
-}
-
-func (s *snapshot) deploymentIDForRequestedSpeed(routeNode compiledRoute, currentID string, requestedSpeed string) string {
-	if requestedSpeed == "" {
-		return currentID
-	}
-	current, ok := s.graph.Deployments[currentID]
-	if !ok {
-		return ""
-	}
-	targetFast := requestedSpeed == "fast"
-	if deploymentIsFast(current) == targetFast {
-		return currentID
-	}
-	for _, candidateID := range routeNode.DeploymentIDs {
-		candidate, ok := s.graph.Deployments[candidateID]
-		if !ok ||
-			candidate.ModelID != current.ModelID ||
-			candidate.Upstream.FixedRequest.ServiceTier != current.Upstream.FixedRequest.ServiceTier ||
-			deploymentIsFast(candidate) != targetFast {
-			continue
-		}
-		return candidateID
-	}
-	return ""
-}
-
-func (s *snapshot) deploymentIDForRequestedRegion(provider schemas.ModelProvider, route Route, currentID string, requestedRegion string) (string, compiledRoute) {
-	current, ok := s.graph.Deployments[currentID]
-	if !ok {
-		return "", compiledRoute{}
-	}
-	currentFast := deploymentIsFast(current)
-	for _, routeNode := range s.routes(provider, route) {
-		for _, candidateID := range routeNode.DeploymentIDs {
-			candidate, ok := s.graph.Deployments[candidateID]
-			if !ok ||
-				candidate.ModelID != current.ModelID ||
-				candidate.Upstream.FixedRequest.ServiceTier != current.Upstream.FixedRequest.ServiceTier ||
-				strings.ToLower(strings.TrimSpace(candidate.Upstream.FixedRequest.InferenceGeo)) != requestedRegion ||
-				deploymentIsFast(candidate) != currentFast {
-				continue
-			}
-			return candidateID, routeNode
-		}
-	}
-	return "", compiledRoute{}
 }
 
 func deploymentServiceTierForRequest(provider schemas.ModelProvider, requestedTier *schemas.BifrostServiceTier) string {
@@ -312,7 +278,10 @@ func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, c
 	for _, routeNode := range snap.routes(provider, route) {
 		for _, deploymentID := range routeNode.DeploymentIDs {
 			deployment, ok := snap.graph.Deployments[deploymentID]
-			if !ok || routeNode.ProviderID != string(provider) || deployment.Upstream.Model != current.Upstream.Model {
+			if !ok ||
+				!deploymentAvailableNow(deployment) ||
+				routeNode.ProviderID != string(provider) ||
+				deployment.Upstream.Model != current.Upstream.Model {
 				continue
 			}
 			if current.Upstream.FixedRequest.InferenceGeo != "" &&
@@ -437,7 +406,7 @@ func (s *snapshot) routeModelProviders(route Route, requested string, allowed ma
 		if !routeSupportsInterface(routeNode, route) {
 			continue
 		}
-		if s.deploymentIDFor(routeNode, requested) == "" {
+		if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID == "" {
 			continue
 		}
 		provider := schemas.ModelProvider(routeNode.ProviderID)
@@ -480,13 +449,8 @@ func (s *snapshot) providerForPreference(preference string) (schemas.ModelProvid
 		return "", false
 	}
 	for providerID, provider := range s.graph.Providers {
-		if strings.EqualFold(providerID, normalized) {
+		if qualifierMatchesIDOrAlias(normalized, providerID, provider.Aliases) {
 			return schemas.ModelProvider(providerID), true
-		}
-		for _, slug := range provider.Slugs {
-			if strings.EqualFold(strings.TrimSpace(slug), normalized) {
-				return schemas.ModelProvider(providerID), true
-			}
 		}
 	}
 	return "", false
@@ -616,23 +580,35 @@ func catalogRouteForRequest(provider schemas.ModelProvider, route Route) (compil
 	return snap.route(provider, route)
 }
 
-func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) string {
-	qualifier, alias := splitQualifiedModel(requestedModel)
-	if alias == "" {
-		return ""
+func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) (string, bool) {
+	qualifier, selector := splitQualifiedModel(requestedModel)
+	if selector == "" {
+		return "", false
 	}
-	record, ok := s.aliases[alias]
-	if !ok {
-		return ""
+	if deploymentID, ok := s.deploymentSelectors[selector]; ok {
+		deployment, exists := s.graph.Deployments[deploymentID]
+		if !exists ||
+			!deploymentAvailableNow(deployment) ||
+			!stringIn(deployment.RouteIDs, route.ID) ||
+			!s.qualifierMatches(qualifier, route.ProviderID, deployment.ModelID) {
+			return "", false
+		}
+		return deploymentID, true
 	}
-	deployment, ok := s.graph.Deployments[record]
-	if !ok || !stringIn(deployment.RouteIDs, route.ID) {
-		return ""
+	modelID, ok := s.modelSelectors[selector]
+	if !ok || !s.qualifierMatches(qualifier, route.ProviderID, modelID) {
+		return "", false
 	}
-	if !s.qualifierMatches(qualifier, route.ProviderID, deployment.ModelID) {
-		return ""
+	for _, deploymentID := range route.DeploymentIDs {
+		deployment, exists := s.graph.Deployments[deploymentID]
+		if exists &&
+			deploymentAvailableNow(deployment) &&
+			deployment.ModelID == modelID &&
+			deployment.Default {
+			return deploymentID, false
+		}
 	}
-	return record
+	return "", false
 }
 
 func splitQualifiedModel(requested string) ([]string, string) {
@@ -660,7 +636,12 @@ func (s *snapshot) qualifierMatches(qualifier []string, providerID, modelID stri
 		return true
 	}
 	provider, ok := s.graph.Providers[providerID]
-	if !ok || !matchesIDOrSlug(qualifier[len(qualifier)-1], providerID, provider.Slugs) {
+	if !ok ||
+		!qualifierMatchesIDOrAlias(
+			qualifier[len(qualifier)-1],
+			providerID,
+			provider.Aliases,
+		) {
 		return false
 	}
 	if len(qualifier) == 1 {
@@ -671,15 +652,15 @@ func (s *snapshot) qualifierMatches(qualifier []string, providerID, modelID stri
 		return false
 	}
 	author, ok := s.graph.Authors[model.AuthorID]
-	return ok && matchesIDOrSlug(qualifier[0], model.AuthorID, author.Slugs)
+	return ok && qualifierMatchesIDOrAlias(qualifier[0], model.AuthorID, author.Aliases)
 }
 
-func matchesIDOrSlug(value, id string, slugs []string) bool {
+func qualifierMatchesIDOrAlias(value, id string, aliases []string) bool {
 	if strings.EqualFold(value, id) {
 		return true
 	}
-	for _, slug := range slugs {
-		if strings.EqualFold(value, slug) {
+	for _, alias := range aliases {
+		if strings.EqualFold(value, alias) {
 			return true
 		}
 	}
@@ -697,7 +678,9 @@ func stringIn(values []string, expected string) bool {
 
 func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRoute) (Deployment, bool) {
 	deployment, ok := s.graph.Deployments[deploymentID]
-	if !ok || !stringIn(deployment.RouteIDs, route.ID) {
+	if !ok ||
+		!deploymentAvailableNow(deployment) ||
+		!stringIn(deployment.RouteIDs, route.ID) {
 		return Deployment{}, false
 	}
 	_, ok = s.graph.Models[deployment.ModelID]

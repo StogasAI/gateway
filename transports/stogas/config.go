@@ -32,9 +32,9 @@ const (
 	confidentialHeartbeatInterval = 10 * time.Second
 	confidentialQuoteRefresh      = 10 * time.Second
 
-	defaultDatabasePoolMaxConns     int32 = 32
-	defaultDatabasePoolMinConns     int32 = 4
-	defaultDatabasePoolMinIdleConns int32 = 4
+	defaultDatabasePoolMaxConns     int32 = 6
+	defaultDatabasePoolMinConns     int32 = 1
+	defaultDatabasePoolMinIdleConns int32 = 1
 	defaultDatabaseQueryExecMode          = "cache_statement"
 )
 
