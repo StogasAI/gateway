@@ -189,6 +189,9 @@ func NewService(
 
 func (s *Service) Close() {
 	s.retryWG.Wait()
+	if s.tinybird != nil {
+		s.tinybird.Close()
+	}
 	if s.db != nil {
 		s.db.Close()
 	}
