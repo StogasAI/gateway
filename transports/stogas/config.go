@@ -40,6 +40,7 @@ const (
 
 var confidentialRuntimeSecretNames = []string{
 	"API_KEY_PEPPER",
+	"BYOK_ENCRYPTION_SECRET",
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
 	"INFERENCE_TOKEN_PUBLIC_KEY",
@@ -50,6 +51,7 @@ var confidentialRuntimeSecretNames = []string{
 type Config struct {
 	AllowPrivateProviderNetwork bool
 	APIKeyPepper                string
+	BYOKEncryptionSecret        string
 	CatalogURL                  string
 	Confidential                ConfidentialConfig
 	DatabasePool                billing.DatabasePoolConfig
@@ -107,6 +109,7 @@ func LoadFromEnv() (Config, error) {
 	config := Config{
 		AllowPrivateProviderNetwork: os.Getenv("STOGAS_ALLOW_PRIVATE_PROVIDER_NETWORK") == "true",
 		APIKeyPepper:                strings.TrimSpace(os.Getenv("API_KEY_PEPPER")),
+		BYOKEncryptionSecret:        strings.TrimSpace(os.Getenv("BYOK_ENCRYPTION_SECRET")),
 		CatalogURL:                  catalogURLForEnvironment(loadRuntimeEnvironment()),
 		Confidential:                loadConfidentialConfigFromEnv(),
 		DatabasePool:                databasePool,
@@ -238,6 +241,7 @@ func rejectUnsupportedConfidentialHostOverrides() error {
 	for _, name := range []string{
 		"ANTHROPIC_API_KEY",
 		"API_KEY_PEPPER",
+		"BYOK_ENCRYPTION_SECRET",
 		"INFERENCE_TOKEN_PUBLIC_KEY",
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
@@ -315,9 +319,9 @@ func loadInfisicalRuntimeSecrets() {
 		return
 	}
 
-	required := []string{"API_KEY_PEPPER", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+	required := []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" || os.Getenv("DATABASE_URL") != "" {
-		required = []string{"API_KEY_PEPPER", "DATABASE_SCHEMA", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+		required = []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
 	}
 	for _, secretName := range required {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
@@ -365,6 +369,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.APIKeyPepper) < 32 {
 		return fmt.Errorf("API_KEY_PEPPER must be at least 32 characters (got %d characters)", len(c.APIKeyPepper))
+	}
+	if len(c.BYOKEncryptionSecret) < 32 {
+		return fmt.Errorf("BYOK_ENCRYPTION_SECRET must be at least 32 characters (got %d characters)", len(c.BYOKEncryptionSecret))
 	}
 	if c.InferenceTokenPublicKey == "" {
 		return fmt.Errorf("INFERENCE_TOKEN_PUBLIC_KEY is required")
@@ -442,6 +449,9 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 }
 
 func validateProviderRuntimeSecretsReady(config Config) error {
+	if len(strings.TrimSpace(config.BYOKEncryptionSecret)) < 32 {
+		return fmt.Errorf("BYOK_ENCRYPTION_SECRET must be at least 32 characters before provider runtime starts")
+	}
 	if strings.TrimSpace(config.OpenAIAPIKey) == "" {
 		return fmt.Errorf("OPENAI_API_KEY is required before provider runtime starts")
 	}
@@ -453,6 +463,7 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 
 func applyRuntimeSecretsFromEnv(config *Config) {
 	config.APIKeyPepper = strings.TrimSpace(os.Getenv("API_KEY_PEPPER"))
+	config.BYOKEncryptionSecret = strings.TrimSpace(os.Getenv("BYOK_ENCRYPTION_SECRET"))
 	config.DatabaseSchema = strings.TrimSpace(os.Getenv("DATABASE_SCHEMA"))
 	config.DatabaseURL = strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	config.InferenceTokenPublicKey = strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY"))

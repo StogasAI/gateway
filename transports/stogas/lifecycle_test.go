@@ -168,6 +168,160 @@ func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
 	}
 }
 
+func TestApplyUpstreamCredentialUsesManagedSafetyIdentifiers(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		provider         schemas.ModelProvider
+		wantSafetyID     *string
+		wantUpstreamUser *string
+	}{
+		{
+			name:         "OpenAI",
+			provider:     schemas.OpenAI,
+			wantSafetyID: schemas.Ptr("user-123"),
+		},
+		{
+			name:             "Anthropic",
+			provider:         schemas.Anthropic,
+			wantUpstreamUser: schemas.Ptr("user-123"),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			request := &schemas.BifrostRequest{
+				ChatRequest: &schemas.BifrostChatRequest{
+					Params: &schemas.ChatParameters{
+						SafetyIdentifier: schemas.Ptr("caller-controlled"),
+						User:             schemas.Ptr("caller-controlled"),
+					},
+					Provider: tc.provider,
+				},
+			}
+			state := &State{Authorization: &billing.Authorization{
+				UpstreamCredential: "stogas",
+				UserID:             "user-123",
+			}}
+
+			if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
+				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			}
+			if !equalStringPointers(request.ChatRequest.Params.SafetyIdentifier, tc.wantSafetyID) {
+				t.Fatalf("safety_identifier = %#v, want %#v", request.ChatRequest.Params.SafetyIdentifier, tc.wantSafetyID)
+			}
+			if !equalStringPointers(request.ChatRequest.Params.User, tc.wantUpstreamUser) {
+				t.Fatalf("user = %#v, want %#v", request.ChatRequest.Params.User, tc.wantUpstreamUser)
+			}
+			if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
+				t.Fatalf("managed request unexpectedly installed direct key: %#v", directKey)
+			}
+		})
+	}
+}
+
+func TestApplyUpstreamCredentialInstallsBYOKKeyAndClearsSafetyIdentifiers(t *testing.T) {
+	const credentialID = "0198f4cc-6c25-7000-8000-000000000001"
+	const upstreamSecret = "sk-upstream-secret"
+
+	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic} {
+		t.Run(string(provider), func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			request := &schemas.BifrostRequest{
+				ChatRequest: &schemas.BifrostChatRequest{
+					Params: &schemas.ChatParameters{
+						SafetyIdentifier: schemas.Ptr("must-not-leak"),
+						User:             schemas.Ptr("must-not-leak"),
+					},
+					Provider: provider,
+				},
+			}
+			state := &State{Authorization: &billing.Authorization{
+				UpstreamCredential:       credentialID,
+				UpstreamCredentialSecret: upstreamSecret,
+				UserID:                   "stogas-user",
+			}}
+
+			if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
+				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			}
+			if request.ChatRequest.Params.SafetyIdentifier != nil || request.ChatRequest.Params.User != nil {
+				t.Fatalf(
+					"BYOK request retained upstream identifiers: safety=%#v user=%#v",
+					request.ChatRequest.Params.SafetyIdentifier,
+					request.ChatRequest.Params.User,
+				)
+			}
+			directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
+			if !ok {
+				t.Fatalf("BYOK request did not install a direct provider key")
+			}
+			if directKey.ID != credentialID || directKey.Name != credentialID {
+				t.Fatalf("direct key attribution = %#v, want credential %q", directKey, credentialID)
+			}
+			if directKey.Value.GetValue() != upstreamSecret {
+				t.Fatalf("direct key secret was not installed")
+			}
+			if directKey.Enabled == nil || !*directKey.Enabled {
+				t.Fatalf("direct key was not enabled")
+			}
+		})
+	}
+}
+
+func TestApplyUpstreamCredentialClearsResponsesSafetyIdentifiersForBYOK(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	request := &schemas.BifrostRequest{
+		ResponsesRequest: &schemas.BifrostResponsesRequest{
+			Params: &schemas.ResponsesParameters{
+				SafetyIdentifier: schemas.Ptr("must-not-leak"),
+				User:             schemas.Ptr("must-not-leak"),
+			},
+			Provider: schemas.OpenAI,
+		},
+	}
+	state := &State{Authorization: &billing.Authorization{
+		UpstreamCredential:       "0198f4cc-6c25-7000-8000-000000000001",
+		UpstreamCredentialSecret: "sk-upstream-secret",
+	}}
+
+	if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
+		t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+	}
+	if request.ResponsesRequest.Params.SafetyIdentifier != nil || request.ResponsesRequest.Params.User != nil {
+		t.Fatalf(
+			"BYOK Responses request retained upstream identifiers: safety=%#v user=%#v",
+			request.ResponsesRequest.Params.SafetyIdentifier,
+			request.ResponsesRequest.Params.User,
+		)
+	}
+}
+
+func TestApplyUpstreamCredentialRejectsIncompleteBYOKAuthorization(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	request := &schemas.BifrostRequest{
+		ChatRequest: &schemas.BifrostChatRequest{
+			Params:   &schemas.ChatParameters{},
+			Provider: schemas.OpenAI,
+		},
+	}
+	state := &State{Authorization: &billing.Authorization{
+		UpstreamCredential: "0198f4cc-6c25-7000-8000-000000000001",
+	}}
+
+	if err := ApplyUpstreamCredential(ctx, state, request); !errors.Is(err, billing.ErrProviderCredential) {
+		t.Fatalf("ApplyUpstreamCredential error = %v, want provider credential failure", err)
+	}
+	if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
+		t.Fatalf("incomplete BYOK authorization installed direct key: %#v", directKey)
+	}
+}
+
+func equalStringPointers(left *string, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 func TestDefaultAdapterFinalPriceUsesSignals(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
@@ -535,7 +689,7 @@ func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testin
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -547,15 +701,15 @@ func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testin
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
 	if state.FinalCostUSDAtoms != "12500000000000000" {
-		t.Fatalf("expected priority input pricing from actual service tier, got %s", state.FinalCostUSDAtoms)
+		t.Fatalf("expected Fast input pricing from returned priority tier, got %s", state.FinalCostUSDAtoms)
 	}
 }
 
-func TestOpenAIPriorityDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing.T) {
+func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -580,7 +734,7 @@ func TestOpenAIPriorityDowngradeUsesActualDeploymentForBillingAndEvidence(t *tes
 		CreatedAt:        time.Now().UTC(),
 		ProviderKey:      "openai",
 		ProductKey:       resolution.Deployment.ID,
-		RequestID:        "priority-downgrade",
+		RequestID:        "fast-downgrade",
 	}
 	state.RequestType = string(schemas.ChatCompletionRequest)
 	state.StartedAt = time.Now().UTC()
@@ -600,11 +754,11 @@ func TestOpenAIPriorityDowngradeUsesActualDeploymentForBillingAndEvidence(t *tes
 	}
 }
 
-func TestOpenAIPriorityHoldCoversActualPriorityServiceTier(t *testing.T) {
+func TestOpenAIFastHoldCoversActualPriorityServiceTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -623,29 +777,29 @@ func TestOpenAIPriorityHoldCoversActualPriorityServiceTier(t *testing.T) {
 		t.Fatalf("FinalPrice returned error: %v", err)
 	}
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover actual priority final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+		t.Fatalf("Fast hold must cover the returned priority-tier cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
-	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23-priority" {
-		t.Fatalf("expected priority deployment hold product key, got %#v", state.Hold)
+	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23-fast" {
+		t.Fatalf("expected Fast deployment hold product key, got %#v", state.Hold)
 	}
 }
 
 func TestOpenAIDefaultAndAutoHoldUseSelectedDefaultDeployment(t *testing.T) {
-	priorityResolution, err := catalog.ResolveRequest(catalog.RequestInput{
+	fastResolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-priority","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
 	})
 	if err != nil {
-		t.Fatalf("ResolveRequest priority returned error: %v", err)
+		t.Fatalf("ResolveRequest Fast returned error: %v", err)
 	}
-	priorityState := NewState(priorityResolution, "sk-test", nil, AdapterFor(priorityResolution.Provider))
-	if err := priorityState.Adapter.EstimateHold(priorityState); err != nil {
-		t.Fatalf("EstimateHold priority returned error: %v", err)
+	fastState := NewState(fastResolution, "sk-test", nil, AdapterFor(fastResolution.Provider))
+	if err := fastState.Adapter.EstimateHold(fastState); err != nil {
+		t.Fatalf("EstimateHold Fast returned error: %v", err)
 	}
-	priorityInput := findMeterEstimate(priorityState.Hold.Meters, billing.MeterInputTokens)
-	if priorityInput == nil {
-		t.Fatalf("priority hold missing input meter: %#v", priorityState.Hold.Meters)
+	fastInput := findMeterEstimate(fastState.Hold.Meters, billing.MeterInputTokens)
+	if fastInput == nil {
+		t.Fatalf("Fast hold missing input meter: %#v", fastState.Hold.Meters)
 	}
 
 	for _, item := range []struct {
@@ -724,8 +878,8 @@ func TestOpenAIDefaultAndAutoHoldUseSelectedDefaultDeployment(t *testing.T) {
 			if defaultInput == nil {
 				t.Fatalf("default hold missing input meter: %#v", state.Hold.Meters)
 			}
-			if compareMoneyStrings(defaultInput.AmountUSDAtoms, priorityInput.AmountUSDAtoms) >= 0 {
-				t.Fatalf("default/auto hold must use default pricing, got default=%#v priority=%#v", defaultInput, priorityInput)
+			if compareMoneyStrings(defaultInput.AmountUSDAtoms, fastInput.AmountUSDAtoms) >= 0 {
+				t.Fatalf("default/auto hold must use default pricing, got default=%#v Fast=%#v", defaultInput, fastInput)
 			}
 		})
 	}
@@ -1015,11 +1169,11 @@ func TestOpenAIDefaultHoldCanSettleAtReturnedPriorityTier(t *testing.T) {
 		t.Fatalf("expected returned priority tier to drive final price, got %s", state.FinalCostUSDAtoms)
 	}
 	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) >= 0 {
-		t.Fatalf("default/auto hold should not reserve unrequested priority capacity: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
+		t.Fatalf("default/auto hold should not reserve unrequested Fast capacity: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
 	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "12500000000000000" {
-		t.Fatalf("expected final input meter to use priority pricing, got %#v", state.FinalMeters)
+		t.Fatalf("expected final input meter to use Fast pricing, got %#v", state.FinalMeters)
 	}
 }
 
@@ -1057,7 +1211,7 @@ func TestOpenAIResponsesFinalPriceUsesReturnedServiceTierFromUsage(t *testing.T)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
 	if input == nil || input.RateKey != billing.RatePerMillionTokens || input.AmountUSDAtoms != "12500000000000000" {
-		t.Fatalf("expected final input meter to use priority pricing, got %#v", state.FinalMeters)
+		t.Fatalf("expected final input meter to use Fast pricing, got %#v", state.FinalMeters)
 	}
 }
 
@@ -1359,8 +1513,8 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	if _, ok := event.Pricing[billing.MeterOutputTokens]; ok {
 		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Pricing)
 	}
-	if event.TotalCostUSDAtoms != "1000" {
-		t.Fatalf("total cost must match final meter sum, got %s", event.TotalCostUSDAtoms)
+	if event.UpstreamCostUSDAtoms != "1000" || event.BilledCostUSDAtoms != "1000" {
+		t.Fatalf("managed costs must match final meter sum, got upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway version = %q", event.GatewayVersion)
@@ -1526,8 +1680,8 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	if event.TotalCostUSDAtoms != "1" {
-		t.Fatalf("logged total must use compacted final meters, got %s", event.TotalCostUSDAtoms)
+	if event.UpstreamCostUSDAtoms != "1" || event.BilledCostUSDAtoms != "1" {
+		t.Fatalf("managed costs must use compacted final meters, got upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
 	}
 	if event.Pricing[billing.MeterInputTokens].(map[string]any)["quantity"] != "2" {
 		t.Fatalf("unexpected compacted pricing %#v", event.Pricing)

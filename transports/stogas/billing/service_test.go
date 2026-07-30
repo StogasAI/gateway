@@ -203,7 +203,6 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "rateUsdAtoms": "1", "usdAtoms": "1"},
 		},
 		ProviderAttempts: []ProviderAttempt{{
-			IsBYOK:                false,
 			LatencyMS:             12,
 			Provider:              "openai",
 			ProviderFirstOutputMS: &firstOutput,
@@ -211,6 +210,7 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			FinishReason:          "stop",
 			Status:                "success",
 			StatusCode:            &status,
+			UpstreamCredential:    "stogas",
 		}},
 		GatewayVersion:          "v1.5.13",
 		ResolvedCatalogNodeIDs:  []string{"route:chat", "provider:openai", "deployment:gpt-5"},
@@ -265,6 +265,30 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	}
 	if event.StogasProvisioningKeyID == nil || *event.StogasProvisioningKeyID != provisioningKeyID {
 		t.Fatalf("expected provisioning key attribution, got %#v", event.StogasProvisioningKeyID)
+	}
+}
+
+func TestBilledRequestCostUsesFullManagedCostAndCeilingTwoPercentForBYOK(t *testing.T) {
+	managed := &Authorization{UpstreamCredential: "stogas"}
+	byok := &Authorization{UpstreamCredential: "0198f4cc-6c25-7000-8000-000000000001"}
+	for _, tc := range []struct {
+		name          string
+		authorization *Authorization
+		upstream      string
+		want          string
+	}{
+		{name: "managed", authorization: managed, upstream: "101", want: "101"},
+		{name: "BYOK zero", authorization: byok, upstream: "0", want: "0"},
+		{name: "BYOK minimum nonzero", authorization: byok, upstream: "1", want: "1"},
+		{name: "BYOK exact", authorization: byok, upstream: "100", want: "2"},
+		{name: "BYOK rounds up", authorization: byok, upstream: "101", want: "3"},
+		{name: "BYOK larger", authorization: byok, upstream: "999", want: "20"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := billedRequestCost(tc.authorization, tc.upstream); got != tc.want {
+				t.Fatalf("billedRequestCost(%q) = %q, want %q", tc.upstream, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -342,7 +366,8 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 			RequestID:               "request-1",
 			StogasBillingStatus:     "complete",
 			StogasProcessingSuccess: true,
-			TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
+			UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
+			BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
 		},
 	)
 
@@ -387,7 +412,8 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 			RequestID:               "request-1",
 			StogasBillingStatus:     "complete",
 			StogasProcessingSuccess: true,
-			TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
+			UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
+			BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
 		},
 		true,
 	)
@@ -720,13 +746,14 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 
 func testAuthorization() *Authorization {
 	return &Authorization{
-		AuthorizedAmount: mustParseBigInt(ZeroChargeUSDAtoms),
-		AvailableAfter:   mustParseBigInt("100000000000"),
-		KeyID:            "key-1",
-		ProductKey:       "gpt-4o-mini",
-		ProviderKey:      "openai",
-		RequestID:        "request-1",
-		UserID:           "user-1",
+		AuthorizedAmount:   mustParseBigInt(ZeroChargeUSDAtoms),
+		AvailableAfter:     mustParseBigInt("100000000000"),
+		KeyID:              "key-1",
+		ProductKey:         "gpt-4o-mini",
+		ProviderKey:        "openai",
+		RequestID:          "request-1",
+		UpstreamCredential: "stogas",
+		UserID:             "user-1",
 	}
 }
 
@@ -737,7 +764,8 @@ func testGatewayRequestEvent() RequestEvent {
 		StogasAPIKeyID:          "key-1",
 		StogasBillingStatus:     "complete",
 		StogasProcessingSuccess: true,
-		TotalCostUSDAtoms:       ZeroChargeUSDAtoms,
+		UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
+		BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
 	}
 }
 

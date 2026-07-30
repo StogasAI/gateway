@@ -704,7 +704,7 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 	switch provider {
 	case schemas.OpenAI:
 		switch value {
-		case "auto", "default", "flex", "priority":
+		case "auto", "default", "fast", "flex", "priority":
 			return nil
 		case "scale", "provisioned":
 			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI " + value + " service_tier is not supported by Stogas"}

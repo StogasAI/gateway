@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"math/big"
 	"strings"
 	"time"
 
@@ -62,6 +63,7 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		firstOutputMS = nil
 	}
 	pricing := clonePricing(input.Pricing)
+	billedCostUSDAtoms := billedRequestCost(authorization, actualCostUSDAtoms)
 
 	return RequestEvent{
 		RequestID:               authorization.RequestID,
@@ -75,16 +77,34 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		Cancelled:               input.Cancelled,
 		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
 		CatalogSequence:         input.CatalogSequence,
-		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), IsBYOK: false}},
+		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), UpstreamCredential: normalizedUpstreamCredential(authorization)}},
 		StogasProcessingSuccess: true,
-		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actualCostUSDAtoms),
+		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, billedCostUSDAtoms),
 		GatewayNodeID:           strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
 		TotalTimeMS:             totalTimeMS,
-		TotalCostUSDAtoms:       actualCostUSDAtoms,
+		UpstreamCostUSDAtoms:    actualCostUSDAtoms,
+		BilledCostUSDAtoms:      billedCostUSDAtoms,
 		Pricing:                 pricing,
 		GatewayVersion:          strings.TrimSpace(input.GatewayVersion),
 		ResolvedCatalogNodeIDs:  append([]string(nil), input.ResolvedCatalogNodeIDs...),
 	}
+}
+
+func normalizedUpstreamCredential(authorization *Authorization) string {
+	if authorization == nil || strings.TrimSpace(authorization.UpstreamCredential) == "" {
+		return "stogas"
+	}
+	return strings.TrimSpace(authorization.UpstreamCredential)
+}
+
+func billedRequestCost(authorization *Authorization, upstreamCost string) string {
+	if normalizedUpstreamCredential(authorization) == "stogas" {
+		return upstreamCost
+	}
+	cost := parseMoneyOrZeroString(upstreamCost)
+	numerator := new(big.Int).Mul(cost, big.NewInt(2))
+	numerator.Add(numerator, big.NewInt(99))
+	return numerator.Quo(numerator, big.NewInt(100)).String()
 }
 
 func isStreamingRequest(requestType string) bool {

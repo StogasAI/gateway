@@ -9,13 +9,7 @@ import (
 )
 
 func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
-	t.Setenv("INFISICAL_SKIP", "true")
-	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
-	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
-	t.Setenv("DATABASE_SCHEMA", "public")
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	setRequiredEnv(t)
 
 	config, err := LoadFromEnv()
 	if err != nil {
@@ -36,13 +30,7 @@ func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
 }
 
 func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
-	t.Setenv("INFISICAL_SKIP", "true")
-	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
-	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
-	t.Setenv("DATABASE_SCHEMA", "public")
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	setRequiredEnv(t)
 	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "12")
 	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "2")
 	t.Setenv("STOGAS_DB_POOL_MIN_IDLE_CONNS", "1")
@@ -67,13 +55,7 @@ func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
 }
 
 func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
-	t.Setenv("INFISICAL_SKIP", "true")
-	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
-	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
-	t.Setenv("DATABASE_SCHEMA", "public")
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	setRequiredEnv(t)
 	t.Setenv("TB_HOST_URL", "https://api.tinybird.co")
 	t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", "gateway-requests-rw-token")
 	t.Setenv("TB_APPEND_ONLY_GATEWAY_REQUESTS", "stale-append-token")
@@ -91,13 +73,7 @@ func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
 }
 
 func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
-	t.Setenv("INFISICAL_SKIP", "true")
-	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
-	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
-	t.Setenv("DATABASE_SCHEMA", "public")
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	setRequiredEnv(t)
 
 	config, err := LoadFromEnv()
 	if err != nil {
@@ -118,13 +94,7 @@ func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
 }
 
 func TestLoadFromEnvRejectsInvalidDatabasePool(t *testing.T) {
-	t.Setenv("INFISICAL_SKIP", "true")
-	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
-	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
-	t.Setenv("DATABASE_SCHEMA", "public")
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	setRequiredEnv(t)
 	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "2")
 	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "3")
 
@@ -412,6 +382,7 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
 		"ANTHROPIC_API_KEY":          "released-anthropic",
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
 		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":            "public_0001_initial_schema",
 		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
@@ -437,6 +408,7 @@ func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingRuntimeSecret(t *te
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
 		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":            "public_0001_initial_schema",
 	})
@@ -446,7 +418,10 @@ func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingRuntimeSecret(t *te
 }
 
 func TestValidateProviderRuntimeSecretsReadyRequiresAppliedSecrets(t *testing.T) {
-	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
+	config := Config{
+		BYOKEncryptionSecret: "released-byok-encryption-secret-at-least-32-characters",
+		Confidential:         ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"},
+	}
 	if err := validateProviderRuntimeSecretsReady(config); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
 		t.Fatalf("expected missing OpenAI provider key error, got %v", err)
 	}
@@ -464,6 +439,7 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 	if err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
 		"ANTHROPIC_API_KEY":          "released-anthropic",
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
 		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":            "public_0001_initial_schema",
 		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
@@ -487,6 +463,7 @@ func setRequiredEnvWithoutProviderKeys(t *testing.T) {
 	t.Helper()
 	t.Setenv("INFISICAL_SKIP", "true")
 	t.Setenv("API_KEY_PEPPER", "01234567890123456789012345678901")
+	t.Setenv("BYOK_ENCRYPTION_SECRET", "test-byok-encryption-secret-at-least-32-characters")
 	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")

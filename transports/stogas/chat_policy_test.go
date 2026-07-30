@@ -737,9 +737,8 @@ func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	}
 }
 
-func TestSanitizeRequestSetsUpstreamUserFromAPIKeyClaims(t *testing.T) {
+func TestApplyUpstreamCredentialSetsManagedProviderAbuseIdentifier(t *testing.T) {
 	responsibleID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
-	claims := &billing.APIKeyClaims{ResponsibleID: responsibleID}
 	for _, item := range []struct {
 		name string
 		path string
@@ -775,7 +774,11 @@ func TestSanitizeRequestSetsUpstreamUserFromAPIKeyClaims(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
-			state := NewState(resolution, "sk-test", claims, AdapterFor(resolution.Provider))
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			state.Authorization = &billing.Authorization{
+				UpstreamCredential: "stogas",
+				UserID:             responsibleID,
+			}
 			if err := state.Adapter.ValidateRequest(state); err != nil {
 				t.Fatalf("ValidateRequest returned error: %v", err)
 			}
@@ -787,14 +790,17 @@ func TestSanitizeRequestSetsUpstreamUserFromAPIKeyClaims(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
 			}
+			if err := ApplyUpstreamCredential(bifrostCtx, state, bifrostReq); err != nil {
+				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			}
 			switch {
 			case item.path == "/v1/chat/completions" && resolution.Provider == schemas.OpenAI:
-				if bifrostReq.ChatRequest.Params.User == nil || *bifrostReq.ChatRequest.Params.User != responsibleID {
-					t.Fatalf("expected chat upstream user %q, got %#v", responsibleID, bifrostReq.ChatRequest.Params.User)
+				if bifrostReq.ChatRequest.Params.SafetyIdentifier == nil || *bifrostReq.ChatRequest.Params.SafetyIdentifier != responsibleID {
+					t.Fatalf("expected chat upstream safety identifier %q, got %#v", responsibleID, bifrostReq.ChatRequest.Params.SafetyIdentifier)
 				}
 			case item.path == "/v1/responses" && resolution.Provider == schemas.OpenAI:
-				if bifrostReq.ResponsesRequest.Params.User == nil || *bifrostReq.ResponsesRequest.Params.User != responsibleID {
-					t.Fatalf("expected responses upstream user %q, got %#v", responsibleID, bifrostReq.ResponsesRequest.Params.User)
+				if bifrostReq.ResponsesRequest.Params.SafetyIdentifier == nil || *bifrostReq.ResponsesRequest.Params.SafetyIdentifier != responsibleID {
+					t.Fatalf("expected responses upstream safety identifier %q, got %#v", responsibleID, bifrostReq.ResponsesRequest.Params.SafetyIdentifier)
 				}
 			case item.path == "/v1/chat/completions" && resolution.Provider == schemas.Anthropic:
 				wire, err := anthropicprovider.ToAnthropicChatRequest(bifrostCtx, bifrostReq.ChatRequest)
@@ -1685,8 +1691,8 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			wantContext: 400000,
 		},
 		{
-			name:        "priority deployment context cap",
-			body:        `{"model":"openai-gpt-5.5-2026-04-23-priority","input":[{"type":"input_text","text":"continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			name:        "Fast deployment context cap",
+			body:        `{"model":"openai-gpt-5.5-2026-04-23-fast","input":[{"type":"input_text","text":"continue"},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
 			wantContext: 272000,
 		},
 		{
