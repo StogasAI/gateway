@@ -104,6 +104,10 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	} else {
 		authorization, err = billing.AuthorizeRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
 	}
+	if err != nil && authorization != nil {
+		state.Authorization = authorization
+		return err
+	}
 	if err != nil && !state.SingleUseRequestID {
 		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, requestID, hold, state.RequestLifetime, err)
 	}
@@ -112,6 +116,59 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	}
 	state.Authorization = authorization
 	SeedBifrostModelParams(state.Resolution)
+	return nil
+}
+
+func ApplyUpstreamCredential(
+	ctx *schemas.BifrostContext,
+	state *State,
+	request *schemas.BifrostRequest,
+) error {
+	if ctx == nil || state == nil || state.Authorization == nil || request == nil {
+		return gatewaybilling.ErrProviderCredential
+	}
+	authorization := state.Authorization
+	managed := authorization.UpstreamCredential == "stogas"
+	if !managed {
+		if authorization.UpstreamCredential == "" || authorization.UpstreamCredentialSecret == "" {
+			return gatewaybilling.ErrProviderCredential
+		}
+		ctx.SetValue(schemas.BifrostContextKeyDirectKey, schemas.Key{
+			ID:      authorization.UpstreamCredential,
+			Name:    authorization.UpstreamCredential,
+			Value:   *schemas.NewSecretVar(authorization.UpstreamCredentialSecret),
+			Models:  schemas.WhiteList{"*"},
+			Weight:  1,
+			Enabled: schemas.Ptr(true),
+		})
+	}
+
+	switch {
+	case request.ChatRequest != nil && request.ChatRequest.Params != nil:
+		request.ChatRequest.Params.User = nil
+		request.ChatRequest.Params.SafetyIdentifier = nil
+		if managed {
+			switch request.ChatRequest.Provider {
+			case schemas.OpenAI:
+				request.ChatRequest.Params.SafetyIdentifier = schemas.Ptr(authorization.UserID)
+			case schemas.Anthropic:
+				request.ChatRequest.Params.User = schemas.Ptr(authorization.UserID)
+			}
+		}
+	case request.ResponsesRequest != nil && request.ResponsesRequest.Params != nil:
+		request.ResponsesRequest.Params.User = nil
+		request.ResponsesRequest.Params.SafetyIdentifier = nil
+		if managed {
+			switch request.ResponsesRequest.Provider {
+			case schemas.OpenAI:
+				request.ResponsesRequest.Params.SafetyIdentifier = schemas.Ptr(authorization.UserID)
+			case schemas.Anthropic:
+				request.ResponsesRequest.Params.User = schemas.Ptr(authorization.UserID)
+			}
+		}
+	default:
+		return catalog.ErrUnsupportedRequest
+	}
 	return nil
 }
 

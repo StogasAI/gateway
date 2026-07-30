@@ -98,15 +98,39 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	if !ok || flex.ID != "openai-gpt-5.5-2026-04-23-flex" {
 		t.Fatalf("OpenAI service_tier did not select the concrete flex deployment: %#v", flex)
 	}
-	requestedPriority := schemas.BifrostServiceTierPriority
-	flex, ok = DeploymentForRouteServiceTier(
+	for _, requestedFastTier := range []schemas.BifrostServiceTier{
+		schemas.BifrostServiceTier("fast"),
+		schemas.BifrostServiceTierPriority,
+	} {
+		fast, fastOK := DeploymentForRouteServiceTier(
+			schemas.OpenAI,
+			"gpt-5.5",
+			RouteResponses,
+			&requestedFastTier,
+		)
+		if !fastOK ||
+			fast.ID != "openai-gpt-5.5-2026-04-23-fast" ||
+			fast.Upstream.FixedRequest.ServiceTier != "priority" ||
+			fast.ImpliedServiceTier == nil ||
+			*fast.ImpliedServiceTier != schemas.BifrostServiceTierPriority {
+			t.Fatalf("OpenAI %q service_tier did not select the Fast deployment: %#v", requestedFastTier, fast)
+		}
+		flex, ok = DeploymentForRouteServiceTier(
+			schemas.OpenAI,
+			"openai-gpt-5.5-2026-04-23-flex",
+			RouteResponses,
+			&requestedFastTier,
+		)
+		if ok {
+			t.Fatalf("conflicting %q request tier accepted for exact flex deployment: %#v", requestedFastTier, flex)
+		}
+	}
+	if retired, retiredOK := DeploymentForRoute(
 		schemas.OpenAI,
-		"openai-gpt-5.5-2026-04-23-flex",
+		"openai-gpt-5.5-2026-04-23-priority",
 		RouteResponses,
-		&requestedPriority,
-	)
-	if ok {
-		t.Fatalf("conflicting request tier accepted for exact flex deployment: %#v", flex)
+	); retiredOK {
+		t.Fatalf("retired Priority deployment selector remained available: %#v", retired)
 	}
 	if _, ok = DeploymentForRouteServiceTier(
 		schemas.OpenAI,
@@ -115,6 +139,31 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 		&requestedFlex,
 	); ok {
 		t.Fatal("conflicting axes must not retarget an exact deployment selector")
+	}
+	resolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.5","input":"hello","service_tier":"fast"}`),
+	})
+	if err != nil {
+		t.Fatalf("resolve Fast mode request: %v", err)
+	}
+	if resolution.Deployment.ID != "openai-gpt-5.5-2026-04-23-fast" ||
+		resolution.responses == nil ||
+		resolution.responses.ResponsesParameters.ServiceTier == nil ||
+		*resolution.responses.ResponsesParameters.ServiceTier != schemas.BifrostServiceTierPriority {
+		t.Fatalf("Fast mode was not normalized to Bifrost's priority wire value: %#v", resolution)
+	}
+	actualFast := schemas.BifrostServiceTier("fast")
+	actual, actualOK := DeploymentForActualExecution(
+		schemas.OpenAI,
+		RouteResponses,
+		resolution.Deployment,
+		&actualFast,
+		"",
+	)
+	if !actualOK || actual.ID != "openai-gpt-5.5-2026-04-23-fast" {
+		t.Fatalf("returned fast tier did not settle against the Fast deployment: %#v", actual)
 	}
 	fastUS, ok := DeploymentForRoute(
 		schemas.Anthropic,

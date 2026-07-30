@@ -115,8 +115,10 @@ func deploymentServiceTierForRequest(provider schemas.ModelProvider, requestedTi
 		switch value {
 		case "auto", "default", "":
 			return "default"
-		case "flex", "priority":
+		case "flex":
 			return value
+		case "fast", "priority":
+			return "priority"
 		}
 	case schemas.Anthropic:
 		switch value {
@@ -231,6 +233,12 @@ func impliedServiceTier(provider schemas.ModelProvider, tier string) *schemas.Bi
 func equivalentServiceTier(provider schemas.ModelProvider, requested, implied schemas.BifrostServiceTier) bool {
 	if requested == implied {
 		return true
+	}
+	if provider == schemas.OpenAI {
+		requestedValue := strings.ToLower(strings.TrimSpace(string(requested)))
+		impliedValue := strings.ToLower(strings.TrimSpace(string(implied)))
+		return impliedValue == "priority" &&
+			(requestedValue == "fast" || requestedValue == "priority")
 	}
 	if provider != schemas.Anthropic {
 		return false
@@ -726,7 +734,7 @@ func deploymentMatchesActualServiceTier(provider schemas.ModelProvider, deployme
 		}
 	}
 	switch actualValue {
-	case "priority":
+	case "fast", "priority":
 		return deploymentTier == "priority"
 	case "flex":
 		return deploymentTier == "flex"

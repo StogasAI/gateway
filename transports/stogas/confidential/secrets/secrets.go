@@ -41,6 +41,7 @@ type InstallInput struct {
 var requiredSecretNames = []string{
 	"ANTHROPIC_API_KEY",
 	"API_KEY_PEPPER",
+	"BYOK_ENCRYPTION_SECRET",
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
 	"INFERENCE_TOKEN_PUBLIC_KEY",

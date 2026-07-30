@@ -61,9 +61,6 @@ func (DefaultAdapter) SanitizeRequest(state *State) error {
 	}
 	state.Resolution.SanitizeClientMetadata()
 	state.Resolution.RequireUpstreamUsage()
-	if state.APIKeyClaims != nil && catalog.ProviderUsesPseudoanonymousUserID(state.Resolution.Provider) {
-		state.Resolution.SetUpstreamUser(state.APIKeyClaims.ResponsibleID)
-	}
 	return nil
 }
 

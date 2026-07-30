@@ -207,6 +207,27 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	}
 
 	if err := stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state); err != nil {
+		if state.Authorization != nil {
+			status := fasthttp.StatusServiceUnavailable
+			state.BifrostError = &schemas.BifrostError{
+				IsBifrostError: true,
+				StatusCode:     &status,
+				Error:          &schemas.ErrorField{Message: "Upstream credential is unavailable"},
+			}
+			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
+		}
+		cancel()
+		s.writeBillingError(ctx, err)
+		return
+	}
+	if err := stogas.ApplyUpstreamCredential(bifrostCtx, state, bifrostReq); err != nil {
+		status := fasthttp.StatusServiceUnavailable
+		state.BifrostError = &schemas.BifrostError{
+			IsBifrostError: true,
+			StatusCode:     &status,
+			Error:          &schemas.ErrorField{Message: "Upstream credential is unavailable"},
+		}
+		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		cancel()
 		s.writeBillingError(ctx, err)
 		return

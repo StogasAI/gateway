@@ -34,6 +34,7 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		config.DatabaseURL,
 		config.DatabaseSchema,
 		config.APIKeyPepper,
+		config.BYOKEncryptionSecret,
 		config.InferenceTokenPublicKey,
 		config.DatabasePool,
 		tinybird,

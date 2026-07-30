@@ -57,7 +57,7 @@ type ProviderAttempt struct {
 	ProviderFirstOutputMS *uint32 `json:"provider_first_output_ms"`
 	ProviderRequestID     string  `json:"provider_request_id"`
 	FinishReason          string  `json:"finish_reason"`
-	IsBYOK                bool    `json:"is_byok"`
+	UpstreamCredential    string  `json:"upstream_credential"`
 }
 
 type RequestEvent struct {
@@ -77,7 +77,8 @@ type RequestEvent struct {
 	StogasBillingStatus     string            `json:"stogas_billing_status"`
 	GatewayNodeID           string            `json:"gateway_node_id"`
 	TotalTimeMS             uint32            `json:"total_time_ms"`
-	TotalCostUSDAtoms       string            `json:"total_cost_usd_atoms"`
+	UpstreamCostUSDAtoms    string            `json:"upstream_cost_usd_atoms"`
+	BilledCostUSDAtoms      string            `json:"billed_cost_usd_atoms"`
 	Pricing                 map[string]any    `json:"pricing"`
 	GatewayVersion          string            `json:"gateway_version"`
 	ResolvedCatalogNodeIDs  []string          `json:"resolved_catalog_node_ids"`
@@ -367,34 +368,36 @@ func (c *TinybirdClient) appendBatch(batch []tinybirdAppendRequest) error {
 }
 
 type tinybirdGatewayRequestEventPayload struct {
-	RequestID                    string  `json:"request_id"`
-	CreatedAt                    string  `json:"created_at"`
-	StogasAPIKeyID               string  `json:"stogas_api_key_id"`
-	StogasProvisioningKeyID      *string `json:"stogas_provisioning_key_id"`
-	StogasUserID                 string  `json:"stogas_user_id"`
-	StogasOrganizationID         string  `json:"stogas_organization_id"`
-	StogasWorkspaceID            string  `json:"stogas_workspace_id"`
-	RequestType                  string  `json:"request_type"`
-	Cancelled                    uint8   `json:"cancelled"`
-	CatalogDigest                string  `json:"catalog_digest"`
-	CatalogSequence              uint64  `json:"catalog_sequence"`
-	ProviderAttempts             string  `json:"provider_attempts"`
-	AnalyticsProviderStatus      string  `json:"analytics_provider_status"`
-	AnalyticsProviderLatencyMS   uint32  `json:"analytics_provider_latency_ms"`
-	AnalyticsTimeToFirstOutputMS *uint32 `json:"analytics_time_to_first_output_ms"`
-	StogasProcessingSuccess      uint8   `json:"stogas_processing_success"`
-	StogasBillingStatus          string  `json:"stogas_billing_status"`
-	GatewayNodeID                string  `json:"gateway_node_id"`
-	TotalTimeMS                  uint32  `json:"total_time_ms"`
-	TotalCostUSDAtoms            string  `json:"total_cost_usd_atoms"`
-	Pricing                      string  `json:"pricing"`
-	AnalyticsInputTokens         uint64  `json:"analytics_input_tokens"`
-	AnalyticsCachedInputTokens   uint64  `json:"analytics_cached_input_tokens"`
-	AnalyticsCacheWriteTokens    uint64  `json:"analytics_cache_write_input_tokens"`
-	AnalyticsOutputTokens        uint64  `json:"analytics_output_tokens"`
-	AnalyticsReasoningTokens     uint64  `json:"analytics_reasoning_tokens"`
-	GatewayVersion               string  `json:"gateway_version"`
-	ResolvedCatalogNodeIDs       string  `json:"resolved_catalog_node_ids"`
+	RequestID                    string   `json:"request_id"`
+	CreatedAt                    string   `json:"created_at"`
+	StogasAPIKeyID               string   `json:"stogas_api_key_id"`
+	StogasProvisioningKeyID      *string  `json:"stogas_provisioning_key_id"`
+	StogasUserID                 string   `json:"stogas_user_id"`
+	StogasOrganizationID         string   `json:"stogas_organization_id"`
+	StogasWorkspaceID            string   `json:"stogas_workspace_id"`
+	RequestType                  string   `json:"request_type"`
+	Cancelled                    uint8    `json:"cancelled"`
+	CatalogDigest                string   `json:"catalog_digest"`
+	CatalogSequence              uint64   `json:"catalog_sequence"`
+	ProviderAttempts             string   `json:"provider_attempts"`
+	AnalyticsProviderStatus      string   `json:"analytics_provider_status"`
+	AnalyticsProviderLatencyMS   uint32   `json:"analytics_provider_latency_ms"`
+	AnalyticsTimeToFirstOutputMS *uint32  `json:"analytics_time_to_first_output_ms"`
+	StogasProcessingSuccess      uint8    `json:"stogas_processing_success"`
+	StogasBillingStatus          string   `json:"stogas_billing_status"`
+	GatewayNodeID                string   `json:"gateway_node_id"`
+	TotalTimeMS                  uint32   `json:"total_time_ms"`
+	UpstreamCostUSDAtoms         string   `json:"upstream_cost_usd_atoms"`
+	BilledCostUSDAtoms           string   `json:"billed_cost_usd_atoms"`
+	AnalyticsUpstreamCredentials []string `json:"analytics_upstream_credentials"`
+	Pricing                      string   `json:"pricing"`
+	AnalyticsInputTokens         uint64   `json:"analytics_input_tokens"`
+	AnalyticsCachedInputTokens   uint64   `json:"analytics_cached_input_tokens"`
+	AnalyticsCacheWriteTokens    uint64   `json:"analytics_cache_write_input_tokens"`
+	AnalyticsOutputTokens        uint64   `json:"analytics_output_tokens"`
+	AnalyticsReasoningTokens     uint64   `json:"analytics_reasoning_tokens"`
+	GatewayVersion               string   `json:"gateway_version"`
+	ResolvedCatalogNodeIDs       string   `json:"resolved_catalog_node_ids"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
@@ -412,10 +415,16 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	providerStatus := ""
 	var providerLatencyMS uint32
 	var timeToFirstOutputMS *uint32
+	upstreamCredentials := make([]string, 0, len(event.ProviderAttempts))
 	if len(event.ProviderAttempts) > 0 {
 		providerStatus = event.ProviderAttempts[0].Status
 		providerLatencyMS = event.ProviderAttempts[0].LatencyMS
 		timeToFirstOutputMS = event.ProviderAttempts[0].ProviderFirstOutputMS
+	}
+	for _, attempt := range event.ProviderAttempts {
+		if credential := strings.TrimSpace(attempt.UpstreamCredential); credential != "" {
+			upstreamCredentials = append(upstreamCredentials, credential)
+		}
 	}
 	cacheWriteTokens :=
 		analyticsPricingQuantity(event.Pricing, MeterCacheWriteInputTokens) +
@@ -430,6 +439,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		AnalyticsProviderStatus:      providerStatus,
 		AnalyticsReasoningTokens:     analyticsPricingQuantity(event.Pricing, MeterReasoningTokens),
 		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
+		AnalyticsUpstreamCredentials: upstreamCredentials,
 		Cancelled:                    cancelled,
 		CatalogDigest:                strings.TrimSpace(event.CatalogDigest),
 		CatalogSequence:              event.CatalogSequence,
@@ -448,7 +458,8 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		StogasProcessingSuccess:      processed,
 		StogasUserID:                 event.StogasUserID,
 		StogasWorkspaceID:            event.StogasWorkspaceID,
-		TotalCostUSDAtoms:            event.TotalCostUSDAtoms,
+		UpstreamCostUSDAtoms:         event.UpstreamCostUSDAtoms,
+		BilledCostUSDAtoms:           event.BilledCostUSDAtoms,
 		TotalTimeMS:                  event.TotalTimeMS,
 	}
 }
