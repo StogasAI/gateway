@@ -9,6 +9,7 @@ const releaseRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(releaseRoot, '../..');
 const pinsPath = resolve(releaseRoot, 'pins.lock.json');
 const pins = JSON.parse(readFileSync(pinsPath, 'utf8'));
+const maxDownloadBytes = 512 * 1024 * 1024;
 
 const workflowPaths = [
 	resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'),
@@ -439,13 +440,40 @@ async function fetchBytes(url, name) {
 			accept: '*/*',
 			'user-agent': 'curl/8.0'
 		},
-		redirect: 'follow'
+		redirect: 'follow',
+		signal: AbortSignal.timeout(60_000)
 	});
-	if (response.ok) return Buffer.from(await response.arrayBuffer());
+	if (response.ok) return readBoundedResponse(response, maxDownloadBytes);
 	try {
-		return execFileSync('curl', ['-fsSL', url], { maxBuffer: 512 * 1024 * 1024 });
+		return execFileSync(
+			'curl',
+			['-fsSL', '--connect-timeout', '15', '--max-time', '120', url],
+			{ maxBuffer: 512 * 1024 * 1024, timeout: 125_000 }
+		);
 	} catch {
 		throw new Error(`Could not fetch ${name}: ${response.status} ${response.statusText}`);
+	}
+}
+
+async function readBoundedResponse(response, maxBytes) {
+	const contentLength = Number(response.headers.get('content-length'));
+	if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+		throw new Error(`Download exceeds ${maxBytes} bytes.`);
+	}
+	if (!response.body) return Buffer.alloc(0);
+
+	const chunks = [];
+	const reader = response.body.getReader();
+	let bytesRead = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) return Buffer.concat(chunks, bytesRead);
+		bytesRead += value.byteLength;
+		if (bytesRead > maxBytes) {
+			await reader.cancel();
+			throw new Error(`Download exceeds ${maxBytes} bytes.`);
+		}
+		chunks.push(Buffer.from(value));
 	}
 }
 
