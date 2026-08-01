@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -22,6 +24,7 @@ const (
 	tinybirdBatchWindow        = 50 * time.Millisecond
 	tinybirdMinRequestInterval = 250 * time.Millisecond
 	tinybirdMaxEventBytes      = 64 * 1024
+	tinybirdMaxResponseBytes   = 64 * 1024
 	// Stay below Tinybird's smallest (10 MB) Events API request limit.
 	tinybirdMaxBatchBytes = 8 * 1024 * 1024
 	tinybirdMaxBatchRows  = 4096
@@ -352,9 +355,20 @@ func (c *TinybirdClient) appendBatch(batch []tinybirdAppendRequest) error {
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("append tinybird batch: status %d", res.StatusCode)
 	}
+	responseBody, err := io.ReadAll(io.LimitReader(res.Body, tinybirdMaxResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("read tinybird batch acknowledgement: %w", err)
+	}
+	if len(responseBody) > tinybirdMaxResponseBytes {
+		return fmt.Errorf("tinybird batch acknowledgement exceeded %d bytes", tinybirdMaxResponseBytes)
+	}
 	result := tinybirdEventsResponse{}
-	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(responseBody))
+	if err := decoder.Decode(&result); err != nil {
 		return fmt.Errorf("decode tinybird batch acknowledgement: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("decode tinybird batch acknowledgement: trailing data")
 	}
 	if result.SuccessfulRows != len(batch) || result.QuarantinedRows != 0 {
 		return fmt.Errorf(

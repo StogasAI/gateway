@@ -44,7 +44,7 @@
   (specification->package "linux-libre@6.18.38"))
 
 (define %go-1-26
-  (specification->package "go@1.26.4"))
+  (specification->package "go@1.26.5"))
 
 (define stogas-go-1-26
   (package

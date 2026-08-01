@@ -79,6 +79,27 @@ func TestHTTPFetcherRejectsBadStatusAndMalformedSignature(t *testing.T) {
 	}
 }
 
+func TestHTTPFetcherRejectsInvalidResponseFraming(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "trailing JSON", body: `{"round":42,"signature":"0102"}{}`},
+		{name: "oversized", body: strings.Repeat(" ", (1<<20)+1)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			if _, err := NewHTTPFetcher(server.Client(), server.URL+QuicknetLatestPath).Fetch(context.Background()); err == nil {
+				t.Fatal("expected response framing error")
+			}
+		})
+	}
+}
+
 func TestHTTPFetcherFallsBackAcrossQuicknetEndpoints(t *testing.T) {
 	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "temporary upstream failure", http.StatusBadGateway)

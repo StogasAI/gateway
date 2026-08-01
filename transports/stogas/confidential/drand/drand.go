@@ -117,7 +117,14 @@ func (f *HTTPFetcher) fetchOne(ctx context.Context, url string) (reportdata.Dran
 		Round      uint64 `json:"round"`
 		Signature  string `json:"signature"`
 	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body); err != nil {
+	encoded, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
+	if err != nil {
+		return reportdata.Drand{}, err
+	}
+	if len(encoded) > 1<<20 {
+		return reportdata.Drand{}, errors.New("drand response exceeds size limit")
+	}
+	if err := json.Unmarshal(encoded, &body); err != nil {
 		return reportdata.Drand{}, err
 	}
 	randomness := body.Randomness

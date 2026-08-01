@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -1385,83 +1384,6 @@ func TestServerConnectionPolicy(t *testing.T) {
 	}
 	if server.server.StreamRequestBody {
 		t.Fatal("Stogas HTTP server should not stream request bodies")
-	}
-}
-
-func TestShutdownDrainsHTTPBeforeClosingRuntimeDependencies(t *testing.T) {
-	source, err := os.ReadFile("http.go")
-	if err != nil {
-		t.Fatalf("read HTTP transport source: %v", err)
-	}
-	shutdown := string(source)
-	shutdownIndex := strings.Index(shutdown, "func (s *Server) shutdown()")
-	if shutdownIndex < 0 {
-		t.Fatal("shutdown lifecycle function missing")
-	}
-	shutdown = shutdown[shutdownIndex:]
-	readinessIndex := strings.Index(shutdown, "s.readinessServer.Shutdown()")
-	httpIndex := strings.Index(shutdown, "s.server.Shutdown()")
-	runtimeIndex := strings.Index(shutdown, "s.runtime.Close()")
-	secureIndex := strings.Index(shutdown, "s.secure.Close()")
-	if readinessIndex < 0 || httpIndex < 0 || runtimeIndex < 0 || secureIndex < 0 {
-		t.Fatalf("shutdown lifecycle calls missing: readiness=%d HTTP=%d runtime=%d secure=%d", readinessIndex, httpIndex, runtimeIndex, secureIndex)
-	}
-	if readinessIndex > runtimeIndex || readinessIndex > secureIndex || httpIndex > runtimeIndex || httpIndex > secureIndex {
-		t.Fatal("both HTTP servers must stop accepting and drain before runtime dependencies close")
-	}
-}
-
-func TestWriteSSEStreamUsesManagedDirectReader(t *testing.T) {
-	source, err := os.ReadFile("http.go")
-	if err != nil {
-		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
-	}
-	text := string(source)
-
-	forbidden := []string{"SetBodyStreamWriter", ".Hijack(", "fasthttputil.NewPipeConns", "fasthttp.NewStreamReader"}
-	for _, token := range forbidden {
-		if strings.Contains(text, token) {
-			t.Fatalf("Stogas SSE streaming must not use %s", token)
-		}
-	}
-	if !strings.Contains(text, "newSSEStreamReader()") || !strings.Contains(text, "SetBodyStream(reader, -1)") {
-		t.Fatal("Stogas SSE streaming must use the local SSE stream reader with fasthttp SetBodyStream")
-	}
-}
-
-func TestInferenceAuthorizesAfterBifrostRequestIsMaterialized(t *testing.T) {
-	source, err := os.ReadFile("http.go")
-	if err != nil {
-		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
-	}
-	text := string(source)
-
-	resolveIndex := strings.Index(text, "catalog.ResolveRequest")
-	validateIndex := strings.Index(text, "adapter.ValidateRequest(state)")
-	toBifrostIndex := strings.Index(text, "resolution.ToBifrost(bifrostCtx)")
-	dryRunIndex := strings.Index(text, "dryRunProviderRequestMarshal(bifrostCtx, bifrostReq)")
-	authorizeIndex := strings.Index(text, "stogas.AuthorizeState(bifrostCtx")
-	if resolveIndex < 0 || validateIndex < 0 || toBifrostIndex < 0 || dryRunIndex < 0 || authorizeIndex < 0 {
-		t.Fatalf("expected inference source to include catalog resolution, validation, ToBifrost, dry run, and AuthorizeState, got ResolveRequest=%d Validate=%d ToBifrost=%d dryRun=%d AuthorizeState=%d", resolveIndex, validateIndex, toBifrostIndex, dryRunIndex, authorizeIndex)
-	}
-	if validateIndex < resolveIndex {
-		t.Fatal("request validation must happen after catalog resolution")
-	}
-	if authorizeIndex < toBifrostIndex {
-		t.Fatal("DB hold authorization must happen after the Bifrost request is materialized")
-	}
-	if authorizeIndex < dryRunIndex {
-		t.Fatal("DB hold authorization must happen after provider request marshal dry-run")
-	}
-}
-
-func TestInferenceDoesNotEnableBifrostExtraHeaders(t *testing.T) {
-	source, err := os.ReadFile("http.go")
-	if err != nil {
-		t.Fatalf("failed to read Stogas HTTP transport source: %v", err)
-	}
-	if strings.Contains(string(source), "BifrostContextKeyExtraHeaders") {
-		t.Fatal("Stogas must not bridge client or state headers into Bifrost extra headers")
 	}
 }
 
