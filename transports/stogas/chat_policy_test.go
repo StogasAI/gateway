@@ -737,7 +737,7 @@ func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	}
 }
 
-func TestApplyUpstreamCredentialSetsManagedProviderAbuseIdentifier(t *testing.T) {
+func TestApplyUpstreamByokSetsManagedProviderAbuseIdentifier(t *testing.T) {
 	responsibleID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
 	for _, item := range []struct {
 		name string
@@ -776,7 +776,7 @@ func TestApplyUpstreamCredentialSetsManagedProviderAbuseIdentifier(t *testing.T)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 			state.Authorization = &billing.Authorization{
-				UpstreamCredential: "stogas",
+				UpstreamByok: "stogas",
 				UserID:             responsibleID,
 			}
 			if err := state.Adapter.ValidateRequest(state); err != nil {
@@ -790,8 +790,8 @@ func TestApplyUpstreamCredentialSetsManagedProviderAbuseIdentifier(t *testing.T)
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
 			}
-			if err := ApplyUpstreamCredential(bifrostCtx, state, bifrostReq); err != nil {
-				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			if err := ApplyUpstreamByok(bifrostCtx, state, bifrostReq); err != nil {
+				t.Fatalf("ApplyUpstreamByok returned error: %v", err)
 			}
 			switch {
 			case item.path == "/v1/chat/completions" && resolution.Provider == schemas.OpenAI:

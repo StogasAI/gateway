@@ -11,6 +11,43 @@ esac
 
 repo_root="$(git rev-parse --show-toplevel)"
 release_root="$repo_root/stogas/release"
+profile_catalog="$release_root/snp-policy-profiles.json"
+
+profile_data="$(
+  node --input-type=module - "$profile_catalog" "${STOGAS_SNP_POLICY_PROFILE:-}" <<'NODE'
+import { readFileSync } from 'node:fs';
+
+const [catalogPath, requestedProfile] = process.argv.slice(2);
+const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
+const rootKeys = Object.keys(catalog).sort();
+if (
+  JSON.stringify(rootKeys) !== JSON.stringify(['active', 'profiles', 'schema']) ||
+  catalog.schema !== 'stogas.snp-policy-profiles.v1' ||
+  typeof catalog.active !== 'string' ||
+  !catalog.profiles ||
+  typeof catalog.profiles !== 'object' ||
+  Array.isArray(catalog.profiles)
+) {
+  throw new Error('invalid SNP policy profile catalog');
+}
+const profileName = requestedProfile || catalog.active;
+if (!/^[a-z0-9-]{1,32}$/.test(profileName)) throw new Error('invalid SNP policy profile name');
+const profile = catalog.profiles[profileName];
+if (
+  !profile ||
+  JSON.stringify(Object.keys(profile).sort()) !== JSON.stringify(['amdProduct', 'policy']) ||
+  !/^[A-Za-z0-9-]{1,32}$/.test(profile.amdProduct) ||
+  !/^0x[0-9a-f]{16}$/.test(profile.policy)
+) {
+  throw new Error(`invalid or unknown SNP policy profile: ${profileName}`);
+}
+console.log(`${profileName}|${profile.amdProduct}|${profile.policy}`);
+NODE
+)"
+IFS='|' read -r snp_policy_profile snp_policy_product snp_policy <<<"$profile_data"
+export STOGAS_SNP_POLICY_PROFILE="$snp_policy_profile"
+export STOGAS_SNP_POLICY_PRODUCT="$snp_policy_product"
+export STOGAS_SNP_POLICY="$snp_policy"
 
 if [ "${STOGAS_RELEASE_ALLOW_DIRTY:-0}" != "1" ]; then
   git -C "$repo_root" diff --quiet --exit-code || {

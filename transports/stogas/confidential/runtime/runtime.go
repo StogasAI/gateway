@@ -40,18 +40,18 @@ type Runtime struct {
 }
 
 type ControlLoop struct {
-	client       provision.Client
-	config       stogas.ConfidentialConfig
-	certs        *identity.CertificateStore
-	entropyReady bool
-	identity     *identity.Material
-	nodeID       string
-	quotes       *quote.Manager
-	secrets      *secretstore.Store
+	client          provision.Client
+	config          stogas.ConfidentialConfig
+	certs           *identity.CertificateStore
+	candidateNodeID string
+	entropyReady    bool
+	identity        *identity.Material
+	quotes          *quote.Manager
+	secrets         *secretstore.Store
 
 	heartbeatMu                  sync.Mutex
 	mu                           sync.RWMutex
-	generationID                 string
+	nodeID                       string
 	admissionReadyUntil          time.Time
 	lastHeartbeatAttemptAt       time.Time
 	lastHeartbeatSuccessAt       time.Time
@@ -133,8 +133,16 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, err
 		if err != nil {
 			return reportdata.Payload{}, err
 		}
+		activeCatalog, ok := catalog.ActiveIdentity()
+		if !ok {
+			return reportdata.Payload{}, errors.New("active catalog identity is unavailable")
+		}
 		certState := certs.State()
 		return reportdata.NewPayload(reportdata.Payload{
+			Catalog: reportdata.CatalogIdentity{
+				Digest:   activeCatalog.Digest,
+				Sequence: activeCatalog.Sequence,
+			},
 			TLSSPKISHA256:      material.TLSSPKISHA256,
 			ActiveCertSHA256:   certState.ActiveCertSHA256,
 			AcceptedCertSHA256: append([]string(nil), certState.AcceptedCertSHA256...),
@@ -330,7 +338,7 @@ func newControlLoop(config stogas.ConfidentialConfig, material *identity.Materia
 		certs:             certs,
 		entropyReady:      entropyReady,
 		identity:          material,
-		nodeID:            deriveNodeID(material),
+		candidateNodeID:   deriveCandidateNodeID(material),
 		quotes:            manager,
 		secrets:           secrets,
 		shutdownRequested: make(chan struct{}),
@@ -351,10 +359,10 @@ func (l *ControlLoop) Start(ctx context.Context) {
 	go l.runHeartbeats(ctx)
 }
 
-func (l *ControlLoop) GenerationID() string {
+func (l *ControlLoop) NodeID() string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.generationID
+	return l.nodeID
 }
 
 func (l *ControlLoop) LastHeartbeatError() error {
@@ -493,12 +501,11 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		l.recordHeartbeatError(err)
 		return nil, err
 	}
-	nodeID := l.GenerationID()
+	nodeID := l.NodeID()
 	if nodeID == "" {
-		nodeID = l.nodeID
+		nodeID = l.candidateNodeID
 	}
 	input := provision.HeartbeatInput{
-		Catalog:       catalogIdentity(),
 		CertExpiresAt: l.certs.State().ExpiresAt,
 		Health: provision.NodeHealth{
 			LastQuoteError: lastErrorString(l.quotes.LastError()),
@@ -516,7 +523,7 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 		return nil, err
 	}
 	l.mu.Lock()
-	l.generationID = response.GenerationID
+	l.nodeID = response.NodeID
 	if response.Shutdown {
 		l.draining = true
 		l.admissionReadyUntil = time.Time{}
@@ -546,15 +553,15 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 		if err != nil {
 			return false, fmt.Errorf("create certificate CSR: %w", err)
 		}
-		generationID := l.GenerationID()
-		if generationID == "" {
-			return false, errors.New("generation id is not available for certificate CSR")
+		nodeID := l.NodeID()
+		if nodeID == "" {
+			return false, errors.New("node ID is not available for certificate CSR")
 		}
 		if _, err := l.client.SubmitCertificateCSR(ctx, provision.CertificateCSRSubmission{
-			CSRDER:       csr,
-			GenerationID: generationID,
-			OrderID:      instruction.OrderID,
-			SigningKey:   l.identity.Ed25519PrivateKey,
+			CSRDER:     csr,
+			NodeID:     nodeID,
+			OrderID:    instruction.OrderID,
+			SigningKey: l.identity.Ed25519PrivateKey,
 		}); err != nil {
 			return false, fmt.Errorf("submit certificate CSR: %w", err)
 		}
@@ -734,7 +741,7 @@ func (l *ControlLoop) recordCertificateError(err error) {
 	l.mu.Unlock()
 }
 
-func deriveNodeID(material *identity.Material) string {
+func deriveCandidateNodeID(material *identity.Material) string {
 	preimage, _ := json.Marshal(map[string]string{
 		"ed25519_public_key": material.Ed25519PublicKey,
 		"hpke_public_key":    material.HPKEPublicKey,
@@ -742,14 +749,6 @@ func deriveNodeID(material *identity.Material) string {
 	})
 	sum := sha256.Sum256(preimage)
 	return hex.EncodeToString(sum[:])
-}
-
-func catalogIdentity() provision.CatalogIdentity {
-	identity, _ := catalog.ActiveIdentity()
-	return provision.CatalogIdentity{
-		Digest:   identity.Digest,
-		Sequence: identity.Sequence,
-	}
 }
 
 func lastErrorString(err error) string {

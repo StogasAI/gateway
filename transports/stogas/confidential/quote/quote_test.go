@@ -13,6 +13,7 @@ import (
 
 func testPayload() reportdata.Payload {
 	return reportdata.Payload{
+		Catalog:            reportdata.CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},

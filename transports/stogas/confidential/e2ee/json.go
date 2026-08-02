@@ -71,4 +71,3 @@ func scanJSONValue(decoder *json.Decoder) error {
 	}
 	return nil
 }
-

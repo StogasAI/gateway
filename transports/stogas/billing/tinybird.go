@@ -60,7 +60,7 @@ type ProviderAttempt struct {
 	ProviderFirstOutputMS *uint32 `json:"provider_first_output_ms"`
 	ProviderRequestID     string  `json:"provider_request_id"`
 	FinishReason          string  `json:"finish_reason"`
-	UpstreamCredential    string  `json:"upstream_credential"`
+	UpstreamByok          string  `json:"upstream_byok"`
 }
 
 type RequestEvent struct {
@@ -74,17 +74,16 @@ type RequestEvent struct {
 	RequestType             string            `json:"request_type"`
 	Cancelled               bool              `json:"cancelled"`
 	CatalogDigest           string            `json:"catalog_digest"`
-	CatalogSequence         uint64            `json:"catalog_sequence"`
 	ProviderAttempts        []ProviderAttempt `json:"provider_attempts"`
 	StogasProcessingSuccess bool              `json:"stogas_processing_success"`
 	StogasBillingStatus     string            `json:"stogas_billing_status"`
-	GatewayNodeID           string            `json:"gateway_node_id"`
+	NodeID                  string            `json:"node_id"`
 	TotalTimeMS             uint32            `json:"total_time_ms"`
 	UpstreamCostUSDAtoms    string            `json:"upstream_cost_usd_atoms"`
 	BilledCostUSDAtoms      string            `json:"billed_cost_usd_atoms"`
 	Pricing                 map[string]any    `json:"pricing"`
 	GatewayVersion          string            `json:"gateway_version"`
-	ResolvedCatalogNodeIDs  []string          `json:"resolved_catalog_node_ids"`
+	CatalogNodeIDs          []string          `json:"catalog_node_ids"`
 }
 
 type tinybirdEventsResponse struct {
@@ -392,18 +391,17 @@ type tinybirdGatewayRequestEventPayload struct {
 	RequestType                  string   `json:"request_type"`
 	Cancelled                    uint8    `json:"cancelled"`
 	CatalogDigest                string   `json:"catalog_digest"`
-	CatalogSequence              uint64   `json:"catalog_sequence"`
 	ProviderAttempts             string   `json:"provider_attempts"`
 	AnalyticsProviderStatus      string   `json:"analytics_provider_status"`
 	AnalyticsProviderLatencyMS   uint32   `json:"analytics_provider_latency_ms"`
 	AnalyticsTimeToFirstOutputMS *uint32  `json:"analytics_time_to_first_output_ms"`
 	StogasProcessingSuccess      uint8    `json:"stogas_processing_success"`
 	StogasBillingStatus          string   `json:"stogas_billing_status"`
-	GatewayNodeID                string   `json:"gateway_node_id"`
+	NodeID                       string   `json:"node_id"`
 	TotalTimeMS                  uint32   `json:"total_time_ms"`
 	UpstreamCostUSDAtoms         string   `json:"upstream_cost_usd_atoms"`
 	BilledCostUSDAtoms           string   `json:"billed_cost_usd_atoms"`
-	AnalyticsUpstreamCredentials []string `json:"analytics_upstream_credentials"`
+	AnalyticsUpstreamByok        []string `json:"analytics_upstream_byok"`
 	Pricing                      string   `json:"pricing"`
 	AnalyticsInputTokens         uint64   `json:"analytics_input_tokens"`
 	AnalyticsCachedInputTokens   uint64   `json:"analytics_cached_input_tokens"`
@@ -411,13 +409,13 @@ type tinybirdGatewayRequestEventPayload struct {
 	AnalyticsOutputTokens        uint64   `json:"analytics_output_tokens"`
 	AnalyticsReasoningTokens     uint64   `json:"analytics_reasoning_tokens"`
 	GatewayVersion               string   `json:"gateway_version"`
-	ResolvedCatalogNodeIDs       string   `json:"resolved_catalog_node_ids"`
+	CatalogNodeIDs               string   `json:"catalog_node_ids"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
 	pricingJSON := mustJSONString(event.Pricing, "{}")
-	resolvedCatalogNodeIDsJSON := mustJSONString(event.ResolvedCatalogNodeIDs, "[]")
+	catalogNodeIDsJSON := mustJSONString(event.CatalogNodeIDs, "[]")
 	processed := uint8(0)
 	if event.StogasProcessingSuccess {
 		processed = 1
@@ -429,15 +427,15 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	providerStatus := ""
 	var providerLatencyMS uint32
 	var timeToFirstOutputMS *uint32
-	upstreamCredentials := make([]string, 0, len(event.ProviderAttempts))
+	upstreamByok := make([]string, 0, len(event.ProviderAttempts))
 	if len(event.ProviderAttempts) > 0 {
 		providerStatus = event.ProviderAttempts[0].Status
 		providerLatencyMS = event.ProviderAttempts[0].LatencyMS
 		timeToFirstOutputMS = event.ProviderAttempts[0].ProviderFirstOutputMS
 	}
 	for _, attempt := range event.ProviderAttempts {
-		if credential := strings.TrimSpace(attempt.UpstreamCredential); credential != "" {
-			upstreamCredentials = append(upstreamCredentials, credential)
+		if byokID := strings.TrimSpace(attempt.UpstreamByok); byokID != "" {
+			upstreamByok = append(upstreamByok, byokID)
 		}
 	}
 	cacheWriteTokens :=
@@ -453,18 +451,17 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		AnalyticsProviderStatus:      providerStatus,
 		AnalyticsReasoningTokens:     analyticsPricingQuantity(event.Pricing, MeterReasoningTokens),
 		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
-		AnalyticsUpstreamCredentials: upstreamCredentials,
+		AnalyticsUpstreamByok:        upstreamByok,
 		Cancelled:                    cancelled,
 		CatalogDigest:                strings.TrimSpace(event.CatalogDigest),
-		CatalogSequence:              event.CatalogSequence,
 		CreatedAt:                    event.CreatedAt,
 		Pricing:                      pricingJSON,
 		ProviderAttempts:             attemptsJSON,
-		GatewayNodeID:                strings.ToLower(strings.TrimSpace(event.GatewayNodeID)),
+		NodeID:                       strings.ToLower(strings.TrimSpace(event.NodeID)),
 		GatewayVersion:               strings.TrimSpace(event.GatewayVersion),
 		RequestID:                    event.RequestID,
 		RequestType:                  event.RequestType,
-		ResolvedCatalogNodeIDs:       resolvedCatalogNodeIDsJSON,
+		CatalogNodeIDs:               catalogNodeIDsJSON,
 		StogasAPIKeyID:               event.StogasAPIKeyID,
 		StogasProvisioningKeyID:      event.StogasProvisioningKeyID,
 		StogasBillingStatus:          event.StogasBillingStatus,

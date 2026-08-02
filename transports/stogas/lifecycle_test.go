@@ -168,7 +168,7 @@ func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
 	}
 }
 
-func TestApplyUpstreamCredentialUsesManagedSafetyIdentifiers(t *testing.T) {
+func TestApplyUpstreamByokUsesManagedSafetyIdentifiers(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
 		provider         schemas.ModelProvider
@@ -198,12 +198,12 @@ func TestApplyUpstreamCredentialUsesManagedSafetyIdentifiers(t *testing.T) {
 				},
 			}
 			state := &State{Authorization: &billing.Authorization{
-				UpstreamCredential: "stogas",
-				UserID:             "user-123",
+				UpstreamByok: "stogas",
+				UserID:       "user-123",
 			}}
 
-			if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
-				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			if err := ApplyUpstreamByok(ctx, state, request); err != nil {
+				t.Fatalf("ApplyUpstreamByok returned error: %v", err)
 			}
 			if !equalStringPointers(request.ChatRequest.Params.SafetyIdentifier, tc.wantSafetyID) {
 				t.Fatalf("safety_identifier = %#v, want %#v", request.ChatRequest.Params.SafetyIdentifier, tc.wantSafetyID)
@@ -218,8 +218,8 @@ func TestApplyUpstreamCredentialUsesManagedSafetyIdentifiers(t *testing.T) {
 	}
 }
 
-func TestApplyUpstreamCredentialInstallsBYOKKeyAndClearsSafetyIdentifiers(t *testing.T) {
-	const credentialID = "0198f4cc-6c25-7000-8000-000000000001"
+func TestApplyUpstreamByokInstallsBYOKKeyAndClearsSafetyIdentifiers(t *testing.T) {
+	const byokID = "0198f4cc-6c25-7000-8000-000000000001"
 	const upstreamSecret = "sk-upstream-secret"
 
 	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic} {
@@ -235,13 +235,13 @@ func TestApplyUpstreamCredentialInstallsBYOKKeyAndClearsSafetyIdentifiers(t *tes
 				},
 			}
 			state := &State{Authorization: &billing.Authorization{
-				UpstreamCredential:       credentialID,
-				UpstreamCredentialSecret: upstreamSecret,
-				UserID:                   "stogas-user",
+				UpstreamByok:       byokID,
+				UpstreamByokSecret: upstreamSecret,
+				UserID:             "stogas-user",
 			}}
 
-			if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
-				t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+			if err := ApplyUpstreamByok(ctx, state, request); err != nil {
+				t.Fatalf("ApplyUpstreamByok returned error: %v", err)
 			}
 			if request.ChatRequest.Params.SafetyIdentifier != nil || request.ChatRequest.Params.User != nil {
 				t.Fatalf(
@@ -254,8 +254,8 @@ func TestApplyUpstreamCredentialInstallsBYOKKeyAndClearsSafetyIdentifiers(t *tes
 			if !ok {
 				t.Fatalf("BYOK request did not install a direct provider key")
 			}
-			if directKey.ID != credentialID || directKey.Name != credentialID {
-				t.Fatalf("direct key attribution = %#v, want credential %q", directKey, credentialID)
+			if directKey.ID != byokID || directKey.Name != byokID {
+				t.Fatalf("direct key attribution = %#v, want credential %q", directKey, byokID)
 			}
 			if directKey.Value.GetValue() != upstreamSecret {
 				t.Fatalf("direct key secret was not installed")
@@ -267,7 +267,7 @@ func TestApplyUpstreamCredentialInstallsBYOKKeyAndClearsSafetyIdentifiers(t *tes
 	}
 }
 
-func TestApplyUpstreamCredentialClearsResponsesSafetyIdentifiersForBYOK(t *testing.T) {
+func TestApplyUpstreamByokClearsResponsesSafetyIdentifiersForBYOK(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	request := &schemas.BifrostRequest{
 		ResponsesRequest: &schemas.BifrostResponsesRequest{
@@ -279,12 +279,12 @@ func TestApplyUpstreamCredentialClearsResponsesSafetyIdentifiersForBYOK(t *testi
 		},
 	}
 	state := &State{Authorization: &billing.Authorization{
-		UpstreamCredential:       "0198f4cc-6c25-7000-8000-000000000001",
-		UpstreamCredentialSecret: "sk-upstream-secret",
+		UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
+		UpstreamByokSecret: "sk-upstream-secret",
 	}}
 
-	if err := ApplyUpstreamCredential(ctx, state, request); err != nil {
-		t.Fatalf("ApplyUpstreamCredential returned error: %v", err)
+	if err := ApplyUpstreamByok(ctx, state, request); err != nil {
+		t.Fatalf("ApplyUpstreamByok returned error: %v", err)
 	}
 	if request.ResponsesRequest.Params.SafetyIdentifier != nil || request.ResponsesRequest.Params.User != nil {
 		t.Fatalf(
@@ -295,7 +295,7 @@ func TestApplyUpstreamCredentialClearsResponsesSafetyIdentifiersForBYOK(t *testi
 	}
 }
 
-func TestApplyUpstreamCredentialRejectsIncompleteBYOKAuthorization(t *testing.T) {
+func TestApplyUpstreamByokRejectsIncompleteBYOKAuthorization(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	request := &schemas.BifrostRequest{
 		ChatRequest: &schemas.BifrostChatRequest{
@@ -304,11 +304,11 @@ func TestApplyUpstreamCredentialRejectsIncompleteBYOKAuthorization(t *testing.T)
 		},
 	}
 	state := &State{Authorization: &billing.Authorization{
-		UpstreamCredential: "0198f4cc-6c25-7000-8000-000000000001",
+		UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001",
 	}}
 
-	if err := ApplyUpstreamCredential(ctx, state, request); !errors.Is(err, billing.ErrProviderCredential) {
-		t.Fatalf("ApplyUpstreamCredential error = %v, want provider credential failure", err)
+	if err := ApplyUpstreamByok(ctx, state, request); !errors.Is(err, billing.ErrByok) {
+		t.Fatalf("ApplyUpstreamByok error = %v, want BYOK failure", err)
 	}
 	if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
 		t.Fatalf("incomplete BYOK authorization installed direct key: %#v", directKey)
@@ -749,7 +749,7 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 		"route:openai-chat-completions",
 		"provider:openai",
 	}
-	if got := authorizer.finalEvents[0].ResolvedCatalogNodeIDs; strings.Join(got, ",") != strings.Join(wantNodeIDs, ",") {
+	if got := authorizer.finalEvents[0].CatalogNodeIDs; strings.Join(got, ",") != strings.Join(wantNodeIDs, ",") {
 		t.Fatalf("resolved catalog node IDs = %#v, want %#v", got, wantNodeIDs)
 	}
 }
@@ -1520,8 +1520,8 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		t.Fatalf("gateway version = %q", event.GatewayVersion)
 	}
 	wantNodeIDs := []string{"model:gpt-5-2026-01-01", "deployment:gpt-5-standard", "route:openai-chat-completions", "provider:openai"}
-	if strings.Join(event.ResolvedCatalogNodeIDs, ",") != strings.Join(wantNodeIDs, ",") {
-		t.Fatalf("resolved catalog node IDs = %#v, want %#v", event.ResolvedCatalogNodeIDs, wantNodeIDs)
+	if strings.Join(event.CatalogNodeIDs, ",") != strings.Join(wantNodeIDs, ",") {
+		t.Fatalf("resolved catalog node IDs = %#v, want %#v", event.CatalogNodeIDs, wantNodeIDs)
 	}
 }
 

@@ -1107,8 +1107,8 @@ func TestResponsesToolMCPApprovalSetting_MarshalJSON_Deterministic(t *testing.T)
 	}
 }
 
-// TestNetworkConfig_TLSFieldsRoundTrip verifies that insecure_skip_verify and ca_cert_pem
-// round-trip correctly through JSON marshaling (used by config.json).
+// TestNetworkConfig_TLSFieldsRoundTrip verifies that TLS policy fields round-trip correctly
+// through JSON marshaling (used by config.json).
 func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 	nc := NetworkConfig{
 		BaseURL:                        "https://example.com",
@@ -1116,6 +1116,7 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 		MaxRetries:                     3,
 		InsecureSkipVerify:             true,
 		CACertPEM:                      NewSecretVar("-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----"),
+		RequirePostQuantumTLS:          true,
 	}
 
 	data, err := json.Marshal(nc)
@@ -1127,8 +1128,10 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 
 	assert.Equal(t, nc.InsecureSkipVerify, decoded.InsecureSkipVerify, "insecure_skip_verify should round-trip")
 	assert.Equal(t, nc.CACertPEM.GetValue(), decoded.CACertPEM.GetValue(), "ca_cert_pem should round-trip")
+	assert.True(t, decoded.RequirePostQuantumTLS, "require_post_quantum_tls should round-trip")
 	assert.Contains(t, string(data), `"insecure_skip_verify":true`)
 	assert.Contains(t, string(data), `"ca_cert_pem"`)
+	assert.Contains(t, string(data), `"require_post_quantum_tls":true`)
 }
 
 // TestNetworkConfig_StreamIdleTimeoutRoundTrip verifies that stream_idle_timeout_in_seconds

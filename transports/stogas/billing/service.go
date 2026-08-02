@@ -36,7 +36,7 @@ var (
 	ErrAPIKeySpendLimit    = errors.New("API key spend limit exceeded")
 	ErrAPIKeyRateLimit     = errors.New("API key rate limit exceeded")
 	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
-	ErrProviderCredential  = errors.New("Upstream credential is unavailable")
+	ErrByok                = errors.New("BYOK key is unavailable")
 	ErrDashboardKeyDenied  = errors.New("API key is not available to this dashboard session")
 	ErrGatewayUnavailable  = errors.New("Gateway billing database unavailable")
 	ErrAuthorizationAbsent = errors.New("Authorization not found")
@@ -88,19 +88,19 @@ from settle_gateway_hold_with_outbox(
 `
 
 type authorizeRow struct {
-	Result                       string
-	HoldID                       *string
-	UserID                       *string
-	KeyID                        *string
-	ProvisioningKeyID            *string
-	OrganizationID               *string
-	WorkspaceID                  *string
-	AuthorizedAmount             *string
-	CreatedAt                    *time.Time
-	ExpiresAt                    *time.Time
-	AvailableAfter               *string
-	UpstreamCredential           *string
-	UpstreamCredentialCiphertext *string
+	Result                 string
+	HoldID                 *string
+	UserID                 *string
+	KeyID                  *string
+	ProvisioningKeyID      *string
+	OrganizationID         *string
+	WorkspaceID            *string
+	AuthorizedAmount       *string
+	CreatedAt              *time.Time
+	ExpiresAt              *time.Time
+	AvailableAfter         *string
+	UpstreamByok           *string
+	UpstreamByokCiphertext *string
 }
 
 type settleRow struct {
@@ -111,21 +111,21 @@ type settleRow struct {
 }
 
 type Authorization struct {
-	AuthorizedAmount         *big.Int
-	AvailableAfter           *big.Int
-	CreatedAt                time.Time
-	ExpiresAt                time.Time
-	HoldID                   string
-	KeyID                    string
-	OrganizationID           string
-	ProvisioningKeyID        *string
-	ProductKey               string
-	ProviderKey              string
-	RequestID                string
-	UserID                   string
-	WorkspaceID              string
-	UpstreamCredential       string
-	UpstreamCredentialSecret string
+	AuthorizedAmount   *big.Int
+	AvailableAfter     *big.Int
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+	HoldID             string
+	KeyID              string
+	OrganizationID     string
+	ProvisioningKeyID  *string
+	ProductKey         string
+	ProviderKey        string
+	RequestID          string
+	UserID             string
+	WorkspaceID        string
+	UpstreamByok       string
+	UpstreamByokSecret string
 }
 
 type Service struct {
@@ -141,7 +141,7 @@ type Service struct {
 	tinybird                *TinybirdClient
 	apiKeyPepper            string
 	inferenceTokenPublicKey ed25519.PublicKey
-	providerCredentials     *providerCredentialDecryptor
+	byok                    *byokDecryptor
 }
 
 type billingError struct {
@@ -181,7 +181,7 @@ func NewService(
 	if err != nil {
 		return nil, err
 	}
-	providerCredentials, err := newProviderCredentialDecryptor(byokEncryptionSecret)
+	byok, err := newByokDecryptor(byokEncryptionSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func NewService(
 		inferenceTokenPublicKey: publicKey,
 		tinybird:                tinybird,
 		apiKeyPepper:            apiKeyPepper,
-		providerCredentials:     providerCredentials,
+		byok:                    byok,
 	}, nil
 }
 
@@ -385,7 +385,7 @@ func (s *Service) authorizeResolvedRequest(
 		paramsHash,
 		singleUse,
 	).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.ProvisioningKeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter, &row.UpstreamCredential, &row.UpstreamCredentialCiphertext,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.ProvisioningKeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter, &row.UpstreamByok, &row.UpstreamByokCiphertext,
 	)
 	if err != nil {
 		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
@@ -419,21 +419,21 @@ func (s *Service) authorizeResolvedRequest(
 				return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 			}
 		}
-		upstreamCredential := derefString(row.UpstreamCredential)
-		authorization := &Authorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: keyID, OrganizationID: organizationID, ProvisioningKeyID: provisioningKeyID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamCredential: upstreamCredential, UserID: userID, WorkspaceID: workspaceID}
-		if upstreamCredential == "" {
-			return authorization, &billingError{err: ErrProviderCredential, statusCode: 503}
+		upstreamByok := derefString(row.UpstreamByok)
+		authorization := &Authorization{AuthorizedAmount: parseMoneyOrZero(row.AuthorizedAmount), AvailableAfter: parseMoneyOrZero(row.AvailableAfter), CreatedAt: derefTime(row.CreatedAt), ExpiresAt: derefTime(row.ExpiresAt), HoldID: derefString(row.HoldID), KeyID: keyID, OrganizationID: organizationID, ProvisioningKeyID: provisioningKeyID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UserID: userID, WorkspaceID: workspaceID}
+		if upstreamByok == "" {
+			return authorization, &billingError{err: ErrByok, statusCode: 503}
 		}
-		if upstreamCredential != "stogas" {
-			authorization.UpstreamCredentialSecret, err = s.providerCredentials.decrypt(
-				derefString(row.UpstreamCredentialCiphertext),
-				upstreamCredential,
+		if upstreamByok != "stogas" {
+			authorization.UpstreamByokSecret, err = s.byok.decrypt(
+				derefString(row.UpstreamByokCiphertext),
+				upstreamByok,
 				organizationID,
 				workspaceID,
 				providerKey,
 			)
 			if err != nil {
-				return authorization, &billingError{err: ErrProviderCredential, statusCode: 503}
+				return authorization, &billingError{err: ErrByok, statusCode: 503}
 			}
 		}
 		s.rejections.clear(rejectionCacheKey)
@@ -459,8 +459,8 @@ func authorizationResultError(result string) error {
 		return &billingError{err: ErrInsufficientBalance, statusCode: 402}
 	case "key_disabled":
 		return &billingError{err: ErrAPIKeyDisabled, statusCode: 403}
-	case "credential_disabled":
-		return &billingError{err: ErrProviderCredential, statusCode: 503}
+	case "byok_disabled":
+		return &billingError{err: ErrByok, statusCode: 503}
 	case "key_expired":
 		return &billingError{err: ErrAPIKeyExpired, statusCode: 403}
 	case "dashboard_forbidden":

@@ -542,12 +542,6 @@ func AllClientHeadersValue() string {
 	return allClientHeadersValue
 }
 
-func AllowsResponseMetadataField(name string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(name))
-	_, ok := responseMetadataFields[normalized]
-	return ok
-}
-
 func KnownFields(route Route) map[string]bool {
 	return parameterSet(route)
 }

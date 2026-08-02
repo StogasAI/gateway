@@ -2,8 +2,7 @@ package e2ee
 
 import (
 	"bytes"
-	"crypto/ecdh"
-	"crypto/rand"
+	"crypto/hpke"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,10 +21,10 @@ const (
 )
 
 func TestRequestRoundTripForEveryRecipient(t *testing.T) {
-	keys := make([]*ecdh.PrivateKey, 3)
+	keys := make([]hpke.PrivateKey, 3)
 	recipients := make([]PublicRecipient, 3)
 	for i := range keys {
-		keys[i] = generateP256Key(t)
+		keys[i] = generateXWingKey(t)
 		recipients[i] = PublicRecipient{PublicKey: keys[i].PublicKey().Bytes()}
 	}
 	now := time.Unix(1_800_000_000, 0).UTC()
@@ -87,7 +86,7 @@ func TestRustClientInteropVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	privateKey, err := ecdh.P256().NewPrivateKey(privateKeyBytes)
+	privateKey, err := hpke.MLKEM768X25519().NewPrivateKey(privateKeyBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +102,7 @@ func TestRustClientInteropVector(t *testing.T) {
 	}
 	if inner.APIKey != fixture.ExpectedInner.APIKey ||
 		inner.Accept != fixture.ExpectedInner.Accept ||
-		inner.ReturnExtraFields != fixture.ExpectedInner.ReturnExtraFields ||
+		inner.ExtraFields != fixture.ExpectedInner.ExtraFields ||
 		!jsonEqual(inner.Body, fixture.ExpectedInner.Body) {
 		t.Fatalf("opened Rust request = %#v, want %#v", inner, fixture.ExpectedInner)
 	}
@@ -125,8 +124,8 @@ func TestRustClientInteropVector(t *testing.T) {
 }
 
 func TestOpenRequestRejectsWrongRecipient(t *testing.T) {
-	intended := generateP256Key(t)
-	other := generateP256Key(t)
+	intended := generateXWingKey(t)
+	other := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	body, _, err := SealRequestWithID(
 		"POST",
@@ -146,7 +145,7 @@ func TestOpenRequestRejectsWrongRecipient(t *testing.T) {
 }
 
 func TestOpenRequestRejectsExpiredAndOverlongAcceptanceWindows(t *testing.T) {
-	key := generateP256Key(t)
+	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	for _, test := range []struct {
 		name      string
@@ -177,12 +176,12 @@ func TestOpenRequestRejectsExpiredAndOverlongAcceptanceWindows(t *testing.T) {
 }
 
 func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
-	key := generateP256Key(t)
+	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	valid := testInnerRequest()
 	tooManyRecipients := make([]PublicRecipient, MaxRecipients+1)
 	for i := range tooManyRecipients {
-		tooManyRecipients[i] = PublicRecipient{PublicKey: generateP256Key(t).PublicKey().Bytes()}
+		tooManyRecipients[i] = PublicRecipient{PublicKey: generateXWingKey(t).PublicKey().Bytes()}
 	}
 	tests := []struct {
 		name       string
@@ -225,8 +224,8 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 }
 
 func TestOpenRequestAuthenticatesEveryEnvelopeBinding(t *testing.T) {
-	key := generateP256Key(t)
-	other := generateP256Key(t)
+	key := generateXWingKey(t)
+	other := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	body, _, err := SealRequestWithID(
 		"POST",
@@ -328,7 +327,7 @@ func TestInspectReservesEnvelopeFieldAndLeavesPlainJSONAlone(t *testing.T) {
 }
 
 func TestResponseRejectsTamperingTruncationAndTrailingData(t *testing.T) {
-	key := generateP256Key(t)
+	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	_, session, err := SealRequestWithID(
 		"POST",
@@ -366,7 +365,7 @@ func TestResponseRejectsTamperingTruncationAndTrailingData(t *testing.T) {
 }
 
 func TestResponseReaderStreamsAndClosesSource(t *testing.T) {
-	key := generateP256Key(t)
+	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	_, session, err := SealRequestWithID(
 		"POST",
@@ -454,7 +453,7 @@ func TestJSONScannerRejectsNestedDuplicatesAndTrailingValues(t *testing.T) {
 }
 
 func FuzzOpenRequestNeverPanics(f *testing.F) {
-	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	key, err := hpke.MLKEM768X25519().GenerateKey()
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -482,9 +481,9 @@ func FuzzDecodeResponseNeverPanics(f *testing.F) {
 	})
 }
 
-func testSession(t *testing.T) (*ecdh.PrivateKey, *Session) {
+func testSession(t *testing.T) (hpke.PrivateKey, *Session) {
 	t.Helper()
-	key := generateP256Key(t)
+	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	_, session, err := SealRequestWithID(
 		"POST",
@@ -501,9 +500,9 @@ func testSession(t *testing.T) (*ecdh.PrivateKey, *Session) {
 	return key, session
 }
 
-func fuzzSession(f *testing.F) (*ecdh.PrivateKey, *Session) {
+func fuzzSession(f *testing.F) (hpke.PrivateKey, *Session) {
 	f.Helper()
-	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	key, err := hpke.MLKEM768X25519().GenerateKey()
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -523,9 +522,9 @@ func fuzzSession(f *testing.F) (*ecdh.PrivateKey, *Session) {
 	return key, session
 }
 
-func generateP256Key(t *testing.T) *ecdh.PrivateKey {
+func generateXWingKey(t *testing.T) hpke.PrivateKey {
 	t.Helper()
-	key, err := ecdh.P256().GenerateKey(rand.Reader)
+	key, err := hpke.MLKEM768X25519().GenerateKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,10 +533,10 @@ func generateP256Key(t *testing.T) *ecdh.PrivateKey {
 
 func testInnerRequest() InnerRequest {
 	return InnerRequest{
-		APIKey:            "sk-stogas-test",
-		Accept:            "application/json",
-		ReturnExtraFields: "provider",
-		Body:              json.RawMessage(`{"model":"gpt-5","input":"hello"}`),
+		APIKey:      "sk-stogas-test",
+		Accept:      "application/json",
+		ExtraFields: true,
+		Body:        json.RawMessage(`{"model":"gpt-5","input":"hello"}`),
 	}
 }
 

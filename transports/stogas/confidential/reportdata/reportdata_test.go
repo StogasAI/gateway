@@ -8,6 +8,7 @@ import (
 
 func testPayload() Payload {
 	return Payload{
+		Catalog:            CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("e", 64), strings.Repeat("d", 64)},

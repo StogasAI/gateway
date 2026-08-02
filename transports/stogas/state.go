@@ -34,6 +34,7 @@ type State struct {
 	Model                 string
 	Response              *schemas.BifrostResponse
 	BifrostError          *schemas.BifrostError
+	FinalEvent            *billing.RequestEvent
 	FinalCostUSDAtoms     string
 	FinalMeters           []catalog.MeterEstimate
 	ProviderStartedAt     time.Time
@@ -41,7 +42,7 @@ type State struct {
 	ProviderFirstOutputMS *uint32
 	Cancelled             bool
 	GatewayVersion        string
-	GatewayNodeID         string
+	NodeID                string
 
 	ProviderResponseHeaders map[string]string
 }

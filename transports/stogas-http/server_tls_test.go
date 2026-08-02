@@ -86,6 +86,128 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	}
 }
 
+func TestConfidentialTLSConfigAllowsModernTLS12AndPrefersHybridTLS13(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+		secure: &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+	}
+	config := server.confidentialTLSConfig()
+	if config.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("minimum TLS version = %x, want TLS 1.2", config.MinVersion)
+	}
+	wantCipherSuites := []uint16{
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+		tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+	}
+	if len(config.CipherSuites) != len(wantCipherSuites) {
+		t.Fatalf("TLS 1.2 cipher suite count = %d, want %d", len(config.CipherSuites), len(wantCipherSuites))
+	}
+	for index := range wantCipherSuites {
+		if config.CipherSuites[index] != wantCipherSuites[index] {
+			t.Fatalf("TLS 1.2 cipher suite %d = %x, want %x", index, config.CipherSuites[index], wantCipherSuites[index])
+		}
+	}
+	want := []tls.CurveID{
+		tls.X25519MLKEM768,
+		tls.SecP256r1MLKEM768,
+		tls.SecP384r1MLKEM1024,
+		tls.X25519,
+		tls.CurveP256,
+		tls.CurveP384,
+	}
+	if len(config.CurvePreferences) != len(want) {
+		t.Fatalf("TLS curve count = %d, want %d", len(config.CurvePreferences), len(want))
+	}
+	for index := range want {
+		if config.CurvePreferences[index] != want[index] {
+			t.Fatalf("TLS curve %d = %v, want %v", index, config.CurvePreferences[index], want[index])
+		}
+	}
+}
+
+func TestConfidentialTLSConfigNegotiatesCompatibleAndHybridClients(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+		secure: &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+	}
+	tests := []struct {
+		name        string
+		client      *tls.Config
+		wantVersion uint16
+		wantCurve   tls.CurveID
+	}{
+		{
+			name: "modern TLS 1.2",
+			client: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS12,
+				CipherSuites:       []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256},
+				CurvePreferences:   []tls.CurveID{tls.X25519},
+				InsecureSkipVerify: true, // Test certificate pinning is covered separately.
+			},
+			wantVersion: tls.VersionTLS12,
+			wantCurve:   tls.X25519,
+		},
+		{
+			name: "classical TLS 1.3",
+			client: &tls.Config{
+				MinVersion:         tls.VersionTLS13,
+				MaxVersion:         tls.VersionTLS13,
+				CurvePreferences:   []tls.CurveID{tls.X25519},
+				InsecureSkipVerify: true, // Test certificate pinning is covered separately.
+			},
+			wantVersion: tls.VersionTLS13,
+			wantCurve:   tls.X25519,
+		},
+		{
+			name: "prefer hybrid TLS 1.3",
+			client: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				MaxVersion:         tls.VersionTLS13,
+				CurvePreferences:   []tls.CurveID{tls.X25519, tls.X25519MLKEM768},
+				InsecureSkipVerify: true, // Test certificate pinning is covered separately.
+			},
+			wantVersion: tls.VersionTLS13,
+			wantCurve:   tls.X25519MLKEM768,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state := negotiateTLS(t, server.confidentialTLSConfig(), test.client)
+			if state.Version != test.wantVersion {
+				t.Fatalf("negotiated TLS version = %x, want %x", state.Version, test.wantVersion)
+			}
+			if state.CurveID != test.wantCurve {
+				t.Fatalf("negotiated TLS curve = %v, want %v", state.CurveID, test.wantCurve)
+			}
+		})
+	}
+}
+
+func negotiateTLS(t *testing.T, serverConfig, clientConfig *tls.Config) tls.ConnectionState {
+	t.Helper()
+	serverConnection, clientConnection := net.Pipe()
+	defer serverConnection.Close()
+	defer clientConnection.Close()
+	server := tls.Server(serverConnection, serverConfig)
+	client := tls.Client(clientConnection, clientConfig)
+	serverResult := make(chan error, 1)
+	go func() {
+		serverResult <- server.Handshake()
+	}()
+	if err := client.Handshake(); err != nil {
+		t.Fatalf("client TLS handshake: %v", err)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatalf("server TLS handshake: %v", err)
+	}
+	return client.ConnectionState()
+}
+
 func TestStartFailsWhenPrivateReadinessListenerCannotBind(t *testing.T) {
 	occupied := testListener(t)
 	defer occupied.Close()

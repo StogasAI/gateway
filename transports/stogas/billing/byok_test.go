@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-func TestProviderCredentialDecryptorMatchesControlWebCryptoFormat(t *testing.T) {
-	decryptor, err := newProviderCredentialDecryptor("test-master-secret-0123456789-abcdef")
+func TestByokDecryptorMatchesControlWebCryptoFormat(t *testing.T) {
+	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
 	if err != nil {
-		t.Fatalf("newProviderCredentialDecryptor returned error: %v", err)
+		t.Fatalf("newByokDecryptor returned error: %v", err)
 	}
 
 	plaintext, err := decryptor.decrypt(
-		"v1.AAECAwQFBgcICQoL.M5UHaC_cZlPfCGItSfcUCDWzgSAaM5i4VXZVKJ63p_EzoXLgdIOq",
+		"v1.AAECAwQFBgcICQoL.M5UHaC_cZlPfCGItSfcUCDWzgSAaM5h7bRYxlBQ8Th_H9MNpncc_",
 		"0198f4cc-6c25-7000-8000-000000000001",
 		"org-test",
 		"workspace-test",
@@ -26,44 +26,44 @@ func TestProviderCredentialDecryptorMatchesControlWebCryptoFormat(t *testing.T) 
 	}
 }
 
-func TestProviderCredentialDecryptorBindsEveryScopeField(t *testing.T) {
-	decryptor, err := newProviderCredentialDecryptor("test-master-secret-0123456789-abcdef")
+func TestByokDecryptorBindsEveryScopeField(t *testing.T) {
+	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
 	if err != nil {
-		t.Fatalf("newProviderCredentialDecryptor returned error: %v", err)
+		t.Fatalf("newByokDecryptor returned error: %v", err)
 	}
-	ciphertext := "v1.AAECAwQFBgcICQoL.M5UHaC_cZlPfCGItSfcUCDWzgSAaM5i4VXZVKJ63p_EzoXLgdIOq"
+	ciphertext := "v1.AAECAwQFBgcICQoL.M5UHaC_cZlPfCGItSfcUCDWzgSAaM5h7bRYxlBQ8Th_H9MNpncc_"
 
 	for _, tc := range []struct {
 		name           string
-		credentialID   string
+		byokID         string
 		organizationID string
 		workspaceID    string
 		provider       string
 	}{
 		{
-			name:           "credential",
-			credentialID:   "0198f4cc-6c25-7000-8000-000000000002",
+			name:           "byok",
+			byokID:         "0198f4cc-6c25-7000-8000-000000000002",
 			organizationID: "org-test",
 			workspaceID:    "workspace-test",
 			provider:       "openai",
 		},
 		{
 			name:           "organization",
-			credentialID:   "0198f4cc-6c25-7000-8000-000000000001",
+			byokID:         "0198f4cc-6c25-7000-8000-000000000001",
 			organizationID: "org-other",
 			workspaceID:    "workspace-test",
 			provider:       "openai",
 		},
 		{
 			name:           "workspace",
-			credentialID:   "0198f4cc-6c25-7000-8000-000000000001",
+			byokID:         "0198f4cc-6c25-7000-8000-000000000001",
 			organizationID: "org-test",
 			workspaceID:    "workspace-other",
 			provider:       "openai",
 		},
 		{
 			name:           "provider",
-			credentialID:   "0198f4cc-6c25-7000-8000-000000000001",
+			byokID:         "0198f4cc-6c25-7000-8000-000000000001",
 			organizationID: "org-test",
 			workspaceID:    "workspace-test",
 			provider:       "anthropic",
@@ -72,7 +72,7 @@ func TestProviderCredentialDecryptorBindsEveryScopeField(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := decryptor.decrypt(
 				ciphertext,
-				tc.credentialID,
+				tc.byokID,
 				tc.organizationID,
 				tc.workspaceID,
 				tc.provider,
@@ -84,13 +84,13 @@ func TestProviderCredentialDecryptorBindsEveryScopeField(t *testing.T) {
 	}
 }
 
-func TestProviderCredentialDecryptorRejectsMalformedInputAndShortMasterSecret(t *testing.T) {
-	if _, err := newProviderCredentialDecryptor("too-short"); err == nil {
+func TestByokDecryptorRejectsMalformedInputAndShortMasterSecret(t *testing.T) {
+	if _, err := newByokDecryptor("too-short"); err == nil {
 		t.Fatalf("short master secret was accepted")
 	}
-	decryptor, err := newProviderCredentialDecryptor("test-master-secret-0123456789-abcdef")
+	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
 	if err != nil {
-		t.Fatalf("newProviderCredentialDecryptor returned error: %v", err)
+		t.Fatalf("newByokDecryptor returned error: %v", err)
 	}
 	for _, ciphertext := range []string{
 		"",

@@ -11,12 +11,11 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 )
 
 const (
-	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v2"
+	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v3"
 	csrSignatureDomain       = "stogas.gateway-csr-submission.v1"
 )
 
@@ -42,8 +41,6 @@ func heartbeatSignatureTranscript(input HeartbeatInput) ([]byte, error) {
 	quoteHash := sha256.Sum256(input.Quote.Quote)
 	fields := [][]byte{
 		[]byte(input.NodeID),
-		[]byte(input.Catalog.Digest),
-		[]byte(strconv.FormatUint(input.Catalog.Sequence, 10)),
 		[]byte(formatTime(input.CertExpiresAt)),
 		[]byte(formatTime(input.ObservedAt)),
 		[]byte(formatTime(input.Quote.GeneratedAt)),
@@ -92,14 +89,14 @@ func signCertificateCSRSubmission(input CertificateCSRSubmission) (string, error
 	if len(input.SigningKey) != ed25519.PrivateKeySize {
 		return "", errors.New("certificate CSR signing key is required")
 	}
-	transcript, err := certificateCSRSignatureTranscript(input.GenerationID, input.OrderID, input.CSRDER)
+	transcript, err := certificateCSRSignatureTranscript(input.NodeID, input.OrderID, input.CSRDER)
 	if err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(input.SigningKey, transcript)), nil
 }
 
-func certificateCSRSignatureTranscript(generationID, orderID string, csrDER []byte) ([]byte, error) {
+func certificateCSRSignatureTranscript(nodeID, orderID string, csrDER []byte) ([]byte, error) {
 	if len(csrDER) == 0 {
 		return nil, errors.New("certificate CSR DER is required")
 	}
@@ -108,7 +105,7 @@ func certificateCSRSignatureTranscript(generationID, orderID string, csrDER []by
 	transcript.WriteString(csrSignatureDomain)
 	transcript.WriteByte(0)
 	for _, field := range [][]byte{
-		[]byte(strings.ToLower(generationID)),
+		[]byte(strings.ToLower(nodeID)),
 		[]byte(orderID),
 		digest[:],
 	} {

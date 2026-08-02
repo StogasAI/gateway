@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
@@ -189,14 +190,31 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 		snapshot.Payload.Ed25519PublicKey != runtime.Identity.Ed25519PublicKey {
 		t.Fatalf("quote payload did not bind runtime identity/config: %#v", snapshot.Payload)
 	}
+	activeCatalog, ok := catalog.ActiveIdentity()
+	if !ok || snapshot.Payload.Catalog.Digest != activeCatalog.Digest ||
+		snapshot.Payload.Catalog.Sequence != activeCatalog.Sequence {
+		t.Fatalf("quote payload did not bind the active catalog: %#v", snapshot.Payload.Catalog)
+	}
 	if len(snapshot.Quote) == 0 {
 		t.Fatal("expected initial mock quote")
 	}
 	output, err := runtime.Proofs.Build(context.Background(), proofhttp.Input{
-		RequestBody:    []byte(`{"request":true}`),
-		ResponseBody:   []byte(`{"response":true}`),
-		CatalogDigest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		CatalogNodeIDs: []string{"author:author-a", "model:model-a", "deployment:deployment-a", "route:route-a", "provider:provider-a"},
+		RequestBody:  []byte(`{"request":true}`),
+		ResponseBody: []byte(`{"response":true}`),
+		Metadata: proof.Metadata{
+			RequestID: "req_1",
+			NodeID:    deriveCandidateNodeID(runtime.Identity),
+			Catalog: proof.Catalog{
+				Digest:   activeCatalog.Digest,
+				Sequence: activeCatalog.Sequence,
+				NodeIDs:  []string{"author:test", "model:test", "deployment:test", "route:test", "provider:test"},
+			},
+			Pricing: proof.Pricing{
+				Meters:            map[string]proof.Meter{},
+				TotalCostUSDAtoms: "0",
+			},
+			Timing: proof.Timing{},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +222,7 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	if output.Headers[proofhttp.HeaderProof] == "" {
 		t.Fatalf("proof did not use the current attested signing identity: %#v", output)
 	}
-	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, output.Object.Payload, output.Object.Signature) {
+	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, proof.PayloadFromObject(output.Object), output.Object.Proof.Signature) {
 		t.Fatal("proof signature was not produced by runtime identity")
 	}
 }
@@ -304,8 +322,8 @@ func TestStartSendsInitialHeartbeatAndTracksAdmissionLease(t *testing.T) {
 		t.Fatal("initial heartbeat was not sent")
 	}
 
-	if runtime.Control.GenerationID() != strings.Repeat("9", 64) {
-		t.Fatalf("generation id not recorded: %q", runtime.Control.GenerationID())
+	if runtime.Control.NodeID() != strings.Repeat("9", 64) {
+		t.Fatalf("node ID not recorded: %q", runtime.Control.NodeID())
 	}
 	runtime.Control.mu.RLock()
 	readyUntil := runtime.Control.admissionReadyUntil
@@ -395,7 +413,7 @@ func TestHeartbeatErrorIsBoundedToContractLimit(t *testing.T) {
 
 func TestControlShutdownInstructionFailsReadinessAndSignalsOnce(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"certificate_instruction":null,"generation_id":"` + strings.Repeat("9", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null,"shutdown":true}`))
+		_, _ = w.Write([]byte(`{"certificate_instruction":null,"node_id":"` + strings.Repeat("9", 64) + `","ok":true,"ready":false,"ready_until":null,"secrets":null,"shutdown":true}`))
 	}))
 	defer server.Close()
 
@@ -421,7 +439,7 @@ func TestControlShutdownInstructionFailsReadinessAndSignalsOnce(t *testing.T) {
 }
 
 func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
-	generationID := strings.Repeat("9", 64)
+	nodeID := strings.Repeat("9", 64)
 	csrCh := make(chan map[string]any, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
@@ -430,10 +448,10 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/api/fleet/heartbeat":
-			writeHeartbeatResponse(t, w, generationID, `{"action":"request_csr","order_id":"order-1","dns_names":["Gateway.Stogas.AI","gateway.stogas.ai"],"common_name":"gateway.stogas.ai"}`)
+			writeHeartbeatResponse(t, w, nodeID, `{"action":"request_csr","order_id":"order-1","dns_names":["Gateway.Stogas.AI","gateway.stogas.ai"],"common_name":"gateway.stogas.ai"}`)
 		case "/api/fleet/cert/csr":
 			csrCh <- body
-			_, _ = w.Write([]byte(`{"generation_id":"` + generationID + `","ok":true,"order_id":"order-1"}`))
+			_, _ = w.Write([]byte(`{"node_id":"` + nodeID + `","ok":true,"order_id":"order-1"}`))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -454,7 +472,7 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 
 	select {
 	case body := <-csrCh:
-		if body["generation_id"] != generationID ||
+		if body["node_id"] != nodeID ||
 			body["order_id"] != "order-1" {
 			t.Fatalf("unexpected CSR submission body: %#v", body)
 		}
@@ -491,7 +509,7 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 }
 
 func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t *testing.T) {
-	generationID := strings.Repeat("9", 64)
+	nodeID := strings.Repeat("9", 64)
 	var mu sync.Mutex
 	var instruction string
 	var heartbeatBodies []map[string]any
@@ -508,7 +526,7 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 		nextInstruction := instruction
 		instruction = ""
 		mu.Unlock()
-		writeHeartbeatResponse(t, w, generationID, nextInstruction)
+		writeHeartbeatResponse(t, w, nodeID, nextInstruction)
 	}))
 	defer server.Close()
 
@@ -698,23 +716,23 @@ func TestStartFailsClosedWhenInitialHeartbeatIsRejected(t *testing.T) {
 	}
 }
 
-func TestDeriveNodeIDUsesOnlyBootIdentity(t *testing.T) {
+func TestDeriveCandidateNodeIDUsesOnlyBootIdentity(t *testing.T) {
 	config := testConfig("mock")
 	material := &identity.Material{
 		TLSSPKISHA256:    strings.Repeat("2", 64),
 		HPKEPublicKey:    "aHBrZQ",
 		Ed25519PublicKey: "ZWRrZXk",
 	}
-	first := deriveNodeID(material)
+	first := deriveCandidateNodeID(material)
 	config.ActiveCertSHA256 = strings.Repeat("4", 64)
 	config.AcceptedCertSHA256 = []string{strings.Repeat("4", 64)}
-	if renewed := deriveNodeID(material); renewed != first {
+	if renewed := deriveCandidateNodeID(material); renewed != first {
 		t.Fatalf("certificate renewal changed node id: %s != %s", renewed, first)
 	}
 
 	changedIdentity := *material
 	changedIdentity.HPKEPublicKey = "aHBrZTI"
-	if next := deriveNodeID(&changedIdentity); next == first {
+	if next := deriveCandidateNodeID(&changedIdentity); next == first {
 		t.Fatal("identity key change should create a different node id")
 	}
 }
@@ -817,13 +835,13 @@ func selfSignedRuntimeLeaf(t *testing.T, material *identity.Material, serial int
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), der
 }
 
-func writeHeartbeatResponse(t *testing.T, w http.ResponseWriter, generationID string, certificateInstructionJSON string) {
+func writeHeartbeatResponse(t *testing.T, w http.ResponseWriter, nodeID string, certificateInstructionJSON string) {
 	t.Helper()
 	if certificateInstructionJSON == "" {
 		certificateInstructionJSON = "null"
 	}
 	readyUntil := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339Nano)
-	_, _ = w.Write([]byte(`{"certificate_instruction":` + certificateInstructionJSON + `,"generation_id":"` + generationID + `","ok":true,"ready":true,"ready_until":"` + readyUntil + `","secrets":null}`))
+	_, _ = w.Write([]byte(`{"certificate_instruction":` + certificateInstructionJSON + `,"node_id":"` + nodeID + `","ok":true,"ready":true,"ready_until":"` + readyUntil + `","secrets":null}`))
 }
 
 func jsonArrayContains(values []any, want string) bool {

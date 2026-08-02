@@ -119,24 +119,24 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	return nil
 }
 
-func ApplyUpstreamCredential(
+func ApplyUpstreamByok(
 	ctx *schemas.BifrostContext,
 	state *State,
 	request *schemas.BifrostRequest,
 ) error {
 	if ctx == nil || state == nil || state.Authorization == nil || request == nil {
-		return gatewaybilling.ErrProviderCredential
+		return gatewaybilling.ErrByok
 	}
 	authorization := state.Authorization
-	managed := authorization.UpstreamCredential == "stogas"
+	managed := authorization.UpstreamByok == "stogas"
 	if !managed {
-		if authorization.UpstreamCredential == "" || authorization.UpstreamCredentialSecret == "" {
-			return gatewaybilling.ErrProviderCredential
+		if authorization.UpstreamByok == "" || authorization.UpstreamByokSecret == "" {
+			return gatewaybilling.ErrByok
 		}
 		ctx.SetValue(schemas.BifrostContextKeyDirectKey, schemas.Key{
-			ID:      authorization.UpstreamCredential,
-			Name:    authorization.UpstreamCredential,
-			Value:   *schemas.NewSecretVar(authorization.UpstreamCredentialSecret),
+			ID:      authorization.UpstreamByok,
+			Name:    authorization.UpstreamByok,
+			Value:   *schemas.NewSecretVar(authorization.UpstreamByokSecret),
 			Models:  schemas.WhiteList{"*"},
 			Weight:  1,
 			Enabled: schemas.Ptr(true),
@@ -177,6 +177,24 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		return
 	}
 	state.BillingFinalized = true
+	event := PrepareFinalState(state)
+	if event == nil {
+		return
+	}
+	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event); err != nil {
+		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
+	}
+}
+
+// PrepareFinalState captures the final price and request timing once. The same
+// immutable values are used by the signed response proof and billing telemetry.
+func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
+	if state == nil || state.Authorization == nil {
+		return nil
+	}
+	if state.FinalEvent != nil {
+		return state.FinalEvent
+	}
 	if state.FinalCostUSDAtoms == "" {
 		adapter := state.Adapter
 		if adapter == nil {
@@ -193,26 +211,24 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	catalogIdentity := state.Resolution.CatalogIdentity()
 	executionDeployment := ExecutionDeployment(state)
 	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-		ActualCostUSDAtoms:     state.FinalCostUSDAtoms,
-		Authorization:          state.Authorization,
-		Cancelled:              state.Cancelled,
-		CatalogDigest:          catalogIdentity.Digest,
-		CatalogSequence:        catalogIdentity.Sequence,
-		Error:                  state.BifrostError,
-		Pricing:                pricingForState(state),
-		ProviderCompletedAt:    state.ProviderCompletedAt,
-		ProviderStartedAt:      state.ProviderStartedAt,
-		ProviderFirstOutputMS:  state.ProviderFirstOutputMS,
-		GatewayNodeID:          state.GatewayNodeID,
-		GatewayVersion:         state.GatewayVersion,
-		RequestType:            state.RequestType,
-		ResolvedCatalogNodeIDs: state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
-		Response:               state.Response,
-		StartedAt:              state.StartedAt,
+		ActualCostUSDAtoms:    state.FinalCostUSDAtoms,
+		Authorization:         state.Authorization,
+		Cancelled:             state.Cancelled,
+		CatalogDigest:         catalogIdentity.Digest,
+		Error:                 state.BifrostError,
+		Pricing:               pricingForState(state),
+		ProviderCompletedAt:   state.ProviderCompletedAt,
+		ProviderStartedAt:     state.ProviderStartedAt,
+		ProviderFirstOutputMS: state.ProviderFirstOutputMS,
+		NodeID:                state.NodeID,
+		GatewayVersion:        state.GatewayVersion,
+		RequestType:           state.RequestType,
+		CatalogNodeIDs:        state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
+		Response:              state.Response,
+		StartedAt:             state.StartedAt,
 	})
-	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, event); err != nil {
-		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
-	}
+	state.FinalEvent = &event
+	return state.FinalEvent
 }
 
 func pricingForState(state *State) map[string]any {

@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -394,9 +393,11 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	}
 	ctx, clientSession := encryptedRequestContext(t, server, material)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	state := &stogas.State{
 		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5"}`),
 		RequestID:  clientSession.RequestID,
+		NodeID:     strings.Repeat("3", 64),
 	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
@@ -408,34 +409,24 @@ func TestWriteInferenceJSONAddsConfidentialProofHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var proofObject proofhttp.Object
+	var proofObject proof.Object
 	if err := json.Unmarshal(encodedProof, &proofObject); err != nil {
 		t.Fatal(err)
 	}
-	nodeIDs := state.Resolution.CatalogNodeIDs()
-	if !reflect.DeepEqual(proofObject.CatalogNodeIDs, nodeIDs) {
-		t.Fatalf(
-			"proof did not bind all resolved catalog nodes: got=%q want=%q",
-			proofObject.CatalogNodeIDs,
-			nodeIDs,
-		)
-	}
-	catalogIdentity := state.Resolution.CatalogIdentity()
+	metadata := proofMetadata(state, encryptedSession(ctx).TranscriptSHA256())
 	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestBody:          ctx.Request.Body(),
-		ResponseBody:         ctx.Response.Body(),
-		CatalogDigest:        catalogIdentity.Digest,
-		CatalogNodeIDs:       nodeIDs,
-		E2EETranscriptSHA256: encryptedSession(ctx).TranscriptSHA256(),
-	}, proofObject.Signature) {
+		RequestBody:  ctx.Request.Body(),
+		ResponseBody: ctx.Response.Body(),
+		Metadata:     metadata,
+	}, proofObject.Proof.Signature) {
 		t.Fatal("proof did not bind the E2EE request transcript")
 	}
+	metadata.E2EETranscriptSHA256 = ""
 	if proof.VerifyInput(publicKey, proof.Input{
-		RequestBody:    ctx.Request.Body(),
-		ResponseBody:   ctx.Response.Body(),
-		CatalogDigest:  catalogIdentity.Digest,
-		CatalogNodeIDs: nodeIDs,
-	}, proofObject.Signature) {
+		RequestBody:  ctx.Request.Body(),
+		ResponseBody: ctx.Response.Body(),
+		Metadata:     metadata,
+	}, proofObject.Proof.Signature) {
 		t.Fatal("E2EE proof verified without its request transcript")
 	}
 }
@@ -444,6 +435,7 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	server := &Server{proofs: &proofhttp.Service{}}
 	ctx := &fasthttp.RequestCtx{}
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	state := &stogas.State{Resolution: testResolution()}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
@@ -454,6 +446,9 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	if !strings.Contains(string(ctx.Response.Body()), "Failed to build confidential response proof") {
 		t.Fatalf("unexpected proof failure body: %s", ctx.Response.Body())
 	}
+	if !strings.Contains(string(ctx.Response.Body()), responseProofErrorCode) {
+		t.Fatalf("proof failure did not include its stable code: %s", ctx.Response.Body())
+	}
 }
 
 func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T) {
@@ -462,6 +457,7 @@ func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T
 	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
 	ctx.Request.SetRequestURI("/v1/chat/completions")
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	completed := make(chan struct{})
 	state := &stogas.State{Resolution: testResolution()}
 
@@ -496,7 +492,15 @@ func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error)
 
 func testProofSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
+	catalogIdentity, ok := catalog.ActiveIdentity()
+	if !ok {
+		t.Fatal("active catalog identity is unavailable")
+	}
 	payload, err := reportdata.NewPayload(reportdata.Payload{
+		Catalog: reportdata.CatalogIdentity{
+			Digest:   catalogIdentity.Digest,
+			Sequence: catalogIdentity.Sequence,
+		},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
 		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
@@ -751,7 +755,7 @@ func TestPublicBifrostErrorMapsMissingStatusNetworkFailureToServiceUnavailable(t
 	}
 }
 
-func TestPublicBifrostErrorHidesProviderCredentialAndQuotaFailures(t *testing.T) {
+func TestPublicBifrostErrorHidesByokAndQuotaFailures(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		status int
@@ -1155,6 +1159,7 @@ func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
 
 func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	defer cancel()
 
 	response := &schemas.BifrostChatResponse{
@@ -1178,172 +1183,52 @@ func TestPublicResponsePayloadRemovesExtraFields(t *testing.T) {
 	}
 }
 
-func TestPublicResponsePayloadIncludesRequestedStogasMetadata(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{
-		"provider":        true,
-		"model_requested": true,
-		"latency":         true,
-	})
-
-	response := &schemas.BifrostChatResponse{
-		ID:      "chatcmpl_test",
-		Object:  "chat.completion",
-		Model:   "gpt-5",
-		Choices: []schemas.BifrostResponseChoice{},
-		ExtraFields: schemas.BifrostResponseExtraFields{
-			Provider:               schemas.OpenAI,
-			OriginalModelRequested: "openai/gpt-5",
-			ResolvedModelUsed:      "gpt-5",
-			Latency:                12,
-		},
-	}
-
-	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
-	metadata, ok := object["stogas"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected stogas metadata, got %#v", object["stogas"])
-	}
-	if metadata["provider"] != string(schemas.OpenAI) {
-		t.Fatalf("expected requested provider metadata, got %#v", metadata)
-	}
-	if metadata["model_requested"] != "openai/gpt-5" {
-		t.Fatalf("expected requested model metadata, got %#v", metadata)
-	}
-	if _, exists := metadata["model_deployment"]; exists {
-		t.Fatalf("did not expect unrequested model_deployment metadata, got %#v", metadata)
+func TestExtraFieldsHeaderIsOneStrictBoolean(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value string
+		want  bool
+		valid bool
+	}{
+		{name: "absent", valid: true},
+		{name: "true", value: "true", want: true, valid: true},
+		{name: "case and whitespace", value: " TRUE ", want: true, valid: true},
+		{name: "false", value: "false", valid: true},
+		{name: "field list", value: "provider,latency"},
+		{name: "number", value: "1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := &fasthttp.RequestCtx{}
+			if test.value != "" {
+				ctx.Request.Header.Set(stogasHeaderExtraFields, test.value)
+			}
+			got, err := extraFieldsHeader(ctx)
+			if (err == nil) != test.valid || got != test.want {
+				t.Fatalf("extraFieldsHeader() = (%v, %v), want (%v, valid=%v)", got, err, test.want, test.valid)
+			}
+		})
 	}
 }
 
-func TestPublicResponsePayloadUsesCatalogDeploymentIdentity(t *testing.T) {
+func TestPublicResponsePayloadNeverEmbedsUnsignedStogasFields(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
-	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"model_deployment": true})
-	stogas.SetState(bifrostCtx, &stogas.State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{ID: "openai-gpt-5.5-2026-04-23-fast"},
-		},
-	})
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 
-	metadata := stogasMetadata(bifrostCtx, schemas.BifrostResponseExtraFields{
-		ResolvedModelUsed: "gpt-5.5-2026-04-23",
-	})
-	if metadata["model_deployment"] != "openai-gpt-5.5-2026-04-23-fast" {
-		t.Fatalf("expected catalog deployment identity, got %#v", metadata)
+	payload := publicResponsePayload(
+		bifrostCtx,
+		map[string]any{"id": "response_1"},
+		schemas.BifrostResponseExtraFields{RawRequest: map[string]any{"api_key": "secret"}},
+	)
+	object := publicPayloadObject(t, payload)
+	if object["id"] != "response_1" {
+		t.Fatalf("normalized response changed: %#v", object)
 	}
-}
-
-func TestPublicResponseProviderHeaderMetadataUsesSanitizedState(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"provider_response_headers": true})
-	stogas.SetState(bifrostCtx, &stogas.State{
-		ProviderResponseHeaders: map[string]string{
-			"X-Request-Id": "adapter-sanitized",
-		},
-	})
-
-	extra := schemas.BifrostResponseExtraFields{
-		ProviderResponseHeaders: map[string]string{
-			"X-Request-Id": "raw-extra",
-		},
+	if _, exists := object["stogas"]; exists {
+		t.Fatalf("unsigned Stogas fields must not be embedded in the response: %#v", object)
 	}
-	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, extra))
-	metadata, ok := object["stogas"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected stogas metadata, got %#v", object)
-	}
-	headers, ok := metadata["provider_response_headers"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected provider response headers metadata, got %#v", metadata["provider_response_headers"])
-	}
-	if headers["X-Request-Id"] != "adapter-sanitized" {
-		t.Fatalf("expected sanitized state provider headers to win, got %#v", headers)
-	}
-}
-
-func TestPublicResponsePayloadRawResponseMetadata(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"raw_response": true})
-
-	raw := map[string]any{"id": "raw_provider_response"}
-	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawResponse: raw}))
-	if object["id"] != "bifrost_response" {
-		t.Fatalf("expected normalized response to remain primary, got %#v", object)
-	}
-	metadata, ok := object["stogas"].(map[string]any)
-	if !ok || metadata["raw_response"] == nil {
-		t.Fatalf("expected raw response metadata, got %#v", object)
-	}
-}
-
-func TestPublicResponsePayloadRedactsRawRequestSecrets(t *testing.T) {
-	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	defer cancel()
-	bifrostCtx.SetValue(stogasReturnExtraFieldsKey, map[string]bool{"raw_request": true})
-
-	raw := map[string]any{
-		"mcp_servers": []any{map[string]any{
-			"authorization_token": "secret",
-			"name":                "remote",
-		}},
-		"tools": []any{map[string]any{
-			"authorization": "secret",
-			"server_label":  "remote",
-		}},
-		"headers": map[string]any{
-			"X-Goog-Api-Key": "secret",
-			"Accept":         "application/json",
-		},
-		"nested": map[string]any{
-			"accessToken":        "secret",
-			"api-key":            "secret",
-			"apiKey":             "secret",
-			"api_key":            "secret",
-			"authorizationToken": "secret",
-			"bearer_token":       "secret",
-			"client_secret":      "secret",
-			"password":           "secret",
-			"secretKey":          "secret",
-			"token":              "secret",
-			"token_count":        float64(42),
-			"apikey_hint":        "last4",
-			"ordinary_name":      "kept",
-		},
-	}
-	object := publicPayloadObject(t, publicResponsePayload(bifrostCtx, map[string]any{"id": "bifrost_response"}, schemas.BifrostResponseExtraFields{RawRequest: raw}))
-	metadata, ok := object["stogas"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected stogas metadata, got %#v", object)
-	}
-	redacted, ok := metadata["raw_request"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected raw request object, got %#v", metadata["raw_request"])
-	}
-	servers := redacted["mcp_servers"].([]any)
-	server := servers[0].(map[string]any)
-	if server["authorization_token"] != "<redacted>" || server["name"] != "remote" {
-		t.Fatalf("unexpected redacted mcp server %#v", server)
-	}
-	tools := redacted["tools"].([]any)
-	tool := tools[0].(map[string]any)
-	if tool["authorization"] != "<redacted>" || tool["server_label"] != "remote" {
-		t.Fatalf("unexpected redacted mcp tool %#v", tool)
-	}
-	headers := redacted["headers"].(map[string]any)
-	if headers["X-Goog-Api-Key"] != "<redacted>" || headers["Accept"] != "application/json" {
-		t.Fatalf("unexpected redacted headers %#v", headers)
-	}
-	nested := redacted["nested"].(map[string]any)
-	for _, key := range []string{"accessToken", "api-key", "apiKey", "api_key", "authorizationToken", "bearer_token", "client_secret", "password", "secretKey", "token"} {
-		if nested[key] != "<redacted>" {
-			t.Fatalf("expected nested %s redaction, got %#v", key, nested)
-		}
-	}
-	if nested["token_count"] != float64(42) || nested["apikey_hint"] != "last4" || nested["ordinary_name"] != "kept" {
-		t.Fatalf("redacted non-secret fields unexpectedly: %#v", nested)
+	if _, exists := object["extra_fields"]; exists {
+		t.Fatalf("Bifrost fields must not be embedded in the response: %#v", object)
 	}
 }
 
@@ -1522,10 +1407,12 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.SetBodyString(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
 		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
 		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		NodeID:     strings.Repeat("3", 64),
 	}
 
 	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
@@ -1555,30 +1442,31 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 
 	body := readResponseBodyStream(t, ctx.Response.BodyStream())
 	chunkJSON := requireSSEDataFrame(t, body, "chatcmpl_stream_proof")
-	proofJSON := requireSSEEventData(t, body, proofhttp.SSEEventName)
-	if proofIndex, doneIndex := strings.Index(body, "event: "+proofhttp.SSEEventName+"\n"), strings.Index(body, "data: [DONE]\n\n"); proofIndex < 0 || doneIndex < 0 || proofIndex > doneIndex {
+	proofPrefix := ": " + proofhttp.SSECommentPrefix
+	proofIndex := strings.Index(body, proofPrefix)
+	doneIndex := strings.Index(body, "data: [DONE]\n\n")
+	if proofIndex < 0 || doneIndex < 0 || proofIndex > doneIndex {
 		t.Fatalf("expected final proof before [DONE], got %q", body)
 	}
+	proofEnd := strings.Index(body[proofIndex:], "\n\n")
+	if proofEnd < 0 {
+		t.Fatalf("expected complete final proof comment, got %q", body)
+	}
+	encodedProof := strings.TrimSpace(body[proofIndex+len(proofPrefix) : proofIndex+proofEnd])
+	proofJSON, err := base64.RawURLEncoding.DecodeString(encodedProof)
+	if err != nil {
+		t.Fatalf("failed to decode proof comment: %v", err)
+	}
 
-	var proofObject proofhttp.Object
-	if err := json.Unmarshal([]byte(proofJSON), &proofObject); err != nil {
-		t.Fatalf("failed to parse proof event: %v", err)
+	var proofObject proof.Object
+	if err := json.Unmarshal(proofJSON, &proofObject); err != nil {
+		t.Fatalf("failed to parse proof comment: %v", err)
 	}
-	nodeIDs := state.Resolution.CatalogNodeIDs()
-	if !reflect.DeepEqual(proofObject.CatalogNodeIDs, nodeIDs) {
-		t.Fatalf(
-			"proof did not bind all resolved catalog nodes: got=%q want=%q",
-			proofObject.CatalogNodeIDs,
-			nodeIDs,
-		)
-	}
-	catalogIdentity := state.Resolution.CatalogIdentity()
 	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
-		RequestBody:    ctx.Request.Body(),
-		CatalogDigest:  catalogIdentity.Digest,
-		CatalogNodeIDs: nodeIDs,
-	}, [][]byte{frameSSEEvent("", []byte(chunkJSON)), frameSSEDone()}, proofObject.Signature) {
-		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Signature, body)
+		RequestBody: ctx.Request.Body(),
+		Metadata:    proofMetadata(state, ""),
+	}, [][]byte{frameSSEEvent("", []byte(chunkJSON)), frameSSEDone()}, proofObject.Proof.Signature) {
+		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Proof.Signature, body)
 	}
 }
 

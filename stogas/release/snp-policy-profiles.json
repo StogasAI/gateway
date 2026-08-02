@@ -1,0 +1,10 @@
+{
+	"active": "milan-v1",
+	"profiles": {
+		"milan-v1": {
+			"amdProduct": "Milan",
+			"policy": "0x000000000213013a"
+		}
+	},
+	"schema": "stogas.snp-policy-profiles.v1"
+}

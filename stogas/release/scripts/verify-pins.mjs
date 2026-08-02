@@ -62,6 +62,7 @@ function verifyLockShape() {
 	assert(pins.releaseSources.linux.version === '6.18.38-gnu', 'Linux release pin must be 6.18.38.');
 	assert(pins.releaseSources.linux.guixPackage === 'stogas-linux-6.18', 'Linux release package must be Stogas custom 6.18.');
 	assert(pins.releaseSources.go.version === '1.26.5', 'Go release pin must be 1.26.5.');
+	assert(pins.releaseSources.go.guixRecipeBaseVersion === '1.26.4', 'Go Guix recipe base must be 1.26.4.');
 	assertBase32(pins.releaseSources.go.guixSourceBase32, 'Go Guix source hash');
 	assert(
 		!pins.releaseSources.linux.requiredBuiltIns.includes('STRICT_MODULE_RWX'),
@@ -88,6 +89,37 @@ function verifyChannelsFile() {
 		'channels.scm introduction fingerprint is stale.'
 	);
 	assert(!channels.includes('0000000000000000000000000000000000000000'), 'Guix channel is not pinned.');
+}
+
+function verifySnpPolicyProfiles() {
+	const catalog = JSON.parse(
+		readFileSync(resolve(releaseRoot, 'snp-policy-profiles.json'), 'utf8')
+	);
+	assert(
+		JSON.stringify(Object.keys(catalog).sort()) ===
+			JSON.stringify(['active', 'profiles', 'schema']),
+		'Invalid SNP policy profile catalog fields.'
+	);
+	assert(catalog.schema === 'stogas.snp-policy-profiles.v1', 'Unsupported SNP policy profile schema.');
+	assert(catalog.active === 'milan-v1', 'The active SNP policy profile must be Milan v1.');
+	const profiles = Object.entries(catalog.profiles ?? {});
+	assert(profiles.length > 0, 'At least one SNP policy profile is required.');
+	const policies = new Set();
+	for (const [name, profile] of profiles) {
+		assert(/^[a-z0-9-]{1,32}$/.test(name), `Invalid SNP policy profile name: ${name}`);
+		assert(
+			JSON.stringify(Object.keys(profile).sort()) === JSON.stringify(['amdProduct', 'policy']),
+			`Invalid SNP policy profile fields: ${name}`
+		);
+		assert(/^[A-Za-z0-9-]{1,32}$/.test(profile.amdProduct), `Invalid SNP product: ${name}`);
+		assert(/^0x[0-9a-f]{16}$/.test(profile.policy), `Invalid SNP policy value: ${name}`);
+		assert(!policies.has(profile.policy), `Duplicate SNP policy value: ${name}`);
+		policies.add(profile.policy);
+	}
+	assert(
+		catalog.profiles['milan-v1']?.policy === '0x000000000213013a',
+		'Milan v1 must disable page movement, require one socket and SNP ABI 1.58, and record the current SMT requirement.'
+	);
 }
 
 function verifyWorkflows() {
@@ -210,6 +242,10 @@ function verifyReleaseSources() {
 	assert(releaseSource.includes('stogas-linux-6.18'), 'Release graph must use the Stogas kernel derivation.');
 	assert(releaseSource.includes(pins.releaseSources.go.url), 'Go source URL is stale.');
 	assert(releaseSource.includes(pins.releaseSources.go.guixSourceBase32), 'Go source hash is stale.');
+	assert(
+		releaseSource.includes(`go@${pins.releaseSources.go.guixRecipeBaseVersion}`),
+		'Go Guix recipe base is stale.'
+	);
 	assert(releaseSource.includes(pins.releaseSources.systemdUkify.url), 'systemd source URL is stale.');
 	assert(releaseSource.includes('OvmfPkg/AmdSev/AmdSevX64.dsc'), 'Release graph must build AmdSevX64 OVMF.');
 	assert(releaseSource.includes(pins.releaseSources.edk2.recursiveGitBase32), 'edk2 recursive source hash is stale.');
@@ -231,7 +267,9 @@ function verifyReleaseSources() {
 		assert(!releaseSource.includes('stogas.gateway.launch-policy.v2'), 'Release graph must not emit launch policy v2.');
 		assert(!releaseSource.includes('\\"memory_mib\\"'), 'Launch policy must not claim host memory as attested evidence.');
 		assert(releaseSource.includes('\\"vcpuCount\\": 4'), 'Release manifest must record four measured VPs.');
-		assert(releaseSource.includes('\\"policy\\":\\"0x0000000000030000\\"'), 'Launch policy must record the expected SNP policy.');
+		assert(releaseSource.includes('(json-string #$%snp-policy)'), 'Launch policy must record the selected SNP policy.');
+		assert(releaseSource.includes('/etc/stogas/snp-policy-profile'), 'The measured guest must bind its SNP policy profile.');
+		assert(releaseSource.includes('stogas/release/snp-policy-profiles.json'), 'Build input hashes must include the SNP policy profiles.');
 		assert(releaseSource.includes('\\"vmpl\\":0'), 'Launch policy must record VMPL 0.');
 		assert(releaseSource.includes('gateway.kernel'), 'Release graph must emit the kernel image.');
 		assert(releaseSource.includes('gateway.initramfs.cpio.zst'), 'Release graph must emit the compressed initramfs.');
@@ -315,6 +353,7 @@ function verifyReleaseSources() {
 		assert(buildScript.includes('release output contains unexpected files'), 'Build script must fail on clutter files.');
 		assert(buildScript.includes('sha256sum -c SHA256SUMS'), 'Build script must verify generated release checksums.');
 		assert(buildScript.includes('STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK'), 'Build script must gate CI no-check builds explicitly.');
+		assert(buildScript.includes('STOGAS_SNP_POLICY_PROFILE'), 'Build script must resolve an explicit SNP policy profile.');
 		assert(hydrateScript.includes('--dry-run'), 'Hydration must preflight the no-substitutes build.');
 		assert(!hydrateScript.includes('2>&1 || true'), 'Hydration dry run must fail closed on unexpected Guix errors.');
 		assert(hydrateScript.includes('cat "$dry_run" >&2'), 'Hydration dry-run failure must print Guix output.');
@@ -336,7 +375,10 @@ function verifyReleaseSources() {
 	assert(goHydrateScript.includes('sum.golang.org'), 'Go hydration must use the public Go checksum database.');
 	assert(goHydrateScript.includes('GOFLAGS=-modcacherw'), 'Go hydration must keep the ignored module cache removable.');
 	assert(goHydrateScript.includes('guix time-machine'), 'Go hydration must use Go from the pinned Guix channel.');
-	assert(goHydrateScript.includes('go@1.26'), 'Go hydration must use the pinned Guix Go package.');
+	assert(
+		goHydrateScript.includes('(@ (stogas release packages) stogas-go-1-26)'),
+		'Go hydration must use the exact release Go package.',
+	);
 	assert(!goHydrateScript.includes('command -v go'), 'Go hydration must not depend on ambient native Go.');
 	assert(rustHydrateScript.includes('cargo vendor --locked'), 'Rust hydration must use locked Cargo vendoring.');
 	assert(rustHydrateScript.includes('guix time-machine'), 'Rust hydration must use Cargo from the pinned Guix channel.');
@@ -479,6 +521,7 @@ async function readBoundedResponse(response, maxBytes) {
 
 verifyLockShape();
 verifyChannelsFile();
+verifySnpPolicyProfiles();
 verifyWorkflows();
 verifyReleaseSources();
 verifyGoAudit();

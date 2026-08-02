@@ -122,9 +122,18 @@ type account struct {
 }
 
 func newAccount(config Config) *account {
-	openAIConfig := newProviderConfig(config.OpenAIBaseURL, config.AllowPrivateProviderNetwork)
+	requirePostQuantumTLS := config.Confidential.Enabled && config.Confidential.Environment != "local"
+	openAIConfig := newProviderConfig(
+		config.OpenAIBaseURL,
+		config.AllowPrivateProviderNetwork,
+		requirePostQuantumTLS,
+	)
 	openAIConfig.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
-	anthropicConfig := newProviderConfig(config.AnthropicBaseURL, config.AllowPrivateProviderNetwork)
+	anthropicConfig := newProviderConfig(
+		config.AnthropicBaseURL,
+		config.AllowPrivateProviderNetwork,
+		requirePostQuantumTLS,
+	)
 
 	return &account{
 		keys: map[schemas.ModelProvider]schemas.Key{
@@ -152,7 +161,7 @@ func newAccount(config Config) *account {
 	}
 }
 
-func newProviderConfig(baseURL string, allowPrivateNetwork bool) schemas.ProviderConfig {
+func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTLS bool) schemas.ProviderConfig {
 	config := schemas.ProviderConfig{
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 		NetworkConfig:            schemas.DefaultNetworkConfig,
@@ -161,6 +170,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork bool) schemas.Provide
 		config.NetworkConfig.BaseURL = baseURL
 	}
 	config.NetworkConfig.AllowPrivateNetwork = allowPrivateNetwork
+	config.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 	config.CheckAndSetDefaults()
 	return config
 }

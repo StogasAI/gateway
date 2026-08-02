@@ -65,6 +65,14 @@ func frameSSEEvent(eventType string, data []byte) []byte {
 	return event
 }
 
+func frameSSEComment(comment string) []byte {
+	event := make([]byte, 0, 2+len(comment)+2)
+	event = append(event, ':', ' ')
+	event = append(event, comment...)
+	event = append(event, '\n', '\n')
+	return event
+}
+
 func (r *sseStreamReader) sendDone() bool {
 	return r.send(frameSSEDone())
 }

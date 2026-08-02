@@ -148,9 +148,17 @@ type signedEnvelope struct {
 }
 
 type releaseManifest struct {
-	Schema        string `json:"schema"`
-	Sequence      uint64 `json:"sequence"`
-	CatalogSchema int    `json:"catalogSchema"`
-	Runtime       string `json:"runtime"`
-	Public        string `json:"public"`
+	Schema        string               `json:"schema"`
+	Sequence      uint64               `json:"sequence"`
+	CatalogSchema int                  `json:"catalogSchema"`
+	Runtime       string               `json:"runtime"`
+	Public        string               `json:"public"`
+	Source        catalogReleaseSource `json:"source"`
+}
+
+type catalogReleaseSource struct {
+	Commit     string `json:"commit"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Tree       string `json:"tree"`
 }
