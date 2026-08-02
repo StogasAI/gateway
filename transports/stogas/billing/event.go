@@ -9,22 +9,21 @@ import (
 )
 
 type EventInput struct {
-	ActualCostUSDAtoms     string
-	Authorization          *Authorization
-	Cancelled              bool
-	CatalogDigest          string
-	CatalogSequence        uint64
-	Error                  *schemas.BifrostError
-	Pricing                map[string]any
-	ProviderCompletedAt    time.Time
-	ProviderStartedAt      time.Time
-	ProviderFirstOutputMS  *uint32
-	GatewayNodeID          string
-	GatewayVersion         string
-	RequestType            string
-	ResolvedCatalogNodeIDs []string
-	Response               *schemas.BifrostResponse
-	StartedAt              time.Time
+	ActualCostUSDAtoms    string
+	Authorization         *Authorization
+	Cancelled             bool
+	CatalogDigest         string
+	Error                 *schemas.BifrostError
+	Pricing               map[string]any
+	ProviderCompletedAt   time.Time
+	ProviderStartedAt     time.Time
+	ProviderFirstOutputMS *uint32
+	NodeID                string
+	GatewayVersion        string
+	RequestType           string
+	CatalogNodeIDs        []string
+	Response              *schemas.BifrostResponse
+	StartedAt             time.Time
 }
 
 func NewRequestEvent(input EventInput) RequestEvent {
@@ -76,29 +75,28 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		RequestType:             normalizeRequestType(input.RequestType),
 		Cancelled:               input.Cancelled,
 		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
-		CatalogSequence:         input.CatalogSequence,
-		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), UpstreamCredential: normalizedUpstreamCredential(authorization)}},
+		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), UpstreamByok: normalizedUpstreamByok(authorization)}},
 		StogasProcessingSuccess: true,
 		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, billedCostUSDAtoms),
-		GatewayNodeID:           strings.ToLower(strings.TrimSpace(input.GatewayNodeID)),
+		NodeID:                  strings.ToLower(strings.TrimSpace(input.NodeID)),
 		TotalTimeMS:             totalTimeMS,
 		UpstreamCostUSDAtoms:    actualCostUSDAtoms,
 		BilledCostUSDAtoms:      billedCostUSDAtoms,
 		Pricing:                 pricing,
 		GatewayVersion:          strings.TrimSpace(input.GatewayVersion),
-		ResolvedCatalogNodeIDs:  append([]string(nil), input.ResolvedCatalogNodeIDs...),
+		CatalogNodeIDs:          append([]string(nil), input.CatalogNodeIDs...),
 	}
 }
 
-func normalizedUpstreamCredential(authorization *Authorization) string {
-	if authorization == nil || strings.TrimSpace(authorization.UpstreamCredential) == "" {
+func normalizedUpstreamByok(authorization *Authorization) string {
+	if authorization == nil || strings.TrimSpace(authorization.UpstreamByok) == "" {
 		return "stogas"
 	}
-	return strings.TrimSpace(authorization.UpstreamCredential)
+	return strings.TrimSpace(authorization.UpstreamByok)
 }
 
 func billedRequestCost(authorization *Authorization, upstreamCost string) string {
-	if normalizedUpstreamCredential(authorization) == "stogas" {
+	if normalizedUpstreamByok(authorization) == "stogas" {
 		return upstreamCost
 	}
 	cost := parseMoneyOrZeroString(upstreamCost)

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -114,6 +115,7 @@ func TestUpdaterSelectsFreshestFullyVerifiedOrigin(t *testing.T) {
 	primary.Public = testDigest(embeddedPublicCatalogJSON)
 	backup := primary
 	backup.Sequence++
+	backup.Source.Tag = fmt.Sprintf("catalog-v%d", backup.Sequence)
 	envelopes := map[string][]byte{
 		"/primary/latest.json": signTestManifest(t, primary, "test", privateKey),
 		"/backup/latest.json":  signTestManifest(t, backup, "test", privateKey),
@@ -243,11 +245,17 @@ func TestUpdaterReadinessToleratesTransientFailuresAndRejectsStaleRefreshes(t *t
 
 func testReleaseManifest(sequence uint64) releaseManifest {
 	return releaseManifest{
-		Schema:        "stogas.catalog.release.v2",
+		Schema:        "stogas.catalog.release.v3",
 		Sequence:      sequence,
 		CatalogSchema: catalogSchema,
 		Runtime:       testDigest(embeddedRuntimeCatalogJSON),
 		Public:        testDigest(embeddedPublicCatalogJSON),
+		Source: catalogReleaseSource{
+			Commit:     strings.Repeat("a", 40),
+			Repository: "https://github.com/StogasAI/catalog",
+			Tag:        fmt.Sprintf("catalog-v%d", sequence),
+			Tree:       strings.Repeat("b", 40),
+		},
 	}
 }
 
@@ -268,10 +276,10 @@ func signTestManifest(t *testing.T, manifest releaseManifest, keyID string, priv
 		Manifest  json.RawMessage `json:"manifest"`
 		Signature string          `json:"signature"`
 	}{
-		Schema:   "stogas.catalog.signed.v2",
+		Schema:   "stogas.catalog.signed.v3",
 		KeyID:    keyID,
 		Manifest: manifestJSON,
-		Signature: base64.StdEncoding.EncodeToString(
+		Signature: base64.RawURLEncoding.EncodeToString(
 			ed25519.Sign(privateKey, append(append([]byte{}, catalogSignatureDomain...), manifestJSON...)),
 		),
 	}

@@ -1,10 +1,10 @@
 package identity
 
 import (
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/hpke"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -17,7 +17,7 @@ import (
 type Material struct {
 	TLSPrivateKey       *ecdsa.PrivateKey
 	TLSSPKISHA256       string
-	HPKEPrivateKey      *ecdh.PrivateKey
+	HPKEPrivateKey      hpke.PrivateKey
 	HPKEPublicKey       string
 	Ed25519PrivateKey   ed25519.PrivateKey
 	Ed25519PublicKey    string
@@ -36,7 +36,12 @@ func Generate(reader io.Reader) (*Material, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal tls spki: %w", err)
 	}
-	hpkeKey, err := ecdh.P256().GenerateKey(reader)
+	hpkeSeed := make([]byte, 32)
+	if _, err := io.ReadFull(reader, hpkeSeed); err != nil {
+		return nil, fmt.Errorf("read hpke key seed: %w", err)
+	}
+	hpkeKey, err := hpke.MLKEM768X25519().NewPrivateKey(hpkeSeed)
+	clear(hpkeSeed)
 	if err != nil {
 		return nil, fmt.Errorf("generate hpke key: %w", err)
 	}

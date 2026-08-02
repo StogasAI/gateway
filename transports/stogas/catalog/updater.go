@@ -28,7 +28,7 @@ const (
 	manifestSizeLimit   = 64 * 1024
 )
 
-var catalogSignatureDomain = []byte("stogas catalog release v2\n")
+var catalogSignatureDomain = []byte("stogas catalog release v3\n")
 
 //go:embed trust/catalog-signing-keys.json
 var trustedKeyJSON []byte
@@ -458,14 +458,14 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	if err := decodeStrict(data, &envelope); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode signed catalog manifest: %w", err)
 	}
-	if envelope.Schema != "stogas.catalog.signed.v2" {
+	if envelope.Schema != "stogas.catalog.signed.v3" {
 		return releaseManifest{}, fmt.Errorf("catalog signature envelope is unsupported")
 	}
 	key, ok := keys[envelope.KeyID]
 	if !ok {
 		return releaseManifest{}, fmt.Errorf("catalog signing key %q is not trusted", envelope.KeyID)
 	}
-	signature, err := base64.StdEncoding.DecodeString(envelope.Signature)
+	signature, err := base64.RawURLEncoding.DecodeString(envelope.Signature)
 	payload := make([]byte, 0, len(catalogSignatureDomain)+len(envelope.Manifest))
 	payload = append(payload, catalogSignatureDomain...)
 	payload = append(payload, envelope.Manifest...)
@@ -476,9 +476,13 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	if err := decodeStrict(envelope.Manifest, &manifest); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode catalog manifest: %w", err)
 	}
-	if manifest.Schema != "stogas.catalog.release.v2" ||
+	if manifest.Schema != "stogas.catalog.release.v3" ||
 		manifest.Sequence == 0 ||
-		manifest.CatalogSchema != catalogSchema {
+		manifest.CatalogSchema != catalogSchema ||
+		manifest.Source.Repository != "https://github.com/StogasAI/catalog" ||
+		manifest.Source.Tag != fmt.Sprintf("catalog-v%d", manifest.Sequence) ||
+		!isLowerHex(manifest.Source.Commit, 40) ||
+		!isLowerHex(manifest.Source.Tree, 40) {
 		return releaseManifest{}, fmt.Errorf("catalog manifest is unsupported")
 	}
 	if _, err := parseSHA256(manifest.Runtime); err != nil {
@@ -488,6 +492,18 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 		return releaseManifest{}, fmt.Errorf("catalog public digest is invalid")
 	}
 	return manifest, nil
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func trustedKeys() (map[string]ed25519.PublicKey, error) {

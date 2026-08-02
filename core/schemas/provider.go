@@ -67,6 +67,7 @@ type NetworkConfig struct {
 	EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`                  // Force HTTP/2 on provider connections (relevant for net/http-based providers like Bedrock)
 	BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`          // Override default beta header support per provider (keys are prefixes like "redact-thinking-")
 	AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`          // Allow connections to RFC 1918 private IPs (for k8s pods, LAN deployments). Link-local (169.254.x.x) is always blocked.
+	RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`       // Require TLS 1.3 with the X25519MLKEM768 hybrid key exchange and no classical fallback.
 }
 
 // UnmarshalJSON customizes JSON unmarshaling for NetworkConfig.
@@ -92,6 +93,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
+		RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`
 	}
 
 	var alias NetworkConfigAlias
@@ -112,6 +114,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 	nc.EnforceHTTP2 = alias.EnforceHTTP2
 	nc.BetaHeaderOverrides = alias.BetaHeaderOverrides
 	nc.AllowPrivateNetwork = alias.AllowPrivateNetwork
+	nc.RequirePostQuantumTLS = alias.RequirePostQuantumTLS
 
 	// Parse RetryBackoffInitial: string → ParseDuration, integer → milliseconds (legacy)
 	if len(alias.RetryBackoffInitial) > 0 && string(alias.RetryBackoffInitial) != "null" {
@@ -185,6 +188,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
+		RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`
 	}
 
 	alias := NetworkConfigAlias{
@@ -202,6 +206,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		EnforceHTTP2:               nc.EnforceHTTP2,
 		BetaHeaderOverrides:        nc.BetaHeaderOverrides,
 		AllowPrivateNetwork:        nc.AllowPrivateNetwork,
+		RequirePostQuantumTLS:      nc.RequirePostQuantumTLS,
 	}
 	if nc.CACertPEM != nil {
 		alias.CACertPEM = SecretVarAsString(nc.CACertPEM)

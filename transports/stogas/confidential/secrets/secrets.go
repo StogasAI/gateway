@@ -1,25 +1,24 @@
 package secrets
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/ecdh"
+	"crypto/hpke"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sync"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"
 )
 
-const hkdfInfo = "stogas.secret-release.p256-hkdf-aes-256-gcm.v1"
+const (
+	hpkeInfo              = "stogas.secret-release.v1"
+	hpkeEncapsulationSize = 1_120
+	hpkeTagSize           = 16
+)
 
 type Store struct {
 	mu      sync.RWMutex
@@ -145,57 +144,48 @@ func DecryptRelease(input InstallInput) ([]Secret, error) {
 	return out, nil
 }
 
-func decryptSecret(privateKey *ecdh.PrivateKey, encrypted provision.SecretCiphertext, aad []byte) ([]byte, error) {
-	ephemeralBytes, err := base64.RawURLEncoding.DecodeString(encrypted.EncapsulatedKey)
+func decryptSecret(privateKey hpke.PrivateKey, encrypted provision.SecretCiphertext, aad []byte) ([]byte, error) {
+	encapsulated, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.EncapsulatedKey)
 	if err != nil {
 		return nil, fmt.Errorf("decode encapsulated key: %w", err)
 	}
-	ephemeral, err := ecdh.P256().NewPublicKey(ephemeralBytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse encapsulated key: %w", err)
+	if len(encapsulated) != hpkeEncapsulationSize {
+		return nil, errors.New("encapsulated key has an invalid length")
 	}
-	sharedSecret, err := privateKey.ECDH(ephemeral)
-	if err != nil {
-		return nil, fmt.Errorf("derive shared secret: %w", err)
-	}
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(hkdf.New(sha256.New, sharedSecret, aad, []byte(hkdfInfo)), key); err != nil {
-		return nil, fmt.Errorf("derive AES key: %w", err)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := base64.RawURLEncoding.DecodeString(encrypted.Ciphertext)
+	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.Ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("decode ciphertext: %w", err)
 	}
-	if len(ciphertext) <= aead.NonceSize() {
+	if len(ciphertext) < hpkeTagSize {
 		return nil, errors.New("ciphertext is too short")
 	}
-	nonce := ciphertext[:aead.NonceSize()]
-	body := ciphertext[aead.NonceSize():]
-	plaintext, err := aead.Open(nil, nonce, body, aad)
+	recipient, err := hpke.NewRecipient(
+		encapsulated,
+		privateKey,
+		hpke.HKDFSHA256(),
+		hpke.AES256GCM(),
+		[]byte(hpkeInfo),
+	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("initialize HPKE recipient: %w", err)
+	}
+	plaintext, err := recipient.Open(aad, ciphertext)
+	if err != nil {
+		return nil, errors.New("HPKE ciphertext authentication failed")
 	}
 	return plaintext, nil
 }
 
 func secretReleaseAAD(bundle *provision.SecretBundle, secret provision.SecretCiphertext) ([]byte, error) {
 	payload := struct {
-		GenerationID     string `json:"generation_id"`
+		NodeID     string `json:"node_id"`
 		ReportDataSHA512 string `json:"report_data_sha512"`
 		Schema           string `json:"schema"`
 		SecretKeyID      string `json:"secret_key_id"`
 		SecretName       string `json:"secret_name"`
 		SecretVersion    string `json:"secret_version"`
 	}{
-		GenerationID:     bundle.GenerationID,
+		NodeID:     bundle.NodeID,
 		ReportDataSHA512: bundle.ReportDataSHA512,
 		Schema:           provision.SecretReleaseSchemaV1,
 		SecretKeyID:      secret.KeyID,

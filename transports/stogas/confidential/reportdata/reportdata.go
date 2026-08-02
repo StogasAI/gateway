@@ -12,10 +12,15 @@ import (
 )
 
 const (
-	SchemaV2             = "stogas.node-report.v2"
+	SchemaV3             = "stogas.node-report.v3"
 	DrandNetworkQuicknet = "quicknet"
 	QuicknetChainHash    = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 )
+
+type CatalogIdentity struct {
+	Digest   string `json:"digest"`
+	Sequence uint64 `json:"sequence"`
+}
 
 type Drand struct {
 	Network    string `json:"network"`
@@ -26,19 +31,20 @@ type Drand struct {
 }
 
 type Payload struct {
-	Schema             string   `json:"schema"`
-	TLSSPKISHA256      string   `json:"tls_spki_sha256"`
-	ActiveCertSHA256   string   `json:"active_cert_sha256"`
-	AcceptedCertSHA256 []string `json:"accepted_cert_sha256"`
-	HPKEPublicKey      string   `json:"hpke_public_key"`
-	Ed25519PublicKey   string   `json:"ed25519_public_key"`
-	Drand              Drand    `json:"drand"`
+	Schema             string          `json:"schema"`
+	Catalog            CatalogIdentity `json:"catalog"`
+	TLSSPKISHA256      string          `json:"tls_spki_sha256"`
+	ActiveCertSHA256   string          `json:"active_cert_sha256"`
+	AcceptedCertSHA256 []string        `json:"accepted_cert_sha256"`
+	HPKEPublicKey      string          `json:"hpke_public_key"`
+	Ed25519PublicKey   string          `json:"ed25519_public_key"`
+	Drand              Drand           `json:"drand"`
 }
 
 func NewPayload(input Payload) (Payload, error) {
 	payload := input
 	if payload.Schema == "" {
-		payload.Schema = SchemaV2
+		payload.Schema = SchemaV3
 	}
 	if payload.Drand.Network == "" {
 		payload.Drand.Network = DrandNetworkQuicknet
@@ -55,8 +61,16 @@ func NewPayload(input Payload) (Payload, error) {
 }
 
 func (p Payload) Validate() error {
-	if p.Schema != SchemaV2 {
+	if p.Schema != SchemaV3 {
 		return fmt.Errorf("unsupported report data schema %q", p.Schema)
+	}
+	if !strings.HasPrefix(p.Catalog.Digest, "sha256:") ||
+		len(p.Catalog.Digest) != len("sha256:")+64 ||
+		strings.ToLower(p.Catalog.Digest) != p.Catalog.Digest {
+		return errors.New("catalog digest must be sha256-prefixed lowercase hex")
+	}
+	if digest, err := hex.DecodeString(strings.TrimPrefix(p.Catalog.Digest, "sha256:")); err != nil || len(digest) != 32 {
+		return errors.New("catalog digest must be sha256-prefixed lowercase hex")
 	}
 	for name, value := range map[string]string{
 		"tls_spki_sha256":    p.TLSSPKISHA256,

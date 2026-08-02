@@ -68,6 +68,37 @@ func TestConfigureTLS_ReturnsUnchangedWhenNeitherSet(t *testing.T) {
 	}
 }
 
+func TestConfigureTLSRequiresOnlyHybridPostQuantumKeyExchange(t *testing.T) {
+	client := &fasthttp.Client{}
+	result := ConfigureTLS(
+		client,
+		schemas.NetworkConfig{RequirePostQuantumTLS: true},
+		testLogger{},
+	)
+
+	if result != client || client.TLSConfig == nil {
+		t.Fatal("ConfigureTLS did not install the required TLS config")
+	}
+	if client.TLSConfig.MinVersion != tls.VersionTLS13 || client.TLSConfig.MaxVersion != tls.VersionTLS13 {
+		t.Fatalf("TLS versions = %x..%x, want TLS 1.3 only", client.TLSConfig.MinVersion, client.TLSConfig.MaxVersion)
+	}
+	if len(client.TLSConfig.CurvePreferences) != 1 || client.TLSConfig.CurvePreferences[0] != tls.X25519MLKEM768 {
+		t.Fatalf("TLS curves = %v, want only X25519MLKEM768", client.TLSConfig.CurvePreferences)
+	}
+	if err := client.TLSConfig.VerifyConnection(tls.ConnectionState{
+		Version: tls.VersionTLS13,
+		CurveID: tls.X25519MLKEM768,
+	}); err != nil {
+		t.Fatalf("hybrid TLS state was rejected: %v", err)
+	}
+	if err := client.TLSConfig.VerifyConnection(tls.ConnectionState{
+		Version: tls.VersionTLS13,
+		CurveID: tls.X25519,
+	}); err == nil {
+		t.Fatal("classical TLS state was accepted")
+	}
+}
+
 func TestConfigureTLS_SetsInsecureSkipVerify(t *testing.T) {
 	client := &fasthttp.Client{}
 	logger := testLogger{}

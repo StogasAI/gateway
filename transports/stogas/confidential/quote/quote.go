@@ -37,12 +37,13 @@ type Manager struct {
 	interval time.Duration
 	now      func() time.Time
 
-	mu       sync.RWMutex
-	current  *Snapshot
-	lastErr  error
-	failures int
-	running  bool
-	stopOnce sync.Once
+	mu        sync.RWMutex
+	refreshMu sync.Mutex
+	current   *Snapshot
+	lastErr   error
+	failures  int
+	running   bool
+	stopOnce  sync.Once
 }
 
 func New(attester Attester, build PayloadFunc, interval time.Duration) (*Manager, error) {
@@ -81,6 +82,9 @@ func (m *Manager) Current(ctx context.Context) (*Snapshot, error) {
 }
 
 func (m *Manager) Refresh(ctx context.Context) error {
+	m.refreshMu.Lock()
+	defer m.refreshMu.Unlock()
+
 	payload, err := m.build(ctx)
 	if err != nil {
 		m.recordErr(err)

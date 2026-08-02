@@ -23,12 +23,15 @@ vendor_tree_sha256() {
 }
 
 hydrate_go() {
+  STOGAS_RELEASE_ROOT="$release_root" \
   STOGAS_TRANSPORTS_ROOT="$transports_root" \
   STOGAS_GO_MODCACHE="$go_modcache" \
   STOGAS_GO_BUILD_CACHE="$go_build_cache" \
   STOGAS_GO_VENDOR="$go_vendor" \
     guix time-machine -C "$release_root/guix/channels.scm" -- \
-      shell go@1.26 git nss-certs -- \
+      shell -L "$release_root/guix/modules" \
+      -e '(@ (stogas release packages) stogas-go-1-26)' \
+      git nss-certs -- \
       bash -c '
         set -euo pipefail
         cd "$STOGAS_TRANSPORTS_ROOT"

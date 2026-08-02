@@ -257,6 +257,22 @@ func (s *Server) serveConfidentialTLS() bool {
 func (s *Server) confidentialTLSConfig() *tls.Config {
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+		},
+		CurvePreferences: []tls.CurveID{
+			tls.X25519MLKEM768,
+			tls.SecP256r1MLKEM768,
+			tls.SecP384r1MLKEM1024,
+			tls.X25519,
+			tls.CurveP256,
+			tls.CurveP384,
+		},
 		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 			if s == nil || s.secure == nil || s.secure.Certs == nil {
 				return nil, errors.New("confidential certificate store is not initialized")

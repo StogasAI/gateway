@@ -33,6 +33,15 @@
   (or (getenv "STOGAS_RELEASE_TREE")
       "0000000000000000000000000000000000000000"))
 
+(define %snp-policy-profile
+  (or (getenv "STOGAS_SNP_POLICY_PROFILE") "milan-v1"))
+
+(define %snp-policy-product
+  (or (getenv "STOGAS_SNP_POLICY_PRODUCT") "Milan"))
+
+(define %snp-policy
+  (or (getenv "STOGAS_SNP_POLICY") "0x000000000213013a"))
+
 (define (release-sequence tag)
   (let* ((version (substring tag 1))
          (parts (map string->number (string-split version #\.))))
@@ -204,7 +213,7 @@
 		                  (display "\"host_data\":\"0000000000000000000000000000000000000000000000000000000000000000\"," port)
 		                  (display "\"id_key_digest\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"," port)
 		                  (display "\"image_id\":\"00000000000000000000000000000000\"," port)
-		                  (display "\"policy\":\"0x0000000000030000\",\"vmpl\":0}," port)
+		                  (format port "\"policy\":~a,\"vmpl\":0}," (json-string #$%snp-policy))
 		                  (format port "\"measurement\":~a," (json-string (string-trim-both measurement)))
 		                  (display "\"name\":\"relay-4c\"," port)
 		                  (format port "\"release_tag\":~a," (json-string #$%release-tag))
@@ -312,6 +321,10 @@
                   (display "  },\n" port)
                   (display "  \"sevSnp\": {\n" port)
                   (display "    \"platform\": \"SEV_SNP\",\n" port)
+	                  (format port "    \"policyProfile\": ~a,\n"
+	                          (json-string #$%snp-policy-profile))
+	                  (format port "    \"product\": ~a,\n"
+	                          (json-string #$%snp-policy-product))
                   (display "    \"vmm\": \"qemu-kvm\",\n" port)
                   (display "    \"measurementTool\": \"igvmmeasure\",\n" port)
                   (format port "    \"measurementToolVersion\": ~a,\n"
@@ -389,6 +402,9 @@
 	                                  "install-guix-bootstrap.sh"))
 	             (cons "stogas/release/scripts/verify-pins.mjs"
 	                   #$(source-file "scripts/verify-pins.mjs" "verify-pins.mjs"))
+	             (cons "stogas/release/snp-policy-profiles.json"
+	                   #$(source-file "snp-policy-profiles.json"
+	                                  "snp-policy-profiles.json"))
 	             (cons "stogas/release/patches/svsm-igvmmeasure-standalone-cargo.patch"
 	                   #$(source-file "patches/svsm-igvmmeasure-standalone-cargo.patch"
 	                                  "svsm-igvmmeasure-standalone-cargo.patch"))
@@ -460,6 +476,12 @@
           (mkdir-p rootfs)
           (mkdir-p (string-append rootfs "/stogas"))
           (mkdir-p (string-append rootfs "/etc"))
+	          (mkdir-p (string-append rootfs "/etc/stogas"))
+	          (call-with-output-file (string-append rootfs "/etc/stogas/snp-policy-profile")
+	            (lambda (port)
+	              (display #$%snp-policy-profile port)
+	              (newline port)))
+	          (chmod (string-append rootfs "/etc/stogas/snp-policy-profile") #o444)
           (call-with-output-file (string-append rootfs "/etc/resolv.conf")
             (lambda (port)
               (display "nameserver 10.0.2.3\noptions timeout:2 attempts:2\n" port)))

@@ -154,14 +154,18 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	catalogIdentity := resolution.CatalogIdentity()
-	ctx.Response.Header.Set("X-Stogas-Catalog-Sequence", strconv.FormatUint(catalogIdentity.Sequence, 10))
-	ctx.Response.Header.Set("X-Stogas-Catalog-Digest", catalogIdentity.Digest)
+	if s.proofs != nil {
+		if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
+			s.writeProofError(ctx)
+			return
+		}
+	}
 
 	adapter := stogas.AdapterFor(resolution.Provider)
-	gatewayNodeID := ""
+	nodeID := ""
 	if s.secure != nil {
 		if s.secure.Control != nil {
-			gatewayNodeID = s.secure.Control.GenerationID()
+			nodeID = s.secure.Control.NodeID()
 		}
 	}
 	bifrostCtx, state, cancel, err := newRequestContext(
@@ -169,7 +173,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		resolution,
 		credential,
 		adapter,
-		gatewayNodeID,
+		nodeID,
 	)
 	if err != nil {
 		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
@@ -212,7 +216,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			state.BifrostError = &schemas.BifrostError{
 				IsBifrostError: true,
 				StatusCode:     &status,
-				Error:          &schemas.ErrorField{Message: "Upstream credential is unavailable"},
+				Error:          &schemas.ErrorField{Message: "BYOK key is unavailable"},
 			}
 			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		}
@@ -220,12 +224,12 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeBillingError(ctx, err)
 		return
 	}
-	if err := stogas.ApplyUpstreamCredential(bifrostCtx, state, bifrostReq); err != nil {
+	if err := stogas.ApplyUpstreamByok(bifrostCtx, state, bifrostReq); err != nil {
 		status := fasthttp.StatusServiceUnavailable
 		state.BifrostError = &schemas.BifrostError{
 			IsBifrostError: true,
 			StatusCode:     &status,
-			Error:          &schemas.ErrorField{Message: "Upstream credential is unavailable"},
+			Error:          &schemas.ErrorField{Message: "BYOK key is unavailable"},
 		}
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		cancel()
@@ -384,6 +388,10 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 		cancel()
 		return
 	}
+	proofTranscriptSHA256 := ""
+	if session := encryptedSession(ctx); session != nil {
+		proofTranscriptSHA256 = session.TranscriptSHA256()
+	}
 	reader := newSSEStreamReader()
 	completedAsync = true
 
@@ -395,7 +403,6 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 		defer stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		defer cancel()
 
-		metadata := newStreamMetadataAccumulator(bifrostCtx)
 		clientConnected := true
 		clientClosed := reader.closed()
 		idleTimeout := streamIdleTimeout(state)
@@ -448,29 +455,17 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 					if !clientConnected {
 						return
 					}
-					if meta := metadata.metadata(bifrostCtx); len(meta) > 0 {
-						encoded, err := marshalPayload(meta)
-						frame := frameSSEEvent("stogas.meta", encoded)
-						if err != nil || !reader.send(frame) {
-							return
-						}
-						if streamProof != nil {
-							streamProof.WriteSentChunk(frame)
-						}
-					}
 					if streamProof != nil {
+						stogas.PrepareFinalState(state)
 						if sendDone {
 							streamProof.WriteSentChunk(frameSSEDone())
 						}
-						if state != nil && state.Resolution != nil {
-							streamProof.SetCatalogNodeIDs(
-								state.Resolution.CatalogNodeIDsForDeployment(stogas.ExecutionDeployment(state)),
-							)
-						}
+						streamProof.SetMetadata(proofMetadata(state, proofTranscriptSHA256))
 						output, err := s.proofs.FinishStream(bifrostCtx, streamProof)
 						if err != nil {
 							encoded, encodeErr := marshalPayload(map[string]any{
 								"error": map[string]any{
+									"code":    responseProofErrorCode,
 									"message": "Failed to build confidential response proof",
 									"type":    "internal_error",
 								},
@@ -480,8 +475,8 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 							}
 							return
 						}
-						encoded, err := marshalPayload(output.Object)
-						if err != nil || !reader.sendEvent(proofhttp.SSEEventName, encoded) {
+						encoded := output.Headers[proofhttp.HeaderProof]
+						if encoded == "" || !reader.send(frameSSEComment(proofhttp.SSECommentPrefix+encoded)) {
 							return
 						}
 					}
@@ -528,7 +523,6 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				if state != nil {
 					state.ObserveChatProviderOutput(chunk.BifrostChatResponse)
 				}
-				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostChatResponse, extra)
 			case chunk.BifrostResponsesStreamResponse != nil:
 				eventName = string(chunk.BifrostResponsesStreamResponse.Type)
@@ -536,7 +530,6 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				if state != nil {
 					state.ObserveResponsesProviderOutput(chunk.BifrostResponsesStreamResponse)
 				}
-				metadata.add(extra)
 				payload = publicResponsePayload(bifrostCtx, chunk.BifrostResponsesStreamResponse.WithDefaults(), extra)
 			default:
 				continue

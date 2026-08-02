@@ -113,6 +113,7 @@
     },
     "go": {
 	  "version": "1.26.5",
+	  "guixRecipeBaseVersion": "1.26.4",
 	  "guixPackage": "stogas-go-1.26",
 	  "url": "https://go.dev/dl/go1.26.5.src.tar.gz",
 	  "sha256": "495be4bc87176ac567392e5b4116abd98466d33d7b49d41e764ccc6976b2dc42",

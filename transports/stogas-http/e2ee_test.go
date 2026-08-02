@@ -27,10 +27,10 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 		strings.Repeat("1", 64),
 		[]e2ee.PublicRecipient{{PublicKey: material.HPKEPrivateKey.PublicKey().Bytes()}},
 		e2ee.InnerRequest{
-			APIKey:            "sk-encrypted",
-			Accept:            "text/event-stream",
-			ReturnExtraFields: "provider",
-			Body:              json.RawMessage(`{"model":"gpt-5.5","stream":true}`),
+			APIKey:      "sk-encrypted",
+			Accept:      "text/event-stream",
+			ExtraFields: true,
+			Body:        json.RawMessage(`{"model":"gpt-5.5","stream":true}`),
 		},
 	)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
 	ctx.Request.SetRequestURI("/v1/chat/completions")
 	ctx.Request.Header.Set("Authorization", "Bearer outer-key")
-	ctx.Request.Header.Set(stogasHeaderReturnExtraFields, "raw_response")
+	ctx.Request.Header.Set(stogasHeaderExtraFields, "false")
 	ctx.Request.SetBody(body)
 
 	session, ok := server.openEncryptedInference(ctx)
@@ -53,7 +53,7 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 	if got := string(ctx.Request.Header.Peek("Authorization")); got != "Bearer sk-encrypted" {
 		t.Fatalf("authorization = %q", got)
 	}
-	if got := string(ctx.Request.Header.Peek(stogasHeaderReturnExtraFields)); got != "provider" {
+	if got := string(ctx.Request.Header.Peek(stogasHeaderExtraFields)); got != "true" {
 		t.Fatalf("extra fields = %q", got)
 	}
 	if got := string(ctx.Request.Body()); got != `{"model":"gpt-5.5","stream":true}` {

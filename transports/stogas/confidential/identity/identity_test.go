@@ -31,8 +31,10 @@ func TestGenerateCreatesDistinctInMemoryKeys(t *testing.T) {
 	if first.Ed25519PublicKey == second.Ed25519PublicKey {
 		t.Fatal("ed25519 public keys should be unique per generation")
 	}
-	if _, err := base64.RawURLEncoding.DecodeString(first.HPKEPublicKey); err != nil {
+	if decoded, err := base64.RawURLEncoding.DecodeString(first.HPKEPublicKey); err != nil {
 		t.Fatalf("hpke key is not base64url: %v", err)
+	} else if len(decoded) != 1_216 {
+		t.Fatalf("unexpected X-Wing HPKE public key length: %d", len(decoded))
 	}
 	if decoded, err := base64.RawURLEncoding.DecodeString(first.Ed25519PublicKey); err != nil {
 		t.Fatalf("ed25519 key is not base64url: %v", err)
@@ -190,6 +192,22 @@ func TestCertificateStoreRejectsRenewedChainWithWrongTLSKey(t *testing.T) {
 	chainPEM, _ := selfSignedLeaf(t, other, 3, time.Now().Add(90*24*time.Hour))
 	if _, err := store.StageRenewedChain(chainPEM); err == nil || !strings.Contains(err.Error(), "reuse the existing TLS public key") {
 		t.Fatalf("expected TLS key reuse error, got %v", err)
+	}
+}
+
+func TestCertificateStoreRejectsUnexpectedPEMBlocks(t *testing.T) {
+	material, err := Generate(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewCertificateStore(material, strings.Repeat("a", 64), []string{strings.Repeat("a", 64)}, time.Now().Add(90*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainPEM, _ := selfSignedLeaf(t, material, 3, time.Now().Add(90*24*time.Hour))
+	chainPEM = append(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not a key")}), chainPEM...)
+	if _, err := store.StageRenewedChain(chainPEM); err == nil || !strings.Contains(err.Error(), "unexpected") {
+		t.Fatalf("expected unexpected PEM block rejection, got %v", err)
 	}
 }
 

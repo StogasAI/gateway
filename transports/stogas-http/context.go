@@ -17,16 +17,16 @@ import (
 type stogasContextKey string
 
 const (
-	stogasReturnExtraFieldsKey stogasContextKey = "stogas.return_extra_fields"
+	stogasExtraFieldsKey stogasContextKey = "stogas.extra_fields"
 
-	stogasHeaderReturnExtraFields = "X-Stogas-Return-Extra-Fields"
+	stogasHeaderExtraFields = "X-Stogas-Extra-Fields"
 
 	chatRequestLifetime = 10 * time.Minute
 )
 
 var chatStreamIdleTimeout = 2 * time.Minute
 
-func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, gatewayNodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
+func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := requestLifetime(resolution)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
@@ -48,7 +48,7 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
 	state.SetDashboardCredential(credential.Dashboard)
-	state.GatewayNodeID = strings.ToLower(strings.TrimSpace(gatewayNodeID))
+	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
 	state.RequestLifetime = lifetime
 	state.SingleUseRequestID = encryptedSession(ctx) != nil
@@ -59,14 +59,8 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 		cancel()
 		return nil, nil, nil, err
 	}
-	if len(extraFields) > 0 {
-		bifrostCtx.SetValue(stogasReturnExtraFieldsKey, extraFields)
-		if extraFields["raw_request"] {
-			bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawRequest, true)
-		}
-		if extraFields["raw_response"] {
-			bifrostCtx.SetValue(schemas.BifrostContextKeySendBackRawResponse, true)
-		}
+	if extraFields {
+		bifrostCtx.SetValue(stogasExtraFieldsKey, true)
 	}
 
 	return bifrostCtx, state, cancel, nil
@@ -98,25 +92,25 @@ func streamIdleTimeout(state *stogas.State) time.Duration {
 	}
 }
 
-func extraFieldsHeader(ctx *fasthttp.RequestCtx) (map[string]bool, error) {
-	fields := make(map[string]bool)
-	raw := strings.TrimSpace(string(ctx.Request.Header.Peek(stogasHeaderReturnExtraFields)))
+func extraFieldsHeader(ctx *fasthttp.RequestCtx) (bool, error) {
+	raw := strings.ToLower(strings.TrimSpace(string(ctx.Request.Header.Peek(stogasHeaderExtraFields))))
 	if raw == "" {
-		return fields, nil
+		return false, nil
 	}
-	for _, field := range strings.Split(raw, ",") {
-		name := strings.ToLower(strings.TrimSpace(field))
-		if name == "" {
-			continue
-		}
-		if !allowsStogasResponseField(name) {
-			return nil, fmt.Errorf("unsupported Stogas extra field: %s", name)
-		}
-		fields[name] = true
+	switch raw {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false", stogasHeaderExtraFields)
 	}
-	return fields, nil
 }
 
-func allowsStogasResponseField(name string) bool {
-	return catalog.AllowsResponseMetadataField(name)
+func wantsExtraFields(ctx *schemas.BifrostContext) bool {
+	if ctx == nil {
+		return false
+	}
+	value, _ := ctx.Value(stogasExtraFieldsKey).(bool)
+	return value
 }

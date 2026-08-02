@@ -56,10 +56,10 @@ func (s *Server) openEncryptedInference(ctx *fasthttp.RequestCtx) (*e2ee.Session
 	} else {
 		ctx.Request.Header.Del("Accept")
 	}
-	if inner.ReturnExtraFields != "" {
-		ctx.Request.Header.Set(stogasHeaderReturnExtraFields, inner.ReturnExtraFields)
+	if inner.ExtraFields {
+		ctx.Request.Header.Set(stogasHeaderExtraFields, "true")
 	} else {
-		ctx.Request.Header.Del(stogasHeaderReturnExtraFields)
+		ctx.Request.Header.Del(stogasHeaderExtraFields)
 	}
 	ctx.Request.SetBodyRaw(append([]byte(nil), inner.Body...))
 	ctx.SetUserValue(e2eeSessionContextKey, session)

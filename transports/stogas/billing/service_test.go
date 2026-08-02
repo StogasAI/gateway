@@ -210,10 +210,10 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			FinishReason:          "stop",
 			Status:                "success",
 			StatusCode:            &status,
-			UpstreamCredential:    "stogas",
+			UpstreamByok:          "stogas",
 		}},
 		GatewayVersion:          "v1.5.13",
-		ResolvedCatalogNodeIDs:  []string{"route:chat", "provider:openai", "deployment:gpt-5"},
+		CatalogNodeIDs:          []string{"route:chat", "provider:openai", "deployment:gpt-5"},
 		StogasProcessingSuccess: true,
 	})
 
@@ -230,8 +230,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		t.Fatalf("gateway_version = %q", event.GatewayVersion)
 	}
 	var nodeIDs []string
-	if err := json.Unmarshal([]byte(event.ResolvedCatalogNodeIDs), &nodeIDs); err != nil || len(nodeIDs) != 3 {
-		t.Fatalf("resolved_catalog_node_ids = %q, err=%v", event.ResolvedCatalogNodeIDs, err)
+	if err := json.Unmarshal([]byte(event.CatalogNodeIDs), &nodeIDs); err != nil || len(nodeIDs) != 3 {
+		t.Fatalf("catalog_node_ids = %q, err=%v", event.CatalogNodeIDs, err)
 	}
 	var attempts []ProviderAttempt
 	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
@@ -269,8 +269,8 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 }
 
 func TestBilledRequestCostUsesFullManagedCostAndCeilingTwoPercentForBYOK(t *testing.T) {
-	managed := &Authorization{UpstreamCredential: "stogas"}
-	byok := &Authorization{UpstreamCredential: "0198f4cc-6c25-7000-8000-000000000001"}
+	managed := &Authorization{UpstreamByok: "stogas"}
+	byok := &Authorization{UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001"}
 	for _, tc := range []struct {
 		name          string
 		authorization *Authorization
@@ -747,14 +747,14 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 
 func testAuthorization() *Authorization {
 	return &Authorization{
-		AuthorizedAmount:   mustParseBigInt(ZeroChargeUSDAtoms),
-		AvailableAfter:     mustParseBigInt("100000000000"),
-		KeyID:              "key-1",
-		ProductKey:         "gpt-4o-mini",
-		ProviderKey:        "openai",
-		RequestID:          "request-1",
-		UpstreamCredential: "stogas",
-		UserID:             "user-1",
+		AuthorizedAmount: mustParseBigInt(ZeroChargeUSDAtoms),
+		AvailableAfter:   mustParseBigInt("100000000000"),
+		KeyID:            "key-1",
+		ProductKey:       "gpt-4o-mini",
+		ProviderKey:      "openai",
+		RequestID:        "request-1",
+		UpstreamByok:     "stogas",
+		UserID:           "user-1",
 	}
 }
 

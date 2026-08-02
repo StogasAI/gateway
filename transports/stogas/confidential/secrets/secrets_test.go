@@ -1,18 +1,12 @@
 package secrets
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/ecdh"
-	"crypto/rand"
+	"crypto/hpke"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"io"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/hkdf"
 
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"
@@ -71,7 +65,7 @@ func TestDecryptReleaseFailsClosedOnBindingMismatch(t *testing.T) {
 
 func testBundle() *provision.SecretBundle {
 	return &provision.SecretBundle{
-		GenerationID:     strings.Repeat("1", 64),
+		NodeID:     strings.Repeat("1", 64),
 		ReportDataSHA512: strings.Repeat("3", 128),
 		Schema:           provision.SecretReleaseSchemaV1,
 	}
@@ -88,38 +82,21 @@ func encryptForTest(material *identity.Material, bundle *provision.SecretBundle,
 		return provision.SecretCiphertext{}, err
 	}
 	sum := sha256.Sum256(aad)
-	ephemeralPrivate, err := ecdh.P256().GenerateKey(rand.Reader)
+	encapsulated, sender, err := hpke.NewSender(
+		material.HPKEPrivateKey.PublicKey(),
+		hpke.HKDFSHA256(),
+		hpke.AES256GCM(),
+		[]byte(hpkeInfo),
+	)
 	if err != nil {
 		return provision.SecretCiphertext{}, err
 	}
-	recipientPublic, err := ecdh.P256().NewPublicKey(material.HPKEPrivateKey.PublicKey().Bytes())
+	ciphertext, err := sender.Seal(aad, []byte(plaintext))
 	if err != nil {
 		return provision.SecretCiphertext{}, err
 	}
-	shared, err := ephemeralPrivate.ECDH(recipientPublic)
-	if err != nil {
-		return provision.SecretCiphertext{}, err
-	}
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(hkdf.New(sha256.New, shared, aad, []byte(hkdfInfo)), key); err != nil {
-		return provision.SecretCiphertext{}, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return provision.SecretCiphertext{}, err
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return provision.SecretCiphertext{}, err
-	}
-	nonce := make([]byte, aead.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return provision.SecretCiphertext{}, err
-	}
-	ciphertext := aead.Seal(nil, nonce, []byte(plaintext), aad)
-	envelope := append(append([]byte(nil), nonce...), ciphertext...)
 	secret.AADSHA256 = hex.EncodeToString(sum[:])
-	secret.Ciphertext = base64.RawURLEncoding.EncodeToString(envelope)
-	secret.EncapsulatedKey = base64.RawURLEncoding.EncodeToString(ephemeralPrivate.PublicKey().Bytes())
+	secret.Ciphertext = base64.RawURLEncoding.EncodeToString(ciphertext)
+	secret.EncapsulatedKey = base64.RawURLEncoding.EncodeToString(encapsulated)
 	return secret, nil
 }

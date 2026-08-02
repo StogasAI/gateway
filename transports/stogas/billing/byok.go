@@ -14,27 +14,27 @@ import (
 )
 
 const (
-	providerCredentialCiphertextVersion = "v1"
-	providerCredentialHKDFSalt          = "stogas:byok:encryption:salt:v1"
-	providerCredentialHKDFInfo          = "stogas:byok:encryption:key:v1"
-	providerCredentialAADPrefix         = "stogas:byok:credential:v1"
-	providerCredentialMinimumSecretSize = 32
+	byokCiphertextVersion = "v1"
+	byokHKDFSalt          = "stogas:byok:encryption:salt:v1"
+	byokHKDFInfo          = "stogas:byok:encryption:key:v1"
+	byokAADPrefix         = "stogas:byok:key:v1"
+	byokMinimumSecretSize = 32
 )
 
-type providerCredentialDecryptor struct {
+type byokDecryptor struct {
 	aead cipher.AEAD
 }
 
-func newProviderCredentialDecryptor(masterSecret string) (*providerCredentialDecryptor, error) {
-	if len([]byte(masterSecret)) < providerCredentialMinimumSecretSize {
-		return nil, fmt.Errorf("BYOK encryption secret must contain at least %d bytes", providerCredentialMinimumSecretSize)
+func newByokDecryptor(masterSecret string) (*byokDecryptor, error) {
+	if len([]byte(masterSecret)) < byokMinimumSecretSize {
+		return nil, fmt.Errorf("BYOK encryption secret must contain at least %d bytes", byokMinimumSecretSize)
 	}
 	key := make([]byte, 32)
 	reader := hkdf.New(
 		sha256.New,
 		[]byte(masterSecret),
-		[]byte(providerCredentialHKDFSalt),
-		[]byte(providerCredentialHKDFInfo),
+		[]byte(byokHKDFSalt),
+		[]byte(byokHKDFInfo),
 	)
 	if _, err := io.ReadFull(reader, key); err != nil {
 		return nil, fmt.Errorf("derive BYOK encryption key: %w", err)
@@ -48,12 +48,12 @@ func newProviderCredentialDecryptor(masterSecret string) (*providerCredentialDec
 	if err != nil {
 		return nil, fmt.Errorf("initialize BYOK authenticated encryption: %w", err)
 	}
-	return &providerCredentialDecryptor{aead: aead}, nil
+	return &byokDecryptor{aead: aead}, nil
 }
 
-func (d *providerCredentialDecryptor) decrypt(
+func (d *byokDecryptor) decrypt(
 	ciphertext string,
-	credentialID string,
+	byokID string,
 	organizationID string,
 	workspaceID string,
 	provider string,
@@ -62,7 +62,7 @@ func (d *providerCredentialDecryptor) decrypt(
 		return "", errors.New("BYOK decryptor is unavailable")
 	}
 	parts := strings.Split(ciphertext, ".")
-	if len(parts) != 3 || parts[0] != providerCredentialCiphertextVersion {
+	if len(parts) != 3 || parts[0] != byokCiphertextVersion {
 		return "", errors.New("unsupported BYOK ciphertext")
 	}
 	nonce, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -75,8 +75,8 @@ func (d *providerCredentialDecryptor) decrypt(
 	}
 	aad := strings.Join(
 		[]string{
-			providerCredentialAADPrefix,
-			credentialID,
+			byokAADPrefix,
+			byokID,
 			organizationID,
 			workspaceID,
 			provider,
@@ -90,7 +90,7 @@ func (d *providerCredentialDecryptor) decrypt(
 	defer clear(plaintext)
 	secret := string(plaintext)
 	if strings.TrimSpace(secret) == "" {
-		return "", errors.New("BYOK credential is empty")
+		return "", errors.New("BYOK key is empty")
 	}
 	return secret, nil
 }

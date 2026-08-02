@@ -280,13 +280,14 @@ func parseCertificateChain(input []byte) ([]*x509.Certificate, error) {
 		if block == nil {
 			break
 		}
-		if block.Type == "CERTIFICATE" {
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("parse certificate PEM block: %w", err)
-			}
-			certs = append(certs, cert)
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("certificate chain contains unexpected %q PEM block", block.Type)
 		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse certificate PEM block: %w", err)
+		}
+		certs = append(certs, cert)
 		rest = next
 	}
 	if len(certs) == 0 {

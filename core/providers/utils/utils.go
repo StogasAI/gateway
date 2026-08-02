@@ -642,7 +642,7 @@ func ConfigureTLS(client *fasthttp.Client, networkConfig schemas.NetworkConfig, 
 	}
 
 	caCertPEM := networkConfig.CACertPEM.GetValue()
-	if !networkConfig.InsecureSkipVerify && caCertPEM == "" {
+	if !networkConfig.InsecureSkipVerify && caCertPEM == "" && !networkConfig.RequirePostQuantumTLS {
 		return client
 	}
 
@@ -656,6 +656,24 @@ func ConfigureTLS(client *fasthttp.Client, networkConfig schemas.NetworkConfig, 
 	if networkConfig.InsecureSkipVerify {
 		logger.Warn("insecure_skip_verify is enabled for provider — TLS certificate verification is disabled. Not recommended for production.")
 		tlsConfig.InsecureSkipVerify = true
+	}
+
+	if networkConfig.RequirePostQuantumTLS {
+		tlsConfig.MinVersion = tls.VersionTLS13
+		tlsConfig.MaxVersion = tls.VersionTLS13
+		tlsConfig.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
+		previousVerifyConnection := tlsConfig.VerifyConnection
+		tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+			if previousVerifyConnection != nil {
+				if err := previousVerifyConnection(state); err != nil {
+					return err
+				}
+			}
+			if state.Version != tls.VersionTLS13 || state.CurveID != tls.X25519MLKEM768 {
+				return fmt.Errorf("provider TLS did not negotiate TLS 1.3 with X25519MLKEM768")
+			}
+			return nil
+		}
 	}
 
 	if caCertPEM != "" {

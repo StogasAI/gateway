@@ -156,7 +156,7 @@ func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx) string {
 
 func internalOrProviderControlHeader(name string) bool {
 	return strings.HasPrefix(name, "x-bf-") ||
-		(strings.HasPrefix(name, "x-stogas-") && name != "x-stogas-return-extra-fields")
+		(strings.HasPrefix(name, "x-stogas-") && name != "x-stogas-extra-fields")
 }
 
 func validateAcceptHeader(raw []byte) bool {

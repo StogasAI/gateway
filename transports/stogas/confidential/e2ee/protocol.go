@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/ecdh"
 	"crypto/hpke"
 	"crypto/rand"
 	"crypto/sha256"
@@ -34,6 +33,8 @@ const (
 	ClockSkewAllowance       = 30 * time.Second
 	MaxAPIKeySize            = 4 * 1024
 	MaxCiphertextSize        = 64 * 1024 * 1024
+	RecipientPublicKeySize   = 1_216
+	EncapsulatedKeySize      = 1_120
 
 	responseFrameData     = 1
 	responseFrameMetadata = 2
@@ -51,7 +52,7 @@ var (
 )
 
 type Recipient struct {
-	KeyID          string `json:"key_id"`
+	KeyID           string `json:"key_id"`
 	EncapsulatedKey string `json:"encapsulated_key"`
 	WrappedKey      string `json:"wrapped_key"`
 }
@@ -70,10 +71,10 @@ type outerEnvelope struct {
 }
 
 type InnerRequest struct {
-	APIKey                  string          `json:"api_key"`
-	Accept                  string          `json:"accept,omitempty"`
-	ReturnExtraFields       string          `json:"return_extra_fields,omitempty"`
-	Body                    json.RawMessage `json:"body"`
+	APIKey      string          `json:"api_key"`
+	Accept      string          `json:"accept,omitempty"`
+	ExtraFields bool            `json:"extra_fields,omitempty"`
+	Body        json.RawMessage `json:"body"`
 }
 
 type PublicRecipient struct {
@@ -81,13 +82,13 @@ type PublicRecipient struct {
 }
 
 type Session struct {
-	RequestID      string
-	BundleSHA256   string
-	ExpiresAt      time.Time
+	RequestID       string
+	BundleSHA256    string
+	ExpiresAt       time.Time
 	RecipientKeyIDs []string
-	transcriptHash [sha256.Size]byte
-	responseAEAD   cipher.AEAD
-	responseNonce  [12]byte
+	transcriptHash  [sha256.Size]byte
+	responseAEAD    cipher.AEAD
+	responseNonce   [12]byte
 }
 
 // TranscriptSHA256 is the channel binding for the exact E2EE request. It
@@ -159,10 +160,10 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 		key hpke.PublicKey
 	}
 	keys := make([]recipientKey, 0, len(recipients))
-	kem := hpke.DHKEM(ecdh.P256())
+	kem := hpke.MLKEM768X25519()
 	for _, recipient := range recipients {
-		if len(recipient.PublicKey) != 65 {
-			return nil, nil, fmt.Errorf("%w: recipient P-256 public key must be 65 bytes", ErrInvalidEnvelope)
+		if len(recipient.PublicKey) != RecipientPublicKeySize {
+			return nil, nil, fmt.Errorf("%w: recipient X-Wing public key must be %d bytes", ErrInvalidEnvelope, RecipientPublicKeySize)
 		}
 		key, err := kem.NewPublicKey(recipient.PublicKey)
 		if err != nil {
@@ -223,7 +224,7 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 			return nil, nil, fmt.Errorf("wrap content key: %w", err)
 		}
 		envelope.Recipients = append(envelope.Recipients, Recipient{
-			KeyID:          base64.RawURLEncoding.EncodeToString(key.id[:]),
+			KeyID:           base64.RawURLEncoding.EncodeToString(key.id[:]),
 			EncapsulatedKey: base64.RawURLEncoding.EncodeToString(encapsulated),
 			WrappedKey:      base64.RawURLEncoding.EncodeToString(wrapped),
 		})
@@ -235,7 +236,7 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 	return encoded, newSession(requestID, bundleSHA256, expiresAt, keyIDs, transcriptHash, responseAEAD, responseNonce), nil
 }
 
-func OpenRequest(body []byte, method, path string, privateKey *ecdh.PrivateKey, now time.Time) (*InnerRequest, *Session, error) {
+func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, now time.Time) (*InnerRequest, *Session, error) {
 	encrypted, err := Inspect(body)
 	if err != nil {
 		return nil, nil, err
@@ -243,8 +244,8 @@ func OpenRequest(body []byte, method, path string, privateKey *ecdh.PrivateKey, 
 	if !encrypted {
 		return nil, nil, ErrNotEnvelope
 	}
-	if privateKey == nil || privateKey.Curve() != ecdh.P256() {
-		return nil, nil, fmt.Errorf("%w: P-256 node key is unavailable", ErrInvalidEnvelope)
+	if privateKey == nil || privateKey.KEM().ID() != hpke.MLKEM768X25519().ID() {
+		return nil, nil, fmt.Errorf("%w: X-Wing node key is unavailable", ErrInvalidEnvelope)
 	}
 
 	var outer outerEnvelope
@@ -306,18 +307,14 @@ func OpenRequest(body []byte, method, path string, privateKey *ecdh.PrivateKey, 
 
 	local := envelope.Recipients[localIndex]
 	encapsulated, err := base64.RawURLEncoding.DecodeString(local.EncapsulatedKey)
-	if err != nil || len(encapsulated) != 65 || base64.RawURLEncoding.EncodeToString(encapsulated) != local.EncapsulatedKey {
+	if err != nil || len(encapsulated) != EncapsulatedKeySize || base64.RawURLEncoding.EncodeToString(encapsulated) != local.EncapsulatedKey {
 		return nil, nil, fmt.Errorf("%w: invalid encapsulated key", ErrInvalidEnvelope)
 	}
 	wrapped, err := base64.RawURLEncoding.DecodeString(local.WrappedKey)
 	if err != nil || len(wrapped) != ContentEncryptionKeySize+16 || base64.RawURLEncoding.EncodeToString(wrapped) != local.WrappedKey {
 		return nil, nil, fmt.Errorf("%w: invalid wrapped key", ErrInvalidEnvelope)
 	}
-	hpkePrivate, err := hpke.NewDHKEMPrivateKey(privateKey)
-	if err != nil {
-		return nil, nil, fmt.Errorf("initialize node HPKE key: %w", err)
-	}
-	recipient, err := hpke.NewRecipient(encapsulated, hpkePrivate, hpke.HKDFSHA256(), hpke.AES256GCM(), hpkeInfo(transcriptHash))
+	recipient, err := hpke.NewRecipient(encapsulated, privateKey, hpke.HKDFSHA256(), hpke.AES256GCM(), hpkeInfo(transcriptHash))
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: HPKE setup failed", ErrInvalidEnvelope)
 	}
@@ -367,11 +364,10 @@ func validateInnerRequest(inner InnerRequest) error {
 	if strings.ContainsAny(inner.APIKey, "\x00\r\n") {
 		return fmt.Errorf("%w: inner api_key contains invalid characters", ErrInvalidEnvelope)
 	}
-	if len(inner.Accept) > 256 || len(inner.ReturnExtraFields) > 1024 {
+	if len(inner.Accept) > 256 {
 		return fmt.Errorf("%w: inner request metadata is too large", ErrInvalidEnvelope)
 	}
-	if strings.ContainsAny(inner.Accept, "\x00\r\n") ||
-		strings.ContainsAny(inner.ReturnExtraFields, "\x00\r\n") {
+	if strings.ContainsAny(inner.Accept, "\x00\r\n") {
 		return fmt.Errorf("%w: inner request metadata contains invalid characters", ErrInvalidEnvelope)
 	}
 	if len(inner.Body) == 0 || !json.Valid(inner.Body) {

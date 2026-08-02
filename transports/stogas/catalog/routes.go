@@ -21,7 +21,7 @@ var routeSpecs = map[Route]routeSpec{
 			"x-goog-api-key",
 			"content-type",
 			"accept",
-			"x-stogas-return-extra-fields",
+			"x-stogas-extra-fields",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -86,7 +86,7 @@ var routeSpecs = map[Route]routeSpec{
 			"x-goog-api-key",
 			"content-type",
 			"accept",
-			"x-stogas-return-extra-fields",
+			"x-stogas-extra-fields",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -144,15 +144,6 @@ var routeByPath = func() map[string]Route {
 var (
 	allClientHeaderNamesValue = buildAllClientHeaders()
 	allClientHeadersValue     = strings.Join(allClientHeaderNamesValue, ", ")
-	responseMetadataFields    = map[string]struct{}{
-		"latency":                   {},
-		"model_deployment":          {},
-		"model_requested":           {},
-		"provider":                  {},
-		"provider_response_headers": {},
-		"raw_request":               {},
-		"raw_response":              {},
-	}
 )
 
 func specForRoute(route Route) (routeSpec, bool) {
