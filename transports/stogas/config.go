@@ -23,6 +23,7 @@ const (
 	defaultMaxRequestBodyMiB    = 16
 	maxRequestBodyMiB           = 128
 	defaultInfisicalSiteURL     = "https://secrets.stogas.ai"
+	defaultChutesBaseURL        = "https://llm.chutes.ai"
 	defaultFleetAPIURLLocal     = "http://127.0.0.1:5184/api/fleet"
 	defaultFleetAPIURLStaging   = "https://staging.stogas.ai/api/fleet"
 	defaultFleetAPIURLProd      = "https://stogas.ai/api/fleet"
@@ -44,8 +45,7 @@ var confidentialRuntimeSecretNames = []string{
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
 	"INFERENCE_TOKEN_PUBLIC_KEY",
-	"OPENAI_API_KEY",
-	"ANTHROPIC_API_KEY",
+	"CHUTES_API_KEY",
 }
 
 type Config struct {
@@ -62,9 +62,9 @@ type Config struct {
 	LogLevel                    string
 	LogOutputStyle              string
 	MaxRequestBodyMiB           int
-	AnthropicAPIKey             string
 	AnthropicBaseURL            string
-	OpenAIAPIKey                string
+	ChutesAPIKey                string
+	ChutesBaseURL               string
 	OpenAIBaseURL               string
 	Port                        string
 	PrivateReadinessPort        string
@@ -120,9 +120,9 @@ func LoadFromEnv() (Config, error) {
 		LogLevel:                    string(schemas.LogLevelInfo),
 		LogOutputStyle:              string(schemas.LoggerOutputTypeJSON),
 		MaxRequestBodyMiB:           defaultMaxRequestBodyMiB,
-		AnthropicAPIKey:             strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")),
 		AnthropicBaseURL:            strings.TrimSpace(os.Getenv("ANTHROPIC_BASE_URL")),
-		OpenAIAPIKey:                strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		ChutesAPIKey:                strings.TrimSpace(os.Getenv("CHUTES_API_KEY")),
+		ChutesBaseURL:               strings.TrimSpace(os.Getenv("CHUTES_BASE_URL")),
 		OpenAIBaseURL:               strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:                        defaultPort,
 		PrivateReadinessPort:        defaultPrivateReadinessPort,
@@ -242,6 +242,7 @@ func rejectUnsupportedConfidentialHostOverrides() error {
 		"ANTHROPIC_API_KEY",
 		"API_KEY_PEPPER",
 		"BYOK_ENCRYPTION_SECRET",
+		"CHUTES_API_KEY",
 		"INFERENCE_TOKEN_PUBLIC_KEY",
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
@@ -319,9 +320,9 @@ func loadInfisicalRuntimeSecrets() {
 		return
 	}
 
-	required := []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+	required := []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY", "CHUTES_API_KEY"}
 	if os.Getenv("INFISICAL_SKIP_DATABASE_URL") == "true" || os.Getenv("DATABASE_URL") != "" {
-		required = []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "INFERENCE_TOKEN_PUBLIC_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}
+		required = []string{"API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "INFERENCE_TOKEN_PUBLIC_KEY", "CHUTES_API_KEY"}
 	}
 	for _, secretName := range required {
 		resolveInfisicalSecret(client, projectID, "/gateway", secretName, true)
@@ -388,11 +389,8 @@ func (c Config) Validate() error {
 	if err := billing.ValidateDatabaseSchema(c.DatabaseSchema); err != nil {
 		return err
 	}
-	if !c.Confidential.ControlConfigured() && c.OpenAIAPIKey == "" {
-		return fmt.Errorf("OPENAI_API_KEY is required")
-	}
-	if !c.Confidential.ControlConfigured() && c.AnthropicAPIKey == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY is required")
+	if !c.Confidential.ControlConfigured() && c.ChutesAPIKey == "" {
+		return fmt.Errorf("CHUTES_API_KEY is required")
 	}
 	if strings.TrimSpace(c.Host) == "" {
 		return fmt.Errorf("host is required")
@@ -452,11 +450,8 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 	if len(strings.TrimSpace(config.BYOKEncryptionSecret)) < 32 {
 		return fmt.Errorf("BYOK_ENCRYPTION_SECRET must be at least 32 characters before provider runtime starts")
 	}
-	if strings.TrimSpace(config.OpenAIAPIKey) == "" {
-		return fmt.Errorf("OPENAI_API_KEY is required before provider runtime starts")
-	}
-	if strings.TrimSpace(config.AnthropicAPIKey) == "" {
-		return fmt.Errorf("ANTHROPIC_API_KEY is required before provider runtime starts")
+	if strings.TrimSpace(config.ChutesAPIKey) == "" {
+		return fmt.Errorf("CHUTES_API_KEY is required before provider runtime starts")
 	}
 	return nil
 }
@@ -467,8 +462,7 @@ func applyRuntimeSecretsFromEnv(config *Config) {
 	config.DatabaseSchema = strings.TrimSpace(os.Getenv("DATABASE_SCHEMA"))
 	config.DatabaseURL = strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	config.InferenceTokenPublicKey = strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY"))
-	config.OpenAIAPIKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	config.AnthropicAPIKey = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	config.ChutesAPIKey = strings.TrimSpace(os.Getenv("CHUTES_API_KEY"))
 	config.TinybirdHost = strings.TrimSpace(os.Getenv("TB_HOST_URL"))
 	config.TinybirdToken = strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN"))
 }

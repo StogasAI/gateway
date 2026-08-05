@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,6 +46,18 @@ type TinybirdClient struct {
 	workerWG           sync.WaitGroup
 	mu                 sync.RWMutex
 	closed             bool
+	batches            atomic.Uint64
+	batchFailures      atomic.Uint64
+	rows               atomic.Uint64
+}
+
+type TinybirdDiagnostics struct {
+	BatchFailures uint64 `json:"batchFailures"`
+	Batches       uint64 `json:"batches"`
+	Closed        bool   `json:"closed"`
+	QueueCapacity int    `json:"queueCapacity"`
+	QueueDepth    int    `json:"queueDepth"`
+	Rows          uint64 `json:"rows"`
 }
 
 type tinybirdAppendRequest struct {
@@ -73,6 +86,7 @@ type RequestEvent struct {
 	StogasWorkspaceID       string            `json:"stogas_workspace_id"`
 	RequestType             string            `json:"request_type"`
 	Cancelled               bool              `json:"cancelled"`
+	ClientStopMS            *uint32           `json:"client_stop_ms"`
 	CatalogDigest           string            `json:"catalog_digest"`
 	ProviderAttempts        []ProviderAttempt `json:"provider_attempts"`
 	StogasProcessingSuccess bool              `json:"stogas_processing_success"`
@@ -199,9 +213,31 @@ func (c *TinybirdClient) run() {
 		c.waitForDispatch(lastDispatch)
 		lastDispatch = time.Now()
 		err := c.appendBatch(batch)
+		c.batches.Add(1)
+		c.rows.Add(uint64(len(batch)))
+		if err != nil {
+			c.batchFailures.Add(1)
+		}
 		for _, appendRequest := range batch {
 			appendRequest.result <- err
 		}
+	}
+}
+
+func (c *TinybirdClient) Diagnostics() *TinybirdDiagnostics {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	closed := c.closed
+	c.mu.RUnlock()
+	return &TinybirdDiagnostics{
+		BatchFailures: c.batchFailures.Load(),
+		Batches:       c.batches.Load(),
+		Closed:        closed,
+		QueueCapacity: cap(c.queue),
+		QueueDepth:    len(c.queue),
+		Rows:          c.rows.Load(),
 	}
 }
 
@@ -390,6 +426,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	StogasWorkspaceID            string   `json:"stogas_workspace_id"`
 	RequestType                  string   `json:"request_type"`
 	Cancelled                    uint8    `json:"cancelled"`
+	ClientStopMS                 *uint32  `json:"client_stop_ms"`
 	CatalogDigest                string   `json:"catalog_digest"`
 	ProviderAttempts             string   `json:"provider_attempts"`
 	AnalyticsProviderStatus      string   `json:"analytics_provider_status"`
@@ -453,6 +490,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
 		AnalyticsUpstreamByok:        upstreamByok,
 		Cancelled:                    cancelled,
+		ClientStopMS:                 event.ClientStopMS,
 		CatalogDigest:                strings.TrimSpace(event.CatalogDigest),
 		CreatedAt:                    event.CreatedAt,
 		Pricing:                      pricingJSON,

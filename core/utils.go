@@ -350,6 +350,8 @@ func clearCtxForFallback(ctx *schemas.BifrostContext) {
 	ctx.ClearValue(schemas.BifrostContextKeyStreamEndIndicator)
 	ctx.ClearValue(schemas.BifrostContextKeyConnectionClosed)
 	ctx.ClearValue(schemas.BifrostContextKeySupportsAssistantPrefill)
+	ctx.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+	ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 }
 
 // ClearContextForInternalRequest clears context state that is specific to the
@@ -376,6 +378,30 @@ func clearCtxForFallback(ctx *schemas.BifrostContext) {
 // should stay tied to the caller's trace) and
 // BifrostContextKeySkipPluginPipeline (whether the internal request runs the
 // plugin pipeline is the caller's decision).
+// virtualKeyHeader carries Bifrost's own virtual key. IsSensitiveHeader does not match it
+// (no api-key/authorization/secret substring, no -token suffix), so it would otherwise be
+// exported to traces verbatim.
+const virtualKeyHeader = "x-bf-vk"
+
+// extraHeaderSpanAttribute returns the span-attribute value for a caller-supplied header and
+// whether it should be exported at all. The virtual key is dropped outright; other
+// credential-bearing headers keep their key (presence is useful) with the value redacted.
+func extraHeaderSpanAttribute(name string, values []string) (any, bool) {
+	if name == "" || len(values) == 0 {
+		return nil, false
+	}
+	if strings.EqualFold(name, virtualKeyHeader) {
+		return nil, false
+	}
+	if schemas.IsSensitiveHeader(name) {
+		return schemas.RedactedAttrValue, true
+	}
+	if len(values) == 1 {
+		return values[0], true
+	}
+	return values, true
+}
+
 func ClearContextForInternalRequest(ctx *schemas.BifrostContext) {
 	// Key routing.
 	ctx.ClearValue(schemas.BifrostContextKeyGovernanceIncludeOnlyKeys)
@@ -386,12 +412,15 @@ func ClearContextForInternalRequest(ctx *schemas.BifrostContext) {
 	ctx.ClearValue(schemas.BifrostContextKeySkipKeySelection)
 	// Body transport.
 	ctx.ClearValue(schemas.BifrostContextKeyUseRawRequestBody)
+	ctx.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+	ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 	ctx.ClearValue(schemas.BifrostContextKeySendBackRawRequest)
 	ctx.ClearValue(schemas.BifrostContextKeySendBackRawResponse)
 	ctx.ClearValue(schemas.BifrostContextKeyPassthroughOverridesPresent)
 	ctx.ClearValue(schemas.BifrostContextKeyLargePayloadMode)
 	ctx.ClearValue(schemas.BifrostContextKeyLargeResponseMode)
 	ctx.ClearValue(schemas.BifrostContextKeyExtraHeaders)
+	ctx.ClearValue(schemas.BifrostContextKeyPassthroughHeaders)
 	ctx.ClearValue(schemas.BifrostContextKeyURLPath)
 }
 

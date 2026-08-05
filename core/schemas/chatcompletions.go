@@ -1646,7 +1646,8 @@ type BifrostLLMUsage struct {
 	CompletionTokens        int                          `json:"completion_tokens,omitempty"`
 	CompletionTokensDetails *ChatCompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 	TotalTokens             int                          `json:"total_tokens"`
-	Cost                    *BifrostCost                 `json:"cost,omitempty"` // Only for the providers which support cost calculation
+	ReasoningTokens         int                          `json:"reasoning_tokens,omitempty"` // OpenAI-compatible providers that report reasoning at usage top level
+	Cost                    *BifrostCost                 `json:"cost,omitempty"`             // Only for the providers which support cost calculation
 	// Served Anthropic tier (fast mode / data residency), carried internally so
 	// cancel/timeout billing (which reads a bare usage via BilledUsage) can apply
 	// the tier multiplier. json:"-" keeps them out of every serialized usage payload.

@@ -33,11 +33,11 @@ func TestStoreInstallsDecryptedSecrets(t *testing.T) {
 	if !store.Ready() {
 		t.Fatal("store did not become ready")
 	}
-	secret, ok := store.Get("OPENAI_API_KEY")
+	secret, ok := store.Get("CHUTES_API_KEY")
 	if !ok {
 		t.Fatal("secret not found")
 	}
-	if string(secret.Value) != "secret-for-OPENAI_API_KEY" || secret.Version != "2026-07-01" {
+	if string(secret.Value) != "secret-for-CHUTES_API_KEY" || secret.Version != "2026-07-01" {
 		t.Fatalf("unexpected secret: %#v", secret)
 	}
 }
@@ -48,7 +48,7 @@ func TestDecryptReleaseFailsClosedOnBindingMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	bundle := testBundle()
-	encrypted, err := encryptForTest(material, bundle, "OPENAI_API_KEY", "provider-secret")
+	encrypted, err := encryptForTest(material, bundle, "CHUTES_API_KEY", "provider-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func TestDecryptReleaseFailsClosedOnBindingMismatch(t *testing.T) {
 
 func testBundle() *provision.SecretBundle {
 	return &provision.SecretBundle{
-		NodeID:     strings.Repeat("1", 64),
+		NodeID:           strings.Repeat("1", 64),
 		ReportDataSHA512: strings.Repeat("3", 128),
 		Schema:           provision.SecretReleaseSchemaV1,
 	}

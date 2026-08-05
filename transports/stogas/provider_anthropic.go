@@ -74,13 +74,18 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	if err := validateAnthropicSamplingIntent(raw); err != nil {
 		return err
 	}
+	if rawJSONValueSet(raw["prompt_cache_key"]) {
+		return invalidRequest("prompt_cache_key is only supported for OpenAI or Azure deployments")
+	}
+	if rawJSONValueSet(raw["prompt_cache_retention"]) {
+		return invalidRequest("prompt_cache_retention is only supported for OpenAI or Azure deployments")
+	}
 	if err := rejectOpenAIOnlyParameters(raw,
 		"frequency_penalty",
 		"logit_bias",
 		"logprobs",
 		"prediction",
 		"presence_penalty",
-		"prompt_cache_key",
 		"prompt_cache_options",
 		"seed",
 		"top_logprobs",
@@ -121,11 +126,16 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	if err := validateAnthropicSamplingIntent(raw); err != nil {
 		return err
 	}
+	if rawJSONValueSet(raw["prompt_cache_key"]) {
+		return invalidRequest("prompt_cache_key is only supported for OpenAI or Azure deployments")
+	}
+	if rawJSONValueSet(raw["prompt_cache_retention"]) {
+		return invalidRequest("prompt_cache_retention is only supported for OpenAI or Azure deployments")
+	}
 	if err := rejectOpenAIOnlyParameters(raw,
 		"frequency_penalty",
 		"include",
 		"presence_penalty",
-		"prompt_cache_key",
 		"prompt_cache_options",
 		"top_logprobs",
 	); err != nil {
@@ -180,9 +190,6 @@ func validateAnthropicParallelToolCalls(raw map[string]json.RawMessage) error {
 }
 
 func validateAnthropicSamplingIntent(raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["temperature"]) && rawJSONValueSet(raw["top_p"]) {
-		return invalidRequest("Anthropic deployments do not support temperature and top_p together")
-	}
 	if rawJSONValueSet(raw["stop"]) && rawJSONValueSet(raw["stop_sequences"]) {
 		return invalidRequest("stop conflicts with stop_sequences")
 	}
@@ -318,6 +325,9 @@ func validateAnthropicCacheControl(raw json.RawMessage, name string) error {
 	if !ok {
 		return invalidRequest(name + " must be an object")
 	}
+	if !onlyRawKeysOptional(cacheControl, "type", "ttl") {
+		return invalidRequest(name + " supports only type and ttl")
+	}
 	if rawString(cacheControl["type"]) != "ephemeral" {
 		return invalidRequest(name + ".type must be ephemeral")
 	}
@@ -369,12 +379,12 @@ func (a AnthropicAdapter) SanitizeRequest(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	state.Resolution.ApplyProviderSamplingParameters()
-	if strings.EqualFold(strings.TrimSpace(state.Resolution.Deployment.Upstream.FixedRequest.Speed), "fast") {
+	if strings.EqualFold(strings.TrimSpace(state.Resolution.Deployment.Upstream.Speed), "fast") {
 		state.Resolution.SetSpeed("fast")
 	} else {
 		state.Resolution.SetSpeed("standard")
 	}
-	switch state.Resolution.Deployment.Upstream.FixedRequest.InferenceGeo {
+	switch state.Resolution.Deployment.Upstream.InferenceGeo {
 	case "us":
 		state.Resolution.SetExtraParam("inference_geo", "us")
 	case "global", "":
@@ -391,7 +401,15 @@ func (a AnthropicAdapter) EstimateHold(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	state.Hold.Meters = append(state.Hold.Meters, anthropicHoldMeters(anthropicAdapterContextForState(state))...)
+	inputFreeMeters := make([]catalog.MeterEstimate, 0, len(state.Hold.Meters))
+	for _, meter := range state.Hold.Meters {
+		if meter.MeterKey != billing.MeterInputTokens {
+			inputFreeMeters = append(inputFreeMeters, meter)
+		}
+	}
+	pricing := effectivePricingForState(state)
+	state.Hold.Meters = append(inputFreeMeters, anthropicHoldMeters(anthropicAdapterContextForState(state))...)
+	state.Hold.Meters = compactMeterEstimates(state.Hold.Meters, pricing)
 	state.Hold.MaxUSDAtoms = sumMeterAmounts(state.Hold.Meters)
 	return nil
 }
@@ -424,8 +442,20 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 	rawType := rawString(tool["type"])
 	if anthropicResponsesToolTypeSupported(rawType) {
 		if rawType == "mcp" {
-			if _, ok := tool["require_approval"]; ok {
+			if raw, ok := tool["require_approval"]; ok && strings.TrimSpace(string(raw)) != "null" {
 				return invalidRequest("mcp.require_approval is only supported for OpenAI Responses deployments")
+			}
+			if raw, ok := tool["connector_id"]; ok && strings.TrimSpace(string(raw)) != "null" {
+				return invalidRequest("mcp.connector_id is only supported for OpenAI or Azure deployments")
+			}
+			if raw, ok := tool["headers"]; ok && strings.TrimSpace(string(raw)) != "null" {
+				return invalidRequest("mcp.headers is only supported for OpenAI or Azure deployments")
+			}
+			if raw, ok := tool["allowed_tools"]; ok {
+				trimmed := strings.TrimSpace(string(raw))
+				if len(trimmed) > 0 && trimmed[0] == '{' {
+					return invalidRequest("mcp allowed_tools filters are only supported for OpenAI or Azure deployments")
+				}
 			}
 		}
 		if anthropicResponsesWebSearchToolType(rawType) {
@@ -513,19 +543,18 @@ func anthropicBillableHostedToolCalls(state *State) int {
 func anthropicHoldMeters(req anthropicAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
 	cacheWriteMeter := anthropicCacheWriteHoldMeter(req)
+	inputMeter := highestInputHoldMeter(req.Deployment.Pricing, cacheWriteMeter)
 	if req.InputTokenLimit > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, cacheWriteMeter, req.InputTokenLimit, true, billing.TokenRateHighest)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, req.InputTokenLimit, true, billing.TokenRateHighest)
 	}
 	if overhead := anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes); overhead > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, overhead, true, billing.TokenRateHighest)
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, cacheWriteMeter, overhead, true, billing.TokenRateHighest)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, overhead, true, billing.TokenRateHighest)
 	}
 	if req.Route == anthropicAdapterRouteResponses && req.ToolChoiceAllowsCalls && usesToolType(req.ToolTypes, "web_search") {
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterAnthropicWebSearchCalls, anthropicHostedToolHoldQuantity(req), true)
 	}
 	if hostedContentTokens := anthropicHostedContentHoldTokens(req); hostedContentTokens > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, hostedContentTokens, true, billing.TokenRateHighest)
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, cacheWriteMeter, hostedContentTokens, true, billing.TokenRateHighest)
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, hostedContentTokens, true, billing.TokenRateHighest)
 	}
 	return meters
 }

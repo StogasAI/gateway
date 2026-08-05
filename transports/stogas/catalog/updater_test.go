@@ -245,7 +245,7 @@ func TestUpdaterReadinessToleratesTransientFailuresAndRejectsStaleRefreshes(t *t
 
 func testReleaseManifest(sequence uint64) releaseManifest {
 	return releaseManifest{
-		Schema:        "stogas.catalog.release.v3",
+		Schema:        "stogas.catalog.release.v1",
 		Sequence:      sequence,
 		CatalogSchema: catalogSchema,
 		Runtime:       testDigest(embeddedRuntimeCatalogJSON),
@@ -276,7 +276,7 @@ func signTestManifest(t *testing.T, manifest releaseManifest, keyID string, priv
 		Manifest  json.RawMessage `json:"manifest"`
 		Signature string          `json:"signature"`
 	}{
-		Schema:   "stogas.catalog.signed.v3",
+		Schema:   "stogas.catalog.signed.v1",
 		KeyID:    keyID,
 		Manifest: manifestJSON,
 		Signature: base64.RawURLEncoding.EncodeToString(

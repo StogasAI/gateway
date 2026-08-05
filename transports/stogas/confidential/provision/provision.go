@@ -48,7 +48,7 @@ type NodeHealth struct {
 
 type HeartbeatResponse struct {
 	CertificateInstruction *CertificateInstruction `json:"certificate_instruction"`
-	NodeID           string                  `json:"node_id"`
+	NodeID                 string                  `json:"node_id"`
 	OK                     bool                    `json:"ok"`
 	Ready                  bool                    `json:"ready"`
 	ReadyUntil             *time.Time              `json:"ready_until"`
@@ -68,20 +68,20 @@ type CertificateInstruction struct {
 }
 
 type CertificateCSRSubmission struct {
-	CSRDER       []byte
-	NodeID string
-	OrderID      string
-	SigningKey   ed25519.PrivateKey
+	CSRDER     []byte
+	NodeID     string
+	OrderID    string
+	SigningKey ed25519.PrivateKey
 }
 
 type CertificateCSRSubmissionResponse struct {
-	NodeID string `json:"node_id"`
-	OK           bool   `json:"ok"`
-	OrderID      string `json:"order_id"`
+	NodeID  string `json:"node_id"`
+	OK      bool   `json:"ok"`
+	OrderID string `json:"order_id"`
 }
 
 type SecretBundle struct {
-	NodeID     string             `json:"node_id"`
+	NodeID           string             `json:"node_id"`
 	ReportDataSHA512 string             `json:"report_data_sha512"`
 	Schema           string             `json:"schema"`
 	Secrets          []SecretCiphertext `json:"secrets"`
@@ -187,10 +187,10 @@ func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSu
 		return nil, err
 	}
 	body := map[string]any{
-		"csr_der":       base64.RawURLEncoding.EncodeToString(input.CSRDER),
-		"node_id": strings.ToLower(input.NodeID),
-		"order_id":      input.OrderID,
-		"signature":     signature,
+		"csr_der":   base64.RawURLEncoding.EncodeToString(input.CSRDER),
+		"node_id":   strings.ToLower(input.NodeID),
+		"order_id":  input.OrderID,
+		"signature": signature,
 	}
 
 	var response certificateCSRSubmissionResponseJSON
@@ -207,9 +207,9 @@ func (c Client) SubmitCertificateCSR(ctx context.Context, input CertificateCSRSu
 		return nil, errors.New("control certificate CSR response order id mismatch")
 	}
 	return &CertificateCSRSubmissionResponse{
-		NodeID: response.NodeID,
-		OK:           response.OK,
-		OrderID:      response.OrderID,
+		NodeID:  response.NodeID,
+		OK:      response.OK,
+		OrderID: response.OrderID,
 	}, nil
 }
 
@@ -292,7 +292,7 @@ func (c Client) endpoint(path string) (string, error) {
 
 type heartbeatResponseJSON struct {
 	CertificateInstruction *certificateInstructionJSON `json:"certificate_instruction"`
-	NodeID           string                      `json:"node_id"`
+	NodeID                 string                      `json:"node_id"`
 	OK                     bool                        `json:"ok"`
 	Ready                  bool                        `json:"ready"`
 	ReadyUntil             *string                     `json:"ready_until"`
@@ -312,13 +312,13 @@ type certificateInstructionJSON struct {
 }
 
 type certificateCSRSubmissionResponseJSON struct {
-	NodeID string `json:"node_id"`
-	OK           bool   `json:"ok"`
-	OrderID      string `json:"order_id"`
+	NodeID  string `json:"node_id"`
+	OK      bool   `json:"ok"`
+	OrderID string `json:"order_id"`
 }
 
 type secretBundleJSON struct {
-	NodeID     string             `json:"node_id"`
+	NodeID           string             `json:"node_id"`
 	ReportDataSHA512 string             `json:"report_data_sha512"`
 	Schema           string             `json:"schema"`
 	Secrets          []SecretCiphertext `json:"secrets"`
@@ -352,7 +352,7 @@ func parseHeartbeatResponse(response heartbeatResponseJSON, request HeartbeatInp
 	}
 	return &HeartbeatResponse{
 		CertificateInstruction: certificateInstruction,
-		NodeID:           response.NodeID,
+		NodeID:                 response.NodeID,
 		OK:                     response.OK,
 		Ready:                  response.Ready,
 		ReadyUntil:             readyUntil,
@@ -426,7 +426,7 @@ func parseSecretBundle(response *secretBundleJSON, nodeID, reportDataSHA512 stri
 		}
 	}
 	return &SecretBundle{
-		NodeID:     response.NodeID,
+		NodeID:           response.NodeID,
 		ReportDataSHA512: response.ReportDataSHA512,
 		Schema:           response.Schema,
 		Secrets:          append([]SecretCiphertext(nil), response.Secrets...),

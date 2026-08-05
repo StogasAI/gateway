@@ -1116,6 +1116,7 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 		MaxRetries:                     3,
 		InsecureSkipVerify:             true,
 		CACertPEM:                      NewSecretVar("-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----"),
+		RequireTLS13:                   true,
 		RequirePostQuantumTLS:          true,
 	}
 
@@ -1128,9 +1129,11 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 
 	assert.Equal(t, nc.InsecureSkipVerify, decoded.InsecureSkipVerify, "insecure_skip_verify should round-trip")
 	assert.Equal(t, nc.CACertPEM.GetValue(), decoded.CACertPEM.GetValue(), "ca_cert_pem should round-trip")
+	assert.True(t, decoded.RequireTLS13, "require_tls_13 should round-trip")
 	assert.True(t, decoded.RequirePostQuantumTLS, "require_post_quantum_tls should round-trip")
 	assert.Contains(t, string(data), `"insecure_skip_verify":true`)
 	assert.Contains(t, string(data), `"ca_cert_pem"`)
+	assert.Contains(t, string(data), `"require_tls_13":true`)
 	assert.Contains(t, string(data), `"require_post_quantum_tls":true`)
 }
 
@@ -1154,15 +1157,16 @@ func TestNetworkConfig_StreamIdleTimeoutRoundTrip(t *testing.T) {
 }
 
 func TestResponsesToolMCPAllowedTools_ArrayRoundTrip(t *testing.T) {
-	input := []byte(`["search","lookup"]`)
-	var allowed ResponsesToolMCPAllowedTools
-	require.NoError(t, Unmarshal(input, &allowed))
-	require.Equal(t, []string{"search", "lookup"}, allowed.ToolNames)
-	require.Nil(t, allowed.Filter)
+	for _, input := range [][]byte{[]byte(`["search","lookup"]`), []byte(`[]`)} {
+		var allowed ResponsesToolMCPAllowedTools
+		require.NoError(t, Unmarshal(input, &allowed))
+		require.NotNil(t, allowed.ToolNames)
+		require.Nil(t, allowed.Filter)
 
-	encoded, err := Marshal(allowed)
-	require.NoError(t, err)
-	require.JSONEq(t, string(input), string(encoded))
+		encoded, err := Marshal(allowed)
+		require.NoError(t, err)
+		require.JSONEq(t, string(input), string(encoded))
+	}
 }
 
 // TestNormalizeResponsesToolType verifies that versioned/provider-specific tool type

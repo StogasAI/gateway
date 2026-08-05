@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"maps"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
 const (
@@ -52,6 +54,9 @@ const (
 //   - Duration string: "500ms", "5s", "1m" — parsed via time.ParseDuration (preferred)
 //   - Integer: treated as milliseconds (legacy format, e.g. 500 means 500ms)
 type NetworkConfig struct {
+	// Transport is an in-process request transform for provider-specific wire protocols.
+	// It is runtime-only and is never serialized.
+	Transport fasthttp.RoundTripper `json:"-"`
 	// BaseURL is supported for OpenAI, Anthropic, Cohere, Mistral, and Ollama providers (required for Ollama)
 	BaseURL                        string            `json:"base_url,omitempty"`                       // Base URL for the provider (optional)
 	ExtraHeaders                   map[string]string `json:"extra_headers,omitempty"`                  // Additional headers to include in requests (optional)
@@ -67,6 +72,7 @@ type NetworkConfig struct {
 	EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`                  // Force HTTP/2 on provider connections (relevant for net/http-based providers like Bedrock)
 	BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`          // Override default beta header support per provider (keys are prefixes like "redact-thinking-")
 	AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`          // Allow connections to RFC 1918 private IPs (for k8s pods, LAN deployments). Link-local (169.254.x.x) is always blocked.
+	RequireTLS13                   bool              `json:"require_tls_13,omitempty"`                 // Require TLS 1.3 without requiring a specific key exchange.
 	RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`       // Require TLS 1.3 with the X25519MLKEM768 hybrid key exchange and no classical fallback.
 }
 
@@ -93,6 +99,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
+		RequireTLS13                   bool              `json:"require_tls_13,omitempty"`
 		RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`
 	}
 
@@ -114,6 +121,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 	nc.EnforceHTTP2 = alias.EnforceHTTP2
 	nc.BetaHeaderOverrides = alias.BetaHeaderOverrides
 	nc.AllowPrivateNetwork = alias.AllowPrivateNetwork
+	nc.RequireTLS13 = alias.RequireTLS13
 	nc.RequirePostQuantumTLS = alias.RequirePostQuantumTLS
 
 	// Parse RetryBackoffInitial: string → ParseDuration, integer → milliseconds (legacy)
@@ -188,6 +196,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
+		RequireTLS13                   bool              `json:"require_tls_13,omitempty"`
 		RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`
 	}
 
@@ -206,6 +215,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		EnforceHTTP2:               nc.EnforceHTTP2,
 		BetaHeaderOverrides:        nc.BetaHeaderOverrides,
 		AllowPrivateNetwork:        nc.AllowPrivateNetwork,
+		RequireTLS13:               nc.RequireTLS13,
 		RequirePostQuantumTLS:      nc.RequirePostQuantumTLS,
 	}
 	if nc.CACertPEM != nil {

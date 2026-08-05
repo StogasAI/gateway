@@ -2880,6 +2880,7 @@ func TestRunPreRequestHooks_CommitsRoutingPinnedKey(t *testing.T) {
 func TestClearAnthropicPassthroughForNonNativeProvider(t *testing.T) {
 	flagKeys := []schemas.BifrostContextKey{
 		schemas.BifrostContextKeyUseRawRequestBody,
+		schemas.BifrostContextKeyPreparedRequestBody,
 		schemas.BifrostContextKeySendBackRawResponse,
 		schemas.BifrostContextKeyPassthroughOverridesPresent,
 	}
@@ -2907,6 +2908,10 @@ func TestClearAnthropicPassthroughForNonNativeProvider(t *testing.T) {
 			for _, k := range flagKeys {
 				ctx.SetValue(k, true)
 			}
+			ctx.SetValue(schemas.BifrostContextKeyRequestModelInfo, schemas.RequestModelInfo{
+				Provider:  schemas.Anthropic,
+				WireModel: "claude-sonnet-4-6",
+			})
 
 			clearAnthropicPassthroughForNonNativeProvider(ctx, tt.baseProvider)
 
@@ -2917,7 +2922,43 @@ func TestClearAnthropicPassthroughForNonNativeProvider(t *testing.T) {
 					t.Errorf("flag %v = %v, want %v", k, got, want)
 				}
 			}
+			modelInfoPresent := ctx.Value(schemas.BifrostContextKeyRequestModelInfo) != nil
+			if modelInfoPresent == tt.wantCleared {
+				t.Errorf("request model info present = %v, want %v", modelInfoPresent, !tt.wantCleared)
+			}
 		})
+	}
+}
+
+func TestClearCtxForFallbackClearsPreparedProviderContext(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyPreparedRequestBody, "sentinel")
+	ctx.SetValue(schemas.BifrostContextKeyRequestModelInfo, schemas.RequestModelInfo{
+		Provider:  schemas.OpenAI,
+		WireModel: "gpt-5.6-terra",
+	})
+
+	clearCtxForFallback(ctx)
+
+	if value := ctx.Value(schemas.BifrostContextKeyPreparedRequestBody); value != nil {
+		t.Fatalf("prepared provider body survived fallback: %#v", value)
+	}
+	if value := ctx.Value(schemas.BifrostContextKeyRequestModelInfo); value != nil {
+		t.Fatalf("request model info survived fallback: %#v", value)
+	}
+}
+
+func TestClearContextForInternalRequestClearsRequestModelInfo(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyRequestModelInfo, schemas.RequestModelInfo{
+		Provider:  schemas.OpenAI,
+		WireModel: "gpt-5.6-terra",
+	})
+
+	ClearContextForInternalRequest(ctx)
+
+	if value := ctx.Value(schemas.BifrostContextKeyRequestModelInfo); value != nil {
+		t.Fatalf("request model info survived internal request reset: %#v", value)
 	}
 }
 

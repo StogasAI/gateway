@@ -28,7 +28,7 @@ func TestNormalizeUpstreamStatusAndInsurance(t *testing.T) {
 		{name: "provider safety backend error is insured", statusCode: intPtr(500), message: "provider safety service unavailable", wantStatus: "provider_error", wantInsured: true},
 		{name: "network error without status", message: "dial tcp: connection refused", wantStatus: "network_error", wantInsured: true},
 		{name: "bad request captures hold", statusCode: intPtr(400), message: "messages.0.content is required", wantStatus: "invalid_request", wantInsured: false},
-		{name: "not found captures hold", statusCode: intPtr(404), message: "model not found", wantStatus: "invalid_request", wantInsured: false},
+		{name: "cataloged provider model not found is insured", statusCode: intPtr(404), message: "model not found", wantStatus: "provider_error", wantInsured: true},
 		{name: "conflict captures hold", statusCode: intPtr(409), message: "conflicting request state", wantStatus: "invalid_request", wantInsured: false},
 		{name: "request too large captures hold", statusCode: intPtr(413), message: "request exceeds maximum size", wantStatus: "invalid_request", wantInsured: false},
 		{name: "unsupported media captures hold", statusCode: intPtr(415), message: "unsupported media type", wantStatus: "invalid_request", wantInsured: false},

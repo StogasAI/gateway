@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const PublicCatalogVersion = "stogas.gateway.catalog.v4"
+const PublicCatalogVersion = "stogas.gateway.catalog.v1"
 
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`

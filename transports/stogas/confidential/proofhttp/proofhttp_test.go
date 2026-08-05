@@ -54,7 +54,7 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	if !reflect.DeepEqual(object, output.Object) {
 		t.Fatalf("proof header and output object diverged: %#v %#v", object, output.Object)
 	}
-	if object.Schema != proof.DomainV5 {
+	if object.Schema != proof.DomainV1 {
 		t.Fatalf("proof identity context mismatch: %#v", object)
 	}
 	if !proof.VerifyInput(publicKey, proof.Input{

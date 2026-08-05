@@ -3178,8 +3178,8 @@ func TestConvertBifrostResponsesMessageContentBlocksToBedrockContentBlocks_Empty
 					},
 				},
 			},
-			expectedBlocks: 1,
-			description:    "Valid file block should create a ContentBlock",
+			expectedBlocks: 2,
+			description:    "Valid file block should create a placeholder and document ContentBlock",
 		},
 		{
 			name: "MixedValidAndInvalidBlocks_ShouldOnlyCreateValidBlocks",
@@ -4533,9 +4533,10 @@ func TestDocumentFormatMapping(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.Len(t, result.Messages, 1)
-			require.Len(t, result.Messages[0].Content, 1)
-			require.NotNil(t, result.Messages[0].Content[0].Document)
-			assert.Equal(t, tt.expectedFormat, result.Messages[0].Content[0].Document.Format,
+			require.Len(t, result.Messages[0].Content, 2)
+			require.NotNil(t, result.Messages[0].Content[0].Text)
+			require.NotNil(t, result.Messages[0].Content[1].Document)
+			assert.Equal(t, tt.expectedFormat, result.Messages[0].Content[1].Document.Format,
 				"File type %q should map to format %q", tt.fileType, tt.expectedFormat)
 		})
 	}

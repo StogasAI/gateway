@@ -3,6 +3,7 @@ package stogas
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -52,8 +53,8 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"function tool missing name", `{"model":"gpt-5.5","messages":[],"tools":[{"type":"function","function":{}}]}`, "function tools require a name"},
 		{"custom tool missing name", `{"model":"gpt-5.5","messages":[],"tools":[{"type":"custom"}]}`, "custom tools require a name"},
 		{"anthropic hosted tool", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"web_search"}]}`, "Only function and mcp_toolset tools"},
-		{"anthropic custom tool", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are only supported for OpenAI Chat deployments"},
-		{"anthropic custom tool choice", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is only supported for OpenAI Chat deployments"},
+		{"anthropic custom tool", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported for the selected Chat deployment"},
+		{"anthropic custom tool choice", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported for the selected Chat deployment"},
 		{"metadata non-string", `{"model":"gpt-5.5","messages":[],"metadata":{"a":1}}`, "metadata values"},
 		{"anthropic-only cache control on openai", `{"model":"gpt-5.5","messages":[],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
 		{"nested cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
@@ -67,8 +68,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic logprobs", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"logprobs":true}`, "logprobs is only supported for OpenAI"},
 		{"anthropic prediction", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"prediction":{"type":"content","content":"hi"}}`, "prediction is only supported for OpenAI"},
 		{"anthropic presence penalty", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"anthropic temperature top p conflict", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"temperature":0.7,"top_p":0.9}`, "temperature and top_p together"},
-		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"prompt_cache_key":"tenant-a"}`, "prompt_cache_key is only supported for OpenAI"},
+		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"prompt_cache_key":"tenant-a"}`, "prompt_cache_key is only supported for OpenAI or Azure"},
 		{"prompt cache isolation key", `{"model":"gpt-5.5","messages":[],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
 		{"anthropic seed", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"seed":1}`, "seed is only supported for OpenAI"},
 		{"anthropic top logprobs", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"top_logprobs":1}`, "top_logprobs is only supported for OpenAI"},
@@ -81,12 +81,22 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"bad reasoning object", `{"model":"gpt-5.5","messages":[],"reasoning":"low"}`, "reasoning must be an object"},
 		{"bad reasoning max tokens", `{"model":"gpt-5.5","messages":[],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
 		{"bad nested reasoning max tokens", `{"model":"gpt-5.5","messages":[],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
-		{"bad reasoning enabled", `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
+		{"unsupported manual reasoning limit", `{"model":"gpt-5.5","messages":[],"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","messages":[],"max_completion_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
+		{"manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","messages":[],"max_completion_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
+		{"manual reasoning budget above deployment maximum", `{"model":"anthropic-claude-opus-4-6","messages":[],"max_completion_tokens":128000,"reasoning":{"max_tokens":128000}}`, "exceeds the deployment maximum"},
+		{"manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","messages":[],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","messages":[],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"manual reasoning limit on Chutes", `{"model":"chutes-glm-5.2","messages":[],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"conflicting reasoning controls", `{"model":"anthropic/claude-opus-4-6","messages":[],"max_completion_tokens":4096,"reasoning":{"effort":"high","max_tokens":1024}}`, "reasoning effort conflicts"},
+		{"bad reasoning enabled type", `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
 		{"unknown reasoning effort", `{"model":"gpt-5.5","messages":[],"reasoning_effort":"ultra"}`, "must be one of"},
-		{"cannot disable always reasoning model", `{"model":"gpt-5-nano","messages":[],"reasoning_effort":"none"}`, "not supported"},
 		{"chat reasoning summary", `{"model":"gpt-5.5","messages":[],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
 		{"unknown reasoning field", `{"model":"gpt-5.5","messages":[],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
 		{"client user", `{"model":"gpt-5.5","messages":[],"user":"u"}`, "user is not supported"},
+		{"store true", `{"model":"gpt-5.5","messages":[],"store":true}`, "store=true is not supported"},
+		{"store null", `{"model":"gpt-5.5","messages":[],"store":null}`, "store must be a boolean"},
+		{"store string", `{"model":"gpt-5.5","messages":[],"store":"false"}`, "Invalid JSON body"},
 		{"client safety identifier", `{"model":"gpt-5.5","messages":[],"safety_identifier":"user_123"}`, "safety_identifier is not supported"},
 		{"anthropic parallel tool calls", `{"model":"anthropic/claude-sonnet-4-6","messages":[],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
 		{"stream options without stream", `{"model":"gpt-5.5","messages":[],"stream_options":{"include_usage":false}}`, "stream_options requires stream=true"},
@@ -108,6 +118,34 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 			err := validateResolvedChat(t, tc.body)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestStoreFalseIsAcceptedAcrossProvidersAndInterfaces(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		responses bool
+		body      string
+	}{
+		{"OpenAI Chat", false, `{"model":"gpt-5.5","messages":[],"store":false}`},
+		{"Azure Chat", false, `{"model":"azure-gpt-5.6-sol","messages":[],"store":false}`},
+		{"Anthropic Chat", false, `{"model":"anthropic/claude-sonnet-4-6","messages":[],"store":false}`},
+		{"Chutes Chat", false, `{"model":"chutes-glm-5.2","messages":[],"store":false}`},
+		{"OpenAI Responses", true, `{"model":"gpt-5-nano","input":"hi","store":false}`},
+		{"Azure Responses", true, `{"model":"azure-gpt-5.6-sol","input":"hi","store":false}`},
+		{"Anthropic Responses", true, `{"model":"anthropic/claude-sonnet-4-6","input":"hi","store":false}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var err error
+			if tc.responses {
+				err = validateResolvedResponses(t, tc.body)
+			} else {
+				err = validateResolvedChat(t, tc.body)
+			}
+			if err != nil {
+				t.Fatalf("store=false was rejected: %v", err)
 			}
 		})
 	}
@@ -274,7 +312,7 @@ func TestChatPolicyRejectsUnsupportedCacheControlPositions(t *testing.T) {
 	}
 }
 
-func TestAnthropicCacheControlAllowsProviderOwnedFutureKeys(t *testing.T) {
+func TestAnthropicCacheControlRejectsUnknownKeys(t *testing.T) {
 	cases := []struct {
 		name string
 		path string
@@ -303,14 +341,9 @@ func TestAnthropicCacheControlAllowsProviderOwnedFutureKeys(t *testing.T) {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err != nil {
-				t.Fatalf("ValidateRequest returned error: %v", err)
-			}
-			if err := state.Adapter.EstimateHold(state); err != nil {
-				t.Fatalf("EstimateHold returned error: %v", err)
-			}
-			if findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens) == nil {
-				t.Fatalf("expected ttl=1h to reserve 1h cache write despite provider-owned future keys, got %#v", state.Hold.Meters)
+			if err := state.Adapter.ValidateRequest(state); err == nil ||
+				!strings.Contains(err.Error(), "supports only type and ttl") {
+				t.Fatalf("unknown cache control was accepted: %v", err)
 			}
 		})
 	}
@@ -496,7 +529,7 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.FixedRequest.InferenceGeo != "us" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.InferenceGeo != "us" {
 		t.Fatalf("unexpected US deployment resolution: %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -737,8 +770,7 @@ func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	}
 }
 
-func TestApplyUpstreamByokSetsManagedProviderAbuseIdentifier(t *testing.T) {
-	responsibleID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
+func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t *testing.T) {
 	for _, item := range []struct {
 		name string
 		path string
@@ -775,10 +807,7 @@ func TestApplyUpstreamByokSetsManagedProviderAbuseIdentifier(t *testing.T) {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			state.Authorization = &billing.Authorization{
-				UpstreamByok: "stogas",
-				UserID:             responsibleID,
-			}
+			state.Authorization = &billing.Authorization{UpstreamByok: "stogas"}
 			if err := state.Adapter.ValidateRequest(state); err != nil {
 				t.Fatalf("ValidateRequest returned error: %v", err)
 			}
@@ -786,53 +815,16 @@ func TestApplyUpstreamByokSetsManagedProviderAbuseIdentifier(t *testing.T) {
 				t.Fatalf("SanitizeRequest returned error: %v", err)
 			}
 			bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 			bifrostReq, err := resolution.ToBifrost(bifrostCtx)
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
 			}
-			if err := ApplyUpstreamByok(bifrostCtx, state, bifrostReq); err != nil {
-				t.Fatalf("ApplyUpstreamByok returned error: %v", err)
+			if err := PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
 			}
-			switch {
-			case item.path == "/v1/chat/completions" && resolution.Provider == schemas.OpenAI:
-				if bifrostReq.ChatRequest.Params.SafetyIdentifier == nil || *bifrostReq.ChatRequest.Params.SafetyIdentifier != responsibleID {
-					t.Fatalf("expected chat upstream safety identifier %q, got %#v", responsibleID, bifrostReq.ChatRequest.Params.SafetyIdentifier)
-				}
-			case item.path == "/v1/responses" && resolution.Provider == schemas.OpenAI:
-				if bifrostReq.ResponsesRequest.Params.SafetyIdentifier == nil || *bifrostReq.ResponsesRequest.Params.SafetyIdentifier != responsibleID {
-					t.Fatalf("expected responses upstream safety identifier %q, got %#v", responsibleID, bifrostReq.ResponsesRequest.Params.SafetyIdentifier)
-				}
-			case item.path == "/v1/chat/completions" && resolution.Provider == schemas.Anthropic:
-				wire, err := anthropicprovider.ToAnthropicChatRequest(bifrostCtx, bifrostReq.ChatRequest)
-				if err != nil {
-					t.Fatalf("ToAnthropicChatRequest returned error: %v", err)
-				}
-				if wire.Metadata == nil || wire.Metadata.UserID == nil || *wire.Metadata.UserID != responsibleID {
-					t.Fatalf("expected Anthropic chat metadata.user_id %q, got %#v", responsibleID, wire.Metadata)
-				}
-			case item.path == "/v1/chat/completions":
-				t.Fatalf("unexpected chat provider %q", resolution.Provider)
-			case item.path == "/v1/responses" && resolution.Provider == schemas.Anthropic:
-				body, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(bifrostCtx, bifrostReq.ResponsesRequest, anthropicprovider.AnthropicRequestBuildConfig{
-					Provider:    schemas.Anthropic,
-					IsStreaming: bifrostReq.RequestType == schemas.ResponsesStreamRequest,
-				})
-				if bifrostErr != nil {
-					t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
-				}
-				var payload struct {
-					Metadata *struct {
-						UserID string `json:"user_id"`
-					} `json:"metadata"`
-				}
-				if err := json.Unmarshal(body, &payload); err != nil {
-					t.Fatalf("failed to decode Anthropic Responses request body: %v\n%s", err, body)
-				}
-				if payload.Metadata == nil || payload.Metadata.UserID != responsibleID {
-					t.Fatalf("expected Anthropic Responses metadata.user_id %q, got %#v in %s", responsibleID, payload.Metadata, body)
-				}
-			case item.path == "/v1/responses":
-				t.Fatalf("unexpected responses provider %q", resolution.Provider)
+			if err := ApplyUpstreamCredentials(bifrostCtx, state); !errors.Is(err, billing.ErrByokRequired) {
+				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})
 	}
@@ -861,8 +853,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic responses frequency penalty", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
 		{"anthropic responses include", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is only supported for OpenAI"},
 		{"anthropic responses presence penalty", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"anthropic responses temperature top p conflict", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","temperature":0.7,"top_p":0.9}`, "temperature and top_p together"},
-		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt_cache_key is only supported for OpenAI"},
+		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt_cache_key is only supported for OpenAI or Azure"},
 		{"top k openai", `{"model":"gpt-5-nano","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
 		{"stop sequences openai", `{"model":"gpt-5-nano","input":"hi","stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
 		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
@@ -871,13 +862,21 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"reasoning effort bad type", `{"model":"gpt-5-nano","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
 		{"responses bad reasoning object", `{"model":"gpt-5-nano","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
 		{"responses bad reasoning max tokens", `{"model":"gpt-5-nano","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
+		{"client reasoning mode", `{"model":"gpt-5.6-sol","input":"hi","reasoning":{"mode":"pro"}}`, "reasoning.mode is not supported"},
+		{"responses unsupported manual reasoning limit", `{"model":"gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"responses manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
+		{"responses manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
+		{"responses manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"responses manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses reasoning display", `{"model":"gpt-5-nano","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
 		{"responses unknown reasoning field", `{"model":"gpt-5-nano","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
 		{"reasoning effort conflict", `{"model":"gpt-5-nano","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
 		{"safety identifier", `{"model":"gpt-5-nano","input":"hi","safety_identifier":"user_123"}`, "safety_identifier is not supported"},
 		{"stream options without stream", `{"model":"gpt-5-nano","input":"hi","stream_options":{"include_obfuscation":true}}`, "stream_options requires stream=true"},
 		{"responses include usage stream option", `{"model":"gpt-5-nano","input":"hi","stream":true,"stream_options":{"include_usage":true}}`, "stream_options.include_usage is not supported for Responses"},
-		{"store", `{"model":"gpt-5-nano","input":"hi","store":true}`, "store is not supported"},
+		{"store true", `{"model":"gpt-5-nano","input":"hi","store":true}`, "store=true is not supported"},
+		{"store null", `{"model":"gpt-5-nano","input":"hi","store":null}`, "store must be a boolean"},
+		{"store string", `{"model":"gpt-5-nano","input":"hi","store":"false"}`, "Invalid JSON body"},
 		{"user", `{"model":"gpt-5-nano","input":"hi","user":"user_123"}`, "user is not supported"},
 		{"metadata non-string", `{"model":"gpt-5-nano","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
 		{"anthropic parallel tool calls", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
@@ -897,13 +896,24 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"openai namespace", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool-loading or provider-state lifecycle"},
 		{"openai memory", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"memory"}]}`, "tool-loading or provider-state lifecycle"},
 		{"mcp http url", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"http://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "mcp tools require an HTTPS server_url"},
-		{"mcp missing allowed tools", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`, "mcp tools require allowed_tools"},
-		{"mcp empty filter allowed tools", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"read_only":false},"require_approval":"never"}]}`, "mcp allowed_tools filter must narrow"},
-		{"mcp headers", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"headers":{"x-api-key":"secret"},"require_approval":"never"}]}`, "mcp.headers is not supported"},
+		{"mcp missing endpoint", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","require_approval":"never"}]}`, "exactly one server_url or connector_id"},
+		{"mcp conflicting endpoints", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "exactly one server_url or connector_id"},
+		{"mcp empty url with connector", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "server_url must be non-empty when provided"},
+		{"mcp empty connector with url", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","connector_id":"","require_approval":"never"}]}`, "connector_id must be non-empty when provided"},
+		{"mcp unknown allowed tools filter field", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"future_filter":true},"require_approval":"never"}]}`, "mcp allowed_tools.future_filter is not supported"},
+		{"mcp invalid header name", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{"bad header":"secret"},"require_approval":"never"}]}`, "valid HTTP field names"},
+		{"mcp invalid header value", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{"x-api-key":"secret\r\ninjected: true"},"require_approval":"never"}]}`, "without control line breaks"},
+		{"mcp padded url", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":" https://example.com/mcp","require_approval":"never"}]}`, "server_url must not contain leading or trailing whitespace"},
+		{"mcp padded connector", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","connector_id":" connector_googlecalendar","require_approval":"never"}]}`, "connector_id must not contain leading or trailing whitespace"},
+		{"mcp unsupported defer loading", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","defer_loading":true,"require_approval":"never"}]}`, "mcp.defer_loading is not supported"},
+		{"mcp unsupported tunnel", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","tunnel_id":"tun_123","require_approval":"never"}]}`, "mcp.tunnel_id is not supported"},
 		{"openai mcp missing approval", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, `OpenAI MCP tools require require_approval="never"`},
 		{"openai mcp approval always", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"always"}]}`, `OpenAI MCP tools require require_approval="never"`},
 		{"openai mcp approval object", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":{"never":{"tool_names":["search"]}}}]}`, `OpenAI MCP tools require require_approval="never"`},
 		{"anthropic mcp approval", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "mcp.require_approval is only supported for OpenAI"},
+		{"anthropic mcp connector", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","connector_id":"connector_googlecalendar"}]}`, "mcp.connector_id is only supported for OpenAI or Azure"},
+		{"anthropic mcp headers", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{"x-api-key":"secret"}}]}`, "mcp.headers is only supported for OpenAI or Azure"},
+		{"anthropic mcp filter", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"tool_names":["search"]}}]}`, "mcp allowed_tools filters are only supported for OpenAI or Azure"},
 		{"anthropic local shell", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, custom, mcp"},
 		{"anthropic max uses too large", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "tools[].max_uses is outside the supported range"},
 		{"anthropic web fetch max uses too large", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":129}]}`, "tools[].max_uses is outside the supported range"},
@@ -933,6 +943,36 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 			err := validateResolvedResponses(t, tc.body)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestResponsesMCPHeaderLimits(t *testing.T) {
+	if err := validateResponsesMCPHeaders(map[string]string{}); err != nil {
+		t.Fatalf("empty MCP headers should be equivalent to omission: %v", err)
+	}
+	if err := validateResponsesMCPHeaders(map[string]string{
+		strings.Repeat("a", maxMCPHeaderNameBytes): strings.Repeat("v", maxMCPHeaderValueBytes),
+	}); err != nil {
+		t.Fatalf("MCP header limits should be inclusive: %v", err)
+	}
+
+	tooMany := make(map[string]string, maxMCPHeaders+1)
+	for index := 0; index <= maxMCPHeaders; index++ {
+		tooMany["x-header-"+strconv.Itoa(index)] = "value"
+	}
+	for _, tc := range []struct {
+		name    string
+		headers map[string]string
+	}{
+		{name: "too many", headers: tooMany},
+		{name: "long name", headers: map[string]string{strings.Repeat("a", maxMCPHeaderNameBytes+1): "value"}},
+		{name: "long value", headers: map[string]string{"x-header": strings.Repeat("v", maxMCPHeaderValueBytes+1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateResponsesMCPHeaders(tc.headers); err == nil {
+				t.Fatal("out-of-range MCP headers were accepted")
 			}
 		})
 	}
@@ -986,18 +1026,31 @@ func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *test
 	}
 }
 
-func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
+func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
-		want string
+		name      string
+		path      string
+		body      string
+		want      string
+		wantError bool
 	}{
 		{
-			name: "OpenAI accepted low effort",
+			name: "OpenAI maps minimal to nearest low effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[],"reasoning_effort":"low"}`,
+			body: `{"model":"gpt-5.5","messages":[],"reasoning_effort":"minimal"}`,
 			want: "low",
+		},
+		{
+			name: "OpenAI enabled maps to nearest medium effort",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":true}}`,
+			want: "medium",
+		},
+		{
+			name: "OpenAI disabled maps to none",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.5","messages":[],"reasoning":{"enabled":false}}`,
+			want: "none",
 		},
 		{
 			name: "Anthropic accepted max effort",
@@ -1011,6 +1064,18 @@ func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
 			body: `{"model":"anthropic/claude-opus-4-8","input":"hi","reasoning":{"effort":"xhigh"}}`,
 			want: "xhigh",
 		},
+		{
+			name: "Azure maps minimal to nearest low effort",
+			path: "/v1/responses",
+			body: `{"model":"azure-gpt-5.6-sol","input":"hi","reasoning":{"effort":"minimal"}}`,
+			want: "low",
+		},
+		{
+			name: "Anthropic maps xhigh upward to max on a tie",
+			path: "/v1/responses",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","reasoning":{"effort":"xhigh"}}`,
+			want: "max",
+		},
 	}
 
 	for _, tc := range tests {
@@ -1020,6 +1085,12 @@ func TestReasoningEffortNormalizationAcrossCatalogModels(t *testing.T) {
 				Path:   tc.path,
 				Body:   []byte(tc.body),
 			})
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("unadvertised reasoning effort was accepted")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
@@ -1047,12 +1118,11 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		DeprecationDate  *string  `json:"deprecationDate"`
 		RouteIDs         []string `json:"routeIds"`
 		Upstream         struct {
-			Model        string `json:"model"`
-			FixedRequest struct {
-				InferenceGeo string `json:"inference_geo"`
-				ServiceTier  string `json:"service_tier"`
-				Speed        string `json:"speed"`
-			} `json:"fixedRequest"`
+			InferenceGeo  string `json:"inferenceGeo"`
+			Model         string `json:"model"`
+			ReasoningMode string `json:"reasoningMode"`
+			ServiceTier   string `json:"serviceTier"`
+			Speed         string `json:"speed"`
 		} `json:"upstream"`
 	}
 	type matrixRoute struct {
@@ -1061,12 +1131,14 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 	}
 	type wirePayload struct {
 		InferenceGeo    string `json:"inference_geo"`
+		MaxTokens       int    `json:"max_tokens"`
 		Model           string `json:"model"`
 		ReasoningEffort string `json:"reasoning_effort"`
 		ServiceTier     string `json:"service_tier"`
 		Speed           string `json:"speed"`
 		Reasoning       struct {
 			Effort string `json:"effort"`
+			Mode   string `json:"mode"`
 		} `json:"reasoning"`
 		OutputConfig struct {
 			Effort string `json:"effort"`
@@ -1074,6 +1146,10 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		Thinking struct {
 			Type string `json:"type"`
 		} `json:"thinking"`
+		ChatTemplateKwargs struct {
+			EnableThinking bool `json:"enable_thinking"`
+			Thinking       bool `json:"thinking"`
+		} `json:"chat_template_kwargs"`
 	}
 
 	public, ok := catalog.PublicCatalogPayload()
@@ -1165,15 +1241,6 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						}
 						state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 						validationErr := state.Adapter.ValidateRequest(state)
-						if provider == schemas.OpenAI &&
-							interfaceName == "chat_completions" &&
-							strings.HasPrefix(source.Upstream.Model, "gpt-5.6-") &&
-							effort == "max" {
-							if validationErr == nil || !strings.Contains(validationErr.Error(), "Responses API") {
-								t.Fatalf("expected GPT-5.6 Chat max effort to be rejected, got %v", validationErr)
-							}
-							return
-						}
 						if validationErr != nil {
 							t.Fatalf("validate catalog deployment: %v", validationErr)
 						}
@@ -1185,13 +1252,25 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						if err != nil {
 							t.Fatalf("build Bifrost request: %v", err)
 						}
+						if interfaceName == "chat_completions" && request.ChatRequest.Provider != provider {
+							t.Fatalf("Bifrost chat provider = %q, want %q", request.ChatRequest.Provider, provider)
+						}
+						if interfaceName == "responses" && request.ResponsesRequest.Provider != provider {
+							t.Fatalf("Bifrost Responses provider = %q, want %q", request.ResponsesRequest.Provider, provider)
+						}
 
 						var wireBytes []byte
 						switch {
-						case provider == schemas.OpenAI && interfaceName == "chat_completions":
+						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "chat_completions":
 							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIChatRequest(ctx, request.ChatRequest))
-						case provider == schemas.OpenAI && interfaceName == "responses":
+						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "responses":
 							wireBytes, err = json.Marshal(openaiprovider.ToOpenAIResponsesRequest(ctx, request.ResponsesRequest))
+						case provider == catalog.ProviderChutes && interfaceName == "chat_completions":
+							var bifrostErr *schemas.BifrostError
+							wireBytes, bifrostErr = prepareChutesChatBody(ctx, request.ChatRequest, false)
+							if bifrostErr != nil {
+								t.Fatalf("prepare Chutes provider body: %v", bifrostErr)
+							}
 						case provider == schemas.Anthropic && interfaceName == "chat_completions":
 							var wire any
 							wire, err = anthropicprovider.ToAnthropicChatRequest(ctx, request.ChatRequest)
@@ -1221,12 +1300,20 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						if wire.Model != source.Upstream.Model {
 							t.Fatalf("wire model = %q, want %q", wire.Model, source.Upstream.Model)
 						}
-						if provider == schemas.OpenAI {
-							if wire.ServiceTier != source.Upstream.FixedRequest.ServiceTier {
-								t.Fatalf("wire service_tier = %q, want %q", wire.ServiceTier, source.Upstream.FixedRequest.ServiceTier)
+						if wire.Reasoning.Mode != source.Upstream.ReasoningMode {
+							t.Fatalf("wire reasoning mode = %q, want %q\n%s", wire.Reasoning.Mode, source.Upstream.ReasoningMode, wireBytes)
+						}
+						switch provider {
+						case schemas.OpenAI:
+							if wire.ServiceTier != source.Upstream.ServiceTier {
+								t.Fatalf("wire service_tier = %q, want %q", wire.ServiceTier, source.Upstream.ServiceTier)
 							}
-						} else {
-							wantInferenceGeo := source.Upstream.FixedRequest.InferenceGeo
+						case schemas.Azure:
+							if wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {
+								t.Fatalf("wire Azure-only axes are invalid: %#v", wire)
+							}
+						case schemas.Anthropic:
+							wantInferenceGeo := source.Upstream.InferenceGeo
 							if wantInferenceGeo == "" {
 								wantInferenceGeo = "global"
 							}
@@ -1240,11 +1327,15 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 								)
 							}
 							wantSpeed := ""
-							if source.Upstream.FixedRequest.Speed == "fast" {
+							if source.Upstream.Speed == "fast" {
 								wantSpeed = "fast"
 							}
 							if wire.Speed != wantSpeed {
 								t.Fatalf("wire speed = %q, want %q", wire.Speed, wantSpeed)
+							}
+						case catalog.ProviderChutes:
+							if wire.MaxTokens != 2048 || wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {
+								t.Fatalf("wire Chutes controls are invalid: %#v", wire)
 							}
 						}
 						if effort == "" {
@@ -1257,21 +1348,168 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							return
 						}
 						var wireEffort string
+						wantEffort := effort
 						switch {
-						case provider == schemas.OpenAI && interfaceName == "chat_completions":
+						case (provider == schemas.OpenAI || provider == schemas.Azure) && interfaceName == "chat_completions":
 							wireEffort = wire.ReasoningEffort
-						case provider == schemas.OpenAI:
+						case provider == schemas.OpenAI || provider == schemas.Azure:
 							wireEffort = wire.Reasoning.Effort
+						case provider == catalog.ProviderChutes:
+							wireEffort = wire.ReasoningEffort
+							control, supported := chutesReasoningWireControl(deploymentID, effort)
+							if !supported {
+								t.Fatalf("catalog advertises an unreviewed Chutes reasoning effort")
+							}
+							wantEffort = control.Effort
+							if control.Thinking == nil ||
+								wire.ChatTemplateKwargs.Thinking != *control.Thinking ||
+								wire.ChatTemplateKwargs.EnableThinking != *control.Thinking {
+								t.Fatalf("wire Chutes thinking controls are invalid\n%s", wireBytes)
+							}
 						default:
 							wireEffort = wire.OutputConfig.Effort
 						}
-						if wireEffort != effort {
-							t.Fatalf("wire reasoning effort = %q, want %q\n%s", wireEffort, effort, wireBytes)
+						if wireEffort != wantEffort {
+							t.Fatalf("wire reasoning effort = %q, want %q\n%s", wireEffort, wantEffort, wireBytes)
 						}
 					})
 				}
 			}
 		}
+	}
+}
+
+func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testing.T) {
+	type matrixDeployment struct {
+		ReasoningMaxTokens *struct {
+			Maximum int `json:"maximum"`
+			Minimum int `json:"minimum"`
+		} `json:"reasoningMaxTokens"`
+		RouteIDs []string `json:"routeIds"`
+	}
+	type matrixRoute struct {
+		Interfaces []string `json:"interfaces"`
+		ProviderID string   `json:"providerId"`
+	}
+
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	routes := map[string]matrixRoute{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode catalog routes: %v", err)
+	}
+
+	covered := 0
+	for deploymentID, deployment := range deployments {
+		if deployment.ReasoningMaxTokens == nil {
+			continue
+		}
+		for _, routeID := range deployment.RouteIDs {
+			route := routes[routeID]
+			if route.ProviderID != string(schemas.Anthropic) {
+				t.Fatalf("%s advertises a manual reasoning budget outside Anthropic", deploymentID)
+			}
+			for _, interfaceName := range route.Interfaces {
+				interfaceName := interfaceName
+				t.Run(deploymentID+"/"+interfaceName, func(t *testing.T) {
+					minimum := deployment.ReasoningMaxTokens.Minimum
+					requestBody := map[string]any{
+						"model":     deploymentID,
+						"reasoning": map[string]any{"max_tokens": minimum},
+					}
+					path := "/v1/responses"
+					if interfaceName == "chat_completions" {
+						path = "/v1/chat/completions"
+						requestBody["messages"] = []map[string]any{{"content": "hi", "role": "user"}}
+						requestBody["max_completion_tokens"] = minimum + 1
+					} else if interfaceName == "responses" {
+						requestBody["input"] = "hi"
+						requestBody["max_output_tokens"] = minimum + 1
+					} else {
+						t.Fatalf("unsupported catalog interface %q", interfaceName)
+					}
+					body, err := json.Marshal(requestBody)
+					if err != nil {
+						t.Fatal(err)
+					}
+					resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: body})
+					if err != nil {
+						t.Fatalf("resolve manual reasoning budget: %v", err)
+					}
+					state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+					if err := state.Adapter.ValidateRequest(state); err != nil {
+						t.Fatalf("validate manual reasoning budget: %v", err)
+					}
+					ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+					request, err := resolution.ToBifrost(ctx)
+					if err != nil {
+						t.Fatalf("build Bifrost request: %v", err)
+					}
+					var wireBytes []byte
+					if interfaceName == "chat_completions" {
+						wire, err := anthropicprovider.ToAnthropicChatRequest(ctx, request.ChatRequest)
+						if err != nil {
+							t.Fatalf("build Anthropic chat wire request: %v", err)
+						}
+						wireBytes, err = json.Marshal(wire)
+						if err != nil {
+							t.Fatalf("marshal Anthropic chat wire request: %v", err)
+						}
+					} else {
+						var bifrostErr *schemas.BifrostError
+						wireBytes, bifrostErr = anthropicprovider.BuildAnthropicResponsesRequestBody(
+							ctx,
+							request.ResponsesRequest,
+							anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
+						)
+						if bifrostErr != nil {
+							t.Fatalf("build Anthropic Responses wire request: %v", bifrostErr)
+						}
+					}
+					var wire struct {
+						Thinking struct {
+							BudgetTokens *int   `json:"budget_tokens"`
+							Type         string `json:"type"`
+						} `json:"thinking"`
+					}
+					if err := json.Unmarshal(wireBytes, &wire); err != nil {
+						t.Fatalf("decode Anthropic wire request: %v\n%s", err, wireBytes)
+					}
+					if wire.Thinking.Type != "enabled" || wire.Thinking.BudgetTokens == nil || *wire.Thinking.BudgetTokens != minimum {
+						t.Fatalf("manual reasoning budget did not reach Anthropic wire: %#v\n%s", wire.Thinking, wireBytes)
+					}
+				})
+				covered++
+			}
+		}
+	}
+	if covered == 0 {
+		t.Fatal("catalog advertises no manual reasoning budget deployments")
+	}
+}
+
+func TestChatReasoningMaxTokensAliasUsesTheSameManualBudgetContract(t *testing.T) {
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":2048,"reasoning_max_tokens":1024}`),
+	})
+	if err != nil {
+		t.Fatalf("resolve reasoning_max_tokens alias: %v", err)
+	}
+	request, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+	if err != nil {
+		t.Fatalf("build Bifrost request: %v", err)
+	}
+	if request.ChatRequest.Params.Reasoning == nil || request.ChatRequest.Params.Reasoning.MaxTokens == nil ||
+		*request.ChatRequest.Params.Reasoning.MaxTokens != 1024 {
+		t.Fatalf("reasoning_max_tokens alias was not normalized: %#v", request.ChatRequest.Params.Reasoning)
 	}
 }
 
@@ -1347,7 +1585,10 @@ func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 		`{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"max_tool_calls":1,"parallel_tool_calls":false}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"},"max_tool_calls":1}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":["search"],"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":null,"headers":{},"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":[],"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","server_description":"Docs search","allowed_tools":{"read_only":true,"tool_names":["search"]},"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"read_only":false},"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"mcp","server_label":"remote"}]}}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
 		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
@@ -1416,8 +1657,32 @@ func TestResponsesMCPToolsReachProviderWireRequest(t *testing.T) {
 			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":["search"],"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
 		},
 		{
+			name: "openai all tools and headers",
+			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","headers":{"x-api-key":"mcp-secret"},"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		},
+		{
+			name: "openai no tools",
+			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":[],"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		},
+		{
+			name: "azure",
+			body: `{"model":"azure-gpt-5.6-sol","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":["search"],"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		},
+		{
+			name: "azure connector",
+			body: `{"model":"azure-gpt-5.6-sol","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","authorization":"secret","headers":{"x-tenant":"customer"},"require_approval":"never"}],"tool_choice":{"type":"mcp","server_label":"calendar"}}`,
+		},
+		{
 			name: "anthropic",
 			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":["search"]}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		},
+		{
+			name: "anthropic all tools",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret"}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
+		},
+		{
+			name: "anthropic no tools",
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","authorization":"secret","allowed_tools":[]}],"tool_choice":{"type":"mcp","server_label":"remote"}}`,
 		},
 	}
 	for _, tc := range tests {
@@ -1437,31 +1702,62 @@ func TestResponsesMCPToolsReachProviderWireRequest(t *testing.T) {
 			if err := state.Adapter.SanitizeRequest(state); err != nil {
 				t.Fatalf("SanitizeRequest returned error: %v", err)
 			}
-			bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+			bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
+			bifrostReq, err := resolution.ToBifrost(bifrostCtx)
 			if err != nil {
 				t.Fatalf("ToBifrost returned error: %v", err)
 			}
-			if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
-				bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP == nil ||
-				bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP.ServerLabel != "remote" ||
-				bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP.Authorization == nil ||
-				*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP.Authorization != "secret" ||
-				!slices.Equal(bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP.AllowedTools.ToolNames, []string{"search"}) {
+			if err := PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+			}
+			if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 || bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP == nil {
 				t.Fatalf("expected Bifrost MCP tool to survive conversion, got %#v", bifrostReq.ResponsesRequest.Params.Tools)
 			}
-			switch tc.name {
-			case "openai":
-				wire := openaiprovider.ToOpenAIResponsesRequest(
-					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
-					bifrostReq.ResponsesRequest,
-				)
-				wireBytes, err := json.Marshal(wire)
-				if err != nil {
-					t.Fatalf("marshal OpenAI Responses wire request: %v", err)
+			typedTool := bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolMCP
+			expectedLabel := "remote"
+			if strings.Contains(tc.name, "connector") {
+				expectedLabel = "calendar"
+			}
+			if typedTool.ServerLabel != expectedLabel || typedTool.Authorization == nil || *typedTool.Authorization != "secret" {
+				t.Fatalf("expected Bifrost MCP identity to survive conversion, got %#v", typedTool)
+			}
+			hasAllowlist := strings.Contains(tc.body, `"allowed_tools"`)
+			emptyAllowlist := strings.Contains(tc.body, `"allowed_tools":[]`)
+			if hasAllowlist {
+				if typedTool.AllowedTools == nil || typedTool.AllowedTools.ToolNames == nil {
+					t.Fatalf("expected Bifrost MCP allowlist to survive conversion, got %#v", typedTool.AllowedTools)
 				}
+				if emptyAllowlist && len(typedTool.AllowedTools.ToolNames) != 0 {
+					t.Fatalf("expected empty Bifrost MCP allowlist, got %#v", typedTool.AllowedTools)
+				}
+				if !emptyAllowlist && !slices.Equal(typedTool.AllowedTools.ToolNames, []string{"search"}) {
+					t.Fatalf("expected named Bifrost MCP allowlist, got %#v", typedTool.AllowedTools)
+				}
+			} else if typedTool.AllowedTools != nil {
+				t.Fatalf("omitted MCP allowlist became %#v", typedTool.AllowedTools)
+			}
+			hasHeaders := strings.Contains(tc.body, `"headers"`)
+			if hasHeaders {
+				if typedTool.Headers == nil || len(*typedTool.Headers) != 1 {
+					t.Fatalf("expected Bifrost MCP headers to survive conversion, got %#v", typedTool.Headers)
+				}
+			} else if typedTool.Headers != nil {
+				t.Fatalf("omitted MCP headers became %#v", typedTool.Headers)
+			}
+			if strings.Contains(tc.name, "connector") {
+				if typedTool.ConnectorID == nil || *typedTool.ConnectorID != "connector_googlecalendar" || typedTool.ServerURL != nil {
+					t.Fatalf("expected Bifrost MCP connector identity, got %#v", typedTool)
+				}
+			} else if typedTool.ServerURL == nil || *typedTool.ServerURL != "https://example.com/mcp" || typedTool.ConnectorID != nil {
+				t.Fatalf("expected Bifrost remote MCP URL identity, got %#v", typedTool)
+			}
+			wireBytes := preparedProviderBody(t, bifrostCtx, bifrostReq.ResponsesRequest)
+			switch {
+			case strings.HasPrefix(tc.name, "openai"), strings.HasPrefix(tc.name, "azure"):
 				var wireBody map[string]any
 				if err := json.Unmarshal(wireBytes, &wireBody); err != nil {
-					t.Fatalf("unmarshal OpenAI Responses wire request: %v\nbody=%s", err, string(wireBytes))
+					t.Fatalf("unmarshal OpenAI-family Responses wire request: %v\nbody=%s", err, string(wireBytes))
 				}
 				tools, _ := wireBody["tools"].([]any)
 				if len(tools) != 1 {
@@ -1469,34 +1765,69 @@ func TestResponsesMCPToolsReachProviderWireRequest(t *testing.T) {
 				}
 				tool, _ := tools[0].(map[string]any)
 				allowed, _ := tool["allowed_tools"].([]any)
-				if tool["type"] != "mcp" || tool["server_label"] != "remote" || tool["server_url"] != "https://example.com/mcp" || tool["authorization"] != "secret" || tool["require_approval"] != "never" || len(allowed) != 1 || allowed[0] != "search" {
+				if tool["type"] != "mcp" || tool["server_label"] != expectedLabel || tool["authorization"] != "secret" || tool["require_approval"] != "never" {
 					t.Fatalf("unexpected OpenAI MCP wire tool: %s", string(wireBytes))
 				}
-			case "anthropic":
-				wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
-					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
-					bifrostReq.ResponsesRequest,
-					anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic},
-				)
-				if bifrostErr != nil {
-					t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
+				if strings.Contains(tc.name, "connector") {
+					if tool["connector_id"] != "connector_googlecalendar" || tool["server_url"] != nil {
+						t.Fatalf("unexpected connector MCP wire tool: %s", string(wireBytes))
+					}
+				} else if tool["server_url"] != "https://example.com/mcp" || tool["connector_id"] != nil {
+					t.Fatalf("unexpected remote MCP wire tool: %s", string(wireBytes))
 				}
+				if hasAllowlist {
+					if emptyAllowlist && len(allowed) != 0 {
+						t.Fatalf("unexpected empty MCP allowlist: %s", string(wireBytes))
+					}
+					if !emptyAllowlist && (len(allowed) != 1 || allowed[0] != "search") {
+						t.Fatalf("unexpected MCP allowlist: %s", string(wireBytes))
+					}
+				} else if _, ok := tool["allowed_tools"]; ok {
+					t.Fatalf("omitted MCP allowlist reached the wire: %s", string(wireBytes))
+				}
+				if hasHeaders {
+					headers, _ := tool["headers"].(map[string]any)
+					if strings.Contains(tc.name, "connector") {
+						if len(headers) != 1 || headers["x-tenant"] != "customer" {
+							t.Fatalf("MCP connector headers did not reach the wire: %s", string(wireBytes))
+						}
+					} else if len(headers) != 1 || headers["x-api-key"] != "mcp-secret" {
+						t.Fatalf("MCP headers did not reach the wire: %s", string(wireBytes))
+					}
+				} else if _, ok := tool["headers"]; ok {
+					t.Fatalf("omitted MCP headers reached the wire: %s", string(wireBytes))
+				}
+			case strings.HasPrefix(tc.name, "anthropic"):
 				var wireBody map[string]any
-				if err := json.Unmarshal(wire, &wireBody); err != nil {
-					t.Fatalf("failed to unmarshal Anthropic responses wire body: %v\nbody=%s", err, string(wire))
+				if err := json.Unmarshal(wireBytes, &wireBody); err != nil {
+					t.Fatalf("failed to unmarshal Anthropic responses wire body: %v\nbody=%s", err, string(wireBytes))
 				}
 				servers, _ := wireBody["mcp_servers"].([]any)
 				tools, _ := wireBody["tools"].([]any)
 				if len(servers) != 1 || len(tools) != 1 {
-					t.Fatalf("expected Anthropic mcp_servers and mcp_toolset, got %s", string(wire))
+					t.Fatalf("expected Anthropic mcp_servers and mcp_toolset, got %s", string(wireBytes))
 				}
 				server, _ := servers[0].(map[string]any)
 				tool, _ := tools[0].(map[string]any)
 				configs, _ := tool["configs"].(map[string]any)
 				searchConfig, _ := configs["search"].(map[string]any)
+				defaultConfig, _ := tool["default_config"].(map[string]any)
 				if server["name"] != "remote" || server["url"] != "https://example.com/mcp" || server["authorization_token"] != "secret" ||
-					tool["type"] != "mcp_toolset" || tool["mcp_server_name"] != "remote" || searchConfig["enabled"] != true {
-					t.Fatalf("unexpected Anthropic MCP wire body: %s", string(wire))
+					tool["type"] != "mcp_toolset" || tool["mcp_server_name"] != "remote" {
+					t.Fatalf("unexpected Anthropic MCP wire body: %s", string(wireBytes))
+				}
+				if hasAllowlist {
+					if defaultConfig["enabled"] != false {
+						t.Fatalf("Anthropic MCP allowlist default did not reach the wire: %s", string(wireBytes))
+					}
+					if emptyAllowlist && len(configs) != 0 {
+						t.Fatalf("empty Anthropic MCP allowlist enabled a tool: %s", string(wireBytes))
+					}
+					if !emptyAllowlist && searchConfig["enabled"] != true {
+						t.Fatalf("Anthropic MCP allowlist did not reach the wire: %s", string(wireBytes))
+					}
+				} else if _, configsOK := tool["configs"]; configsOK || tool["default_config"] != nil {
+					t.Fatalf("omitted MCP allowlist constrained Anthropic tools: %s", string(wireBytes))
 				}
 			}
 		})
@@ -1855,12 +2186,12 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`,
+			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"}}`,
+			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
 		},
 	}
 	for _, tc := range tests {
@@ -1892,12 +2223,18 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 					options.TTL == nil || *options.TTL != "30m" {
 					t.Fatalf("expected typed chat prompt_cache_options, got %#v", options)
 				}
+				if retention := bifrostReq.ChatRequest.Params.PromptCacheRetention; retention == nil || *retention != "24h" {
+					t.Fatalf("expected typed chat prompt_cache_retention, got %#v", retention)
+				}
 				wire = openaiprovider.ToOpenAIChatRequest(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), bifrostReq.ChatRequest)
 			case "/v1/responses":
 				options := bifrostReq.ResponsesRequest.Params.PromptCacheOptions
 				if options == nil || options.Mode == nil || *options.Mode != "explicit" ||
 					options.TTL == nil || *options.TTL != "30m" {
 					t.Fatalf("expected typed Responses prompt_cache_options, got %#v", options)
+				}
+				if retention := bifrostReq.ResponsesRequest.Params.PromptCacheRetention; retention == nil || *retention != "24h" {
+					t.Fatalf("expected typed Responses prompt_cache_retention, got %#v", retention)
 				}
 				wire = openaiprovider.ToOpenAIResponsesRequest(
 					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -1909,37 +2246,64 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 				t.Fatalf("marshal OpenAI wire request: %v", err)
 			}
 			if !strings.Contains(string(wireBytes), `"prompt_cache_options":{"mode":"explicit","ttl":"30m"}`) ||
-				!strings.Contains(string(wireBytes), `"prompt_cache_breakpoint":{"mode":"explicit"}`) {
+				!strings.Contains(string(wireBytes), `"prompt_cache_breakpoint":{"mode":"explicit"}`) ||
+				!strings.Contains(string(wireBytes), `"prompt_cache_retention":"24h"`) {
 				t.Fatalf("wire prompt cache fields were not preserved: %s", wireBytes)
 			}
 		})
 	}
 }
 
-func TestOpenAIPromptCachingRejectsLegacyAndInvalidShapes(t *testing.T) {
+func TestOpenAIPromptCacheImplicitModeReachesTheWire(t *testing.T) {
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}`),
+	})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatalf("documented implicit cache mode was rejected: %v", err)
+	}
+	bifrostReq, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+	if err != nil {
+		t.Fatalf("ToBifrost returned error: %v", err)
+	}
+	wireBytes, err := json.Marshal(openaiprovider.ToOpenAIResponsesRequest(
+		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
+		bifrostReq.ResponsesRequest,
+	))
+	if err != nil {
+		t.Fatalf("marshal OpenAI Responses request: %v", err)
+	}
+	for _, field := range []string{`"mode":"implicit"`, `"ttl":"30m"`} {
+		if !strings.Contains(string(wireBytes), field) {
+			t.Fatalf("documented cache field %s was not preserved: %s", field, wireBytes)
+		}
+	}
+}
+
+func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		body string
-		want string
+		name          string
+		path          string
+		body          string
+		want          string
+		resolveReject bool
 	}{
 		{
-			name: "older model",
-			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_options":{"mode":"implicit"}}`,
-			want: "require a GPT-5.6 deployment",
+			name:          "non-string mode",
+			path:          "/v1/responses",
+			body:          `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":1}}`,
+			resolveReject: true,
 		},
 		{
-			name: "invalid mode",
-			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"auto"}}`,
-			want: "mode must be implicit or explicit",
-		},
-		{
-			name: "invalid ttl",
-			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"24h"}}`,
-			want: "ttl must be 30m",
+			name:          "non-string ttl",
+			path:          "/v1/chat/completions",
+			body:          `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":30}}`,
+			resolveReject: true,
 		},
 		{
 			name: "extra option",
@@ -1948,16 +2312,52 @@ func TestOpenAIPromptCachingRejectsLegacyAndInvalidShapes(t *testing.T) {
 			want: "supports only mode and ttl",
 		},
 		{
+			name: "unknown option mode",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"future"}}`,
+			want: "mode must be implicit or explicit",
+		},
+		{
+			name: "unsupported option ttl",
+			path: "/v1/chat/completions",
+			body: `{"model":"gpt-5.6-luna","messages":[],"prompt_cache_options":{"ttl":"2h"}}`,
+			want: "ttl must be 30m",
+		},
+		{
+			name: "explicit controls on implicit-only model",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
+			want: "explicit prompt caching is not supported",
+		},
+		{
+			name: "unknown retention",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_retention":"forever"}`,
+			want: "retention must be in_memory or 24h",
+		},
+		{
 			name: "breakpoint wrong block",
 			path: "/v1/chat/completions",
 			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","prompt_cache_breakpoint":{"mode":"explicit"},"content":"hi"}]}`,
-			want: "only supported on text prompt blocks",
+			want: "not supported on this prompt block",
 		},
 		{
-			name: "breakpoint wrong shape",
+			name: "unknown breakpoint mode",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"implicit"}}]}]}`,
-			want: "must contain only mode: explicit",
+			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"future"}}]}]}`,
+			want: "breakpoint.mode must be explicit",
+		},
+		{
+			name:          "breakpoint non-string mode",
+			path:          "/v1/responses",
+			body:          `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":1}}]}]}`,
+			resolveReject: true,
+		},
+		{
+			name: "too many breakpoints",
+			path: "/v1/responses",
+			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"five","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"}}`,
+			want: "at most four prompt blocks",
 		},
 		{
 			name: "anthropic breakpoint",
@@ -1973,6 +2373,12 @@ func TestOpenAIPromptCachingRejectsLegacyAndInvalidShapes(t *testing.T) {
 				Path:   tc.path,
 				Body:   []byte(tc.body),
 			})
+			if tc.resolveReject {
+				if err == nil {
+					t.Fatal("request schema accepted an unrepresentable cache shape")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
@@ -1984,21 +2390,22 @@ func TestOpenAIPromptCachingRejectsLegacyAndInvalidShapes(t *testing.T) {
 		})
 	}
 
-	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
-		body := `{"model":"gpt-5.6-luna","prompt_cache_retention":"24h"`
-		if path == "/v1/chat/completions" {
-			body += `,"messages":[{"role":"user","content":"hi"}]}`
-		} else {
-			body += `,"input":"hi"}`
-		}
-		if _, err := catalog.ResolveRequest(catalog.RequestInput{
+	t.Run("cache key on uncached deployment", func(t *testing.T) {
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
-			Path:   path,
-			Body:   []byte(body),
-		}); err == nil {
-			t.Fatalf("%s accepted deprecated prompt_cache_retention", path)
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"gpt-5-nano","messages":[],"prompt_cache_key":"tenant-a"}`),
+		})
+		if err != nil {
+			t.Fatalf("ResolveRequest returned error: %v", err)
 		}
-	}
+		resolution.Deployment.Capabilities.ImplicitPromptCaching = false
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		err = state.Adapter.ValidateRequest(state)
+		if err == nil || !strings.Contains(err.Error(), "prompt caching is not supported") {
+			t.Fatalf("expected the deployment capability gate to reject the cache key, got %v", err)
+		}
+	})
 }
 
 func TestAnthropicSamplingParametersNormalizeAndReachProviderRequest(t *testing.T) {
@@ -2010,12 +2417,12 @@ func TestAnthropicSamplingParametersNormalizeAndReachProviderRequest(t *testing.
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_k":40,"stop_sequences":["END"],"task_budget":{"type":"tokens","total":20000,"remaining":19000},"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"temperature":0.7,"top_p":0.9,"top_k":40,"stop_sequences":["END"],"task_budget":{"type":"tokens","total":20000,"remaining":19000},"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","top_k":40,"stop_sequences":["END"],"task_budget":{"type":"tokens","total":20000,"remaining":19000},"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","temperature":0.7,"top_p":0.9,"top_k":40,"stop_sequences":["END"],"task_budget":{"type":"tokens","total":20000,"remaining":19000},"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 	}
 	for _, tc := range tests {
@@ -2060,6 +2467,9 @@ func TestAnthropicSamplingParametersNormalizeAndReachProviderRequest(t *testing.
 				if wireReq.TopK == nil || *wireReq.TopK != 40 {
 					t.Fatalf("expected Anthropic chat top_k=40, got %#v", wireReq.TopK)
 				}
+				if wireReq.Temperature == nil || *wireReq.Temperature != 0.7 || wireReq.TopP != nil {
+					t.Fatalf("expected Bifrost to prefer Anthropic temperature over top_p, got temperature=%#v top_p=%#v", wireReq.Temperature, wireReq.TopP)
+				}
 				if !slices.Equal(wireReq.StopSequences, []string{"END"}) {
 					t.Fatalf("expected Anthropic chat stop_sequences, got %#v", wireReq.StopSequences)
 				}
@@ -2096,6 +2506,9 @@ func TestAnthropicSamplingParametersNormalizeAndReachProviderRequest(t *testing.
 				}
 				if wireBody["top_k"] != float64(40) {
 					t.Fatalf("expected Anthropic responses top_k=40, got %#v", wireBody["top_k"])
+				}
+				if wireBody["temperature"] != 0.7 || wireBody["top_p"] != nil {
+					t.Fatalf("expected Bifrost to prefer Anthropic temperature over top_p, got temperature=%#v top_p=%#v", wireBody["temperature"], wireBody["top_p"])
 				}
 				if stops, ok := wireBody["stop_sequences"].([]any); !ok || len(stops) != 1 || stops[0] != "END" {
 					t.Fatalf("expected Anthropic responses stop_sequences, got %#v", wireBody["stop_sequences"])
@@ -2345,12 +2758,18 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 	if findMeterEstimate(state.Hold.Meters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("web_fetch must not reserve Anthropic web-search call meters, got %#v", state.Hold.Meters)
 	}
-	expectedFetchInputTokens := strconv.Itoa(1000 * defaultResponsesHostedToolCalls)
-	if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, expectedFetchInputTokens) == nil {
-		t.Fatalf("expected web_fetch token hold quantity %s, got %#v", expectedFetchInputTokens, state.Hold.Meters)
+	req := anthropicAdapterContextForState(state)
+	expectedFetchInputTokens := 1000 * defaultResponsesHostedToolCalls
+	if got := anthropicHostedContentHoldTokens(req); got != expectedFetchInputTokens {
+		t.Fatalf("expected web_fetch content headroom %d, got %d", expectedFetchInputTokens, got)
 	}
-	if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens, expectedFetchInputTokens) == nil {
-		t.Fatalf("expected web_fetch 1h cache-write hold quantity %s, got %#v", expectedFetchInputTokens, state.Hold.Meters)
+	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + expectedFetchInputTokens
+	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
+	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(expectedInputTokens) {
+		t.Fatalf("expected one combined web_fetch 1h cache-write hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
+	}
+	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
+		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
 	state.Signals = &StandardSignals{
 		Prompt:       resolution.InputTokenLimit() + 1000*defaultResponsesHostedToolCalls,
@@ -3051,12 +3470,15 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 	if !foundHold {
 		t.Fatalf("expected Anthropic web search hold meter in %#v", state.Hold.Meters)
 	}
-	searchContentHeadroom := resolution.Deployment.ContextWindowTokens - resolution.OutputTokenLimit() - resolution.InputTokenLimit()
-	if searchContentHeadroom > 0 && findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(searchContentHeadroom)) == nil {
-		t.Fatalf("expected Anthropic web search result-token hold quantity %d, got %#v", searchContentHeadroom, state.Hold.Meters)
+	req := anthropicAdapterContextForState(state)
+	searchContentHeadroom := anthropicHostedContentHoldTokens(req)
+	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + searchContentHeadroom
+	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
+	if searchContentHeadroom > 0 && (cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(expectedInputTokens)) {
+		t.Fatalf("expected one combined Anthropic web search 1h cache-write hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
 	}
-	if searchContentHeadroom > 0 && findMeterEstimateQuantity(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens, strconv.Itoa(searchContentHeadroom)) == nil {
-		t.Fatalf("expected Anthropic web search 1h cache-write hold quantity %d, got %#v", searchContentHeadroom, state.Hold.Meters)
+	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
+		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
 
 	numSearchQueries := 2
@@ -3207,8 +3629,14 @@ func TestAnthropicResponsesToolChoiceNarrowsHostedToolHold(t *testing.T) {
 	if findMeterEstimate(state.Hold.Meters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("tool_choice allowed only web_fetch, so web_search call hold must not be present: %#v", state.Hold.Meters)
 	}
-	if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, "2000") == nil {
-		t.Fatalf("expected web_fetch content hold for max_content_tokens * max_tool_calls, got %#v", state.Hold.Meters)
+	req := anthropicAdapterContextForState(state)
+	if got := anthropicHostedContentHoldTokens(req); got != 2000 {
+		t.Fatalf("expected web_fetch content headroom 2000, got %d", got)
+	}
+	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + 2000
+	inputMeter := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
+	if inputMeter == nil || inputMeter.Quantity != strconv.Itoa(expectedInputTokens) {
+		t.Fatalf("expected one combined web_fetch input hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
 	}
 	state.Signals = &StandardSignals{Prompt: resolution.InputTokenLimit() + 2000, Completion: resolution.OutputTokenLimit()}
 	if err := state.Adapter.FinalPrice(state); err != nil {
@@ -3252,9 +3680,12 @@ func TestAnthropicResponsesToolChoiceNarrowsToWebSearchHold(t *testing.T) {
 	if searchMeter == nil || searchMeter.Quantity != "2" || !searchMeter.HoldRequired {
 		t.Fatalf("expected web_search call hold quantity 2, got %#v in %#v", searchMeter, state.Hold.Meters)
 	}
-	searchContentHeadroom := resolution.Deployment.ContextWindowTokens - resolution.OutputTokenLimit() - resolution.InputTokenLimit()
-	if searchContentHeadroom > 0 && findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(searchContentHeadroom)) == nil {
-		t.Fatalf("expected web_search result-token hold quantity %d, got %#v", searchContentHeadroom, state.Hold.Meters)
+	req := anthropicAdapterContextForState(state)
+	searchContentHeadroom := anthropicHostedContentHoldTokens(req)
+	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + searchContentHeadroom
+	inputMeter := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
+	if searchContentHeadroom > 0 && (inputMeter == nil || inputMeter.Quantity != strconv.Itoa(expectedInputTokens)) {
+		t.Fatalf("expected one combined web_search input hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
 	}
 	state.Signals = &StandardSignals{Prompt: resolution.InputTokenLimit() + searchContentHeadroom, Completion: resolution.OutputTokenLimit(), WebSearch: 2}
 	if err := state.Adapter.FinalPrice(state); err != nil {

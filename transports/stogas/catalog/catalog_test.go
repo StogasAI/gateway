@@ -16,15 +16,157 @@ func TestEmbeddedCatalogV5LoadsFiveNodeGraph(t *testing.T) {
 	if snap.identity.Sequence != 0 || !strings.HasPrefix(snap.identity.Digest, "sha256:") {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
-	if len(snap.graph.Authors) != 2 ||
+	if len(snap.graph.Authors) != 9 ||
 		len(snap.graph.Models) < 10 ||
-		len(snap.graph.Providers) != 2 ||
-		len(snap.graph.Routes) != 3 ||
-		len(snap.graph.Deployments) < 30 {
+		len(snap.graph.Providers) != 4 ||
+		len(snap.graph.Routes) != 6 ||
+		len(snap.graph.Deployments) < 40 {
 		t.Fatalf("unexpected v4 graph sizes: %#v", snap.graph)
 	}
 	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; !exists {
 		t.Fatal("historical search preview deployment must remain reproducible")
+	}
+}
+
+func TestResolveRequestRejectsAmbiguousOrPathologicalJSON(t *testing.T) {
+	tests := []RequestInput{
+		{
+			Method: "POST",
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"gpt-5.6-sol","model":"gpt-5.6-terra","messages":[{"role":"user","content":"hi"}]}`),
+		},
+		{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_text","text":"a","text":"b"}]}]}`),
+		},
+		{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"gpt-5.6-sol","input":"hi"}{"model":"gpt-5.6-sol","input":"again"}`),
+		},
+	}
+	for _, input := range tests {
+		if _, err := ResolveRequest(input); !errors.Is(err, ErrInvalidJSON) {
+			t.Fatalf("ResolveRequest error = %v, want invalid JSON for %s", err, input.Body)
+		}
+	}
+
+	deepInput := strings.Repeat("[", maxRequestJSONDepth+2) + `"hi"` + strings.Repeat("]", maxRequestJSONDepth+2)
+	if _, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-sol","input":` + deepInput + `}`),
+	}); !errors.Is(err, ErrInvalidJSON) {
+		t.Fatalf("deeply nested request error = %v, want invalid JSON", err)
+	}
+}
+
+func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel(t *testing.T) {
+	loadTestCatalog(t)
+	for _, modelCase := range []struct {
+		model     string
+		selectors []string
+	}{
+		{model: "gpt-5.6-sol", selectors: []string{"gpt-5.6-pro", "gpt-5.6-sol-pro"}},
+		{model: "gpt-5.6-terra", selectors: []string{"gpt-5.6-terra-pro"}},
+		{model: "gpt-5.6-luna", selectors: []string{"gpt-5.6-luna-pro"}},
+	} {
+		for _, tierCase := range []struct {
+			selectorSuffix   string
+			serviceTier      string
+			deploymentSuffix string
+		}{
+			{serviceTier: "default"},
+			{selectorSuffix: "-flex", serviceTier: "flex", deploymentSuffix: "-flex"},
+			{selectorSuffix: "-fast", serviceTier: "priority", deploymentSuffix: "-fast"},
+		} {
+			deploymentID := "openai-" + modelCase.model + "-pro" + tierCase.deploymentSuffix
+			for _, baseSelector := range modelCase.selectors {
+				selector := baseSelector + tierCase.selectorSuffix
+				t.Run(selector, func(t *testing.T) {
+					resolution, err := ResolveRequest(RequestInput{
+						Method: "POST",
+						Path:   "/v1/responses",
+						Body:   []byte(`{"model":"` + selector + `","input":"hello"}`),
+					})
+					if err != nil {
+						t.Fatalf("resolve Pro deployment: %v", err)
+					}
+					if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != deploymentID ||
+						resolution.Deployment.Upstream.Model != modelCase.model ||
+						resolution.Deployment.Upstream.ReasoningMode != "pro" ||
+						resolution.Deployment.Upstream.ServiceTier != tierCase.serviceTier {
+						t.Fatalf("unexpected Pro resolution: %#v", resolution.Deployment)
+					}
+					request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+					if err != nil {
+						t.Fatalf("build Pro request: %v", err)
+					}
+					if request.ResponsesRequest == nil || request.ResponsesRequest.Model != modelCase.model ||
+						request.ResponsesRequest.Params.Reasoning == nil ||
+						request.ResponsesRequest.Params.Reasoning.Mode == nil ||
+						*request.ResponsesRequest.Params.Reasoning.Mode != "pro" {
+						t.Fatalf("Pro mode did not reach the typed provider request: %#v", request.ResponsesRequest)
+					}
+					if actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, resolution.Deployment, nil, ""); !ok || actual.ID != deploymentID {
+						t.Fatalf("actual execution lost Pro identity: %#v", actual)
+					}
+				})
+			}
+			if _, ok := DeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
+				t.Fatalf("%s was exposed on Chat Completions", deploymentID)
+			}
+		}
+	}
+
+	standard, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"openai/gpt-5.6-sol","input":"hello"}`),
+	})
+	if err != nil {
+		t.Fatalf("resolve standard GPT-5.6: %v", err)
+	}
+	if standard.Deployment.Upstream.ReasoningMode != "" {
+		t.Fatalf("standard deployment unexpectedly enabled Pro mode: %#v", standard.Deployment)
+	}
+	flex, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-pro","input":"hello","service_tier":"flex"}`),
+	})
+	if err != nil || flex.Deployment.ID != "openai-gpt-5.6-sol-pro-flex" {
+		t.Fatalf("service tier did not retarget within the Pro deployment family: resolution=%#v err=%v", flex, err)
+	}
+	for _, tier := range []string{"fast", "priority"} {
+		fast, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"gpt-5.6-pro","input":"hello","service_tier":"` + tier + `"}`),
+		})
+		if err != nil || fast.Deployment.ID != "openai-gpt-5.6-sol-pro-fast" {
+			t.Fatalf("%s tier did not retarget within the Pro deployment family: resolution=%#v err=%v", tier, fast, err)
+		}
+	}
+	actualTier := schemas.BifrostServiceTierDefault
+	actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, flex.Deployment, &actualTier, "")
+	if !ok || actual.ID != "openai-gpt-5.6-sol-pro" {
+		t.Fatalf("actual service tier did not preserve Pro mode while selecting settlement pricing: %#v", actual)
+	}
+	if _, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-pro-flex","input":"hello","service_tier":"default"}`),
+	}); err == nil {
+		t.Fatal("a conflicting service tier changed a pinned Pro Flex selector")
+	}
+	if _, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"openai-gpt-5.6-sol-pro","input":"hello","service_tier":"flex"}`),
+	}); err == nil {
+		t.Fatal("a conflicting service tier changed an exact Pro deployment selector")
 	}
 }
 
@@ -51,6 +193,24 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	} {
 		if _, ok, err := ProviderForRouteModel(RouteResponses, requested); err != nil || ok {
 			t.Fatalf("%s: expected a closed miss, ok=%v err=%v", requested, ok, err)
+		}
+	}
+}
+
+func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.T) {
+	loadTestCatalog(t)
+	for _, route := range []Route{RouteChat, RouteResponses} {
+		provider, ok, err := ProviderForRouteModel(route, "gpt-5.6-sol")
+		if err != nil || !ok || provider != schemas.OpenAI {
+			t.Fatalf("unqualified GPT-5.6 must default to OpenAI: provider=%q ok=%v err=%v", provider, ok, err)
+		}
+		provider, ok, err = ProviderForRouteModel(route, "azure/gpt-5.6-sol")
+		if err != nil || !ok || provider != schemas.Azure {
+			t.Fatalf("qualified GPT-5.6 must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
+		}
+		provider, ok, err = ProviderForRouteModelPreference(route, "gpt-5.6-sol", "azure")
+		if err != nil || !ok || provider != schemas.Azure {
+			t.Fatalf("provider preference must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
 		}
 	}
 }
@@ -83,7 +243,7 @@ func TestDeploymentLifecycleCutoffsFailClosed(t *testing.T) {
 func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	loadTestCatalog(t)
 	flex, ok := DeploymentForRoute(schemas.OpenAI, "openai-gpt-5.5-2026-04-23-flex", RouteResponses)
-	if !ok || flex.Upstream.FixedRequest.ServiceTier != "flex" ||
+	if !ok || flex.Upstream.ServiceTier != "flex" ||
 		flex.ImpliedServiceTier == nil ||
 		*flex.ImpliedServiceTier != schemas.BifrostServiceTierFlex {
 		t.Fatalf("unexpected flex deployment: %#v", flex)
@@ -110,7 +270,7 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 		)
 		if !fastOK ||
 			fast.ID != "openai-gpt-5.5-2026-04-23-fast" ||
-			fast.Upstream.FixedRequest.ServiceTier != "priority" ||
+			fast.Upstream.ServiceTier != "priority" ||
 			fast.ImpliedServiceTier == nil ||
 			*fast.ImpliedServiceTier != schemas.BifrostServiceTierPriority {
 			t.Fatalf("OpenAI %q service_tier did not select the Fast deployment: %#v", requestedFastTier, fast)
@@ -172,24 +332,46 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	)
 	if !ok ||
 		fastUS.ID != "anthropic-claude-opus-4-8-fast-us" ||
-		fastUS.Upstream.FixedRequest.Speed != "fast" ||
-		fastUS.Upstream.FixedRequest.InferenceGeo != "us" ||
+		fastUS.Upstream.Speed != "fast" ||
+		fastUS.Upstream.InferenceGeo != "us" ||
 		len(fastUS.RouteIDs) != 1 ||
 		fastUS.RouteIDs[0] != "anthropic-messages" {
 		t.Fatalf("unexpected fast US deployment: %#v", fastUS)
 	}
 }
 
-func TestReasoningAdmissionIsExactBeforeBifrostConversion(t *testing.T) {
+func TestReasoningAdmissionMapsCanonicalControlsWithoutInventingBinaryEfforts(t *testing.T) {
 	loadTestCatalog(t)
-	if got, err := normalizeReasoningEffort("high", []string{"minimal", "low", "medium", "high"}); err != nil || got != "high" {
-		t.Fatalf("accepted effort = %q, err=%v", got, err)
+	optional := Deployment{ReasoningAvailability: "optional", ReasoningEfforts: []string{"minimal", "low", "medium", "high"}}
+	if got, err := normalizeReasoningEffort("high", optional); err != nil || got.Effort == nil || *got.Effort != "high" {
+		t.Fatalf("accepted effort = %#v, err=%v", got, err)
 	}
-	if _, err := normalizeReasoningEffort("max", []string{"minimal", "low", "medium", "high"}); err == nil {
-		t.Fatal("unsupported canonical effort must not pass through to Bifrost")
+	if got, err := normalizeReasoningEffort("max", optional); err != nil || got.Effort == nil || *got.Effort != "high" {
+		t.Fatalf("higher effort did not map down: %#v err=%v", got, err)
 	}
-	if _, err := normalizeReasoningEffort("none", []string{"low", "medium", "high"}); err == nil {
-		t.Fatal("reasoning disablement must be declared by the deployment")
+	if got, err := normalizeReasoningEffort("none", optional); err != nil || got.Effort == nil || *got.Effort != "none" {
+		t.Fatalf("optional reasoning was not disabled: %#v err=%v", got, err)
+	}
+	binary := Deployment{ReasoningAvailability: "optional"}
+	if got, err := normalizeReasoningEffort("minimal", binary); err != nil || got.Enabled == nil || !*got.Enabled || got.Effort != nil {
+		t.Fatalf("positive binary reasoning did not map to enabled: %#v err=%v", got, err)
+	}
+	if got, err := normalizeReasoningEffort("none", binary); err != nil || got.Enabled == nil || *got.Enabled || got.Effort != nil {
+		t.Fatalf("binary reasoning did not map none to disabled: %#v err=%v", got, err)
+	}
+	twoLevels := Deployment{ReasoningAvailability: "optional", ReasoningEfforts: []string{"high", "max"}}
+	if got, err := normalizeReasoningEffort("xhigh", twoLevels); err != nil || got.Effort == nil || *got.Effort != "max" {
+		t.Fatalf("upward tie did not map to max: %#v err=%v", got, err)
+	}
+	requiredWithoutLevels := Deployment{ReasoningAvailability: "required"}
+	if _, err := normalizeReasoningEffort("high", requiredWithoutLevels); err == nil {
+		t.Fatal("effort was accepted for always-on reasoning without level control")
+	}
+	if _, err := normalizeReasoningEffort("none", Deployment{ReasoningAvailability: "required", ReasoningEfforts: []string{"low", "high"}}); err == nil {
+		t.Fatal("required reasoning was disabled")
+	}
+	if _, err := normalizeReasoningEffort("ultra", optional); err == nil {
+		t.Fatal("non-canonical effort was accepted")
 	}
 }
 
@@ -241,8 +423,8 @@ func TestPublicCatalogDisclosesEffectiveModerationAndDataHandling(t *testing.T) 
 		t.Fatalf("decode public deployments: %v", err)
 	}
 	for id, deployment := range deployments {
-		if !deployment.Moderated {
-			t.Fatalf("%s moderation fact is not explicit", id)
+		if deployment.Moderated != !strings.HasPrefix(id, "chutes-") {
+			t.Fatalf("%s has incorrect effective moderation: %v", id, deployment.Moderated)
 		}
 		if deployment.DataHandling["processingRegions"] == nil || deployment.DataHandling["storageRegions"] == nil {
 			t.Fatalf("%s data handling is incomplete: %#v", id, deployment.DataHandling)
@@ -264,6 +446,26 @@ func TestFlattenedPricingNeedsNoProviderOverlay(t *testing.T) {
 	}
 }
 
+func TestChutesTEEPolicyIsMaterializedPerDeployment(t *testing.T) {
+	loadTestCatalog(t)
+	blocked, ok := DeploymentForRoute(
+		ProviderChutes,
+		"chutes-qwen3-32b",
+		RouteChat,
+	)
+	if !ok || blocked.TEE == nil || blocked.TEE.ExternalNetworkEgress != "blocked" {
+		t.Fatalf("unexpected blocked Chutes TEE policy: %#v", blocked.TEE)
+	}
+	allowed, ok := DeploymentForRoute(
+		ProviderChutes,
+		"chutes-nemotron-3-nano-omni-30b",
+		RouteChat,
+	)
+	if !ok || allowed.TEE == nil || allowed.TEE.ExternalNetworkEgress != "allowed" {
+		t.Fatalf("unexpected Nemotron Chutes TEE policy: %#v", allowed.TEE)
+	}
+}
+
 func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	var runtime map[string]any
 	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
@@ -280,6 +482,26 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
 		!strings.Contains(err.Error(), "unknown route") {
 		t.Fatalf("broken route reference was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationRejectsAzureDeploymentModelMaps(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	deployments := graph["deployments"].(map[string]any)
+	deployment := deployments["azure-gpt-5.6-sol"].(map[string]any)
+	upstream := deployment["upstream"].(map[string]any)
+	upstream["model"] = "customer-specific-deployment"
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "invalid Azure upstream selector") {
+		t.Fatalf("Azure deployment model map was accepted: %v", err)
 	}
 }
 
@@ -316,6 +538,62 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
 		!strings.Contains(err.Error(), "unsupported reasoning effort") {
 		t.Fatalf("catalog with unknown reasoning effort was accepted: %v", err)
+	}
+
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph = runtime["graph"].(map[string]any)
+	deployments = graph["deployments"].(map[string]any)
+	deployment = deployments["openai-gpt-5.5-2026-04-23"].(map[string]any)
+	deployment["reasoningEfforts"] = []any{"high", "low"}
+	broken, err = json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "canonical order") {
+		t.Fatalf("catalog with unordered reasoning efforts was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationRejectsInvalidChutesTEEPolicy(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	deployments := graph["deployments"].(map[string]any)
+	deployment := deployments["chutes-qwen3-32b"].(map[string]any)
+	tee := deployment["tee"].(map[string]any)
+	tee["externalNetworkEgress"] = "sometimes"
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "external network egress") {
+		t.Fatalf("catalog with unknown Chutes egress policy was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	deployments := graph["deployments"].(map[string]any)
+	deployment := deployments["chutes-qwen3-235b-a22b-thinking-2507"].(map[string]any)
+	deployment["reasoningAvailability"] = "unsupported"
+	deployment["reasoningEfforts"] = []any{}
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "weakens required model reasoning") {
+		t.Fatalf("catalog that weakens required model reasoning was accepted: %v", err)
 	}
 }
 

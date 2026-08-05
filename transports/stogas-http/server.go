@@ -41,6 +41,7 @@ type Server struct {
 	catalogUpdater  *catalog.Updater
 	requests        *requestDrain
 	memory          *requestMemoryAdmission
+	startedAt       time.Time
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
@@ -95,6 +96,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		logger:         logger,
 		requests:       newRequestDrain(),
 		memory:         &requestMemoryAdmission{},
+		startedAt:      time.Now().UTC(),
 		runtime:        runtime,
 		secure:         secure,
 	}
@@ -141,7 +143,7 @@ func (s *Server) routes() error {
 	}
 	readinessRouter := router.New()
 	readinessRouter.GET("/ready", s.readiness)
-	readinessRouter.GET("/ready/details", s.readinessDetails)
+	readinessRouter.GET("/diagnostics/v1", s.diagnostics)
 	s.readinessServer = &fasthttp.Server{
 		Handler:               readinessRouter.Handler,
 		GetOnly:               true,

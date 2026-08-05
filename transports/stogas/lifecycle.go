@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -115,59 +114,47 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 		return err
 	}
 	state.Authorization = authorization
-	SeedBifrostModelParams(state.Resolution)
 	return nil
 }
 
-func ApplyUpstreamByok(
+// ApplyUpstreamCredentials installs the request-scoped provider credential.
+// PrepareProviderRequest has already fixed the provider body, so this function
+// must not mutate request fields.
+func ApplyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
-	request *schemas.BifrostRequest,
 ) error {
-	if ctx == nil || state == nil || state.Authorization == nil || request == nil {
+	if ctx == nil || state == nil || state.Authorization == nil || state.Resolution == nil {
 		return gatewaybilling.ErrByok
 	}
 	authorization := state.Authorization
 	managed := authorization.UpstreamByok == "stogas"
+	if managed && state.Resolution.Provider != catalog.ProviderChutes {
+		return gatewaybilling.ErrByokRequired
+	}
 	if !managed {
 		if authorization.UpstreamByok == "" || authorization.UpstreamByokSecret == "" {
 			return gatewaybilling.ErrByok
 		}
-		ctx.SetValue(schemas.BifrostContextKeyDirectKey, schemas.Key{
+		if state.Resolution.Provider != schemas.Azure && !validUpstreamAPIKey(authorization.UpstreamByokSecret) {
+			return gatewaybilling.ErrByok
+		}
+		directKey := schemas.Key{
 			ID:      authorization.UpstreamByok,
 			Name:    authorization.UpstreamByok,
 			Value:   *schemas.NewSecretVar(authorization.UpstreamByokSecret),
 			Models:  schemas.WhiteList{"*"},
 			Weight:  1,
 			Enabled: schemas.Ptr(true),
-		})
-	}
-
-	switch {
-	case request.ChatRequest != nil && request.ChatRequest.Params != nil:
-		request.ChatRequest.Params.User = nil
-		request.ChatRequest.Params.SafetyIdentifier = nil
-		if managed {
-			switch request.ChatRequest.Provider {
-			case schemas.OpenAI:
-				request.ChatRequest.Params.SafetyIdentifier = schemas.Ptr(authorization.UserID)
-			case schemas.Anthropic:
-				request.ChatRequest.Params.User = schemas.Ptr(authorization.UserID)
+		}
+		if state.Resolution.Provider == schemas.Azure {
+			var err error
+			directKey, err = azureDirectKey(authorization, state.Resolution)
+			if err != nil {
+				return err
 			}
 		}
-	case request.ResponsesRequest != nil && request.ResponsesRequest.Params != nil:
-		request.ResponsesRequest.Params.User = nil
-		request.ResponsesRequest.Params.SafetyIdentifier = nil
-		if managed {
-			switch request.ResponsesRequest.Provider {
-			case schemas.OpenAI:
-				request.ResponsesRequest.Params.SafetyIdentifier = schemas.Ptr(authorization.UserID)
-			case schemas.Anthropic:
-				request.ResponsesRequest.Params.User = schemas.Ptr(authorization.UserID)
-			}
-		}
-	default:
-		return catalog.ErrUnsupportedRequest
+		ctx.SetValue(schemas.BifrostContextKeyDirectKey, directKey)
 	}
 	return nil
 }
@@ -214,6 +201,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		ActualCostUSDAtoms:    state.FinalCostUSDAtoms,
 		Authorization:         state.Authorization,
 		Cancelled:             state.Cancelled,
+		ClientStoppedAt:       state.ClientStoppedAt,
 		CatalogDigest:         catalogIdentity.Digest,
 		Error:                 state.BifrostError,
 		Pricing:               pricingForState(state),
@@ -313,16 +301,4 @@ func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAut
 	}
 
 	return nil, authorizeErr
-}
-
-// SeedBifrostModelParams supplies Bifrost provider helpers with catalog-owned model limits.
-func SeedBifrostModelParams(resolution *catalog.ResolvedRequest) {
-	if resolution == nil || resolution.Model == "" || resolution.Deployment.MaxOutputTokens <= 0 {
-		return
-	}
-
-	maxOutputTokens := resolution.Deployment.MaxOutputTokens
-	params, _ := providerUtils.GetModelParams(resolution.Model)
-	params.MaxOutputTokens = &maxOutputTokens
-	providerUtils.SetModelParams(resolution.Model, params)
 }

@@ -4,11 +4,14 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const longContextThresholdTokens = billing.LongContextThresholdTokens
+
+const minimumPromptCacheWriteTokens = 1024
 
 func baseHoldEstimate(state *State) HoldEstimate {
 	if state == nil || state.Resolution == nil {
@@ -31,7 +34,7 @@ func baseHoldEstimate(state *State) HoldEstimate {
 			meters,
 			pricing,
 			inputTokenLimit,
-			openAICacheWriteHoldCopies(state),
+			openAICacheWriteHoldMeter(state),
 		)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
@@ -47,13 +50,26 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 	if state == nil {
 		return billing.ZeroChargeUSDAtoms
 	}
-	if state.Signals == nil {
+	if !hasMeasuredUsage(state.Signals) && len(extraMeters) == 0 {
 		state.FinalMeters = nil
 		return noUsageFinalPrice(state)
 	}
-	promptTokens := state.Signals.PromptTokens()
-	completionTokens := state.Signals.CompletionTokens()
-	reasoningTokens := state.Signals.ReasoningTokens()
+	promptTokens := 0
+	completionTokens := 0
+	reasoningTokens := 0
+	cachedInputTokens := 0
+	cacheWriteTokens := 0
+	cacheWrite5mTokens := 0
+	cacheWrite1hTokens := 0
+	if state.Signals != nil {
+		promptTokens = state.Signals.PromptTokens()
+		completionTokens = state.Signals.CompletionTokens()
+		reasoningTokens = state.Signals.ReasoningTokens()
+		cachedInputTokens = state.Signals.CachedInputTokens()
+		cacheWriteTokens = state.Signals.CacheWriteInputTokens()
+		cacheWrite5mTokens = state.Signals.CacheWrite5mInputTokens()
+		cacheWrite1hTokens = state.Signals.CacheWrite1hInputTokens()
+	}
 	if reasoningTokens < 0 {
 		reasoningTokens = 0
 	}
@@ -61,13 +77,25 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		reasoningTokens = completionTokens
 	}
 	outputTokens := completionTokens - reasoningTokens
-	cachedInputTokens := state.Signals.CachedInputTokens()
-	cacheWriteTokens := state.Signals.CacheWriteInputTokens()
-	cacheWrite5mTokens := state.Signals.CacheWrite5mInputTokens()
-	cacheWrite1hTokens := state.Signals.CacheWrite1hInputTokens()
-	inputTokens := promptTokens - cachedInputTokens - cacheWriteTokens - cacheWrite5mTokens - cacheWrite1hTokens
-	if inputTokens < 0 {
-		inputTokens = 0
+	if inferred := azureUnreportedCacheWriteTokens(
+		state,
+		promptTokens,
+		cachedInputTokens,
+		cacheWriteTokens,
+		cacheWrite5mTokens,
+		cacheWrite1hTokens,
+	); inferred > 0 {
+		cacheWriteTokens = inferred
+	}
+	inputTokens := 0
+	partitionedInputTokens, ok := addTokenCounts(
+		cachedInputTokens,
+		cacheWriteTokens,
+		cacheWrite5mTokens,
+		cacheWrite1hTokens,
+	)
+	if ok && partitionedInputTokens <= promptTokens {
+		inputTokens = promptTokens - partitionedInputTokens
 	}
 	rateMode := billing.TokenRateStandard
 	if promptTokens > longContextThresholdTokens {
@@ -92,40 +120,58 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 	return sumMeterAmounts(meters)
 }
 
+// Azure bills GPT-5.6 cache writes but currently exposes only cached reads in
+// request usage. Classify the unreported uncached portion conservatively only
+// at Microsoft's 1,024-token cache threshold. Explicit write usage takes
+// precedence if Azure adds it.
+func azureUnreportedCacheWriteTokens(
+	state *State,
+	promptTokens int,
+	cachedInputTokens int,
+	cacheWriteTokens int,
+	cacheWrite5mTokens int,
+	cacheWrite1hTokens int,
+) int {
+	if state == nil || state.Resolution == nil ||
+		state.Resolution.Provider != schemas.Azure ||
+		!strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") ||
+		promptTokens < minimumPromptCacheWriteTokens ||
+		cachedInputTokens < 0 || cachedInputTokens > promptTokens ||
+		cacheWriteTokens != 0 || cacheWrite5mTokens != 0 || cacheWrite1hTokens != 0 {
+		return 0
+	}
+	return promptTokens - cachedInputTokens
+}
+
 func appendInputTokenHoldCost(
 	meters []catalog.MeterEstimate,
 	pricing catalog.Pricing,
 	quantity int,
-	cacheWriteCopies int,
+	alternativeMeterKey string,
 ) []catalog.MeterEstimate {
-	meterKey := billing.MeterInputTokens
-	_, inputRate, hasInputRate := billing.PricingRate(pricing, meterKey, billing.TokenRateHighest)
-	_, cacheWriteRate, hasCacheWriteRate := billing.PricingRate(
-		pricing,
-		billing.MeterCacheWriteInputTokens,
-		billing.TokenRateHighest,
-	)
-	cacheWriteMoreExpensive := false
-	if cacheWriteCopies > 0 && hasCacheWriteRate {
-		cacheWriteTotalRate := new(big.Int).Mul(
-			cacheWriteRate,
-			big.NewInt(int64(cacheWriteCopies)),
-		)
-		cacheWriteMoreExpensive = !hasInputRate || cacheWriteTotalRate.Cmp(inputRate) > 0
-	}
-	if cacheWriteMoreExpensive {
-		meterKey = billing.MeterCacheWriteInputTokens
-		quantity *= cacheWriteCopies
-	}
+	meterKey := highestInputHoldMeter(pricing, alternativeMeterKey)
 	return billing.AppendTokenMeterCost(meters, pricing, meterKey, quantity, true, billing.TokenRateHighest)
 }
 
-func openAICacheWriteHoldCopies(state *State) int {
+func highestInputHoldMeter(pricing catalog.Pricing, alternativeMeterKey string) string {
+	meterKey := billing.MeterInputTokens
+	if alternativeMeterKey == "" || alternativeMeterKey == meterKey {
+		return meterKey
+	}
+	_, inputRate, hasInputRate := billing.PricingRate(pricing, meterKey, billing.TokenRateHighest)
+	_, alternativeRate, hasAlternativeRate := billing.PricingRate(pricing, alternativeMeterKey, billing.TokenRateHighest)
+	if hasAlternativeRate && (!hasInputRate || alternativeRate.Cmp(inputRate) > 0) {
+		return alternativeMeterKey
+	}
+	return meterKey
+}
+
+func openAICacheWriteHoldMeter(state *State) string {
 	if state == nil ||
 		state.Resolution == nil ||
-		state.Resolution.Provider != "openai" ||
+		(state.Resolution.Provider != schemas.OpenAI && state.Resolution.Provider != schemas.Azure) ||
 		!strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") {
-		return 0
+		return ""
 	}
 	raw := state.Resolution.RawBody()
 	breakpoints, err := validatePromptCacheBreakpoints(
@@ -133,7 +179,7 @@ func openAICacheWriteHoldCopies(state *State) int {
 		state.Resolution.Route,
 	)
 	if err != nil {
-		return 4
+		return billing.MeterCacheWriteInputTokens
 	}
 	mode := "implicit"
 	if options, ok := rawObject(raw["prompt_cache_options"]); ok {
@@ -141,10 +187,10 @@ func openAICacheWriteHoldCopies(state *State) int {
 			mode = configured
 		}
 	}
-	if mode == "explicit" {
-		return min(breakpoints, 4)
+	if mode == "explicit" && breakpoints == 0 {
+		return ""
 	}
-	return min(breakpoints+1, 4)
+	return billing.MeterCacheWriteInputTokens
 }
 
 func effectivePricingForState(state *State) catalog.Pricing {
@@ -207,11 +253,21 @@ func pricingDeploymentForState(state *State) catalog.Deployment {
 		return catalog.Deployment{}
 	}
 	deployment := state.Resolution.Deployment
-	signals, ok := state.Signals.(*StandardSignals)
-	if !ok || signals == nil || (signals.ActualServiceTier == nil && signals.ActualSpeed == "") {
+	actualTier := state.ActualServiceTier
+	actualSpeed := state.ActualSpeed
+	actualModel := state.ActualModel
+	if signals, ok := state.Signals.(*StandardSignals); ok && signals != nil {
+		if actualTier == nil {
+			actualTier = signals.ActualServiceTier
+		}
+		if actualSpeed == "" {
+			actualSpeed = signals.ActualSpeed
+		}
+	}
+	if actualTier == nil && actualSpeed == "" && actualModel == "" {
 		return deployment
 	}
-	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, signals.ActualServiceTier, signals.ActualSpeed)
+	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, actualTier, actualSpeed, actualModel)
 	if !ok {
 		return deployment
 	}

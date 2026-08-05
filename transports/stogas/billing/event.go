@@ -12,6 +12,7 @@ type EventInput struct {
 	ActualCostUSDAtoms    string
 	Authorization         *Authorization
 	Cancelled             bool
+	ClientStoppedAt       time.Time
 	CatalogDigest         string
 	Error                 *schemas.BifrostError
 	Pricing               map[string]any
@@ -53,6 +54,14 @@ func NewRequestEvent(input EventInput) RequestEvent {
 	if upstreamTimeMS > totalTimeMS {
 		upstreamTimeMS = totalTimeMS
 	}
+	var clientStopMS *uint32
+	if !input.ClientStoppedAt.IsZero() && !input.ClientStoppedAt.Before(startedAt) {
+		value := uint32Duration(input.ClientStoppedAt.Sub(startedAt))
+		if value > totalTimeMS {
+			value = totalTimeMS
+		}
+		clientStopMS = &value
+	}
 	actualCostUSDAtoms := input.ActualCostUSDAtoms
 	if actualCostUSDAtoms == "" {
 		actualCostUSDAtoms = ZeroChargeUSDAtoms
@@ -74,6 +83,7 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		StogasWorkspaceID:       authorization.WorkspaceID,
 		RequestType:             normalizeRequestType(input.RequestType),
 		Cancelled:               input.Cancelled,
+		ClientStopMS:            clientStopMS,
 		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
 		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), UpstreamByok: normalizedUpstreamByok(authorization)}},
 		StogasProcessingSuccess: true,
@@ -181,9 +191,13 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "network_error"
 	case statusCode >= 500:
 		return "provider_error"
+	case statusCode == 404:
+		// The catalog already resolved a known upstream model. A provider 404
+		// therefore means that the selected deployment is unavailable or drifted.
+		return "provider_error"
 	case looksLikeContentFilterError(text):
 		return "content_filter"
-	case statusCode == 400 || statusCode == 404 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
+	case statusCode == 400 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
 	case looksLikeRequestConversionError(text):
 		return "invalid_request"

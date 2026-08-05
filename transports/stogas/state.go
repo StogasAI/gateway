@@ -40,9 +40,13 @@ type State struct {
 	ProviderStartedAt     time.Time
 	ProviderCompletedAt   time.Time
 	ProviderFirstOutputMS *uint32
+	ClientStoppedAt       time.Time
 	Cancelled             bool
 	GatewayVersion        string
 	NodeID                string
+	ActualServiceTier     *schemas.BifrostServiceTier
+	ActualSpeed           string
+	ActualModel           string
 
 	ProviderResponseHeaders map[string]string
 }
@@ -80,6 +84,13 @@ func (s *State) MarkProviderCompleted() {
 		return
 	}
 	s.ProviderCompletedAt = time.Now()
+}
+
+func (s *State) MarkClientStopped() {
+	if s == nil || !s.ClientStoppedAt.IsZero() {
+		return
+	}
+	s.ClientStoppedAt = time.Now()
 }
 
 // ObserveProviderFirstOutput records the gateway-observed elapsed provider call

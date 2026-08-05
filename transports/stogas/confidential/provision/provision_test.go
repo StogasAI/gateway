@@ -55,7 +55,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 			t.Fatalf("heartbeat must not send legacy verifier JWTs: %#v", body)
 		}
 		reportData, ok := body["report_data"].(map[string]any)
-		if !ok || reportData["schema"] != reportdata.SchemaV3 {
+		if !ok || reportData["schema"] != reportdata.SchemaV1 {
 			t.Fatalf("report data not sent as structured JSON: %#v", body["report_data"])
 		}
 		if _, ok := body["catalog"]; ok {
@@ -154,10 +154,10 @@ func TestSubmitCertificateCSRPostsStrictControlContract(t *testing.T) {
 
 	client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 	result, err := client.SubmitCertificateCSR(context.Background(), CertificateCSRSubmission{
-		CSRDER:       []byte("csr-der"),
-		NodeID: strings.ToUpper(nodeID),
-		OrderID:      "order-1",
-		SigningKey:   signingKey,
+		CSRDER:     []byte("csr-der"),
+		NodeID:     strings.ToUpper(nodeID),
+		OrderID:    "order-1",
+		SigningKey: signingKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,12 +177,12 @@ func TestSendHeartbeatValidatesInlineSecretBundle(t *testing.T) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"certificate_instruction": nil,
-			"node_id":           nodeID,
+			"node_id":                 nodeID,
 			"ok":                      true,
 			"ready":                   false,
 			"ready_until":             nil,
 			"secrets": map[string]any{
-				"node_id":      nodeID,
+				"node_id":            nodeID,
 				"report_data_sha512": reportHash,
 				"schema":             SecretReleaseSchemaV1,
 				"secrets": []map[string]string{{

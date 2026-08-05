@@ -99,6 +99,28 @@ func TestConfigureTLSRequiresOnlyHybridPostQuantumKeyExchange(t *testing.T) {
 	}
 }
 
+func TestConfigureTLSCanRequireTLS13WithoutForcingHybridKeyExchange(t *testing.T) {
+	client := &fasthttp.Client{}
+	result := ConfigureTLS(
+		client,
+		schemas.NetworkConfig{RequireTLS13: true},
+		testLogger{},
+	)
+
+	if result != client || client.TLSConfig == nil {
+		t.Fatal("ConfigureTLS did not install the required TLS config")
+	}
+	if client.TLSConfig.MinVersion != tls.VersionTLS13 || client.TLSConfig.MaxVersion != tls.VersionTLS13 {
+		t.Fatalf("TLS versions = %x..%x, want TLS 1.3 only", client.TLSConfig.MinVersion, client.TLSConfig.MaxVersion)
+	}
+	if len(client.TLSConfig.CurvePreferences) != 0 {
+		t.Fatalf("TLS 1.3 policy unexpectedly forced curves %v", client.TLSConfig.CurvePreferences)
+	}
+	if client.TLSConfig.VerifyConnection != nil {
+		t.Fatal("TLS 1.3 policy unexpectedly installed a hybrid-only verifier")
+	}
+}
+
 func TestConfigureTLS_SetsInsecureSkipVerify(t *testing.T) {
 	client := &fasthttp.Client{}
 	logger := testLogger{}

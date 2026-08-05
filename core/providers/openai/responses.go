@@ -87,7 +87,7 @@ func ToOpenAIResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.B
 	}
 
 	// Canonical model for capability gating only; wire model is untouched.
-	capModel := schemas.ResolveCanonicalModel(ctx, bifrostReq.Model)
+	capModel := schemas.ResolveCanonicalModelForProvider(ctx, bifrostReq.Provider, bifrostReq.Model)
 
 	var messages []schemas.ResponsesMessage
 	// OpenAI models (except for gpt-oss) do not support reasoning content blocks, so we need to convert them to summaries, if there are any
@@ -311,7 +311,7 @@ func ToOpenAIResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.B
 			} else if req.ResponsesParameters.Reasoning.MaxTokens != nil {
 				// Estimate effort from max_tokens
 				maxTokens := *req.ResponsesParameters.Reasoning.MaxTokens
-				maxOutputTokens := utils.GetMaxOutputTokensOrDefault(req.Model, DefaultCompletionMaxTokens)
+				maxOutputTokens := utils.GetRequestMaxOutputTokensOrDefault(ctx, bifrostReq.Provider, req.Model, DefaultCompletionMaxTokens)
 				if req.ResponsesParameters.MaxOutputTokens != nil {
 					maxOutputTokens = *req.ResponsesParameters.MaxOutputTokens
 				}
