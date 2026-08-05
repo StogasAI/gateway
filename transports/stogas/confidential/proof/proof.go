@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	DomainV5       = "stogas.response-proof.v5"
+	DomainV1       = "stogas.response-proof.v1"
 	MaxObjectBytes = 8 * 1024
 )
 
@@ -226,7 +226,7 @@ func VerifyStreamingInput(
 func payloadForHashes(metadata Metadata, requestSHA256 string, responseSHA256 string) Payload {
 	metadata = cloneMetadata(metadata)
 	return Payload{
-		Schema:    DomainV5,
+		Schema:    DomainV1,
 		RequestID: metadata.RequestID,
 		NodeID:    metadata.NodeID,
 		Catalog:   metadata.Catalog,
@@ -318,8 +318,8 @@ func signingMessage(payload Payload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	message := make([]byte, 0, len(DomainV5)+1+len(bytes))
-	message = append(message, DomainV5...)
+	message := make([]byte, 0, len(DomainV1)+1+len(bytes))
+	message = append(message, DomainV1...)
 	message = append(message, 0)
 	return append(message, bytes...), nil
 }

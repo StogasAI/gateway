@@ -38,12 +38,14 @@ func validateCommonResponsesPolicy(state *State) error {
 		"fallbacks",
 		"previous_response_id",
 		"safety_identifier",
-		"store",
 		"user",
 	} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
+	}
+	if err := validateFalseOnlyBoolean(raw, "store"); err != nil {
+		return err
 	}
 	if err := validateJSONBool(raw, "stream"); err != nil {
 		return err
@@ -215,19 +217,43 @@ func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage)
 
 func validateResponsesMCPTool(rawTools json.RawMessage, selected schemas.ResponsesTool) error {
 	if selected.ResponsesToolMCP == nil {
-		return invalidRequest("mcp tools require server_label and server_url")
+		return invalidRequest("mcp tools require server_label and exactly one server_url or connector_id")
 	}
 	label := strings.TrimSpace(selected.ResponsesToolMCP.ServerLabel)
 	if label == "" || strings.ContainsAny(label, "\x00\r\n") || !utf8.ValidString(label) {
 		return invalidRequest("mcp tools require a non-empty server_label")
 	}
-	if selected.ResponsesToolMCP.ServerURL == nil {
-		return invalidRequest("mcp tools require server_url")
+	serverURL := ""
+	if selected.ResponsesToolMCP.ServerURL != nil {
+		serverURL = strings.TrimSpace(*selected.ResponsesToolMCP.ServerURL)
+		if serverURL == "" {
+			return invalidRequest("mcp server_url must be non-empty when provided")
+		}
+		if serverURL != *selected.ResponsesToolMCP.ServerURL {
+			return invalidRequest("mcp server_url must not contain leading or trailing whitespace")
+		}
 	}
-	endpoint := strings.TrimSpace(*selected.ResponsesToolMCP.ServerURL)
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return invalidRequest("mcp tools require an HTTPS server_url")
+	connectorID := ""
+	if selected.ResponsesToolMCP.ConnectorID != nil {
+		connectorID = strings.TrimSpace(*selected.ResponsesToolMCP.ConnectorID)
+		if connectorID == "" {
+			return invalidRequest("mcp connector_id must be non-empty when provided")
+		}
+		if connectorID != *selected.ResponsesToolMCP.ConnectorID {
+			return invalidRequest("mcp connector_id must not contain leading or trailing whitespace")
+		}
+	}
+	if (serverURL == "") == (connectorID == "") {
+		return invalidRequest("mcp tools require exactly one server_url or connector_id")
+	}
+	if serverURL != "" {
+		parsed, err := url.Parse(serverURL)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil {
+			return invalidRequest("mcp tools require an HTTPS server_url")
+		}
+	}
+	if connectorID != "" && (len(connectorID) > 128 || strings.ContainsAny(connectorID, "\x00\r\n") || !utf8.ValidString(connectorID)) {
+		return invalidRequest("mcp connector_id must be a non-empty string up to 128 bytes without control line breaks")
 	}
 	if selected.ResponsesToolMCP.Authorization != nil {
 		token := *selected.ResponsesToolMCP.Authorization
@@ -235,8 +261,15 @@ func validateResponsesMCPTool(rawTools json.RawMessage, selected schemas.Respons
 			return invalidRequest("mcp authorization must be a non-empty string up to 4096 bytes without control line breaks")
 		}
 	}
-	if err := validateResponsesMCPAllowedTools(selected.ResponsesToolMCP.AllowedTools); err != nil {
-		return err
+	if selected.ResponsesToolMCP.Headers != nil {
+		if err := validateResponsesMCPHeaders(*selected.ResponsesToolMCP.Headers); err != nil {
+			return err
+		}
+	}
+	if selected.ResponsesToolMCP.AllowedTools != nil {
+		if err := validateResponsesMCPAllowedTools(selected.ResponsesToolMCP.AllowedTools); err != nil {
+			return err
+		}
 	}
 
 	var rawList []map[string]json.RawMessage
@@ -254,20 +287,15 @@ func validateResponsesMCPTool(rawTools json.RawMessage, selected schemas.Respons
 		matchedRawTool = true
 		for name := range rawTool {
 			switch name {
-			case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "require_approval", "cache_control":
+			case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "connector_id", "headers", "require_approval", "cache_control":
 			default:
 				return invalidRequest("mcp." + name + " is not supported by Stogas API")
 			}
 		}
-		if _, ok := rawTool["allowed_tools"]; !ok {
-			return invalidRequest("mcp tools require allowed_tools")
-		}
-		var allowed schemas.ResponsesToolMCPAllowedTools
-		if err := sonic.Unmarshal(rawTool["allowed_tools"], &allowed); err != nil {
-			return invalidRequest("mcp allowed_tools must be a non-empty string array or narrowing filter")
-		}
-		if err := validateResponsesMCPAllowedTools(&allowed); err != nil {
-			return err
+		if allowedRaw, ok := rawTool["allowed_tools"]; ok {
+			if err := validateResponsesMCPAllowedToolsRaw(allowedRaw); err != nil {
+				return err
+			}
 		}
 	}
 	if !matchedRawTool {
@@ -276,20 +304,77 @@ func validateResponsesMCPTool(rawTools json.RawMessage, selected schemas.Respons
 	return nil
 }
 
+func validateResponsesMCPHeaders(headers map[string]string) error {
+	if len(headers) > maxMCPHeaders {
+		return invalidRequest("mcp headers must contain at most 32 entries")
+	}
+	for name, value := range headers {
+		if !validMCPHeaderName(name) {
+			return invalidRequest("mcp header names must be valid HTTP field names up to 128 bytes")
+		}
+		if len(value) > maxMCPHeaderValueBytes || strings.ContainsAny(value, "\x00\r\n") || !utf8.ValidString(value) {
+			return invalidRequest("mcp header values must be valid UTF-8 up to 4096 bytes without control line breaks")
+		}
+	}
+	return nil
+}
+
+func validMCPHeaderName(name string) bool {
+	if name == "" || len(name) > maxMCPHeaderNameBytes {
+		return false
+	}
+	for index := 0; index < len(name); index++ {
+		value := name[index]
+		if (value >= 'a' && value <= 'z') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= '0' && value <= '9') ||
+			strings.ContainsRune("!#$%&'*+-.^_`|~", rune(value)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func validateResponsesMCPAllowedTools(allowed *schemas.ResponsesToolMCPAllowedTools) error {
 	if allowed == nil {
-		return invalidRequest("mcp tools require allowed_tools")
+		return nil
 	}
-	if len(allowed.ToolNames) > 0 {
+	if allowed.ToolNames != nil && allowed.Filter != nil {
+		return invalidRequest("mcp allowed_tools must contain either a string array or a filter")
+	}
+	if allowed.ToolNames != nil {
 		return validateResponsesMCPToolNames(allowed.ToolNames)
 	}
 	if allowed.Filter == nil {
-		return invalidRequest("mcp allowed_tools must be a non-empty string array or narrowing filter")
-	}
-	if len(allowed.Filter.ToolNames) == 0 && (allowed.Filter.ReadOnly == nil || !*allowed.Filter.ReadOnly) {
-		return invalidRequest("mcp allowed_tools filter must narrow by tool_names or read_only=true")
+		return invalidRequest("mcp allowed_tools must be a string array or filter")
 	}
 	return validateResponsesMCPToolNames(allowed.Filter.ToolNames)
+}
+
+func validateResponsesMCPAllowedToolsRaw(raw json.RawMessage) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "null" {
+		return nil
+	}
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var filter map[string]json.RawMessage
+		if err := sonic.Unmarshal(raw, &filter); err != nil {
+			return invalidRequest("mcp allowed_tools must be a string array or filter")
+		}
+		for name := range filter {
+			switch name {
+			case "read_only", "tool_names":
+			default:
+				return invalidRequest("mcp allowed_tools." + name + " is not supported by Stogas API")
+			}
+		}
+	}
+	var allowed schemas.ResponsesToolMCPAllowedTools
+	if err := sonic.Unmarshal(raw, &allowed); err != nil {
+		return invalidRequest("mcp allowed_tools must be a string array or filter")
+	}
+	return validateResponsesMCPAllowedTools(&allowed)
 }
 
 func validateResponsesMCPToolNames(names []string) error {

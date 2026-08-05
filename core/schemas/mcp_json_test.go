@@ -129,7 +129,6 @@ func TestMCPClientConfigUnmarshalToolExecutionTimeoutNegativeString(t *testing.T
 	}
 }
 
-
 // TestMCPClientConfigMarshalToolSyncIntervalEmitsNanoseconds pins the wire unit of
 // tool_sync_interval. MarshalJSON overrides tool_execution_timeout into a duration
 // string but lets tool_sync_interval fall through to time.Duration's default

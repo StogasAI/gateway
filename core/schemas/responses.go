@@ -3143,10 +3143,10 @@ type ResponsesToolMCPAllowedTools struct {
 }
 
 func (at ResponsesToolMCPAllowedTools) MarshalJSON() ([]byte, error) {
-	if len(at.ToolNames) > 0 && at.Filter != nil {
+	if at.ToolNames != nil && at.Filter != nil {
 		return nil, fmt.Errorf("only one of ToolNames or Filter can be set")
 	}
-	if len(at.ToolNames) > 0 {
+	if at.ToolNames != nil {
 		return MarshalSorted(at.ToolNames)
 	}
 	if at.Filter != nil {
@@ -3158,10 +3158,15 @@ func (at ResponsesToolMCPAllowedTools) MarshalJSON() ([]byte, error) {
 func (at *ResponsesToolMCPAllowedTools) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if bytes.Equal(trimmed, []byte("null")) {
+		at.ToolNames = nil
+		at.Filter = nil
 		return nil
 	}
 	var toolNames []string
 	if err := Unmarshal(trimmed, &toolNames); err == nil {
+		if toolNames == nil {
+			toolNames = []string{}
+		}
 		at.ToolNames = toolNames
 		at.Filter = nil
 		return nil

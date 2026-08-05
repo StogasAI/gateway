@@ -5,9 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/bytedance/sonic"
-	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
-	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -17,6 +14,12 @@ import (
 
 func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
 	if s != nil && s.memory.pressured() {
+		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+		ctx.SetContentType("application/json")
+		_, _ = ctx.WriteString(`{"ok":false}`)
+		return
+	}
+	if s != nil && s.requests.diagnostics().Draining {
 		ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
 		ctx.SetContentType("application/json")
 		_, _ = ctx.WriteString(`{"ok":false}`)
@@ -46,12 +49,16 @@ func (s *Server) readiness(ctx *fasthttp.RequestCtx) {
 	_, _ = ctx.WriteString(`{"ok":false}`)
 }
 
-func (s *Server) readinessDetails(ctx *fasthttp.RequestCtx) {
+func (s *Server) diagnostics(ctx *fasthttp.RequestCtx) {
 	ready := true
 	reasons := []string{}
 	if s != nil && s.memory.pressured() {
 		ready = false
 		reasons = append(reasons, "memory_pressure")
+	}
+	if s != nil && s.requests.diagnostics().Draining {
+		ready = false
+		reasons = append(reasons, "draining")
 	}
 	if s != nil && s.secure != nil {
 		result := s.secure.Readiness()
@@ -65,14 +72,20 @@ func (s *Server) readinessDetails(ctx *fasthttp.RequestCtx) {
 		}
 	}
 	var catalogStatus catalog.UpdateStatus
+	var controlStatus any
 	if s != nil {
 		catalogStatus = s.catalogUpdater.Status()
+		if s.secure != nil {
+			controlStatus = s.secure.ControlDiagnostics()
+		}
 	}
 	s.writeJSON(ctx, fasthttp.StatusOK, map[string]any{
 		"catalog": catalogStatus,
-		"control": s.secure.ControlDiagnostics(),
+		"control": controlStatus,
+		"node":    s.privateDiagnostics(),
 		"ready":   ready,
 		"reasons": reasons,
+		"schema":  "stogas.node-diagnostics.v1",
 	})
 }
 
@@ -199,12 +212,12 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if err := dryRunProviderRequestMarshal(bifrostCtx, bifrostReq); err != nil {
+	if err := adapter.EstimateHold(state); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
 		return
 	}
-	if err := adapter.EstimateHold(state); err != nil {
+	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 		cancel()
 		s.writeCatalogError(ctx, err)
 		return
@@ -224,7 +237,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		s.writeBillingError(ctx, err)
 		return
 	}
-	if err := stogas.ApplyUpstreamByok(bifrostCtx, state, bifrostReq); err != nil {
+	if err := stogas.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
 		status := fasthttp.StatusServiceUnavailable
 		state.BifrostError = &schemas.BifrostError{
 			IsBifrostError: true,
@@ -243,7 +256,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stream, bifrostErr := s.runtime.Client().ChatCompletionStreamRequest(bifrostCtx, bifrostReq.ChatRequest)
 		if bifrostErr != nil {
 			state.MarkProviderCompleted()
-			_ = adapter.IngestResponse(state, nil, bifrostErr)
+			if err := adapter.IngestResponse(state, nil, bifrostErr); err != nil {
+				bifrostErr = stogas.UpstreamUsageProtocolError(err)
+				state.BifrostError = bifrostErr
+			}
 			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 			cancel()
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -260,7 +276,10 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		stream, bifrostErr := s.runtime.Client().ResponsesStreamRequest(bifrostCtx, bifrostReq.ResponsesRequest)
 		if bifrostErr != nil {
 			state.MarkProviderCompleted()
-			_ = adapter.IngestResponse(state, nil, bifrostErr)
+			if err := adapter.IngestResponse(state, nil, bifrostErr); err != nil {
+				bifrostErr = stogas.UpstreamUsageProtocolError(err)
+				state.BifrostError = bifrostErr
+			}
 			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 			cancel()
 			s.forwardProviderHeadersFromContext(ctx, bifrostCtx)
@@ -278,7 +297,13 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		response, bifrostErr := s.runtime.Client().ChatCompletionRequest(bifrostCtx, bifrostReq.ChatRequest)
 		state.MarkProviderCompleted()
 		stateResponse := &schemas.BifrostResponse{ChatResponse: response}
-		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
+		if err := adapter.IngestResponse(state, stateResponse, bifrostErr); err != nil {
+			bifrostErr = stogas.UpstreamUsageProtocolError(err)
+			state.BifrostError = bifrostErr
+		} else if bifrostErr == nil && !stogas.HasMeasuredUsage(state) {
+			bifrostErr = stogas.UpstreamUsageProtocolError(stogas.ErrProviderUsageMissing)
+			state.BifrostError = bifrostErr
+		}
 		_ = adapter.SanitizeResponse(state)
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
@@ -297,7 +322,13 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			response = response.WithDefaults()
 		}
 		stateResponse := &schemas.BifrostResponse{ResponsesResponse: response}
-		_ = adapter.IngestResponse(state, stateResponse, bifrostErr)
+		if err := adapter.IngestResponse(state, stateResponse, bifrostErr); err != nil {
+			bifrostErr = stogas.UpstreamUsageProtocolError(err)
+			state.BifrostError = bifrostErr
+		} else if bifrostErr == nil && !stogas.HasMeasuredUsage(state) {
+			bifrostErr = stogas.UpstreamUsageProtocolError(stogas.ErrProviderUsageMissing)
+			state.BifrostError = bifrostErr
+		}
 		_ = adapter.SanitizeResponse(state)
 		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 		if bifrostErr != nil {
@@ -312,66 +343,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		cancel()
 		s.writeCatalogError(ctx, catalog.ErrUnsupportedRequest)
 	}
-}
-
-func dryRunProviderRequestMarshal(ctx *schemas.BifrostContext, req *schemas.BifrostRequest) error {
-	if req == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	switch {
-	case req.ChatRequest != nil:
-		switch req.ChatRequest.Provider {
-		case schemas.OpenAI:
-			converted := openaiprovider.ToOpenAIChatRequest(ctx, req.ChatRequest)
-			if converted == nil {
-				return invalidProviderRequest()
-			}
-			if _, err := sonic.Marshal(converted); err != nil {
-				return invalidProviderRequest()
-			}
-		case schemas.Anthropic:
-			converted, err := anthropicprovider.ToAnthropicChatRequest(ctx, req.ChatRequest)
-			if err != nil || converted == nil {
-				return invalidProviderRequest()
-			}
-			if _, err := sonic.Marshal(converted); err != nil {
-				return invalidProviderRequest()
-			}
-		default:
-			if _, err := sonic.Marshal(req.ChatRequest); err != nil {
-				return invalidProviderRequest()
-			}
-		}
-	case req.ResponsesRequest != nil:
-		switch req.ResponsesRequest.Provider {
-		case schemas.OpenAI:
-			converted := openaiprovider.ToOpenAIResponsesRequest(ctx, req.ResponsesRequest)
-			if converted == nil {
-				return invalidProviderRequest()
-			}
-			if _, err := sonic.Marshal(converted); err != nil {
-				return invalidProviderRequest()
-			}
-		case schemas.Anthropic:
-			if _, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, req.ResponsesRequest, anthropicprovider.AnthropicRequestBuildConfig{
-				Provider:    schemas.Anthropic,
-				IsStreaming: req.RequestType == schemas.ResponsesStreamRequest,
-			}); bifrostErr != nil {
-				return invalidProviderRequest()
-			}
-		default:
-			if _, err := sonic.Marshal(req.ResponsesRequest); err != nil {
-				return invalidProviderRequest()
-			}
-		}
-	default:
-		return catalog.ErrUnsupportedRequest
-	}
-	return nil
-}
-
-func invalidProviderRequest() error {
-	return catalog.APIError{StatusCode: fasthttp.StatusBadRequest, Type: catalog.ErrorTypeInvalidRequest, Message: "Invalid request for selected provider"}
 }
 
 func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, sendDone bool, includeEventName bool, cancel context.CancelFunc, completion ...func()) {
@@ -433,6 +404,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				clientConnected = false
 				if state != nil {
 					state.Cancelled = true
+					state.MarkClientStopped()
 				}
 				clientClosed = nil
 				continue
@@ -452,6 +424,17 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 			case next, ok := <-stream:
 				if !ok {
 					state.MarkProviderCompleted()
+					if state != nil && state.Adapter != nil && state.BifrostError == nil && !stogas.HasMeasuredUsage(state) {
+						bifrostErr := stogas.UpstreamUsageProtocolError(stogas.ErrProviderUsageMissing)
+						state.BifrostError = bifrostErr
+						if clientConnected {
+							encoded, err := marshalPayload(bifrostErrorPayload(bifrostErr))
+							if err == nil {
+								_ = reader.sendEvent("", encoded)
+							}
+						}
+						return
+					}
 					if !clientConnected {
 						return
 					}
@@ -494,7 +477,18 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				continue
 			}
 			if state != nil && state.Adapter != nil {
-				_ = state.Adapter.IngestChunk(state, chunk)
+				if err := state.Adapter.IngestChunk(state, chunk); err != nil {
+					state.MarkProviderCompleted()
+					bifrostErr := stogas.UpstreamUsageProtocolError(err)
+					state.BifrostError = bifrostErr
+					if clientConnected {
+						encoded, encodeErr := marshalPayload(bifrostErrorPayload(bifrostErr))
+						if encodeErr == nil {
+							_ = reader.sendEvent("", encoded)
+						}
+					}
+					return
+				}
 			}
 
 			if chunk.BifrostError != nil {

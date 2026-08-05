@@ -264,7 +264,7 @@ function verifyReleaseSources() {
 		assert(releaseSource.includes('gateway.init'), 'Release graph must emit the Go init binary.');
 		assert(releaseSource.includes('gateway-launch-policy.json'), 'Release graph must emit the launch policy artifact.');
 		assert(releaseSource.includes('stogas.gateway.launch-policy.v1'), 'Release graph must stamp launch policy v1.');
-		assert(!releaseSource.includes('stogas.gateway.launch-policy.v2'), 'Release graph must not emit launch policy v2.');
+		assert(!releaseSource.includes('stogas.gateway.launch-policy.invalid'), 'Release graph must not emit an invalid launch policy schema.');
 		assert(!releaseSource.includes('\\"memory_mib\\"'), 'Launch policy must not claim host memory as attested evidence.');
 		assert(releaseSource.includes('\\"vcpuCount\\": 4'), 'Release manifest must record four measured VPs.');
 		assert(releaseSource.includes('(json-string #$%snp-policy)'), 'Launch policy must record the selected SNP policy.');

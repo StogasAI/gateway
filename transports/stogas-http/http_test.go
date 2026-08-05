@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -193,7 +194,7 @@ func TestInferenceAttemptsWorkWhenPrivateReadinessIsUnhealthy(t *testing.T) {
 	}
 }
 
-func TestPrivateReadinessDetailsExposeActionableReasons(t *testing.T) {
+func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	server := &Server{
 		config: stogas.Config{MaxRequestBodyMiB: 1},
 		secure: &confidentialruntime.Runtime{EntropyReady: true},
@@ -203,17 +204,19 @@ func TestPrivateReadinessDetailsExposeActionableReasons(t *testing.T) {
 	}
 	ctx := &fasthttp.RequestCtx{}
 	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
-	ctx.Request.SetRequestURI("/ready/details")
+	ctx.Request.SetRequestURI("/diagnostics/v1")
 
 	server.readinessServer.Handler(ctx)
 
 	if ctx.Response.StatusCode() != fasthttp.StatusOK {
-		t.Fatalf("expected 200 readiness details, got %d", ctx.Response.StatusCode())
+		t.Fatalf("expected 200 diagnostics, got %d", ctx.Response.StatusCode())
 	}
 	var payload struct {
 		Control *confidentialruntime.ControlDiagnostics `json:"control"`
+		Node    privateNodeDiagnostics                  `json:"node"`
 		Ready   bool                                    `json:"ready"`
 		Reasons []string                                `json:"reasons"`
+		Schema  string                                  `json:"schema"`
 	}
 	if err := json.Unmarshal(ctx.Response.Body(), &payload); err != nil {
 		t.Fatalf("decode readiness details: %v", err)
@@ -221,8 +224,14 @@ func TestPrivateReadinessDetailsExposeActionableReasons(t *testing.T) {
 	if payload.Ready || len(payload.Reasons) == 0 {
 		t.Fatalf("expected actionable non-ready reasons, got %#v", payload)
 	}
+	if payload.Schema != "stogas.node-diagnostics.v1" {
+		t.Fatalf("unexpected diagnostics schema %q", payload.Schema)
+	}
 	if payload.Control != nil {
 		t.Fatalf("runtime without a Control loop should report null diagnostics, got %#v", payload.Control)
+	}
+	if payload.Node.GeneratedAt.IsZero() || payload.Node.Process.NumCPU < 1 || payload.Node.Process.GOMAXPROCS < 1 {
+		t.Fatalf("private node diagnostics are incomplete: %#v", payload.Node)
 	}
 }
 
@@ -241,10 +250,10 @@ func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 	}
 	publicDetails := &fasthttp.RequestCtx{}
 	publicDetails.Request.Header.SetMethod(fasthttp.MethodGet)
-	publicDetails.Request.SetRequestURI("/ready/details")
+	publicDetails.Request.SetRequestURI("/diagnostics/v1")
 	server.server.Handler(publicDetails)
 	if publicDetails.Response.StatusCode() != fasthttp.StatusNotFound {
-		t.Fatalf("public GET /ready/details status = %d, want 404", publicDetails.Response.StatusCode())
+		t.Fatalf("public GET /diagnostics/v1 status = %d, want 404", publicDetails.Response.StatusCode())
 	}
 
 	for _, request := range []struct {
@@ -1272,7 +1281,7 @@ func TestServerConnectionPolicy(t *testing.T) {
 	}
 }
 
-func TestDryRunProviderRequestMarshalCoversPublicProvidersAndRoutes(t *testing.T) {
+func TestPrepareProviderRequestCoversPublicProvidersAndRoutes(t *testing.T) {
 	text := "hello"
 	maxTokens := 16
 	chatContent := &schemas.ChatMessageContent{ContentStr: &text}
@@ -1287,6 +1296,21 @@ func TestDryRunProviderRequestMarshalCoversPublicProvidersAndRoutes(t *testing.T
 			name: "openai chat completions",
 			req: &schemas.BifrostRequest{
 				RequestType: schemas.ChatCompletionRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.OpenAI,
+					Model:    "gpt-5-nano",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "openai chat completions stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionStreamRequest,
 				ChatRequest: &schemas.BifrostChatRequest{
 					Provider: schemas.OpenAI,
 					Model:    "gpt-5-nano",
@@ -1314,9 +1338,99 @@ func TestDryRunProviderRequestMarshalCoversPublicProvidersAndRoutes(t *testing.T
 			},
 		},
 		{
+			name: "anthropic chat completions stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionStreamRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.Anthropic,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "azure chat completions",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.Azure,
+					Model:    "gpt-5.6-terra",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "azure chat completions stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionStreamRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: schemas.Azure,
+					Model:    "gpt-5.6-terra",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "chutes chat completions",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: catalog.ProviderChutes,
+					Model:    "deepseek-ai/DeepSeek-V3.2",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "chutes chat completions stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ChatCompletionStreamRequest,
+				ChatRequest: &schemas.BifrostChatRequest{
+					Provider: catalog.ProviderChutes,
+					Model:    "deepseek-ai/DeepSeek-V3.2",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: chatContent,
+					}},
+					Params: &schemas.ChatParameters{MaxCompletionTokens: &maxTokens},
+				},
+			},
+		},
+		{
 			name: "openai responses",
 			req: &schemas.BifrostRequest{
 				RequestType: schemas.ResponsesRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.OpenAI,
+					Model:    "gpt-5-nano",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "openai responses stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesStreamRequest,
 				ResponsesRequest: &schemas.BifrostResponsesRequest{
 					Provider: schemas.OpenAI,
 					Model:    "gpt-5-nano",
@@ -1343,15 +1457,97 @@ func TestDryRunProviderRequestMarshalCoversPublicProvidersAndRoutes(t *testing.T
 				},
 			},
 		},
+		{
+			name: "anthropic responses stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesStreamRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.Anthropic,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "azure responses",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.Azure,
+					Model:    "gpt-5.6-terra",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
+		{
+			name: "azure responses stream",
+			req: &schemas.BifrostRequest{
+				RequestType: schemas.ResponsesStreamRequest,
+				ResponsesRequest: &schemas.BifrostResponsesRequest{
+					Provider: schemas.Azure,
+					Model:    "gpt-5.6-terra",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &responseRole,
+						Content: responseContent,
+					}},
+					Params: &schemas.ResponsesParameters{MaxOutputTokens: &maxTokens},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 			defer cancel()
+			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, tt.req.RequestType)
+			provider, model, _ := tt.req.GetRequestFields()
+			state := &stogas.State{Resolution: &catalog.ResolvedRequest{
+				Provider:    provider,
+				Model:       model,
+				RequestType: tt.req.RequestType,
+				Deployment:  catalog.Deployment{},
+			}}
 
-			if err := dryRunProviderRequestMarshal(bifrostCtx, tt.req); err != nil {
-				t.Fatalf("dryRunProviderRequestMarshal returned error: %v", err)
+			if err := stogas.PrepareProviderRequest(bifrostCtx, state, tt.req); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+			}
+			var body []byte
+			if tt.req.ChatRequest != nil {
+				body, _ = providerutils.CheckAndGetPreparedRequestBody(bifrostCtx, tt.req.ChatRequest)
+			} else {
+				body, _ = providerutils.CheckAndGetPreparedRequestBody(bifrostCtx, tt.req.ResponsesRequest)
+			}
+			if !json.Valid(body) {
+				t.Fatalf("prepared body is not valid JSON: %q", body)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode prepared body: %v", err)
+			}
+			streaming := tt.req.RequestType == schemas.ChatCompletionStreamRequest || tt.req.RequestType == schemas.ResponsesStreamRequest
+			if streaming && payload["stream"] != true {
+				t.Fatalf("stream = %#v, want true", payload["stream"])
+			}
+			if !streaming && payload["stream"] == true {
+				t.Fatal("unary prepared body enabled streaming")
+			}
+			if streaming && tt.req.ChatRequest != nil && provider != schemas.Anthropic {
+				streamOptions, ok := payload["stream_options"].(map[string]any)
+				if !ok || streamOptions["include_usage"] != true {
+					t.Fatalf("stream_options = %#v, want include_usage=true", payload["stream_options"])
+				}
+			}
+			if (provider == schemas.OpenAI || provider == schemas.Azure) && payload["store"] != false {
+				t.Fatalf("%s store = %#v, want false", provider, payload["store"])
 			}
 		})
 	}
@@ -1392,6 +1588,78 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	}
 	if strings.Contains(body, "extra_fields") {
 		t.Fatalf("streamed public payload leaked extra_fields: %q", body)
+	}
+}
+
+func TestWriteSSEStreamFailsClosedWithoutTerminalTokenUsage(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{
+		Adapter:    stogas.DefaultAdapter{},
+		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+	}
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer ctx.Response.CloseBodyStream()
+
+	go func() {
+		content := "hello"
+		stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
+			ID:     "chatcmpl_missing_usage",
+			Object: "chat.completion.chunk",
+			Choices: []schemas.BifrostResponseChoice{{
+				ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+					Delta: &schemas.ChatStreamResponseChoiceDelta{Content: &content},
+				},
+			}},
+		}}
+		close(stream)
+	}()
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	if strings.Contains(body, "data: [DONE]\n\n") {
+		t.Fatalf("stream without token usage emitted a success terminator: %q", body)
+	}
+	payload := requireSSEErrorPayload(t, body)
+	if payload["type"] != "gateway_error" || payload["message"] != "Upstream provider error" {
+		t.Fatalf("unexpected missing-usage stream error: %#v in %q", payload, body)
+	}
+	if state.BifrostError == nil || state.BifrostError.Error == nil || state.BifrostError.Error.Code == nil ||
+		*state.BifrostError.Error.Code != "upstream_usage_missing" {
+		t.Fatalf("missing usage was not retained for billing diagnostics: %#v", state.BifrostError)
+	}
+}
+
+func TestWriteSSEStreamRejectsMalformedUsageBeforeSuccessTermination(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{
+		Adapter:    stogas.DefaultAdapter{},
+		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+	}
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer ctx.Response.CloseBodyStream()
+	go func() {
+		stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
+			ID:    "chatcmpl_invalid_usage",
+			Usage: &schemas.BifrostLLMUsage{PromptTokens: -1},
+		}}
+		close(stream)
+	}()
+
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	if strings.Contains(body, "data: [DONE]\n\n") || strings.Contains(body, "chatcmpl_invalid_usage") {
+		t.Fatalf("malformed usage reached the client as success: %q", body)
+	}
+	_ = requireSSEErrorPayload(t, body)
+	if state.BifrostError == nil || state.BifrostError.Error == nil || state.BifrostError.Error.Code == nil ||
+		*state.BifrostError.Error.Code != "upstream_usage_invalid" {
+		t.Fatalf("malformed usage was not retained for diagnostics: %#v", state.BifrostError)
 	}
 }
 
@@ -1476,7 +1744,7 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := &stogas.State{Adapter: stogas.DefaultAdapter{}}
+	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, StartedAt: time.Now()}
 	cancelled := make(chan struct{})
 	var once sync.Once
 
@@ -1497,6 +1765,9 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	}
 	if !state.Cancelled {
 		t.Fatal("client stream closure must be recorded as cancellation")
+	}
+	if state.ClientStoppedAt.IsZero() || state.ClientStoppedAt.Before(state.StartedAt) {
+		t.Fatalf("client stream closure time was not recorded: %#v", state.ClientStoppedAt)
 	}
 
 	select {

@@ -37,7 +37,7 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 	}
 
 	// Canonical model for capability gating only; wire model (openaiReq.Model) is untouched.
-	capModel := schemas.ResolveCanonicalModel(ctx, bifrostReq.Model)
+	capModel := schemas.ResolveCanonicalModelForProvider(ctx, bifrostReq.Provider, bifrostReq.Model)
 
 	if bifrostReq.Params != nil {
 		openaiReq.ChatParameters = *bifrostReq.Params
@@ -65,27 +65,27 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 
 	switch bifrostReq.Provider {
 	case schemas.OpenAI, schemas.Azure:
-		openaiReq.normalizeReasoningEffort(capModel)
+		openaiReq.normalizeReasoningEffort(ctx, bifrostReq.Provider, capModel)
 		return openaiReq
 	case schemas.Cerebras, schemas.DeepSeek, schemas.Wafer:
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		openaiReq.stripReasoningDetails()
 		return openaiReq
 	case schemas.XAI:
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		openaiReq.applyXAICompatibility(capModel)
 		return openaiReq
 	case schemas.Gemini:
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		// Removing extra parameters that are not supported by Gemini
 		openaiReq.ServiceTier = nil
 		return openaiReq
 	case schemas.Mistral:
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		openaiReq.applyMistralCompatibility()
 		return openaiReq
 	case schemas.Vertex:
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 
 		// Apply Mistral-specific transformations for Vertex Mistral models
 		if schemas.IsMistralModel(bifrostReq.Model) {
@@ -108,7 +108,7 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 		}
 		// Fireworks supports predicted outputs; save before the filter strips them.
 		prediction := openaiReq.ChatParameters.Prediction
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		openaiReq.ChatParameters.Prediction = prediction
 		return openaiReq
 	default:
@@ -116,16 +116,16 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 		if isCustomProvider, ok := ctx.Value(schemas.BifrostContextKeyIsCustomProvider).(bool); ok && isCustomProvider {
 			return openaiReq
 		}
-		openaiReq.filterOpenAISpecificParameters(capModel)
+		openaiReq.filterOpenAISpecificParameters(ctx, bifrostReq.Provider, capModel)
 		return openaiReq
 	}
 }
 
 // Filter OpenAI Specific Parameters
-func (req *OpenAIChatRequest) filterOpenAISpecificParameters(capModel string) {
+func (req *OpenAIChatRequest) filterOpenAISpecificParameters(ctx *schemas.BifrostContext, provider schemas.ModelProvider, capModel string) {
 	// Handle reasoning parameter: OpenAI uses effort-based reasoning
 	// Priority: effort (native) > max_tokens (estimated)
-	req.normalizeReasoningEffort(capModel)
+	req.normalizeReasoningEffort(ctx, provider, capModel)
 
 	if req.ChatParameters.Prediction != nil {
 		req.ChatParameters.Prediction = nil
@@ -150,7 +150,7 @@ func (req *OpenAIChatRequest) filterOpenAISpecificParameters(capModel string) {
 	}
 }
 
-func (req *OpenAIChatRequest) normalizeReasoningEffort(capModel string) {
+func (req *OpenAIChatRequest) normalizeReasoningEffort(ctx *schemas.BifrostContext, provider schemas.ModelProvider, capModel string) {
 	if req.ChatParameters.Reasoning != nil {
 		reasoningCopy := *req.ChatParameters.Reasoning
 		req.ChatParameters.Reasoning = &reasoningCopy
@@ -163,7 +163,7 @@ func (req *OpenAIChatRequest) normalizeReasoningEffort(capModel string) {
 		} else if req.ChatParameters.Reasoning.MaxTokens != nil {
 			// Estimate effort from max_tokens
 			maxTokens := *req.ChatParameters.Reasoning.MaxTokens
-			maxCompletionTokens := utils.GetMaxOutputTokensOrDefault(req.Model, DefaultCompletionMaxTokens)
+			maxCompletionTokens := utils.GetRequestMaxOutputTokensOrDefault(ctx, provider, req.Model, DefaultCompletionMaxTokens)
 			if req.ChatParameters.MaxCompletionTokens != nil {
 				maxCompletionTokens = *req.ChatParameters.MaxCompletionTokens
 			}

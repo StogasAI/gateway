@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,7 @@ var (
 	ErrAPIKeyRateLimit     = errors.New("API key rate limit exceeded")
 	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
 	ErrByok                = errors.New("BYOK key is unavailable")
+	ErrByokRequired        = errors.New("A BYOK key is required for this provider")
 	ErrDashboardKeyDenied  = errors.New("API key is not available to this dashboard session")
 	ErrGatewayUnavailable  = errors.New("Gateway billing database unavailable")
 	ErrAuthorizationAbsent = errors.New("Authorization not found")
@@ -137,11 +139,18 @@ type Service struct {
 	retryMaxDelay           time.Duration
 	retryWindow             time.Duration
 	retryWG                 sync.WaitGroup
+	retryActive             atomic.Int64
 	settleFunc              func(context.Context, *Authorization, string, string, string, bool) error
 	tinybird                *TinybirdClient
 	apiKeyPepper            string
 	inferenceTokenPublicKey ed25519.PublicKey
 	byok                    *byokDecryptor
+}
+
+type DiagnosticsSnapshot struct {
+	Database          *DatabaseDiagnostics `json:"database,omitempty"`
+	SettlementRetries int64                `json:"settlementRetries"`
+	Tinybird          *TinybirdDiagnostics `json:"tinybird,omitempty"`
 }
 
 type billingError struct {
@@ -214,6 +223,17 @@ func (s *Service) ProbeDatabase(ctx context.Context) error {
 		return fmt.Errorf("gateway database is unavailable")
 	}
 	return s.db.Ping(ctx)
+}
+
+func (s *Service) Diagnostics() DiagnosticsSnapshot {
+	if s == nil {
+		return DiagnosticsSnapshot{}
+	}
+	return DiagnosticsSnapshot{
+		Database:          s.db.Diagnostics(),
+		SettlementRetries: s.retryActive.Load(),
+		Tinybird:          s.tinybird.Diagnostics(),
+	}
 }
 
 func (s *Service) ValidateAPIKeyFormat(rawAPIKey string) error {
@@ -461,6 +481,8 @@ func authorizationResultError(result string) error {
 		return &billingError{err: ErrAPIKeyDisabled, statusCode: 403}
 	case "byok_disabled":
 		return &billingError{err: ErrByok, statusCode: 503}
+	case "byok_required":
+		return &billingError{err: ErrByokRequired, statusCode: 400}
 	case "key_expired":
 		return &billingError{err: ErrAPIKeyExpired, statusCode: 403}
 	case "dashboard_forbidden":
@@ -513,8 +535,10 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 
 	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost, payload, writeOutbox); err != nil {
 		s.retryWG.Add(1)
+		s.retryActive.Add(1)
 		go func() {
 			defer s.retryWG.Done()
+			defer s.retryActive.Add(-1)
 			s.retrySettle(authorization, paramsHash, actualCost, payload, event, writeOutbox)
 		}()
 		return nil

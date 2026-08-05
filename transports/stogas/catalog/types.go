@@ -8,8 +8,10 @@ import (
 type Route string
 
 const (
-	RouteChat      Route = "chat-completions"
-	RouteResponses Route = "responses"
+	RouteChat      Route                 = "chat-completions"
+	RouteResponses Route                 = "responses"
+	ProviderChutes schemas.ModelProvider = "chutes"
+	ProviderAzure  schemas.ModelProvider = schemas.Azure
 
 	canonicalAuthHeader = "authorization"
 )
@@ -20,28 +22,42 @@ type Identity struct {
 }
 
 type Deployment struct {
-	ID                  string
-	ModelID             string
-	Upstream            Upstream
-	ContextWindowTokens int
-	ImpliedServiceTier  *schemas.BifrostServiceTier
-	MaxOutputTokens     int
-	Pricing             Pricing
-	RouteIDs            []string
-	ReasoningEfforts    []string
-	ReasoningSupported  bool
-	snapshot            *snapshot
+	ID                    string
+	ModelID               string
+	Upstream              Upstream
+	Capabilities          Capabilities
+	ContextWindowTokens   int
+	ImpliedServiceTier    *schemas.BifrostServiceTier
+	MaxOutputTokens       int
+	Pricing               Pricing
+	RouteIDs              []string
+	ReasoningAvailability string
+	ReasoningEfforts      []string
+	ReasoningMaxTokens    *ReasoningMaxTokens
+	ReasoningSupported    bool
+	TEE                   *TEE
+	snapshot              *snapshot
+}
+
+type TEE struct {
+	ExternalNetworkEgress string `json:"externalNetworkEgress"`
+	Mechanism             string `json:"mechanism"`
+	Status                string `json:"status"`
 }
 
 type Upstream struct {
-	Model        string
-	FixedRequest UpstreamFixedRequest
+	Model         string
+	ChuteID       string
+	GPUCount      int
+	InferenceGeo  string
+	ReasoningMode string
+	ServiceTier   string
+	Speed         string
 }
 
-type UpstreamFixedRequest struct {
-	InferenceGeo string
-	ServiceTier  string
-	Speed        string
+type ReasoningMaxTokens struct {
+	Maximum int `json:"maximum"`
+	Minimum int `json:"minimum"`
 }
 
 type Pricing = billing.Pricing
@@ -77,26 +93,32 @@ type compiledAuthor struct {
 }
 
 type compiledDeployment struct {
-	Aliases          []string             `json:"aliases"`
-	Capabilities     compiledCapabilities `json:"capabilities"`
-	Default          bool                 `json:"default"`
-	Limits           compiledLimits       `json:"limits"`
-	ModelID          string               `json:"modelId"`
-	Pricing          Pricing              `json:"pricing"`
-	ReasoningEfforts []string             `json:"reasoningEfforts"`
-	DeprecationDate  *string              `json:"deprecationDate"`
-	RouteIDs         []string             `json:"routeIds"`
-	Upstream         compiledUpstream     `json:"upstream"`
+	Aliases               []string            `json:"aliases"`
+	Capabilities          Capabilities        `json:"capabilities"`
+	ContextWindowTokens   int                 `json:"contextWindowTokens"`
+	InputModalities       []string            `json:"inputModalities"`
+	MaxOutputTokens       int                 `json:"maxOutputTokens"`
+	ModelID               string              `json:"modelId"`
+	OutputModalities      []string            `json:"outputModalities"`
+	Pricing               Pricing             `json:"pricing"`
+	ReasoningAvailability string              `json:"reasoningAvailability"`
+	ReasoningEfforts      []string            `json:"reasoningEfforts"`
+	ReasoningMaxTokens    *ReasoningMaxTokens `json:"reasoningMaxTokens"`
+	DeprecationDate       *string             `json:"deprecationDate"`
+	RouteIDs              []string            `json:"routeIds"`
+	TEE                   *TEE                `json:"tee,omitempty"`
+	Upstream              compiledUpstream    `json:"upstream"`
 }
 
-type compiledCapabilities struct {
+type Capabilities struct {
 	Cancellation            bool     `json:"cancellation"`
 	FunctionCalling         bool     `json:"functionCalling"`
 	InputModalities         []string `json:"inputModalities"`
 	OutputModalities        []string `json:"outputModalities"`
 	ParallelFunctionCalling bool     `json:"parallelFunctionCalling"`
 	PDFInput                bool     `json:"pdfInput"`
-	PromptCaching           bool     `json:"promptCaching"`
+	ImplicitPromptCaching   bool     `json:"implicitPromptCaching"`
+	ExplicitPromptCaching   bool     `json:"explicitPromptCaching"`
 	Streaming               bool     `json:"streaming"`
 	StructuredOutputs       bool     `json:"structuredOutputs"`
 	SystemMessages          bool     `json:"systemMessages"`
@@ -105,32 +127,31 @@ type compiledCapabilities struct {
 	WebSearch               bool     `json:"webSearch"`
 }
 
-type compiledLimits struct {
-	ContextTokens int `json:"contextTokens"`
-	OutputTokens  int `json:"outputTokens"`
-}
-
 type compiledUpstream struct {
-	Model        string                       `json:"model"`
-	FixedRequest compiledUpstreamFixedRequest `json:"fixedRequest"`
-}
-
-type compiledUpstreamFixedRequest struct {
-	InferenceGeo string `json:"inference_geo,omitempty"`
-	ServiceTier  string `json:"service_tier,omitempty"`
-	Speed        string `json:"speed,omitempty"`
+	Model         string `json:"model"`
+	ChuteID       string `json:"chuteId,omitempty"`
+	GPUCount      int    `json:"gpuCount,omitempty"`
+	InferenceGeo  string `json:"inferenceGeo,omitempty"`
+	ReasoningMode string `json:"reasoningMode,omitempty"`
+	ServiceTier   string `json:"serviceTier,omitempty"`
+	Speed         string `json:"speed,omitempty"`
 }
 
 type compiledModel struct {
-	Aliases     []string `json:"aliases"`
-	AuthorID    string   `json:"authorId"`
-	Name        string   `json:"name"`
-	ReleaseDate string   `json:"releaseDate"`
+	Aliases               []string            `json:"aliases"`
+	AuthorID              string              `json:"authorId"`
+	MaxOutputTokens       int                 `json:"maxOutputTokens"`
+	Name                  string              `json:"name"`
+	ReasoningAvailability string              `json:"reasoningAvailability"`
+	ReasoningEfforts      []string            `json:"reasoningEfforts"`
+	ReasoningMaxTokens    *ReasoningMaxTokens `json:"reasoningMaxTokens"`
+	ReleaseDate           string              `json:"releaseDate"`
 }
 
 type compiledProvider struct {
-	Aliases []string `json:"aliases"`
-	Name    string   `json:"name"`
+	Aliases         []string `json:"aliases"`
+	CredentialModes []string `json:"credentialModes"`
+	Name            string   `json:"name"`
 }
 
 type compiledRoute struct {

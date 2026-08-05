@@ -28,7 +28,7 @@ const (
 	manifestSizeLimit   = 64 * 1024
 )
 
-var catalogSignatureDomain = []byte("stogas catalog release v3\n")
+var catalogSignatureDomain = []byte("stogas catalog release v1\n")
 
 //go:embed trust/catalog-signing-keys.json
 var trustedKeyJSON []byte
@@ -458,7 +458,7 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	if err := decodeStrict(data, &envelope); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode signed catalog manifest: %w", err)
 	}
-	if envelope.Schema != "stogas.catalog.signed.v3" {
+	if envelope.Schema != "stogas.catalog.signed.v1" {
 		return releaseManifest{}, fmt.Errorf("catalog signature envelope is unsupported")
 	}
 	key, ok := keys[envelope.KeyID]
@@ -476,7 +476,7 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	if err := decodeStrict(envelope.Manifest, &manifest); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode catalog manifest: %w", err)
 	}
-	if manifest.Schema != "stogas.catalog.release.v3" ||
+	if manifest.Schema != "stogas.catalog.release.v1" ||
 		manifest.Sequence == 0 ||
 		manifest.CatalogSchema != catalogSchema ||
 		manifest.Source.Repository != "https://github.com/StogasAI/catalog" ||

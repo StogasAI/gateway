@@ -1,8 +1,10 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 const (
 	ErrorTypeInvalidRequest = "invalid_request_error"
 	ErrorTypeInternal       = "internal_error"
+	maxRequestJSONDepth     = 128
 )
 
 var (
@@ -122,6 +125,25 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	if r == nil {
 		return nil, ErrUnsupportedRequest
 	}
+	converted := false
+	if ctx != nil {
+		if !schemas.SetRequestModelInfo(ctx, schemas.RequestModelInfo{
+			Provider:        r.Provider,
+			WireModel:       r.Model,
+			CanonicalModel:  r.Deployment.ModelID,
+			MaxOutputTokens: r.outputTokenLimit,
+		}) {
+			return nil, ErrUnsupportedRequest
+		}
+		defer func() {
+			if !converted {
+				ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
+			}
+		}()
+	}
+	if ctx != nil && r.Provider == ProviderChutes {
+		ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
+	}
 	switch {
 	case r.chat != nil:
 		body := r.chat.ToBifrostChatRequest(ctx)
@@ -131,6 +153,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Provider = r.Provider
 		body.Model = r.Model
 		body.Fallbacks = nil
+		converted = true
 		return &schemas.BifrostRequest{RequestType: r.RequestType, ChatRequest: body}, nil
 	case r.responses != nil:
 		body := r.responses.ToBifrostResponsesRequest(ctx)
@@ -140,6 +163,7 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 		body.Provider = r.Provider
 		body.Model = r.Model
 		body.Fallbacks = nil
+		converted = true
 		return &schemas.BifrostRequest{RequestType: r.RequestType, ResponsesRequest: body}, nil
 	default:
 		return nil, ErrUnsupportedRequest
@@ -504,15 +528,14 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if request.ChatParameters.Reasoning != nil && request.ChatParameters.Reasoning.Effort != nil {
-		effort, err := normalizeReasoningEffort(
-			*request.ChatParameters.Reasoning.Effort,
-			resolution.Deployment.ReasoningEfforts,
-		)
-		if err != nil {
+	if request.ChatParameters.Reasoning != nil {
+		if err := normalizeChatReasoning(
+			request.ChatParameters.Reasoning,
+			resolution.Deployment,
+			resolution.outputTokenLimit,
+		); err != nil {
 			return nil, err
 		}
-		request.ChatParameters.Reasoning.Effort = &effort
 	}
 	resolution.chat = &request
 	return resolution, nil
@@ -571,59 +594,219 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 		return nil, err
 	}
 	if request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
-		effort, err := normalizeReasoningEffort(
+		selection, err := normalizeReasoningEffort(
 			*request.ResponsesParameters.Reasoning.Effort,
-			resolution.Deployment.ReasoningEfforts,
+			resolution.Deployment,
 		)
 		if err != nil {
 			return nil, err
 		}
-		request.ResponsesParameters.Reasoning.Effort = &effort
+		if selection.Enabled != nil {
+			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "the selected Responses deployment exposes only a reasoning on/off control"}
+		}
+		request.ResponsesParameters.Reasoning.Effort = selection.Effort
+	}
+	if request.ResponsesParameters.Reasoning != nil {
+		if err := validateReasoningMaxTokens(
+			request.ResponsesParameters.Reasoning.Effort,
+			nil,
+			request.ResponsesParameters.Reasoning.MaxTokens,
+			resolution.Deployment,
+			resolution.outputTokenLimit,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
+		if request.ResponsesParameters.Reasoning == nil {
+			request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+		}
+		request.ResponsesParameters.Reasoning.Mode = &mode
 	}
 	resolution.responses = &request
 	return resolution, nil
 }
 
-var canonicalReasoningEfforts = map[string]struct{}{
-	"none": {}, "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {}, "max": {},
+var canonicalReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
+
+type normalizedReasoning struct {
+	Effort  *string
+	Enabled *bool
 }
 
 func normalizeReasoningEffort(
 	requested string,
-	supported []string,
-) (string, error) {
-	if _, canonical := canonicalReasoningEfforts[requested]; !canonical {
-		return "", APIError{
+	deployment Deployment,
+) (normalizedReasoning, error) {
+	if requested == "none" {
+		switch deployment.ReasoningAvailability {
+		case "unsupported":
+			return normalizedReasoning{}, nil
+		case "optional":
+			if len(deployment.ReasoningEfforts) == 0 {
+				enabled := false
+				return normalizedReasoning{Enabled: &enabled}, nil
+			}
+			effort := requested
+			return normalizedReasoning{Effort: &effort}, nil
+		default:
+			return normalizedReasoning{}, APIError{
+				StatusCode: http.StatusBadRequest,
+				Type:       ErrorTypeInvalidRequest,
+				Message:    "reasoning cannot be disabled for the selected deployment",
+			}
+		}
+	}
+	if reasoningEffortIndex(requested) < 0 {
+		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
 			Message:    "reasoning effort must be one of: none, minimal, low, medium, high, xhigh, max",
 		}
 	}
-	if len(supported) == 0 {
-		return "", APIError{
+	if deployment.ReasoningAvailability == "unsupported" {
+		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning effort is not supported for the selected model",
+			Message:    "reasoning is not supported for the selected deployment",
 		}
 	}
-	if !containsReasoningEffort(supported, requested) {
-		return "", APIError{
+	if len(deployment.ReasoningEfforts) == 0 {
+		if deployment.ReasoningAvailability == "optional" {
+			enabled := true
+			return normalizedReasoning{Enabled: &enabled}, nil
+		}
+		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning effort is not supported for the selected model",
+			Message:    "the selected deployment always reasons but does not expose effort selection; use reasoning.enabled",
 		}
 	}
-	// Bifrost owns provider wire conversion after exact catalog admission.
-	return requested, nil
+	effort := nearestReasoningEffort(requested, deployment.ReasoningEfforts)
+	return normalizedReasoning{Effort: &effort}, nil
 }
 
-func containsReasoningEffort(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
+func normalizeReasoningEnabled(enabled bool, deployment Deployment) (normalizedReasoning, error) {
+	if !enabled {
+		return normalizeReasoningEffort("none", deployment)
+	}
+	if deployment.ReasoningAvailability == "unsupported" {
+		return normalizedReasoning{}, APIError{
+			StatusCode: http.StatusBadRequest,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    "reasoning is not supported for the selected deployment",
 		}
 	}
-	return false
+	if len(deployment.ReasoningEfforts) == 0 {
+		if deployment.ReasoningAvailability == "optional" {
+			value := true
+			return normalizedReasoning{Enabled: &value}, nil
+		}
+		return normalizedReasoning{}, nil
+	}
+	return normalizeReasoningEffort("medium", deployment)
+}
+
+func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deployment, outputTokenLimit int) error {
+	if reasoning == nil {
+		return nil
+	}
+	if reasoning.Effort != nil && reasoning.Enabled != nil {
+		if (*reasoning.Effort == "none") == *reasoning.Enabled {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.enabled conflicts with reasoning.effort"}
+		}
+		reasoning.Enabled = nil
+	}
+	if err := validateReasoningMaxTokens(
+		reasoning.Effort,
+		reasoning.Enabled,
+		reasoning.MaxTokens,
+		deployment,
+		outputTokenLimit,
+	); err != nil {
+		return err
+	}
+	if reasoning.MaxTokens != nil {
+		reasoning.Enabled = nil
+		return nil
+	}
+	var (
+		selection normalizedReasoning
+		err       error
+	)
+	switch {
+	case reasoning.Effort != nil:
+		selection, err = normalizeReasoningEffort(*reasoning.Effort, deployment)
+	case reasoning.Enabled != nil:
+		selection, err = normalizeReasoningEnabled(*reasoning.Enabled, deployment)
+	default:
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	reasoning.Effort = selection.Effort
+	reasoning.Enabled = selection.Enabled
+	return nil
+}
+
+func nearestReasoningEffort(requested string, supported []string) string {
+	requestedIndex := reasoningEffortIndex(requested)
+	best := supported[0]
+	bestIndex := reasoningEffortIndex(best)
+	bestDistance := absInt(requestedIndex - bestIndex)
+	for _, candidate := range supported[1:] {
+		candidateIndex := reasoningEffortIndex(candidate)
+		distance := absInt(requestedIndex - candidateIndex)
+		if distance < bestDistance || (distance == bestDistance && candidateIndex > bestIndex) {
+			best = candidate
+			bestIndex = candidateIndex
+			bestDistance = distance
+		}
+	}
+	return best
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func reasoningEffortIndex(value string) int {
+	for index, effort := range canonicalReasoningEfforts {
+		if value == effort {
+			return index
+		}
+	}
+	return -1
+}
+
+func validateReasoningMaxTokens(effort *string, enabled *bool, maxTokens *int, deployment Deployment, outputTokenLimit int) error {
+	if maxTokens == nil {
+		return nil
+	}
+	if effort != nil {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning effort conflicts with a manual reasoning token limit"}
+	}
+	if enabled != nil && !*enabled {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "disabled reasoning conflicts with a manual reasoning token limit"}
+	}
+	capability := deployment.ReasoningMaxTokens
+	if capability == nil {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "manual reasoning token limits are not supported for the selected deployment; use reasoning.effort"}
+	}
+	if *maxTokens < capability.Minimum {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be at least the deployment minimum"}
+	}
+	if *maxTokens > capability.Maximum {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens exceeds the deployment maximum"}
+	}
+	if *maxTokens >= outputTokenLimit {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be less than the output token limit"}
+	}
+	return nil
 }
 
 func resolveOpenAIRequest(
@@ -710,6 +893,13 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI " + value + " service_tier is not supported by Stogas"}
 		default:
 			return ErrUnsupportedServiceTier
+		}
+	case schemas.Azure:
+		switch value {
+		case "auto", "default":
+			return nil
+		default:
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Azure BYOK deployments do not support a selectable service_tier"}
 		}
 	case schemas.Anthropic:
 		switch value {
@@ -842,11 +1032,82 @@ func resolvedRequest(
 }
 
 func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
+	if err := validateRequestJSON(body); err != nil {
+		return nil, ErrInvalidJSON
+	}
 	var rawData map[string]json.RawMessage
 	if err := sonic.Unmarshal(body, &rawData); err != nil {
 		return nil, ErrInvalidJSON
 	}
 	return rawData, nil
+}
+
+func validateRequestJSON(body []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := scanRequestJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanRequestJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > maxRequestJSONDepth {
+		return errors.New("JSON nesting exceeds limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("object key is not a string")
+			}
+			if _, exists := seen[key]; exists {
+				return errors.New("duplicate object key")
+			}
+			seen[key] = struct{}{}
+			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim('}') {
+			return errors.New("unterminated object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim(']') {
+			return errors.New("unterminated array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	return nil
 }
 
 func maxInputTokenHold(contextWindowTokens int, outputTokenLimit int) int {
@@ -999,7 +1260,7 @@ func validateAllowedRequestFields(rawData map[string]json.RawMessage, route Rout
 }
 
 func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route) (map[string]interface{}, error) {
-	typedFields := typedOpenAIRequestFields(route)
+	typedFields := typedOpenAIRequestFields(provider, route)
 	if len(typedFields) == 0 {
 		return nil, ErrCatalogUnavailable
 	}
@@ -1022,8 +1283,12 @@ func extractExtraParams(rawData map[string]json.RawMessage, knownFields map[stri
 	return extraParams
 }
 
-func typedOpenAIRequestFields(route Route) map[string]bool {
+func typedOpenAIRequestFields(provider schemas.ModelProvider, route Route) map[string]bool {
 	fields := KnownFields(route)
+	if provider == ProviderChutes && route == RouteChat {
+		fields = copyBoolMap(fields)
+		delete(fields, "repetition_penalty")
+	}
 	if route != RouteResponses {
 		return fields
 	}
@@ -1049,6 +1314,57 @@ func copyStringAnyMap(values map[string]interface{}) map[string]interface{} {
 		out[key] = value
 	}
 	return out
+}
+
+// ReasoningEffort returns the admitted canonical reasoning effort.
+func (r *ResolvedRequest) ReasoningEffort() (string, bool) {
+	if r == nil || r.chat == nil || r.chat.ChatParameters.Reasoning == nil ||
+		r.chat.ChatParameters.Reasoning.Effort == nil {
+		return "", false
+	}
+	return *r.chat.ChatParameters.Reasoning.Effort, true
+}
+
+// ReasoningEnabled returns an admitted binary reasoning control.
+func (r *ResolvedRequest) ReasoningEnabled() (bool, bool) {
+	if r == nil || r.chat == nil || r.chat.ChatParameters.Reasoning == nil ||
+		r.chat.ChatParameters.Reasoning.Enabled == nil {
+		return false, false
+	}
+	return *r.chat.ChatParameters.Reasoning.Enabled, true
+}
+
+// PrepareChutesChatWire applies Chutes-specific output and reasoning fields.
+// The resolved output limit remains the billing hold limit.
+func (r *ResolvedRequest) PrepareChutesChatWire(
+	defaultOutputTokens int,
+	upstreamReasoningEffort string,
+	thinking *bool,
+) {
+	if r == nil || r.chat == nil || r.Route != RouteChat {
+		return
+	}
+	if _, maxTokensSet := rawIntValue(r.pricing.RawBody["max_tokens"]); !maxTokensSet {
+		if _, maxCompletionTokensSet := rawIntValue(r.pricing.RawBody["max_completion_tokens"]); !maxCompletionTokensSet &&
+			defaultOutputTokens >= 0 && defaultOutputTokens < r.outputTokenLimit {
+			r.outputTokenLimit = defaultOutputTokens
+			r.inputTokenLimit = maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens)
+		}
+	}
+	limit := r.outputTokenLimit
+	r.chat.ChatParameters.MaxCompletionTokens = nil
+	r.chat.MaxTokens = nil
+	r.chat.ChatParameters.Reasoning = nil
+	r.SetExtraParam("max_tokens", limit)
+	if upstreamReasoningEffort != "" {
+		r.SetExtraParam("reasoning_effort", upstreamReasoningEffort)
+	}
+	if thinking != nil {
+		r.SetExtraParam("chat_template_kwargs", map[string]interface{}{
+			"enable_thinking": *thinking,
+			"thinking":        *thinking,
+		})
+	}
 }
 
 func applyChatAliases(request *openaiprovider.OpenAIChatRequest) {
@@ -1103,8 +1419,8 @@ func applyResponsesAliases(rawData map[string]json.RawMessage, request *openaipr
 var (
 	chatRawReasoningFields = map[string]bool{
 		"display":    true,
-		"effort":     true,
 		"enabled":    true,
+		"effort":     true,
 		"max_tokens": true,
 	}
 	responsesRawReasoningFields = map[string]bool{
@@ -1163,6 +1479,9 @@ func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedF
 		}
 	}
 	if hasReasoning {
+		if err := validateRawReasoningBool(reasoning["enabled"], "reasoning.enabled"); err != nil {
+			return err
+		}
 		if err := validateRawReasoningEffort(reasoning["effort"], "reasoning.effort"); err != nil {
 			return err
 		}
@@ -1170,9 +1489,6 @@ func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedF
 			return err
 		}
 		if err := validateRawReasoningPositiveInteger(reasoning["max_tokens"], "reasoning.max_tokens"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningBoolean(reasoning["enabled"], "reasoning.enabled"); err != nil {
 			return err
 		}
 		if err := validateRawReasoningSummary(reasoning["summary"], "reasoning.summary"); err != nil {
@@ -1203,6 +1519,17 @@ func validateRawReasoningEffort(raw json.RawMessage, name string) error {
 	}
 	if strings.TrimSpace(value) == "" {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a string"}
+	}
+	return nil
+}
+
+func validateRawReasoningBool(raw json.RawMessage, name string) error {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil
+	}
+	var value bool
+	if err := sonic.Unmarshal(raw, &value); err != nil {
+		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a boolean"}
 	}
 	return nil
 }
@@ -1238,17 +1565,6 @@ func validateRawReasoningPositiveInteger(raw json.RawMessage, name string) error
 	}
 	if value < 1 {
 		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is outside the supported range"}
-	}
-	return nil
-}
-
-func validateRawReasoningBoolean(raw json.RawMessage, name string) error {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil
-	}
-	var value bool
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a boolean"}
 	}
 	return nil
 }

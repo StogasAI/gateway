@@ -2,21 +2,27 @@ package stogas
 
 import (
 	"context"
+	"fmt"
+	"net/url"
+	"strings"
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/valyala/fasthttp"
 )
 
 const (
-	openAIProviderKeyID    = "stogas-openai"
-	anthropicProviderKeyID = "stogas-anthropic"
+	chutesProviderKeyID = "stogas-chutes"
 )
 
 type Runtime struct {
-	client  *bifrost.Bifrost
-	billing *billing.Service
-	cancel  context.CancelFunc
+	client     *bifrost.Bifrost
+	billing    *billing.Service
+	chutesE2EE *chutese2ee.Transport
+	cancel     context.CancelFunc
 }
 
 func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Runtime, error) {
@@ -28,6 +34,11 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	}
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
+	chutesTransport, err := newChutesE2EETransport(config)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	tinybird := billing.NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
 	billingService, err := billing.NewService(
 		runtimeCtx,
@@ -40,23 +51,25 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		tinybird,
 	)
 	if err != nil {
+		chutesTransport.Close()
 		cancel()
 		return nil, err
 	}
 
 	client, err := bifrost.Init(runtimeCtx, schemas.BifrostConfig{
-		Account:         newAccount(config),
+		Account:         newAccount(config, chutesTransport),
 		InitialPoolSize: schemas.DefaultInitialPoolSize,
 		Logger:          logger,
 		Tracer:          schemas.DefaultTracer(),
 	})
 	if err != nil {
 		billingService.Close()
+		chutesTransport.Close()
 		cancel()
 		return nil, err
 	}
 
-	return &Runtime{client: client, billing: billingService, cancel: cancel}, nil
+	return &Runtime{client: client, billing: billingService, chutesE2EE: chutesTransport, cancel: cancel}, nil
 }
 
 func (r *Runtime) Client() *bifrost.Bifrost {
@@ -94,6 +107,20 @@ func (r *Runtime) Billing() *billing.Service {
 	return r.billing
 }
 
+func (r *Runtime) ChutesE2EEDiagnostics() chutese2ee.DiagnosticsSnapshot {
+	if r == nil || r.chutesE2EE == nil {
+		return chutese2ee.DiagnosticsSnapshot{}
+	}
+	return r.chutesE2EE.Diagnostics()
+}
+
+func (r *Runtime) BillingDiagnostics() billing.DiagnosticsSnapshot {
+	if r == nil || r.billing == nil {
+		return billing.DiagnosticsSnapshot{}
+	}
+	return r.billing.Diagnostics()
+}
+
 func (r *Runtime) ProbeDependencies(ctx context.Context) error {
 	if r == nil || r.billing == nil {
 		return billing.ErrGatewayUnavailable
@@ -111,6 +138,9 @@ func (r *Runtime) Close() {
 	if r.billing != nil {
 		r.billing.Close()
 	}
+	if r.chutesE2EE != nil {
+		r.chutesE2EE.Close()
+	}
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -121,7 +151,7 @@ type account struct {
 	providerConfigs map[schemas.ModelProvider]schemas.ProviderConfig
 }
 
-func newAccount(config Config) *account {
+func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
 	requirePostQuantumTLS := config.Confidential.Enabled && config.Confidential.Environment != "local"
 	openAIConfig := newProviderConfig(
 		config.OpenAIBaseURL,
@@ -134,31 +164,83 @@ func newAccount(config Config) *account {
 		config.AllowPrivateProviderNetwork,
 		requirePostQuantumTLS,
 	)
+	azureConfig := newProviderConfig(
+		"",
+		config.AllowPrivateProviderNetwork,
+		false,
+	)
+	azureConfig.NetworkConfig.RequireTLS13 = requirePostQuantumTLS
+	chutesBaseURL := config.ChutesBaseURL
+	if chutesBaseURL == "" {
+		chutesBaseURL = defaultChutesBaseURL
+	}
+	chutesConfig := newProviderConfig(
+		chutesBaseURL,
+		config.AllowPrivateProviderNetwork,
+		false,
+	)
+	chutesConfig.CustomProviderConfig = &schemas.CustomProviderConfig{
+		BaseProviderType: schemas.OpenAI,
+		AllowedRequests: &schemas.AllowedRequests{
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+		},
+	}
+	chutesConfig.NetworkConfig.Transport = chutesTransport
 
 	return &account{
 		keys: map[schemas.ModelProvider]schemas.Key{
-			schemas.OpenAI: {
-				ID:      openAIProviderKeyID,
-				Name:    openAIProviderKeyID,
-				Value:   *schemas.NewSecretVar(config.OpenAIAPIKey),
-				Models:  schemas.WhiteList{"*"},
-				Weight:  1,
-				Enabled: schemas.Ptr(true),
-			},
-			schemas.Anthropic: {
-				ID:      anthropicProviderKeyID,
-				Name:    anthropicProviderKeyID,
-				Value:   *schemas.NewSecretVar(config.AnthropicAPIKey),
+			catalog.ProviderChutes: {
+				ID:      chutesProviderKeyID,
+				Name:    chutesProviderKeyID,
+				Value:   *schemas.NewSecretVar(config.ChutesAPIKey),
 				Models:  schemas.WhiteList{"*"},
 				Weight:  1,
 				Enabled: schemas.Ptr(true),
 			},
 		},
 		providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{
-			schemas.OpenAI:    openAIConfig,
-			schemas.Anthropic: anthropicConfig,
+			schemas.OpenAI:         openAIConfig,
+			schemas.Anthropic:      anthropicConfig,
+			schemas.Azure:          azureConfig,
+			catalog.ProviderChutes: chutesConfig,
 		},
 	}
+}
+
+func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
+	apiBaseURL, err := chutesE2EEAPIBaseURL(config.ChutesBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	confidentialProduction := config.Confidential.Enabled && config.Confidential.Environment != "local"
+	return chutese2ee.New(chutese2ee.Options{
+		APIKey:                  config.ChutesAPIKey,
+		APIBaseURL:              apiBaseURL,
+		RequireProductionOrigin: confidentialProduction,
+		ResolveModel: func(upstreamModel string) (chutese2ee.ModelTarget, bool) {
+			deployment, ok := catalog.DeploymentForUpstreamModel(catalog.ProviderChutes, upstreamModel, catalog.RouteChat)
+			if !ok || deployment.Upstream.ChuteID == "" || deployment.Upstream.GPUCount < 1 {
+				return chutese2ee.ModelTarget{}, false
+			}
+			return chutese2ee.ModelTarget{
+				ChuteID:  deployment.Upstream.ChuteID,
+				GPUCount: deployment.Upstream.GPUCount,
+			}, true
+		},
+	})
+}
+
+func chutesE2EEAPIBaseURL(chutesBaseURL string) (string, error) {
+	baseURL := strings.TrimSpace(chutesBaseURL)
+	if baseURL == "" || strings.TrimRight(baseURL, "/") == defaultChutesBaseURL {
+		return "https://api.chutes.ai", nil
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
+		return "", fmt.Errorf("invalid CHUTES_BASE_URL")
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTLS bool) schemas.ProviderConfig {
@@ -176,7 +258,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {

@@ -27,7 +27,15 @@ type OpenAIAdapter struct {
 	DefaultAdapter
 }
 
+type AzureAdapter struct {
+	DefaultAdapter
+}
+
 type AnthropicAdapter struct {
+	DefaultAdapter
+}
+
+type ChutesAdapter struct {
 	DefaultAdapter
 }
 
@@ -35,8 +43,12 @@ func AdapterFor(provider schemas.ModelProvider) Adapter {
 	switch provider {
 	case schemas.OpenAI:
 		return OpenAIAdapter{}
+	case schemas.Azure:
+		return AzureAdapter{}
 	case schemas.Anthropic:
 		return AnthropicAdapter{}
+	case catalog.ProviderChutes:
+		return ChutesAdapter{}
 	default:
 		return DefaultAdapter{}
 	}
@@ -78,20 +90,35 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 	}
 	if chunk.BifrostError != nil {
 		state.BifrostError = chunk.BifrostError
+		if usage := chunk.BifrostError.ExtraFields.BilledUsage; usage != nil {
+			if err := validateReportedUsage(state, usage); err != nil {
+				return err
+			}
+			setSignalsFromUsage(state, usage)
+		}
 		return nil
 	}
 	switch {
 	case chunk.BifrostChatResponse != nil:
 		state.Response = &schemas.BifrostResponse{ChatResponse: chunk.BifrostChatResponse}
 		observeActualExecution(state, chunk.BifrostChatResponse.ServiceTier, chunk.BifrostChatResponse.Speed)
-		setSignalsFromUsage(state, chunk.BifrostChatResponse.Usage)
+		if usage := chunk.BifrostChatResponse.Usage; usage != nil {
+			if err := validateReportedUsage(state, usage); err != nil {
+				return err
+			}
+			setSignalsFromUsage(state, usage)
+		}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
 		if streamResp.Response != nil {
 			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed)
 			if streamResp.Response.Usage != nil {
-				setSignalsFromUsage(state, streamResp.Response.Usage.ToBifrostLLMUsage())
+				usage := streamResp.Response.Usage.ToBifrostLLMUsage()
+				if err := validateReportedUsage(state, usage); err != nil {
+					return err
+				}
+				setSignalsFromUsage(state, usage)
 			}
 		}
 	}
@@ -105,7 +132,21 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	state.Response = resp
 	state.BifrostError = bifrostErr
 	observeBifrostActualExecution(state, resp)
-	setSignalsFromUsage(state, billing.LLMUsage(resp))
+	usage := billing.LLMUsage(resp)
+	if usage != nil {
+		if err := validateReportedUsage(state, usage); err != nil {
+			return err
+		}
+	}
+	setSignalsFromUsage(state, usage)
+	if bifrostErr != nil {
+		if billedUsage := bifrostErr.ExtraFields.BilledUsage; billedUsage != nil {
+			if err := validateReportedUsage(state, billedUsage); err != nil {
+				return err
+			}
+			setSignalsFromUsage(state, billedUsage)
+		}
+	}
 	return nil
 }
 
@@ -177,10 +218,13 @@ func observeBifrostActualExecution(state *State, resp *schemas.BifrostResponse) 
 	switch {
 	case resp.ChatResponse != nil:
 		observeActualExecution(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed)
+		observeActualModel(state, resp.ChatResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel)
 	case resp.ResponsesResponse != nil:
 		observeActualExecution(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed)
+		observeActualModel(state, resp.ResponsesResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel)
 	case resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil:
 		observeActualExecution(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed)
+		observeActualModel(state, resp.ResponsesStreamResponse.Response.ExtraFields.RoutingInfo.ServerSideFallbackModel)
 	}
 }
 

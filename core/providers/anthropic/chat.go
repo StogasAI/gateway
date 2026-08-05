@@ -278,21 +278,20 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 		messages = messages[:trimmed]
 	}
 
-	anthropicReq := &AnthropicMessageRequest{
-		Model:     bifrostReq.Model,
-		MaxTokens: providerUtils.GetMaxOutputTokensOrDefault(bifrostReq.Model, AnthropicDefaultMaxTokens),
+	maxTokens := AnthropicDefaultMaxTokens
+	if bifrostReq.Params != nil && bifrostReq.Params.MaxCompletionTokens != nil {
+		maxTokens = *bifrostReq.Params.MaxCompletionTokens
+	} else {
+		maxTokens = providerUtils.GetRequestMaxOutputTokensOrDefault(ctx, bifrostReq.Provider, bifrostReq.Model, AnthropicDefaultMaxTokens)
 	}
+	anthropicReq := &AnthropicMessageRequest{Model: bifrostReq.Model, MaxTokens: maxTokens}
 
 	// capModel is the canonical model string used only for capability/version
-	capModel := schemas.ResolveCanonicalModel(ctx, bifrostReq.Model)
+	capModel := schemas.ResolveCanonicalModelForProvider(ctx, bifrostReq.Provider, bifrostReq.Model)
 
 	// Convert parameters
 	if bifrostReq.Params != nil {
 		anthropicReq.ExtraParams = bifrostReq.Params.ExtraParams
-		if bifrostReq.Params.MaxCompletionTokens != nil {
-			anthropicReq.MaxTokens = *bifrostReq.Params.MaxCompletionTokens
-		}
-
 		// Opus 4.7+ and the Fable/Mythos family reject temperature, top_p, and
 		// top_k with a 400 error.
 		if !IsAdaptiveOnlyThinkingModel(capModel) {
@@ -594,7 +593,7 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 						budgetTokens = MinimumReasoningMaxTokens
 					}
 					if budgetTokens < MinimumReasoningMaxTokens {
-						return nil, fmt.Errorf("reasoning.max_tokens must be >= %d for anthropic", MinimumReasoningMaxTokens)
+						return nil, fmt.Errorf("reasoning.max_tokens must be >= %d for anthropic: %w", MinimumReasoningMaxTokens, ErrReasoningMaxTokensTooLow)
 					}
 					anthropicReq.Thinking = &AnthropicThinking{
 						Type:         "enabled",
@@ -612,7 +611,7 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 					setEffortOnOutputConfig(anthropicReq, effort)
 					budgetTokens, err := providerUtils.GetBudgetTokensFromReasoningEffort(effort, MinimumReasoningMaxTokens, anthropicReq.MaxTokens)
 					if err != nil {
-						return nil, err
+						return nil, fmt.Errorf("%w: %w", ErrReasoningMaxTokensTooLow, err)
 					}
 					anthropicReq.Thinking = &AnthropicThinking{
 						Type:         "enabled",
@@ -622,7 +621,7 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 					// Older models: budget_tokens only
 					budgetTokens, err := providerUtils.GetBudgetTokensFromReasoningEffort(*bifrostReq.Params.Reasoning.Effort, MinimumReasoningMaxTokens, anthropicReq.MaxTokens)
 					if err != nil {
-						return nil, err
+						return nil, fmt.Errorf("%w: %w", ErrReasoningMaxTokensTooLow, err)
 					}
 					anthropicReq.Thinking = &AnthropicThinking{
 						Type:         "enabled",
@@ -782,14 +781,28 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 						} else if toolMsg.Content.ContentBlocks != nil {
 							blocks := make([]AnthropicContentBlock, 0, len(toolMsg.Content.ContentBlocks))
 							for _, block := range toolMsg.Content.ContentBlocks {
+								// Anthropic rejects cache_control nested inside tool_result.content
+								// ("cache_control may not be specified within `tool_result.content`.
+								// Instead, place it directly on `tool_result`"), so hoist the first
+								// one found onto the tool_result block itself rather than copying it
+								// onto the nested block -- mirrors the same hoist-to-outer-level
+								// pattern already used for Bedrock's nested cachePoint
+								// (core/providers/bedrock/responses.go).
+								if block.CacheControl != nil && toolResult.CacheControl == nil {
+									toolResult.CacheControl = block.CacheControl
+								}
 								if block.Text != nil && *block.Text != "" {
 									blocks = append(blocks, AnthropicContentBlock{
-										Type:         AnthropicContentBlockTypeText,
-										Text:         block.Text,
-										CacheControl: block.CacheControl,
+										Type: AnthropicContentBlockTypeText,
+										Text: block.Text,
 									})
 								} else if block.ImageURLStruct != nil {
-									blocks = append(blocks, ConvertToAnthropicImageBlock(block))
+									imageBlock := ConvertToAnthropicImageBlock(block)
+									// ConvertToAnthropicImageBlock copies CacheControl onto the
+									// returned block unconditionally (correct for a top-level image
+									// block, but not here -- it's already hoisted above).
+									imageBlock.CacheControl = nil
+									blocks = append(blocks, imageBlock)
 								}
 							}
 							if len(blocks) > 0 {

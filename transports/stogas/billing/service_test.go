@@ -299,6 +299,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	providerCompletedAt := now.Add(-20 * time.Millisecond)
 	event := NewRequestEvent(EventInput{
 		Authorization:       &Authorization{RequestID: "request-1"},
+		ClientStoppedAt:     now.Add(-55 * time.Millisecond),
 		ProviderCompletedAt: providerCompletedAt,
 		ProviderStartedAt:   providerStartedAt,
 		StartedAt:           startedAt,
@@ -309,6 +310,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	providerTime := event.ProviderAttempts[0].LatencyMS
 	if providerTime < 35 || providerTime > 45 {
 		t.Fatalf("provider time should end at observed provider completion, got %dms", providerTime)
+	}
+	if event.ClientStopMS == nil || *event.ClientStopMS < 40 || *event.ClientStopMS > 50 {
+		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
 	}
 
 	event = NewRequestEvent(EventInput{
@@ -340,6 +344,15 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 			event.ProviderAttempts[0].LatencyMS,
 			event.TotalTimeMS,
 		)
+	}
+
+	event = NewRequestEvent(EventInput{
+		Authorization:   &Authorization{RequestID: "request-client-stop-clamp"},
+		ClientStoppedAt: now.Add(time.Hour),
+		StartedAt:       startedAt,
+	})
+	if event.ClientStopMS == nil || *event.ClientStopMS != event.TotalTimeMS {
+		t.Fatalf("client stop time must not exceed total time: stop=%#v total=%d", event.ClientStopMS, event.TotalTimeMS)
 	}
 }
 

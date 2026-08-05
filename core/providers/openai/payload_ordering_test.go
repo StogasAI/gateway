@@ -120,7 +120,6 @@ func TestParseImageVariationFormDataBodyFromRequest_OrdersMetadataBeforeFile(t *
 	)
 }
 
-
 // TestPayloadOrdering_ResponsesTextFormatJSONSchema guards against JSON-schema
 // key reordering on the Responses passthrough path. Structured-output generation
 // is sensitive to the literal property order of `text.format.schema`: OpenAI

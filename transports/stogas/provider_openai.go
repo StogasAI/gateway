@@ -17,6 +17,7 @@ import (
 const (
 	openAIAdapterRouteChat      openAIAdapterRoute = "chat-completions"
 	openAIAdapterRouteResponses openAIAdapterRoute = "responses"
+	maxPromptCacheBreakpoints                      = 4
 
 	webSearchFixedContentInputTokens = 8000
 	searchCallQuantity               = 1
@@ -83,10 +84,10 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if err := validateOpenAIPromptCaching(state); err != nil {
 		return err
 	}
-	if err := validateOpenAIChatCompletionPolicy(state); err != nil {
+	if err := validateOpenAIWireChatPolicy(state); err != nil {
 		return err
 	}
-	if err := validateOpenAIResponsesPolicy(state); err != nil {
+	if err := validateOpenAIWireResponsesPolicy(state); err != nil {
 		return err
 	}
 	return openAIGuardrailError(validateOpenAIGuardrails(openAIAdapterContextForState(state)))
@@ -97,6 +98,25 @@ func validateOpenAIPromptCaching(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	raw := state.Resolution.RawBody()
+	capabilities := state.Resolution.Deployment.Capabilities
+	if err := validatePromptCacheKey(raw["prompt_cache_key"], "prompt_cache_key"); err != nil {
+		return err
+	}
+	if rawJSONValueSet(raw["prompt_cache_key"]) && !capabilities.ImplicitPromptCaching {
+		return invalidRequest("prompt caching is not supported for the selected OpenAI deployment")
+	}
+	if retentionRaw := raw["prompt_cache_retention"]; rawJSONValueSet(retentionRaw) {
+		if !capabilities.ImplicitPromptCaching {
+			return invalidRequest("prompt caching is not supported for the selected OpenAI deployment")
+		}
+		retention, ok := rawStringValue(retentionRaw)
+		if !ok {
+			return invalidRequest("prompt_cache_retention must be a string")
+		}
+		if retention != "in_memory" && retention != "24h" {
+			return invalidRequest("prompt_cache_retention must be in_memory or 24h")
+		}
+	}
 	optionsSet := rawJSONValueSet(raw["prompt_cache_options"])
 	breakpoints, err := validatePromptCacheBreakpoints(
 		rawPromptContent(state.Resolution.Route, raw),
@@ -105,11 +125,14 @@ func validateOpenAIPromptCaching(state *State) error {
 	if err != nil {
 		return err
 	}
+	if breakpoints > maxPromptCacheBreakpoints {
+		return invalidRequest("prompt_cache_breakpoint supports at most four prompt blocks")
+	}
 	if !optionsSet && breakpoints == 0 {
 		return nil
 	}
-	if !strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") {
-		return invalidRequest("prompt cache options and breakpoints require a GPT-5.6 deployment")
+	if !capabilities.ExplicitPromptCaching {
+		return invalidRequest("explicit prompt caching is not supported for the selected OpenAI deployment")
 	}
 	if !optionsSet {
 		return nil
@@ -123,13 +146,19 @@ func validateOpenAIPromptCaching(state *State) error {
 	}
 	if modeRaw, exists := options["mode"]; exists {
 		mode, ok := rawStringValue(modeRaw)
-		if !ok || (mode != "implicit" && mode != "explicit") {
+		if !ok {
+			return invalidRequest("prompt_cache_options.mode must be a string")
+		}
+		if mode != "implicit" && mode != "explicit" {
 			return invalidRequest("prompt_cache_options.mode must be implicit or explicit")
 		}
 	}
 	if ttlRaw, exists := options["ttl"]; exists {
 		ttl, ok := rawStringValue(ttlRaw)
-		if !ok || ttl != "30m" {
+		if !ok {
+			return invalidRequest("prompt_cache_options.ttl must be a string")
+		}
+		if ttl != "30m" {
 			return invalidRequest("prompt_cache_options.ttl must be 30m")
 		}
 	}
@@ -151,14 +180,23 @@ func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (i
 			return nil
 		}
 		blockType := rawStringField(object, "type")
-		allowed := (route == catalog.RouteChat && (blockType == "text" || blockType == "refusal")) ||
-			(route == catalog.RouteResponses && blockType == "input_text")
+		allowed := (route == catalog.RouteChat && stringInSet(blockType,
+			"text", "image_url", "input_audio", "file", "refusal")) ||
+			(route == catalog.RouteResponses && stringInSet(blockType,
+				"input_text", "input_image", "input_file"))
 		if !allowed {
-			return invalidRequest("prompt_cache_breakpoint is only supported on text prompt blocks")
+			return invalidRequest("prompt_cache_breakpoint is not supported on this prompt block")
 		}
 		breakpoint, ok := rawObject(breakpointRaw)
-		if !ok || !onlyRawKeys(breakpoint, "mode") || rawString(breakpoint["mode"]) != "explicit" {
-			return invalidRequest("prompt_cache_breakpoint must contain only mode: explicit")
+		if !ok || !onlyRawKeys(breakpoint, "mode") {
+			return invalidRequest("prompt_cache_breakpoint must contain only mode")
+		}
+		mode, ok := rawStringValue(breakpoint["mode"])
+		if !ok {
+			return invalidRequest("prompt_cache_breakpoint.mode must be a string")
+		}
+		if mode != "explicit" {
+			return invalidRequest("prompt_cache_breakpoint.mode must be explicit")
 		}
 		count++
 		return nil
@@ -166,28 +204,23 @@ func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (i
 	return count, err
 }
 
-func onlyRawKeysOptional(object map[string]json.RawMessage, keys ...string) bool {
-	allowed := make(map[string]bool, len(keys))
-	for _, key := range keys {
-		allowed[key] = true
-	}
-	for key := range object {
-		if !allowed[key] {
-			return false
+func stringInSet(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
-func validateOpenAIChatCompletionPolicy(state *State) error {
+// The Azure v1 data plane uses these OpenAI request schemas too. Provider
+// selection and dispatch remain native Azure concerns; this layer only validates
+// the shared representable wire surface before a hold is placed.
+func validateOpenAIWireChatPolicy(state *State) error {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteChat {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") &&
-		rawReasoningEffort(raw) == "max" {
-		return invalidRequest("reasoning effort max requires the Responses API for GPT-5.6")
-	}
 	for _, name := range []string{"cache_control", "context_management", "mcp_servers", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is only supported for Anthropic deployments")
@@ -208,19 +241,7 @@ func validateOpenAIChatCompletionPolicy(state *State) error {
 	}
 	return nil
 }
-
-func rawReasoningEffort(raw map[string]json.RawMessage) string {
-	if effort := rawString(raw["reasoning_effort"]); effort != "" {
-		return effort
-	}
-	reasoning, ok := rawObject(raw["reasoning"])
-	if !ok {
-		return ""
-	}
-	return rawString(reasoning["effort"])
-}
-
-func validateOpenAIResponsesPolicy(state *State) error {
+func validateOpenAIWireResponsesPolicy(state *State) error {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
 		return nil
 	}
@@ -417,6 +438,7 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForDeployment(state, state.Resolution.Deployment), state.Resolution.OutputTokenLimit(), state.Resolution.InputTokenLimit())...)
+	state.Hold.Meters = compactMeterEstimates(state.Hold.Meters, effectivePricingForState(state))
 	state.Hold.MaxUSDAtoms = sumMeterAmounts(state.Hold.Meters)
 	return nil
 }
@@ -904,32 +926,40 @@ func responsesHostedToolHoldQuantity(req openAIAdapterContext) int {
 }
 
 func validateMCPTool(tool map[string]json.RawMessage) error {
-	if rawStringField(tool, "server_label") == "" || rawStringField(tool, "server_url") == "" {
+	if rawStringField(tool, "server_label") == "" {
 		return errOpenAIInvalidProviderToolSpec
 	}
-	parsed, err := url.Parse(rawStringField(tool, "server_url"))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+	serverURL := strings.TrimSpace(rawStringField(tool, "server_url"))
+	connectorID := strings.TrimSpace(rawStringField(tool, "connector_id"))
+	if (serverURL == "") == (connectorID == "") {
 		return errOpenAIInvalidProviderToolSpec
 	}
-	var allowedTools schemas.ResponsesToolMCPAllowedTools
-	if err := sonic.Unmarshal(tool["allowed_tools"], &allowedTools); err != nil {
-		return errOpenAIInvalidProviderToolSpec
-	}
-	if len(allowedTools.ToolNames) == 0 && allowedTools.Filter == nil {
-		return errOpenAIInvalidProviderToolSpec
-	}
-	for _, name := range allowedTools.ToolNames {
-		if strings.TrimSpace(name) == "" {
+	if serverURL != "" {
+		parsed, err := url.Parse(serverURL)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil {
 			return errOpenAIInvalidProviderToolSpec
 		}
 	}
-	if allowedTools.Filter != nil {
-		if len(allowedTools.Filter.ToolNames) == 0 && (allowedTools.Filter.ReadOnly == nil || !*allowedTools.Filter.ReadOnly) {
-			return errOpenAIInvalidProviderToolSpec
-		}
-		for _, name := range allowedTools.Filter.ToolNames {
-			if strings.TrimSpace(name) == "" {
+	if allowedToolsRaw, ok := tool["allowed_tools"]; ok {
+		if strings.TrimSpace(string(allowedToolsRaw)) != "null" {
+			var allowedTools schemas.ResponsesToolMCPAllowedTools
+			if err := sonic.Unmarshal(allowedToolsRaw, &allowedTools); err != nil {
 				return errOpenAIInvalidProviderToolSpec
+			}
+			if allowedTools.ToolNames == nil && allowedTools.Filter == nil {
+				return errOpenAIInvalidProviderToolSpec
+			}
+			for _, name := range allowedTools.ToolNames {
+				if strings.TrimSpace(name) == "" {
+					return errOpenAIInvalidProviderToolSpec
+				}
+			}
+			if allowedTools.Filter != nil {
+				for _, name := range allowedTools.Filter.ToolNames {
+					if strings.TrimSpace(name) == "" {
+						return errOpenAIInvalidProviderToolSpec
+					}
+				}
 			}
 		}
 	}
@@ -938,7 +968,7 @@ func validateMCPTool(tool map[string]json.RawMessage) error {
 	}
 	for key := range tool {
 		switch key {
-		case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "require_approval":
+		case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "connector_id", "headers", "require_approval":
 		default:
 			return errOpenAIUnsupportedTool
 		}

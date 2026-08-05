@@ -89,8 +89,8 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 
 func TestAnthropicHoldMeters(t *testing.T) {
 	req := anthropicAdapterContext{
-		Route:                anthropicAdapterRouteResponses,
-		Deployment:           anthropicAdapterDeployment{Model: "claude-opus-4-8", Pricing: testPricing()},
+		Route:                 anthropicAdapterRouteResponses,
+		Deployment:            anthropicAdapterDeployment{Model: "claude-opus-4-8", Pricing: testPricing()},
 		InputTokenLimit:       1000,
 		ToolChoiceAllowsCalls: true,
 		ToolTypes:             []string{"web_search"},
@@ -159,8 +159,8 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 			req := anthropicAdapterContext{
 				Route:                 anthropicAdapterRouteResponses,
 				Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
-				InputTokenLimit:        900,
-				OutputTokenLimit:       100,
+				InputTokenLimit:       900,
+				OutputTokenLimit:      100,
 				ToolChoiceAllowsCalls: true,
 				ToolTypes:             []string{"web_fetch"},
 				RawBody:               mustObject(t, tt.body),
@@ -177,29 +177,29 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 	req := anthropicAdapterContext{
 		Route:                 anthropicAdapterRouteResponses,
 		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
-		InputTokenLimit:        900,
-		OutputTokenLimit:       100,
+		InputTokenLimit:       900,
+		OutputTokenLimit:      100,
 		ToolChoiceAllowsCalls: true,
 		ToolTypes:             []string{"web_fetch"},
 		RawBody:               mustObject(t, `{"cache_control":{"type":"ephemeral","ttl":"1h"},"max_tool_calls":2}`),
 		RawTools:              []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`)},
 	}
 	meters := anthropicHoldMeters(req)
-	if findMeter(meters, billing.MeterInputTokens, "1400") == nil {
-		t.Fatalf("expected web_fetch fetched-content input hold meter, got %#v", meters)
-	}
 	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "1400") == nil {
 		t.Fatalf("expected web_fetch fetched-content cache-write hold meter, got %#v", meters)
+	}
+	if findMeter(meters, billing.MeterInputTokens, "1400") != nil {
+		t.Fatalf("fetched content must use one worst-case input category, got %#v", meters)
 	}
 
 	req.ToolTypes = []string{"web_search"}
 	req.RawTools = []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20260318"}`)}
 	meters = anthropicHoldMeters(req)
-	if findMeter(meters, billing.MeterInputTokens, "4000") == nil {
-		t.Fatalf("expected web_search result-content input hold meter, got %#v", meters)
-	}
 	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "4000") == nil {
 		t.Fatalf("expected web_search result-content cache-write hold meter, got %#v", meters)
+	}
+	if findMeter(meters, billing.MeterInputTokens, "4000") != nil {
+		t.Fatalf("search content must use one worst-case input category, got %#v", meters)
 	}
 }
 
@@ -207,8 +207,8 @@ func TestAnthropicHostedContentHoldDoesNotDoubleCountSearchAndFetch(t *testing.T
 	req := anthropicAdapterContext{
 		Route:                 anthropicAdapterRouteResponses,
 		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
-		InputTokenLimit:        900,
-		OutputTokenLimit:       100,
+		InputTokenLimit:       900,
+		OutputTokenLimit:      100,
 		ToolChoiceAllowsCalls: true,
 		ToolTypes:             []string{"web_search", "web_fetch"},
 		RawBody:               mustObject(t, `{"max_tool_calls":2}`),
@@ -272,7 +272,7 @@ func TestAnthropicCacheWriteHoldMetersFollowRequestedTTL(t *testing.T) {
 			req := anthropicAdapterContext{
 				Route:           tt.route,
 				Deployment:      anthropicAdapterDeployment{Model: "claude-sonnet-4-6", Pricing: testPricing()},
-				InputTokenLimit:  1000,
+				InputTokenLimit: 1000,
 				RawBody:         mustObject(t, tt.body),
 				RawTools:        rawTools,
 			}
@@ -293,11 +293,11 @@ func TestAnthropicCacheWriteHoldMetersFollowRequestedTTL(t *testing.T) {
 
 func TestAnthropicFinalMeters(t *testing.T) {
 	req := anthropicAdapterContext{
-		Route:               anthropicAdapterRouteResponses,
-		Deployment:          anthropicAdapterDeployment{Model: "claude-opus-4-8", Pricing: testPricing()},
+		Route:                 anthropicAdapterRouteResponses,
+		Deployment:            anthropicAdapterDeployment{Model: "claude-opus-4-8", Pricing: testPricing()},
 		ToolChoiceAllowsCalls: true,
-		ToolTypes:           []string{"web_search"},
-		ActualWebSearchCalls: 3,
+		ToolTypes:             []string{"web_search"},
+		ActualWebSearchCalls:  3,
 	}
 
 	meters := anthropicFinalMeters(req)

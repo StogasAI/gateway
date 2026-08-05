@@ -16,6 +16,9 @@ const (
 	maxMetadataKeyBytes    = 64
 	maxMetadataValueBytes  = 512
 	maxMCPAuthTokenBytes   = 4096
+	maxMCPHeaders          = 32
+	maxMCPHeaderNameBytes  = 128
+	maxMCPHeaderValueBytes = 4096
 	maxPromptCacheKeyBytes = 256
 )
 
@@ -33,10 +36,13 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "safety_identifier", "store", "user", "container", "fallbacks", "prompt_cache_isolation_key"} {
+	for _, name := range []string{"audio", "function_call", "functions", "safety_identifier", "user", "container", "fallbacks", "prompt_cache_isolation_key"} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
+	}
+	if err := validateFalseOnlyBoolean(raw, "store"); err != nil {
+		return err
 	}
 	if err := validateJSONBool(raw, "stream"); err != nil {
 		return err
@@ -188,6 +194,24 @@ func validateRawJSONBool(raw json.RawMessage, name string) error {
 	return nil
 }
 
+func validateFalseOnlyBoolean(raw map[string]json.RawMessage, name string) error {
+	valueRaw, ok := raw[name]
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(string(valueRaw)) == "null" {
+		return invalidRequest(name + " must be a boolean")
+	}
+	var value bool
+	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
+		return invalidRequest(name + " must be a boolean")
+	}
+	if value {
+		return invalidRequest(name + "=true is not supported; omit " + name + " or set it to false")
+	}
+	return nil
+}
+
 func validateMetadata(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
@@ -256,11 +280,24 @@ func validatePromptCacheKey(raw json.RawMessage, name string) error {
 	return nil
 }
 
+func onlyRawKeysOptional(object map[string]json.RawMessage, keys ...string) bool {
+	allowed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		allowed[key] = true
+	}
+	for key := range object {
+		if !allowed[key] {
+			return false
+		}
+	}
+	return true
+}
+
 var (
 	chatReasoningFields = map[string]bool{
 		"display":    true,
-		"effort":     true,
 		"enabled":    true,
+		"effort":     true,
 		"max_tokens": true,
 	}
 	responsesReasoningFields = map[string]bool{
@@ -305,6 +342,9 @@ func validateReasoningParameters(raw map[string]json.RawMessage, allowedFields m
 		return err
 	}
 	if hasReasoning {
+		if err := validateReasoningEnabledValue(reasoning["enabled"], "reasoning.enabled"); err != nil {
+			return err
+		}
 		if err := validateReasoningEffortValue(reasoning["effort"], "reasoning.effort"); err != nil {
 			return err
 		}
@@ -312,9 +352,6 @@ func validateReasoningParameters(raw map[string]json.RawMessage, allowedFields m
 			return err
 		}
 		if err := validateReasoningMaxTokensValue(reasoning["max_tokens"], "reasoning.max_tokens"); err != nil {
-			return err
-		}
-		if err := validateReasoningEnabledValue(reasoning["enabled"], "reasoning.enabled"); err != nil {
 			return err
 		}
 		if err := validateReasoningSummaryValue(reasoning["summary"], "reasoning.summary"); err != nil {
@@ -338,17 +375,6 @@ func validateReasoningEffortValue(raw json.RawMessage, name string) error {
 	return nil
 }
 
-func validateReasoningMaxTokensValue(raw json.RawMessage, name string) error {
-	value, exists, err := rawInteger(raw, name)
-	if err != nil || !exists {
-		return err
-	}
-	if value < 1 {
-		return invalidRequest(name + " is outside the supported range")
-	}
-	return nil
-}
-
 func validateReasoningEnabledValue(raw json.RawMessage, name string) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
@@ -356,6 +382,17 @@ func validateReasoningEnabledValue(raw json.RawMessage, name string) error {
 	var value bool
 	if err := sonic.Unmarshal(raw, &value); err != nil {
 		return invalidRequest(name + " must be a boolean")
+	}
+	return nil
+}
+
+func validateReasoningMaxTokensValue(raw json.RawMessage, name string) error {
+	value, exists, err := rawInteger(raw, name)
+	if err != nil || !exists {
+		return err
+	}
+	if value < 1 {
+		return invalidRequest(name + " is outside the supported range")
 	}
 	return nil
 }
@@ -478,7 +515,7 @@ func validateChatTools(raw json.RawMessage, capabilities chatToolCapabilities) (
 	for _, tool := range tools {
 		kind := rawString(tool["type"])
 		if kind == "custom" && !capabilities.allowCustom {
-			return nil, invalidRequest("custom tools are only supported for OpenAI Chat deployments")
+			return nil, invalidRequest("custom tools are not supported for the selected Chat deployment")
 		}
 		switch kind {
 		case "function", "custom":
@@ -676,7 +713,7 @@ func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef, capabiliti
 		return nil
 	case "custom":
 		if !capabilities.allowCustom {
-			return invalidRequest("custom tool_choice is only supported for OpenAI Chat deployments")
+			return invalidRequest("custom tool_choice is not supported for the selected Chat deployment")
 		}
 		if len(tools) == 0 {
 			return invalidRequest("tool_choice requires supported tools")

@@ -12,6 +12,12 @@ type requestMemoryAdmission struct {
 	used atomic.Int64
 }
 
+type requestMemoryDiagnostics struct {
+	BudgetBytes int64 `json:"budgetBytes"`
+	Pressured   bool  `json:"pressured"`
+	UsedBytes   int64 `json:"usedBytes"`
+}
+
 func (a *requestMemoryAdmission) acquire(bodyBytes int) (func(), bool) {
 	weight := int64(bodyBytes) * requestMemoryAmplification
 	if weight < minimumRequestWeightBytes {
@@ -35,4 +41,16 @@ func (a *requestMemoryAdmission) acquire(bodyBytes int) (func(), bool) {
 
 func (a *requestMemoryAdmission) pressured() bool {
 	return a != nil && a.used.Load() >= requestMemoryBudgetBytes*9/10
+}
+
+func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
+	used := int64(0)
+	if a != nil {
+		used = a.used.Load()
+	}
+	return requestMemoryDiagnostics{
+		BudgetBytes: requestMemoryBudgetBytes,
+		Pressured:   used >= requestMemoryBudgetBytes*9/10,
+		UsedBytes:   used,
+	}
 }

@@ -23,7 +23,14 @@ func TestValidateToolsAllowsOnlyExplicitPricedOrCustomerOwnedTools(t *testing.T)
 		{"responses function", openAIAdapterRouteResponses, `{"tools":[{"type":"function","name":"lookup"}]}`},
 		{"responses custom", openAIAdapterRouteResponses, `{"tools":[{"type":"custom","name":"lookup"}]}`},
 		{"responses mcp", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`},
+		{"responses mcp all tools", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`},
+		{"responses mcp nullable allowlist", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":null,"require_approval":"never"}]}`},
+		{"responses mcp empty allowlist", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":[],"require_approval":"never"}]}`},
+		{"responses mcp headers", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{"x-api-key":"secret"},"require_approval":"never"}]}`},
+		{"responses mcp empty headers", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{},"require_approval":"never"}]}`},
+		{"responses mcp connector", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","authorization":"secret","require_approval":"never"}]}`},
 		{"responses mcp filter", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","server_description":"Docs search","allowed_tools":{"read_only":true,"tool_names":["search"]},"require_approval":"never"}]}`},
+		{"responses mcp non-narrowing filter", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"read_only":false},"require_approval":"never"}]}`},
 		{"responses web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search"}]}`},
 		{"responses compact versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_20260209"}]}`},
 		{"responses versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
@@ -79,26 +86,21 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 	}
 }
 
-func TestValidateResponsesMCPToolsRejectUnsafeOrUnboundedShapes(t *testing.T) {
+func TestValidateResponsesMCPToolsRejectUnrepresentableShapes(t *testing.T) {
 	for _, item := range []struct {
 		name string
 		body string
 		err  error
 	}{
 		{
-			name: "missing allowed tools",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`,
+			name: "missing endpoint",
+			body: `{"tools":[{"type":"mcp","server_label":"remote","require_approval":"never"}]}`,
 			err:  errOpenAIInvalidProviderToolSpec,
 		},
 		{
-			name: "empty filter",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"read_only":false},"require_approval":"never"}]}`,
+			name: "conflicting endpoints",
+			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
 			err:  errOpenAIInvalidProviderToolSpec,
-		},
-		{
-			name: "arbitrary headers",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"headers":{"x-api-key":"secret"},"require_approval":"never"}]}`,
-			err:  errOpenAIUnsupportedTool,
 		},
 		{
 			name: "approval workflow object",

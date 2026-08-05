@@ -82,7 +82,7 @@ printf '%s\n' "$vendor_tree_hash" > "$go_vendor_sha256"
 
 cat > "$go_cache_manifest" <<JSON
 {
-  "schema": "stogas.gateway.go-cache.v2",
+  "schema": "stogas.gateway.go-cache.v1",
   "goModSha256": "$(sha256sum "$transports_root/go.mod" | cut -d' ' -f1)",
   "goSumSha256": "$(sha256sum "$transports_root/go.sum" | cut -d' ' -f1)",
   "vendorModulesSha256": "$(sha256sum "$go_vendor/modules.txt" | cut -d' ' -f1)",

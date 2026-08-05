@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v3"
+	heartbeatSignatureDomain = "stogas.gateway-heartbeat.v1"
 	csrSignatureDomain       = "stogas.gateway-csr-submission.v1"
 )
 

@@ -250,6 +250,15 @@ func GetMaxOutputTokensOrDefault(model string, defaultValue int) int {
 	return defaultValue
 }
 
+// GetRequestMaxOutputTokensOrDefault uses exact request-scoped model metadata
+// before the process-wide model-parameter cache and static fallbacks.
+func GetRequestMaxOutputTokensOrDefault(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, defaultValue int) int {
+	if info, ok := schemas.GetRequestModelInfo(ctx, provider, model); ok && info.MaxOutputTokens > 0 {
+		return info.MaxOutputTokens
+	}
+	return GetMaxOutputTokensOrDefault(model, defaultValue)
+}
+
 // IsVertexMultiRegionOnlyModel reports whether the given model is flagged in the
 // datasheet as only available on Google Vertex multi-region pool endpoints
 // (aiplatform.{region}.rep.googleapis.com). Returns false on cache miss or if

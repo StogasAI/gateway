@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"errors"
 	"fmt"
 
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
@@ -138,9 +139,12 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 	if providerUtils.IsLargePayloadPassthroughEnabled(ctx) {
 		return nil, nil
 	}
+	if preparedBody, ok := providerUtils.CheckAndGetPreparedRequestBody(ctx, request); ok {
+		return preparedBody, nil
+	}
 
 	// capModel is the canonical model used for capability gating in the raw-body
-	capModel := schemas.ResolveCanonicalModel(ctx, request.Model)
+	capModel := schemas.ResolveCanonicalModelForProvider(ctx, request.Provider, request.Model)
 
 	defaults := AnthropicProviderRequestDefaultsMap[cfg.Provider]
 
@@ -207,7 +211,7 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 						modelForTokens = r.String()
 					}
 				}
-				jsonBody, err = providerUtils.SetJSONField(jsonBody, "max_tokens", providerUtils.GetMaxOutputTokensOrDefault(modelForTokens, AnthropicDefaultMaxTokens))
+				jsonBody, err = providerUtils.SetJSONField(jsonBody, "max_tokens", providerUtils.GetRequestMaxOutputTokensOrDefault(ctx, request.Provider, modelForTokens, AnthropicDefaultMaxTokens))
 				if err != nil {
 					return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
 				}
@@ -290,6 +294,16 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 
 		reqBody, convErr := ToAnthropicResponsesRequest(ctx, request)
 		if convErr != nil {
+			if errors.Is(convErr, ErrReasoningMaxTokensTooLow) {
+				return nil, providerUtils.EnrichError(
+					ctx,
+					providerUtils.NewBifrostBadRequestError(convErr.Error()),
+					jsonBody,
+					nil,
+					cfg.ShouldSendBackRawRequest,
+					cfg.ShouldSendBackRawResponse,
+				)
+			}
 			return nil, newErr(schemas.ErrRequestBodyConversion, convErr, jsonBody)
 		}
 		if reqBody == nil {
@@ -421,10 +435,13 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 	if providerUtils.IsLargePayloadPassthroughEnabled(ctx) {
 		return nil, nil
 	}
+	if preparedBody, ok := providerUtils.CheckAndGetPreparedRequestBody(ctx, request); ok {
+		return preparedBody, nil
+	}
 
 	// capModel is the canonical model used for capability gating in the raw-body
 	// path; the wire request.Model may be an opaque alias/deployment id.
-	capModel := schemas.ResolveCanonicalModel(ctx, request.Model)
+	capModel := schemas.ResolveCanonicalModelForProvider(ctx, request.Provider, request.Model)
 
 	defaults := AnthropicProviderRequestDefaultsMap[cfg.Provider]
 
@@ -471,7 +488,7 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 					modelForTokens = r.String()
 				}
 			}
-			jsonBody, err = providerUtils.SetJSONField(jsonBody, "max_tokens", providerUtils.GetMaxOutputTokensOrDefault(modelForTokens, AnthropicDefaultMaxTokens))
+			jsonBody, err = providerUtils.SetJSONField(jsonBody, "max_tokens", providerUtils.GetRequestMaxOutputTokensOrDefault(ctx, request.Provider, modelForTokens, AnthropicDefaultMaxTokens))
 			if err != nil {
 				return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
 			}
@@ -531,6 +548,16 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 	} else {
 		reqBody, convErr := ToAnthropicChatRequest(ctx, request)
 		if convErr != nil {
+			if errors.Is(convErr, ErrReasoningMaxTokensTooLow) {
+				return nil, providerUtils.EnrichError(
+					ctx,
+					providerUtils.NewBifrostBadRequestError(convErr.Error()),
+					jsonBody,
+					nil,
+					cfg.ShouldSendBackRawRequest,
+					cfg.ShouldSendBackRawResponse,
+				)
+			}
 			return nil, newErr(schemas.ErrRequestBodyConversion, convErr, jsonBody)
 		}
 		if reqBody == nil {

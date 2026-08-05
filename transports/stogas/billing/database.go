@@ -28,6 +28,21 @@ type GatewayDB struct {
 	pool *pgxpool.Pool
 }
 
+type DatabaseDiagnostics struct {
+	AcquireCount            int64 `json:"acquireCount"`
+	AcquireDurationMS       int64 `json:"acquireDurationMs"`
+	AcquiredConnections     int32 `json:"acquiredConnections"`
+	CanceledAcquireCount    int64 `json:"canceledAcquireCount"`
+	ConstructingConnections int32 `json:"constructingConnections"`
+	EmptyAcquireCount       int64 `json:"emptyAcquireCount"`
+	IdleConnections         int32 `json:"idleConnections"`
+	MaxConnections          int32 `json:"maxConnections"`
+	MaxIdleDestroyed        int64 `json:"maxIdleDestroyed"`
+	MaxLifetimeDestroyed    int64 `json:"maxLifetimeDestroyed"`
+	NewConnections          int64 `json:"newConnections"`
+	TotalConnections        int32 `json:"totalConnections"`
+}
+
 func ValidateDatabaseSchema(databaseSchema string) error {
 	_, err := pgrollSearchPath(databaseSchema)
 	return err
@@ -87,6 +102,27 @@ func (db *GatewayDB) Ping(ctx context.Context) error {
 		return fmt.Errorf("postgres pool is unavailable")
 	}
 	return db.pool.Ping(ctx)
+}
+
+func (db *GatewayDB) Diagnostics() *DatabaseDiagnostics {
+	if db == nil || db.pool == nil {
+		return nil
+	}
+	stats := db.pool.Stat()
+	return &DatabaseDiagnostics{
+		AcquireCount:            stats.AcquireCount(),
+		AcquireDurationMS:       stats.AcquireDuration().Milliseconds(),
+		AcquiredConnections:     stats.AcquiredConns(),
+		CanceledAcquireCount:    stats.CanceledAcquireCount(),
+		ConstructingConnections: stats.ConstructingConns(),
+		EmptyAcquireCount:       stats.EmptyAcquireCount(),
+		IdleConnections:         stats.IdleConns(),
+		MaxConnections:          stats.MaxConns(),
+		MaxIdleDestroyed:        stats.MaxIdleDestroyCount(),
+		MaxLifetimeDestroyed:    stats.MaxLifetimeDestroyCount(),
+		NewConnections:          stats.NewConnsCount(),
+		TotalConnections:        stats.TotalConns(),
+	}
 }
 
 func queryExecMode(mode string) pgx.QueryExecMode {

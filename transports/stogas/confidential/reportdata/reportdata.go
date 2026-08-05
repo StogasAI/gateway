@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SchemaV3             = "stogas.node-report.v3"
+	SchemaV1             = "stogas.node-report.v1"
 	DrandNetworkQuicknet = "quicknet"
 	QuicknetChainHash    = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 )
@@ -44,7 +44,7 @@ type Payload struct {
 func NewPayload(input Payload) (Payload, error) {
 	payload := input
 	if payload.Schema == "" {
-		payload.Schema = SchemaV3
+		payload.Schema = SchemaV1
 	}
 	if payload.Drand.Network == "" {
 		payload.Drand.Network = DrandNetworkQuicknet
@@ -61,7 +61,7 @@ func NewPayload(input Payload) (Payload, error) {
 }
 
 func (p Payload) Validate() error {
-	if p.Schema != SchemaV3 {
+	if p.Schema != SchemaV1 {
 		return fmt.Errorf("unsupported report data schema %q", p.Schema)
 	}
 	if !strings.HasPrefix(p.Catalog.Digest, "sha256:") ||

@@ -32,7 +32,9 @@ import (
 // through to a *fasthttp.RequestCtx parent.
 //
 // Pre-fix:  bc.Value(key) returns the RequestCtx-only value (proves the unsafe
-//           fall-through link exists) → test FAILS.
+//
+//	fall-through link exists) → test FAILS.
+//
 // Post-fix: bc.Value(key) returns nil without touching the pooled ctx → PASSES.
 func TestBifrostContext_Value_DoesNotConsultPooledRequestCtx(t *testing.T) {
 	var rctx fasthttp.RequestCtx

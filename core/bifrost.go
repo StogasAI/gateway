@@ -5058,6 +5058,16 @@ func (bifrost *Bifrost) handleRequest(ctx *schemas.BifrostContext, req *schemas.
 	// Expose the model catalog to plugins (ctx.GetModelInfo / ctx.CalculateCost)
 	// before any hook runs.
 	bifrost.setModelCatalogOnContext(ctx)
+	// A prepared provider body is valid only while the typed request is
+	// immutable. Plugins and Bifrost's optional server-side MCP manager can
+	// rewrite it, so force the normal provider converter when either mutation
+	// surface is configured. Client-supplied MCP tools are already part of the
+	// typed request and do not trigger this path.
+	plugins := bifrost.llmPlugins.Load()
+	if (plugins != nil && len(*plugins) > 0) || bifrost.MCPManager != nil {
+		ctx.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+		ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
+	}
 
 	// PreRequestHook: once-per-request phase where plugins decide provider/model/fallbacks
 	// (and may mutate other request fields). Mutations commit to req and are observed by
@@ -5193,6 +5203,13 @@ func (bifrost *Bifrost) handleStreamRequest(ctx *schemas.BifrostContext, req *sc
 	// Expose the model catalog to plugins (ctx.GetModelInfo / ctx.CalculateCost)
 	// before any hook runs.
 	bifrost.setModelCatalogOnContext(ctx)
+	// Client MCP tools are already in the typed request; MCPManager means only
+	// Bifrost's optional server-side tool injection.
+	plugins := bifrost.llmPlugins.Load()
+	if (plugins != nil && len(*plugins) > 0) || bifrost.MCPManager != nil {
+		ctx.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+		ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
+	}
 
 	// PreRequestHook: once-per-request phase. See handleRequest for semantics.
 	preReqPipeline := bifrost.getPluginPipeline()
@@ -6185,26 +6202,25 @@ func executeRequestWithRetries[T any](
 
 		// Surface caller-supplied extra headers (from x-bf-eh-* and direct-allowlist
 		// header forwarding) as span attributes so observability backends see the
-		// same set Bifrost forwards to the upstream provider.
-		if extraHeaders, ok := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string); ok {
-			for name, values := range extraHeaders {
-				if name == "" || len(values) == 0 {
-					continue
-				}
-				// Never export credential-bearing headers verbatim. The transport
-				// layer denylists most sensitive headers, but plain authorization /
-				// set-cookie can still reach here, and core SDK callers bypass that
-				// guard entirely. Keep the key (presence is useful) but redact the value.
-				if schemas.IsSensitiveHeader(name) {
-					tracer.SetAttribute(handle, schemas.AttrExtraHeaderPrefix+name, schemas.RedactedAttrValue)
-					continue
-				}
-				if len(values) == 1 {
-					tracer.SetAttribute(handle, schemas.AttrExtraHeaderPrefix+name, values[0])
-				} else {
-					tracer.SetAttribute(handle, schemas.AttrExtraHeaderPrefix+name, values)
+		// same set Bifrost forwards to the upstream provider. Credential-bearing values
+		// are redacted and the virtual key is dropped; see extraHeaderSpanAttribute.
+		exportHeaderAttributes := func(headers map[string][]string) {
+			for name, values := range headers {
+				if value, export := extraHeaderSpanAttribute(name, values); export {
+					tracer.SetAttribute(handle, schemas.AttrExtraHeaderPrefix+name, value)
 				}
 			}
+		}
+		if extraHeaders, ok := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string); ok {
+			exportHeaderAttributes(extraHeaders)
+		}
+		// The Anthropic OAuth passthrough set no longer reaches ExtraHeaders (only the
+		// Anthropic provider forwards it), but the caller metadata it carries — x-app,
+		// x-claude-code-session-id, x-stainless-* — is what attribution keys on, and it was
+		// traced before the split. Merge it back in so observability is unchanged. Tracing
+		// only: this does not put those headers back on any provider request.
+		if passthrough, ok := ctx.Value(schemas.BifrostContextKeyPassthroughHeaders).(map[string][]string); ok {
+			exportHeaderAttributes(passthrough)
 		}
 
 		// Populate LLM request attributes (messages, parameters, etc.)
@@ -6452,6 +6468,8 @@ func clearAnthropicPassthroughForNonNativeProvider(ctx *schemas.BifrostContext, 
 		return
 	}
 	ctx.SetValue(schemas.BifrostContextKeyUseRawRequestBody, false)
+	ctx.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+	ctx.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 	ctx.SetValue(schemas.BifrostContextKeySendBackRawResponse, false)
 	ctx.SetValue(schemas.BifrostContextKeyPassthroughOverridesPresent, false)
 }
@@ -6787,6 +6805,8 @@ func (bifrost *Bifrost) requestWorker(provider schemas.Provider, config *schemas
 		if IsStreamRequestType(req.RequestType) {
 			stream, bifrostError = executeRequestWithRetries(req.Context, config, func(k schemas.Key) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 				if aliasConfig := k.Aliases.ResolveConfig(originalModelRequested); aliasConfig != nil {
+					req.Context.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+					req.Context.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 					resolvedModel = aliasConfig.ModelID
 					req.Context.SetValue(schemas.BifrostContextKeyResolvedAlias, &schemas.ResolvedAlias{Key: originalModelRequested, Config: aliasConfig})
 				} else {
@@ -6886,6 +6906,8 @@ func (bifrost *Bifrost) requestWorker(provider schemas.Provider, config *schemas
 		} else {
 			result, bifrostError = executeRequestWithRetries(req.Context, config, func(k schemas.Key) (*schemas.BifrostResponse, *schemas.BifrostError) {
 				if aliasConfig := k.Aliases.ResolveConfig(originalModelRequested); aliasConfig != nil {
+					req.Context.ClearValue(schemas.BifrostContextKeyPreparedRequestBody)
+					req.Context.ClearValue(schemas.BifrostContextKeyRequestModelInfo)
 					resolvedModel = aliasConfig.ModelID
 					req.Context.SetValue(schemas.BifrostContextKeyResolvedAlias, &schemas.ResolvedAlias{Key: originalModelRequested, Config: aliasConfig})
 				} else {

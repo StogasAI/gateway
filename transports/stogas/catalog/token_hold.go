@@ -54,7 +54,7 @@ func inputTokenHoldEstimate(body []byte, rawData map[string]json.RawMessage, pro
 	}
 	estimate := 0
 	switch provider {
-	case schemas.OpenAI:
+	case schemas.OpenAI, schemas.Azure:
 		estimate = openAIInputTokenHold(model, stats)
 	case schemas.Anthropic:
 		estimate = anthropicInputTokenHold(stats)

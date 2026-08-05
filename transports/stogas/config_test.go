@@ -160,8 +160,8 @@ func TestLoadFromEnvStagingConfidentialDefaultsRequireCloudflareAccess(t *testin
 	if config.PrivateReadinessPort != defaultPrivateReadinessPort {
 		t.Fatalf("staging should derive private readiness port %s, got %q", defaultPrivateReadinessPort, config.PrivateReadinessPort)
 	}
-	if config.OpenAIAPIKey != "" || config.AnthropicAPIKey != "" {
-		t.Fatalf("staging should wait for released provider keys: %#v", config)
+	if config.ChutesAPIKey != "" {
+		t.Fatalf("staging should wait for the released managed Chutes key: %#v", config)
 	}
 }
 
@@ -254,6 +254,7 @@ func TestLoadFromEnvRejectsStagingHostRuntimeSecrets(t *testing.T) {
 	for _, name := range []string{
 		"ANTHROPIC_API_KEY",
 		"API_KEY_PEPPER",
+		"CHUTES_API_KEY",
 		"INFERENCE_TOKEN_PUBLIC_KEY",
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
@@ -356,8 +357,8 @@ func TestLoadFromEnvAllowsProviderKeysFromConfidentialSecretRelease(t *testing.T
 	if config.Confidential.AttesterMode != "igvm-native" {
 		t.Fatalf("local secret release should derive native attestation, got %#v", config.Confidential)
 	}
-	if config.OpenAIAPIKey != "" || config.AnthropicAPIKey != "" {
-		t.Fatalf("provider keys should not come from host env: %#v", config)
+	if config.ChutesAPIKey != "" {
+		t.Fatalf("the managed Chutes key should not come from host env: %#v", config)
 	}
 }
 
@@ -375,18 +376,18 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 	t.Setenv("INFISICAL_SKIP", "true")
 
 	config := Config{
-		AnthropicAPIKey: "host-anthropic",
-		Confidential:    ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"},
-		OpenAIAPIKey:    "host-openai",
+		ChutesAPIKey: "host-chutes",
+		Confidential: ConfidentialConfig{
+			ControlURL: "https://control.stogas.localhost/api/fleet",
+		},
 	}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"ANTHROPIC_API_KEY":          "released-anthropic",
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
 		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
+		"CHUTES_API_KEY":             "released-chutes",
 		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":            "public_0001_initial_schema",
 		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
-		"OPENAI_API_KEY":             "released-openai",
 		"TB_GATEWAY_REQUESTS_TOKEN":  "tinybird-token",
 		"TB_HOST_URL":                "https://tinybird.example",
 	})
@@ -396,8 +397,8 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 	if os.Getenv("API_KEY_PEPPER") != "released-api-key-pepper-0123456789" || os.Getenv("DATABASE_SCHEMA") != "public_0001_initial_schema" {
 		t.Fatalf("released runtime secrets were not installed")
 	}
-	if config.OpenAIAPIKey != "released-openai" || config.AnthropicAPIKey != "released-anthropic" {
-		t.Fatalf("runtime provider keys did not refresh from released secrets: %#v", config)
+	if config.ChutesAPIKey != "released-chutes" {
+		t.Fatalf("the managed Chutes key did not refresh from released secrets: %#v", config)
 	}
 	if config.TinybirdHost != "https://tinybird.example" || config.TinybirdToken != "tinybird-token" {
 		t.Fatalf("runtime service secrets did not refresh from released secrets: %#v", config)
@@ -422,13 +423,8 @@ func TestValidateProviderRuntimeSecretsReadyRequiresAppliedSecrets(t *testing.T)
 		BYOKEncryptionSecret: "released-byok-encryption-secret-at-least-32-characters",
 		Confidential:         ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"},
 	}
-	if err := validateProviderRuntimeSecretsReady(config); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
-		t.Fatalf("expected missing OpenAI provider key error, got %v", err)
-	}
-
-	config.OpenAIAPIKey = "released-openai"
-	if err := validateProviderRuntimeSecretsReady(config); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
-		t.Fatalf("expected missing Anthropic provider key error, got %v", err)
+	if err := validateProviderRuntimeSecretsReady(config); err == nil || !strings.Contains(err.Error(), "CHUTES_API_KEY") {
+		t.Fatalf("expected missing Chutes provider key error, got %v", err)
 	}
 }
 
@@ -437,13 +433,12 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
 	if err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"ANTHROPIC_API_KEY":          "released-anthropic",
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
 		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
+		"CHUTES_API_KEY":             "released-chutes",
 		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":            "public_0001_initial_schema",
 		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
-		"OPENAI_API_KEY":             "released-openai",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -455,8 +450,7 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	setRequiredEnvWithoutProviderKeys(t)
-	t.Setenv("OPENAI_API_KEY", "test-openai-key")
-	t.Setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+	t.Setenv("CHUTES_API_KEY", "test-chutes-key")
 }
 
 func setRequiredEnvWithoutProviderKeys(t *testing.T) {

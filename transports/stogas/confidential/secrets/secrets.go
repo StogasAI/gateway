@@ -38,13 +38,12 @@ type InstallInput struct {
 }
 
 var requiredSecretNames = []string{
-	"ANTHROPIC_API_KEY",
+	"CHUTES_API_KEY",
 	"API_KEY_PEPPER",
 	"BYOK_ENCRYPTION_SECRET",
 	"DATABASE_SCHEMA",
 	"DATABASE_URL",
 	"INFERENCE_TOKEN_PUBLIC_KEY",
-	"OPENAI_API_KEY",
 }
 
 func NewStore() *Store {
@@ -178,14 +177,14 @@ func decryptSecret(privateKey hpke.PrivateKey, encrypted provision.SecretCiphert
 
 func secretReleaseAAD(bundle *provision.SecretBundle, secret provision.SecretCiphertext) ([]byte, error) {
 	payload := struct {
-		NodeID     string `json:"node_id"`
+		NodeID           string `json:"node_id"`
 		ReportDataSHA512 string `json:"report_data_sha512"`
 		Schema           string `json:"schema"`
 		SecretKeyID      string `json:"secret_key_id"`
 		SecretName       string `json:"secret_name"`
 		SecretVersion    string `json:"secret_version"`
 	}{
-		NodeID:     bundle.NodeID,
+		NodeID:           bundle.NodeID,
 		ReportDataSHA512: bundle.ReportDataSHA512,
 		Schema:           provision.SecretReleaseSchemaV1,
 		SecretKeyID:      secret.KeyID,

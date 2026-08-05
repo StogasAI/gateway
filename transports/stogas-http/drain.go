@@ -9,6 +9,11 @@ type requestDrain struct {
 	idle     chan struct{}
 }
 
+type requestDrainDiagnostics struct {
+	Active   int  `json:"active"`
+	Draining bool `json:"draining"`
+}
+
 func newRequestDrain() *requestDrain {
 	idle := make(chan struct{})
 	close(idle)
@@ -45,4 +50,13 @@ func (d *requestDrain) start() <-chan struct{} {
 	defer d.mu.Unlock()
 	d.draining = true
 	return d.idle
+}
+
+func (d *requestDrain) diagnostics() requestDrainDiagnostics {
+	if d == nil {
+		return requestDrainDiagnostics{}
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return requestDrainDiagnostics{Active: d.active, Draining: d.draining}
 }
