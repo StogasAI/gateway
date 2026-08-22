@@ -11,6 +11,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
+type AttesterFunc func(ctx context.Context, reportData [64]byte) ([]byte, error)
+
+func (f AttesterFunc) Quote(ctx context.Context, reportData [64]byte) ([]byte, error) {
+	return f(ctx, reportData)
+}
+
 func testPayload() reportdata.Payload {
 	return reportdata.Payload{
 		Catalog:            reportdata.CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},

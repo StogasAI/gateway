@@ -1,14 +1,12 @@
 package catalog
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -16,13 +14,11 @@ var active atomic.Pointer[snapshot]
 var activationMu sync.RWMutex
 
 func init() {
-	if snap, err := loadSnapshot(); err == nil {
-		active.Store(snap)
+	snap, err := loadSnapshot()
+	if err != nil {
+		panic("load embedded catalog: " + err.Error())
 	}
-}
-
-func DeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
-	return DeploymentForRouteServiceTier(provider, model, route, nil)
+	active.Store(snap)
 }
 
 // DeploymentForUpstreamModel resolves the exact model identifier already placed
@@ -112,7 +108,7 @@ func deploymentMatchesRequestedTier(
 ) bool {
 	if requestedTier != nil {
 		target := deploymentServiceTierForRequest(provider, requestedTier)
-		if target == "" || deployment.Upstream.ServiceTier != target {
+		if target == "" || normalizedDeploymentServiceTier(provider, deployment.Upstream.ServiceTier) != target {
 			return false
 		}
 	}
@@ -137,7 +133,7 @@ func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelPro
 	if !ok || !deploymentAvailableNow(current) {
 		return ""
 	}
-	if current.Upstream.ServiceTier == targetTier {
+	if normalizedDeploymentServiceTier(provider, current.Upstream.ServiceTier) == targetTier {
 		return currentID
 	}
 	if impliedServiceTierForDeployment(provider, current) != nil {
@@ -150,14 +146,28 @@ func (s *snapshot) deploymentIDForRequestedServiceTier(provider schemas.ModelPro
 		if !ok ||
 			!deploymentAvailableNow(candidate) ||
 			candidate.ModelID != current.ModelID ||
-			candidate.Upstream.ServiceTier != targetTier ||
+			normalizedDeploymentServiceTier(provider, candidate.Upstream.ServiceTier) != targetTier ||
 			candidate.Upstream.ReasoningMode != currentReasoningMode ||
+			candidate.Upstream.Hosting != current.Upstream.Hosting ||
+			candidate.Upstream.ModelFormat != current.Upstream.ModelFormat ||
+			candidate.Upstream.ModelVersion != current.Upstream.ModelVersion ||
+			candidate.Upstream.DeploymentType != current.Upstream.DeploymentType ||
 			deploymentIsFast(candidate) != currentFast {
 			continue
 		}
 		return candidateID
 	}
 	return currentID
+}
+
+func normalizedDeploymentServiceTier(provider schemas.ModelProvider, tier string) string {
+	if provider == schemas.Anthropic && strings.TrimSpace(tier) == "" {
+		return "standard_only"
+	}
+	if provider == schemas.Azure && strings.TrimSpace(tier) == "" {
+		return "default"
+	}
+	return tier
 }
 
 func deploymentServiceTierForRequest(provider schemas.ModelProvider, requestedTier *schemas.BifrostServiceTier) string {
@@ -178,7 +188,9 @@ func deploymentServiceTierForRequest(provider schemas.ModelProvider, requestedTi
 	case schemas.Azure:
 		switch value {
 		case "auto", "default", "":
-			return ""
+			return "default"
+		case "fast", "priority":
+			return "priority"
 		}
 	case schemas.Anthropic:
 		switch value {
@@ -205,16 +217,42 @@ func applyDeploymentServiceTier(provider schemas.ModelProvider, serviceTier **sc
 		return applyAnthropicDeploymentServiceTier(serviceTier, deployment)
 	}
 	if provider == schemas.Azure {
-		if serviceTier == nil || *serviceTier == nil {
-			return deployment.Upstream.ServiceTier == ""
+		if serviceTier == nil {
+			return true
 		}
-		switch strings.ToLower(strings.TrimSpace(string(**serviceTier))) {
-		case "", "auto", "default":
-			*serviceTier = nil
-			return deployment.Upstream.ServiceTier == ""
-		default:
+		target := strings.TrimSpace(deployment.Upstream.ServiceTier)
+		if target == "" {
+			if *serviceTier == nil {
+				return true
+			}
+			switch strings.ToLower(strings.TrimSpace(string(**serviceTier))) {
+			case "", "auto", "default":
+				*serviceTier = nil
+				return true
+			default:
+				return false
+			}
+		}
+		if implied := impliedServiceTier(provider, deployment.Upstream.ServiceTier); implied != nil {
+			if *serviceTier != nil && !equivalentServiceTier(provider, **serviceTier, *implied) {
+				return false
+			}
+			*serviceTier = implied
+			return true
+		}
+		if target != "default" {
 			return false
 		}
+		if *serviceTier != nil {
+			switch strings.ToLower(strings.TrimSpace(string(**serviceTier))) {
+			case "", "auto", "default":
+			default:
+				return false
+			}
+		}
+		value := schemas.BifrostServiceTierDefault
+		*serviceTier = &value
+		return true
 	}
 	if serviceTier == nil {
 		return true
@@ -306,7 +344,7 @@ func equivalentServiceTier(provider schemas.ModelProvider, requested, implied sc
 	if requested == implied {
 		return true
 	}
-	if provider == schemas.OpenAI {
+	if provider == schemas.OpenAI || provider == schemas.Azure {
 		requestedValue := strings.ToLower(strings.TrimSpace(string(requested)))
 		impliedValue := strings.ToLower(strings.TrimSpace(string(implied)))
 		return impliedValue == "priority" &&
@@ -327,18 +365,6 @@ func equivalentServiceTier(provider schemas.ModelProvider, requested, implied sc
 
 func deploymentIsFast(deployment compiledDeployment) bool {
 	return strings.EqualFold(strings.TrimSpace(deployment.Upstream.Speed), "fast")
-}
-
-func rawStringField(object map[string]json.RawMessage, key string) string {
-	raw, ok := object[key]
-	if !ok {
-		return ""
-	}
-	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, current Deployment, actualTier *schemas.BifrostServiceTier, actualSpeed string, actualModel ...string) (Deployment, bool) {
@@ -381,6 +407,13 @@ func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, c
 			if currentCompiledOK && deployment.Upstream.ReasoningMode != currentReasoningMode {
 				continue
 			}
+			if currentCompiledOK &&
+				(deployment.Upstream.Hosting != currentCompiled.Upstream.Hosting ||
+					deployment.Upstream.ModelFormat != currentCompiled.Upstream.ModelFormat ||
+					deployment.Upstream.ModelVersion != currentCompiled.Upstream.ModelVersion ||
+					deployment.Upstream.DeploymentType != currentCompiled.Upstream.DeploymentType) {
+				continue
+			}
 			if current.Upstream.InferenceGeo != "" &&
 				deployment.Upstream.InferenceGeo != current.Upstream.InferenceGeo {
 				continue
@@ -402,41 +435,6 @@ func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, c
 		}
 	}
 	return Deployment{}, false
-}
-
-func ProviderForRoute(route Route) (schemas.ModelProvider, bool) {
-	snap := active.Load()
-	if snap == nil {
-		return "", false
-	}
-	var selected schemas.ModelProvider
-	for _, routeNode := range snap.graph.Routes {
-		if !routeSupportsInterface(routeNode, route) || routeNode.ProviderID == "" {
-			continue
-		}
-		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if selected != "" && selected != provider {
-			return "", false
-		}
-		selected = provider
-	}
-	return selected, selected != ""
-}
-
-func ProviderPricing(provider schemas.ModelProvider) Pricing {
-	return nil
-}
-
-func ProviderForRouteModel(route Route, requestedModel string) (schemas.ModelProvider, bool, error) {
-	return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{})
-}
-
-func ProviderForRouteModelPreference(route Route, requestedModel string, preferredProvider string) (schemas.ModelProvider, bool, error) {
-	preferredProvider = strings.TrimSpace(preferredProvider)
-	if preferredProvider == "" {
-		return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{})
-	}
-	return ProviderForRouteModelRouting(route, requestedModel, ProviderRoutingPreference{Only: []string{preferredProvider}})
 }
 
 func ProviderForRouteModelRouting(route Route, requestedModel string, preference ProviderRoutingPreference) (schemas.ModelProvider, bool, error) {
@@ -461,6 +459,25 @@ func ProviderForRouteModelRouting(route Route, requestedModel string, preference
 	if err != nil {
 		return "", false, err
 	}
+	var constraint []schemas.ModelProvider
+	if strings.TrimSpace(preference.Constraint) != "" {
+		constraint, err = snap.resolveProviderPreferences([]string{preference.Constraint})
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if len(constraint) == 1 {
+		constrainedProvider := constraint[0]
+		if len(only) > 0 && !providerInList(constrainedProvider, only) {
+			return "", false, ErrCredentialProviderConflict
+		}
+		allowed := map[schemas.ModelProvider]bool{constrainedProvider: true}
+		candidates := snap.routeModelProviders(route, requested, allowed)
+		if len(candidates) != 1 || candidates[0] != constrainedProvider {
+			return "", false, ErrModelUnavailable
+		}
+		return constrainedProvider, true, nil
+	}
 	allowed := map[schemas.ModelProvider]bool(nil)
 	if len(only) > 0 {
 		allowed = make(map[schemas.ModelProvider]bool, len(only))
@@ -483,6 +500,15 @@ func ProviderForRouteModelRouting(route Route, requestedModel string, preference
 		return candidates[0], true, nil
 	}
 	return "", false, ErrModelAmbiguous
+}
+
+func providerInList(provider schemas.ModelProvider, providers []schemas.ModelProvider) bool {
+	for _, candidate := range providers {
+		if candidate == provider {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *snapshot) providerForRouteModel(route Route, requested string, allowed map[schemas.ModelProvider]bool) (schemas.ModelProvider, bool, error) {
@@ -574,15 +600,6 @@ func (s *snapshot) providerForPreference(preference string) (schemas.ModelProvid
 	return "", false
 }
 
-func ProviderUsesPseudoanonymousUserID(provider schemas.ModelProvider) bool {
-	return provider == schemas.OpenAI || provider == schemas.Anthropic
-}
-
-func PathForRoute(route Route) (string, bool) {
-	spec, ok := specForRoute(route)
-	return spec.Path, ok
-}
-
 func RouteForPath(path string) (Route, bool) {
 	normalized := strings.TrimSpace(path)
 	route, ok := routeByPath[normalized]
@@ -628,6 +645,12 @@ func allowedClientExtraParams(provider schemas.ModelProvider, route Route) map[s
 			"task_budget":        true,
 		}
 	}
+	if provider == schemas.Azure && route == RouteResponses {
+		return map[string]bool{
+			"cache_control":      true,
+			"context_management": true,
+		}
+	}
 	return nil
 }
 
@@ -639,31 +662,12 @@ func AuthHeaderNames(route Route) []string {
 	return stableAuthHeaderOrder(spec.AuthHeaders)
 }
 
-func ClientHeaderNames(route Route) []string {
-	spec, ok := specForRoute(route)
-	if !ok {
-		return nil
-	}
-	return stableHeaderOrder(spec.Headers)
-}
-
-func AllClientHeaderNames() []string {
-	return append([]string(nil), allClientHeaderNamesValue...)
-}
-
 func AllClientHeadersValue() string {
 	return allClientHeadersValue
 }
 
 func KnownFields(route Route) map[string]bool {
 	return parameterSet(route)
-}
-
-func ParameterAliasFor(route Route, name string) (string, bool) {
-	if route == RouteChat && name == "max_tokens" {
-		return "max_completion_tokens", true
-	}
-	return "", false
 }
 
 func (s *snapshot) route(provider schemas.ModelProvider, route Route) (compiledRoute, bool) {
@@ -812,27 +816,38 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 	capabilities := deployment.Capabilities
 	capabilities.InputModalities = append([]string(nil), deployment.InputModalities...)
 	capabilities.OutputModalities = append([]string(nil), deployment.OutputModalities...)
-	var tee *TEE
-	if deployment.TEE != nil {
-		value := *deployment.TEE
-		tee = &value
+	dataHandling, exists := deployment.DataHandlingByRoute[route.ID]
+	if !exists {
+		return Deployment{}, false
+	}
+	if dataHandling.TEE != nil {
+		value := *dataHandling.TEE
+		dataHandling.TEE = &value
 	}
 	var reasoningMaxTokens *ReasoningMaxTokens
 	if deployment.ReasoningMaxTokens != nil {
 		value := *deployment.ReasoningMaxTokens
 		reasoningMaxTokens = &value
 	}
+	reasoningEfforts := deployment.ReasoningEfforts
+	if override, exists := deployment.RouteOverrides[route.ID]; exists {
+		reasoningEfforts = override.ReasoningEfforts
+	}
 	return Deployment{
 		ID:      deploymentID,
 		ModelID: deployment.ModelID,
 		Upstream: Upstream{
-			Model:         deployment.Upstream.Model,
-			ChuteID:       deployment.Upstream.ChuteID,
-			GPUCount:      deployment.Upstream.GPUCount,
-			InferenceGeo:  deployment.Upstream.InferenceGeo,
-			ReasoningMode: deployment.Upstream.ReasoningMode,
-			ServiceTier:   deployment.Upstream.ServiceTier,
-			Speed:         deployment.Upstream.Speed,
+			Model:          deployment.Upstream.Model,
+			ModelFormat:    deployment.Upstream.ModelFormat,
+			ModelVersion:   deployment.Upstream.ModelVersion,
+			ChuteID:        deployment.Upstream.ChuteID,
+			GPUCount:       deployment.Upstream.GPUCount,
+			InferenceGeo:   deployment.Upstream.InferenceGeo,
+			ReasoningMode:  deployment.Upstream.ReasoningMode,
+			ServiceTier:    deployment.Upstream.ServiceTier,
+			Speed:          deployment.Upstream.Speed,
+			Hosting:        deployment.Upstream.Hosting,
+			DeploymentType: deployment.Upstream.DeploymentType,
 		},
 		Capabilities:          capabilities,
 		ContextWindowTokens:   deployment.ContextWindowTokens,
@@ -841,17 +856,12 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 		Pricing:               deployment.Pricing,
 		RouteIDs:              []string{route.ID},
 		ReasoningAvailability: deployment.ReasoningAvailability,
-		ReasoningEfforts:      append([]string(nil), deployment.ReasoningEfforts...),
+		ReasoningEfforts:      append([]string(nil), reasoningEfforts...),
 		ReasoningMaxTokens:    reasoningMaxTokens,
 		ReasoningSupported:    deployment.ReasoningAvailability != "unsupported",
-		TEE:                   tee,
+		DataHandling:          dataHandling,
 		snapshot:              s,
 	}, true
-}
-
-func (s *snapshot) allowsParam(route compiledRoute, name string) bool {
-	known := parameterSet(firstInterfaceRoute(route))
-	return known[name]
 }
 
 func deploymentMatchesActualServiceTier(provider schemas.ModelProvider, deploymentTier string, actual schemas.BifrostServiceTier) bool {
@@ -860,7 +870,7 @@ func deploymentMatchesActualServiceTier(provider schemas.ModelProvider, deployme
 	if provider == schemas.Anthropic {
 		switch actualValue {
 		case "default", "standard", "standard_only", "":
-			return deploymentTier == "standard_only"
+			return deploymentTier == ""
 		default:
 			return false
 		}

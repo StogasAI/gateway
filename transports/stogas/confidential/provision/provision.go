@@ -41,9 +41,9 @@ type HeartbeatInput struct {
 }
 
 type NodeHealth struct {
-	LastQuoteError string            `json:"last_quote_error,omitempty"`
-	Ready          bool              `json:"ready"`
-	SecretVersions map[string]string `json:"secret_versions"`
+	LastQuoteFailureClass string            `json:"last_quote_failure_class,omitempty"`
+	Ready                 bool              `json:"ready"`
+	SecretVersions        map[string]string `json:"secret_versions"`
 }
 
 type HeartbeatResponse struct {
@@ -237,7 +237,11 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	resp, err := httpClient.Do(req)
+	safeClient := *httpClient
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("control redirects are not permitted")
+	}
+	resp, err := safeClient.Do(req)
 	if err != nil {
 		return err
 	}

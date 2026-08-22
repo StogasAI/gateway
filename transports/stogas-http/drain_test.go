@@ -9,7 +9,10 @@ import (
 
 func TestRequestDrainRejectsNewWorkAndWaitsForEveryActiveRequest(t *testing.T) {
 	drain := newRequestDrain()
-	if !drain.begin() || !drain.begin() {
+	if !drain.begin() {
+		t.Fatal("request drain rejected first request before draining")
+	}
+	if !drain.begin() {
 		t.Fatal("request drain rejected work before draining")
 	}
 	idle := drain.start()

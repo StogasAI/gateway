@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -27,6 +28,16 @@ func bifrostErrorPayload(bifrostErr *schemas.BifrostError) any {
 }
 
 func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
+	if statusCode, errorType, code, message, ok := publicProviderDependencyError(bifrostErr); ok {
+		return statusCode, map[string]any{
+			"error": map[string]any{
+				"code":    code,
+				"message": message,
+				"param":   nil,
+				"type":    errorType,
+			},
+		}
+	}
 	statusCode := publicBifrostStatus(bifrostErr)
 	errorType := publicBifrostType(statusCode, bifrostErr)
 	message := publicBifrostMessage(statusCode, errorType, bifrostErr)
@@ -40,6 +51,48 @@ func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
 			"param":   param,
 			"type":    errorType,
 		},
+	}
+}
+
+func publicProviderDependencyError(bifrostErr *schemas.BifrostError) (int, string, string, string, bool) {
+	if bifrostErr == nil || bifrostErr.StatusCode == nil {
+		return 0, "", "", "", false
+	}
+	statusCode := *bifrostErr.StatusCode
+	code := bifrostErrorCode(bifrostErr)
+	switch code {
+	case "upstream_verification_failed":
+		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+			"Provider verification failed; the request was not sent", true
+	case "upstream_capacity_unavailable":
+		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+			"No verified private provider capacity is currently available", true
+	case "upstream_configuration_error":
+		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+			"The managed provider configuration is unavailable", true
+	case "upstream_protocol_error":
+		return fasthttp.StatusBadGateway, "gateway_error", code,
+			"The provider returned an invalid private response", true
+	case "upstream_rate_limit_error":
+		return fasthttp.StatusTooManyRequests, "rate_limit_error", code,
+			"The upstream provider rate limit was exceeded", true
+	}
+
+	switch statusCode {
+	case fasthttp.StatusUnauthorized:
+		return fasthttp.StatusBadGateway, "gateway_error", "upstream_authentication_failed",
+			"The configured provider credential was rejected", true
+	case fasthttp.StatusPaymentRequired:
+		return fasthttp.StatusBadGateway, "gateway_error", "upstream_quota_exceeded",
+			"The configured provider account has insufficient quota", true
+	case fasthttp.StatusForbidden:
+		return fasthttp.StatusBadGateway, "gateway_error", "upstream_access_denied",
+			"The configured provider credential cannot access the requested model", true
+	case fasthttp.StatusTooManyRequests:
+		return fasthttp.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
+			"The upstream provider rate limit was exceeded", true
+	default:
+		return 0, "", "", "", false
 	}
 }
 
@@ -124,12 +177,14 @@ func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.
 		return "Invalid request"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
-		if message != "" && !messageLooksSensitive(message) {
+		if safeProviderClientMessage(message) {
 			return message
 		}
 	}
 
 	switch errorType {
+	case "invalid_request_error":
+		return "Invalid request"
 	case "authentication_error":
 		return "Authentication failed"
 	case "billing_error":
@@ -162,14 +217,32 @@ func publicBifrostCode(statusCode int, bifrostErr *schemas.BifrostError) any {
 	if statusCode >= 500 || bifrostErr == nil || bifrostErr.Error == nil || bifrostErr.Error.Code == nil || *bifrostErr.Error.Code == "" {
 		return nil
 	}
-	return *bifrostErr.Error.Code
+	code := *bifrostErr.Error.Code
+	if !safeProviderErrorIdentifier(code, 128, false) {
+		return nil
+	}
+	return code
 }
 
 func publicBifrostParam(statusCode int, bifrostErr *schemas.BifrostError) any {
 	if statusCode >= 500 || bifrostErr == nil || bifrostErr.Error == nil {
 		return nil
 	}
-	return bifrostErr.Error.Param
+	var param string
+	switch value := bifrostErr.Error.Param.(type) {
+	case string:
+		param = value
+	case *string:
+		if value != nil {
+			param = *value
+		}
+	default:
+		return nil
+	}
+	if !safeProviderErrorIdentifier(param, 256, true) {
+		return nil
+	}
+	return param
 }
 
 func bifrostHasType(bifrostErr *schemas.BifrostError, errorType string) bool {
@@ -187,6 +260,13 @@ func bifrostErrorType(bifrostErr *schemas.BifrostError) string {
 		return *bifrostErr.Type
 	}
 	return ""
+}
+
+func bifrostErrorCode(bifrostErr *schemas.BifrostError) string {
+	if bifrostErr == nil || bifrostErr.Error == nil || bifrostErr.Error.Code == nil {
+		return ""
+	}
+	return *bifrostErr.Error.Code
 }
 
 func bifrostErrorMessage(bifrostErr *schemas.BifrostError) string {
@@ -289,6 +369,27 @@ func messageLooksSensitive(message string) bool {
 		}
 	}
 	return false
+}
+
+func safeProviderClientMessage(message string) bool {
+	return message != "" && len(message) <= 1024 && utf8.ValidString(message) &&
+		!strings.ContainsRune(message, '\x00') && !messageLooksSensitive(message)
+}
+
+func safeProviderErrorIdentifier(value string, maximum int, allowBrackets bool) bool {
+	if value == "" || len(value) > maximum {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || character == '_' || character == '-' ||
+			character == '.' || allowBrackets && (character == '[' || character == ']') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) writeJSON(ctx *fasthttp.RequestCtx, statusCode int, payload any) {

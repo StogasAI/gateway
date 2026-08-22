@@ -100,27 +100,18 @@ func proofPricing(event *billing.RequestEvent) proof.Pricing {
 		return result
 	}
 	result.TotalCostUSDAtoms = event.BilledCostUSDAtoms
-	if len(event.ProviderAttempts) > 0 {
-		byok := strings.TrimSpace(event.ProviderAttempts[0].UpstreamByok)
+	if finalAttempt, ok := event.FinalProviderAttempt(); ok {
+		byok := strings.TrimSpace(finalAttempt.UpstreamByok)
 		if byok != "" && byok != "stogas" {
 			result.BYOKCostUSDAtoms = event.UpstreamCostUSDAtoms
 		}
 	}
-	for key, raw := range event.Pricing {
-		entry, ok := raw.(map[string]any)
-		if !ok {
-			result.Meters[key] = proof.Meter{}
-			continue
-		}
-		quantity, _ := entry["quantity"].(string)
-		rateKey, _ := entry["rateKey"].(string)
-		rateUSDAtoms, _ := entry["rateUsdAtoms"].(string)
-		usdAtoms, _ := entry["usdAtoms"].(string)
+	for key, entry := range event.Pricing {
 		result.Meters[key] = proof.Meter{
-			Quantity:     quantity,
-			RateKey:      rateKey,
-			RateUSDAtoms: rateUSDAtoms,
-			USDAtoms:     usdAtoms,
+			Quantity:     entry.Quantity,
+			RateKey:      entry.RateKey,
+			RateUSDAtoms: entry.RateUSDAtoms,
+			USDAtoms:     entry.USDAtoms,
 		}
 	}
 	return result
@@ -131,10 +122,7 @@ func proofTiming(event *billing.RequestEvent) proof.Timing {
 		return proof.Timing{}
 	}
 	result := proof.Timing{TotalMS: event.TotalTimeMS}
-	if len(event.ProviderAttempts) > 0 {
-		result.ProviderMS = event.ProviderAttempts[0].LatencyMS
-		result.TimeToFirstOutputMS = event.ProviderAttempts[0].ProviderFirstOutputMS
-	}
+	result.ProviderMS, result.TimeToFirstOutputMS = event.ProviderTiming()
 	return result
 }
 

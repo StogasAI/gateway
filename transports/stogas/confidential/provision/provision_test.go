@@ -62,7 +62,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 			t.Fatalf("heartbeat must not duplicate the quote-bound catalog: %#v", body)
 		}
 		health, ok := body["health"].(map[string]any)
-		if !ok || health["ready"] != false || health["last_quote_error"] != "drand fetch failed" {
+		if !ok || health["ready"] != false || health["last_quote_failure_class"] != "quote_refresh_failed" {
 			t.Fatalf("unexpected health payload: %#v", body["health"])
 		}
 		versions, ok := health["secret_versions"].(map[string]any)
@@ -82,7 +82,7 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
 		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		Health:        NodeHealth{Ready: false, LastQuoteError: "drand fetch failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
+		Health:        NodeHealth{Ready: false, LastQuoteFailureClass: "quote_refresh_failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
 		NodeID:        "node-1",
 		ObservedAt:    now,
 		Quote:         snapshot,
@@ -96,6 +96,31 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 	}
 	if result.CertificateInstruction != nil {
 		t.Fatalf("unexpected certificate instruction: %#v", result.CertificateInstruction)
+	}
+}
+
+func TestSendHeartbeatDoesNotForwardCredentialsAcrossRedirects(t *testing.T) {
+	targetCalled := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		targetCalled = true
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	client := Client{
+		AccessClientID:     "access-client-id",
+		AccessClientSecret: "access-client-secret",
+		AllowInsecureLocal: true,
+		BaseURL:            source.URL,
+	}
+	if _, err := client.SendHeartbeat(context.Background(), testHeartbeatInput(t)); err == nil {
+		t.Fatal("expected redirect rejection")
+	}
+	if targetCalled {
+		t.Fatal("redirect target received the credential-bearing heartbeat")
 	}
 }
 

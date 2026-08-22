@@ -40,6 +40,30 @@ func TestStoreInstallsDecryptedSecrets(t *testing.T) {
 	if string(secret.Value) != "secret-for-CHUTES_API_KEY" || secret.Version != "2026-07-01" {
 		t.Fatalf("unexpected secret: %#v", secret)
 	}
+	if err := store.Install(InstallInput{Bundle: bundle, Identity: material}); err == nil {
+		t.Fatal("expected a second runtime configuration install to fail")
+	}
+}
+
+func TestStoreRejectsIncompleteRuntimeConfiguration(t *testing.T) {
+	material, err := identity.Generate(strings.NewReader(strings.Repeat("c", 4096)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := testBundle()
+	encrypted, err := encryptForTest(material, bundle, "CHUTES_API_KEY", "provider-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Secrets = []provision.SecretCiphertext{encrypted}
+
+	store := NewStore()
+	if err := store.Install(InstallInput{Bundle: bundle, Identity: material}); err == nil {
+		t.Fatal("expected an incomplete runtime configuration to fail")
+	}
+	if len(store.Versions()) != 0 {
+		t.Fatal("incomplete runtime configuration changed the store")
+	}
 }
 
 func TestDecryptReleaseFailsClosedOnBindingMismatch(t *testing.T) {

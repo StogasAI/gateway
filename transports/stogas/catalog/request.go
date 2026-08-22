@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -12,26 +11,29 @@ import (
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 const (
 	ErrorTypeInvalidRequest = "invalid_request_error"
 	ErrorTypeInternal       = "internal_error"
-	maxRequestJSONDepth     = 128
+	maxProviderRoutingItems = 32
+	maxProviderNameBytes    = 64
 )
 
 var (
-	ErrCatalogUnavailable     = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrProviderUnavailable    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrRouteUnavailable       = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod      = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrParameterTooLarge      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrUnsupportedTool        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
-	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrCatalogUnavailable         = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON                = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous             = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable           = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable           = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod          = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge          = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrUnsupportedTool            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
+	ErrUnsupportedServiceTier     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrCredentialProviderConflict = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Pass-through credential provider conflicts with request routing"}
 )
 
 type APIError struct {
@@ -56,9 +58,10 @@ func PublicError(err error) APIError {
 }
 
 type RequestInput struct {
-	Body   []byte
-	Method string
-	Path   string
+	Body               []byte
+	Method             string
+	Path               string
+	ProviderConstraint string
 }
 
 type ResolvedRequest struct {
@@ -87,12 +90,13 @@ type requestPricingContext struct {
 }
 
 type ProviderRoutingPreference struct {
-	Only  []string
-	Order []string
+	Constraint string
+	Only       []string
+	Order      []string
 }
 
 func (p ProviderRoutingPreference) Empty() bool {
-	return len(p.Only) == 0 && len(p.Order) == 0
+	return strings.TrimSpace(p.Constraint) == "" && len(p.Only) == 0 && len(p.Order) == 0
 }
 
 type requestWithSettableExtraParams interface {
@@ -113,9 +117,9 @@ func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
 
 	switch route {
 	case RouteChat:
-		return resolveChatRequest(input.Body, route)
+		return resolveChatRequest(input.Body, route, input.ProviderConstraint)
 	case RouteResponses:
-		return resolveResponsesRequest(input.Body, route)
+		return resolveResponsesRequest(input.Body, route, input.ProviderConstraint)
 	default:
 		return nil, ErrUnsupportedRequest
 	}
@@ -239,6 +243,21 @@ func (r *ResolvedRequest) OutputTokenLimit() int {
 	return r.outputTokenLimit
 }
 
+// SetWireModel binds the already authorized catalog deployment to the exact
+// customer deployment name used on the provider request. It does not change
+// the catalog deployment, pricing, or receipt identity.
+func (r *ResolvedRequest) SetWireModel(model string) error {
+	if r == nil {
+		return ErrUnsupportedRequest
+	}
+	model = strings.TrimSpace(model)
+	if model == "" || len(model) > 256 || strings.ContainsAny(model, "\x00\r\n") {
+		return ErrModelUnavailable
+	}
+	r.Model = model
+	return nil
+}
+
 func (r *ResolvedRequest) NormalizeMinimumOutputTokenLimit(min int) {
 	if r == nil || min <= 0 || r.outputTokenLimit <= 0 || r.outputTokenLimit >= min {
 		return
@@ -297,22 +316,6 @@ func (r *ResolvedRequest) SanitizeClientMetadata() {
 	}
 	if r.responses != nil {
 		r.responses.ResponsesParameters.Metadata = nil
-	}
-}
-
-func (r *ResolvedRequest) SetUpstreamUser(user string) {
-	if r == nil {
-		return
-	}
-	user = strings.TrimSpace(user)
-	if user == "" {
-		return
-	}
-	if r.chat != nil {
-		r.chat.ChatParameters.User = &user
-	}
-	if r.responses != nil {
-		r.responses.ResponsesParameters.User = &user
 	}
 }
 
@@ -410,7 +413,7 @@ func (r *ResolvedRequest) EnsureResponsesToolMaxUses(maxUses int, toolTypes ...s
 		}
 	}
 	for _, tool := range r.pricing.RawTools {
-		if _, ok := allowed[rawResponsesServerToolFamily(rawStringField(tool, "type"))]; !ok {
+		if _, ok := allowed[rawResponsesServerToolFamily(rawjson.NormalizedStringField(tool, "type"))]; !ok {
 			continue
 		}
 		setRawIntIfMissing(tool, "max_uses", maxUses)
@@ -486,18 +489,21 @@ func rawStringListValue(raw json.RawMessage) ([]string, bool) {
 	return values, true
 }
 
-func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
+func resolveChatRequest(body []byte, route Route, providerConstraint string) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
 	}
-	if normalized, err := normalizeChatStopString(rawData); err != nil {
+	if err := dropUnknownTopLevelFields(rawData, route); err != nil {
 		return nil, err
-	} else if normalized {
-		body, err = sonic.Marshal(rawData)
-		if err != nil {
-			return nil, ErrInvalidJSON
-		}
+	}
+	dropNoOpCompatibilityFields(rawData, route)
+	if _, err := normalizeChatStopString(rawData); err != nil {
+		return nil, err
+	}
+	body, err = sonic.Marshal(rawData)
+	if err != nil {
+		return nil, ErrInvalidJSON
 	}
 	if err := validateChatRawAliases(rawData); err != nil {
 		return nil, err
@@ -524,6 +530,7 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 		func() { applyChatAliases(&request) },
 		func() *int { return request.ChatParameters.MaxCompletionTokens },
 		&request,
+		providerConstraint,
 	)
 	if err != nil {
 		return nil, err
@@ -562,10 +569,18 @@ func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
 	return true, nil
 }
 
-func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error) {
+func resolveResponsesRequest(body []byte, route Route, providerConstraint string) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
+	}
+	if err := dropUnknownTopLevelFields(rawData, route); err != nil {
+		return nil, err
+	}
+	dropNoOpCompatibilityFields(rawData, route)
+	body, err = sonic.Marshal(rawData)
+	if err != nil {
+		return nil, ErrInvalidJSON
 	}
 	if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
 		return nil, err
@@ -589,6 +604,7 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 		func() { applyResponsesAliases(rawData, &request) },
 		func() *int { return request.ResponsesParameters.MaxOutputTokens },
 		&request,
+		providerConstraint,
 	)
 	if err != nil {
 		return nil, err
@@ -627,188 +643,6 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 	return resolution, nil
 }
 
-var canonicalReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
-
-type normalizedReasoning struct {
-	Effort  *string
-	Enabled *bool
-}
-
-func normalizeReasoningEffort(
-	requested string,
-	deployment Deployment,
-) (normalizedReasoning, error) {
-	if requested == "none" {
-		switch deployment.ReasoningAvailability {
-		case "unsupported":
-			return normalizedReasoning{}, nil
-		case "optional":
-			if len(deployment.ReasoningEfforts) == 0 {
-				enabled := false
-				return normalizedReasoning{Enabled: &enabled}, nil
-			}
-			effort := requested
-			return normalizedReasoning{Effort: &effort}, nil
-		default:
-			return normalizedReasoning{}, APIError{
-				StatusCode: http.StatusBadRequest,
-				Type:       ErrorTypeInvalidRequest,
-				Message:    "reasoning cannot be disabled for the selected deployment",
-			}
-		}
-	}
-	if reasoningEffortIndex(requested) < 0 {
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning effort must be one of: none, minimal, low, medium, high, xhigh, max",
-		}
-	}
-	if deployment.ReasoningAvailability == "unsupported" {
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning is not supported for the selected deployment",
-		}
-	}
-	if len(deployment.ReasoningEfforts) == 0 {
-		if deployment.ReasoningAvailability == "optional" {
-			enabled := true
-			return normalizedReasoning{Enabled: &enabled}, nil
-		}
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "the selected deployment always reasons but does not expose effort selection; use reasoning.enabled",
-		}
-	}
-	effort := nearestReasoningEffort(requested, deployment.ReasoningEfforts)
-	return normalizedReasoning{Effort: &effort}, nil
-}
-
-func normalizeReasoningEnabled(enabled bool, deployment Deployment) (normalizedReasoning, error) {
-	if !enabled {
-		return normalizeReasoningEffort("none", deployment)
-	}
-	if deployment.ReasoningAvailability == "unsupported" {
-		return normalizedReasoning{}, APIError{
-			StatusCode: http.StatusBadRequest,
-			Type:       ErrorTypeInvalidRequest,
-			Message:    "reasoning is not supported for the selected deployment",
-		}
-	}
-	if len(deployment.ReasoningEfforts) == 0 {
-		if deployment.ReasoningAvailability == "optional" {
-			value := true
-			return normalizedReasoning{Enabled: &value}, nil
-		}
-		return normalizedReasoning{}, nil
-	}
-	return normalizeReasoningEffort("medium", deployment)
-}
-
-func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deployment, outputTokenLimit int) error {
-	if reasoning == nil {
-		return nil
-	}
-	if reasoning.Effort != nil && reasoning.Enabled != nil {
-		if (*reasoning.Effort == "none") == *reasoning.Enabled {
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.enabled conflicts with reasoning.effort"}
-		}
-		reasoning.Enabled = nil
-	}
-	if err := validateReasoningMaxTokens(
-		reasoning.Effort,
-		reasoning.Enabled,
-		reasoning.MaxTokens,
-		deployment,
-		outputTokenLimit,
-	); err != nil {
-		return err
-	}
-	if reasoning.MaxTokens != nil {
-		reasoning.Enabled = nil
-		return nil
-	}
-	var (
-		selection normalizedReasoning
-		err       error
-	)
-	switch {
-	case reasoning.Effort != nil:
-		selection, err = normalizeReasoningEffort(*reasoning.Effort, deployment)
-	case reasoning.Enabled != nil:
-		selection, err = normalizeReasoningEnabled(*reasoning.Enabled, deployment)
-	default:
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	reasoning.Effort = selection.Effort
-	reasoning.Enabled = selection.Enabled
-	return nil
-}
-
-func nearestReasoningEffort(requested string, supported []string) string {
-	requestedIndex := reasoningEffortIndex(requested)
-	best := supported[0]
-	bestIndex := reasoningEffortIndex(best)
-	bestDistance := absInt(requestedIndex - bestIndex)
-	for _, candidate := range supported[1:] {
-		candidateIndex := reasoningEffortIndex(candidate)
-		distance := absInt(requestedIndex - candidateIndex)
-		if distance < bestDistance || (distance == bestDistance && candidateIndex > bestIndex) {
-			best = candidate
-			bestIndex = candidateIndex
-			bestDistance = distance
-		}
-	}
-	return best
-}
-
-func absInt(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
-func reasoningEffortIndex(value string) int {
-	for index, effort := range canonicalReasoningEfforts {
-		if value == effort {
-			return index
-		}
-	}
-	return -1
-}
-
-func validateReasoningMaxTokens(effort *string, enabled *bool, maxTokens *int, deployment Deployment, outputTokenLimit int) error {
-	if maxTokens == nil {
-		return nil
-	}
-	if effort != nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning effort conflicts with a manual reasoning token limit"}
-	}
-	if enabled != nil && !*enabled {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "disabled reasoning conflicts with a manual reasoning token limit"}
-	}
-	capability := deployment.ReasoningMaxTokens
-	if capability == nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "manual reasoning token limits are not supported for the selected deployment; use reasoning.effort"}
-	}
-	if *maxTokens < capability.Minimum {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be at least the deployment minimum"}
-	}
-	if *maxTokens > capability.Maximum {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens exceeds the deployment maximum"}
-	}
-	if *maxTokens >= outputTokenLimit {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.max_tokens must be less than the output token limit"}
-	}
-	return nil
-}
-
 func resolveOpenAIRequest(
 	body []byte,
 	rawData map[string]json.RawMessage,
@@ -820,14 +654,13 @@ func resolveOpenAIRequest(
 	applyRequestAliases func(),
 	requestedOutputLimit func() *int,
 	extraParams requestWithSettableExtraParams,
+	providerConstraint string,
 ) (*ResolvedRequest, error) {
-	if err := validateAllowedRequestFields(rawData, route); err != nil {
-		return nil, err
-	}
 	providerPreference, err := requestProviderPreference(rawData)
 	if err != nil {
 		return nil, err
 	}
+	providerPreference.Constraint = strings.TrimSpace(providerConstraint)
 	provider, ok, err := ProviderForRouteModelRouting(route, requestedModel, providerPreference)
 	if err != nil {
 		return nil, err
@@ -896,10 +729,10 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 		}
 	case schemas.Azure:
 		switch value {
-		case "auto", "default":
+		case "auto", "default", "fast", "priority":
 			return nil
 		default:
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Azure BYOK deployments do not support a selectable service_tier"}
+			return ErrUnsupportedServiceTier
 		}
 	case schemas.Anthropic:
 		switch value {
@@ -979,14 +812,14 @@ func providerStringList(name string, raw json.RawMessage) ([]string, error) {
 		return nil, nil
 	}
 	var values []string
-	if err := sonic.Unmarshal(raw, &values); err != nil || len(values) == 0 {
+	if err := sonic.Unmarshal(raw, &values); err != nil || len(values) == 0 || len(values) > maxProviderRoutingItems {
 		return nil, providerPreferenceShapeError(name)
 	}
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
-		if normalized == "" {
+		if normalized == "" || len(normalized) > maxProviderNameBytes {
 			return nil, providerPreferenceShapeError(name)
 		}
 		key := strings.ToLower(normalized)
@@ -1029,85 +862,6 @@ func resolvedRequest(
 		outputTokenLimit: outputTokenLimit,
 		pricing:          pricing,
 	}
-}
-
-func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
-	if err := validateRequestJSON(body); err != nil {
-		return nil, ErrInvalidJSON
-	}
-	var rawData map[string]json.RawMessage
-	if err := sonic.Unmarshal(body, &rawData); err != nil {
-		return nil, ErrInvalidJSON
-	}
-	return rawData, nil
-}
-
-func validateRequestJSON(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := scanRequestJSONValue(decoder, 0); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("trailing JSON value")
-		}
-		return err
-	}
-	return nil
-}
-
-func scanRequestJSONValue(decoder *json.Decoder, depth int) error {
-	if depth > maxRequestJSONDepth {
-		return errors.New("JSON nesting exceeds limit")
-	}
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		seen := map[string]struct{}{}
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return errors.New("object key is not a string")
-			}
-			if _, exists := seen[key]; exists {
-				return errors.New("duplicate object key")
-			}
-			seen[key] = struct{}{}
-			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim('}') {
-			return errors.New("unterminated object")
-		}
-	case '[':
-		for decoder.More() {
-			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim(']') {
-			return errors.New("unterminated array")
-		}
-	default:
-		return errors.New("unexpected JSON delimiter")
-	}
-	return nil
 }
 
 func maxInputTokenHold(contextWindowTokens int, outputTokenLimit int) int {
@@ -1184,7 +938,7 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 		hasWebSearchOptions = true
 		var options map[string]json.RawMessage
 		if err := sonic.Unmarshal(rawOptions, &options); err == nil {
-			searchContextSize = rawStringField(options, "search_context_size")
+			searchContextSize = rawjson.NormalizedStringField(options, "search_context_size")
 		}
 	}
 	rawTools, ok := rawData["tools"]
@@ -1207,7 +961,7 @@ func requestPricingContextForRaw(route Route, rawData map[string]json.RawMessage
 		}
 	} else {
 		for _, tool := range tools {
-			toolType := rawStringField(tool, "type")
+			toolType := rawjson.NormalizedStringField(tool, "type")
 			if toolType != "" {
 				toolTypes = append(toolTypes, toolType)
 			}
@@ -1246,26 +1000,81 @@ func routeForInput(input RequestInput) (Route, bool, bool) {
 	return route, true, strings.ToUpper(spec.Method) == normalizedMethod
 }
 
-func validateAllowedRequestFields(rawData map[string]json.RawMessage, route Route) error {
+func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route) (map[string]interface{}, error) {
+	typedFields := typedOpenAIRequestFields(provider, route)
+	if len(typedFields) == 0 {
+		return nil, ErrCatalogUnavailable
+	}
+	// Typed request decoding ignores unknown OpenAI-compatible extension fields.
+	// Keep that compatibility at the public boundary, but forward only the small
+	// provider-specific allowlist below. A client extension must never become an
+	// upstream parameter merely because Bifrost learns it later.
+	extraParams := extractExtraParams(rawData, typedFields)
+	return FilterExtraParams(provider, model, route, extraParams), nil
+}
+
+func dropUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route) error {
 	knownFields := KnownFields(route)
 	if len(knownFields) == 0 {
 		return ErrCatalogUnavailable
 	}
 	for name := range rawData {
 		if !knownFields[name] {
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is not supported by Stogas API"}
+			delete(rawData, name)
 		}
 	}
 	return nil
 }
 
-func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route) (map[string]interface{}, error) {
-	typedFields := typedOpenAIRequestFields(provider, route)
-	if len(typedFields) == 0 {
-		return nil, ErrCatalogUnavailable
+// dropNoOpCompatibilityFields accepts common SDK defaults without letting
+// those fields select provider storage, routing, identity, or non-text output.
+// JSON null is omission for every optional top-level request field. Required
+// fields remain so the normal request validator can report them accurately.
+// Meaningful unsupported values remain and are rejected by route policy.
+func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route) {
+	for name, raw := range rawData {
+		if name != "model" && name != "messages" && name != "input" && rawJSONNull(raw) {
+			delete(rawData, name)
+		}
 	}
-	extraParams := extractExtraParams(rawData, typedFields)
-	return FilterExtraParams(provider, model, route, extraParams), nil
+	delete(rawData, "user")
+	delete(rawData, "safety_identifier")
+
+	switch route {
+	case RouteChat:
+		dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
+		dropRawFieldIf(rawData, "functions", rawJSONNullOrEmptyArray)
+		dropRawFieldIf(rawData, "modalities", rawJSONNullOrEmptyArray)
+		dropRawFieldIf(rawData, "prompt_cache_isolation_key", rawJSONNullOrEmptyString)
+	case RouteResponses:
+		dropRawFieldIf(rawData, "background", rawJSONFalse)
+		dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
+		dropRawFieldIf(rawData, "previous_response_id", rawJSONNullOrEmptyString)
+	}
+}
+
+func dropRawFieldIf(rawData map[string]json.RawMessage, name string, noOp func(json.RawMessage) bool) {
+	if raw, ok := rawData[name]; ok && noOp(raw) {
+		delete(rawData, name)
+	}
+}
+
+func rawJSONNull(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+func rawJSONFalse(raw json.RawMessage) bool {
+	return bytes.Equal(bytes.TrimSpace(raw), []byte("false"))
+}
+
+func rawJSONNullOrEmptyArray(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte("[]"))
+}
+
+func rawJSONNullOrEmptyString(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return bytes.Equal(trimmed, []byte("null")) || bytes.Equal(trimmed, []byte(`""`))
 }
 
 func extractExtraParams(rawData map[string]json.RawMessage, knownFields map[string]bool) map[string]interface{} {
@@ -1414,159 +1223,6 @@ func applyResponsesAliases(rawData map[string]json.RawMessage, request *openaipr
 		request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
 	}
 	request.ResponsesParameters.Reasoning.Effort = &effort
-}
-
-var (
-	chatRawReasoningFields = map[string]bool{
-		"display":    true,
-		"enabled":    true,
-		"effort":     true,
-		"max_tokens": true,
-	}
-	responsesRawReasoningFields = map[string]bool{
-		"effort":           true,
-		"generate_summary": true,
-		"max_tokens":       true,
-		"summary":          true,
-	}
-)
-
-func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedFields map[string]bool, allowAliases bool, allowDottedEffort bool) error {
-	reasoning, hasReasoning, err := rawReasoningObject(rawData["reasoning"])
-	if err != nil {
-		return err
-	}
-	if hasReasoning {
-		for name := range reasoning {
-			if !allowedFields[name] {
-				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning." + name + " is not supported by Stogas API"}
-			}
-		}
-	}
-	if allowAliases {
-		for _, item := range []struct {
-			alias string
-			field string
-		}{
-			{"reasoning_effort", "effort"},
-			{"reasoning_max_tokens", "max_tokens"},
-			{"reasoning_display", "display"},
-		} {
-			if _, ok := rawData[item.alias]; ok && hasReasoning {
-				if _, exists := reasoning[item.field]; exists {
-					return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: item.alias + " conflicts with reasoning." + item.field}
-				}
-			}
-		}
-		if err := validateRawReasoningEffort(rawData["reasoning_effort"], "reasoning_effort"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningDisplay(rawData["reasoning_display"], "reasoning_display"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningPositiveInteger(rawData["reasoning_max_tokens"], "reasoning_max_tokens"); err != nil {
-			return err
-		}
-	}
-	if allowDottedEffort {
-		if err := validateRawReasoningEffort(rawData["reasoning.effort"], "reasoning.effort"); err != nil {
-			return err
-		}
-		if _, ok := rawData["reasoning.effort"]; ok && hasReasoning {
-			if _, exists := reasoning["effort"]; exists {
-				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.effort conflicts with reasoning.effort"}
-			}
-		}
-	}
-	if hasReasoning {
-		if err := validateRawReasoningBool(reasoning["enabled"], "reasoning.enabled"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningEffort(reasoning["effort"], "reasoning.effort"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningDisplay(reasoning["display"], "reasoning.display"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningPositiveInteger(reasoning["max_tokens"], "reasoning.max_tokens"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningSummary(reasoning["summary"], "reasoning.summary"); err != nil {
-			return err
-		}
-		if err := validateRawReasoningSummary(reasoning["generate_summary"], "reasoning.generate_summary"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func rawReasoningObject(raw json.RawMessage) (map[string]json.RawMessage, bool, error) {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil, false, nil
-	}
-	var object map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &object); err != nil {
-		return nil, false, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning must be an object"}
-	}
-	return object, true, nil
-}
-
-func validateRawReasoningEffort(raw json.RawMessage, name string) error {
-	value, ok, err := rawReasoningString(raw, name)
-	if err != nil || !ok {
-		return err
-	}
-	if strings.TrimSpace(value) == "" {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a string"}
-	}
-	return nil
-}
-
-func validateRawReasoningBool(raw json.RawMessage, name string) error {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil
-	}
-	var value bool
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a boolean"}
-	}
-	return nil
-}
-
-func validateRawReasoningDisplay(raw json.RawMessage, name string) error {
-	_, _, err := rawReasoningString(raw, name)
-	return err
-}
-
-func validateRawReasoningSummary(raw json.RawMessage, name string) error {
-	_, _, err := rawReasoningString(raw, name)
-	return err
-}
-
-func rawReasoningString(raw json.RawMessage, name string) (string, bool, error) {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return "", false, nil
-	}
-	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
-		return "", true, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a string"}
-	}
-	return value, true, nil
-}
-
-func validateRawReasoningPositiveInteger(raw json.RawMessage, name string) error {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
-		return nil
-	}
-	var value int
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be an integer"}
-	}
-	if value < 1 {
-		return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " is outside the supported range"}
-	}
-	return nil
 }
 
 func validateChatTokenAliases(rawData map[string]json.RawMessage) error {

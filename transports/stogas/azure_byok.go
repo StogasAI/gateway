@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -13,42 +14,56 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-const azureByokSchema = "stogas.azure-byok.v2"
+const (
+	azureByokSchema        = "stogas.azure-byok.v5"
+	azureDeploymentNameMax = 256
+	azureDataScope         = "https://ai.azure.com/.default"
+)
 
 var (
-	azureResourceNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+	azureProjectPathPattern = regexp.MustCompile(`^/api/projects/[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$`)
+	azureUUIDPattern        = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 )
 
 type azureByokCredential struct {
-	APIKey       string `json:"apiKey"`
-	ResourceName string `json:"resourceName"`
-	ResourceType string `json:"resourceType"`
-	Schema       string `json:"schema"`
+	ClientID        string   `json:"clientId"`
+	ClientSecret    string   `json:"clientSecret"`
+	Schema          string   `json:"schema"`
+	SubscriptionIDs []string `json:"subscriptionIds"`
+	TenantID        string   `json:"tenantId"`
 }
 
-func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest) (schemas.Key, error) {
-	if authorization == nil || resolution == nil {
-		return schemas.Key{}, billing.ErrByok
+func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest) (schemas.Key, string, error) {
+	if authorization == nil || resolution == nil || resolution.Provider != schemas.Azure || authorization.AzureBinding == nil {
+		return schemas.Key{}, "", billing.ErrByok
 	}
 	credential, err := parseAzureByokCredential(authorization.UpstreamByokSecret)
 	if err != nil {
-		return schemas.Key{}, billing.ErrByok
+		return schemas.Key{}, "", billing.ErrByok
 	}
-	model := resolution.Deployment.Upstream.Model
-	if resolution.Provider != schemas.Azure || model == "" || model != resolution.Deployment.ModelID {
-		return schemas.Key{}, billing.ErrByok
+	binding := authorization.AzureBinding
+	if !validAzureBinding(
+		*binding,
+		resolution.Deployment.Upstream,
+		resolution.Deployment.DataHandling,
+	) {
+		return schemas.Key{}, "", billing.ErrByok
 	}
 	return schemas.Key{
 		ID:     authorization.UpstreamByok,
 		Name:   authorization.UpstreamByok,
-		Value:  *schemas.NewSecretVar(credential.APIKey),
-		Models: schemas.WhiteList{model},
+		Value:  *schemas.NewSecretVar(""),
+		Models: schemas.WhiteList{binding.DeploymentName},
 		AzureKeyConfig: &schemas.AzureKeyConfig{
-			Endpoint: *schemas.NewSecretVar(azureEndpoint(credential)),
+			ClientID:     schemas.NewSecretVar(credential.ClientID),
+			ClientSecret: schemas.NewSecretVar(credential.ClientSecret),
+			Endpoint:     *schemas.NewSecretVar(binding.Endpoint),
+			Scopes:       []string{binding.TokenScope},
+			TenantID:     schemas.NewSecretVar(credential.TenantID),
 		},
 		Weight:  1,
 		Enabled: schemas.Ptr(true),
-	}, nil
+	}, binding.DeploymentName, nil
 }
 
 func parseAzureByokCredential(raw string) (azureByokCredential, error) {
@@ -59,17 +74,87 @@ func parseAzureByokCredential(raw string) (azureByokCredential, error) {
 		return azureByokCredential{}, err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return azureByokCredential{}, errors.New("Azure BYOK contains trailing JSON")
+		return azureByokCredential{}, errors.New("invalid Azure BYOK: trailing JSON")
 	}
-	credential.ResourceName = strings.ToLower(strings.TrimSpace(credential.ResourceName))
+	credential.ClientID = strings.ToLower(strings.TrimSpace(credential.ClientID))
+	credential.TenantID = strings.ToLower(strings.TrimSpace(credential.TenantID))
 	if credential.Schema != azureByokSchema ||
-		!validUpstreamAPIKey(credential.APIKey) ||
-		len(credential.ResourceName) < 2 || len(credential.ResourceName) > 63 ||
-		!azureResourceNamePattern.MatchString(credential.ResourceName) ||
-		(credential.ResourceType != "azure_openai" && credential.ResourceType != "azure_ai_foundry") {
-		return azureByokCredential{}, errors.New("Azure BYOK is invalid")
+		!azureUUIDPattern.MatchString(credential.ClientID) ||
+		!azureUUIDPattern.MatchString(credential.TenantID) ||
+		!validUpstreamAPIKey(credential.ClientSecret) ||
+		len(credential.SubscriptionIDs) < 1 || len(credential.SubscriptionIDs) > 64 {
+		return azureByokCredential{}, errors.New("invalid Azure BYOK")
+	}
+	seen := make(map[string]struct{}, len(credential.SubscriptionIDs))
+	previous := ""
+	for index, subscriptionID := range credential.SubscriptionIDs {
+		subscriptionID = strings.ToLower(strings.TrimSpace(subscriptionID))
+		if !azureUUIDPattern.MatchString(subscriptionID) || subscriptionID <= previous {
+			return azureByokCredential{}, errors.New("invalid Azure BYOK")
+		}
+		if _, exists := seen[subscriptionID]; exists {
+			return azureByokCredential{}, errors.New("invalid Azure BYOK")
+		}
+		seen[subscriptionID] = struct{}{}
+		credential.SubscriptionIDs[index] = subscriptionID
+		previous = subscriptionID
 	}
 	return credential, nil
+}
+
+func validAzureBinding(
+	binding billing.AzureBinding,
+	upstream catalog.Upstream,
+	dataHandling catalog.DataHandling,
+) bool {
+	if binding.TokenScope != azureDataScope ||
+		!validAzureDeploymentName(binding.DeploymentName) ||
+		!catalog.IsCanonicalDataLocation(binding.ProcessingLocation, false) ||
+		!catalog.IsCanonicalDataLocation(binding.StorageLocation, false) ||
+		!catalog.DataLocationWithin(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
+		!catalog.DataLocationWithin(binding.StorageLocation, dataHandling.StorageLocation) ||
+		binding.DeploymentType != upstream.DeploymentType ||
+		binding.Hosting != upstream.Hosting ||
+		binding.ModelFormat != upstream.ModelFormat ||
+		binding.ModelName != upstream.Model ||
+		binding.ModelVersion != upstream.ModelVersion {
+		return false
+	}
+	parsed, err := url.Parse(binding.Endpoint)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawPath != "" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if !trustedAzureInferenceHost(host) {
+		return false
+	}
+	isProjectEndpoint := azureProjectPathPattern.MatchString(parsed.Path)
+	if binding.DeploymentType == "instant" {
+		return isProjectEndpoint && strings.HasSuffix(host, ".services.ai.azure.com")
+	}
+	return parsed.Path == "" || parsed.Path == "/"
+}
+
+func trustedAzureInferenceHost(host string) bool {
+	for _, suffix := range []string{".openai.azure.com", ".services.ai.azure.com"} {
+		if strings.HasSuffix(host, suffix) {
+			name := strings.TrimSuffix(host, suffix)
+			return name != "" && !strings.Contains(name, ".")
+		}
+	}
+	return false
+}
+
+func validAzureDeploymentName(value string) bool {
+	if len(value) == 0 || len(value) > azureDeploymentNameMax {
+		return false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] < 0x20 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func validUpstreamAPIKey(value string) bool {
@@ -82,12 +167,4 @@ func validUpstreamAPIKey(value string) bool {
 		}
 	}
 	return true
-}
-
-func azureEndpoint(credential azureByokCredential) string {
-	domain := "openai.azure.com"
-	if credential.ResourceType == "azure_ai_foundry" {
-		domain = "services.ai.azure.com"
-	}
-	return "https://" + credential.ResourceName + "." + domain
 }

@@ -2,11 +2,11 @@ package stogas
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
@@ -18,7 +18,7 @@ type Adapter interface {
 	IngestChunk(*State, *schemas.BifrostStreamChunk) error
 	IngestResponse(*State, *schemas.BifrostResponse, *schemas.BifrostError) error
 	FinalPrice(*State) error
-	SanitizeResponse(*State) error
+	SanitizeResponse(*State)
 }
 
 type DefaultAdapter struct{}
@@ -80,7 +80,11 @@ func (DefaultAdapter) EstimateHold(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	state.Hold = baseHoldEstimate(state)
+	hold, err := baseHoldEstimate(state)
+	if err != nil {
+		return err
+	}
+	state.Hold = hold
 	return nil
 }
 
@@ -88,39 +92,79 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 	if state == nil || chunk == nil {
 		return nil
 	}
+	parts := 0
+	if chunk.BifrostError != nil {
+		parts++
+	}
+	if chunk.BifrostChatResponse != nil {
+		parts++
+	}
+	if chunk.BifrostResponsesStreamResponse != nil {
+		parts++
+	}
+	if parts != 1 {
+		return ErrProviderResponseMalformed
+	}
 	if chunk.BifrostError != nil {
 		state.BifrostError = chunk.BifrostError
 		if usage := chunk.BifrostError.ExtraFields.BilledUsage; usage != nil {
-			if err := validateReportedUsage(state, usage); err != nil {
+			if err := ingestReportedUsage(state, usage); err != nil {
 				return err
 			}
-			setSignalsFromUsage(state, usage)
 		}
 		return nil
 	}
 	switch {
 	case chunk.BifrostChatResponse != nil:
-		state.Response = &schemas.BifrostResponse{ChatResponse: chunk.BifrostChatResponse}
-		observeActualExecution(state, chunk.BifrostChatResponse.ServiceTier, chunk.BifrostChatResponse.Speed)
-		if usage := chunk.BifrostChatResponse.Usage; usage != nil {
-			if err := validateReportedUsage(state, usage); err != nil {
+		response := chunk.BifrostChatResponse
+		if usage := response.Usage; usage != nil {
+			if err := ingestReportedUsage(state, usage); err != nil {
 				return err
 			}
-			setSignalsFromUsage(state, usage)
 		}
+		if err := validateProviderChatResponse(state, response, true); err != nil {
+			return err
+		}
+		if err := validateActualExecutionReport(state, response.ServiceTier, response.Speed, response.InferenceGeo); err != nil {
+			return err
+		}
+		if err := validateActualResponseModel(state, response.Model); err != nil {
+			return err
+		}
+		if responseHasFallbackModel(response.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+			return ErrProviderExecutionMismatch
+		}
+		observeActualExecution(state, response.ServiceTier, response.Speed, response.InferenceGeo)
+		observeActualResponseModel(state, response.Model)
+		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
-		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
-		if streamResp.Response != nil {
-			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed)
-			if streamResp.Response.Usage != nil {
-				usage := streamResp.Response.Usage.ToBifrostLLMUsage()
-				if err := validateReportedUsage(state, usage); err != nil {
-					return err
-				}
-				setSignalsFromUsage(state, usage)
+		if streamResp.Response != nil && streamResp.Response.Usage != nil {
+			usage := streamResp.Response.Usage.ToBifrostLLMUsage()
+			if err := ingestReportedUsage(state, usage); err != nil {
+				return err
 			}
 		}
+		if err := validateProviderResponsesStream(state, streamResp); err != nil {
+			return err
+		}
+		if responseHasFallbackModel(streamResp.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+			return ErrProviderExecutionMismatch
+		}
+		if streamResp.Response != nil {
+			if err := validateActualExecutionReport(state, streamResp.Response.ServiceTier, streamResp.Response.Speed, streamResp.Response.InferenceGeo); err != nil {
+				return err
+			}
+			if err := validateActualResponseModel(state, streamResp.Response.Model); err != nil {
+				return err
+			}
+			if responseHasFallbackModel(streamResp.Response.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+				return ErrProviderExecutionMismatch
+			}
+			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed, streamResp.Response.InferenceGeo)
+			observeActualResponseModel(state, streamResp.Response.Model)
+		}
+		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
 	}
 	return nil
 }
@@ -129,48 +173,161 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	if state == nil {
 		return nil
 	}
-	state.Response = resp
 	state.BifrostError = bifrostErr
-	observeBifrostActualExecution(state, resp)
-	usage := billing.LLMUsage(resp)
+	usage := unambiguousResponseUsage(resp)
 	if usage != nil {
-		if err := validateReportedUsage(state, usage); err != nil {
+		if err := ingestReportedUsage(state, usage); err != nil {
 			return err
 		}
 	}
-	setSignalsFromUsage(state, usage)
-	if bifrostErr != nil {
-		if billedUsage := bifrostErr.ExtraFields.BilledUsage; billedUsage != nil {
-			if err := validateReportedUsage(state, billedUsage); err != nil {
-				return err
-			}
-			setSignalsFromUsage(state, billedUsage)
+	if bifrostErr == nil {
+		if err := validateBifrostResponseShape(state, resp); err != nil {
+			return err
 		}
 	}
+	if err := validateBifrostActualExecution(state, resp); err != nil {
+		return err
+	}
+	observeBifrostActualExecution(state, resp)
+	if bifrostErr != nil {
+		if billedUsage := bifrostErr.ExtraFields.BilledUsage; billedUsage != nil {
+			if err := ingestReportedUsage(state, billedUsage); err != nil {
+				return err
+			}
+		}
+	}
+	state.Response = resp
 	return nil
+}
+
+func ingestReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
+	if err := validateReportedUsage(state, usage); err != nil {
+		if state != nil && (errors.Is(err, ErrProviderUsageMalformed) || errors.Is(err, ErrProviderUsageExceedsHold)) {
+			state.Signals = nil
+		}
+		return err
+	}
+	setSignalsFromUsage(state, usage)
+	return nil
+}
+
+func unambiguousResponseUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
+	if resp == nil {
+		return nil
+	}
+	parts := 0
+	for _, set := range []bool{
+		resp.ChatResponse != nil,
+		resp.ResponsesResponse != nil,
+		resp.ResponsesStreamResponse != nil,
+	} {
+		if set {
+			parts++
+		}
+	}
+	if parts != 1 {
+		return nil
+	}
+	if resp.ChatResponse != nil {
+		return resp.ChatResponse.Usage
+	}
+	if resp.ResponsesResponse != nil && resp.ResponsesResponse.Usage != nil {
+		return resp.ResponsesResponse.Usage.ToBifrostLLMUsage()
+	}
+	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.Usage != nil {
+		return resp.ResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage()
+	}
+	return nil
+}
+
+func validateBifrostResponseShape(state *State, resp *schemas.BifrostResponse) error {
+	if resp == nil {
+		return ErrProviderResponseMalformed
+	}
+	parts := 0
+	if resp.ChatResponse != nil {
+		parts++
+	}
+	if resp.ResponsesResponse != nil {
+		parts++
+	}
+	if resp.ResponsesStreamResponse != nil {
+		parts++
+	}
+	if parts != 1 {
+		return ErrProviderResponseMalformed
+	}
+	switch {
+	case resp.ChatResponse != nil:
+		return validateProviderChatResponse(state, resp.ChatResponse, false)
+	case resp.ResponsesResponse != nil:
+		return validateProviderResponsesResponse(state, resp.ResponsesResponse)
+	case resp.ResponsesStreamResponse != nil:
+		return validateProviderResponsesStream(state, resp.ResponsesStreamResponse)
+	default:
+		return ErrProviderResponseMalformed
+	}
+}
+
+func validateBifrostActualExecution(state *State, resp *schemas.BifrostResponse) error {
+	if resp == nil {
+		return nil
+	}
+	switch {
+	case resp.ChatResponse != nil:
+		if responseHasFallbackModel(resp.ChatResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+			return ErrProviderExecutionMismatch
+		}
+		if err := validateActualResponseModel(state, resp.ChatResponse.Model); err != nil {
+			return err
+		}
+		return validateActualExecutionReport(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed, resp.ChatResponse.InferenceGeo)
+	case resp.ResponsesResponse != nil:
+		if responseHasFallbackModel(resp.ResponsesResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+			return ErrProviderExecutionMismatch
+		}
+		if err := validateActualResponseModel(state, resp.ResponsesResponse.Model); err != nil {
+			return err
+		}
+		return validateActualExecutionReport(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed, resp.ResponsesResponse.InferenceGeo)
+	case resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil:
+		if responseHasFallbackModel(resp.ResponsesStreamResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel) ||
+			responseHasFallbackModel(resp.ResponsesStreamResponse.Response.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
+			return ErrProviderExecutionMismatch
+		}
+		if err := validateActualResponseModel(state, resp.ResponsesStreamResponse.Response.Model); err != nil {
+			return err
+		}
+		return validateActualExecutionReport(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed, resp.ResponsesStreamResponse.Response.InferenceGeo)
+	default:
+		return nil
+	}
 }
 
 func (DefaultAdapter) FinalPrice(state *State) error {
 	if state == nil {
 		return nil
 	}
-	state.FinalCostUSDAtoms = baseFinalPrice(state, nil)
+	price, err := baseFinalPrice(state, nil)
+	if err != nil {
+		return err
+	}
+	state.FinalCostUSDAtoms = price
 	return nil
 }
 
-func (DefaultAdapter) SanitizeResponse(state *State) error {
+func (DefaultAdapter) SanitizeResponse(state *State) {
 	if state == nil {
-		return nil
+		return
 	}
 	state.ProviderResponseHeaders = nil
 	if state.Response == nil {
-		return nil
+		return
 	}
 	extra := state.Response.GetExtraFields()
 	if extra != nil {
 		state.ProviderResponseHeaders = extra.ProviderResponseHeaders
 	}
-	return nil
 }
 
 func responsesStreamHasWebSearchCall(resp *schemas.BifrostResponsesStreamResponse) bool {
@@ -217,14 +374,14 @@ func observeBifrostActualExecution(state *State, resp *schemas.BifrostResponse) 
 	}
 	switch {
 	case resp.ChatResponse != nil:
-		observeActualExecution(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed)
-		observeActualModel(state, resp.ChatResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel)
+		observeActualExecution(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed, resp.ChatResponse.InferenceGeo)
+		observeActualResponseModel(state, resp.ChatResponse.Model)
 	case resp.ResponsesResponse != nil:
-		observeActualExecution(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed)
-		observeActualModel(state, resp.ResponsesResponse.ExtraFields.RoutingInfo.ServerSideFallbackModel)
+		observeActualExecution(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed, resp.ResponsesResponse.InferenceGeo)
+		observeActualResponseModel(state, resp.ResponsesResponse.Model)
 	case resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil:
-		observeActualExecution(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed)
-		observeActualModel(state, resp.ResponsesStreamResponse.Response.ExtraFields.RoutingInfo.ServerSideFallbackModel)
+		observeActualExecution(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed, resp.ResponsesStreamResponse.Response.InferenceGeo)
+		observeActualResponseModel(state, resp.ResponsesStreamResponse.Response.Model)
 	}
 }
 
@@ -269,10 +426,10 @@ func responsesMessageWebSearchCallIsBillable(item *schemas.ResponsesMessage) boo
 
 func responsesMessageWebSearchCallID(item schemas.ResponsesMessage) string {
 	switch {
-	case item.ResponsesToolMessage != nil && item.ResponsesToolMessage.CallID != nil && strings.TrimSpace(*item.ResponsesToolMessage.CallID) != "":
-		return "call:" + strings.TrimSpace(*item.ResponsesToolMessage.CallID)
 	case item.ID != nil && strings.TrimSpace(*item.ID) != "":
 		return "id:" + strings.TrimSpace(*item.ID)
+	case item.ResponsesToolMessage != nil && item.ResponsesToolMessage.CallID != nil && strings.TrimSpace(*item.ResponsesToolMessage.CallID) != "":
+		return "call:" + strings.TrimSpace(*item.ResponsesToolMessage.CallID)
 	default:
 		return ""
 	}
@@ -346,5 +503,5 @@ func resolutionUsesToolType(state *State, toolType schemas.ResponsesToolType) bo
 }
 
 func (DefaultAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
-	return invalidRequest("Only function, custom, mcp, and priced hosted web search tools are supported")
+	return invalidRequest("Only function, custom, and priced hosted web search tools are supported")
 }

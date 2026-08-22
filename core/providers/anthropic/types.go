@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -175,7 +176,7 @@ type ProviderFeatureSupport struct {
 	Skills                 bool // Agent Skills — container.skills object (cite: A)
 	ContainerBasic         bool // Bare string-form container id — universally supported (cite: A)
 	Context1M              bool // 1M context window — context-1m-2025-08-07 (cite: A)
-	FastMode               bool // Opus 4.6 research preview — fast-mode-2026-02-01 (cite: A)
+	FastMode               bool // Opus 4.8 and Opus 5 research preview — fast-mode-2026-02-01 (cite: A)
 	RedactThinking         bool // redact-thinking-2026-02-12 (cite: A) — note Bedrock has its own "thinking encryption" (different mechanism)
 	TaskBudgets            bool // output_config.task_budget — task-budgets-2026-03-13 (cite: A)
 	InferenceGeo           bool // inference_geo field — Claude API only; Bedrock/Vertex/Azure use their own region-routing mechanisms (cite: A)
@@ -475,7 +476,7 @@ type AnthropicMessageRequest struct {
 	Thinking          *AnthropicThinking     `json:"thinking,omitempty"`
 	OutputFormat      json.RawMessage        `json:"output_format,omitempty"` // Beta: requires header "anthropic-beta": "structured-outputs-2025-11-13" (json.RawMessage preserves key ordering)
 	OutputConfig      *AnthropicOutputConfig `json:"output_config,omitempty"` // GA: structured outputs without beta header
-	Speed             *string                `json:"speed,omitempty"`         // "fast" for fast mode (Opus 4.6 only, requires fast-mode beta header)
+	Speed             *string                `json:"speed,omitempty"`         // "fast" for fast mode (Opus 4.8 and Opus 5 only, requires fast-mode beta header)
 	ServiceTier       *string                `json:"service_tier,omitempty"`  // "auto" or "standard_only"
 	InferenceGeo      *string                `json:"inference_geo,omitempty"` // the geographic region for inference processing. If not specified, the workspace's default_inference_geo is used.
 	ContextManagement *ContextManagement     `json:"context_management,omitempty"`
@@ -759,7 +760,7 @@ func (ct *ClearToolInputs) UnmarshalJSON(data []byte) error {
 
 type CompactManagementEditClearToolUses struct {
 	ClearToolInputs *ClearToolInputs                   `json:"clear_tool_inputs,omitempty"`
-	ClearAtLast     *CompactManagementEditTypeAndValue `json:"clear_at_last,omitempty"`
+	ClearAtLeast    *CompactManagementEditTypeAndValue `json:"clear_at_least,omitempty"`
 	Keep            *CompactManagementEditTypeAndValue `json:"keep,omitempty"`
 	ExcludeTools    []string                           `json:"exclude_tools,omitempty"`
 	Trigger         *CompactManagementEditTypeAndValue `json:"trigger,omitempty"`
@@ -1155,13 +1156,15 @@ const (
 
 	// code_execution inner result-content discriminators (the "content" object on
 	// a *_code_execution_tool_result block; ContentObj.Type carries these).
-	AnthropicContentBlockTypeCodeExecutionResult                AnthropicContentBlockType = "code_execution_result"                 // legacy Python (code_execution)
-	AnthropicContentBlockTypeEncryptedCodeExecutionResult       AnthropicContentBlockType = "encrypted_code_execution_result"       // code_execution with encrypted stdout
-	AnthropicContentBlockTypeBashCodeExecutionResult            AnthropicContentBlockType = "bash_code_execution_result"            // bash_code_execution
-	AnthropicContentBlockTypeTextEditorCodeExecutionResult      AnthropicContentBlockType = "text_editor_code_execution_result"     // text_editor_code_execution
-	AnthropicContentBlockTypeCodeExecutionToolResultError       AnthropicContentBlockType = "code_execution_tool_result_error"      // legacy Python error
-	AnthropicContentBlockTypeBashCodeExecutionToolResultError   AnthropicContentBlockType = "bash_code_execution_tool_result_error" // bash error
-	AnthropicContentBlockTypeTextEditorCodeExecutionResultError AnthropicContentBlockType = "text_editor_code_execution_tool_result_error"
+	AnthropicContentBlockTypeCodeExecutionResult                     AnthropicContentBlockType = "code_execution_result"           // legacy Python (code_execution)
+	AnthropicContentBlockTypeEncryptedCodeExecutionResult            AnthropicContentBlockType = "encrypted_code_execution_result" // code_execution with encrypted stdout
+	AnthropicContentBlockTypeBashCodeExecutionResult                 AnthropicContentBlockType = "bash_code_execution_result"      // bash_code_execution
+	AnthropicContentBlockTypeTextEditorCodeExecutionViewResult       AnthropicContentBlockType = "text_editor_code_execution_view_result"
+	AnthropicContentBlockTypeTextEditorCodeExecutionCreateResult     AnthropicContentBlockType = "text_editor_code_execution_create_result"
+	AnthropicContentBlockTypeTextEditorCodeExecutionStrReplaceResult AnthropicContentBlockType = "text_editor_code_execution_str_replace_result"
+	AnthropicContentBlockTypeCodeExecutionToolResultError            AnthropicContentBlockType = "code_execution_tool_result_error"      // legacy Python error
+	AnthropicContentBlockTypeBashCodeExecutionToolResultError        AnthropicContentBlockType = "bash_code_execution_tool_result_error" // bash error
+	AnthropicContentBlockTypeTextEditorCodeExecutionResultError      AnthropicContentBlockType = "text_editor_code_execution_tool_result_error"
 	// code_execution file-output blocks (inside a result's "content" array; carry file_id).
 	AnthropicContentBlockTypeCodeExecutionOutput     AnthropicContentBlockType = "code_execution_output"      // legacy Python output file
 	AnthropicContentBlockTypeBashCodeExecutionOutput AnthropicContentBlockType = "bash_code_execution_output" // bash output file
@@ -1177,6 +1180,7 @@ const (
 	AnthropicToolCallerTypeDirect                AnthropicToolCallerType = "direct"
 	AnthropicToolCallerTypeCodeExecution20250825 AnthropicToolCallerType = "code_execution_20250825"
 	AnthropicToolCallerTypeCodeExecution20260120 AnthropicToolCallerType = "code_execution_20260120"
+	AnthropicToolCallerTypeCodeExecution20260521 AnthropicToolCallerType = "code_execution_20260521"
 )
 
 // AnthropicToolCaller represents the "caller" union on tool-use and
@@ -1878,6 +1882,79 @@ type AnthropicUsage struct {
 	Speed                    *string                       `json:"speed,omitempty"`                 // "fast" or "standard" — which speed was actually served (fast mode research preview)
 	InferenceGeo             *string                       `json:"inference_geo,omitempty"`         // the geographic region for inference processing. If not specified, the workspace's default_inference_geo is used.
 	Iterations               []AnthropicUsage              `json:"iterations,omitempty"`            // Iterations statistics
+}
+
+// BillingTotals returns the token totals that Anthropic charges at the
+// top-level model's rates. When compaction iterations are present, Anthropic's
+// top-level token counters exclude them. The documented billing total is then
+// the sum of every iteration, not the top-level counters plus the iterations.
+// Server-side fallback and advisor iterations have separate billing rules and
+// can use different model rates, so their top-level counters remain authoritative.
+//
+// Saturation is deliberate. Usage is untrusted provider data and these
+// conversion methods cannot return an error. A negative value stays negative
+// and an overflow becomes MaxInt so the Stogas usage validator rejects it.
+func (u *AnthropicUsage) BillingTotals() *AnthropicUsage {
+	if u == nil || len(u.Iterations) == 0 {
+		return u
+	}
+	for i := range u.Iterations {
+		iterationType := ""
+		if u.Iterations[i].Type != nil {
+			iterationType = *u.Iterations[i].Type
+		}
+		if iterationType == AnthropicUsageIterationTypeFallbackMessage || iterationType == "advisor_message" {
+			return u
+		}
+	}
+	total := &AnthropicUsage{
+		Type:         u.Type,
+		Model:        u.Model,
+		ServiceTier:  u.ServiceTier,
+		Speed:        u.Speed,
+		InferenceGeo: u.InferenceGeo,
+		Iterations:   u.Iterations,
+	}
+	for i := range u.Iterations {
+		iteration := u.Iterations[i].BillingTotals()
+		if iteration == nil {
+			continue
+		}
+		total.InputTokens = addAnthropicUsageCount(total.InputTokens, iteration.InputTokens)
+		total.CacheCreationInputTokens = addAnthropicUsageCount(total.CacheCreationInputTokens, iteration.CacheCreationInputTokens)
+		total.CacheReadInputTokens = addAnthropicUsageCount(total.CacheReadInputTokens, iteration.CacheReadInputTokens)
+		total.CacheCreation.Ephemeral5mInputTokens = addAnthropicUsageCount(total.CacheCreation.Ephemeral5mInputTokens, iteration.CacheCreation.Ephemeral5mInputTokens)
+		total.CacheCreation.Ephemeral1hInputTokens = addAnthropicUsageCount(total.CacheCreation.Ephemeral1hInputTokens, iteration.CacheCreation.Ephemeral1hInputTokens)
+		total.OutputTokens = addAnthropicUsageCount(total.OutputTokens, iteration.OutputTokens)
+		if iteration.OutputTokensDetails != nil {
+			if total.OutputTokensDetails == nil {
+				total.OutputTokensDetails = &AnthropicOutputTokensDetails{}
+			}
+			total.OutputTokensDetails.ThinkingTokens = addAnthropicUsageCount(total.OutputTokensDetails.ThinkingTokens, iteration.OutputTokensDetails.ThinkingTokens)
+		}
+		if iteration.ServerToolUse != nil {
+			if total.ServerToolUse == nil {
+				total.ServerToolUse = &AnthropicServerToolUseUsage{}
+			}
+			total.ServerToolUse.WebSearchRequests = addAnthropicUsageCount(total.ServerToolUse.WebSearchRequests, iteration.ServerToolUse.WebSearchRequests)
+		}
+	}
+	// Some API versions report the server-tool count only at the top level.
+	// Keep the stronger count without adding the same calls twice.
+	if u.ServerToolUse != nil && (total.ServerToolUse == nil || u.ServerToolUse.WebSearchRequests > total.ServerToolUse.WebSearchRequests) {
+		total.ServerToolUse = &AnthropicServerToolUseUsage{WebSearchRequests: u.ServerToolUse.WebSearchRequests}
+	}
+	return total
+}
+
+func addAnthropicUsageCount(left int, right int) int {
+	if left < 0 || right < 0 {
+		return -1
+	}
+	if right > math.MaxInt-left {
+		return math.MaxInt
+	}
+	return left + right
 }
 
 // AnthropicOutputTokensDetails breaks down output_tokens for extended-thinking responses.

@@ -380,6 +380,7 @@ func TestGPUHardwarePolicyMappings(t *testing.T) {
 		{model: "NVIDIA H200 NVL", family: "h200", architecture: "HOPPER"},
 		{model: "NVIDIA B200", family: "b200", architecture: "BLACKWELL"},
 		{model: "NVIDIA B300", family: "b300", architecture: "BLACKWELL"},
+		{model: "GB110", family: "b300", architecture: "BLACKWELL"},
 		{model: "NVIDIA RTX PRO 6000 Blackwell Server Edition", family: "pro_6000", architecture: "BLACKWELL"},
 	}
 	for _, test := range tests {

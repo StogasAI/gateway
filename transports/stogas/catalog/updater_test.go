@@ -196,7 +196,11 @@ func TestUpdaterRejectsRollbackAndNonCanonicalArtifactPaths(t *testing.T) {
 		t.Fatalf("rollback was accepted: %v", err)
 	}
 
-	if _, err := updater.fetchArtifact(context.Background(), "not-a-digest", runtimeSizeLimit); err == nil {
+	releaseURLs, err := updater.sources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updater.fetchArtifactFrom(context.Background(), releaseURLs[0], "not-a-digest", runtimeSizeLimit); err == nil {
 		t.Fatal("invalid artifact digest was accepted")
 	}
 }
@@ -214,6 +218,30 @@ func TestUpdaterCanRequireAValidInitialRelease(t *testing.T) {
 	})
 	if updater != nil || err == nil || !strings.Contains(err.Error(), "load initial signed catalog") {
 		t.Fatalf("required initial release did not fail closed: updater=%#v err=%v", updater, err)
+	}
+}
+
+func TestUpdaterDoesNotFollowRedirects(t *testing.T) {
+	targetCalled := false
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		targetCalled = true
+	}))
+	defer target.Close()
+	source := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	updater, err := StartUpdater(context.Background(), UpdaterConfig{
+		ReleaseURL:     source.URL + "/latest.json",
+		HTTPClient:     source.Client(),
+		RequireInitial: true,
+	})
+	if updater != nil || err == nil {
+		t.Fatalf("redirecting initial release was accepted: updater=%#v err=%v", updater, err)
+	}
+	if targetCalled {
+		t.Fatal("redirect target received a catalog request")
 	}
 }
 

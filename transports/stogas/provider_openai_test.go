@@ -10,34 +10,21 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
-func TestValidateToolsAllowsOnlyExplicitPricedOrCustomerOwnedTools(t *testing.T) {
+func TestValidateToolsAllowsOnlyExplicitPricedOrClientExecutedTools(t *testing.T) {
 	for _, item := range []struct {
 		name  string
 		route openAIAdapterRoute
 		body  string
 	}{
 		{"chat function", openAIAdapterRouteChat, `{"tools":[{"type":"function","function":{"name":"lookup"}}]}`},
-		{"chat custom", openAIAdapterRouteChat, `{"tools":[{"type":"custom","name":"lookup"}]}`},
 		{"responses function", openAIAdapterRouteResponses, `{"tools":[{"type":"function","name":"lookup"}]}`},
 		{"responses custom", openAIAdapterRouteResponses, `{"tools":[{"type":"custom","name":"lookup"}]}`},
-		{"responses mcp", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`},
-		{"responses mcp all tools", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`},
-		{"responses mcp nullable allowlist", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":null,"require_approval":"never"}]}`},
-		{"responses mcp empty allowlist", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":[],"require_approval":"never"}]}`},
-		{"responses mcp headers", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{"x-api-key":"secret"},"require_approval":"never"}]}`},
-		{"responses mcp empty headers", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","headers":{},"require_approval":"never"}]}`},
-		{"responses mcp connector", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","authorization":"secret","require_approval":"never"}]}`},
-		{"responses mcp filter", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","server_description":"Docs search","allowed_tools":{"read_only":true,"tool_names":["search"]},"require_approval":"never"}]}`},
-		{"responses mcp non-narrowing filter", openAIAdapterRouteResponses, `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":{"read_only":false},"require_approval":"never"}]}`},
 		{"responses web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search"}]}`},
-		{"responses compact versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_20260209"}]}`},
-		{"responses versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_2026_01_01"}]}`},
-		{"responses future web search alias", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_latest"}]}`},
-		{"responses compact preview web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_preview_20250311"}]}`},
-		{"responses preview web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_preview_2026_01_01"}]}`},
-		{"responses future preview web search alias", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_preview_latest"}]}`},
+		{"responses versioned web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_2025_08_26"}]}`},
+		{"responses versioned preview web search", openAIAdapterRouteResponses, `{"tools":[{"type":"web_search_preview_2025_03_11"}]}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			if err := validateOpenAIGuardrails(toolAdapterContext(t, item.route, item.body)); err != nil {
@@ -54,6 +41,7 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 		err  error
 	}{
 		{"missing type", `{"tools":[{"function":{"name":"lookup"}}]}`, errOpenAIInvalidProviderToolSpec},
+		{"chat custom", `{"tools":[{"type":"custom","name":"lookup"}]}`, errOpenAIUnsupportedTool},
 		{"chat local shell alias", `{"tools":[{"type":"local_shell"}]}`, errOpenAIUnsupportedTool},
 		{"chat apply patch", `{"tools":[{"type":"apply_patch"}]}`, errOpenAIUnsupportedTool},
 		{"chat shell local", `{"tools":[{"type":"shell","environment":{"type":"local"}}]}`, errOpenAIUnsupportedTool},
@@ -84,34 +72,37 @@ func TestValidateToolsRejectsOpenAINativeToolsAndBadShapes(t *testing.T) {
 	if err := validateOpenAIGuardrails(openAIAdapterContext{Route: openAIAdapterRouteChat, OutputTokenLimit: 16, ToolsParseFailed: true}); !errors.Is(err, errOpenAIInvalidProviderToolSpec) {
 		t.Fatalf("expected malformed tools to fail closed, got %v", err)
 	}
+
+	for _, rawType := range []string{"web_search_20260209", "web_search_2026_01_01", "web_search_latest", "web_search_preview_20250311", "web_search_preview_2026_01_01", "web_search_preview_latest"} {
+		err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, `{"tools":[{"type":"`+rawType+`"}]}`))
+		if !errors.Is(err, errOpenAIUnsupportedTool) {
+			t.Fatalf("expected unknown Responses tool type %q to fail closed, got %v", rawType, err)
+		}
+	}
 }
 
-func TestValidateResponsesMCPToolsRejectUnrepresentableShapes(t *testing.T) {
+func TestValidateResponsesRejectsAllRemoteMCPShapes(t *testing.T) {
 	for _, item := range []struct {
 		name string
 		body string
-		err  error
 	}{
 		{
-			name: "missing endpoint",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","require_approval":"never"}]}`,
-			err:  errOpenAIInvalidProviderToolSpec,
+			name: "remote URL",
+			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","require_approval":"never"}]}`,
 		},
 		{
-			name: "conflicting endpoints",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
-			err:  errOpenAIInvalidProviderToolSpec,
+			name: "connector",
+			body: `{"tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
 		},
 		{
-			name: "approval workflow object",
-			body: `{"tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":{"never":{"tool_names":["search"]}}}]}`,
-			err:  errOpenAIUnsupportedTool,
+			name: "malformed",
+			body: `{"tools":[{"type":"mcp"}]}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			err := validateOpenAIGuardrails(toolAdapterContext(t, openAIAdapterRouteResponses, item.body))
-			if !errors.Is(err, item.err) {
-				t.Fatalf("expected %v, got %v", item.err, err)
+			if !errors.Is(err, errOpenAIUnsupportedTool) {
+				t.Fatalf("expected remote MCP rejection, got %v", err)
 			}
 		})
 	}
@@ -221,7 +212,7 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 		{
 			name: "chat max_completion_tokens",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[],"max_completion_tokens":0}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
 		},
 		{
 			name: "responses max_output_tokens",
@@ -315,7 +306,7 @@ func TestValidateRequestAllowsWebSearchOptionsOnlyForChatSearchModels(t *testing
 func TestValidateOpenAIChatWebSearchOptionsPreservesTypedShape(t *testing.T) {
 	if err := validateResolvedChat(t, `{
 		"model":"gpt-5-search-api",
-		"messages":[],
+		"messages":[{"role":"user","content":"hi"}],
 		"web_search_options":{
 			"search_context_size":"low",
 			"user_location":{
@@ -340,22 +331,22 @@ func TestValidateOpenAIChatWebSearchOptionsPreservesTypedShape(t *testing.T) {
 	}{
 		{
 			name: "unknown option",
-			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"future_option":true},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"web_search_options":{"future_option":true},"max_completion_tokens":100}`,
 			want: "web_search_options.future_option is not supported",
 		},
 		{
 			name: "unknown location field",
-			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"user_location":{"type":"approximate","future_field":true}},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"web_search_options":{"user_location":{"type":"approximate","future_field":true}},"max_completion_tokens":100}`,
 			want: "web_search_options.user_location.future_field is not supported",
 		},
 		{
 			name: "unknown approximate field",
-			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"user_location":{"type":"approximate","approximate":{"postal_code":"94107"}}},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"web_search_options":{"user_location":{"type":"approximate","approximate":{"postal_code":"94107"}}},"max_completion_tokens":100}`,
 			want: "web_search_options.user_location.approximate.postal_code is not supported",
 		},
 		{
 			name: "unpriced search context size",
-			body: `{"model":"gpt-5-search-api","messages":[],"web_search_options":{"search_context_size":"future"},"max_completion_tokens":100}`,
+			body: `{"model":"gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"future"},"max_completion_tokens":100}`,
 			want: "web_search_options.search_context_size must be low, medium, or high",
 		},
 	} {
@@ -369,19 +360,19 @@ func TestValidateOpenAIChatWebSearchOptionsPreservesTypedShape(t *testing.T) {
 }
 
 func TestWebSearchPricingRules(t *testing.T) {
-	if got := webSearchFixedContentTokens("gpt-4o-mini", []string{"web_search"}); got != 8000 {
+	if got := webSearchFixedContentTokensForKind("gpt-4o-mini", "web_search"); got != 8000 {
 		t.Fatalf("expected fixed non-preview content tokens, got %d", got)
 	}
-	if got := webSearchFixedContentTokens("gpt-4.1-mini-2026-01-01", []string{"web_search"}); got != 8000 {
+	if got := webSearchFixedContentTokensForKind("gpt-4.1-mini-2026-01-01", "web_search"); got != 8000 {
 		t.Fatalf("expected fixed versioned non-preview content tokens, got %d", got)
 	}
-	if got := webSearchFixedContentTokens("gpt-4o-mini-search-preview", []string{"web_search"}); got != 0 {
+	if got := webSearchFixedContentTokensForKind("gpt-4o-mini-search-preview", "web_search"); got != 0 {
 		t.Fatalf("search-preview chat model must not use fixed Responses token block, got %d", got)
 	}
-	if got := webSearchFixedContentTokens("gpt-4.1-mini-search-preview-2026-01-01", []string{"web_search"}); got != 0 {
+	if got := webSearchFixedContentTokensForKind("gpt-4.1-mini-search-preview-2026-01-01", "web_search"); got != 0 {
 		t.Fatalf("search-preview gpt-4.1-mini slug must not use fixed Responses token block, got %d", got)
 	}
-	if got := webSearchFixedContentTokens("gpt-4o-mini", []string{"web_search_preview"}); got != 0 {
+	if got := webSearchFixedContentTokensForKind("gpt-4o-mini", "web_search_preview"); got != 0 {
 		t.Fatalf("preview tool must not use fixed non-preview token block, got %d", got)
 	}
 
@@ -393,13 +384,13 @@ func TestWebSearchPricingRules(t *testing.T) {
 		},
 		ToolTypes: []string{"web_search_preview"},
 	}
-	if !webSearchContentTokensBilledAtModelRates(reasoningPreview) {
+	if !webSearchContentTokensBilledAtModelRatesForKind(reasoningPreview, "web_search_preview") {
 		t.Fatalf("reasoning-model web_search_preview content tokens should be billed at model rates")
 	}
 	nonReasoningPreview := reasoningPreview
 	nonReasoningPreview.Deployment.Model = "gpt-4o-mini"
 	nonReasoningPreview.Deployment.ReasoningSupported = false
-	if webSearchContentTokensBilledAtModelRates(nonReasoningPreview) {
+	if webSearchContentTokensBilledAtModelRatesForKind(nonReasoningPreview, "web_search_preview") {
 		t.Fatalf("non-reasoning web_search_preview content tokens should be free")
 	}
 	if got := responsesSearchMeter(reasoningPreview); got != MeterOpenAIResponsesWebSearchPreviewCalls {
@@ -429,12 +420,12 @@ func TestWebSearchPricingRules(t *testing.T) {
 	}
 
 	allowedNonPreviewSearch := ambiguousSearch
-	allowedNonPreviewSearch.RawBody = rawJSON(t, `{"tool_choice":{"type":"allowed_tools","tools":[{"type":"web_search"}]}}`)
+	allowedNonPreviewSearch.RawBody = rawJSON(t, `{"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`)
 	if got := responsesSearchMeter(allowedNonPreviewSearch); got != MeterOpenAIResponsesWebSearchCalls {
 		t.Fatalf("expected allowed_tools to narrow Responses search meter to non-preview, got %q", got)
 	}
 	allowedPreviewSearch := ambiguousSearch
-	allowedPreviewSearch.RawBody = rawJSON(t, `{"tool_choice":{"type":"allowed_tools","tools":[{"type":"web_search_preview_2026_01_01"}]}}`)
+	allowedPreviewSearch.RawBody = rawJSON(t, `{"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview_2025_03_11"}]}}`)
 	if got := responsesSearchMeter(allowedPreviewSearch); got != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls {
 		t.Fatalf("expected versioned allowed_tools preview selector to use preview meter, got %q", got)
 	}
@@ -577,8 +568,8 @@ func TestResponsesWebSearchSettlementUsesActualCalls(t *testing.T) {
 
 	req.RawBody = rawJSON(t, `{"max_tool_calls":1}`)
 	meters = openAIResponsesHostedToolFinalMeters(req)
-	if len(meters) != 1 || meters[0].Quantity != "1" {
-		t.Fatalf("expected settlement quantity to be capped by max_tool_calls, got %#v", meters)
+	if len(meters) != 1 || meters[0].Quantity != "2" {
+		t.Fatalf("expected settlement to preserve the observed quantity for terminal authorization checks, got %#v", meters)
 	}
 }
 
@@ -616,7 +607,7 @@ func TestResponsesAmbiguousWebSearchUsesOneCostlierTool(t *testing.T) {
 		t.Fatalf("expected preview settlement meter quantity 1, got %#v", settlementMeters[0])
 	}
 
-	req.RawBody = rawJSON(t, `{"max_tool_calls":2,"tool_choice":{"type":"allowed_tools","tools":[{"type":"web_search"}]}}`)
+	req.RawBody = rawJSON(t, `{"max_tool_calls":2,"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`)
 	req.ActualWebSearchCalls = 1
 	holdMeters = openAIResponsesHostedToolHoldMeters(req, 0, 0)
 	if len(holdMeters) != 2 {
@@ -710,7 +701,7 @@ func toolAdapterContext(t *testing.T, route openAIAdapterRoute, body string) ope
 	}
 	toolTypes := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		toolType := rawStringField(tool, "type")
+		toolType := rawjson.NormalizedStringField(tool, "type")
 		if toolType != "" {
 			toolTypes = append(toolTypes, toolType)
 		}

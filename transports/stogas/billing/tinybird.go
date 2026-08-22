@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +21,7 @@ const (
 	tinybirdGatewayRequestsDatasource = "gateway_requests"
 	tinybirdAppendTimeout             = 10 * time.Second
 	tinybirdAppendWaitTimeout         = tinybirdAppendTimeout + time.Second
+	tinybirdCircuitOpenDuration       = 30 * time.Second
 	// Coalesce briefly after idle, but cap steady-state dispatches independently.
 	// Eight nodes therefore use at most 32 of the datasource's 100 requests/second.
 	tinybirdBatchWindow        = 50 * time.Millisecond
@@ -32,32 +34,39 @@ const (
 	tinybirdQueueCapacity = 2048
 )
 
+var errTinybirdCircuitOpen = errors.New("append tinybird event: circuit is open")
+
 type TinybirdClient struct {
-	client             *http.Client
-	host               string
-	token              string
-	batchWindow        time.Duration
-	minRequestInterval time.Duration
-	maxBatchBytes      int
-	maxBatchRows       int
-	queue              chan tinybirdAppendRequest
-	stop               chan struct{}
-	startOnce          sync.Once
-	workerWG           sync.WaitGroup
-	mu                 sync.RWMutex
-	closed             bool
-	batches            atomic.Uint64
-	batchFailures      atomic.Uint64
-	rows               atomic.Uint64
+	client              *http.Client
+	host                string
+	token               string
+	batchWindow         time.Duration
+	minRequestInterval  time.Duration
+	maxBatchBytes       int
+	maxBatchRows        int
+	circuitOpenDuration time.Duration
+	queue               chan tinybirdAppendRequest
+	stop                chan struct{}
+	startOnce           sync.Once
+	workerWG            sync.WaitGroup
+	mu                  sync.RWMutex
+	closed              bool
+	batches             atomic.Uint64
+	batchFailures       atomic.Uint64
+	circuitOpenUntil    atomic.Int64
+	rows                atomic.Uint64
+	shortCircuits       atomic.Uint64
 }
 
 type TinybirdDiagnostics struct {
 	BatchFailures uint64 `json:"batchFailures"`
 	Batches       uint64 `json:"batches"`
+	CircuitOpen   bool   `json:"circuitOpen"`
 	Closed        bool   `json:"closed"`
 	QueueCapacity int    `json:"queueCapacity"`
 	QueueDepth    int    `json:"queueDepth"`
 	Rows          uint64 `json:"rows"`
+	ShortCircuits uint64 `json:"shortCircuits"`
 }
 
 type tinybirdAppendRequest struct {
@@ -95,33 +104,77 @@ type RequestEvent struct {
 	TotalTimeMS             uint32            `json:"total_time_ms"`
 	UpstreamCostUSDAtoms    string            `json:"upstream_cost_usd_atoms"`
 	BilledCostUSDAtoms      string            `json:"billed_cost_usd_atoms"`
-	Pricing                 map[string]any    `json:"pricing"`
+	Pricing                 EventPricing      `json:"pricing"`
 	GatewayVersion          string            `json:"gateway_version"`
 	CatalogNodeIDs          []string          `json:"catalog_node_ids"`
+	analyticsQuantities     map[string]uint64
 }
+
+type EventMeter struct {
+	Quantity     string `json:"quantity"`
+	RateKey      string `json:"rateKey"`
+	RateUSDAtoms string `json:"rateUsdAtoms"`
+	USDAtoms     string `json:"usdAtoms"`
+}
+
+type EventPricing map[string]EventMeter
 
 type tinybirdEventsResponse struct {
 	QuarantinedRows int `json:"quarantined_rows"`
 	SuccessfulRows  int `json:"successful_rows"`
 }
 
-func NewTinybirdClient(host string, token string) *TinybirdClient {
-	host = strings.TrimRight(strings.TrimSpace(host), "/")
+func NewTinybirdClient(host string, token string, allowInsecurePrivateNetwork bool) (*TinybirdClient, error) {
+	host = strings.TrimSpace(host)
 	token = strings.TrimSpace(token)
+	if host == "" && token == "" {
+		return nil, nil
+	}
 	if host == "" || token == "" {
-		return nil
+		return nil, errors.New("configure Tinybird host and token together")
+	}
+	normalizedHost, err := NormalizeTinybirdHost(host, allowInsecurePrivateNetwork)
+	if err != nil {
+		return nil, err
 	}
 	return &TinybirdClient{
-		client:             &http.Client{Timeout: tinybirdAppendTimeout},
-		host:               host,
-		token:              token,
-		batchWindow:        tinybirdBatchWindow,
-		minRequestInterval: tinybirdMinRequestInterval,
-		maxBatchBytes:      tinybirdMaxBatchBytes,
-		maxBatchRows:       tinybirdMaxBatchRows,
-		queue:              make(chan tinybirdAppendRequest, tinybirdQueueCapacity),
-		stop:               make(chan struct{}),
+		client: &http.Client{
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+			Timeout: tinybirdAppendTimeout,
+		},
+		host:                normalizedHost,
+		token:               token,
+		batchWindow:         tinybirdBatchWindow,
+		minRequestInterval:  tinybirdMinRequestInterval,
+		maxBatchBytes:       tinybirdMaxBatchBytes,
+		maxBatchRows:        tinybirdMaxBatchRows,
+		circuitOpenDuration: tinybirdCircuitOpenDuration,
+		queue:               make(chan tinybirdAppendRequest, tinybirdQueueCapacity),
+		stop:                make(chan struct{}),
+	}, nil
+}
+
+func NormalizeTinybirdHost(host string, allowInsecurePrivateNetwork bool) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(host))
+	if err != nil || parsed.Host == "" || parsed.Opaque != "" || parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("invalid Tinybird host: expected a clean HTTPS origin")
 	}
+	if parsed.RawPath != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return "", errors.New("invalid Tinybird host: expected a clean HTTPS origin")
+	}
+	allowsHTTP := parsed.Hostname() == "localhost"
+	if address := net.ParseIP(parsed.Hostname()); address != nil {
+		allowsHTTP = address.IsLoopback() ||
+			(allowInsecurePrivateNetwork && (address.IsPrivate() || address.IsLinkLocalUnicast()))
+	}
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && allowsHTTP) {
+		return "", errors.New("invalid Tinybird host: expected a clean HTTPS origin")
+	}
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event RequestEvent) error {
@@ -130,6 +183,10 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Request
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("append tinybird event: %w", err)
+	}
+	if c.circuitOpen(time.Now()) {
+		c.shortCircuits.Add(1)
+		return errTinybirdCircuitOpen
 	}
 
 	line, err := json.Marshal(tinybirdGatewayRequestEvent(event))
@@ -210,9 +267,20 @@ func (c *TinybirdClient) run() {
 		batch, next, stopped := c.collectBatch(first, closing, lastDispatch)
 		pending = next
 		closing = closing || stopped
-		c.waitForDispatch(lastDispatch)
-		lastDispatch = time.Now()
-		err := c.appendBatch(batch)
+		var err error
+		if c.circuitOpen(time.Now()) {
+			c.shortCircuits.Add(uint64(len(batch)))
+			err = errTinybirdCircuitOpen
+		} else {
+			c.waitForDispatch(lastDispatch)
+			lastDispatch = time.Now()
+			err = c.appendBatch(batch)
+			if err != nil {
+				c.openCircuit(time.Now())
+			} else {
+				c.circuitOpenUntil.Store(0)
+			}
+		}
 		c.batches.Add(1)
 		c.rows.Add(uint64(len(batch)))
 		if err != nil {
@@ -234,11 +302,25 @@ func (c *TinybirdClient) Diagnostics() *TinybirdDiagnostics {
 	return &TinybirdDiagnostics{
 		BatchFailures: c.batchFailures.Load(),
 		Batches:       c.batches.Load(),
+		CircuitOpen:   c.circuitOpen(time.Now()),
 		Closed:        closed,
 		QueueCapacity: cap(c.queue),
 		QueueDepth:    len(c.queue),
 		Rows:          c.rows.Load(),
+		ShortCircuits: c.shortCircuits.Load(),
 	}
+}
+
+func (c *TinybirdClient) circuitOpen(now time.Time) bool {
+	return now.UnixNano() < c.circuitOpenUntil.Load()
+}
+
+func (c *TinybirdClient) openCircuit(now time.Time) {
+	duration := c.circuitOpenDuration
+	if duration <= 0 {
+		duration = tinybirdCircuitOpenDuration
+	}
+	c.circuitOpenUntil.Store(now.Add(duration).UnixNano())
 }
 
 func (c *TinybirdClient) nextBatchRequest(pending *tinybirdAppendRequest, closing bool) (tinybirdAppendRequest, bool) {
@@ -432,6 +514,8 @@ type tinybirdGatewayRequestEventPayload struct {
 	AnalyticsProviderStatus      string   `json:"analytics_provider_status"`
 	AnalyticsProviderLatencyMS   uint32   `json:"analytics_provider_latency_ms"`
 	AnalyticsTimeToFirstOutputMS *uint32  `json:"analytics_time_to_first_output_ms"`
+	AnalyticsProviders           []string `json:"analytics_providers"`
+	AnalyticsProviderStatuses    []string `json:"analytics_provider_statuses"`
 	StogasProcessingSuccess      uint8    `json:"stogas_processing_success"`
 	StogasBillingStatus          string   `json:"stogas_billing_status"`
 	NodeID                       string   `json:"node_id"`
@@ -462,31 +546,41 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		cancelled = 1
 	}
 	providerStatus := ""
-	var providerLatencyMS uint32
-	var timeToFirstOutputMS *uint32
+	providerLatencyMS, timeToFirstOutputMS := event.ProviderTiming()
 	upstreamByok := make([]string, 0, len(event.ProviderAttempts))
-	if len(event.ProviderAttempts) > 0 {
-		providerStatus = event.ProviderAttempts[0].Status
-		providerLatencyMS = event.ProviderAttempts[0].LatencyMS
-		timeToFirstOutputMS = event.ProviderAttempts[0].ProviderFirstOutputMS
+	providers := make([]string, 0, len(event.ProviderAttempts))
+	providerStatuses := make([]string, 0, len(event.ProviderAttempts))
+	if finalAttempt, ok := event.FinalProviderAttempt(); ok {
+		providerStatus = finalAttempt.Status
 	}
 	for _, attempt := range event.ProviderAttempts {
+		if provider := strings.TrimSpace(attempt.Provider); provider != "" {
+			providers = append(providers, provider)
+		}
+		if status := strings.TrimSpace(attempt.Status); status != "" {
+			providerStatuses = append(providerStatuses, status)
+		}
+		if attempt.StatusCode != nil && *attempt.StatusCode >= 100 && *attempt.StatusCode <= 599 {
+			providerStatuses = append(providerStatuses, strconv.Itoa(*attempt.StatusCode))
+		}
 		if byokID := strings.TrimSpace(attempt.UpstreamByok); byokID != "" {
 			upstreamByok = append(upstreamByok, byokID)
 		}
 	}
 	cacheWriteTokens :=
-		analyticsPricingQuantity(event.Pricing, MeterCacheWriteInputTokens) +
-			analyticsPricingQuantity(event.Pricing, MeterCacheWrite5mInputTokens) +
-			analyticsPricingQuantity(event.Pricing, MeterCacheWrite1hInputTokens)
+		event.analyticsPricingQuantity(MeterCacheWriteInputTokens) +
+			event.analyticsPricingQuantity(MeterCacheWrite5mInputTokens) +
+			event.analyticsPricingQuantity(MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
-		AnalyticsCachedInputTokens:   analyticsPricingQuantity(event.Pricing, MeterCachedInputTokens),
+		AnalyticsCachedInputTokens:   event.analyticsPricingQuantity(MeterCachedInputTokens),
 		AnalyticsCacheWriteTokens:    cacheWriteTokens,
-		AnalyticsInputTokens:         analyticsPricingQuantity(event.Pricing, MeterInputTokens),
-		AnalyticsOutputTokens:        analyticsPricingQuantity(event.Pricing, MeterOutputTokens),
+		AnalyticsInputTokens:         event.analyticsPricingQuantity(MeterInputTokens),
+		AnalyticsOutputTokens:        event.analyticsPricingQuantity(MeterOutputTokens),
 		AnalyticsProviderLatencyMS:   providerLatencyMS,
 		AnalyticsProviderStatus:      providerStatus,
-		AnalyticsReasoningTokens:     analyticsPricingQuantity(event.Pricing, MeterReasoningTokens),
+		AnalyticsProviders:           providers,
+		AnalyticsProviderStatuses:    providerStatuses,
+		AnalyticsReasoningTokens:     event.analyticsPricingQuantity(MeterReasoningTokens),
 		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
 		AnalyticsUpstreamByok:        upstreamByok,
 		Cancelled:                    cancelled,
@@ -513,16 +607,16 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	}
 }
 
-func analyticsPricingQuantity(pricing map[string]any, meter string) uint64 {
-	entry, ok := pricing[meter].(map[string]any)
-	if !ok {
-		return 0
+func saturatingUint32(value uint64) uint32 {
+	const maximum = ^uint32(0)
+	if value > uint64(maximum) {
+		return maximum
 	}
-	quantity, err := strconv.ParseUint(strings.TrimSpace(fmt.Sprint(entry["quantity"])), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return quantity
+	return uint32(value)
+}
+
+func (event RequestEvent) analyticsPricingQuantity(meter string) uint64 {
+	return event.analyticsQuantities[meter]
 }
 
 func mustJSONString(value any, fallback string) string {

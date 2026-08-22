@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"regexp"
 	"sort"
@@ -338,8 +337,12 @@ func (v *nrasVerifier) refreshKeys(ctx context.Context) error {
 			if xErr != nil || yErr != nil || len(xBytes) != 48 || len(yBytes) != 48 {
 				return nil, errors.New("invalid NVIDIA JWK coordinates")
 			}
-			key := &ecdsa.PublicKey{Curve: elliptic.P384(), X: new(big.Int).SetBytes(xBytes), Y: new(big.Int).SetBytes(yBytes)}
-			if !key.Curve.IsOnCurve(key.X, key.Y) {
+			encodedKey := make([]byte, 1+len(xBytes)+len(yBytes))
+			encodedKey[0] = 4
+			copy(encodedKey[1:], xBytes)
+			copy(encodedKey[1+len(xBytes):], yBytes)
+			key, keyErr := ecdsa.ParseUncompressedPublicKey(elliptic.P384(), encodedKey)
+			if keyErr != nil {
 				return nil, errors.New("NVIDIA JWK is not on P-384")
 			}
 			if _, duplicate := keys[item.Kid]; duplicate {
@@ -357,51 +360,45 @@ func (v *nrasVerifier) refreshKeys(ctx context.Context) error {
 }
 
 func (v *nrasVerifier) request(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
-	var lastErr error
-	for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+	var body []byte
+	err := retryChutesRead(ctx, false, 2*time.Second, func() error {
 		var requestBody io.Reader
 		if payload != nil {
 			requestBody = bytes.NewReader(payload)
 		}
 		request, err := http.NewRequestWithContext(ctx, method, endpoint, requestBody)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		request.Header.Set("Accept", "application/json")
 		if payload != nil {
 			request.Header.Set("Content-Type", "application/json")
 		}
 		response, err := v.client.Do(request)
-		if err == nil {
-			body, readErr := io.ReadAll(io.LimitReader(response.Body, maxNRASBody+1))
-			closeErr := response.Body.Close()
-			switch {
-			case readErr != nil:
-				err = readErr
-			case closeErr != nil:
-				err = closeErr
-			case len(body) > maxNRASBody:
-				return nil, errors.New("NVIDIA response is too large")
-			case response.StatusCode == http.StatusOK:
-				return body, nil
-			default:
-				err = &httpStatusError{
-					Operation:  method + " NVIDIA attestation",
-					StatusCode: response.StatusCode,
-					RetryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
-				}
+		if err != nil {
+			return err
+		}
+		candidate, readErr := io.ReadAll(io.LimitReader(response.Body, maxNRASBody+1))
+		closeErr := response.Body.Close()
+		switch {
+		case readErr != nil:
+			return readErr
+		case closeErr != nil:
+			return closeErr
+		case len(candidate) > maxNRASBody:
+			return errors.New("NVIDIA response is too large")
+		case response.StatusCode == http.StatusOK:
+			body = candidate
+			return nil
+		default:
+			return &httpStatusError{
+				Operation:  method + " NVIDIA attestation",
+				StatusCode: response.StatusCode,
+				RetryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
 			}
 		}
-		lastErr = err
-		if attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(err, false) {
-			break
-		}
-		delay, ok := chutesReadRetryDelay(err, attempt, 2*time.Second)
-		if !ok || !waitForChutesRetry(ctx, delay) {
-			break
-		}
-	}
-	return nil, lastErr
+	})
+	return body, err
 }
 
 type tokenTimes struct {
@@ -499,6 +496,8 @@ func constantTimeStringEqual(left, right string) bool {
 func gpuFamilyForHardwareModel(model string) (string, bool) {
 	normalized := strings.ToLower(strings.NewReplacer("_", " ", "-", " ").Replace(strings.TrimSpace(model)))
 	switch {
+	case normalized == "gb110":
+		return "b300", true
 	case strings.Contains(normalized, "b300"):
 		return "b300", true
 	case strings.Contains(normalized, "b200"):

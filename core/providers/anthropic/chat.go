@@ -292,30 +292,22 @@ func ToAnthropicChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bif
 	// Convert parameters
 	if bifrostReq.Params != nil {
 		anthropicReq.ExtraParams = bifrostReq.Params.ExtraParams
-		// Opus 4.7+ and the Fable/Mythos family reject temperature, top_p, and
-		// top_k with a 400 error.
-		if !IsAdaptiveOnlyThinkingModel(capModel) {
-			// Anthropic doesn't allow both temperature and top_p to be specified.
-			// If both are present, prefer temperature (more commonly used).
-			if bifrostReq.Params.Temperature != nil {
-				anthropicReq.Temperature = bifrostReq.Params.Temperature
-			} else if bifrostReq.Params.TopP != nil {
-				anthropicReq.TopP = bifrostReq.Params.TopP
-			}
+		// Preserve sampling intent. The selected provider and model remain
+		// authoritative for current combinations and ranges.
+		if bifrostReq.Params.Temperature != nil {
+			anthropicReq.Temperature = bifrostReq.Params.Temperature
+		}
+		if bifrostReq.Params.TopP != nil {
+			anthropicReq.TopP = bifrostReq.Params.TopP
 		}
 		anthropicReq.StopSequences = bifrostReq.Params.Stop
 
 		// TopK — prefer the promoted neutral field; fall back to ExtraParams.
-		// Opus 4.7+ and the Fable/Mythos family reject top_k with a 400 error.
 		if bifrostReq.Params.TopK != nil {
-			if !IsAdaptiveOnlyThinkingModel(capModel) {
-				anthropicReq.TopK = bifrostReq.Params.TopK
-			}
+			anthropicReq.TopK = bifrostReq.Params.TopK
 		} else if topK, ok := schemas.SafeExtractIntPointer(bifrostReq.Params.ExtraParams["top_k"]); ok {
 			delete(anthropicReq.ExtraParams, "top_k")
-			if !IsAdaptiveOnlyThinkingModel(capModel) {
-				anthropicReq.TopK = topK
-			}
+			anthropicReq.TopK = topK
 		}
 
 		// Speed — prefer neutral field, then ExtraParams.
@@ -1156,38 +1148,10 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 
 	// Convert usage information
 	if response.Usage != nil {
-		promptTokensDetails := &schemas.ChatPromptTokensDetails{
-			CachedReadTokens:  response.Usage.CacheReadInputTokens,
-			CachedWriteTokens: response.Usage.CacheCreationInputTokens,
-		}
-		if response.Usage.CacheCreation.Ephemeral5mInputTokens > 0 || response.Usage.CacheCreation.Ephemeral1hInputTokens > 0 {
-			promptTokensDetails.CachedWriteTokenDetails = &schemas.ChatCachedWriteTokenDetails{
-				CachedWriteTokens5m: response.Usage.CacheCreation.Ephemeral5mInputTokens,
-				CachedWriteTokens1h: response.Usage.CacheCreation.Ephemeral1hInputTokens,
-			}
-		}
-		bifrostResponse.Usage = &schemas.BifrostLLMUsage{
-			PromptTokens:        response.Usage.InputTokens + response.Usage.CacheReadInputTokens + response.Usage.CacheCreationInputTokens,
-			PromptTokensDetails: promptTokensDetails,
-			CompletionTokens:    response.Usage.OutputTokens,
-		}
-		// Forward web search request count so server-tool use is billed.
-		if response.Usage.ServerToolUse != nil && response.Usage.ServerToolUse.WebSearchRequests > 0 {
-			n := response.Usage.ServerToolUse.WebSearchRequests
-			bifrostResponse.Usage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{
-				NumSearchQueries: &n,
-			}
-		}
-		// Extended-thinking token count. Already a subset of OutputTokens (see
-		// AnthropicOutputTokensDetails), which matches the Bifrost invariant that
-		// ReasoningTokens <= CompletionTokens — so no folding is required here.
-		if response.Usage.OutputTokensDetails != nil && response.Usage.OutputTokensDetails.ThinkingTokens > 0 {
-			if bifrostResponse.Usage.CompletionTokensDetails == nil {
-				bifrostResponse.Usage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{}
-			}
-			bifrostResponse.Usage.CompletionTokensDetails.ReasoningTokens = response.Usage.OutputTokensDetails.ThinkingTokens
-		}
-		bifrostResponse.Usage.TotalTokens = bifrostResponse.Usage.PromptTokens + bifrostResponse.Usage.CompletionTokens
+		// Anthropic's top-level counters exclude compaction iterations. Reuse the
+		// Responses conversion so Chat and Responses expose the same billable sum,
+		// including cache and thinking partitions.
+		bifrostResponse.Usage = ConvertAnthropicUsageToBifrostUsage(response.Usage).ToBifrostLLMUsage()
 		// Forward service tier from usage to response
 		if response.Usage.ServiceTier != nil {
 			mapped := MapAnthropicServiceTierToBifrost(*response.Usage.ServiceTier)

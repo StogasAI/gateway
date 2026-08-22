@@ -10,38 +10,40 @@ import (
 // prompt + total counters, matching the per-request totals Anthropic reports
 // only at the end of a stream. This is the value billed when a stream is
 // cancelled mid-flight.
-func TestNormalizeCachedUsage_FoldsCacheIntoPromptAndTotal(t *testing.T) {
-	usage := &schemas.BifrostLLMUsage{
-		PromptTokens:     10,
-		CompletionTokens: 5,
-		TotalTokens:      15,
-		PromptTokensDetails: &schemas.ChatPromptTokensDetails{
-			CachedReadTokens:  3,
-			CachedWriteTokens: 7,
-		},
-	}
-	normalizeCachedUsage(usage)
-	if usage.PromptTokens != 20 {
-		t.Fatalf("PromptTokens = %d, want 20 (10 + 3 + 7)", usage.PromptTokens)
-	}
-	if usage.TotalTokens != 25 {
-		t.Fatalf("TotalTokens = %d, want 25 (15 + 3 + 7)", usage.TotalTokens)
-	}
-	if usage.CompletionTokens != 5 {
-		t.Fatalf("CompletionTokens = %d, want 5 (unchanged)", usage.CompletionTokens)
-	}
-}
+func TestNormalizeCachedUsage(t *testing.T) {
+	t.Run("folds cache into prompt and total", func(t *testing.T) {
+		usage := &schemas.BifrostLLMUsage{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+			PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+				CachedReadTokens:  3,
+				CachedWriteTokens: 7,
+			},
+		}
+		normalizeCachedUsage(usage)
+		if usage.PromptTokens != 20 {
+			t.Fatalf("PromptTokens = %d, want 20 (10 + 3 + 7)", usage.PromptTokens)
+		}
+		if usage.TotalTokens != 25 {
+			t.Fatalf("TotalTokens = %d, want 25 (15 + 3 + 7)", usage.TotalTokens)
+		}
+		if usage.CompletionTokens != 5 {
+			t.Fatalf("CompletionTokens = %d, want 5 (unchanged)", usage.CompletionTokens)
+		}
+	})
 
-func TestNormalizeCachedUsage_NoCacheDetailsIsNoOp(t *testing.T) {
-	usage := &schemas.BifrostLLMUsage{PromptTokens: 10, TotalTokens: 15}
-	normalizeCachedUsage(usage)
-	if usage.PromptTokens != 10 || usage.TotalTokens != 15 {
-		t.Fatalf("unexpected mutation: prompt=%d total=%d", usage.PromptTokens, usage.TotalTokens)
-	}
-}
+	t.Run("no cache details is a no-op", func(t *testing.T) {
+		usage := &schemas.BifrostLLMUsage{PromptTokens: 10, TotalTokens: 15}
+		normalizeCachedUsage(usage)
+		if usage.PromptTokens != 10 || usage.TotalTokens != 15 {
+			t.Fatalf("unexpected mutation: prompt=%d total=%d", usage.PromptTokens, usage.TotalTokens)
+		}
+	})
 
-func TestNormalizeCachedUsage_NilSafe(t *testing.T) {
-	normalizeCachedUsage(nil) // must not panic
+	t.Run("nil is safe", func(t *testing.T) {
+		normalizeCachedUsage(nil)
+	})
 }
 
 func TestAccumulateAnthropicResponsesUsage_MirrorsCacheIntoBilledUsage(t *testing.T) {

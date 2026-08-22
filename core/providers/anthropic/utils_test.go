@@ -2809,8 +2809,7 @@ func TestIsAdaptiveOnlyThinkingModel(t *testing.T) {
 }
 
 // TestSupportsFastMode pins the helper against Anthropic's fast-mode docs.
-// TestSupportsMidConversationSystem pins the helper against Anthropic docs:
-// available on the Anthropic API only, Opus 4.8+ only, no beta header required.
+// TestSupportsMidConversationSystem pins the helper against Anthropic docs.
 func TestSupportsMidConversationSystem(t *testing.T) {
 	tests := []struct {
 		provider schemas.ModelProvider
@@ -2823,6 +2822,8 @@ func TestSupportsMidConversationSystem(t *testing.T) {
 		{schemas.Anthropic, "claude-opus-4-8-20260601", true},
 		{schemas.Anthropic, "claude-opus-5", true},
 		{schemas.Anthropic, "claude-opus-5-20260601", true},
+		{schemas.Anthropic, "claude-sonnet-5", true},
+		{schemas.Anthropic, "claude-sonnet-5-20260630", true},
 		// Not supported: Bedrock and Vertex even with Opus 4.8 / Opus 5.
 		{schemas.Bedrock, "global.anthropic.claude-opus-4-8", false},
 		{schemas.Vertex, "claude-opus-4-8", false},
@@ -2870,7 +2871,7 @@ func TestSupportsFastMode(t *testing.T) {
 		{"claude-opus-4.7-20260401", false},
 		{"claude-opus-4-8", true},
 		{"claude-opus-4.8-20260601", true},
-		// Opus 5: fast mode via IsOpus47Plus.
+		// Opus 5: fast mode via IsOpus5Plus.
 		{"claude-opus-5", true},
 		{"claude-opus-5-20260601", true},
 		// Bedrock / Vertex prefixed IDs.

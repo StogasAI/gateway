@@ -32,7 +32,7 @@ const (
 	maxEvidenceBody            = 64 << 20
 	maxMeasurementBody         = 4 << 20
 	maxNRASBody                = 16 << 20
-	maxDecryptedResponse       = 128 << 20
+	maxDecryptedResponse       = 64 << 20
 	maxEncryptedSSELine        = 8 << 20
 	maximumDiscoveredInstances = 5
 	maximumInvokeAttempts      = maximumDiscoveredInstances
@@ -40,7 +40,7 @@ const (
 
 var (
 	ErrNoUsableTicket       = errors.New("no verified Chutes E2EE ticket is available")
-	ErrAttestationFailed    = errors.New("Chutes TEE attestation failed")
+	ErrAttestationFailed    = errors.New("failed Chutes TEE attestation")
 	ErrInvalidE2EERequest   = errors.New("invalid Chutes E2EE request")
 	ErrInvalidE2EEResponse  = errors.New("invalid Chutes E2EE response")
 	ErrMeasurementPolicy    = errors.New("invalid Chutes TEE measurement policy")

@@ -25,6 +25,19 @@ func (l *authTestLogger) LogHTTPRequest(level schemas.LogLevel, msg string) sche
 	return schemas.NoopLogEvent
 }
 
+func TestAzureProviderAppliesBufferedResponseCapToBothClients(t *testing.T) {
+	const responseCap = 123456
+	provider, err := NewAzureProvider(&schemas.ProviderConfig{
+		NetworkConfig: schemas.NetworkConfig{MaxResponseBodySize: responseCap},
+	}, &authTestLogger{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.client.MaxResponseBodySize != responseCap || provider.streamingClient.MaxResponseBodySize != responseCap {
+		t.Fatalf("response cap did not reach both clients: unary=%d stream=%d", provider.client.MaxResponseBodySize, provider.streamingClient.MaxResponseBodySize)
+	}
+}
+
 // TestAzureAuthHeaderForwarding verifies that the non-streaming media operations
 // forward the auth header produced by getAzureAuthHeaders to the upstream request,
 // rather than the old behavior of always sending "Authorization: Bearer <key.Value>"

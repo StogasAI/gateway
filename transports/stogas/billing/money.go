@@ -3,23 +3,33 @@ package billing
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math/big"
 )
 
-const ZeroChargeUSDAtoms = "0"
+const (
+	ZeroChargeUSDAtoms    = "0"
+	maximumUSDAtoms       = "1000000000000000000000000000000"
+	maximumUSDAtomsDigits = len(maximumUSDAtoms)
+)
 
-func createHoldParamsHash(providerKey string, productKey string) string {
+func createHoldParamsHash(providerKey string, productKey string, passthroughByokID string, upstreamTargetJSON ...string) string {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(providerKey))
 	_, _ = hasher.Write([]byte{0})
 	_, _ = hasher.Write([]byte(productKey))
+	_, _ = hasher.Write([]byte{0})
+	_, _ = hasher.Write([]byte(passthroughByokID))
+	_, _ = hasher.Write([]byte{0})
+	if len(upstreamTargetJSON) > 0 {
+		_, _ = hasher.Write([]byte(upstreamTargetJSON[0]))
+	}
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func settlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actualCost string) string {
+func settlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actual *big.Int) string {
 	authorized := cloneOrZero(authorizedAmount)
 	available := cloneOrZero(availableAfter)
-	actual := parseMoneyOrZeroString(actualCost)
 	refund := new(big.Int).Sub(authorized, actual)
 	switch {
 	case refund.Sign() >= 0:
@@ -39,27 +49,33 @@ func cloneOrZero(value *big.Int) *big.Int {
 	return new(big.Int).Set(value)
 }
 
-func moneyOrZeroString(value *big.Int) string {
-	if value == nil {
-		return ZeroChargeUSDAtoms
-	}
-	return value.String()
-}
-
-func nonEmptyMoneyString(value string) string {
+// ParseNonnegativeInteger accepts only the canonical base-10 form used by
+// billing and pricing records.
+func ParseNonnegativeInteger(value string) (*big.Int, error) {
 	if value == "" {
-		return ZeroChargeUSDAtoms
+		return nil, fmt.Errorf("value is empty")
 	}
-	return value
-}
-
-func parseMoneyOrZeroString(value string) *big.Int {
-	if value == "" {
-		return big.NewInt(0)
+	if value != "0" && value[0] == '0' {
+		return nil, fmt.Errorf("value is not canonical")
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return nil, fmt.Errorf("value is not a nonnegative integer")
+		}
 	}
 	parsed, ok := new(big.Int).SetString(value, 10)
 	if !ok {
-		return big.NewInt(0)
+		return nil, fmt.Errorf("value is not a nonnegative integer")
 	}
-	return parsed
+	return parsed, nil
+}
+
+// ParseUSDAtoms validates the canonical amount range accepted by the database
+// settlement functions.
+func ParseUSDAtoms(value string) (*big.Int, error) {
+	if len(value) > maximumUSDAtomsDigits ||
+		(len(value) == maximumUSDAtomsDigits && value > maximumUSDAtoms) {
+		return nil, fmt.Errorf("USD atom amount exceeds the settlement limit")
+	}
+	return ParseNonnegativeInteger(value)
 }

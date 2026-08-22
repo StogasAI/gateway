@@ -242,6 +242,57 @@ func TestBifrostResponsesResponseUnmarshalTimestamps(t *testing.T) {
 	})
 }
 
+func TestBifrostResponsesResponseWithDefaultsPreservesProviderExecutionMetadata(t *testing.T) {
+	category := "policy"
+	explanation := "request refused"
+	expiresAt := "2026-08-20T12:00:00Z"
+	speed := "fast"
+	inferenceGeo := "us"
+	serviceTier := BifrostServiceTierPriority
+	response := &BifrostResponsesResponse{
+		ID:           Ptr("resp_metadata"),
+		ServiceTier:  &serviceTier,
+		Speed:        &speed,
+		InferenceGeo: &inferenceGeo,
+		StopReason:   Ptr("refusal"),
+		StopDetails: &ResponsesStopDetails{
+			Type:        "refusal",
+			Category:    &category,
+			Explanation: &explanation,
+		},
+		Container: &ResponsesResponseContainer{
+			ID:        "container_123",
+			ExpiresAt: &expiresAt,
+		},
+	}
+
+	normalized := response.WithDefaults()
+	if normalized.ServiceTier == nil || *normalized.ServiceTier != serviceTier ||
+		normalized.Speed == nil || *normalized.Speed != speed ||
+		normalized.InferenceGeo == nil || *normalized.InferenceGeo != inferenceGeo {
+		t.Fatalf("execution metadata was not preserved: %#v", normalized)
+	}
+	if normalized.StopReason == nil || *normalized.StopReason != "refusal" ||
+		normalized.StopDetails == nil || normalized.StopDetails.Category == nil ||
+		*normalized.StopDetails.Category != category || normalized.StopDetails.Explanation == nil ||
+		*normalized.StopDetails.Explanation != explanation {
+		t.Fatalf("refusal metadata was not preserved: %#v", normalized.StopDetails)
+	}
+	if normalized.Container == nil || normalized.Container.ID != "container_123" ||
+		normalized.Container.ExpiresAt == nil || *normalized.Container.ExpiresAt != expiresAt {
+		t.Fatalf("container metadata was not preserved: %#v", normalized.Container)
+	}
+
+	stream := (&BifrostResponsesStreamResponse{
+		Type:     ResponsesStreamResponseTypeCompleted,
+		Response: response,
+	}).WithDefaults()
+	if stream.Response == nil || stream.Response.Speed == nil || *stream.Response.Speed != speed ||
+		stream.Response.Container == nil || stream.Response.StopDetails == nil {
+		t.Fatalf("stream normalization dropped provider execution metadata: %#v", stream.Response)
+	}
+}
+
 // TestResponsesMessageContentEmptyMarshalsToEmptyString verifies that empty
 // content serializes as "" rather than null, since the OpenAI Responses API
 // rejects null content.
@@ -752,5 +803,28 @@ func TestStreamWithDefaultsStripsCodeExecutionCarry(t *testing.T) {
 		if strings.Contains(string(encoded), "code_execution_") {
 			t.Errorf("%s: normalized stream JSON still has code_execution_*:\n%s", typ, encoded)
 		}
+	}
+}
+
+func TestStreamWithDefaultsPreservesCustomToolInputDone(t *testing.T) {
+	input := "printf safe"
+	source := &BifrostResponsesStreamResponse{
+		Type:           ResponsesStreamResponseTypeCustomToolCallInputDone,
+		SequenceNumber: 7,
+		OutputIndex:    Ptr(0),
+		ItemID:         Ptr("ctc_1"),
+		Input:          &input,
+	}
+
+	normalized := source.WithDefaults()
+	if normalized.Input == nil || *normalized.Input != input {
+		t.Fatalf("custom tool input was lost: %#v", normalized.Input)
+	}
+	encoded, err := Marshal(normalized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"input":"printf safe"`) {
+		t.Fatalf("custom tool input missing from wire event: %s", encoded)
 	}
 }

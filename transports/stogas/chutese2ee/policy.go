@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -57,18 +58,18 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 			return cached, nil
 		}
 		var measurements []measurementPolicy
-		var fetchErr error
-		for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+		fetchErr := retryChutesRead(ctx, false, 5*time.Second, func() error {
 			measurements = nil
-			_, _, fetchErr = c.api.requestJSON(ctx, "GET", measurementsPath, nil, maxMeasurementBody, &measurements)
-			if fetchErr == nil || attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(fetchErr, false) {
-				break
-			}
-			delay, ok := chutesReadRetryDelay(fetchErr, attempt, 5*time.Second)
-			if !ok || !waitForChutesRetry(ctx, delay) {
-				break
-			}
-		}
+			_, _, requestErr := c.api.requestJSON(
+				ctx,
+				http.MethodGet,
+				measurementsPath,
+				nil,
+				maxMeasurementBody,
+				&measurements,
+			)
+			return requestErr
+		})
 		if fetchErr != nil {
 			return nil, fmt.Errorf("fetch measurement policy: %w", fetchErr)
 		}

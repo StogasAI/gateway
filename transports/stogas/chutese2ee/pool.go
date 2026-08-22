@@ -463,32 +463,34 @@ func (s *poolState) attest(target ModelTarget, discovered []discoveredInstance, 
 
 func (s *poolState) discover(target ModelTarget) ([]discoveredInstance, time.Time, error) {
 	chuteID := target.ChuteID
-	var lastErr error
-	for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+	var instances []discoveredInstance
+	var expiresAt time.Time
+	err := retryChutesRead(s.ctx, true, 2*time.Second, func() error {
 		var response discoveryResponse
 		path := discoveryPathPrefix + url.PathEscape(chuteID)
-		status, latency, err := s.api.requestJSON(s.ctx, http.MethodGet, path, nil, maxDiscoveryBody, &response)
-		s.diagnostics.recordDiscovery(chuteID, status, latency, err)
-		if err == nil {
-			instances, expiresAt, validationErr := validateDiscovery(response, time.Now())
-			if validationErr != nil {
-				return nil, time.Time{}, validationErr
-			}
-			if s.attestor != nil {
-				s.attestor.observe(target, instances)
-			}
-			return instances, expiresAt, nil
+		status, latency, requestErr := s.api.requestJSON(
+			s.ctx,
+			http.MethodGet,
+			path,
+			nil,
+			maxDiscoveryBody,
+			&response,
+		)
+		s.diagnostics.recordDiscovery(chuteID, status, latency, requestErr)
+		if requestErr != nil {
+			return requestErr
 		}
-		lastErr = err
-		if attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(err, true) {
-			break
-		}
-		delay, ok := chutesReadRetryDelay(err, attempt, 2*time.Second)
-		if !ok || !waitForChutesRetry(s.ctx, delay) {
-			break
-		}
+		var validationErr error
+		instances, expiresAt, validationErr = validateDiscovery(response, time.Now())
+		return validationErr
+	})
+	if err != nil {
+		return nil, time.Time{}, err
 	}
-	return nil, time.Time{}, lastErr
+	if s.attestor != nil {
+		s.attestor.observe(target, instances)
+	}
+	return instances, expiresAt, nil
 }
 
 func validateDiscovery(response discoveryResponse, now time.Time) ([]discoveredInstance, time.Time, error) {

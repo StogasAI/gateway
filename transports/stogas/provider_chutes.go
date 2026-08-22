@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -25,6 +24,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"reasoning_effort":      true,
 	"response_format":       true,
 	"rules":                 true,
+	"safety_identifier":     true,
 	"seed":                  true,
 	"stop":                  true,
 	"stream":                true,
@@ -35,6 +35,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"tools":                 true,
 	"top_k":                 true,
 	"top_p":                 true,
+	"user":                  true,
 }
 
 func (a ChutesAdapter) ValidateRequest(state *State) error {
@@ -50,6 +51,15 @@ func (a ChutesAdapter) ValidateRequest(state *State) error {
 func (a ChutesAdapter) SanitizeRequest(state *State) error {
 	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
 		return err
+	}
+	if state.Resolution.Deployment.ID == "chutes-qwen3.8-27b" {
+		raw := state.Resolution.RawBody()
+		reasoning, _ := rawObject(raw["reasoning"])
+		_, nestedEffort := rawStringValue(reasoning["effort"])
+		_, effortAlias := rawStringValue(raw["reasoning_effort"])
+		if rawBool(reasoning["enabled"]) && !nestedEffort && !effortAlias {
+			return invalidRequest("Qwen3.8 reasoning enablement requires an explicit effort")
+		}
 	}
 	control := chutesReasoningControl{}
 	if requested, ok := state.Resolution.ReasoningEffort(); ok {
@@ -76,6 +86,16 @@ type chutesReasoningControl struct {
 
 func chutesReasoningWireControl(deploymentID string, requested string) (chutesReasoningControl, bool) {
 	switch deploymentID {
+	case "chutes-qwen3.8-27b":
+		if requested == "none" {
+			thinking := false
+			return chutesReasoningControl{Thinking: &thinking}, true
+		}
+		if requested != "low" && requested != "medium" && requested != "xhigh" {
+			return chutesReasoningControl{}, false
+		}
+		thinking := true
+		return chutesReasoningControl{Effort: requested, Thinking: &thinking}, true
 	case "chutes-kimi-k3":
 		if requested != "low" && requested != "high" && requested != "max" {
 			return chutesReasoningControl{}, false
@@ -95,6 +115,11 @@ func chutesReasoningWireControl(deploymentID string, requested string) (chutesRe
 
 func chutesReasoningEnabledWireControl(deploymentID string, enabled bool) (chutesReasoningControl, bool) {
 	switch deploymentID {
+	case "chutes-qwen3.8-27b":
+		if enabled {
+			return chutesReasoningControl{}, false
+		}
+		return chutesReasoningControl{Thinking: &enabled}, true
 	case "chutes-deepseek-v3.2",
 		"chutes-gemma-4-31b-turbo",
 		"chutes-glm-5.1",
@@ -127,25 +152,11 @@ func validateChutesChatPolicy(state *State) error {
 			return invalidRequest(name + " is not supported for Chutes deployments")
 		}
 	}
-	if err := validateChutesNumberRange(raw, "temperature", func(value float64) bool { return value >= 0 }); err != nil {
+	if err := validateNumber(raw, "repetition_penalty"); err != nil {
 		return err
-	}
-	if err := validateChutesNumberRange(raw, "top_p", func(value float64) bool { return value > 0 && value <= 1 }); err != nil {
-		return err
-	}
-	if err := validateChutesIntegerRange(raw, "top_k", func(value int) bool { return value == -1 || value >= 1 }); err != nil {
-		return err
-	}
-	if err := validateChutesNumberRange(raw, "repetition_penalty", func(value float64) bool { return value > 0 && value <= 2 }); err != nil {
-		return err
-	}
-	for _, name := range []string{"frequency_penalty", "presence_penalty"} {
-		if err := validateChutesNumberRange(raw, name, func(value float64) bool { return value >= -2 && value <= 2 }); err != nil {
-			return err
-		}
 	}
 	for _, name := range []string{"max_completion_tokens", "max_tokens"} {
-		if err := validateChutesIntegerRange(raw, name, func(value int) bool { return value >= 1 }); err != nil {
+		if err := validateIntegerRange(raw, name, 1, state.Resolution.Deployment.MaxOutputTokens); err != nil {
 			return err
 		}
 	}
@@ -155,44 +166,14 @@ func validateChutesChatPolicy(state *State) error {
 	if err := validateChutesResponseFormat(raw["response_format"], state.Resolution.Deployment.Capabilities.StructuredOutputs); err != nil {
 		return err
 	}
-	tools, err := validateChatTools(raw["tools"], chatToolCapabilities{})
+	tools, err := validateChatTools(raw["tools"])
 	if err != nil {
 		return err
 	}
 	if len(tools) > 0 && !state.Resolution.Deployment.Capabilities.FunctionCalling {
 		return invalidRequest("tools are not supported for the selected Chutes model")
 	}
-	return validateChatToolChoice(raw["tool_choice"], tools, chatToolCapabilities{})
-}
-
-func validateChutesNumberRange(raw map[string]json.RawMessage, name string, valid func(float64) bool) error {
-	valueRaw, ok := raw[name]
-	if !ok || strings.TrimSpace(string(valueRaw)) == "null" {
-		return nil
-	}
-	var value float64
-	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
-		return invalidRequest(name + " must be a number")
-	}
-	if !valid(value) {
-		return invalidRequest(name + " is outside the Chutes supported range")
-	}
-	return nil
-}
-
-func validateChutesIntegerRange(raw map[string]json.RawMessage, name string, valid func(int) bool) error {
-	valueRaw, ok := raw[name]
-	if !ok || strings.TrimSpace(string(valueRaw)) == "null" {
-		return nil
-	}
-	var value int
-	if err := sonic.Unmarshal(valueRaw, &value); err != nil {
-		return invalidRequest(name + " must be an integer")
-	}
-	if !valid(value) {
-		return invalidRequest(name + " is outside the Chutes supported range")
-	}
-	return nil
+	return validateChatToolChoice(raw["tool_choice"], tools)
 }
 
 func validateChutesResponseFormat(raw json.RawMessage, supported bool) error {

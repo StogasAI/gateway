@@ -60,6 +60,14 @@ func TestCodeExecution_BashResponseRoundTrip(t *testing.T) {
 	if bifrostResp == nil {
 		t.Fatal("ToBifrostResponsesResponse returned nil")
 	}
+	if bifrostResp.Object != "response" || bifrostResp.Status == nil ||
+		*bifrostResp.Status != schemas.ResponsesResponseStatusCompleted {
+		t.Fatalf("response identity/status was not translated: object=%q status=%v", bifrostResp.Object, bifrostResp.Status)
+	}
+	if bifrostResp.Container == nil || bifrostResp.Container.ID != "container_018jVZJnpVtdyWij4ULp3qTN" ||
+		bifrostResp.Container.ExpiresAt == nil || *bifrostResp.Container.ExpiresAt != "2026-06-18T18:46:48.969255Z" {
+		t.Fatalf("response-level container was not translated: %#v", bifrostResp.Container)
+	}
 
 	var found bool
 	for _, out := range bifrostResp.Output {
@@ -180,7 +188,7 @@ var rawTextEditorViewResponse = `{
       "type": "text_editor_code_execution_tool_result",
       "tool_use_id": "srvtoolu_view1",
       "content": {
-        "type": "text_editor_code_execution_result",
+        "type": "text_editor_code_execution_view_result",
         "file_type": "text",
         "content": "{\n  \"debug\": true\n}",
         "num_lines": 3,
@@ -506,7 +514,7 @@ var textEditorCodeExecStreamEvents = []string{
 	`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"command\": \"view\", \"pa"}}`,
 	`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"th\": \"/tmp/data.py\"}"}}`,
 	`{"type":"content_block_stop","index":0}`,
-	`{"type":"content_block_start","index":1,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_te1","content":{"type":"text_editor_code_execution_result","file_type":"text","content":"print('hi')\n","num_lines":1,"start_line":1,"total_lines":1}}}`,
+	`{"type":"content_block_start","index":1,"content_block":{"type":"text_editor_code_execution_tool_result","tool_use_id":"srvtoolu_te1","content":{"type":"text_editor_code_execution_view_result","file_type":"text","content":"print('hi')\n","num_lines":1,"start_line":1,"total_lines":1}}}`,
 	`{"type":"content_block_stop","index":1}`,
 	`{"type":"message_delta","delta":{"stop_reason":"end_turn","container":{"id":"container_te1","expires_at":"2026-06-25T13:57:10Z"}},"usage":{"output_tokens":40}}`,
 	`{"type":"message_stop"}`,

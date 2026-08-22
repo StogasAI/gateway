@@ -2,24 +2,26 @@ package stogas
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 const (
-	maxMetadataKeys        = 16
-	maxMetadataKeyBytes    = 64
-	maxMetadataValueBytes  = 512
-	maxMCPAuthTokenBytes   = 4096
-	maxMCPHeaders          = 32
-	maxMCPHeaderNameBytes  = 128
-	maxMCPHeaderValueBytes = 4096
-	maxPromptCacheKeyBytes = 256
+	maxMetadataKeys          = 16
+	maxMetadataKeyBytes      = 64
+	maxMetadataValueBytes    = 512
+	maxPromptCacheKeyBytes   = 256
+	maxClientTools           = 128
+	maxToolDescriptionBytes  = 1024
+	maxPortableStopSequences = 16
+	maxStopSequenceBytes     = 1024
 )
 
 func validateCommonChatCompletionPolicy(state *State) error {
@@ -36,7 +38,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "safety_identifier", "user", "container", "fallbacks", "prompt_cache_isolation_key"} {
+	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "prompt_cache_isolation_key"} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
@@ -62,6 +64,9 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if err := validateChatStop(raw["stop"]); err != nil {
 		return err
 	}
+	if err := validateChatResponseFormat(raw["response_format"]); err != nil {
+		return err
+	}
 	if err := validateInteger(raw, "max_completion_tokens"); err != nil {
 		return err
 	}
@@ -80,7 +85,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if err := validateReasoningParameters(raw, chatReasoningFields); err != nil {
 		return err
 	}
-	if err := validateChatMessagesTextOnly(raw["messages"]); err != nil {
+	if err := validateChatMessagesTextOnly(state, raw["messages"]); err != nil {
 		return err
 	}
 	return nil
@@ -89,11 +94,6 @@ func validateCommonChatCompletionPolicy(state *State) error {
 type chatToolRef struct {
 	kind string
 	name string
-}
-
-type chatToolCapabilities struct {
-	allowCustom     bool
-	allowMCPToolset bool
 }
 
 func invalidRequest(message string) error {
@@ -130,6 +130,146 @@ func validateChatStop(raw json.RawMessage) error {
 	var values []string
 	if err := sonic.Unmarshal(raw, &values); err != nil {
 		return invalidRequest("stop must be a string or array of strings")
+	}
+	return validateStopSequenceValues(values, "stop", maxPortableStopSequences, "stop sequences must be non-empty strings")
+}
+
+func validateStopSequenceArray(raw json.RawMessage, path string, maxItems int) error {
+	values, err := validateStringArray(raw, path, maxItems)
+	if err != nil {
+		return err
+	}
+	return validateStopSequenceValues(values, path, maxItems, path+" must contain non-empty strings")
+}
+
+func validateStopSequenceValues(values []string, path string, maxItems int, emptyMessage string) error {
+	if maxItems > 0 && len(values) > maxItems {
+		return invalidRequest(path + " contains too many items")
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			return invalidRequest(emptyMessage)
+		}
+		if len(value) > maxStopSequenceBytes {
+			return invalidRequest(path + " values must not exceed 1024 bytes")
+		}
+		if strings.ContainsRune(value, '\x00') {
+			return invalidRequest(path + " values must not contain NUL")
+		}
+		if _, duplicate := seen[value]; duplicate {
+			return invalidRequest(path + " must not contain duplicate values")
+		}
+		seen[value] = struct{}{}
+	}
+	return nil
+}
+
+func validateStringArray(raw json.RawMessage, path string, maxItems int) ([]string, error) {
+	if !rawJSONValueSet(raw) {
+		return nil, nil
+	}
+	var values []string
+	if err := sonic.Unmarshal(raw, &values); err != nil {
+		return nil, invalidRequest(path + " must be an array of strings")
+	}
+	if maxItems > 0 && len(values) > maxItems {
+		return nil, invalidRequest(path + " contains too many items")
+	}
+	for _, value := range values {
+		if value == "" {
+			return nil, invalidRequest(path + " must contain non-empty strings")
+		}
+	}
+	return values, nil
+}
+
+func validateChatResponseFormat(raw json.RawMessage) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	format, ok := rawObject(raw)
+	if !ok {
+		return invalidRequest("response_format must be an object")
+	}
+	formatType, ok := rawStringValue(format["type"])
+	if !ok {
+		return invalidRequest("response_format.type must be a string")
+	}
+	switch formatType {
+	case "text", "json_object":
+		if !onlyRawKeys(format, "type") {
+			return invalidRequest("response_format type " + formatType + " supports only type")
+		}
+	case "json_schema":
+		if !onlyRawKeys(format, "type", "json_schema") {
+			return invalidRequest("response_format type json_schema requires only type and json_schema")
+		}
+		return validateStructuredOutputDefinition(format["json_schema"], "response_format.json_schema")
+	default:
+		return invalidRequest("response_format.type must be text, json_object, or json_schema")
+	}
+	return nil
+}
+
+func validateStructuredOutputDefinition(raw json.RawMessage, path string) error {
+	definition, ok := rawObject(raw)
+	if !ok {
+		return invalidRequest(path + " must contain only name, description, schema, and strict")
+	}
+	return validateStructuredOutputDefinitionMap(definition, path)
+}
+
+func validateStructuredOutputDefinitionMap(definition map[string]json.RawMessage, path string) error {
+	if !onlyRawKeysOptional(definition, "name", "description", "schema", "strict") {
+		return invalidRequest(path + " must contain only name, description, schema, and strict")
+	}
+	name, ok := rawStringValue(definition["name"])
+	if !ok || !validClientToolName(name) {
+		return invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	}
+	if description, exists := definition["description"]; exists {
+		if _, ok := rawStringValue(description); !ok {
+			return invalidRequest(path + ".description must be a string")
+		}
+	}
+	if _, ok := rawObject(definition["schema"]); !ok {
+		return invalidRequest(path + ".schema must be an object")
+	}
+	if strict, exists := definition["strict"]; exists {
+		if err := validateRawJSONBool(strict, path+".strict"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChatPrediction(raw json.RawMessage) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	prediction, ok := rawObject(raw)
+	if !ok || !onlyRawKeys(prediction, "type", "content") {
+		return invalidRequest("prediction must contain only type and content")
+	}
+	if rawString(prediction["type"]) != "content" {
+		return invalidRequest("prediction.type must be content")
+	}
+	if _, ok := rawStringValue(prediction["content"]); ok {
+		return nil
+	}
+	var parts []map[string]json.RawMessage
+	if err := sonic.Unmarshal(prediction["content"], &parts); err != nil || len(parts) == 0 {
+		return invalidRequest("prediction.content must be a string or non-empty array of text parts")
+	}
+	for index, part := range parts {
+		path := "prediction.content[" + strconv.Itoa(index) + "]"
+		if !onlyRawKeys(part, "type", "text") || rawString(part["type"]) != "text" {
+			return invalidRequest(path + " must contain only type=text and text")
+		}
+		if _, ok := rawStringValue(part["text"]); !ok {
+			return invalidRequest(path + ".text must be a string")
+		}
 	}
 	return nil
 }
@@ -402,7 +542,7 @@ func validateReasoningSummaryValue(raw json.RawMessage, name string) error {
 		return nil
 	}
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
+	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
 		return invalidRequest(name + " must be a string")
 	}
 	return nil
@@ -413,7 +553,7 @@ func validateReasoningDisplayValue(raw json.RawMessage, name string) error {
 		return nil
 	}
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
+	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
 		return invalidRequest(name + " must be a string")
 	}
 	return nil
@@ -430,252 +570,590 @@ func rawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	return object, true
 }
 
-func validateChatMessagesTextOnly(raw json.RawMessage) error {
-	var messages []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &messages); err != nil {
+type chatMessageInputValidation struct {
+	allCallIDs map[string]bool
+	meaningful bool
+	pending    map[string]bool
+}
+
+func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return invalidRequest("messages must be a non-empty array")
+	}
+	var rawMessages []json.RawMessage
+	if err := sonic.Unmarshal(raw, &rawMessages); err != nil {
 		return invalidRequest("messages must be an array")
 	}
-	hasText := false
-	for _, message := range messages {
+	if len(rawMessages) == 0 {
+		return invalidRequest("messages must contain at least one message")
+	}
+	validation := chatMessageInputValidation{
+		allCallIDs: make(map[string]bool),
+		pending:    make(map[string]bool),
+	}
+	seenConversation := false
+	for index, messageRaw := range rawMessages {
+		var message map[string]json.RawMessage
+		if err := sonic.Unmarshal(messageRaw, &message); err != nil || message == nil {
+			return invalidRequest("messages must contain only objects")
+		}
+		path := fmt.Sprintf("messages[%d]", index)
 		if err := validateTextOnlyMediaFields(message, "Only text message content is supported"); err != nil {
 			return err
 		}
-		contentRaw, ok := message["content"]
+		role, ok := rawStringValue(message["role"])
 		if !ok {
-			continue
+			return invalidRequest(path + ".role must be a string")
 		}
-		trimmed := strings.TrimSpace(string(contentRaw))
-		if trimmed == "" || trimmed == "null" {
-			continue
+		if len(validation.pending) > 0 && role != string(schemas.ChatMessageRoleTool) {
+			return invalidRequest(path + " must be a tool result because the preceding assistant tool calls are unresolved")
 		}
-		if trimmed[0] == '"' {
-			var content string
-			if err := sonic.Unmarshal(contentRaw, &content); err != nil {
-				return invalidRequest("message content must be text")
+		if responsesUsesAnthropicWire(state) && seenConversation &&
+			(role == string(schemas.ChatMessageRoleSystem) || role == string(schemas.ChatMessageRoleDeveloper)) {
+			if !anthropicWireSupportsMidConversationSystem(state) {
+				return invalidRequest(path + ".role cannot be preserved after the conversation starts on this Anthropic-format deployment")
 			}
-			hasText = hasText || strings.TrimSpace(content) != ""
-			continue
+			if index+1 < len(rawMessages) && chatInputRole(rawMessages[index+1]) != string(schemas.ChatMessageRoleAssistant) {
+				return invalidRequest(path + ".role must be last or immediately precede an assistant message on this Anthropic-format deployment")
+			}
 		}
-		var blocks []map[string]json.RawMessage
-		if err := sonic.Unmarshal(contentRaw, &blocks); err != nil {
-			return invalidRequest("message content must be text")
-		}
-		for _, block := range blocks {
-			if err := validateTextOnlyMediaFields(block, "Only text message content is supported"); err != nil {
+		switch schemas.ChatMessageRole(role) {
+		case schemas.ChatMessageRoleSystem, schemas.ChatMessageRoleDeveloper, schemas.ChatMessageRoleUser:
+			if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content"); err != nil {
 				return err
 			}
-			if rawString(block["type"]) != "text" {
-				return invalidRequest("Only text message content is supported")
+			if err := validateOptionalChatMessageName(state, message, path); err != nil {
+				return err
 			}
-			var text string
-			if err := sonic.Unmarshal(block["text"], &text); err != nil {
-				return invalidRequest("text content must be a string")
+			content, ok := message["content"]
+			if !ok {
+				return invalidRequest(path + ".content is required")
 			}
-			hasText = hasText || strings.TrimSpace(text) != ""
+			meaningful, err := validateChatMessageTextContent(content, path+".content", true)
+			if err != nil {
+				return err
+			}
+			validation.meaningful = validation.meaningful || meaningful
+		case schemas.ChatMessageRoleAssistant:
+			if err := validateChatAssistantInput(state, message, path, &validation); err != nil {
+				return err
+			}
+			if responsesUsesAnthropicWire(state) && index == len(rawMessages)-1 {
+				if err := rejectTrailingAssistantWhitespace(message["content"], path+".content"); err != nil {
+					return err
+				}
+			}
+		case schemas.ChatMessageRoleTool:
+			if err := validateChatToolResultInput(state, message, path, &validation); err != nil {
+				return err
+			}
+		default:
+			return invalidRequest(path + ".role is not supported")
+		}
+		if role != string(schemas.ChatMessageRoleSystem) && role != string(schemas.ChatMessageRoleDeveloper) {
+			seenConversation = true
 		}
 	}
-	if len(messages) > 0 && !hasText {
-		return invalidRequest("messages must contain non-empty text")
+	if len(validation.pending) > 0 {
+		return invalidRequest("assistant tool calls require one matching tool result each in the same stateless request")
+	}
+	if !validation.meaningful {
+		return invalidRequest("messages must contain non-empty text or a tool result")
 	}
 	return nil
 }
 
+func rejectTrailingAssistantWhitespace(raw json.RawMessage, path string) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	if text, ok := rawStringValue(raw); ok {
+		if strings.TrimRight(text, " \n\r\t") != text {
+			return invalidRequest(path + " must not end in whitespace on an Anthropic assistant prefill")
+		}
+		return nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &blocks); err != nil {
+		return nil
+	}
+	for index := len(blocks) - 1; index >= 0; index-- {
+		if !stringInSet(rawString(blocks[index]["type"]), "text", "output_text") {
+			continue
+		}
+		text, ok := rawStringValue(blocks[index]["text"])
+		if ok && strings.TrimRight(text, " \n\r\t") != text {
+			return invalidRequest(path + " must not end in whitespace on an Anthropic assistant prefill")
+		}
+		return nil
+	}
+	return nil
+}
+
+func validateChatAssistantInput(state *State, message map[string]json.RawMessage, path string, validation *chatMessageInputValidation) error {
+	if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content", "refusal", "reasoning", "reasoning_content", "reasoning_details", "annotations", "tool_calls"); err != nil {
+		return err
+	}
+	if err := validateOptionalChatMessageName(state, message, path); err != nil {
+		return err
+	}
+	hasPayload := false
+	if content, ok := message["content"]; ok && strings.TrimSpace(string(content)) != "null" {
+		meaningful, err := validateChatMessageTextContent(content, path+".content", false)
+		if err != nil {
+			return err
+		}
+		hasPayload = meaningful
+		validation.meaningful = validation.meaningful || meaningful
+	}
+	if refusal, ok := message["refusal"]; ok {
+		if responsesUsesAnthropicWire(state) {
+			return invalidRequest(path + ".refusal is not supported for Anthropic-format history")
+		}
+		value, ok := rawStringValue(refusal)
+		if !ok {
+			return invalidRequest(path + ".refusal must be a string")
+		}
+		meaningful := strings.TrimSpace(value) != ""
+		hasPayload = hasPayload || meaningful
+		validation.meaningful = validation.meaningful || meaningful
+	}
+	reasoningSet := false
+	reasoningValue := ""
+	if reasoning, ok := message["reasoning"]; ok {
+		value, ok := rawStringValue(reasoning)
+		if !ok {
+			return invalidRequest(path + ".reasoning must be a string")
+		}
+		reasoningValue = value
+		reasoningSet = strings.TrimSpace(value) != ""
+		hasPayload = hasPayload || reasoningSet
+	}
+	if _, ok := message["reasoning_content"]; ok {
+		return invalidRequest(path + ".reasoning_content is not supported; use reasoning")
+	}
+	reasoningDetailsSet := false
+	if details, ok := message["reasoning_details"]; ok {
+		if !chatReasoningDetailsInputSupported(state) {
+			return invalidRequest("reasoning_details history is supported only for Anthropic-format deployments")
+		}
+		if err := validateChatReasoningDetails(details, path+".reasoning_details"); err != nil {
+			return err
+		}
+		if reasoningSet && !chatReasoningMatchesDetails(reasoningValue, details) {
+			return invalidRequest(path + ".reasoning must match the visible text in reasoning_details")
+		}
+		reasoningDetailsSet = true
+		hasPayload = true
+	}
+	if reasoningSet && !reasoningDetailsSet && !chatPlainReasoningInputSupported(state) {
+		return invalidRequest(path + ".reasoning requires signed reasoning_details for the selected deployment")
+	}
+	if annotations, ok := message["annotations"]; ok {
+		if !chatAnnotationsInputSupported(state) {
+			return invalidRequest("assistant annotations are supported only for OpenAI-format deployments")
+		}
+		if err := validateChatAnnotations(annotations, path+".annotations"); err != nil {
+			return err
+		}
+		hasPayload = true
+	}
+	if calls, ok := message["tool_calls"]; ok {
+		if err := validateChatToolCalls(state, calls, path+".tool_calls", validation); err != nil {
+			return err
+		}
+		hasPayload = true
+	}
+	if !hasPayload {
+		return invalidRequest(path + " must contain content, refusal, reasoning history, annotations, or tool calls")
+	}
+	return nil
+}
+
+func validateChatToolResultInput(state *State, message map[string]json.RawMessage, path string, validation *chatMessageInputValidation) error {
+	if err := rejectUnsupportedInputKeys(message, path, "role", "name", "content", "tool_call_id"); err != nil {
+		return err
+	}
+	if err := validateOptionalChatMessageName(state, message, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(message, "tool_call_id", path, false)
+	if err != nil {
+		return err
+	}
+	if !validation.pending[callID] {
+		return invalidRequest(path + ".tool_call_id must match an unresolved preceding assistant tool call")
+	}
+	content, ok := message["content"]
+	if !ok {
+		return invalidRequest(path + ".content is required")
+	}
+	if _, err := validateChatMessageTextContent(content, path+".content", false); err != nil {
+		return err
+	}
+	delete(validation.pending, callID)
+	validation.meaningful = true
+	return nil
+}
+
+func validateChatToolCalls(state *State, raw json.RawMessage, path string, validation *chatMessageInputValidation) error {
+	var calls []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &calls); err != nil || len(calls) == 0 {
+		return invalidRequest(path + " must be a non-empty array")
+	}
+	for index, call := range calls {
+		callPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := rejectUnsupportedInputKeys(call, callPath, "type", "id", "function"); err != nil {
+			return err
+		}
+		if rawString(call["type"]) != "function" {
+			return invalidRequest(callPath + ".type must be function")
+		}
+		callID, err := requiredInputString(call, "id", callPath, false)
+		if err != nil {
+			return err
+		}
+		if err := validateProviderToolCallID(state, callID, callPath+".id"); err != nil {
+			return err
+		}
+		if validation.allCallIDs[callID] {
+			return invalidRequest(callPath + ".id duplicates another assistant tool call")
+		}
+		var function map[string]json.RawMessage
+		if err := sonic.Unmarshal(call["function"], &function); err != nil || function == nil {
+			return invalidRequest(callPath + ".function must be an object")
+		}
+		if err := rejectUnsupportedInputKeys(function, callPath+".function", "name", "arguments"); err != nil {
+			return err
+		}
+		name, err := requiredInputString(function, "name", callPath+".function", false)
+		if err != nil {
+			return err
+		}
+		if !validClientToolName(name) {
+			return invalidRequest(callPath + ".function.name must contain 1 to 64 letters, digits, underscores, or hyphens")
+		}
+		arguments, err := requiredInputString(function, "arguments", callPath+".function", true)
+		if err != nil {
+			return err
+		}
+		if !catalog.ValidateJSONObjectText(arguments) {
+			return invalidRequest(callPath + ".function.arguments must encode a JSON object")
+		}
+		validation.allCallIDs[callID] = true
+		validation.pending[callID] = true
+	}
+	return nil
+}
+
+func chatInputRole(raw json.RawMessage) string {
+	var message map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &message); err != nil || message == nil {
+		return ""
+	}
+	return rawString(message["role"])
+}
+
+func validateProviderToolCallID(state *State, value string, path string) error {
+	if len(value) > 64 {
+		return invalidRequest(path + " must contain at most 64 bytes")
+	}
+	if !responsesUsesAnthropicWire(state) {
+		return nil
+	}
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '_' || character == '-' {
+			continue
+		}
+		return invalidRequest(path + " must contain only letters, digits, underscores, or hyphens for Anthropic-format deployments")
+	}
+	return nil
+}
+
+func validateChatMessageTextContent(raw json.RawMessage, path string, requireNonEmpty bool) (bool, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		if requireNonEmpty {
+			return false, invalidRequest(path + " must contain non-empty text")
+		}
+		return false, nil
+	}
+	if trimmed[0] == '"' {
+		var content string
+		if err := sonic.Unmarshal(raw, &content); err != nil {
+			return false, invalidRequest(path + " must be text or an array of text blocks")
+		}
+		meaningful := strings.TrimSpace(content) != ""
+		if requireNonEmpty && !meaningful {
+			return false, invalidRequest(path + " must contain non-empty text")
+		}
+		return meaningful, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &blocks); err != nil || len(blocks) == 0 {
+		return false, invalidRequest(path + " must be text or a non-empty array of text blocks")
+	}
+	meaningful := false
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := validateTextOnlyMediaFields(block, "Only text message content is supported"); err != nil {
+			return false, err
+		}
+		if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "cache_control", "prompt_cache_breakpoint"); err != nil {
+			return false, err
+		}
+		if rawString(block["type"]) != "text" {
+			return false, invalidRequest("Only text message content is supported")
+		}
+		text, ok := rawStringValue(block["text"])
+		if !ok {
+			return false, invalidRequest(blockPath + ".text must be a string")
+		}
+		meaningful = meaningful || strings.TrimSpace(text) != ""
+	}
+	if requireNonEmpty && !meaningful {
+		return false, invalidRequest(path + " must contain non-empty text")
+	}
+	return meaningful, nil
+}
+
+func validateChatReasoningDetails(raw json.RawMessage, path string) error {
+	var details []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &details); err != nil || len(details) == 0 {
+		return invalidRequest(path + " must be a non-empty array")
+	}
+	for index, detail := range details {
+		detailPath := fmt.Sprintf("%s[%d]", path, index)
+		value, exists, err := rawInteger(detail["index"], detailPath+".index")
+		if err != nil || !exists {
+			return invalidRequest(detailPath + ".index must be an integer")
+		}
+		if value != index {
+			return invalidRequest(detailPath + ".index must match its array position")
+		}
+		switch rawString(detail["type"]) {
+		case string(schemas.BifrostReasoningDetailsTypeText):
+			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "text", "signature"); err != nil {
+				return err
+			}
+			if _, err := requiredInputString(detail, "text", detailPath, true); err != nil {
+				return err
+			}
+			if _, err := requiredInputString(detail, "signature", detailPath, false); err != nil {
+				return err
+			}
+		case string(schemas.BifrostReasoningDetailsTypeEncrypted):
+			if err := rejectUnsupportedInputKeys(detail, detailPath, "id", "index", "type", "data"); err != nil {
+				return err
+			}
+			if _, err := requiredInputString(detail, "data", detailPath, false); err != nil {
+				return err
+			}
+		default:
+			return invalidRequest(detailPath + ".type is not supported for Anthropic history replay")
+		}
+		if id, ok := detail["id"]; ok {
+			if _, ok := rawStringValue(id); !ok {
+				return invalidRequest(detailPath + ".id must be a string")
+			}
+		}
+	}
+	return nil
+}
+
+func chatReasoningMatchesDetails(reasoning string, raw json.RawMessage) bool {
+	var details []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &details); err != nil {
+		return false
+	}
+	visible := make([]string, 0, len(details))
+	for _, detail := range details {
+		if rawString(detail["type"]) == string(schemas.BifrostReasoningDetailsTypeText) {
+			visible = append(visible, rawString(detail["text"]))
+		}
+	}
+	joined := strings.Join(visible, "\n")
+	return reasoning == joined || (len(visible) > 0 && reasoning == joined+"\n")
+}
+
+func validateChatAnnotations(raw json.RawMessage, path string) error {
+	var annotations []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &annotations); err != nil || len(annotations) == 0 {
+		return invalidRequest(path + " must be a non-empty array")
+	}
+	for index, annotation := range annotations {
+		annotationPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := rejectUnsupportedInputKeys(annotation, annotationPath, "type", "url_citation"); err != nil {
+			return err
+		}
+		if rawString(annotation["type"]) != "url_citation" {
+			return invalidRequest(annotationPath + ".type must be url_citation")
+		}
+		var citation map[string]json.RawMessage
+		if err := sonic.Unmarshal(annotation["url_citation"], &citation); err != nil || citation == nil {
+			return invalidRequest(annotationPath + ".url_citation must be an object")
+		}
+		if err := rejectUnsupportedInputKeys(citation, annotationPath+".url_citation", "start_index", "end_index", "title", "url"); err != nil {
+			return err
+		}
+		start, startExists, startErr := rawInteger(citation["start_index"], annotationPath+".url_citation.start_index")
+		if startErr != nil || !startExists || start < 0 {
+			return invalidRequest(annotationPath + ".url_citation.start_index must be a non-negative integer")
+		}
+		end, endExists, endErr := rawInteger(citation["end_index"], annotationPath+".url_citation.end_index")
+		if endErr != nil || !endExists || end < start {
+			return invalidRequest(annotationPath + ".url_citation.end_index must be an integer at or after start_index")
+		}
+		for _, key := range []string{"title", "url"} {
+			if _, err := requiredInputString(citation, key, annotationPath+".url_citation", true); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateOptionalChatMessageName(state *State, message map[string]json.RawMessage, path string) error {
+	if _, ok := message["name"]; !ok {
+		return nil
+	}
+	if responsesUsesAnthropicWire(state) {
+		return invalidRequest(path + ".name is not supported for Anthropic-format history")
+	}
+	_, err := requiredInputString(message, "name", path, false)
+	return err
+}
+
+func chatReasoningDetailsInputSupported(state *State) bool {
+	return state != nil && state.Resolution != nil &&
+		(state.Resolution.Provider == schemas.Anthropic ||
+			(state.Resolution.Provider == schemas.Azure && azureDeploymentUsesAnthropicWire(state)))
+}
+
+func chatPlainReasoningInputSupported(state *State) bool {
+	return state != nil && state.Resolution != nil && state.Resolution.Provider == catalog.ProviderChutes
+}
+
+func chatAnnotationsInputSupported(state *State) bool {
+	return state != nil && state.Resolution != nil &&
+		(state.Resolution.Provider == schemas.OpenAI ||
+			(state.Resolution.Provider == schemas.Azure && !azureDeploymentUsesAnthropicWire(state)))
+}
+
 func validateTextOnlyMediaFields(object map[string]json.RawMessage, mediaMessage string) error {
-	if _, ok := object["file_id"]; ok {
+	if rawJSONValueSet(object["file_id"]) {
 		return invalidRequest("file_id inputs are not supported")
 	}
-	if _, ok := object["file_url"]; ok {
+	if rawJSONValueSet(object["file_url"]) {
 		return invalidRequest("file_url inputs are not supported")
 	}
-	if _, ok := object["file_data"]; ok {
+	if rawJSONValueSet(object["file_data"]) {
 		return invalidRequest("file inputs are not supported")
 	}
 	for _, name := range []string{"file", "input_file"} {
-		if _, ok := object[name]; ok {
+		if rawJSONValueSet(object[name]) {
 			return invalidRequest("file inputs are not supported")
 		}
 	}
 	for _, name := range []string{"audio", "image", "image_url", "input_audio", "input_image"} {
-		if _, ok := object[name]; ok {
+		if rawJSONValueSet(object[name]) {
 			return invalidRequest(mediaMessage)
 		}
 	}
 	return nil
 }
 
-func validateChatTools(raw json.RawMessage, capabilities chatToolCapabilities) ([]chatToolRef, error) {
-	if len(raw) == 0 {
+func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return nil, nil
 	}
 	var tools []map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &tools); err != nil {
 		return nil, invalidRequest("tools must be an array")
 	}
+	if len(tools) > maxClientTools {
+		return nil, invalidRequest("tools must contain at most 128 definitions")
+	}
 	refs := make([]chatToolRef, 0, len(tools))
-	for _, tool := range tools {
+	seenNames := make(map[string]bool, len(tools))
+	for index, tool := range tools {
+		path := fmt.Sprintf("tools[%d]", index)
 		kind := rawString(tool["type"])
-		if kind == "custom" && !capabilities.allowCustom {
+		if kind == "custom" {
 			return nil, invalidRequest("custom tools are not supported for the selected Chat deployment")
 		}
 		switch kind {
-		case "function", "custom":
-			name := chatToolName(tool, kind)
-			if name == "" {
-				return nil, invalidRequest(kind + " tools require a name")
-			}
-			refs = append(refs, chatToolRef{kind: kind, name: name})
-		case "mcp_toolset":
-			if !capabilities.allowMCPToolset {
-				return nil, invalidRequest("mcp_toolset tools are only supported for Anthropic deployments")
-			}
-			if err := validateMCPToolsetTool(tool); err != nil {
+		case "function":
+			if err := rejectUnsupportedInputKeys(tool, path, "type", "function", "cache_control"); err != nil {
 				return nil, err
 			}
-			name := strings.TrimSpace(rawString(tool["mcp_server_name"]))
-			if name == "" {
-				return nil, invalidRequest("mcp_toolset tools require mcp_server_name")
+			var function map[string]json.RawMessage
+			if err := sonic.Unmarshal(tool["function"], &function); err != nil || function == nil {
+				return nil, invalidRequest(path + ".function must be an object")
 			}
+			if err := rejectUnsupportedInputKeys(function, path+".function", "name", "description", "parameters", "strict"); err != nil {
+				return nil, err
+			}
+			name, err := requiredInputString(function, "name", path+".function", false)
+			if err != nil {
+				return nil, err
+			}
+			if !validClientToolName(name) {
+				return nil, invalidRequest(path + ".function.name must contain 1 to 64 letters, digits, underscores, or hyphens")
+			}
+			if seenNames[name] {
+				return nil, invalidRequest(path + ".function.name duplicates another tool")
+			}
+			if description, ok := function["description"]; ok {
+				value, ok := rawStringValue(description)
+				if !ok {
+					return nil, invalidRequest(path + ".function.description must be a string")
+				}
+				if len(value) > maxToolDescriptionBytes {
+					return nil, invalidRequest(path + ".function.description exceeds 1024 bytes")
+				}
+			}
+			if parameters, ok := function["parameters"]; ok {
+				var schema map[string]json.RawMessage
+				if err := sonic.Unmarshal(parameters, &schema); err != nil || schema == nil {
+					return nil, invalidRequest(path + ".function.parameters must be an object")
+				}
+			}
+			if strict, ok := function["strict"]; ok {
+				var value bool
+				if err := sonic.Unmarshal(strict, &value); err != nil {
+					return nil, invalidRequest(path + ".function.strict must be a boolean")
+				}
+			}
+			seenNames[name] = true
 			refs = append(refs, chatToolRef{kind: kind, name: name})
 		default:
-			return nil, invalidRequest(chatSupportedToolsMessage(capabilities))
+			return nil, invalidRequest("Only function tools are supported")
 		}
 	}
 	return refs, nil
 }
 
-func chatSupportedToolsMessage(capabilities chatToolCapabilities) string {
-	if capabilities.allowMCPToolset {
-		return "Only function and mcp_toolset tools are supported"
+func validClientToolName(name string) bool {
+	if len(name) == 0 || len(name) > 64 {
+		return false
 	}
-	if capabilities.allowCustom {
-		return "Only function and custom tools are supported"
+	for index := 0; index < len(name); index++ {
+		value := name[index]
+		if (value >= 'a' && value <= 'z') ||
+			(value >= 'A' && value <= 'Z') ||
+			(value >= '0' && value <= '9') || value == '_' || value == '-' {
+			continue
+		}
+		return false
 	}
-	return "Only function tools are supported"
+	return true
 }
 
-func validateMCPToolsetTool(tool map[string]json.RawMessage) error {
-	for name := range tool {
-		switch name {
-		case "type", "mcp_server_name", "default_config", "configs", "cache_control":
-		default:
-			return invalidRequest("mcp_toolset." + name + " is not supported by Stogas API")
-		}
-	}
-	if raw, ok := tool["default_config"]; ok {
-		if err := validateMCPToolsetConfig(raw, "mcp_toolset.default_config"); err != nil {
-			return err
-		}
-	}
-	if raw, ok := tool["configs"]; ok {
-		configs, ok := rawObject(raw)
-		if !ok {
-			return invalidRequest("mcp_toolset.configs must be an object")
-		}
-		for name, config := range configs {
-			if strings.TrimSpace(name) == "" {
-				return invalidRequest("mcp_toolset.configs keys must be non-empty")
-			}
-			if err := validateMCPToolsetConfig(config, "mcp_toolset.configs."+name); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func validateMCPToolsetConfig(raw json.RawMessage, name string) error {
-	config, ok := rawObject(raw)
-	if !ok {
-		return invalidRequest(name + " must be an object")
-	}
-	for key, value := range config {
-		switch key {
-		case "enabled", "defer_loading":
-			if err := validateRawJSONBool(value, name+"."+key); err != nil {
-				return err
-			}
-		default:
-			return invalidRequest(name + "." + key + " is not supported by Stogas API")
-		}
-	}
-	return nil
-}
-
-func validateChatMCPServers(raw json.RawMessage, tools []chatToolRef) error {
-	toolsetCounts := map[string]int{}
-	for _, tool := range tools {
-		if tool.kind == "mcp_toolset" {
-			toolsetCounts[tool.name]++
-		}
-	}
-	if !rawJSONValueSet(raw) {
-		if len(toolsetCounts) > 0 {
-			return invalidRequest("mcp_toolset tools require matching mcp_servers")
-		}
-		return nil
-	}
-	var servers []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &servers); err != nil {
-		return invalidRequest("mcp_servers must be an array")
-	}
-	if len(servers) == 0 {
-		return invalidRequest("mcp_servers must contain at least one server")
-	}
-	names := map[string]struct{}{}
-	for _, server := range servers {
-		name, err := validateMCPServer(server)
-		if err != nil {
-			return err
-		}
-		if _, exists := names[name]; exists {
-			return invalidRequest("mcp_servers names must be unique")
-		}
-		names[name] = struct{}{}
-		if toolsetCounts[name] != 1 {
-			return invalidRequest("mcp_servers must match mcp_toolset tools one-to-one")
-		}
-	}
-	for name := range toolsetCounts {
-		if _, ok := names[name]; !ok {
-			return invalidRequest("mcp_toolset tools require matching mcp_servers")
-		}
-		if toolsetCounts[name] != 1 {
-			return invalidRequest("mcp_servers must match mcp_toolset tools one-to-one")
-		}
-	}
-	return nil
-}
-
-func validateMCPServer(server map[string]json.RawMessage) (string, error) {
-	for name := range server {
-		switch name {
-		case "type", "url", "name", "authorization_token":
-		default:
-			return "", invalidRequest("mcp_servers[]." + name + " is not supported by Stogas API")
-		}
-	}
-	if rawString(server["type"]) != "url" {
-		return "", invalidRequest(`mcp_servers[].type must be "url"`)
-	}
-	endpoint := strings.TrimSpace(rawString(server["url"]))
-	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return "", invalidRequest("mcp_servers[].url must be an HTTPS URL")
-	}
-	name := strings.TrimSpace(rawString(server["name"]))
-	if name == "" || strings.ContainsAny(name, "\x00\r\n") || !utf8.ValidString(name) {
-		return "", invalidRequest("mcp_servers[].name must be a non-empty string")
-	}
-	if tokenRaw, ok := server["authorization_token"]; ok {
-		token := rawString(tokenRaw)
-		if token == "" || len(token) > maxMCPAuthTokenBytes || strings.ContainsAny(token, "\x00\r\n") || !utf8.ValidString(token) {
-			return "", invalidRequest("mcp_servers[].authorization_token must be a non-empty string up to 4096 bytes without control line breaks")
-		}
-	}
-	return name, nil
-}
-
-func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef, capabilities chatToolCapabilities) error {
+func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
@@ -703,52 +1181,29 @@ func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef, capabiliti
 		if len(tools) == 0 {
 			return invalidRequest("tool_choice requires supported tools")
 		}
-		name := chatToolChoiceName(object, kind)
-		if name == "" {
-			return invalidRequest("tool_choice must name a " + kind + " tool")
+		if err := rejectUnsupportedInputKeys(object, "tool_choice", "type", "function"); err != nil {
+			return err
+		}
+		var function map[string]json.RawMessage
+		if err := sonic.Unmarshal(object["function"], &function); err != nil || function == nil {
+			return invalidRequest("tool_choice.function must be an object")
+		}
+		if err := rejectUnsupportedInputKeys(function, "tool_choice.function", "name"); err != nil {
+			return err
+		}
+		name, err := requiredInputString(function, "name", "tool_choice.function", false)
+		if err != nil || !validClientToolName(name) {
+			return invalidRequest("tool_choice must name a function tool")
 		}
 		if !chatToolExists(tools, kind, name) {
 			return invalidRequest("tool_choice selects an unknown " + kind + " tool")
 		}
 		return nil
 	case "custom":
-		if !capabilities.allowCustom {
-			return invalidRequest("custom tool_choice is not supported for the selected Chat deployment")
-		}
-		if len(tools) == 0 {
-			return invalidRequest("tool_choice requires supported tools")
-		}
-		name := chatToolChoiceName(object, kind)
-		if name == "" {
-			return invalidRequest("tool_choice must name a custom tool")
-		}
-		if !chatToolExists(tools, kind, name) {
-			return invalidRequest("tool_choice selects an unknown custom tool")
-		}
-		return nil
+		return invalidRequest("custom tool_choice is not supported for the selected Chat deployment")
 	default:
 		return invalidRequest("tool_choice must be auto, none, required, or a supported tool object")
 	}
-}
-
-func chatToolName(tool map[string]json.RawMessage, kind string) string {
-	if name := strings.TrimSpace(rawString(tool["name"])); name != "" {
-		return name
-	}
-	if nested, ok := rawObject(tool[kind]); ok {
-		return strings.TrimSpace(rawString(nested["name"]))
-	}
-	return ""
-}
-
-func chatToolChoiceName(choice map[string]json.RawMessage, kind string) string {
-	if name := strings.TrimSpace(rawString(choice["name"])); name != "" {
-		return name
-	}
-	if nested, ok := rawObject(choice[kind]); ok {
-		return strings.TrimSpace(rawString(nested["name"]))
-	}
-	return ""
 }
 
 func chatToolExists(tools []chatToolRef, kind string, name string) bool {

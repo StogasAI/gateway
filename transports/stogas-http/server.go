@@ -24,7 +24,8 @@ import (
 const (
 	serverConcurrency        = 2048
 	serverReadBufferSize     = 16 * 1024
-	serverReadTimeout        = 30 * time.Second
+	serverReadTimeout        = 5 * time.Minute
+	readinessReadTimeout     = 30 * time.Second
 	serverIdleTimeout        = 60 * time.Second
 	serverTCPKeepalivePeriod = 30 * time.Second
 )
@@ -41,6 +42,7 @@ type Server struct {
 	catalogUpdater  *catalog.Updater
 	requests        *requestDrain
 	memory          *requestMemoryAdmission
+	chatIdleTimeout time.Duration
 	startedAt       time.Time
 }
 
@@ -70,6 +72,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		releasedSecrets = secure.Secrets
 	}
 	if err := stogas.ApplyConfidentialRuntimeSecrets(&config, releasedSecrets); err != nil {
+		catalogUpdater.Close()
 		if secure != nil {
 			secure.Close()
 		}
@@ -77,6 +80,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 	}
 	runtime, err := stogas.NewRuntime(ctx, config, logger)
 	if err != nil {
+		catalogUpdater.Close()
 		if secure != nil {
 			secure.Close()
 		}
@@ -125,8 +129,9 @@ func (s *Server) routes() error {
 	r.NotFound = s.notFound
 
 	s.router = r
+	connectionLogger := newSecureFastHTTPLogger(os.Stderr)
 	s.server = &fasthttp.Server{
-		Handler:                      chain(r.Handler, securityHeaders, cors, s.requestDecompression),
+		Handler:                      chain(r.Handler, securityHeaders, cors, s.requestBodyAdmission, s.requestDecompression),
 		Concurrency:                  serverConcurrency,
 		MaxRequestBodySize:           s.config.MaxRequestBodyMiB * 1024 * 1024,
 		NoDefaultServerHeader:        true,
@@ -134,9 +139,10 @@ func (s *Server) routes() error {
 		ReadTimeout:                  serverReadTimeout,
 		WriteTimeout:                 0,
 		IdleTimeout:                  serverIdleTimeout,
+		Logger:                       connectionLogger,
 		TCPKeepalive:                 true,
 		TCPKeepalivePeriod:           serverTCPKeepalivePeriod,
-		StreamRequestBody:            false,
+		StreamRequestBody:            true,
 		ReduceMemoryUsage:            true,
 		SecureErrorLogMessage:        true,
 		DisablePreParseMultipartForm: true,
@@ -148,8 +154,10 @@ func (s *Server) routes() error {
 		Handler:               readinessRouter.Handler,
 		GetOnly:               true,
 		NoDefaultServerHeader: true,
-		ReadTimeout:           serverReadTimeout,
+		ReadTimeout:           readinessReadTimeout,
 		IdleTimeout:           serverIdleTimeout,
+		Logger:                connectionLogger,
+		SecureErrorLogMessage: true,
 		TCPKeepalive:          true,
 		TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
 	}

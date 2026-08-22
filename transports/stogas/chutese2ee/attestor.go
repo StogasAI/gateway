@@ -266,20 +266,19 @@ func (a *attestor) verifyOnce(
 	nonce := hex.EncodeToString(nonceBytes)
 	path := evidencePathPrefix + url.PathEscape(chuteID) + "/evidence?nonce=" + nonce
 	var response evidenceResponse
-	var status int
-	for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+	err = retryChutesRead(ctx, false, 5*time.Second, func() error {
 		response = evidenceResponse{}
-		var latency time.Duration
-		status, latency, err = a.api.requestJSON(ctx, http.MethodGet, path, nil, maxEvidenceBody, &response)
-		a.diagnostics.recordEvidence(chuteID, status, latency, err)
-		if err == nil || attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(err, false) {
-			break
-		}
-		delay, ok := chutesReadRetryDelay(err, attempt, 5*time.Second)
-		if !ok || !waitForChutesRetry(ctx, delay) {
-			break
-		}
-	}
+		status, latency, requestErr := a.api.requestJSON(
+			ctx,
+			http.MethodGet,
+			path,
+			nil,
+			maxEvidenceBody,
+			&response,
+		)
+		a.diagnostics.recordEvidence(chuteID, status, latency, requestErr)
+		return requestErr
+	})
 	if err != nil {
 		return result, fmt.Errorf("fetch Chutes evidence: %w", err)
 	}

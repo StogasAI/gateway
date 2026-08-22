@@ -791,14 +791,15 @@ func TestResponsesToolMessageActionStruct_MarshalUnmarshal_WebSearchAction(t *te
 			jsonData: `{"type":"open_page","url":"https://example.com"}`,
 		},
 		{
-			name: "web search action - find",
+			name: "web search action - find in page",
 			action: schemas.ResponsesToolMessageActionStruct{
 				ResponsesWebSearchToolCallAction: &schemas.ResponsesWebSearchToolCallAction{
-					Type:    "find",
+					Type:    "find_in_page",
+					URL:     schemas.Ptr("https://example.com"),
 					Pattern: schemas.Ptr("error.*occurred"),
 				},
 			},
-			jsonData: `{"type":"find","pattern":"error.*occurred"}`,
+			jsonData: `{"type":"find_in_page","url":"https://example.com","pattern":"error.*occurred"}`,
 		},
 		{
 			name: "web search action - search with queries array",

@@ -166,10 +166,52 @@ func TestSettlementStatuses(t *testing.T) {
 				UserID:           "user",
 			}
 
-			if got := settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, tt.actual); got != tt.wantStatus {
+			actual := mustBigInt(t, tt.actual)
+			if got := settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, actual); got != tt.wantStatus {
 				t.Fatalf("settlementStatus = %s, want %s", got, tt.wantStatus)
 			}
 		})
+	}
+}
+
+func TestParseUSDAtomsRejectsNoncanonicalOrOutOfRangeValues(t *testing.T) {
+	for _, value := range []string{
+		"",
+		"abc",
+		"-1",
+		"+1",
+		" 1",
+		"1 ",
+		"01",
+		"1000000000000000000000000000001",
+	} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := ParseUSDAtoms(value); err == nil {
+				t.Fatalf("ParseUSDAtoms(%q) succeeded", value)
+			}
+		})
+	}
+
+	for _, value := range []string{"0", "1", maximumUSDAtoms} {
+		t.Run("valid_"+value, func(t *testing.T) {
+			parsed, err := ParseUSDAtoms(value)
+			if err != nil {
+				t.Fatalf("ParseUSDAtoms(%q) returned error: %v", value, err)
+			}
+			if parsed.String() != value {
+				t.Fatalf("ParseUSDAtoms(%q) = %s", value, parsed)
+			}
+		})
+	}
+}
+
+func TestParseDatabaseMoneyRejectsMissingOrMalformedValues(t *testing.T) {
+	if _, err := parseDatabaseMoney(nil, "authorized amount"); err == nil {
+		t.Fatal("parseDatabaseMoney accepted a missing amount")
+	}
+	malformed := "invalid"
+	if _, err := parseDatabaseMoney(&malformed, "authorized amount"); err == nil {
+		t.Fatal("parseDatabaseMoney accepted a malformed amount")
 	}
 }
 
@@ -196,20 +238,36 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 }
 
 func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
-	status := 200
-	firstOutput := uint32(46)
+	failedStatus := 502
+	successStatus := 200
+	firstOutput := uint32(40)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		Pricing: map[string]any{
-			"input_tokens": map[string]any{"quantity": "12", "rateKey": "per_mill_tokens", "rateUsdAtoms": "1", "usdAtoms": "1"},
+		Pricing: EventPricing{
+			"input_tokens":                {Quantity: "12", RateKey: "per_mill_tokens", RateUSDAtoms: "1", USDAtoms: "1"},
+			"cache_write_input_tokens":    {Quantity: "1"},
+			"cache_write_5m_input_tokens": {Quantity: "2"},
+			"cache_write_1h_input_tokens": {Quantity: "4"},
+		},
+		analyticsQuantities: map[string]uint64{
+			"input_tokens":                12,
+			"cache_write_input_tokens":    1,
+			"cache_write_5m_input_tokens": 2,
+			"cache_write_1h_input_tokens": 4,
 		},
 		ProviderAttempts: []ProviderAttempt{{
-			LatencyMS:             12,
-			Provider:              "openai",
+			LatencyMS:    30,
+			Provider:     "openai",
+			Status:       "network_error",
+			StatusCode:   &failedStatus,
+			UpstreamByok: "stogas",
+		}, {
+			LatencyMS:             90,
+			Provider:              "anthropic",
 			ProviderFirstOutputMS: &firstOutput,
 			ProviderRequestID:     "provider-request",
 			FinishReason:          "stop",
 			Status:                "success",
-			StatusCode:            &status,
+			StatusCode:            &successStatus,
 			UpstreamByok:          "stogas",
 		}},
 		GatewayVersion:          "v1.5.13",
@@ -223,8 +281,18 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
 		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
 	}
-	if event.AnalyticsTimeToFirstOutputMS == nil || *event.AnalyticsTimeToFirstOutputMS != firstOutput {
-		t.Fatalf("analytics_time_to_first_output_ms = %#v", event.AnalyticsTimeToFirstOutputMS)
+	if event.AnalyticsProviderLatencyMS != 120 {
+		t.Fatalf("analytics_provider_latency_ms = %d, want 120", event.AnalyticsProviderLatencyMS)
+	}
+	if event.AnalyticsCacheWriteTokens != 7 {
+		t.Fatalf("analytics cache-write tokens = %d, want 7", event.AnalyticsCacheWriteTokens)
+	}
+	if strings.Join(event.AnalyticsProviders, ",") != "openai,anthropic" ||
+		strings.Join(event.AnalyticsProviderStatuses, ",") != "network_error,502,success,200" {
+		t.Fatalf("analytics provider projections do not include every attempt: %#v", event)
+	}
+	if event.AnalyticsTimeToFirstOutputMS == nil || *event.AnalyticsTimeToFirstOutputMS != 70 {
+		t.Fatalf("analytics_time_to_first_output_ms = %#v, want 70", event.AnalyticsTimeToFirstOutputMS)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway_version = %q", event.GatewayVersion)
@@ -234,7 +302,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		t.Fatalf("catalog_node_ids = %q, err=%v", event.CatalogNodeIDs, err)
 	}
 	var attempts []ProviderAttempt
-	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil || len(attempts) != 1 {
+	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil ||
+		len(attempts) != 2 || attempts[1].Provider != "anthropic" {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
 	var pricing map[string]map[string]string
@@ -243,21 +312,42 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	}
 }
 
+func TestTinybirdGatewayRequestEventSaturatesRetryTiming(t *testing.T) {
+	maximum := ^uint32(0)
+	firstOutput := uint32(1)
+	event := tinybirdGatewayRequestEvent(RequestEvent{ProviderAttempts: []ProviderAttempt{
+		{LatencyMS: maximum, Provider: "openai", Status: "network_error"},
+		{
+			LatencyMS:             1,
+			Provider:              "anthropic",
+			ProviderFirstOutputMS: &firstOutput,
+			Status:                "success",
+		},
+	}})
+
+	if event.AnalyticsProviderLatencyMS != maximum {
+		t.Fatalf("analytics_provider_latency_ms = %d, want %d", event.AnalyticsProviderLatencyMS, maximum)
+	}
+	if event.AnalyticsTimeToFirstOutputMS == nil || *event.AnalyticsTimeToFirstOutputMS != maximum {
+		t.Fatalf("analytics_time_to_first_output_ms = %#v, want %d", event.AnalyticsTimeToFirstOutputMS, maximum)
+	}
+}
+
 func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
 	providerFirstOutput := uint32(8)
 	provisioningKeyID := "019de515-eabf-7c0e-89bd-400629a79580"
-	event := NewRequestEvent(EventInput{
+	event := mustNewRequestEvent(t, EventInput{
 		Authorization:         &Authorization{AuthorizedAmount: mustParseBigInt("10"), ProvisioningKeyID: &provisioningKeyID, RequestID: "request-1"},
 		ProviderFirstOutputMS: &providerFirstOutput,
 		RequestType:           string(schemas.ChatCompletionStreamRequest),
-		Pricing: map[string]any{
-			"input_tokens": map[string]any{"quantity": "1", "rateKey": "per_mill_tokens", "rateUsdAtoms": "2000000", "usdAtoms": "2"},
+		Pricing: EventPricing{
+			"input_tokens": {Quantity: "1", RateKey: "per_mill_tokens", RateUSDAtoms: "2000000", USDAtoms: "2"},
 		},
 		StartedAt: startedAt,
 	})
 
-	if event.Pricing["input_tokens"].(map[string]any)["rateUsdAtoms"] != "2000000" {
+	if event.Pricing["input_tokens"].RateUSDAtoms != "2000000" {
 		t.Fatalf("expected settled pricing audit, got %#v", event.Pricing)
 	}
 	if event.ProviderAttempts[0].ProviderFirstOutputMS == nil || *event.ProviderAttempts[0].ProviderFirstOutputMS != providerFirstOutput {
@@ -270,7 +360,7 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 
 func TestBilledRequestCostUsesFullManagedCostAndCeilingTwoPercentForBYOK(t *testing.T) {
 	managed := &Authorization{UpstreamByok: "stogas"}
-	byok := &Authorization{UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001"}
+	byok := &Authorization{UpstreamByok: "0198f4cc-6c25-8000-8000-000000000001"}
 	for _, tc := range []struct {
 		name          string
 		authorization *Authorization
@@ -285,7 +375,7 @@ func TestBilledRequestCostUsesFullManagedCostAndCeilingTwoPercentForBYOK(t *test
 		{name: "BYOK larger", authorization: byok, upstream: "999", want: "20"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := billedRequestCost(tc.authorization, tc.upstream); got != tc.want {
+			if got := billedRequestCost(tc.authorization, mustBigInt(t, tc.upstream)).String(); got != tc.want {
 				t.Fatalf("billedRequestCost(%q) = %q, want %q", tc.upstream, got, tc.want)
 			}
 		})
@@ -297,7 +387,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	startedAt := now.Add(-100 * time.Millisecond)
 	providerStartedAt := now.Add(-60 * time.Millisecond)
 	providerCompletedAt := now.Add(-20 * time.Millisecond)
-	event := NewRequestEvent(EventInput{
+	event := mustNewRequestEvent(t, EventInput{
 		Authorization:       &Authorization{RequestID: "request-1"},
 		ClientStoppedAt:     now.Add(-55 * time.Millisecond),
 		ProviderCompletedAt: providerCompletedAt,
@@ -315,7 +405,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
 	}
 
-	event = NewRequestEvent(EventInput{
+	event = mustNewRequestEvent(t, EventInput{
 		Authorization:       &Authorization{RequestID: "request-provider-clock"},
 		ProviderCompletedAt: providerCompletedAt,
 		ProviderStartedAt:   providerStartedAt,
@@ -331,7 +421,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		)
 	}
 
-	event = NewRequestEvent(EventInput{
+	event = mustNewRequestEvent(t, EventInput{
 		Authorization: &Authorization{RequestID: "request-2"},
 		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 500},
@@ -346,7 +436,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		)
 	}
 
-	event = NewRequestEvent(EventInput{
+	event = mustNewRequestEvent(t, EventInput{
 		Authorization:   &Authorization{RequestID: "request-client-stop-clamp"},
 		ClientStoppedAt: now.Add(time.Hour),
 		StartedAt:       startedAt,
@@ -354,6 +444,88 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.ClientStopMS == nil || *event.ClientStopMS != event.TotalTimeMS {
 		t.Fatalf("client stop time must not exceed total time: stop=%#v total=%d", event.ClientStopMS, event.TotalTimeMS)
 	}
+}
+
+func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
+	base := time.Now().UTC().Add(-time.Second)
+	statusCode := 502
+	firstOutputMS := uint32(40)
+	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "provider-request"}}
+	event := mustNewRequestEvent(t, EventInput{
+		Authorization: &Authorization{
+			ProviderKey: "openai",
+			RequestID:   "request-retry",
+		},
+		ProviderAttempts: []ProviderAttemptInput{
+			{
+				Provider:    "openai",
+				StartedAt:   base.Add(10 * time.Millisecond),
+				CompletedAt: base.Add(40 * time.Millisecond),
+				Error: &schemas.BifrostError{
+					StatusCode: &statusCode,
+					Error:      &schemas.ErrorField{Message: "upstream unavailable"},
+				},
+			},
+			{
+				Provider:              "anthropic",
+				StartedAt:             base.Add(55 * time.Millisecond),
+				CompletedAt:           base.Add(145 * time.Millisecond),
+				ProviderFirstOutputMS: &firstOutputMS,
+				Response:              response,
+			},
+		},
+		ProviderStartedAt:   base.Add(5 * time.Millisecond),
+		ProviderCompletedAt: base.Add(150 * time.Millisecond),
+		RequestType:         string(schemas.ChatCompletionStreamRequest),
+		Response:            response,
+		StartedAt:           base,
+	})
+
+	if len(event.ProviderAttempts) != 2 {
+		t.Fatalf("provider attempts = %#v, want two attempts", event.ProviderAttempts)
+	}
+	if event.ProviderAttempts[0].LatencyMS != 30 || event.ProviderAttempts[1].LatencyMS != 90 {
+		t.Fatalf("provider attempt latencies = %#v", event.ProviderAttempts)
+	}
+	if event.ProviderAttempts[0].Status != "provider_error" || event.ProviderAttempts[1].Status != "success" {
+		t.Fatalf("provider attempt statuses = %#v", event.ProviderAttempts)
+	}
+	payload := tinybirdGatewayRequestEvent(event)
+	if payload.AnalyticsProviderLatencyMS != 120 {
+		t.Fatalf("analytics provider latency = %d, want 120", payload.AnalyticsProviderLatencyMS)
+	}
+	if payload.AnalyticsTimeToFirstOutputMS == nil || *payload.AnalyticsTimeToFirstOutputMS != 70 {
+		t.Fatalf("analytics time to first output = %#v, want 70", payload.AnalyticsTimeToFirstOutputMS)
+	}
+	if payload.AnalyticsProviderStatus != "success" || strings.Join(payload.AnalyticsProviders, ",") != "openai,anthropic" {
+		t.Fatalf("analytics provider projection = %#v", payload)
+	}
+
+	aggregateFirstOutputMS := uint32(7)
+	singleAttempt := mustNewRequestEvent(t, EventInput{
+		Authorization:         &Authorization{ProviderKey: "openai", RequestID: "request-single"},
+		ProviderAttempts:      []ProviderAttemptInput{{Provider: "anthropic", StartedAt: base.Add(20 * time.Millisecond), CompletedAt: base.Add(21 * time.Millisecond)}},
+		ProviderStartedAt:     base.Add(10 * time.Millisecond),
+		ProviderCompletedAt:   base.Add(50 * time.Millisecond),
+		ProviderFirstOutputMS: &aggregateFirstOutputMS,
+		RequestType:           string(schemas.ChatCompletionStreamRequest),
+		StartedAt:             base,
+	})
+	if len(singleAttempt.ProviderAttempts) != 1 || singleAttempt.ProviderAttempts[0].Provider != "anthropic" || singleAttempt.ProviderAttempts[0].LatencyMS != 1 {
+		t.Fatalf("single observed attempt was not preserved: %#v", singleAttempt.ProviderAttempts)
+	}
+	if got := singleAttempt.ProviderAttempts[0].ProviderFirstOutputMS; got != nil {
+		t.Fatalf("single observed attempt inherited aggregate first output: %#v", got)
+	}
+}
+
+func mustNewRequestEvent(t testing.TB, input EventInput) RequestEvent {
+	t.Helper()
+	event, err := NewRequestEvent(input)
+	if err != nil {
+		t.Fatalf("NewRequestEvent returned error: %v", err)
+	}
+	return event
 }
 
 func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
@@ -720,6 +892,28 @@ func TestCloseWaitsForActiveSettlementRetry(t *testing.T) {
 	case <-closeReturned:
 	case <-time.After(time.Second):
 		t.Fatal("Close did not return after settlement retry finished")
+	}
+}
+
+func TestFinalizeRequestBoundsConcurrentSettlementRetries(t *testing.T) {
+	retrySlots := make(chan struct{}, 1)
+	retrySlots <- struct{}{}
+	service := &Service{
+		retrySlots: retrySlots,
+		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
+			return errors.New("simulated postgres outage")
+		},
+	}
+
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+		t.Fatalf("FinalizeRequest returned error: %v", err)
+	}
+	diagnostics := service.Diagnostics()
+	if diagnostics.SettlementRetries != 0 {
+		t.Fatalf("active settlement retries = %d, want 0", diagnostics.SettlementRetries)
+	}
+	if diagnostics.SettlementRetryDeferrals != 1 {
+		t.Fatalf("settlement retry deferrals = %d, want 1", diagnostics.SettlementRetryDeferrals)
 	}
 }
 

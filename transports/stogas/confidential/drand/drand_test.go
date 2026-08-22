@@ -79,6 +79,25 @@ func TestHTTPFetcherRejectsBadStatusAndMalformedSignature(t *testing.T) {
 	}
 }
 
+func TestHTTPFetcherDoesNotFollowRedirects(t *testing.T) {
+	targetCalled := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		targetCalled = true
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		http.Redirect(response, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	if _, err := NewHTTPFetcher(source.Client(), source.URL).Fetch(context.Background()); err == nil {
+		t.Fatal("expected redirect rejection")
+	}
+	if targetCalled {
+		t.Fatal("redirect target received a drand request")
+	}
+}
+
 func TestHTTPFetcherRejectsInvalidResponseFraming(t *testing.T) {
 	tests := []struct {
 		name string
@@ -175,22 +194,7 @@ func TestHTTPFetcherAppliesTotalFetchBudget(t *testing.T) {
 	}
 }
 
-func TestDefaultQuicknetRelayURLsArePinnedFallbackSet(t *testing.T) {
-	expected := []string{
-		"https://api.drand.sh",
-		"https://api2.drand.sh",
-		"https://api3.drand.sh",
-		"https://drand.cloudflare.com",
-		"https://api.drand.secureweb3.com:6875",
-	}
-	if len(DefaultQuicknetRelayURLs) != len(expected) {
-		t.Fatalf("expected %d default relays, got %d", len(expected), len(DefaultQuicknetRelayURLs))
-	}
-	for i := range expected {
-		if DefaultQuicknetRelayURLs[i] != expected[i] {
-			t.Fatalf("default relay %d = %q, want %q", i, DefaultQuicknetRelayURLs[i], expected[i])
-		}
-	}
+func TestDefaultQuicknetLatestURLsArePinnedFallbackSet(t *testing.T) {
 	expectedLatestURLs := []string{
 		"https://api.drand.sh" + QuicknetLatestV2Path,
 		"https://api2.drand.sh" + QuicknetLatestV2Path,
@@ -198,12 +202,13 @@ func TestDefaultQuicknetRelayURLsArePinnedFallbackSet(t *testing.T) {
 		"https://drand.cloudflare.com" + QuicknetLatestV1Path,
 		"https://api.drand.secureweb3.com:6875" + QuicknetLatestV1Path,
 	}
-	if len(DefaultQuicknetLatestURLs) != len(expectedLatestURLs) {
-		t.Fatalf("expected %d default latest urls, got %d", len(expectedLatestURLs), len(DefaultQuicknetLatestURLs))
+	latestURLs := defaultQuicknetLatestURLs()
+	if len(latestURLs) != len(expectedLatestURLs) {
+		t.Fatalf("expected %d default latest urls, got %d", len(expectedLatestURLs), len(latestURLs))
 	}
 	for i := range expectedLatestURLs {
-		if DefaultQuicknetLatestURLs[i] != expectedLatestURLs[i] {
-			t.Fatalf("default latest url %d = %q, want %q", i, DefaultQuicknetLatestURLs[i], expectedLatestURLs[i])
+		if latestURLs[i] != expectedLatestURLs[i] {
+			t.Fatalf("default latest url %d = %q, want %q", i, latestURLs[i], expectedLatestURLs[i])
 		}
 	}
 }
@@ -295,7 +300,7 @@ func TestSourceRejectsSignatureFailure(t *testing.T) {
 	if err := source.Refresh(context.Background()); err == nil {
 		t.Fatal("expected signature verification error")
 	}
-	if source.LastError() == nil {
+	if source.lastErr == nil {
 		t.Fatal("expected last error")
 	}
 }

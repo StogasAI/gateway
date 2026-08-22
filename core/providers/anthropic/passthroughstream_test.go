@@ -492,27 +492,21 @@ func TestAnthropicWebFetchResultRoundTrip(t *testing.T) {
 	}
 }
 
-func TestAnthropicWebFetchTextResultRoundTrip(t *testing.T) {
-	toolID := "srvtoolu_fetch_text"
+func TestAnthropicWebFetchErrorResultRoundTrip(t *testing.T) {
+	toolID := "srvtoolu_fetch_error"
+	errorCode := "url_not_accessible"
 	result := &AnthropicContentBlock{
 		Type:      AnthropicContentBlockTypeWebFetchToolResult,
 		ToolUseID: &toolID,
 		Content: &AnthropicContent{ContentObj: &AnthropicContentBlock{
-			Type: "web_fetch_result",
-			URL:  schemas.Ptr("https://example.com/plain"),
-			Content: &AnthropicContent{ContentObj: &AnthropicContentBlock{
-				Type: AnthropicContentBlockTypeText,
-				Text: schemas.Ptr("plain fetched text"),
-			}},
+			Type:      "web_fetch_tool_result_error",
+			ErrorCode: &errorCode,
 		}},
 	}
 
 	carry := convertAnthropicWebFetchResultToBifrost(result)
-	if carry == nil || carry.Document == nil || carry.Document.Text == nil {
-		t.Fatalf("expected typed text web_fetch result payload, got %#v", carry)
-	}
-	if got := *carry.Document.Text; got != "plain fetched text" {
-		t.Fatalf("unexpected carried text: %q", got)
+	if carry == nil || carry.ErrorCode == nil || *carry.ErrorCode != errorCode || carry.Document != nil {
+		t.Fatalf("expected typed web_fetch error payload, got %#v", carry)
 	}
 
 	msg := &schemas.ResponsesMessage{
@@ -530,12 +524,9 @@ func TestAnthropicWebFetchTextResultRoundTrip(t *testing.T) {
 		t.Fatalf("expected server_tool_use + web_fetch_tool_result, got %d blocks: %#v", len(blocks), blocks)
 	}
 	inner := getAnthropicContentObject(blocks[1].Content)
-	if inner == nil || inner.Content == nil {
-		t.Fatalf("expected rebuilt fetch result content, got %#v", inner)
-	}
-	textBlock := getAnthropicContentObject(inner.Content)
-	if textBlock == nil || textBlock.Text == nil || *textBlock.Text != "plain fetched text" {
-		t.Fatalf("expected rebuilt text content, got %#v", textBlock)
+	if inner == nil || inner.Type != "web_fetch_tool_result_error" || inner.ErrorCode == nil ||
+		*inner.ErrorCode != errorCode || inner.Content != nil {
+		t.Fatalf("expected rebuilt fetch error, got %#v", inner)
 	}
 }
 

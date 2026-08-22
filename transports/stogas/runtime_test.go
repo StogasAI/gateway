@@ -47,6 +47,15 @@ func TestRuntimeAccountDisablesOpenAIProviderStorage(t *testing.T) {
 	if chutesConfig.NetworkConfig.BaseURL != defaultChutesBaseURL {
 		t.Fatalf("Chutes base URL = %q, want %q", chutesConfig.NetworkConfig.BaseURL, defaultChutesBaseURL)
 	}
+	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes} {
+		providerConfig, err := account.GetConfigForProvider(provider)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if providerConfig == nil || providerConfig.NetworkConfig.MaxResponseBodySize != maxProviderResponseBodySize {
+			t.Fatalf("%s provider response cap = %#v, want %d", provider, providerConfig, maxProviderResponseBodySize)
+		}
+	}
 
 	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure} {
 		keys, err := account.GetKeysForProvider(t.Context(), provider)

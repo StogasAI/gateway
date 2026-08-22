@@ -58,16 +58,16 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		if !isChatRequestType(request.RequestType) || chat.Provider != resolution.Provider || chat.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeChatProviderFields(chat)
-		applyRequiredChatOutputLimit(resolution, chat)
+		sanitizeChatProviderFields(ctx, chat)
+		applyRequiredChatOutputLimit(ctx, resolution, chat)
 		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
 		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.Provider || responses.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeResponsesProviderFields(responses)
-		applyRequiredResponsesOutputLimit(resolution, responses)
+		sanitizeResponsesProviderFields(ctx, responses)
+		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest)
 	default:
 		return catalog.ErrUnsupportedRequest
@@ -93,8 +93,8 @@ func resolvedOutputLimit(resolution *catalog.ResolvedRequest) int {
 	return resolution.Deployment.MaxOutputTokens
 }
 
-func applyRequiredChatOutputLimit(resolution *catalog.ResolvedRequest, request *schemas.BifrostChatRequest) {
-	if request == nil || request.Provider != schemas.Anthropic {
+func applyRequiredChatOutputLimit(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest, request *schemas.BifrostChatRequest) {
+	if request == nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return
 	}
 	if request.Params == nil {
@@ -108,8 +108,8 @@ func applyRequiredChatOutputLimit(resolution *catalog.ResolvedRequest, request *
 	}
 }
 
-func applyRequiredResponsesOutputLimit(resolution *catalog.ResolvedRequest, request *schemas.BifrostResponsesRequest) {
-	if request == nil || request.Provider != schemas.Anthropic {
+func applyRequiredResponsesOutputLimit(ctx *schemas.BifrostContext, resolution *catalog.ResolvedRequest, request *schemas.BifrostResponsesRequest) {
+	if request == nil || !usesAnthropicWireFormat(ctx, request.Provider, request.Model) {
 		return
 	}
 	if request.Params == nil {
@@ -131,7 +131,7 @@ func isResponsesRequestType(requestType schemas.RequestType) bool {
 	return requestType == schemas.ResponsesRequest || requestType == schemas.ResponsesStreamRequest
 }
 
-func sanitizeChatProviderFields(request *schemas.BifrostChatRequest) {
+func sanitizeChatProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest) {
 	if request.Params == nil {
 		request.Params = &schemas.ChatParameters{}
 	}
@@ -139,12 +139,12 @@ func sanitizeChatProviderFields(request *schemas.BifrostChatRequest) {
 	request.Params.SafetyIdentifier = nil
 	request.Params.User = nil
 	request.Params.Store = nil
-	if request.Provider == schemas.OpenAI || request.Provider == schemas.Azure {
+	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
 		request.Params.Store = schemas.Ptr(false)
 	}
 }
 
-func sanitizeResponsesProviderFields(request *schemas.BifrostResponsesRequest) {
+func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest) {
 	if request.Params == nil {
 		request.Params = &schemas.ResponsesParameters{}
 	}
@@ -152,7 +152,7 @@ func sanitizeResponsesProviderFields(request *schemas.BifrostResponsesRequest) {
 	request.Params.SafetyIdentifier = nil
 	request.Params.User = nil
 	request.Params.Store = nil
-	if request.Provider == schemas.OpenAI || request.Provider == schemas.Azure {
+	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
 		request.Params.Store = schemas.Ptr(false)
 	}
 }
@@ -162,6 +162,13 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 	case schemas.OpenAI:
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case schemas.Azure:
+		if schemas.IsAnthropicModelFamily(ctx, request.Model) {
+			return anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
+				Provider:    schemas.Azure,
+				Model:       request.Model,
+				IsStreaming: streaming,
+			})
+		}
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case schemas.Anthropic:
 		return anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
@@ -180,6 +187,14 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 	case schemas.OpenAI:
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Azure:
+		if schemas.IsAnthropicModelFamily(ctx, request.Model) {
+			return anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
+				Provider:      schemas.Azure,
+				Model:         request.Model,
+				IsStreaming:   streaming,
+				ValidateTools: true,
+			})
+		}
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Anthropic:
 		return anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
@@ -189,6 +204,10 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 	default:
 		return nil, providerutils.NewUnsupportedOperationError(requestTypeForResponses(streaming), request.Provider)
 	}
+}
+
+func usesAnthropicWireFormat(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string) bool {
+	return provider == schemas.Anthropic || (provider == schemas.Azure && schemas.IsAnthropicModelFamily(ctx, model))
 }
 
 func prepareOpenAIChatBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool) ([]byte, *schemas.BifrostError) {

@@ -4,6 +4,7 @@ package azure
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ import (
 const AzureAuthorizationTokenKey schemas.BifrostContextKey = "azure-authorization-token"
 
 // DefaultAzureScope is the default scope for Azure authentication.
-const DefaultAzureScope = "https://cognitiveservices.azure.com/.default"
+const DefaultAzureScope = "https://ai.azure.com/.default"
 
 // DefaultAzureSorageScope is the default scope for Azure storage.
 const DefaultAzureStorageScope = "https://storage.azure.com/.default"
@@ -43,15 +44,27 @@ type AzureProvider struct {
 	streamingClient *fasthttp.Client      // HTTP client for streaming API requests (no ReadTimeout; idle governed by NewIdleTimeoutReader)
 	networkConfig   schemas.NetworkConfig // Network configuration including extra headers
 
-	credentials         sync.Map // map of tenant ID:client ID to azcore.TokenCredential
+	credentials         sync.Map // clientSecretCredentialCacheKey or defaultAzureCredentialCacheKey to azcore.TokenCredential
 	sendBackRawRequest  bool     // Whether to include raw request in BifrostResponse
 	sendBackRawResponse bool     // Whether to include raw response in BifrostResponse
 }
 
+type clientSecretCredentialCacheKey struct {
+	clientID         string
+	clientSecretHash [sha256.Size]byte
+	tenantID         string
+}
+
+type defaultAzureCredentialCacheKey struct{}
+
 func (p *AzureProvider) getOrCreateAuth(
 	tenantID, clientID, clientSecret string,
 ) (azcore.TokenCredential, error) {
-	key := tenantID + ":" + clientID
+	key := clientSecretCredentialCacheKey{
+		clientID:         clientID,
+		clientSecretHash: sha256.Sum256([]byte(clientSecret)),
+		tenantID:         tenantID,
+	}
 
 	// Fast path
 	if val, ok := p.credentials.Load(key); ok {
@@ -77,7 +90,7 @@ func (p *AzureProvider) getOrCreateAuth(
 // It automatically detects the auth environment: managed identity on Azure VMs/containers,
 // workload identity in AKS, environment variables, Azure CLI, and more.
 func (p *AzureProvider) getOrCreateDefaultAzureCredential() (azcore.TokenCredential, error) {
-	const cacheKey = "default_azure_credential"
+	cacheKey := defaultAzureCredentialCacheKey{}
 
 	if val, ok := p.credentials.Load(cacheKey); ok {
 		return val.(azcore.TokenCredential), nil
@@ -177,6 +190,7 @@ func NewAzureProvider(config *schemas.ProviderConfig, logger schemas.Logger) (*A
 	client := &fasthttp.Client{
 		ReadTimeout:         requestTimeout,
 		WriteTimeout:        requestTimeout,
+		MaxResponseBodySize: config.NetworkConfig.MaxResponseBodySize,
 		MaxConnsPerHost:     config.NetworkConfig.MaxConnsPerHost,
 		MaxIdleConnDuration: time.Second * time.Duration(config.NetworkConfig.KeepAliveTimeoutInSeconds),
 		MaxConnWaitTimeout:  requestTimeout,

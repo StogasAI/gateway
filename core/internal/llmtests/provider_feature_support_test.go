@@ -207,8 +207,8 @@ func TestProviderToolValidation(t *testing.T) {
 			name:     "Vertex/mixed_supported_and_unsupported",
 			provider: schemas.Vertex,
 			tools: []schemas.ResponsesTool{
-				{Type: schemas.ResponsesToolTypeWebSearch},   // allowed
-				{Type: schemas.ResponsesToolTypeFunction},    // allowed
+				{Type: schemas.ResponsesToolTypeWebSearch},       // allowed
+				{Type: schemas.ResponsesToolTypeFunction},        // allowed
 				{Type: schemas.ResponsesToolTypeCodeInterpreter}, // rejected
 			},
 			expectErr: true,
@@ -765,15 +765,15 @@ func TestProviderAnthropicRequestPipeline(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name                    string
-		provider                schemas.ModelProvider
-		model                   string
-		tools                   []schemas.ResponsesTool
-		expectConversionErr     bool
-		errSubstr               string
-		expectedWebSearchType   string // expected web_search tool type after conversion
-		expectedBetaHeaders     []string
-		unexpectedBetaHeaders   []string
+		name                  string
+		provider              schemas.ModelProvider
+		model                 string
+		tools                 []schemas.ResponsesTool
+		expectConversionErr   bool
+		errSubstr             string
+		expectedWebSearchType string // expected web_search tool type after conversion
+		expectedBetaHeaders   []string
+		unexpectedBetaHeaders []string
 	}{
 		// ── Vertex: web_search with filters → basic version, no dynamic headers ──
 		{
@@ -1010,7 +1010,11 @@ func TestProviderFeatureMapCompleteness(t *testing.T) {
 		assert.True(t, features.Bash, "%s should support Bash", provider)
 		assert.True(t, features.Memory, "%s should support Memory", provider)
 		assert.True(t, features.TextEditor, "%s should support TextEditor", provider)
-		assert.True(t, features.ToolSearch, "%s should support ToolSearch", provider)
+		if provider == schemas.Bedrock {
+			assert.False(t, features.ToolSearch, "Bedrock should NOT support ToolSearch through Converse")
+		} else {
+			assert.True(t, features.ToolSearch, "%s should support ToolSearch", provider)
+		}
 	}
 }
 

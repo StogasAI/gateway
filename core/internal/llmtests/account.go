@@ -142,7 +142,7 @@ type ComprehensiveTestConfig struct {
 	CompactionModel          string                     // Model for compaction tests; defaults to claude-sonnet-4-6
 	ExternalCompactionModel  string                     // Model for external compaction tests; defaults to gpt-4o
 	InterleavedThinkingModel string                     // Model for interleaved thinking tests; defaults to claude-opus-4-5
-	FastModeModel            string                     // Model for fast mode tests; defaults to claude-opus-4-6
+	FastModeModel            string                     // Model for fast mode tests; defaults to claude-opus-4-8
 	RealtimeModel            string                     // Model for Realtime API (e.g., "gpt-4o-realtime-preview")
 }
 

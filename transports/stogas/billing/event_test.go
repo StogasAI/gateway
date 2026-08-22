@@ -17,9 +17,9 @@ func TestNormalizeUpstreamStatusAndInsurance(t *testing.T) {
 		wantInsured bool
 	}{
 		{name: "nil success", wantStatus: "success", wantInsured: false},
-		{name: "provider auth failure", statusCode: intPtr(401), message: "invalid provider key", wantStatus: "provider_error", wantInsured: true},
-		{name: "provider permission failure", statusCode: intPtr(403), message: "permission denied", wantStatus: "provider_error", wantInsured: true},
-		{name: "provider permission policy failure is insured", statusCode: intPtr(403), message: "organization policy disabled provider access", wantStatus: "provider_error", wantInsured: true},
+		{name: "provider auth failure", statusCode: intPtr(401), message: "invalid provider key", wantStatus: "authentication_error", wantInsured: true},
+		{name: "provider permission failure", statusCode: intPtr(403), message: "permission denied", wantStatus: "permission_error", wantInsured: true},
+		{name: "provider permission policy failure is insured", statusCode: intPtr(403), message: "organization policy disabled provider access", wantStatus: "permission_error", wantInsured: true},
 		{name: "provider quota failure", statusCode: intPtr(402), message: "insufficient_quota", wantStatus: "over_budget", wantInsured: true},
 		{name: "provider rate limit", statusCode: intPtr(429), message: "rate_limit exceeded", wantStatus: "rate_limited", wantInsured: true},
 		{name: "provider timeout", statusCode: intPtr(504), message: "upstream timed out", wantStatus: "network_error", wantInsured: true},
@@ -65,8 +65,16 @@ func TestNormalizeUpstreamStatusAndInsurance(t *testing.T) {
 			if got := NormalizeUpstreamStatus(bifrostErr); got != tt.wantStatus {
 				t.Fatalf("NormalizeUpstreamStatus = %s, want %s", got, tt.wantStatus)
 			}
-			if got := ProviderErrorIsInsured(bifrostErr); got != tt.wantInsured {
-				t.Fatalf("ProviderErrorIsInsured = %v, want %v", got, tt.wantInsured)
+			if got := ProviderErrorIsInsured(bifrostErr, true); got != tt.wantInsured {
+				t.Fatalf("ProviderErrorIsInsured(managed) = %v, want %v", got, tt.wantInsured)
+			}
+			wantByokInsured := tt.wantInsured
+			switch tt.wantStatus {
+			case "authentication_error", "permission_error", "rate_limited", "over_budget":
+				wantByokInsured = false
+			}
+			if got := ProviderErrorIsInsured(bifrostErr, false); got != wantByokInsured {
+				t.Fatalf("ProviderErrorIsInsured(BYOK) = %v, want %v", got, wantByokInsured)
 			}
 		})
 	}

@@ -30,20 +30,20 @@ type apiClient struct {
 
 func newAPIClient(apiKey, rawBaseURL string, requireProductionOrigin, requirePostQuantumTLS bool) (*apiClient, error) {
 	if err := validateChutesAPIKey(apiKey); err != nil {
-		return nil, errors.New("Chutes API key is required")
+		return nil, errors.New("missing Chutes API key")
 	}
 	baseURL, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawBaseURL), "/"))
 	if err != nil || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
 		return nil, errors.New("invalid Chutes E2EE API base URL")
 	}
 	if baseURL.Path != "" && baseURL.Path != "/" {
-		return nil, errors.New("Chutes E2EE API base URL must not contain a path")
+		return nil, errors.New("invalid Chutes E2EE API base URL: path is not permitted")
 	}
 	if requireProductionOrigin && baseURL.String() != productionAPIBaseURL {
 		return nil, errors.New("confidential Chutes E2EE traffic must use the fixed Chutes API origin")
 	}
 	if baseURL.Scheme != "https" && !(baseURL.Scheme == "http" && !requirePostQuantumTLS) {
-		return nil, errors.New("Chutes E2EE API base URL must use HTTPS")
+		return nil, errors.New("invalid Chutes E2EE API base URL: HTTPS is required")
 	}
 
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
@@ -121,7 +121,7 @@ func (c *apiClient) requestJSON(ctx context.Context, method, path string, reques
 		return response.StatusCode, time.Since(started), err
 	}
 	if int64(len(body)) > maximum {
-		return response.StatusCode, time.Since(started), errors.New("Chutes response is too large")
+		return response.StatusCode, time.Since(started), errors.New("oversized Chutes response")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return response.StatusCode, time.Since(started), &httpStatusError{
@@ -210,4 +210,27 @@ func waitForChutesRetry(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func retryChutesRead(
+	ctx context.Context,
+	retryNotFound bool,
+	maximumDelay time.Duration,
+	operation func() error,
+) error {
+	var lastErr error
+	for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+		lastErr = operation()
+		if lastErr == nil {
+			return nil
+		}
+		if attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(lastErr, retryNotFound) {
+			break
+		}
+		delay, ok := chutesReadRetryDelay(lastErr, attempt, maximumDelay)
+		if !ok || !waitForChutesRetry(ctx, delay) {
+			break
+		}
+	}
+	return lastErr
 }

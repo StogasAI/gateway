@@ -2,6 +2,7 @@ package e2ee
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -23,6 +24,8 @@ type ResponseReader struct {
 	finalSent    bool
 	sourceClosed bool
 	emptyReads   int
+	bodyBytes    int
+	baseNonce    [responseNonceSize]byte
 }
 
 func (s *Session) EncodeResponse(metadata ResponseMetadata, body []byte) ([]byte, error) {
@@ -34,6 +37,14 @@ func (s *Session) EncodeResponse(metadata ResponseMetadata, body []byte) ([]byte
 }
 
 func (s *Session) NewResponseReader(source io.Reader, metadata ResponseMetadata) (*ResponseReader, error) {
+	var responseNonce [responseNonceSize]byte
+	if _, err := io.ReadFull(rand.Reader, responseNonce[:]); err != nil {
+		return nil, errors.New("generate E2EE response nonce")
+	}
+	return s.newResponseReaderWithNonce(source, metadata, responseNonce)
+}
+
+func (s *Session) newResponseReaderWithNonce(source io.Reader, metadata ResponseMetadata, responseNonce [responseNonceSize]byte) (*ResponseReader, error) {
 	if s == nil || s.responseAEAD == nil {
 		return nil, errors.New("E2EE response session is unavailable")
 	}
@@ -43,7 +54,15 @@ func (s *Session) NewResponseReader(source io.Reader, metadata ResponseMetadata)
 	if err := validateResponseMetadata(metadata); err != nil {
 		return nil, err
 	}
-	return &ResponseReader{source: source, session: s, metadata: metadata}, nil
+	if !s.responseStarted.CompareAndSwap(false, true) {
+		return nil, errors.New("E2EE response session is single-use")
+	}
+	return &ResponseReader{
+		source:    source,
+		session:   s,
+		metadata:  metadata,
+		baseNonce: responseNonce,
+	}, nil
 }
 
 func (r *ResponseReader) Read(p []byte) (int, error) {
@@ -54,22 +73,30 @@ func (r *ResponseReader) Read(p []byte) (int, error) {
 		if !r.started {
 			r.started = true
 			r.pending.Write(responseMagic)
+			r.pending.Write(r.baseNonce[:])
 			metadata, err := json.Marshal(r.metadata)
 			if err != nil {
 				return 0, err
 			}
-			if err := r.appendFrame(responseFrameMetadata, metadata); err != nil {
+			if len(metadata) > maxResponseMetadata {
+				return 0, errors.New("E2EE response metadata is too large")
+			}
+			if err := r.appendRecord(metadata); err != nil {
 				return 0, err
 			}
 			continue
 		}
 		if !r.sourceDone {
-			chunk := make([]byte, maxResponseFrameSize)
+			chunk := make([]byte, maxResponseRecordSize)
 			n, err := r.source.Read(chunk)
 			if n > 0 {
 				r.emptyReads = 0
-				if frameErr := r.appendFrame(responseFrameData, chunk[:n]); frameErr != nil {
-					return 0, frameErr
+				if n > MaxResponseBodySize-r.bodyBytes {
+					return 0, errors.New("E2EE response body is too large")
+				}
+				r.bodyBytes += n
+				if recordErr := r.appendRecord(chunk[:n]); recordErr != nil {
+					return 0, recordErr
 				}
 			} else if err == nil {
 				r.emptyReads++
@@ -91,7 +118,7 @@ func (r *ResponseReader) Read(p []byte) (int, error) {
 		}
 		if !r.finalSent {
 			r.finalSent = true
-			if err := r.appendFrame(responseFrameFinal, nil); err != nil {
+			if err := r.appendRecord(nil); err != nil {
 				return 0, err
 			}
 			continue
@@ -112,18 +139,19 @@ func (r *ResponseReader) Close() error {
 	return nil
 }
 
-func (r *ResponseReader) appendFrame(frameType byte, plaintext []byte) error {
+func (r *ResponseReader) appendRecord(plaintext []byte) error {
 	if r.sequence == math.MaxUint64 {
 		return errors.New("E2EE response sequence exhausted")
 	}
-	aad := r.session.responseAAD(frameType, r.sequence)
-	nonce := r.session.responseNonceFor(r.sequence)
+	if len(plaintext) > maxResponseRecordSize {
+		return errors.New("E2EE response record is too large")
+	}
+	aad := r.session.responseAAD(r.sequence)
+	nonce := responseNonceFor(r.baseNonce, r.sequence)
 	ciphertext := r.session.responseAEAD.Seal(nil, nonce[:], plaintext, aad)
 	if len(ciphertext) > int(^uint32(0)) {
-		return errors.New("E2EE response frame is too large")
+		return errors.New("E2EE response record is too large")
 	}
-	r.pending.WriteByte(frameType)
-	_ = binary.Write(&r.pending, binary.BigEndian, r.sequence)
 	_ = binary.Write(&r.pending, binary.BigEndian, uint32(len(ciphertext)))
 	r.pending.Write(ciphertext)
 	r.sequence++
@@ -134,54 +162,44 @@ func (s *Session) DecodeResponse(data []byte) (*DecodedResponse, error) {
 	if s == nil || s.responseAEAD == nil {
 		return nil, errors.New("E2EE response session is unavailable")
 	}
-	if len(data) < len(responseMagic) || !bytes.Equal(data[:len(responseMagic)], responseMagic) {
+	if len(data) > MaxResponseWireSize {
+		return nil, errors.New("E2EE response is too large")
+	}
+	preambleSize := len(responseMagic) + responseNonceSize
+	if len(data) < preambleSize || !bytes.Equal(data[:len(responseMagic)], responseMagic) {
 		return nil, errors.New("invalid E2EE response magic")
 	}
-	reader := bytes.NewReader(data[len(responseMagic):])
+	var baseNonce [responseNonceSize]byte
+	copy(baseNonce[:], data[len(responseMagic):preambleSize])
+	reader := bytes.NewReader(data[preambleSize:])
 	var result DecodedResponse
 	sequence := uint64(0)
 	metadataSeen := false
-	finalSeen := false
 	for reader.Len() > 0 {
-		frameType, err := reader.ReadByte()
-		if err != nil {
-			return nil, err
-		}
-		var frameSequence uint64
 		var ciphertextLength uint32
-		if err := binary.Read(reader, binary.BigEndian, &frameSequence); err != nil {
-			return nil, errors.New("truncated E2EE response frame")
-		}
 		if err := binary.Read(reader, binary.BigEndian, &ciphertextLength); err != nil {
-			return nil, errors.New("truncated E2EE response frame")
-		}
-		if frameSequence != sequence {
-			return nil, errors.New("non-contiguous E2EE response sequence")
+			return nil, errors.New("truncated E2EE response record")
 		}
 		if int64(ciphertextLength) > int64(reader.Len()) || ciphertextLength < uint32(s.responseAEAD.Overhead()) {
-			return nil, errors.New("invalid E2EE response frame length")
+			return nil, errors.New("invalid E2EE response record length")
 		}
-		maxCiphertextLength := maxResponseFrameSize + s.responseAEAD.Overhead()
-		if frameType == responseFrameMetadata {
+		maxCiphertextLength := maxResponseRecordSize + s.responseAEAD.Overhead()
+		if sequence == 0 {
 			maxCiphertextLength = maxResponseMetadata + s.responseAEAD.Overhead()
 		}
 		if ciphertextLength > uint32(maxCiphertextLength) {
-			return nil, errors.New("E2EE response frame is too large")
+			return nil, errors.New("E2EE response record is too large")
 		}
 		ciphertext := make([]byte, ciphertextLength)
 		if _, err := io.ReadFull(reader, ciphertext); err != nil {
-			return nil, errors.New("truncated E2EE response frame")
+			return nil, errors.New("truncated E2EE response record")
 		}
-		nonce := s.responseNonceFor(sequence)
-		plaintext, err := s.responseAEAD.Open(nil, nonce[:], ciphertext, s.responseAAD(frameType, sequence))
+		nonce := responseNonceFor(baseNonce, sequence)
+		plaintext, err := s.responseAEAD.Open(nil, nonce[:], ciphertext, s.responseAAD(sequence))
 		if err != nil {
-			return nil, errors.New("E2EE response authentication failed")
+			return nil, errors.New("E2EE response record authentication failed")
 		}
-		switch frameType {
-		case responseFrameMetadata:
-			if metadataSeen || sequence != 0 {
-				return nil, errors.New("invalid E2EE response metadata position")
-			}
+		if sequence == 0 {
 			if len(plaintext) > maxResponseMetadata {
 				return nil, errors.New("E2EE response metadata is too large")
 			}
@@ -191,28 +209,23 @@ func (s *Session) DecodeResponse(data []byte) (*DecodedResponse, error) {
 			}
 			result.Metadata = metadata
 			metadataSeen = true
-		case responseFrameData:
-			if !metadataSeen || finalSeen {
-				return nil, errors.New("invalid E2EE response data position")
+		} else if len(plaintext) > 0 {
+			if !metadataSeen {
+				return nil, errors.New("invalid E2EE response body position")
+			}
+			if len(plaintext) > MaxResponseBodySize-len(result.Body) {
+				return nil, errors.New("E2EE response body is too large")
 			}
 			result.Body = append(result.Body, plaintext...)
-		case responseFrameFinal:
-			if !metadataSeen || finalSeen || len(plaintext) != 0 {
-				return nil, errors.New("invalid E2EE response final frame")
+		} else {
+			if !metadataSeen {
+				return nil, errors.New("invalid E2EE response final record")
 			}
-			finalSeen = true
-			if reader.Len() != 0 {
-				return nil, errors.New("data follows E2EE response final frame")
-			}
-		default:
-			return nil, errors.New("unknown E2EE response frame type")
+			return &result, nil
 		}
 		sequence++
 	}
-	if !metadataSeen || !finalSeen {
-		return nil, errors.New("truncated E2EE response")
-	}
-	return &result, nil
+	return nil, errors.New("truncated E2EE response")
 }
 
 func decodeResponseMetadata(data []byte) (ResponseMetadata, error) {
@@ -234,20 +247,19 @@ func decodeResponseMetadata(data []byte) (ResponseMetadata, error) {
 	return metadata, nil
 }
 
-func (s *Session) responseAAD(frameType byte, sequence uint64) []byte {
-	aad := make([]byte, 0, sha256.Size+len("stogas.e2ee.response.frame.v1")+1+8)
-	aad = append(aad, []byte("stogas.e2ee.response.frame.v1")...)
+func (s *Session) responseAAD(sequence uint64) []byte {
+	aad := make([]byte, 0, sha256.Size+len("stogas.e2ee.response.record.v1")+1+8)
+	aad = append(aad, []byte("stogas.e2ee.response.record.v1")...)
 	aad = append(aad, 0)
 	aad = append(aad, s.transcriptHash[:]...)
-	aad = append(aad, frameType)
 	var encodedSequence [8]byte
 	binary.BigEndian.PutUint64(encodedSequence[:], sequence)
 	aad = append(aad, encodedSequence[:]...)
 	return aad
 }
 
-func (s *Session) responseNonceFor(sequence uint64) [12]byte {
-	nonce := s.responseNonce
+func responseNonceFor(base [12]byte, sequence uint64) [12]byte {
+	nonce := base
 	for i := 0; i < 8; i++ {
 		nonce[len(nonce)-1-i] ^= byte(sequence >> (8 * i))
 	}
@@ -258,20 +270,25 @@ func validateResponseMetadata(metadata ResponseMetadata) error {
 	if metadata.StatusCode < 100 || metadata.StatusCode > 599 {
 		return errors.New("invalid inner HTTP status")
 	}
-	if metadata.ContentType == "" || len(metadata.ContentType) > 256 {
+	if !validContentType(metadata.ContentType) {
 		return errors.New("invalid inner Content-Type")
 	}
 	if len(metadata.Headers) > 32 {
 		return errors.New("too many inner response headers")
 	}
+	seen := make(map[string]struct{}, len(metadata.Headers))
 	for key, value := range metadata.Headers {
-		if key == "" ||
-			len(key) > 128 ||
+		normalized := strings.ToLower(key)
+		if len(key) > 128 ||
 			len(value) > 16*1024 ||
-			strings.ContainsAny(key, "\x00\r\n:") ||
-			strings.ContainsAny(value, "\x00\r\n") {
+			!validHTTPFieldName(key) ||
+			!validHTTPFieldValue(value, true) {
 			return fmt.Errorf("invalid inner response header")
 		}
+		if _, duplicate := seen[normalized]; duplicate {
+			return fmt.Errorf("duplicate inner response header")
+		}
+		seen[normalized] = struct{}{}
 	}
 	return nil
 }

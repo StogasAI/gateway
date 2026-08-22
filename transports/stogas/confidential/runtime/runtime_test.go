@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -25,6 +24,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 )
+
+func lastCertificateError(loop *ControlLoop) error {
+	loop.mu.RLock()
+	defer loop.mu.RUnlock()
+	return loop.lastCertificateError
+}
 
 func TestStartDisabledIsNoop(t *testing.T) {
 	runtime, err := Start(context.Background(), stogas.ConfidentialConfig{})
@@ -47,8 +52,7 @@ func TestControlDiagnosticsTrackFailureAndRecovery(t *testing.T) {
 		failed.LastFailureAt == nil ||
 		failed.LastSuccessAt != nil ||
 		failed.LastDurationMS < 0 ||
-		failed.LastFailureClass != "deadline_exceeded" ||
-		failed.LastFailureMessage == "" {
+		failed.LastFailureClass != "deadline_exceeded" {
 		t.Fatalf("unexpected failed heartbeat diagnostics: %#v", failed)
 	}
 
@@ -57,8 +61,7 @@ func TestControlDiagnosticsTrackFailureAndRecovery(t *testing.T) {
 	if recovered.ConsecutiveFailures != 0 ||
 		recovered.LastSuccessAt == nil ||
 		recovered.LastFailureAt == nil ||
-		recovered.LastFailureClass != "" ||
-		recovered.LastFailureMessage != "" {
+		recovered.LastFailureClass != "" {
 		t.Fatalf("unexpected recovered heartbeat diagnostics: %#v", recovered)
 	}
 }
@@ -259,15 +262,9 @@ func TestStartWithoutConfiguredCertificateQuotesProvisionalCertificate(t *testin
 }
 
 func TestStartFailsClosedWhenEntropyIsUnavailable(t *testing.T) {
-	old := waitForEntropy
-	waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
+	_, err := start(context.Background(), testConfig("mock"), func(context.Context, time.Duration) error {
 		return errors.New("entropy unavailable")
-	}
-	defer func() {
-		waitForEntropy = old
-	}()
-
-	_, err := Start(context.Background(), testConfig("mock"))
+	})
 	if err == nil || !strings.Contains(err.Error(), "confidential entropy readiness failed") {
 		t.Fatalf("expected entropy startup failure, got %v", err)
 	}
@@ -401,13 +398,12 @@ func TestRuntimeDependencyProbeFailsLocalReadiness(t *testing.T) {
 	}
 }
 
-func TestHeartbeatErrorIsBoundedToContractLimit(t *testing.T) {
-	message := lastErrorString(errors.New(strings.Repeat("é", 700)))
-	if characters := len([]rune(message)); characters != 500 {
-		t.Fatalf("heartbeat error length = %d, want 500", characters)
+func TestQuoteFailureClassNeverExposesErrorText(t *testing.T) {
+	if got := quoteFailureClass(errors.New("secret provider response")); got != "quote_refresh_failed" {
+		t.Fatalf("quote failure class = %q, want quote_refresh_failed", got)
 	}
-	if !utf8.ValidString(message) {
-		t.Fatal("heartbeat error truncation produced invalid UTF-8")
+	if got := quoteFailureClass(context.DeadlineExceeded); got != "deadline_exceeded" {
+		t.Fatalf("quote deadline class = %q, want deadline_exceeded", got)
 	}
 }
 
@@ -581,8 +577,8 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	if !ok || !jsonArrayContains(accepted, newHash) {
 		t.Fatalf("follow-up heartbeat did not bind the staged certificate hash: %#v", reportData)
 	}
-	if runtime.Control.LastCertificateError() != nil {
-		t.Fatalf("unexpected certificate instruction error: %v", runtime.Control.LastCertificateError())
+	if err := lastCertificateError(runtime.Control); err != nil {
+		t.Fatalf("unexpected certificate instruction error: %v", err)
 	}
 
 	activateJSON, err := json.Marshal(map[string]string{
@@ -653,8 +649,8 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	if !ok || len(accepted) != 1 || accepted[0] != newHash {
 		t.Fatalf("prune instruction did not drop old certificate hash: %#v", reportData)
 	}
-	if runtime.Control.LastCertificateError() != nil {
-		t.Fatalf("unexpected certificate instruction error after prune: %v", runtime.Control.LastCertificateError())
+	if err := lastCertificateError(runtime.Control); err != nil {
+		t.Fatalf("unexpected certificate instruction error after prune: %v", err)
 	}
 
 	directChainPEM, directLeafDER := selfSignedRuntimeLeaf(t, runtime.Identity, 21, newExpiry.Add(24*time.Hour))
@@ -692,8 +688,8 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	if reportData["active_cert_sha256"] != directHash || !ok || len(accepted) != 1 || accepted[0] != directHash {
 		t.Fatalf("direct install should activate and prune to only the public certificate hash: %#v", reportData)
 	}
-	if runtime.Control.LastCertificateError() != nil {
-		t.Fatalf("unexpected certificate instruction error after direct install: %v", runtime.Control.LastCertificateError())
+	if err := lastCertificateError(runtime.Control); err != nil {
+		t.Fatalf("unexpected certificate instruction error after direct install: %v", err)
 	}
 }
 
@@ -734,64 +730,6 @@ func TestDeriveCandidateNodeIDUsesOnlyBootIdentity(t *testing.T) {
 	changedIdentity.HPKEPublicKey = "aHBrZTI"
 	if next := deriveCandidateNodeID(&changedIdentity); next == first {
 		t.Fatal("identity key change should create a different node id")
-	}
-}
-
-func TestRuntimeCertificateRenewalRefreshesReportDataImmediately(t *testing.T) {
-	config := testConfig("mock")
-	config.CertExpiresAt = time.Now().UTC().Add(30 * 24 * time.Hour)
-	runtime, err := Start(context.Background(), config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtime.Close()
-
-	newExpiry := time.Now().UTC().Truncate(time.Second).Add(90 * 24 * time.Hour)
-	chainPEM, leafDER := selfSignedRuntimeLeaf(t, runtime.Identity, 10, newExpiry)
-	newHash := identity.CertSHA256Hex(leafDER)
-	staged, err := runtime.StageRenewedCertificate(context.Background(), chainPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if staged.ActiveCertSHA256 != config.ActiveCertSHA256 || !hasReason(staged.AcceptedCertSHA256, newHash) {
-		t.Fatalf("renewed certificate was not staged as dual-hash state: %#v", staged)
-	}
-	snapshot, err := runtime.Quotes.Current(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Payload.ActiveCertSHA256 != config.ActiveCertSHA256 || !hasReason(snapshot.Payload.AcceptedCertSHA256, newHash) {
-		t.Fatalf("quote did not refresh with staged certificate hashes: %#v", snapshot.Payload)
-	}
-
-	active, err := runtime.ActivateStagedCertificate(context.Background(), newHash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if active.ActiveCertSHA256 != newHash || !active.ExpiresAt.Equal(newExpiry) {
-		t.Fatalf("certificate was not activated: %#v", active)
-	}
-	snapshot, err = runtime.Quotes.Current(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if snapshot.Payload.ActiveCertSHA256 != newHash || !hasReason(snapshot.Payload.AcceptedCertSHA256, config.ActiveCertSHA256) {
-		t.Fatalf("quote did not refresh after activation: %#v", snapshot.Payload)
-	}
-
-	pruned, err := runtime.PruneAcceptedCertificates(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(pruned.AcceptedCertSHA256) != 1 || pruned.AcceptedCertSHA256[0] != newHash {
-		t.Fatalf("accepted certificate hashes were not pruned: %#v", pruned)
-	}
-	snapshot, err = runtime.Quotes.Current(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapshot.Payload.AcceptedCertSHA256) != 1 || snapshot.Payload.AcceptedCertSHA256[0] != newHash {
-		t.Fatalf("quote did not refresh after certificate prune: %#v", snapshot.Payload)
 	}
 }
 

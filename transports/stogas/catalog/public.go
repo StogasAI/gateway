@@ -3,7 +3,6 @@ package catalog
 import (
 	"encoding/json"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -50,26 +49,6 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 		PublicDigest:  snap.publicDigest,
 		Graph:         bundle.Graph,
 	}, true
-}
-
-func PublicCatalogJSON() ([]byte, bool) {
-	payload, ok := PublicCatalogPayload()
-	if !ok {
-		return nil, false
-	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, false
-	}
-	return encoded, true
-}
-
-func PublicCatalogHash() (string, bool) {
-	identity, ok := ActiveIdentity()
-	if !ok {
-		return "", false
-	}
-	return strings.TrimPrefix(identity.Digest, "sha256:"), true
 }
 
 func ActiveIdentity() (Identity, bool) {

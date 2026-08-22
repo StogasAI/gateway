@@ -39,7 +39,16 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		cancel()
 		return nil, err
 	}
-	tinybird := billing.NewTinybirdClient(config.TinybirdHost, config.TinybirdToken)
+	tinybird, err := billing.NewTinybirdClient(
+		config.TinybirdHost,
+		config.TinybirdToken,
+		config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
+	)
+	if err != nil {
+		chutesTransport.Close()
+		cancel()
+		return nil, fmt.Errorf("configure Tinybird: %w", err)
+	}
 	billingService, err := billing.NewService(
 		runtimeCtx,
 		config.DatabaseURL,
@@ -60,7 +69,7 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		Account:         newAccount(config, chutesTransport),
 		InitialPoolSize: schemas.DefaultInitialPoolSize,
 		Logger:          logger,
-		Tracer:          schemas.DefaultTracer(),
+		Tracer:          newProviderAttemptTracer(schemas.DefaultTracer()),
 	})
 	if err != nil {
 		billingService.Close()
@@ -77,13 +86,6 @@ func (r *Runtime) Client() *bifrost.Bifrost {
 		return nil
 	}
 	return r.client
-}
-
-func (r *Runtime) ValidateAPIKeyFormat(rawAPIKey string) error {
-	if r == nil || r.billing == nil {
-		return billing.ErrInvalidAPIKey
-	}
-	return r.billing.ValidateAPIKeyFormat(rawAPIKey)
 }
 
 func (r *Runtime) ParseAPIKey(rawAPIKey string) (*billing.APIKeyClaims, error) {
@@ -253,6 +255,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 	}
 	config.NetworkConfig.AllowPrivateNetwork = allowPrivateNetwork
 	config.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
+	config.NetworkConfig.MaxResponseBodySize = maxProviderResponseBodySize
 	config.CheckAndSetDefaults()
 	return config
 }

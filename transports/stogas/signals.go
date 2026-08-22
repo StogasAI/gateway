@@ -2,14 +2,20 @@ package stogas
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
 var (
-	ErrProviderUsageMissing   = errors.New("upstream response did not report token usage")
-	ErrProviderUsageMalformed = errors.New("upstream response reported invalid token usage")
+	ErrProviderUsageMissing      = errors.New("upstream response did not report token usage")
+	ErrProviderUsageMalformed    = errors.New("upstream response reported invalid token usage")
+	ErrProviderUsageExceedsHold  = errors.New("upstream response usage exceeds the authorized request bounds")
+	ErrProviderExecutionMismatch = errors.New("upstream response reported unauthorized or inconsistent execution metadata")
+	ErrProviderResponseMalformed = errors.New("upstream response violated the selected API contract")
+	ErrProviderResponseTooLarge  = errors.New("upstream response exceeded the gateway response limit")
 )
 
 type Signals interface {
@@ -59,12 +65,21 @@ func HasMeasuredUsage(state *State) bool {
 	return state != nil && hasMeasuredUsage(state.Signals)
 }
 
-func validateReportedUsage(_ *State, usage *schemas.BifrostLLMUsage) error {
+func validateReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
 	if usage == nil {
 		return ErrProviderUsageMissing
 	}
 	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 || usage.ReasoningTokens < 0 {
 		return ErrProviderUsageMalformed
+	}
+	if err := validateActualExecutionReport(state, nil, usage.Speed, usage.InferenceGeo); err != nil {
+		return err
+	}
+	if usage.ServerSideFallbackModel != nil && strings.TrimSpace(*usage.ServerSideFallbackModel) != "" {
+		// Every client and provider fallback surface is closed. A fallback model
+		// can have different prices and proof identity, so it cannot be settled as
+		// the deployment that the gateway authorized.
+		return ErrProviderExecutionMismatch
 	}
 	promptTokens, completionTokens, ok := reportedUsageTokenTotals(usage)
 	if !ok {
@@ -77,7 +92,7 @@ func validateReportedUsage(_ *State, usage *schemas.BifrostLLMUsage) error {
 		}
 	}
 	if details := usage.PromptTokensDetails; details != nil {
-		if details.TextTokens < 0 || details.AudioTokens < 0 || details.ImageTokens < 0 ||
+		if details.TextTokens < 0 || details.AudioTokens != 0 || details.ImageTokens != 0 ||
 			details.CachedReadTokens < 0 || details.CachedWriteTokens < 0 {
 			return ErrProviderUsageMalformed
 		}
@@ -105,9 +120,9 @@ func validateReportedUsage(_ *State, usage *schemas.BifrostLLMUsage) error {
 		}
 	}
 	if details := usage.CompletionTokensDetails; details != nil {
-		if details.TextTokens < 0 || details.AcceptedPredictionTokens < 0 || details.AudioTokens < 0 ||
+		if details.TextTokens < 0 || details.AcceptedPredictionTokens < 0 || details.AudioTokens != 0 ||
 			details.ReasoningTokens < 0 || details.RejectedPredictionTokens < 0 ||
-			(details.ImageTokens != nil && *details.ImageTokens < 0) ||
+			(details.ImageTokens != nil && *details.ImageTokens != 0) ||
 			(details.CitationTokens != nil && *details.CitationTokens < 0) ||
 			(details.NumSearchQueries != nil && *details.NumSearchQueries < 0) {
 			return ErrProviderUsageMalformed
@@ -123,7 +138,88 @@ func validateReportedUsage(_ *State, usage *schemas.BifrostLLMUsage) error {
 	if usage.ReasoningTokens > completionTokens {
 		return ErrProviderUsageMalformed
 	}
+	if usageRegresses(state, usage) {
+		return ErrProviderUsageMalformed
+	}
+	if exceedsTokenHold(state, promptTokens, completionTokens) {
+		return ErrProviderUsageExceedsHold
+	}
 	return nil
+}
+
+func usageRegresses(state *State, usage *schemas.BifrostLLMUsage) bool {
+	if state == nil || usage == nil {
+		return false
+	}
+	current, ok := state.Signals.(*StandardSignals)
+	if !ok || current == nil {
+		return false
+	}
+	next := signalsFromUsage(usage)
+	if next == nil {
+		return false
+	}
+	return next.Prompt < current.Prompt ||
+		next.Completion < current.Completion ||
+		next.Reasoning < current.Reasoning ||
+		next.Cached < current.Cached ||
+		next.CacheWrite < current.CacheWrite ||
+		next.CacheWrite5m < current.CacheWrite5m ||
+		next.CacheWrite1h < current.CacheWrite1h
+}
+
+func exceedsTokenHold(state *State, promptTokens int, completionTokens int) bool {
+	if inputLimit, ok := tokenHoldCapacity(state, true); ok && promptTokens > inputLimit {
+		return true
+	}
+	if outputLimit, ok := tokenHoldCapacity(state, false); ok && completionTokens > outputLimit {
+		return true
+	}
+	return false
+}
+
+func tokenHoldCapacity(state *State, input bool) (int, bool) {
+	if state == nil || len(state.Hold.Meters) == 0 {
+		return 0, false
+	}
+	total := 0
+	found := false
+	for _, meter := range state.Hold.Meters {
+		if !meter.HoldRequired || input != isInputTokenMeter(meter.MeterKey) {
+			continue
+		}
+		if !input && !isOutputTokenMeter(meter.MeterKey) {
+			continue
+		}
+		quantity, err := strconv.Atoi(meter.Quantity)
+		if err != nil || quantity < 0 {
+			return 0, true
+		}
+		var ok bool
+		total, ok = addTokenCounts(total, quantity)
+		if !ok {
+			return 0, true
+		}
+		found = true
+	}
+	return total, found
+}
+
+func isOutputTokenMeter(meterKey string) bool {
+	return meterKey == billing.MeterOutputTokens || meterKey == billing.MeterReasoningTokens
+}
+
+func isInputTokenMeter(meterKey string) bool {
+	switch meterKey {
+	case billing.MeterInputTokens,
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWriteInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens:
+		return true
+	default:
+		return false
+	}
 }
 
 func reportedUsageTokenTotals(usage *schemas.BifrostLLMUsage) (int, int, bool) {
@@ -193,10 +289,10 @@ func reportedUsageTokenTotals(usage *schemas.BifrostLLMUsage) (int, int, bool) {
 	return promptTokens, completionTokens, ok && total == usage.TotalTokens
 }
 
-// UpstreamUsageProtocolError converts an untrusted usage report failure into a
-// stable provider protocol error. The public HTTP layer hides the internal
-// distinction while billing treats the request as an insured provider failure.
-func UpstreamUsageProtocolError(err error) *schemas.BifrostError {
+// UpstreamProtocolError converts an untrusted provider response failure into a
+// stable protocol error. The public HTTP layer hides the internal distinction
+// while billing treats the request as an insured provider failure.
+func UpstreamProtocolError(err error) *schemas.BifrostError {
 	statusCode := 502
 	errorType := "upstream_protocol_error"
 	code := "upstream_usage_invalid"
@@ -204,6 +300,15 @@ func UpstreamUsageProtocolError(err error) *schemas.BifrostError {
 	if errors.Is(err, ErrProviderUsageMissing) {
 		code = "upstream_usage_missing"
 		message = "Upstream response did not report token usage"
+	} else if errors.Is(err, ErrProviderExecutionMismatch) {
+		code = "upstream_execution_invalid"
+		message = "Upstream response reported invalid execution metadata"
+	} else if errors.Is(err, ErrProviderResponseTooLarge) {
+		code = "upstream_response_too_large"
+		message = "Upstream response exceeded the gateway response limit"
+	} else if errors.Is(err, ErrProviderResponseMalformed) {
+		code = "upstream_response_invalid"
+		message = "Upstream response violated the selected API contract"
 	}
 	allowFallbacks := false
 	return &schemas.BifrostError{
@@ -216,6 +321,113 @@ func UpstreamUsageProtocolError(err error) *schemas.BifrostError {
 			Code:    &code,
 			Message: message,
 		},
+	}
+}
+
+func validateActualExecutionReport(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo *string) error {
+	if state == nil || state.Resolution == nil {
+		return nil
+	}
+	tierValue := ""
+	if tier != nil {
+		tierValue = strings.ToLower(strings.TrimSpace(string(*tier)))
+	}
+	speedValue := ""
+	if speed != nil {
+		speedValue = strings.ToLower(strings.TrimSpace(*speed))
+	}
+	allowedTier, allowedSpeed := permittedActualExecution(
+		state.Resolution.Provider,
+		state.Resolution.Deployment,
+		tier,
+		speedValue,
+	)
+	if tierValue != "" && executionTierClass(state.Resolution.Provider, tier) != "" && allowedTier == nil {
+		return ErrProviderExecutionMismatch
+	}
+	if speedValue != "" && executionSpeedClass(state.Resolution.Provider, speedValue) != "" && allowedSpeed == "" {
+		return ErrProviderExecutionMismatch
+	}
+	if inferenceGeo != nil {
+		reportedGeo := strings.ToLower(strings.TrimSpace(*inferenceGeo))
+		if reportedGeo != "" {
+			selectedGeo := strings.ToLower(strings.TrimSpace(state.Resolution.Deployment.Upstream.InferenceGeo))
+			if state.Resolution.Provider != schemas.Anthropic {
+				return ErrProviderExecutionMismatch
+			}
+			if selectedGeo == "" {
+				if reportedGeo != "not_available" {
+					return ErrProviderExecutionMismatch
+				}
+			} else if !stringInSet(selectedGeo, "global", "us") || reportedGeo != selectedGeo {
+				return ErrProviderExecutionMismatch
+			}
+		}
+	}
+	reportedTierClass := executionTierClass(state.Resolution.Provider, tier)
+	if reportedTierClass != "" && executionTierClass(state.Resolution.Provider, state.ActualServiceTier) != "" &&
+		reportedTierClass != executionTierClass(state.Resolution.Provider, state.ActualServiceTier) {
+		return ErrProviderExecutionMismatch
+	}
+	reportedSpeedClass := executionSpeedClass(state.Resolution.Provider, speedValue)
+	if reportedSpeedClass != "" && executionSpeedClass(state.Resolution.Provider, state.ActualSpeed) != "" &&
+		reportedSpeedClass != executionSpeedClass(state.Resolution.Provider, state.ActualSpeed) {
+		return ErrProviderExecutionMismatch
+	}
+	return nil
+}
+
+// ValidateCompletedExecution checks stream topology. Missing optional provider
+// metadata keeps the catalog-selected deployment; explicit contradictions are
+// rejected as each response or chunk is ingested.
+func ValidateCompletedExecution(state *State) error {
+	if state == nil {
+		return nil
+	}
+	return validateProviderStreamCompleted(state)
+}
+
+// ValidateStreamExecutionBeforeOutput remains an explicit transport boundary.
+// Ingestion already rejects reported model, tier, speed, and geography
+// conflicts before a chunk reaches the client; omitted metadata is compatible.
+func ValidateStreamExecutionBeforeOutput(state *State) error {
+	return nil
+}
+
+func executionTierClass(provider schemas.ModelProvider, tier *schemas.BifrostServiceTier) string {
+	if tier == nil {
+		return ""
+	}
+	value := strings.ToLower(strings.TrimSpace(string(*tier)))
+	switch provider {
+	case schemas.OpenAI, schemas.Azure:
+		switch value {
+		case "fast", "priority":
+			return "priority"
+		case "flex":
+			return "flex"
+		case "auto", "default", "standard", "standard_only":
+			return "standard"
+		}
+	case schemas.Anthropic:
+		if stringInSet(value, "auto", "default", "standard", "standard_only") {
+			return "standard"
+		}
+	}
+	return ""
+}
+
+func executionSpeedClass(provider schemas.ModelProvider, speed string) string {
+	if provider != schemas.Anthropic {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(speed)) {
+	case "fast":
+		return "fast"
+	case "standard":
+		return "standard"
+	default:
+		return ""
 	}
 }
 
@@ -316,11 +528,6 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 		return nil
 	}
 	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
-}
-
-func cacheWriteTokenTotal(details *schemas.ChatPromptTokensDetails) int {
-	tokens, _ := cacheWriteTokenTotalChecked(details)
-	return tokens
 }
 
 func cacheWriteTokenTotalChecked(details *schemas.ChatPromptTokensDetails) (int, bool) {
@@ -436,32 +643,91 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	}
 }
 
-func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string) {
+func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo ...*string) {
 	if state == nil {
 		return
 	}
-	if tier != nil {
-		value := *tier
+	provider := schemas.ModelProvider("")
+	if state.Resolution != nil {
+		provider = state.Resolution.Provider
+	}
+	if tier != nil && executionTierClass(provider, tier) != "" {
+		value := schemas.BifrostServiceTier(strings.ToLower(strings.TrimSpace(string(*tier))))
 		state.ActualServiceTier = &value
 	}
-	if speed != nil {
+	if speed != nil && executionSpeedClass(provider, *speed) != "" {
 		state.ActualSpeed = strings.ToLower(strings.TrimSpace(*speed))
+	}
+	if len(inferenceGeo) > 0 && inferenceGeo[0] != nil && strings.TrimSpace(*inferenceGeo[0]) != "" {
+		state.ActualInferenceGeo = strings.ToLower(strings.TrimSpace(*inferenceGeo[0]))
 	}
 }
 
-func observeActualModel(state *State, model *string) {
-	if state == nil || model == nil {
+func validateActualResponseModel(state *State, model string) error {
+	if state == nil || state.Resolution == nil {
+		return nil
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	expected := strings.TrimSpace(state.Resolution.Model)
+	if expected == "" {
+		return nil
+	}
+	if !providerModelMatchesSelected(expected, model) || (state.ActualModel != "" && state.ActualModel != model) {
+		return ErrProviderExecutionMismatch
+	}
+	return nil
+}
+
+func providerModelMatchesSelected(expected, actual string) bool {
+	if actual == expected {
+		return true
+	}
+	prefix := expected + "-"
+	if !strings.HasPrefix(actual, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(actual, prefix)
+	if len(suffix) == 8 {
+		return asciiDigits(suffix)
+	}
+	return len(suffix) == 10 && suffix[4] == '-' && suffix[7] == '-' &&
+		asciiDigits(suffix[:4]) && asciiDigits(suffix[5:7]) && asciiDigits(suffix[8:])
+}
+
+func asciiDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func observeActualResponseModel(state *State, model string) {
+	if state == nil {
 		return
 	}
-	state.ActualModel = strings.TrimSpace(*model)
+	model = strings.TrimSpace(model)
+	if model != "" {
+		state.ActualModel = model
+	}
+}
+
+func responseHasFallbackModel(model *string) bool {
+	return model != nil && strings.TrimSpace(*model) != ""
 }
 
 func observeUsageExecution(state *State, usage *schemas.BifrostLLMUsage) {
 	if state == nil || usage == nil {
 		return
 	}
-	observeActualExecution(state, nil, usage.Speed)
-	observeActualModel(state, usage.ServerSideFallbackModel)
+	observeActualExecution(state, nil, usage.Speed, usage.InferenceGeo)
 }
 
 func setWebSearchSignals(state *State, count int) {

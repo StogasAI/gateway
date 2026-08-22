@@ -19,6 +19,7 @@ type streamReader struct {
 	streamKey   []byte
 	pending     bytes.Buffer
 	initialized bool
+	authDone    bool
 	done        bool
 	closed      bool
 	onError     func()
@@ -48,7 +49,7 @@ func (r *streamReader) Read(target []byte) (int, error) {
 		line, err := r.readLine()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return 0, r.fail(fmt.Errorf("%w: encrypted stream ended before [DONE]", ErrInvalidE2EEResponse))
+				return 0, r.fail(fmt.Errorf("%w: encrypted stream ended before authenticated [DONE]", ErrInvalidE2EEResponse))
 			}
 			return 0, r.fail(err)
 		}
@@ -116,6 +117,9 @@ func (r *streamReader) processLine(line []byte) error {
 		if !r.initialized {
 			return fmt.Errorf("%w: stream ended before initialization", ErrInvalidE2EEResponse)
 		}
+		if !r.authDone {
+			return fmt.Errorf("%w: outer completion preceded authenticated completion", ErrInvalidE2EEResponse)
+		}
 		r.pending.WriteString("data: [DONE]\n\n")
 		r.done = true
 		return nil
@@ -154,6 +158,10 @@ func (r *streamReader) processLine(line []byte) error {
 		}
 		defer clear(plaintext)
 		if isDecryptedCompletionMarker(plaintext) {
+			if r.authDone {
+				return fmt.Errorf("%w: duplicate authenticated completion", ErrInvalidE2EEResponse)
+			}
+			r.authDone = true
 			r.pending.WriteString("data: [DONE]\n\n")
 			r.done = true
 			return nil
@@ -184,11 +192,6 @@ func isDecryptedCompletionMarker(event []byte) bool {
 		return false
 	}
 	return bytes.Equal(bytes.TrimSpace(event[len("data:"):]), []byte("[DONE]"))
-}
-
-func validDecryptedSSEEvent(event []byte) bool {
-	normalized, err := normalizeDecryptedSSEEvent(event)
-	return err == nil && len(normalized) > 0
 }
 
 func normalizeDecryptedSSEEvent(event []byte) ([]byte, error) {

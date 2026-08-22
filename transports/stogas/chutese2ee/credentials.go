@@ -13,7 +13,7 @@ const (
 	credentialIdleLifetime    = 5 * time.Minute
 )
 
-var errCredentialUnavailable = errors.New("Chutes credential is unavailable")
+var errCredentialUnavailable = errors.New("unavailable Chutes credential")
 
 type credentialFingerprint [sha256.Size]byte
 

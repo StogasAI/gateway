@@ -41,7 +41,7 @@ type Transport struct {
 
 func New(options Options) (*Transport, error) {
 	if options.ResolveModel == nil {
-		return nil, errors.New("Chutes catalog model resolver is required")
+		return nil, errors.New("missing Chutes catalog model resolver")
 	}
 	api, err := newAPIClient(
 		options.APIKey,
@@ -90,7 +90,7 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool) *fasthttp.Client {
 		MaxConnDuration:           5 * time.Minute,
 		MaxConnWaitTimeout:        30 * time.Second,
 		ReadTimeout:               5 * time.Minute,
-		WriteTimeout:              30 * time.Second,
+		WriteTimeout:              5 * time.Minute,
 		MaxResponseBodySize:       maxDecryptedResponse + (2 << 20),
 		MaxIdemponentCallAttempts: 1,
 		NoDefaultUserAgentHeader:  true,
@@ -167,7 +167,7 @@ func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 
 func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request, response *fasthttp.Response) (bool, error) {
 	if t == nil || t.closed.Load() {
-		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_unavailable", "Chutes private inference is unavailable", 0)
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
 	}
 	originalPath := string(request.URI().Path())
@@ -187,18 +187,18 @@ func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request,
 	}
 	target, ok := t.resolveModel(metadata.Model)
 	if !ok || !validModelTarget(target) {
-		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_unavailable", "Chutes private inference is unavailable", 0)
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
 	}
 	chuteID := target.ChuteID
 	apiKey, err := chutesAPIKeyFromAuthorization(string(request.Header.Peek("Authorization")))
 	if err != nil {
-		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_unavailable", "Chutes private inference is unavailable", 0)
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
 	}
 	credential, releaseCredential, err := t.acquireCredential(apiKey)
 	if err != nil {
-		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_unavailable", "Chutes private inference is unavailable", 0)
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
 	}
 	defer func() {
@@ -265,7 +265,7 @@ func setTicketReservationError(response *fasthttp.Response, err error, managed b
 		switch statusErr.StatusCode {
 		case http.StatusUnauthorized:
 			if !managed {
-				setSyntheticError(response, http.StatusUnauthorized, "invalid_api_key", "The Chutes API key is invalid", 0)
+				setSyntheticError(response, http.StatusUnauthorized, "upstream_authentication_failed", "The configured Chutes credential was rejected", 0)
 				return
 			}
 		case http.StatusForbidden:
@@ -278,7 +278,15 @@ func setTicketReservationError(response *fasthttp.Response, err error, managed b
 			return
 		}
 	}
-	setSyntheticError(response, http.StatusServiceUnavailable, "upstream_unavailable", "No verified Chutes private capacity is currently available", retryAfter)
+	if errors.Is(err, ErrAttestationFailed) || errors.Is(err, ErrGPUAttestationFailed) || errors.Is(err, ErrMeasurementPolicy) {
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_verification_failed", "Chutes private capacity did not pass verification", retryAfter)
+		return
+	}
+	if managed && statusErr != nil && (statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden) {
+		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "The managed Chutes configuration is unavailable", retryAfter)
+		return
+	}
+	setSyntheticError(response, http.StatusServiceUnavailable, "upstream_capacity_unavailable", "No verified Chutes private capacity is currently available", retryAfter)
 }
 
 func configureInvokeRequest(
@@ -409,6 +417,9 @@ func (s *ownedInvokeStream) Close() error {
 		if closer, ok := s.source.(io.Closer); ok {
 			closeErr = closer.Close()
 		}
+		// Chutes can leave encrypted SSE bytes after its authenticated [DONE].
+		// Discard this connection so unread framing cannot contaminate the pool.
+		s.response.SetConnectionClose()
 		fasthttp.ReleaseResponse(s.response)
 		if s.onClose != nil {
 			s.onClose()

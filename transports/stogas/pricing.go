@@ -1,7 +1,9 @@
 package stogas
 
 import (
+	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -13,9 +15,9 @@ const longContextThresholdTokens = billing.LongContextThresholdTokens
 
 const minimumPromptCacheWriteTokens = 1024
 
-func baseHoldEstimate(state *State) HoldEstimate {
+func baseHoldEstimate(state *State) (HoldEstimate, error) {
 	if state == nil || state.Resolution == nil {
-		return HoldEstimate{}
+		return HoldEstimate{}, nil
 	}
 	resolution := state.Resolution
 	deployment := resolution.Deployment
@@ -28,7 +30,7 @@ func baseHoldEstimate(state *State) HoldEstimate {
 		inputTokenLimit = 0
 	}
 	meters := []catalog.MeterEstimate{}
-	pricing := effectivePricingForState(state)
+	pricing := holdPricingForState(state)
 	if inputTokenLimit > 0 {
 		meters = appendInputTokenHoldCost(
 			meters,
@@ -38,17 +40,21 @@ func baseHoldEstimate(state *State) HoldEstimate {
 		)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
+	meters, total, err := canonicalizeMeters(meters, pricing)
+	if err != nil {
+		return HoldEstimate{}, err
+	}
 	return HoldEstimate{
-		MaxUSDAtoms: sumMeterAmounts(meters),
+		MaxUSDAtoms: total,
 		ProductKey:  resolution.Deployment.ID,
 		ProviderKey: string(resolution.Provider),
 		Meters:      meters,
-	}
+	}, nil
 }
 
-func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
+func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) (string, error) {
 	if state == nil {
-		return billing.ZeroChargeUSDAtoms
+		return billing.ZeroChargeUSDAtoms, nil
 	}
 	if !hasMeasuredUsage(state.Signals) && len(extraMeters) == 0 {
 		state.FinalMeters = nil
@@ -115,9 +121,12 @@ func baseFinalPrice(state *State, extraMeters []catalog.MeterEstimate) string {
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterReasoningTokens, reasoningTokens, false, rateMode)
 	}
 	meters = append(meters, extraMeters...)
-	meters = compactMeterEstimates(meters, pricing)
+	meters, total, err := canonicalizeMeters(meters, pricing)
+	if err != nil {
+		return "", err
+	}
 	state.FinalMeters = meters
-	return sumMeterAmounts(meters)
+	return total, nil
 }
 
 // Azure bills GPT-5.6 cache writes but currently exposes only cached reads in
@@ -197,7 +206,21 @@ func effectivePricingForState(state *State) catalog.Pricing {
 	if state == nil || state.Resolution == nil {
 		return nil
 	}
-	return billing.WithReasoningTokenFallback(mergePricing(catalog.ProviderPricing(state.Resolution.Provider), pricingDeploymentForState(state).Pricing))
+	return effectivePricingForDeployment(pricingDeploymentForState(state))
+}
+
+func effectivePricingForDeployment(deployment catalog.Deployment) catalog.Pricing {
+	return billing.WithReasoningTokenFallback(clonePricing(deployment.Pricing))
+}
+
+// Authorization uses the deployment selected by the request. Paid execution
+// upgrades are explicit deployments; documented Fast-to-Standard fallback can
+// only reduce the final charge.
+func holdPricingForState(state *State) catalog.Pricing {
+	if state == nil || state.Resolution == nil {
+		return nil
+	}
+	return effectivePricingForDeployment(state.Resolution.Deployment)
 }
 
 func appendOutputTokenHoldCost(meters []catalog.MeterEstimate, pricing catalog.Pricing, quantity int) []catalog.MeterEstimate {
@@ -210,20 +233,6 @@ func appendOutputTokenHoldCost(meters []catalog.MeterEstimate, pricing catalog.P
 		return billing.AppendTokenMeterCost(meters, pricing, billing.MeterOutputTokens, quantity, true, billing.TokenRateHighest)
 	}
 	return meters
-}
-
-func mergePricing(base catalog.Pricing, overrides catalog.Pricing) catalog.Pricing {
-	if len(base) == 0 {
-		return clonePricing(overrides)
-	}
-	merged := make(catalog.Pricing, len(base)+len(overrides))
-	for meterKey, rates := range base {
-		merged[meterKey] = copyRates(rates)
-	}
-	for meterKey, rates := range overrides {
-		merged[meterKey] = copyRates(rates)
-	}
-	return merged
 }
 
 func clonePricing(pricing catalog.Pricing) catalog.Pricing {
@@ -255,7 +264,6 @@ func pricingDeploymentForState(state *State) catalog.Deployment {
 	deployment := state.Resolution.Deployment
 	actualTier := state.ActualServiceTier
 	actualSpeed := state.ActualSpeed
-	actualModel := state.ActualModel
 	if signals, ok := state.Signals.(*StandardSignals); ok && signals != nil {
 		if actualTier == nil {
 			actualTier = signals.ActualServiceTier
@@ -264,120 +272,232 @@ func pricingDeploymentForState(state *State) catalog.Deployment {
 			actualSpeed = signals.ActualSpeed
 		}
 	}
-	if actualTier == nil && actualSpeed == "" && actualModel == "" {
+	actualTier, actualSpeed = permittedActualExecution(state.Resolution.Provider, deployment, actualTier, actualSpeed)
+	if actualTier == nil && actualSpeed == "" {
 		return deployment
 	}
-	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, actualTier, actualSpeed, actualModel)
+	// A provider-reported fallback model is diagnostic metadata. It cannot
+	// change the deployment, price, or receipt authorized for this request.
+	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, actualTier, actualSpeed)
 	if !ok {
 		return deployment
 	}
 	return actual
 }
 
-// ExecutionDeployment returns the concrete deployment reported by the provider
-// when it differs from the requested deployment.
+func permittedActualExecution(
+	provider schemas.ModelProvider,
+	selected catalog.Deployment,
+	actualTier *schemas.BifrostServiceTier,
+	actualSpeed string,
+) (*schemas.BifrostServiceTier, string) {
+	selectedTier := strings.ToLower(strings.TrimSpace(selected.Upstream.ServiceTier))
+	actualTierClass := executionTierClass(provider, actualTier)
+	if actualTierClass == "" {
+		actualTier = nil
+	}
+	actualSpeed = strings.ToLower(strings.TrimSpace(actualSpeed))
+
+	switch provider {
+	case schemas.OpenAI:
+		switch selectedTier {
+		case "flex":
+			if actualTierClass != "flex" {
+				actualTier = nil
+			}
+		case "priority":
+			if actualTierClass != "priority" && actualTierClass != "standard" {
+				actualTier = nil
+			}
+		default:
+			if actualTierClass != "standard" {
+				actualTier = nil
+			}
+		}
+		actualSpeed = ""
+	case schemas.Azure:
+		if selectedTier == "priority" {
+			if actualTierClass != "priority" && actualTierClass != "standard" {
+				actualTier = nil
+			}
+		} else if actualTierClass != "standard" {
+			actualTier = nil
+		}
+		actualSpeed = ""
+	case schemas.Anthropic:
+		if actualTierClass != "standard" {
+			actualTier = nil
+		}
+		selectedSpeed := strings.ToLower(strings.TrimSpace(selected.Upstream.Speed))
+		if selectedSpeed == "fast" {
+			if !stringInSet(actualSpeed, "fast", "") {
+				actualSpeed = ""
+			}
+		} else if actualSpeed != "standard" {
+			actualSpeed = ""
+		}
+	default:
+		actualTier = nil
+		actualSpeed = ""
+	}
+	return actualTier, actualSpeed
+}
+
+// ExecutionDeployment returns an allowed concrete execution variant for the
+// authorized deployment. Unrecognized provider metadata cannot retarget it.
 func ExecutionDeployment(state *State) catalog.Deployment {
 	return pricingDeploymentForState(state)
 }
 
-func noUsageFinalPrice(state *State) string {
-	if state == nil || (state.BifrostError != nil && billing.ProviderErrorIsInsured(state.BifrostError)) {
-		return billing.ZeroChargeUSDAtoms
+func noUsageFinalPrice(state *State) (string, error) {
+	if state == nil {
+		return billing.ZeroChargeUSDAtoms, nil
+	}
+	managed := state.Authorization == nil || state.Authorization.UpstreamByok == "" || state.Authorization.UpstreamByok == "stogas"
+	if state.BifrostError != nil && billing.ProviderErrorIsInsured(state.BifrostError, managed) {
+		return billing.ZeroChargeUSDAtoms, nil
 	}
 	if state.Authorization != nil && state.Authorization.AuthorizedAmount != nil {
 		amount := state.Authorization.AuthorizedAmount.String()
-		state.FinalMeters = holdCaptureFinalMeters(state, amount)
-		return amount
+		if !managed && state.Hold.MaxUSDAtoms != "" {
+			amount = state.Hold.MaxUSDAtoms
+		}
+		meters, err := holdCaptureFinalMeters(state, amount)
+		if err != nil {
+			return "", err
+		}
+		state.FinalMeters = meters
+		return amount, nil
 	}
-	return billing.ZeroChargeUSDAtoms
+	return billing.ZeroChargeUSDAtoms, nil
 }
 
-func holdCaptureFinalMeters(state *State, chargedAmount string) []catalog.MeterEstimate {
-	if state == nil || len(state.Hold.Meters) == 0 || sumMeterAmounts(state.Hold.Meters) != chargedAmount {
-		return nil
+func holdCaptureFinalMeters(state *State, chargedAmount string) ([]catalog.MeterEstimate, error) {
+	if state == nil || len(state.Hold.Meters) == 0 {
+		return nil, nil
 	}
-	meters := make([]catalog.MeterEstimate, len(state.Hold.Meters))
-	for i, meter := range state.Hold.Meters {
+	meters, total, err := canonicalizeMeters(state.Hold.Meters, holdPricingForState(state))
+	if err != nil {
+		return nil, err
+	}
+	if total != chargedAmount {
+		return nil, nil
+	}
+	for i, meter := range meters {
 		meter.HoldRequired = false
 		meters[i] = meter
 	}
-	return meters
+	return meters, nil
 }
 
-func sumMeterAmounts(meters []catalog.MeterEstimate) string {
-	total := big.NewInt(0)
-	for _, meter := range meters {
-		amount, ok := new(big.Int).SetString(meter.AmountUSDAtoms, 10)
-		if ok {
-			total.Add(total, amount)
-		}
-	}
-	return total.String()
-}
-
-func compactMeterEstimates(meters []catalog.MeterEstimate, pricing catalog.Pricing) []catalog.MeterEstimate {
-	if len(meters) < 2 {
-		return meters
+func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {
+	if len(meters) == 0 {
+		return nil, billing.ZeroChargeUSDAtoms, nil
 	}
 	type meterGroup struct {
 		meter    catalog.MeterEstimate
 		quantity *big.Int
-		amount   *big.Int
+		rate     *big.Int
 	}
 	order := make([]string, 0, len(meters))
 	groups := map[string]*meterGroup{}
 	for _, meter := range meters {
-		if meter.MeterKey == "" || meter.RateKey == "" {
-			continue
+		if meter.MeterKey == "" || strings.TrimSpace(meter.MeterKey) != meter.MeterKey ||
+			meter.RateKey == "" || strings.TrimSpace(meter.RateKey) != meter.RateKey {
+			return nil, "", fmt.Errorf("meter identity is invalid")
 		}
-		quantity, ok := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok || quantity.Sign() < 0 {
-			continue
+		quantity, err := billing.ParseNonnegativeInteger(meter.Quantity)
+		if err != nil || quantity.Sign() <= 0 || !quantity.IsUint64() {
+			return nil, "", fmt.Errorf("meter %s has an invalid quantity", meter.MeterKey)
 		}
-		amount, ok := new(big.Int).SetString(meter.AmountUSDAtoms, 10)
-		if !ok || amount.Sign() < 0 {
-			continue
+		rates, meterExists := pricing[meter.MeterKey]
+		catalogRateRaw, rateExists := rates[meter.RateKey]
+		if !meterExists || !rateExists || catalogRateRaw == "" {
+			return nil, "", fmt.Errorf("meter %s has no catalog rate", meter.MeterKey)
+		}
+		rateRaw := meter.RateUSDAtoms
+		if rateRaw == "" {
+			rateRaw = catalogRateRaw
+		}
+		rate, rateErr := billing.ParseUSDAtoms(rateRaw)
+		amount, amountErr := billing.ParseUSDAtoms(meter.AmountUSDAtoms)
+		if rateErr != nil || amountErr != nil || rate.Sign() <= 0 || amount.Sign() <= 0 {
+			return nil, "", fmt.Errorf("meter %s has an invalid rate or amount", meter.MeterKey)
+		}
+		catalogRate, err := billing.ParseUSDAtoms(catalogRateRaw)
+		if err != nil || catalogRate.Cmp(rate) != 0 {
+			return nil, "", fmt.Errorf("meter %s does not match its catalog rate", meter.MeterKey)
+		}
+		expected, err := calculatedMeterAmount(meter.RateKey, quantity, rate)
+		if err != nil || expected.Cmp(amount) != 0 {
+			return nil, "", fmt.Errorf("meter %s has an inconsistent amount", meter.MeterKey)
 		}
 		key := meter.MeterKey + "\x00" + meter.RateKey + "\x00" + boolKey(meter.HoldRequired)
 		group := groups[key]
 		if group == nil {
 			order = append(order, key)
-			groups[key] = &meterGroup{meter: meter, quantity: quantity, amount: amount}
+			meter.RateUSDAtoms = rate.String()
+			groups[key] = &meterGroup{meter: meter, quantity: quantity, rate: rate}
 			continue
 		}
+		if group.rate.Cmp(rate) != 0 {
+			return nil, "", fmt.Errorf("meter %s uses conflicting rates", meter.MeterKey)
+		}
 		group.quantity.Add(group.quantity, quantity)
-		group.amount.Add(group.amount, amount)
-	}
-	if len(groups) == len(meters) {
-		return meters
+		if !group.quantity.IsUint64() {
+			return nil, "", fmt.Errorf("meter %s quantity exceeds the supported range", meter.MeterKey)
+		}
 	}
 	compacted := make([]catalog.MeterEstimate, 0, len(groups))
+	total := big.NewInt(0)
 	for _, key := range order {
 		group := groups[key]
 		meter := group.meter
 		meter.Quantity = group.quantity.String()
-		meter.AmountUSDAtoms = compactedMeterAmount(pricing, meter.MeterKey, meter.RateKey, group.quantity, group.amount).String()
+		amount, err := calculatedMeterAmount(meter.RateKey, group.quantity, group.rate)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := billing.ParseUSDAtoms(amount.String()); err != nil {
+			return nil, "", fmt.Errorf("meter %s amount exceeds the settlement limit", meter.MeterKey)
+		}
+		meter.AmountUSDAtoms = amount.String()
+		total.Add(total, amount)
 		compacted = append(compacted, meter)
 	}
-	return compacted
+	if _, err := billing.ParseUSDAtoms(total.String()); err != nil {
+		return nil, "", fmt.Errorf("meter total exceeds the settlement limit")
+	}
+	return compacted, total.String(), nil
 }
 
-func compactedMeterAmount(pricing catalog.Pricing, meterKey string, rateKey string, quantity *big.Int, fallback *big.Int) *big.Int {
-	meterPricing := pricing[meterKey]
-	rate, ok := billing.ParseRate(meterPricing[rateKey])
-	if !ok {
-		return new(big.Int).Set(fallback)
-	}
-	divisor := int64(billing.MillionTokens)
-	if strings.HasPrefix(rateKey, "per_1k") {
+func calculatedMeterAmount(rateKey string, quantity *big.Int, rate *big.Int) (*big.Int, error) {
+	var divisor int64
+	switch {
+	case strings.HasPrefix(rateKey, "per_mill"):
+		divisor = billing.MillionTokens
+	case strings.HasPrefix(rateKey, "per_1k"):
 		divisor = billing.ThousandCalls
+	default:
+		return nil, fmt.Errorf("unsupported meter rate key %s", rateKey)
 	}
 	cost := new(big.Int).Mul(new(big.Int).Set(quantity), rate)
 	quotient, remainder := new(big.Int).QuoRem(cost, big.NewInt(divisor), new(big.Int))
 	if remainder.Sign() > 0 {
 		quotient.Add(quotient, big.NewInt(1))
 	}
-	return quotient
+	return quotient, nil
+}
+
+func validateCanonicalMeterSummary(meters []catalog.MeterEstimate, pricing catalog.Pricing, total string) error {
+	canonical, canonicalTotal, err := canonicalizeMeters(meters, pricing)
+	if err != nil {
+		return err
+	}
+	if canonicalTotal != total || !slices.Equal(canonical, meters) {
+		return fmt.Errorf("meter summary is not canonical")
+	}
+	return nil
 }
 
 func boolKey(value bool) string {

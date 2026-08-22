@@ -21,10 +21,9 @@ const (
 
 	stogasHeaderExtraFields = "X-Stogas-Extra-Fields"
 
-	chatRequestLifetime = 10 * time.Minute
+	chatRequestLifetime   = 10 * time.Minute
+	chatStreamIdleTimeout = 2 * time.Minute
 )
-
-var chatStreamIdleTimeout = 2 * time.Minute
 
 func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := requestLifetime(resolution)
@@ -48,6 +47,17 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
 	state.SetDashboardCredential(credential.Dashboard)
+	if credential.Upstream != nil {
+		plaintext, credentialErr := stogas.CanonicalPassthroughCredential(
+			resolution.Provider,
+			credential.Upstream.APIKey,
+		)
+		if credentialErr != nil {
+			cancel()
+			return nil, nil, nil, credentialErr
+		}
+		state.PassthroughByokSecret = plaintext
+	}
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
 	state.RequestLifetime = lifetime
@@ -80,12 +90,15 @@ func requestLifetime(resolution *catalog.ResolvedRequest) time.Duration {
 	}
 }
 
-func streamIdleTimeout(state *stogas.State) time.Duration {
+func streamIdleTimeout(state *stogas.State, configured time.Duration) time.Duration {
 	if state == nil || state.Resolution == nil {
 		return 0
 	}
 	switch state.Resolution.Route {
 	case catalog.RouteChat:
+		if configured > 0 {
+			return configured
+		}
 		return chatStreamIdleTimeout
 	default:
 		return 0
@@ -93,7 +106,14 @@ func streamIdleTimeout(state *stogas.State) time.Duration {
 }
 
 func extraFieldsHeader(ctx *fasthttp.RequestCtx) (bool, error) {
-	raw := strings.ToLower(strings.TrimSpace(string(ctx.Request.Header.Peek(stogasHeaderExtraFields))))
+	values := ctx.Request.Header.PeekAll(stogasHeaderExtraFields)
+	if len(values) > 1 {
+		return false, fmt.Errorf("%s must appear at most once", stogasHeaderExtraFields)
+	}
+	raw := ""
+	if len(values) == 1 {
+		raw = strings.ToLower(strings.TrimSpace(string(values[0])))
+	}
 	if raw == "" {
 		return false, nil
 	}
