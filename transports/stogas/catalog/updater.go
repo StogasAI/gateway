@@ -90,10 +90,15 @@ func StartUpdater(parent context.Context, config UpdaterConfig) (*Updater, error
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{Timeout: 20 * time.Second}
 	}
+	client := *config.HTTPClient
+	client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("catalog redirects are not permitted")
+	}
+	config.HTTPClient = &client
 	ctx, cancel := context.WithCancel(parent)
 	updater := &Updater{
 		cancel:      cancel,
-		client:      config.HTTPClient,
+		client:      &client,
 		config:      config,
 		etags:       make(map[string]string, len(releaseURLs)),
 		keys:        keys,
@@ -260,14 +265,6 @@ func (u *Updater) pollOnce(ctx context.Context) error {
 	active.Store(selected.snapshot)
 	u.rememberEtags(successes)
 	return nil
-}
-
-func (u *Updater) fetchArtifact(ctx context.Context, digestValue string, limit int64) ([]byte, error) {
-	releaseURLs, err := u.sources()
-	if err != nil {
-		return nil, err
-	}
-	return u.fetchArtifactFrom(ctx, releaseURLs[0], digestValue, limit)
 }
 
 func (u *Updater) fetchArtifactFrom(

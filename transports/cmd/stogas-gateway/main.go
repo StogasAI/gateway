@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
-	"strings"
 	"syscall"
 
 	"go.uber.org/automaxprocs/maxprocs"
@@ -23,19 +24,32 @@ const defaultGuestCaBundlePath = "/etc/ssl/certs/ca-certificates.crt"
 const requiredOpenFiles = 65536
 const defaultGoMemoryLimitBytes = 10 * 1024 * 1024 * 1024
 
+type startupReasonCode string
+
+const (
+	startupCABundleInspectionFailed startupReasonCode = "ca_bundle_inspection_failed"
+	startupConfigurationLoadFailed  startupReasonCode = "configuration_load_failed"
+	startupMaxProcsAdjustmentFailed startupReasonCode = "maxprocs_adjustment_failed"
+	startupOpenFileLimitFailed      startupReasonCode = "open_file_limit_failed"
+	startupRuntimeInitFailed        startupReasonCode = "runtime_initialization_failed"
+	startupServerFailed             startupReasonCode = "server_failed"
+)
+
 func main() {
 	if err := ensureOpenFileLimit(syscall.Getrlimit, syscall.Setrlimit); err != nil {
-		fatal("gateway startup: " + err.Error())
+		fatal(startupOpenFileLimitFailed)
 	}
 	setDefaultGuestCertFile()
-	_, _ = maxprocs.Set()
+	if _, err := maxprocs.Set(); err != nil {
+		writeStartupEvent(os.Stderr, "gateway_startup_warning", "warn", startupMaxProcsAdjustmentFailed)
+	}
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(defaultGoMemoryLimitBytes)
 	}
 
 	config, err := stogas.LoadFromEnv()
 	if err != nil {
-		fatal(err.Error())
+		fatal(startupConfigurationLoadFailed)
 	}
 
 	flag.StringVar(&config.Host, "host", config.Host, "Host to bind the gateway to")
@@ -51,11 +65,11 @@ func main() {
 
 	server, err := stogashttp.New(context.Background(), config, logger)
 	if err != nil {
-		fatal(err.Error())
+		fatal(startupRuntimeInitFailed)
 	}
 
 	if err := server.Start(); err != nil {
-		fatal(err.Error())
+		fatal(startupServerFailed)
 	}
 }
 
@@ -92,11 +106,28 @@ func setDefaultGuestCertFileAt(path string) {
 	if _, err := os.Stat(path); err == nil {
 		_ = os.Setenv("SSL_CERT_FILE", path)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		_, _ = os.Stderr.WriteString("unable to inspect guest CA bundle: " + err.Error() + "\n")
+		writeStartupEvent(os.Stderr, "gateway_startup_warning", "warn", startupCABundleInspectionFailed)
 	}
 }
 
-func fatal(message string) {
-	_, _ = os.Stderr.WriteString(strings.TrimSpace(message) + "\n")
+func writeStartupEvent(output io.Writer, event string, severity string, reasonCode startupReasonCode) {
+	payload, err := json.Marshal(struct {
+		ErrorType  string `json:"errorType"`
+		Event      string `json:"event"`
+		ReasonCode string `json:"reasonCode"`
+		Severity   string `json:"severity"`
+	}{
+		ErrorType:  "Error",
+		Event:      event,
+		ReasonCode: string(reasonCode),
+		Severity:   severity,
+	})
+	if err == nil {
+		_, _ = fmt.Fprintln(output, string(payload))
+	}
+}
+
+func fatal(reasonCode startupReasonCode) {
+	writeStartupEvent(os.Stderr, "gateway_startup_failed", "error", reasonCode)
 	os.Exit(1)
 }

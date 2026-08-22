@@ -1060,7 +1060,7 @@ func TestToAnthropicChatRequest_MapsUserToMetadataUserID(t *testing.T) {
 	}
 }
 
-func TestToAnthropicChatRequest_Opus47_StripsTemperatureTopPTopK(t *testing.T) {
+func TestToAnthropicChatRequest_Opus47PreservesProviderOwnedSampling(t *testing.T) {
 	temp := 0.7
 	topP := 0.9
 
@@ -1084,14 +1084,14 @@ func TestToAnthropicChatRequest_Opus47_StripsTemperatureTopPTopK(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Temperature != nil {
-		t.Errorf("expected Temperature to be nil for Opus 4.7, got %v", result.Temperature)
+	if result.Temperature == nil || *result.Temperature != temp {
+		t.Errorf("expected Temperature %v, got %v", temp, result.Temperature)
 	}
-	if result.TopP != nil {
-		t.Errorf("expected TopP to be nil for Opus 4.7, got %v", result.TopP)
+	if result.TopP == nil || *result.TopP != topP {
+		t.Errorf("expected TopP %v, got %v", topP, result.TopP)
 	}
-	if result.TopK != nil {
-		t.Errorf("expected TopK to be nil for Opus 4.7, got %v", result.TopK)
+	if result.TopK == nil || *result.TopK != 40 {
+		t.Errorf("expected TopK 40, got %v", result.TopK)
 	}
 }
 

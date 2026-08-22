@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"fmt"
 	"math/big"
 	"strings"
 	"time"
@@ -15,7 +16,8 @@ type EventInput struct {
 	ClientStoppedAt       time.Time
 	CatalogDigest         string
 	Error                 *schemas.BifrostError
-	Pricing               map[string]any
+	Pricing               EventPricing
+	ProviderAttempts      []ProviderAttemptInput
 	ProviderCompletedAt   time.Time
 	ProviderStartedAt     time.Time
 	ProviderFirstOutputMS *uint32
@@ -27,7 +29,16 @@ type EventInput struct {
 	StartedAt             time.Time
 }
 
-func NewRequestEvent(input EventInput) RequestEvent {
+type ProviderAttemptInput struct {
+	Provider              string
+	StartedAt             time.Time
+	CompletedAt           time.Time
+	ProviderFirstOutputMS *uint32
+	Response              *schemas.BifrostResponse
+	Error                 *schemas.BifrostError
+}
+
+func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	authorization := input.Authorization
 	if authorization == nil {
 		authorization = &Authorization{}
@@ -62,16 +73,24 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		}
 		clientStopMS = &value
 	}
-	actualCostUSDAtoms := input.ActualCostUSDAtoms
-	if actualCostUSDAtoms == "" {
-		actualCostUSDAtoms = ZeroChargeUSDAtoms
+	actualCost := input.ActualCostUSDAtoms
+	if actualCost == "" {
+		actualCost = ZeroChargeUSDAtoms
+	}
+	actualCostUSDAtoms, err := ParseUSDAtoms(actualCost)
+	if err != nil {
+		return RequestEvent{}, fmt.Errorf("invalid upstream cost: %w", err)
 	}
 	firstOutputMS := input.ProviderFirstOutputMS
 	if !isStreamingRequest(input.RequestType) {
 		firstOutputMS = nil
 	}
-	pricing := clonePricing(input.Pricing)
+	pricing, analyticsQuantities, err := validateEventPricing(input.Pricing)
+	if err != nil {
+		return RequestEvent{}, err
+	}
 	billedCostUSDAtoms := billedRequestCost(authorization, actualCostUSDAtoms)
+	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS, firstOutputMS)
 
 	return RequestEvent{
 		RequestID:               authorization.RequestID,
@@ -85,17 +104,88 @@ func NewRequestEvent(input EventInput) RequestEvent {
 		Cancelled:               input.Cancelled,
 		ClientStopMS:            clientStopMS,
 		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
-		ProviderAttempts:        []ProviderAttempt{{Provider: authorization.ProviderKey, Status: NormalizeUpstreamStatus(input.Error), StatusCode: providerStatusCode(input.Error), LatencyMS: upstreamTimeMS, ProviderFirstOutputMS: firstOutputMS, ProviderRequestID: upstreamRequestID(input.Response), FinishReason: finishReason(input.Response), UpstreamByok: normalizedUpstreamByok(authorization)}},
+		ProviderAttempts:        providerAttempts,
 		StogasProcessingSuccess: true,
 		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, billedCostUSDAtoms),
 		NodeID:                  strings.ToLower(strings.TrimSpace(input.NodeID)),
 		TotalTimeMS:             totalTimeMS,
-		UpstreamCostUSDAtoms:    actualCostUSDAtoms,
-		BilledCostUSDAtoms:      billedCostUSDAtoms,
+		UpstreamCostUSDAtoms:    actualCostUSDAtoms.String(),
+		BilledCostUSDAtoms:      billedCostUSDAtoms.String(),
 		Pricing:                 pricing,
 		GatewayVersion:          strings.TrimSpace(input.GatewayVersion),
 		CatalogNodeIDs:          append([]string(nil), input.CatalogNodeIDs...),
+		analyticsQuantities:     analyticsQuantities,
+	}, nil
+}
+
+func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32, fallbackFirstOutputMS *uint32) []ProviderAttempt {
+	if len(input.ProviderAttempts) == 0 {
+		return []ProviderAttempt{{
+			Provider:              authorization.ProviderKey,
+			Status:                NormalizeUpstreamStatus(input.Error),
+			StatusCode:            providerStatusCode(input.Error),
+			LatencyMS:             fallbackLatencyMS,
+			ProviderFirstOutputMS: cloneUint32Pointer(fallbackFirstOutputMS),
+			ProviderRequestID:     upstreamRequestID(input.Response),
+			FinishReason:          finishReason(input.Response),
+			UpstreamByok:          normalizedUpstreamByok(authorization),
+		}}
 	}
+
+	attempts := make([]ProviderAttempt, len(input.ProviderAttempts))
+	for index, observed := range input.ProviderAttempts {
+		provider := strings.TrimSpace(observed.Provider)
+		if provider == "" {
+			provider = authorization.ProviderKey
+		}
+		firstOutputMS := cloneUint32Pointer(observed.ProviderFirstOutputMS)
+		if !isStreamingRequest(input.RequestType) {
+			firstOutputMS = nil
+		}
+		attempts[index] = ProviderAttempt{
+			Provider:              provider,
+			Status:                NormalizeUpstreamStatus(observed.Error),
+			StatusCode:            providerStatusCode(observed.Error),
+			LatencyMS:             uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
+			ProviderFirstOutputMS: firstOutputMS,
+			ProviderRequestID:     upstreamRequestID(observed.Response),
+			FinishReason:          finishReason(observed.Response),
+			UpstreamByok:          normalizedUpstreamByok(authorization),
+		}
+	}
+	return attempts
+}
+
+func (event RequestEvent) FinalProviderAttempt() (ProviderAttempt, bool) {
+	if len(event.ProviderAttempts) == 0 {
+		return ProviderAttempt{}, false
+	}
+	return event.ProviderAttempts[len(event.ProviderAttempts)-1], true
+}
+
+func (event RequestEvent) ProviderTiming() (uint32, *uint32) {
+	finalAttempt, ok := event.FinalProviderAttempt()
+	if !ok {
+		return 0, nil
+	}
+	var priorLatency uint64
+	for _, attempt := range event.ProviderAttempts[:len(event.ProviderAttempts)-1] {
+		priorLatency += uint64(attempt.LatencyMS)
+	}
+	providerLatencyMS := saturatingUint32(priorLatency + uint64(finalAttempt.LatencyMS))
+	if finalAttempt.ProviderFirstOutputMS == nil {
+		return providerLatencyMS, nil
+	}
+	firstOutputMS := saturatingUint32(priorLatency + uint64(*finalAttempt.ProviderFirstOutputMS))
+	return providerLatencyMS, &firstOutputMS
+}
+
+func cloneUint32Pointer(value *uint32) *uint32 {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func normalizedUpstreamByok(authorization *Authorization) string {
@@ -105,14 +195,13 @@ func normalizedUpstreamByok(authorization *Authorization) string {
 	return strings.TrimSpace(authorization.UpstreamByok)
 }
 
-func billedRequestCost(authorization *Authorization, upstreamCost string) string {
+func billedRequestCost(authorization *Authorization, upstreamCost *big.Int) *big.Int {
 	if normalizedUpstreamByok(authorization) == "stogas" {
-		return upstreamCost
+		return new(big.Int).Set(upstreamCost)
 	}
-	cost := parseMoneyOrZeroString(upstreamCost)
-	numerator := new(big.Int).Mul(cost, big.NewInt(2))
+	numerator := new(big.Int).Mul(upstreamCost, big.NewInt(2))
 	numerator.Add(numerator, big.NewInt(99))
-	return numerator.Quo(numerator, big.NewInt(100)).String()
+	return numerator.Quo(numerator, big.NewInt(100))
 }
 
 func isStreamingRequest(requestType string) bool {
@@ -124,29 +213,12 @@ func isStreamingRequest(requestType string) bool {
 	}
 }
 
-func LLMUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
-	if resp == nil {
-		return nil
-	}
-	if resp.ChatResponse != nil {
-		return resp.ChatResponse.Usage
-	}
-	if resp.TextCompletionResponse != nil {
-		return resp.TextCompletionResponse.Usage
-	}
-	if resp.ResponsesResponse != nil && resp.ResponsesResponse.Usage != nil {
-		return resp.ResponsesResponse.Usage.ToBifrostLLMUsage()
-	}
-	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.Usage != nil {
-		return resp.ResponsesStreamResponse.Response.Usage.ToBifrostLLMUsage()
-	}
-	return nil
-}
-
-func ProviderErrorIsInsured(bifrostErr *schemas.BifrostError) bool {
+func ProviderErrorIsInsured(bifrostErr *schemas.BifrostError, managed bool) bool {
 	switch NormalizeUpstreamStatus(bifrostErr) {
-	case "network_error", "provider_error", "rate_limited", "over_budget":
+	case "network_error", "provider_error":
 		return true
+	case "authentication_error", "permission_error", "rate_limited", "over_budget":
+		return managed
 	default:
 		return false
 	}
@@ -183,6 +255,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	text := strings.ToLower(errorText(bifrostErr))
 
 	switch {
+	case statusCode == 401:
+		return "authentication_error"
+	case statusCode == 403:
+		return "permission_error"
 	case statusCode == 402:
 		return "over_budget"
 	case statusCode == 429:
@@ -341,12 +417,26 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
-func clonePricing(pricing map[string]any) map[string]any {
-	cloned := make(map[string]any, len(pricing))
-	for key, value := range pricing {
-		cloned[key] = value
+func validateEventPricing(pricing EventPricing) (EventPricing, map[string]uint64, error) {
+	cloned := make(EventPricing, len(pricing))
+	quantities := make(map[string]uint64, len(pricing))
+	for key, meter := range pricing {
+		if key == "" || strings.TrimSpace(key) != key || meter.RateKey == "" || strings.TrimSpace(meter.RateKey) != meter.RateKey {
+			return nil, nil, fmt.Errorf("invalid pricing meter identity")
+		}
+		quantity, err := ParseNonnegativeInteger(meter.Quantity)
+		if err != nil || quantity.Sign() <= 0 || !quantity.IsUint64() {
+			return nil, nil, fmt.Errorf("invalid pricing meter quantity for %s", key)
+		}
+		rate, rateErr := ParseUSDAtoms(meter.RateUSDAtoms)
+		amount, amountErr := ParseUSDAtoms(meter.USDAtoms)
+		if rateErr != nil || amountErr != nil || rate.Sign() <= 0 || amount.Sign() <= 0 {
+			return nil, nil, fmt.Errorf("invalid pricing meter amount for %s", key)
+		}
+		cloned[key] = meter
+		quantities[key] = quantity.Uint64()
 	}
-	return cloned
+	return cloned, quantities, nil
 }
 
 func uint32Duration(value time.Duration) uint32 {

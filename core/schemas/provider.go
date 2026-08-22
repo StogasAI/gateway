@@ -57,6 +57,10 @@ type NetworkConfig struct {
 	// Transport is an in-process request transform for provider-specific wire protocols.
 	// It is runtime-only and is never serialized.
 	Transport fasthttp.RoundTripper `json:"-"`
+	// MaxResponseBodySize bounds buffered provider responses. Streaming clients use
+	// the same value as the threshold at which fasthttp switches to a body stream.
+	// It is runtime-only and zero keeps fasthttp's default behavior.
+	MaxResponseBodySize int `json:"-"`
 	// BaseURL is supported for OpenAI, Anthropic, Cohere, Mistral, and Ollama providers (required for Ollama)
 	BaseURL                        string            `json:"base_url,omitempty"`                       // Base URL for the provider (optional)
 	ExtraHeaders                   map[string]string `json:"extra_headers,omitempty"`                  // Additional headers to include in requests (optional)

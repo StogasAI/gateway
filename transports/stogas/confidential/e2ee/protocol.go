@@ -16,6 +16,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,15 +33,15 @@ const (
 	MaxAcceptanceWindow      = 2 * time.Minute
 	ClockSkewAllowance       = 30 * time.Second
 	MaxAPIKeySize            = 4 * 1024
-	MaxCiphertextSize        = 64 * 1024 * 1024
+	MaxCiphertextSize        = 94 * 1024 * 1024
+	MaxResponseBodySize      = 65 * 1024 * 1024
+	MaxResponseWireSize      = 66 * 1024 * 1024
 	RecipientPublicKeySize   = 1_216
 	EncapsulatedKeySize      = 1_120
 
-	responseFrameData     = 1
-	responseFrameMetadata = 2
-	responseFrameFinal    = 3
-	maxResponseFrameSize  = 64 * 1024
+	maxResponseRecordSize = 64 * 1024
 	maxResponseMetadata   = 64 * 1024
+	responseNonceSize     = 12
 )
 
 var (
@@ -71,10 +72,16 @@ type outerEnvelope struct {
 }
 
 type InnerRequest struct {
-	APIKey      string          `json:"api_key"`
-	Accept      string          `json:"accept,omitempty"`
-	ExtraFields bool            `json:"extra_fields,omitempty"`
-	Body        json.RawMessage `json:"body"`
+	APIKey             string              `json:"api_key"`
+	Accept             string              `json:"accept,omitempty"`
+	ExtraFields        bool                `json:"extra_fields,omitempty"`
+	UpstreamCredential *UpstreamCredential `json:"upstream_credential,omitempty"`
+	Body               json.RawMessage     `json:"body"`
+}
+
+type UpstreamCredential struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"api_key"`
 }
 
 type PublicRecipient struct {
@@ -83,12 +90,9 @@ type PublicRecipient struct {
 
 type Session struct {
 	RequestID       string
-	BundleSHA256    string
-	ExpiresAt       time.Time
-	RecipientKeyIDs []string
 	transcriptHash  [sha256.Size]byte
 	responseAEAD    cipher.AEAD
-	responseNonce   [12]byte
+	responseStarted atomic.Bool
 }
 
 // TranscriptSHA256 is the channel binding for the exact E2EE request. It
@@ -130,14 +134,6 @@ func Inspect(body []byte) (bool, error) {
 		return true, fmt.Errorf("%w: %v", ErrInvalidEnvelope, err)
 	}
 	return ok, nil
-}
-
-func SealRequest(method, path string, expiresAt time.Time, bundleSHA256 string, recipients []PublicRecipient, inner InnerRequest) ([]byte, *Session, error) {
-	requestID, err := uuid.NewV7()
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate request id: %w", err)
-	}
-	return SealRequestWithID(method, path, requestID.String(), expiresAt, bundleSHA256, recipients, inner)
 }
 
 func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bundleSHA256 string, recipients []PublicRecipient, inner InnerRequest) ([]byte, *Session, error) {
@@ -199,7 +195,7 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 		return nil, nil, fmt.Errorf("encode inner request: %w", err)
 	}
 	defer clear(innerJSON)
-	requestAEAD, requestNonce, responseAEAD, responseNonce, err := deriveAEADs(contentKey, transcriptHash)
+	requestAEAD, requestNonce, responseAEAD, err := deriveAEADs(contentKey, transcriptHash)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -233,7 +229,7 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode E2EE envelope: %w", err)
 	}
-	return encoded, newSession(requestID, bundleSHA256, expiresAt, keyIDs, transcriptHash, responseAEAD, responseNonce), nil
+	return encoded, newSession(requestID, transcriptHash, responseAEAD), nil
 }
 
 func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, now time.Time) (*InnerRequest, *Session, error) {
@@ -323,7 +319,7 @@ func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, n
 		return nil, nil, fmt.Errorf("%w: content key authentication failed", ErrInvalidEnvelope)
 	}
 	defer clear(contentKey)
-	requestAEAD, requestNonce, responseAEAD, responseNonce, err := deriveAEADs(contentKey, transcriptHash)
+	requestAEAD, requestNonce, responseAEAD, err := deriveAEADs(contentKey, transcriptHash)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -354,26 +350,87 @@ func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, n
 	if err := validateInnerRequest(inner); err != nil {
 		return nil, nil, err
 	}
-	return &inner, newSession(envelope.RequestID, envelope.BundleSHA256, expiresAt, keyIDs, transcriptHash, responseAEAD, responseNonce), nil
+	return &inner, newSession(envelope.RequestID, transcriptHash, responseAEAD), nil
 }
 
 func validateInnerRequest(inner InnerRequest) error {
-	if strings.TrimSpace(inner.APIKey) == "" || len(inner.APIKey) > MaxAPIKeySize {
+	if !validCredential(inner.APIKey) {
 		return fmt.Errorf("%w: inner api_key is required", ErrInvalidEnvelope)
-	}
-	if strings.ContainsAny(inner.APIKey, "\x00\r\n") {
-		return fmt.Errorf("%w: inner api_key contains invalid characters", ErrInvalidEnvelope)
 	}
 	if len(inner.Accept) > 256 {
 		return fmt.Errorf("%w: inner request metadata is too large", ErrInvalidEnvelope)
 	}
-	if strings.ContainsAny(inner.Accept, "\x00\r\n") {
+	if inner.Accept != "" && !validHTTPFieldValue(inner.Accept, false) {
 		return fmt.Errorf("%w: inner request metadata contains invalid characters", ErrInvalidEnvelope)
+	}
+	if inner.UpstreamCredential != nil {
+		credential := inner.UpstreamCredential
+		credential.Provider = strings.ToLower(strings.TrimSpace(credential.Provider))
+		switch credential.Provider {
+		case "anthropic", "chutes", "openai":
+		default:
+			return fmt.Errorf("%w: upstream credential provider is invalid", ErrInvalidEnvelope)
+		}
+		if !validCredential(credential.APIKey) {
+			return fmt.Errorf("%w: upstream credential api_key is invalid", ErrInvalidEnvelope)
+		}
 	}
 	if len(inner.Body) == 0 || !json.Valid(inner.Body) {
 		return fmt.Errorf("%w: inner body must be valid JSON", ErrInvalidEnvelope)
 	}
 	return nil
+}
+
+func validCredential(value string) bool {
+	if len(value) == 0 || len(value) > MaxAPIKeySize {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] < 0x21 || value[index] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validHTTPFieldValue(value string, allowEmpty bool) bool {
+	if value == "" {
+		return allowEmpty
+	}
+	if strings.TrimSpace(value) != value {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] != '\t' && (value[index] < 0x20 || value[index] > 0x7e) {
+			return false
+		}
+	}
+	return true
+}
+
+func validHTTPFieldName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index := range len(value) {
+		character := value[index]
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", rune(character)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validContentType(value string) bool {
+	if len(value) == 0 || len(value) > 256 || !validHTTPFieldValue(value, false) {
+		return false
+	}
+	mediaType, _, _ := strings.Cut(value, ";")
+	major, minor, ok := strings.Cut(mediaType, "/")
+	return ok && major != "" && minor != "" && !strings.Contains(minor, "/") &&
+		validHTTPFieldName(major) && validHTTPFieldName(minor)
 }
 
 func decodeBundleHash(value string) ([sha256.Size]byte, error) {
@@ -438,39 +495,34 @@ func hpkeInfo(transcriptHash [sha256.Size]byte) []byte {
 	return append([]byte("stogas.e2ee.content-key.v1\x00"), transcriptHash[:]...)
 }
 
-func deriveAEADs(contentKey []byte, transcriptHash [sha256.Size]byte) (cipher.AEAD, [12]byte, cipher.AEAD, [12]byte, error) {
-	var requestNonce, responseNonce [12]byte
+func deriveAEADs(contentKey []byte, transcriptHash [sha256.Size]byte) (cipher.AEAD, [12]byte, cipher.AEAD, error) {
+	var requestNonce [12]byte
 	if len(contentKey) != ContentEncryptionKeySize {
-		return nil, requestNonce, nil, responseNonce, fmt.Errorf("%w: invalid content key length", ErrInvalidEnvelope)
+		return nil, requestNonce, nil, fmt.Errorf("%w: invalid content key length", ErrInvalidEnvelope)
 	}
 	prk := hkdf.Extract(sha256.New, contentKey, transcriptHash[:])
 	requestKey, err := expand(prk, "stogas.e2ee.request.key.v1", 32)
 	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
+		return nil, requestNonce, nil, err
 	}
 	requestNonceBytes, err := expand(prk, "stogas.e2ee.request.nonce.v1", len(requestNonce))
 	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
+		return nil, requestNonce, nil, err
 	}
 	responseKey, err := expand(prk, "stogas.e2ee.response.key.v1", 32)
 	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
-	}
-	responseNonceBytes, err := expand(prk, "stogas.e2ee.response.nonce.v1", len(responseNonce))
-	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
+		return nil, requestNonce, nil, err
 	}
 	copy(requestNonce[:], requestNonceBytes)
-	copy(responseNonce[:], responseNonceBytes)
 	requestAEAD, err := newAESGCM(requestKey)
 	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
+		return nil, requestNonce, nil, err
 	}
 	responseAEAD, err := newAESGCM(responseKey)
 	if err != nil {
-		return nil, requestNonce, nil, responseNonce, err
+		return nil, requestNonce, nil, err
 	}
-	return requestAEAD, requestNonce, responseAEAD, responseNonce, nil
+	return requestAEAD, requestNonce, responseAEAD, nil
 }
 
 func expand(prk []byte, label string, size int) ([]byte, error) {
@@ -493,19 +545,11 @@ func newAESGCM(key []byte) (cipher.AEAD, error) {
 	return aead, nil
 }
 
-func newSession(requestID, bundleSHA256 string, expiresAt time.Time, keyIDs [][KeyIDSize]byte, transcriptHash [sha256.Size]byte, responseAEAD cipher.AEAD, responseNonce [12]byte) *Session {
-	encodedIDs := make([]string, len(keyIDs))
-	for i := range keyIDs {
-		encodedIDs[i] = base64.RawURLEncoding.EncodeToString(keyIDs[i][:])
-	}
+func newSession(requestID string, transcriptHash [sha256.Size]byte, responseAEAD cipher.AEAD) *Session {
 	return &Session{
-		RequestID:       requestID,
-		BundleSHA256:    strings.ToLower(bundleSHA256),
-		ExpiresAt:       expiresAt.UTC(),
-		RecipientKeyIDs: encodedIDs,
-		transcriptHash:  transcriptHash,
-		responseAEAD:    responseAEAD,
-		responseNonce:   responseNonce,
+		RequestID:      requestID,
+		transcriptHash: transcriptHash,
+		responseAEAD:   responseAEAD,
 	}
 }
 

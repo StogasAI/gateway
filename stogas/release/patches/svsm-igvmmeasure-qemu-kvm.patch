@@ -1,0 +1,186 @@
+diff --git a/tools/igvmmeasure/Cargo.toml b/tools/igvmmeasure/Cargo.toml
+index b6d7c8f..c405d6b 100644
+--- a/tools/igvmmeasure/Cargo.toml
++++ b/tools/igvmmeasure/Cargo.toml
+@@ -4 +4 @@ version = "0.1.0"
+-edition.workspace = true
++edition = "2024"
+@@ -6,12 +6,9 @@ edition.workspace = true
+-# specify dependencies' target to avoid feature unification with SVSM
+-# see https://doc.rust-lang.org/cargo/reference/features.html#feature-unification
+-[target.'cfg(all(target_os = "linux"))'.dependencies]
+-clap = { workspace = true, default-features = true, features = ["derive"] }
+-sha2 = { workspace = true, default-features = true }
+-igvm.workspace = true
+-igvm_defs.workspace = true
+-p384.workspace = true
+-zerocopy.workspace = true
+-
+-[lints]
+-workspace = true
++[workspace]
++
++[dependencies]
++clap = { version = "4.4.14", default-features = true, features = ["derive"] }
++sha2 = { version = "0.10.8", default-features = true }
++igvm = { version = "0.4.0", default-features = false }
++igvm_defs = { version = "0.4.0", default-features = false }
++p384 = { version = "0.13.0" }
++zerocopy = { version = "0.8.2", features = ["derive"] }
+diff --git a/tools/igvmmeasure/src/igvm_measure.rs b/tools/igvmmeasure/src/igvm_measure.rs
+index ebb7ebe..67e9022 100644
+--- a/tools/igvmmeasure/src/igvm_measure.rs
++++ b/tools/igvmmeasure/src/igvm_measure.rs
+@@ -58 +58 @@ pub enum KvmCheckError {
+-    InvalidVmsaCount,
++    InvalidVmsaVpIndex(u32, u16),
+@@ -67 +67 @@ impl std::fmt::Display for KvmCheckError {
+-            KvmCheckError::InvalidVmsaCount => {
++            KvmCheckError::InvalidVmsaVpIndex(expected, actual) => {
+@@ -70,3 +70,2 @@ impl std::fmt::Display for KvmCheckError {
+-                    "More than one VMSA has been provided \
+-                    in the IGVM file. QEMU/KVM only supports setting of the \
+-                    VMSA for the first virtual CPU."
++                    "VMSA VP index {actual} is out of order; expected contiguous \
++                    VP index {expected}."
+@@ -97,7 +96,6 @@ impl std::fmt::Display for KvmCheckError {
+-                    "The VMSA must be the final page \
+-                    directive in the IGVM file. \
+-                    This is because QEMU/KVM measures the VMSA page \
+-                    when the measurement is finalized and not in the \
+-                    order specified in the IGVM file. Make sure your \
+-                    IGVM file places the VMSA directive after any other \
+-                    measured or unmeasured page directives."
++                    "VMSAs must form the final page-directive suffix in the \
++                    IGVM file. This is because QEMU/KVM measures all VMSA pages \
++                    when the measurement is finalized and not in the order \
++                    specified in the IGVM file. Make sure your IGVM file places \
++                    every VMSA directive after all other measured or unmeasured \
++                    page directives."
+@@ -234,0 +233,5 @@ impl IgvmMeasure {
++                        if self.check_kvm && (self.vmsa_count > 0) {
++                            return Err(
++                                IgvmMeasureError::from(KvmCheckError::InvalidVmsaOrder).into()
++                            );
++                        }
+@@ -257 +260 @@ impl IgvmMeasure {
+-                    vp_index: _vp_index,
++                    vp_index,
+@@ -260 +263 @@ impl IgvmMeasure {
+-                    self.measure_vmsa(&mut ctx, *gpa, *compatibility_mask, vmsa)?;
++                    self.measure_vmsa(&mut ctx, *gpa, *compatibility_mask, *vp_index, vmsa)?;
+@@ -391 +394 @@ impl IgvmMeasure {
+-    fn check_vmsa(&self, gpa: u64, vmsa: &SevVmsa) -> Result<(), KvmCheckError> {
++    fn check_vmsa(&self, gpa: u64, vp_index: u16, vmsa: &SevVmsa) -> Result<(), KvmCheckError> {
+@@ -393,2 +396,2 @@ impl IgvmMeasure {
+-            if self.vmsa_count > 0 {
+-                return Err(KvmCheckError::InvalidVmsaCount);
++            if u32::from(vp_index) != self.vmsa_count {
++                return Err(KvmCheckError::InvalidVmsaVpIndex(self.vmsa_count, vp_index));
+@@ -411,0 +415 @@ impl IgvmMeasure {
++        vp_index: u16,
+@@ -414 +418 @@ impl IgvmMeasure {
+-        self.check_vmsa(gpa, vmsa)?;
++        self.check_vmsa(gpa, vp_index, vmsa)?;
+@@ -416 +420,14 @@ impl IgvmMeasure {
+-        let mut vmsa_page = vmsa.as_bytes().to_vec();
++        let mut normalized_vmsa = *vmsa;
++        if self.check_kvm {
++            /*
++             * QEMU passes the IGVM VMSA through KVM CPU state before SNP
++             * launch finalization. KVM's svm_set_cr4() preserves host CR4.MCE
++             * in the measured VMSA, and RFLAGS bit 1 is architecturally fixed.
++             */
++            const CR4_MCE: u64 = 1 << 6;
++            const RFLAGS_FIXED_BIT: u64 = 1 << 1;
++
++            normalized_vmsa.cr4 |= CR4_MCE;
++            normalized_vmsa.rflags |= RFLAGS_FIXED_BIT;
++        }
++        let mut vmsa_page = normalized_vmsa.as_bytes().to_vec();
+@@ -429,0 +447,85 @@ impl IgvmMeasure {
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use zerocopy::FromZeros;
++
++    const KVM_VMSA_GPA: u64 = 0xFFFFFFFFF000;
++
++    fn kvm_measure() -> IgvmMeasure {
++        IgvmMeasure {
++            show_progress: false,
++            check_kvm: true,
++            native_zero: false,
++            digest: vec![],
++            last_page_type: SnpPageType::None,
++            last_gpa: 0,
++            last_next_gpa: 0,
++            last_len: 0,
++            compatibility_mask: 1,
++            vmsa_count: 0,
++            id_block_ld: None,
++            platform: IgvmPlatformType::SEV_SNP,
++        }
++    }
++
++    fn valid_vmsa() -> SevVmsa {
++        let mut vmsa = SevVmsa::new_zeroed();
++        vmsa.cr0 = 0x30;
++        vmsa
++    }
++
++    #[test]
++    fn kvm_check_requires_contiguous_vp_indexes() {
++        let mut measure = kvm_measure();
++        let vmsa = valid_vmsa();
++
++        assert!(measure.check_vmsa(KVM_VMSA_GPA, 0, &vmsa).is_ok());
++        measure.vmsa_count = 1;
++        assert!(measure.check_vmsa(KVM_VMSA_GPA, 1, &vmsa).is_ok());
++        assert!(matches!(
++            measure.check_vmsa(KVM_VMSA_GPA, 2, &vmsa),
++            Err(KvmCheckError::InvalidVmsaVpIndex(1, 2))
++        ));
++    }
++
++    #[test]
++    fn kvm_check_rejects_invalid_gpa_and_cr0() {
++        let mut vmsa = valid_vmsa();
++        let measure = kvm_measure();
++
++        assert!(matches!(
++            measure.check_vmsa(0, 0, &vmsa),
++            Err(KvmCheckError::InvalidVmsaGpa(0))
++        ));
++        vmsa.cr0 = 0;
++        assert!(matches!(
++            measure.check_vmsa(KVM_VMSA_GPA, 0, &vmsa),
++            Err(KvmCheckError::InvalidVmsaCr0(0))
++        ));
++    }
++
++    #[test]
++    fn kvm_measurement_normalizes_typed_vmsa_fields() {
++        let mut measure = kvm_measure();
++        let mut ctx = IgvmMeasureContext::default();
++        let vmsa = valid_vmsa();
++
++        measure
++            .measure_vmsa(&mut ctx, KVM_VMSA_GPA, 1, 0, &vmsa)
++            .unwrap();
++
++        let mut normalized = vmsa;
++        normalized.cr4 |= 1 << 6;
++        normalized.rflags |= 1 << 1;
++        let mut normalized_page = normalized.as_bytes().to_vec();
++        normalized_page.resize(PAGE_SIZE_4K as usize, 0);
++        let expected = PageInfo::new_vmsa_page([0; 48], KVM_VMSA_GPA, &normalized_page)
++            .update_hash();
++
++        assert_eq!(ctx.digest_snp, expected);
++        assert_eq!(measure.vmsa_count, 1);
++        assert_eq!(vmsa.cr4, 0);
++        assert_eq!(vmsa.rflags, 0);
++    }
++}

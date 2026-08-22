@@ -64,6 +64,16 @@ func newTruncationTestProvider(baseURL string) *AnthropicProvider {
 	}, truncationTestLogger{})
 }
 
+func TestAnthropicProviderAppliesBufferedResponseCapToBothClients(t *testing.T) {
+	const responseCap = 123456
+	provider := NewAnthropicProvider(&schemas.ProviderConfig{
+		NetworkConfig: schemas.NetworkConfig{MaxResponseBodySize: responseCap},
+	}, truncationTestLogger{})
+	if provider.client.MaxResponseBodySize != responseCap || provider.streamingClient.MaxResponseBodySize != responseCap {
+		t.Fatalf("response cap did not reach both clients: unary=%d stream=%d", provider.client.MaxResponseBodySize, provider.streamingClient.MaxResponseBodySize)
+	}
+}
+
 func truncationPassthroughPostHook(_ *schemas.BifrostContext, resp *schemas.BifrostResponse, err *schemas.BifrostError) (*schemas.BifrostResponse, *schemas.BifrostError) {
 	return resp, err
 }
@@ -116,8 +126,20 @@ func truncationChatRequest() *schemas.BifrostChatRequest {
 	}
 }
 
+func truncationResponsesRequest() *schemas.BifrostResponsesRequest {
+	return &schemas.BifrostResponsesRequest{
+		Provider: schemas.Anthropic,
+		Model:    "claude-repro",
+		Input: []schemas.ResponsesMessage{{
+			Type:    schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+			Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+			Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hi")},
+		}},
+	}
+}
+
 const anthropicMessageStart = "event: message_start\n" +
-	`data: {"type":"message_start","message":{"id":"msg_repro","type":"message","role":"assistant","model":"claude-repro","content":[],"usage":{"input_tokens":5,"output_tokens":0}}}` + "\n\n" +
+	`data: {"type":"message_start","message":{"id":"msg_repro","type":"message","role":"assistant","model":"claude-repro","content":[],"usage":{"input_tokens":5,"output_tokens":0,"service_tier":"standard","inference_geo":"us"}}}` + "\n\n" +
 	"event: content_block_start\n" +
 	`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n"
 
@@ -131,7 +153,7 @@ const anthropicTextDelta = "event: content_block_delta\n" +
 const anthropicMessageStop = "event: content_block_stop\n" +
 	`data: {"type":"content_block_stop","index":0}` + "\n\n" +
 	"event: message_delta\n" +
-	`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}` + "\n\n" +
+	`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3,"speed":"fast"}}` + "\n\n" +
 	"event: message_stop\n" +
 	`data: {"type":"message_stop"}` + "\n\n"
 
@@ -232,6 +254,19 @@ func TestAnthropicChatStreamCompleteUnaffected(t *testing.T) {
 			t.Fatalf("chunk %d unexpectedly carried an error: %+v", i, chunk.BifrostError)
 		}
 	}
+	first := chunks[0].BifrostChatResponse
+	if first == nil {
+		t.Fatalf("message_start must produce the first chat chunk, got %+v", chunks[0])
+	}
+	if first.Model != "claude-repro" {
+		t.Fatalf("message_start model = %q, want claude-repro", first.Model)
+	}
+	if first.ServiceTier == nil || *first.ServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("message_start service tier = %v, want default", first.ServiceTier)
+	}
+	if first.InferenceGeo == nil || *first.InferenceGeo != "us" {
+		t.Fatalf("message_start inference geo = %v, want us", first.InferenceGeo)
+	}
 	// A plain text delta is also a non-nil BifrostChatResponse, so identity has to be
 	// checked on properties only the synthesized terminal chunk carries: usage,
 	// a finish reason, and an empty delta.
@@ -241,6 +276,18 @@ func TestAnthropicChatStreamCompleteUnaffected(t *testing.T) {
 	}
 	if final.Usage == nil {
 		t.Fatal("terminal chunk must carry the accumulated usage; it is the only chunk the cost calculation can bill on")
+	}
+	if final.Model != "claude-repro" {
+		t.Fatalf("terminal model = %q, want claude-repro", final.Model)
+	}
+	if final.ServiceTier == nil || *final.ServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("terminal service tier = %v, want default", final.ServiceTier)
+	}
+	if final.Speed == nil || *final.Speed != "fast" {
+		t.Fatalf("terminal speed = %v, want fast", final.Speed)
+	}
+	if final.InferenceGeo == nil || *final.InferenceGeo != "us" {
+		t.Fatalf("terminal inference geo = %v, want us", final.InferenceGeo)
 	}
 	// message_start reports input_tokens 5, message_delta reports a cumulative
 	// output_tokens 3 (https://platform.claude.com/docs/en/build-with-claude/streaming).
@@ -267,6 +314,67 @@ func TestAnthropicChatStreamCompleteUnaffected(t *testing.T) {
 	// The content that arrived mid-stream is still expected to have been forwarded.
 	if !chunksContainContent(chunks[:len(chunks)-1], anthropicPartialText) {
 		t.Errorf("expected an earlier chunk carrying %q", anthropicPartialText)
+	}
+}
+
+func TestAnthropicResponsesStreamForwardsStartAndTerminalExecutionMetadata(t *testing.T) {
+	server := anthropicSSEServer(t, anthropicMessageStart+anthropicTextDelta+anthropicMessageStop, false)
+	defer server.Close()
+
+	provider := newTruncationTestProvider(server.URL)
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ResponsesStream(ctx, truncationPassthroughPostHook, nil,
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationResponsesRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+
+	chunks := collectTruncationChunks(t, stream)
+	if len(chunks) == 0 {
+		t.Fatal("expected chunks from a well-formed Responses stream")
+	}
+	var created, completed *schemas.BifrostResponsesResponse
+	for i, chunk := range chunks {
+		if chunk.BifrostError != nil {
+			t.Fatalf("chunk %d unexpectedly carried an error: %+v", i, chunk.BifrostError)
+		}
+		response := chunk.BifrostResponsesStreamResponse
+		if response == nil || response.Response == nil {
+			continue
+		}
+		switch response.Type {
+		case schemas.ResponsesStreamResponseTypeCreated:
+			created = response.Response
+		case schemas.ResponsesStreamResponseTypeCompleted:
+			completed = response.Response
+		}
+	}
+	if created == nil {
+		t.Fatal("stream did not emit response.created")
+	}
+	if created.Model != "claude-repro" {
+		t.Fatalf("response.created model = %q, want claude-repro", created.Model)
+	}
+	if created.ServiceTier == nil || *created.ServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("response.created service tier = %v, want default", created.ServiceTier)
+	}
+	if created.InferenceGeo == nil || *created.InferenceGeo != "us" {
+		t.Fatalf("response.created inference geo = %v, want us", created.InferenceGeo)
+	}
+	if completed == nil {
+		t.Fatal("stream did not emit response.completed")
+	}
+	if completed.Model != "claude-repro" {
+		t.Fatalf("response.completed model = %q, want claude-repro", completed.Model)
+	}
+	if completed.ServiceTier == nil || *completed.ServiceTier != schemas.BifrostServiceTierDefault {
+		t.Fatalf("response.completed service tier = %v, want default", completed.ServiceTier)
+	}
+	if completed.Speed == nil || *completed.Speed != "fast" {
+		t.Fatalf("response.completed speed = %v, want fast", completed.Speed)
+	}
+	if completed.InferenceGeo == nil || *completed.InferenceGeo != "us" {
+		t.Fatalf("response.completed inference geo = %v, want us", completed.InferenceGeo)
 	}
 }
 
@@ -349,17 +457,8 @@ func TestAnthropicResponsesStreamTruncatedBillsCachedTokens(t *testing.T) {
 
 	provider := newTruncationTestProvider(server.URL)
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	request := &schemas.BifrostResponsesRequest{
-		Provider: schemas.Anthropic,
-		Model:    "claude-repro",
-		Input: []schemas.ResponsesMessage{{
-			Type:    schemas.Ptr(schemas.ResponsesMessageTypeMessage),
-			Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
-			Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hi")},
-		}},
-	}
 	stream, bifrostErr := provider.ResponsesStream(ctx, truncationPassthroughPostHook, nil,
-		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, request)
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationResponsesRequest())
 	if bifrostErr != nil {
 		t.Fatalf("stream setup failed: %v", bifrostErr)
 	}

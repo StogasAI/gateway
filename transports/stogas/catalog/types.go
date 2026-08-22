@@ -35,24 +35,38 @@ type Deployment struct {
 	ReasoningEfforts      []string
 	ReasoningMaxTokens    *ReasoningMaxTokens
 	ReasoningSupported    bool
-	TEE                   *TEE
+	DataHandling          DataHandling
 	snapshot              *snapshot
 }
 
 type TEE struct {
+	Attestation           string `json:"attestation"`
 	ExternalNetworkEgress string `json:"externalNetworkEgress"`
-	Mechanism             string `json:"mechanism"`
-	Status                string `json:"status"`
+	Technology            string `json:"technology"`
+}
+
+type DataHandling struct {
+	ProcessingLocation string `json:"processingLocation"`
+	StorageLocation    string `json:"storageLocation"`
+	EndToEndEncrypted  bool   `json:"endToEndEncrypted"`
+	RetentionDays      *int   `json:"retentionDays"`
+	TrainingUse        bool   `json:"trainingUse"`
+	ZeroDataRetention  bool   `json:"zeroDataRetention"`
+	TEE                *TEE   `json:"tee"`
 }
 
 type Upstream struct {
-	Model         string
-	ChuteID       string
-	GPUCount      int
-	InferenceGeo  string
-	ReasoningMode string
-	ServiceTier   string
-	Speed         string
+	Model          string
+	ModelFormat    string
+	ModelVersion   string
+	ChuteID        string
+	GPUCount       int
+	InferenceGeo   string
+	ReasoningMode  string
+	ServiceTier    string
+	Speed          string
+	Hosting        string
+	DeploymentType string
 }
 
 type ReasoningMaxTokens struct {
@@ -75,8 +89,9 @@ type snapshot struct {
 }
 
 type compiledCatalog struct {
-	Schema string        `json:"schema"`
-	Graph  compiledGraph `json:"graph"`
+	Schema       string        `json:"schema"`
+	PublicDigest string        `json:"publicDigest"`
+	Graph        compiledGraph `json:"graph"`
 }
 
 type compiledGraph struct {
@@ -93,21 +108,26 @@ type compiledAuthor struct {
 }
 
 type compiledDeployment struct {
-	Aliases               []string            `json:"aliases"`
-	Capabilities          Capabilities        `json:"capabilities"`
-	ContextWindowTokens   int                 `json:"contextWindowTokens"`
-	InputModalities       []string            `json:"inputModalities"`
-	MaxOutputTokens       int                 `json:"maxOutputTokens"`
-	ModelID               string              `json:"modelId"`
-	OutputModalities      []string            `json:"outputModalities"`
-	Pricing               Pricing             `json:"pricing"`
-	ReasoningAvailability string              `json:"reasoningAvailability"`
-	ReasoningEfforts      []string            `json:"reasoningEfforts"`
-	ReasoningMaxTokens    *ReasoningMaxTokens `json:"reasoningMaxTokens"`
-	DeprecationDate       *string             `json:"deprecationDate"`
-	RouteIDs              []string            `json:"routeIds"`
-	TEE                   *TEE                `json:"tee,omitempty"`
-	Upstream              compiledUpstream    `json:"upstream"`
+	Aliases               []string                                   `json:"aliases"`
+	Capabilities          Capabilities                               `json:"capabilities"`
+	ContextWindowTokens   int                                        `json:"contextWindowTokens"`
+	InputModalities       []string                                   `json:"inputModalities"`
+	MaxOutputTokens       int                                        `json:"maxOutputTokens"`
+	ModelID               string                                     `json:"modelId"`
+	OutputModalities      []string                                   `json:"outputModalities"`
+	Pricing               Pricing                                    `json:"pricing"`
+	ReasoningAvailability string                                     `json:"reasoningAvailability"`
+	ReasoningEfforts      []string                                   `json:"reasoningEfforts"`
+	ReasoningMaxTokens    *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
+	RouteOverrides        map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
+	DeprecationDate       *string                                    `json:"deprecationDate"`
+	RouteIDs              []string                                   `json:"routeIds"`
+	DataHandlingByRoute   map[string]DataHandling                    `json:"dataHandlingByRoute"`
+	Upstream              compiledUpstream                           `json:"upstream"`
+}
+
+type compiledDeploymentRouteOverride struct {
+	ReasoningEfforts []string `json:"reasoningEfforts"`
 }
 
 type Capabilities struct {
@@ -124,17 +144,20 @@ type Capabilities struct {
 	SystemMessages          bool     `json:"systemMessages"`
 	ToolChoice              bool     `json:"toolChoice"`
 	URLContext              bool     `json:"urlContext"`
-	WebSearch               bool     `json:"webSearch"`
 }
 
 type compiledUpstream struct {
-	Model         string `json:"model"`
-	ChuteID       string `json:"chuteId,omitempty"`
-	GPUCount      int    `json:"gpuCount,omitempty"`
-	InferenceGeo  string `json:"inferenceGeo,omitempty"`
-	ReasoningMode string `json:"reasoningMode,omitempty"`
-	ServiceTier   string `json:"serviceTier,omitempty"`
-	Speed         string `json:"speed,omitempty"`
+	Model          string `json:"model"`
+	ModelFormat    string `json:"modelFormat,omitempty"`
+	ModelVersion   string `json:"modelVersion,omitempty"`
+	ChuteID        string `json:"chuteId,omitempty"`
+	GPUCount       int    `json:"gpuCount,omitempty"`
+	InferenceGeo   string `json:"inferenceGeo,omitempty"`
+	ReasoningMode  string `json:"reasoningMode,omitempty"`
+	ServiceTier    string `json:"serviceTier,omitempty"`
+	Speed          string `json:"speed,omitempty"`
+	Hosting        string `json:"hosting,omitempty"`
+	DeploymentType string `json:"deploymentType,omitempty"`
 }
 
 type compiledModel struct {
@@ -159,13 +182,6 @@ type compiledRoute struct {
 	DeploymentIDs []string `json:"-"`
 	Interfaces    []string `json:"interfaces"`
 	ProviderID    string   `json:"providerId"`
-}
-
-type signedEnvelope struct {
-	Schema    string          `json:"schema"`
-	KeyID     string          `json:"keyId"`
-	Manifest  releaseManifest `json:"manifest"`
-	Signature string          `json:"signature"`
 }
 
 type releaseManifest struct {

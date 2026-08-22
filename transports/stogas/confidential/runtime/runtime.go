@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -74,11 +74,12 @@ type ControlDiagnostics struct {
 	LastDurationMS      int64      `json:"last_duration_ms"`
 	LastFailureAt       *time.Time `json:"last_failure_at"`
 	LastFailureClass    string     `json:"last_failure_class,omitempty"`
-	LastFailureMessage  string     `json:"last_failure_message,omitempty"`
 	LastSuccessAt       *time.Time `json:"last_success_at"`
 }
 
-var waitForEntropy = func(ctx context.Context, timeout time.Duration) error {
+type entropyWaiter func(context.Context, time.Duration) error
+
+func waitForSystemEntropy(ctx context.Context, timeout time.Duration) error {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
@@ -95,6 +96,10 @@ const maxConsecutiveQuoteRefreshFailures = 2
 const runtimeDependencyTimeout = time.Second
 
 func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
+	return start(ctx, config, waitForSystemEntropy)
+}
+
+func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy entropyWaiter) (*Runtime, error) {
 	if !config.Enabled {
 		return nil, nil
 	}
@@ -257,68 +262,6 @@ func (r *Runtime) ShutdownRequested() <-chan struct{} {
 	return r.Control.ShutdownRequested()
 }
 
-func (r *Runtime) CreateCertificateCSR(input identity.CSRInput) ([]byte, error) {
-	if r == nil || r.Certs == nil {
-		return nil, errors.New("confidential certificate store is not initialized")
-	}
-	return r.Certs.CreateCSR(input)
-}
-
-func (r *Runtime) StageRenewedCertificate(ctx context.Context, chain []byte) (identity.CertificateState, error) {
-	if r == nil || r.Certs == nil {
-		return identity.CertificateState{}, errors.New("confidential certificate store is not initialized")
-	}
-	state, err := r.Certs.StageRenewedChain(chain)
-	if err != nil {
-		return identity.CertificateState{}, err
-	}
-	if err := r.refreshQuoteAfterCertificateChange(ctx); err != nil {
-		return state, err
-	}
-	return state, nil
-}
-
-func (r *Runtime) ActivateStagedCertificate(ctx context.Context, hash string) (identity.CertificateState, error) {
-	if r == nil || r.Certs == nil {
-		return identity.CertificateState{}, errors.New("confidential certificate store is not initialized")
-	}
-	state, err := r.Certs.ActivateStaged(hash)
-	if err != nil {
-		return identity.CertificateState{}, err
-	}
-	if err := r.refreshQuoteAfterCertificateChange(ctx); err != nil {
-		return state, err
-	}
-	return state, nil
-}
-
-func (r *Runtime) PruneAcceptedCertificates(ctx context.Context) (identity.CertificateState, error) {
-	if r == nil || r.Certs == nil {
-		return identity.CertificateState{}, errors.New("confidential certificate store is not initialized")
-	}
-	state, err := r.Certs.PruneAcceptedToActive()
-	if err != nil {
-		return identity.CertificateState{}, err
-	}
-	if err := r.refreshQuoteAfterCertificateChange(ctx); err != nil {
-		return state, err
-	}
-	return state, nil
-}
-
-func (r *Runtime) refreshQuoteAfterCertificateChange(ctx context.Context) error {
-	if r == nil || r.Quotes == nil {
-		return errors.New("confidential quote manager is not initialized")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := r.Quotes.Refresh(ctx); err != nil {
-		return fmt.Errorf("refresh quote after certificate state change: %w", err)
-	}
-	return nil
-}
-
 func (l *ControlLoop) Readiness() readiness.Result {
 	if l == nil {
 		return readiness.Result{Ready: false, Reasons: []string{"control loop is not configured"}}
@@ -365,12 +308,6 @@ func (l *ControlLoop) NodeID() string {
 	return l.nodeID
 }
 
-func (l *ControlLoop) LastHeartbeatError() error {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.lastHeartbeatError
-}
-
 func (l *ControlLoop) Diagnostics() *ControlDiagnostics {
 	if l == nil {
 		return nil
@@ -387,21 +324,8 @@ func (l *ControlLoop) Diagnostics() *ControlDiagnostics {
 	}
 	if l.lastHeartbeatError != nil {
 		result.LastFailureClass = heartbeatFailureClass(l.lastHeartbeatError)
-		result.LastFailureMessage = lastErrorString(l.lastHeartbeatError)
 	}
 	return result
-}
-
-func (l *ControlLoop) LastSecretError() error {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.lastSecretError
-}
-
-func (l *ControlLoop) LastCertificateError() error {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.lastCertificateError
 }
 
 func (l *ControlLoop) runHeartbeats(ctx context.Context) {
@@ -413,7 +337,14 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := l.sendScheduledHeartbeat(ctx); err != nil {
-				log.Printf("stogas confidential heartbeat failed after retry: %v", err)
+				payload, _ := json.Marshal(map[string]string{
+					"environment": l.config.Environment,
+					"errorType":   "Error",
+					"event":       "confidential_heartbeat_failed",
+					"reasonCode":  heartbeatFailureClass(err),
+					"severity":    "error",
+				})
+				_, _ = fmt.Fprintln(os.Stderr, string(payload))
 			}
 		}
 	}
@@ -508,9 +439,9 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 	input := provision.HeartbeatInput{
 		CertExpiresAt: l.certs.State().ExpiresAt,
 		Health: provision.NodeHealth{
-			LastQuoteError: lastErrorString(l.quotes.LastError()),
-			Ready:          l.localReadinessResultAt(time.Now()).Ready,
-			SecretVersions: l.secrets.Versions(),
+			LastQuoteFailureClass: quoteFailureClass(l.quotes.LastError()),
+			Ready:                 l.localReadinessResultAt(time.Now()).Ready,
+			SecretVersions:        l.secrets.Versions(),
 		},
 		NodeID:     nodeID,
 		ObservedAt: time.Now().UTC(),
@@ -751,18 +682,6 @@ func deriveCandidateNodeID(material *identity.Material) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func lastErrorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	const maxHeartbeatErrorCharacters = 500
-	message := []rune(err.Error())
-	if len(message) <= maxHeartbeatErrorCharacters {
-		return string(message)
-	}
-	return string(message[:maxHeartbeatErrorCharacters])
-}
-
 func heartbeatFailureClass(err error) string {
 	if err == nil {
 		return ""
@@ -787,6 +706,19 @@ func heartbeatFailureClass(err error) string {
 	default:
 		return "transport"
 	}
+}
+
+func quoteFailureClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	return "quote_refresh_failed"
 }
 
 func timePointer(value time.Time) *time.Time {

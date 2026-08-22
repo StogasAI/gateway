@@ -57,11 +57,7 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	if object.Schema != proof.DomainV1 {
 		t.Fatalf("proof identity context mismatch: %#v", object)
 	}
-	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestBody:  input.RequestBody,
-		ResponseBody: input.ResponseBody,
-		Metadata:     input.Metadata,
-	}, object.Proof.Signature) {
+	if !proof.VerifyInput(publicKey, proof.Input(input), object.Proof.Signature) {
 		t.Fatal("response proof did not bind its complete receipt")
 	}
 }

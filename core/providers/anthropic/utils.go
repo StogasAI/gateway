@@ -284,9 +284,8 @@ func stripUnsupportedAnthropicFields(req *AnthropicMessageRequest, provider sche
 	if len(req.MCPServers) > 0 && !features.MCP {
 		req.MCPServers = nil
 	}
-	// Speed is both provider-gated (FastMode flag) and model-gated
-	// (Opus 4.6 only per SupportsFastMode). Strip if either gate fails —
-	// Anthropic's API rejects speed:"fast" on non-Opus-4.6 models with a 400.
+	// Speed is both provider-gated (FastMode flag) and model-gated. Strip it if
+	// either gate fails. Only Opus 4.8 and Opus 5 currently support fast mode.
 	if req.Speed != nil && (!features.FastMode || !SupportsFastMode(model)) {
 		req.Speed = nil
 	}
@@ -853,8 +852,7 @@ func IsOpus5Plus(model string) bool {
 //     ("Claude Fable 5 and Claude Mythos 5 use adaptive thinking, which is
 //     always on ... thinking: {type: "disabled"} is rejected.")
 //   - https://platform.claude.com/docs/en/build-with-claude/fast-mode
-//     (fast mode is NOT supported on Fable — Opus 4.6/4.7/4.8 only; this is why
-//     Fable is kept separate from IsOpus47Plus, which gates SupportsFastMode).
+//     (fast mode is NOT supported on Fable; only Opus 4.8 and Opus 5 support it).
 func IsFableFamily(model string) bool {
 	m := strings.ToLower(model)
 	return strings.Contains(m, "fable") || strings.Contains(m, "mythos")
@@ -875,8 +873,8 @@ func IsSonnet5Plus(model string) bool {
 // extended thinking is removed (adaptive is the only thinking-on mode) and
 // temperature/top_p/top_k are rejected with a 400. Covers Opus 4.7+, Sonnet 5+,
 // and the Fable/Mythos family. Use this — not IsOpus47Plus — for the thinking and
-// sampling-parameter gates so Fable is handled correctly. (Fast mode is gated
-// on IsOpus47Plus instead, since Fable does not support speed:"fast".)
+// sampling-parameter gates so Fable is handled correctly. Fast mode has its own
+// narrower model gate.
 func IsAdaptiveOnlyThinkingModel(model string) bool {
 	return IsOpus47Plus(model) || IsSonnet5Plus(model) || IsFableFamily(model)
 }
@@ -952,10 +950,9 @@ func appendToSystemContent(existing *AnthropicContent, newContent AnthropicConte
 
 // SupportsMidConversationSystem returns true if the provider+model combination
 // supports role:"system" entries inside the messages array (mid-conversation
-// system messages). Available on the Anthropic API only — not on Bedrock or
-// Vertex. Supported on Claude Opus 4.8+ (including Opus 5) and the Claude
-// Fable/Mythos family (Fable post-dates Opus 4.8; the public doc lists Opus 4.8
-// but Fable supports it as well). No beta header is required.
+// system messages). This converter currently emits them only on the native
+// Anthropic API. Supported models are Claude Opus 4.8+, Fable 5, Mythos 5, and
+// Sonnet 5. No beta header is required.
 //
 // Source: https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages
 func SupportsMidConversationSystem(provider schemas.ModelProvider, model string) bool {
@@ -963,7 +960,7 @@ func SupportsMidConversationSystem(provider schemas.ModelProvider, model string)
 		return false
 	}
 	m := strings.ToLower(model)
-	if IsFableFamily(m) || IsOpus5Plus(m) {
+	if IsFableFamily(m) || IsOpus5Plus(m) || IsSonnet5Plus(m) {
 		return true
 	}
 	return strings.Contains(m, "opus") &&
@@ -1245,8 +1242,8 @@ func AddMissingBetaHeadersToContext(ctx *schemas.BifrostContext, req *AnthropicM
 		}
 	}
 	// Check for fast mode. Only add the beta header when both the provider
-	// supports fast mode AND the model does (Opus 4.6 only per
-	// SupportsFastMode); otherwise sending the header guarantees a 400.
+	// supports fast mode AND the model does; otherwise sending the header can
+	// cause an upstream error.
 	if req.Speed != nil {
 		if (!hasProvider || features.FastMode) && SupportsFastMode(schemas.ResolveCanonicalModelForProvider(ctx, provider, req.Model)) {
 			headers = appendUniqueHeader(headers, AnthropicFastModeBetaHeader)

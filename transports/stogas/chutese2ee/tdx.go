@@ -82,7 +82,7 @@ func newCollateralGetter() *collateralGetter {
 			},
 			Timeout: collateralHTTPTimeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return errors.New("Intel collateral redirects are not permitted")
+				return errors.New("disallowed Intel collateral redirect")
 			},
 		},
 		cache: make(map[string]collateralEntry),
@@ -110,7 +110,7 @@ func (g *collateralGetter) get(ctx context.Context, rawURL string) (map[string][
 			return nil, errors.New("invalid Intel collateral URL")
 		}
 		if _, allowed := intelCollateralHosts[parsed.Hostname()]; !allowed {
-			return nil, errors.New("Intel collateral URL host is not permitted")
+			return nil, errors.New("disallowed Intel collateral URL host")
 		}
 		requestContext, cancel := context.WithTimeout(context.Background(), collateralHTTPTimeout)
 		defer cancel()
@@ -140,43 +140,39 @@ func (g *collateralGetter) get(ctx context.Context, rawURL string) (map[string][
 }
 
 func (g *collateralGetter) fetch(ctx context.Context, rawURL string) (map[string][]string, []byte, error) {
-	var lastErr error
-	for attempt := 0; attempt < maximumSafeReadAttempts; attempt++ {
+	var headers map[string][]string
+	var body []byte
+	err := retryChutesRead(ctx, false, 2*time.Second, func() error {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
-			return nil, nil, err
+			return err
 		}
 		response, err := g.client.Do(request)
-		if err == nil {
-			body, readErr := io.ReadAll(io.LimitReader(response.Body, maxCollateralSize+1))
-			closeErr := response.Body.Close()
-			switch {
-			case readErr != nil:
-				err = readErr
-			case closeErr != nil:
-				err = closeErr
-			case len(body) > maxCollateralSize:
-				return nil, nil, errors.New("Intel collateral response is too large")
-			case response.StatusCode == http.StatusOK:
-				return cloneHeaders(response.Header), body, nil
-			default:
-				err = &httpStatusError{
-					Operation:  "GET Intel collateral",
-					StatusCode: response.StatusCode,
-					RetryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
-				}
+		if err != nil {
+			return err
+		}
+		candidate, readErr := io.ReadAll(io.LimitReader(response.Body, maxCollateralSize+1))
+		closeErr := response.Body.Close()
+		switch {
+		case readErr != nil:
+			return readErr
+		case closeErr != nil:
+			return closeErr
+		case len(candidate) > maxCollateralSize:
+			return errors.New("oversized Intel collateral response")
+		case response.StatusCode == http.StatusOK:
+			headers = cloneHeaders(response.Header)
+			body = candidate
+			return nil
+		default:
+			return &httpStatusError{
+				Operation:  "GET Intel collateral",
+				StatusCode: response.StatusCode,
+				RetryAfter: parseRetryAfter(response.Header.Get("Retry-After"), time.Now()),
 			}
 		}
-		lastErr = err
-		if attempt+1 >= maximumSafeReadAttempts || !retryableChutesRead(err, false) {
-			break
-		}
-		delay, ok := chutesReadRetryDelay(err, attempt, 2*time.Second)
-		if !ok || !waitForChutesRetry(ctx, delay) {
-			break
-		}
-	}
-	return nil, nil, lastErr
+	})
+	return headers, body, err
 }
 
 func (g *collateralGetter) store(rawURL string, fresh collateralEntry, now time.Time) {

@@ -20,25 +20,18 @@ const (
 	QuicknetLatestV2Path      = "/v2/beacons/quicknet/rounds/latest"
 	QuicknetLatestV1Path      = "/" + reportdata.QuicknetChainHash + "/public/latest"
 	QuicknetLatestPath        = QuicknetLatestV2Path
-	DefaultQuicknetLatestURL  = "https://api.drand.sh" + QuicknetLatestV2Path
 	defaultHTTPRequestTimeout = 2 * time.Second
 	defaultHTTPFetchTimeout   = 4 * time.Second
 )
 
-var DefaultQuicknetRelayURLs = []string{
-	"https://api.drand.sh",
-	"https://api2.drand.sh",
-	"https://api3.drand.sh",
-	"https://drand.cloudflare.com",
-	"https://api.drand.secureweb3.com:6875",
-}
-
-var DefaultQuicknetLatestURLs = []string{
-	"https://api.drand.sh" + QuicknetLatestV2Path,
-	"https://api2.drand.sh" + QuicknetLatestV2Path,
-	"https://api3.drand.sh" + QuicknetLatestV2Path,
-	"https://drand.cloudflare.com" + QuicknetLatestV1Path,
-	"https://api.drand.secureweb3.com:6875" + QuicknetLatestV1Path,
+func defaultQuicknetLatestURLs() []string {
+	return []string{
+		"https://api.drand.sh" + QuicknetLatestV2Path,
+		"https://api2.drand.sh" + QuicknetLatestV2Path,
+		"https://api3.drand.sh" + QuicknetLatestV2Path,
+		"https://drand.cloudflare.com" + QuicknetLatestV1Path,
+		"https://api.drand.secureweb3.com:6875" + QuicknetLatestV1Path,
+	}
 }
 
 type Fetcher interface {
@@ -72,10 +65,14 @@ func NewHTTPFetcher(client *http.Client, url string) *HTTPFetcher {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	if strings.TrimSpace(url) == "" {
-		return &HTTPFetcher{client: client, urls: append([]string(nil), DefaultQuicknetLatestURLs...)}
+	safeClient := *client
+	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return errors.New("drand redirects are not permitted")
 	}
-	return &HTTPFetcher{client: client, urls: normalizeQuicknetURLs(url)}
+	if strings.TrimSpace(url) == "" {
+		return &HTTPFetcher{client: &safeClient, urls: defaultQuicknetLatestURLs()}
+	}
+	return &HTTPFetcher{client: &safeClient, urls: normalizeQuicknetURLs(url)}
 }
 
 func (f *HTTPFetcher) Fetch(ctx context.Context) (reportdata.Drand, error) {
@@ -238,12 +235,6 @@ func (s *Source) Refresh(ctx context.Context) error {
 	s.lastErr = nil
 	s.mu.Unlock()
 	return nil
-}
-
-func (s *Source) LastError() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lastErr
 }
 
 func Validate(beacon reportdata.Drand) error {

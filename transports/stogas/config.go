@@ -20,8 +20,9 @@ const (
 	defaultHost                 = "127.0.0.1"
 	defaultPort                 = "5185"
 	defaultPrivateReadinessPort = "5186"
-	defaultMaxRequestBodyMiB    = 16
+	defaultMaxRequestBodyMiB    = 128
 	maxRequestBodyMiB           = 128
+	maxProviderResponseBodySize = 64 << 20
 	defaultInfisicalSiteURL     = "https://secrets.stogas.ai"
 	defaultChutesBaseURL        = "https://llm.chutes.ai"
 	defaultFleetAPIURLLocal     = "http://127.0.0.1:5184/api/fleet"
@@ -313,10 +314,20 @@ func loadInfisicalRuntimeSecrets() {
 		siteURL = defaultInfisicalSiteURL
 	}
 
-	fmt.Printf("[stogas] Connecting to Infisical (%s)...\n", siteURL)
+	writeOperationalLog(operationalLogEvent{
+		Environment: loadRuntimeEnvironment(),
+		Event:       "infisical_auth_started",
+		Severity:    "info",
+	})
 	client := infisical.NewInfisicalClient(context.Background(), infisical.Config{SiteUrl: siteURL})
 	if _, err := client.Auth().UniversalAuthLogin(infisicalClientID, infisicalClientSecret); err != nil {
-		fmt.Printf("[stogas] Warning: Failed to authenticate with Infisical: %v\n", err)
+		writeOperationalLog(operationalLogEvent{
+			Environment: loadRuntimeEnvironment(),
+			ErrorType:   safeOperationalErrorType(err),
+			Event:       "infisical_auth_failed",
+			ReasonCode:  "authentication_failed",
+			Severity:    "error",
+		})
 		return
 	}
 
@@ -354,17 +365,25 @@ func resolveInfisicalSecret(client infisical.InfisicalClientInterface, projectID
 			lastErr = fmt.Errorf("empty secret value")
 			continue
 		}
-		fmt.Printf("[stogas] Infisical resolved %s from %s %s\n", secretName, environment, secretPath)
 		os.Setenv(secretName, res.SecretValue)
 		return
 	}
 
 	if required {
-		fmt.Printf("[stogas] Warning: Failed to retrieve required secret %s: %v\n", secretName, lastErr)
+		writeOperationalLog(operationalLogEvent{
+			Environment: loadRuntimeEnvironment(),
+			ErrorType:   safeOperationalErrorType(lastErr),
+			Event:       "infisical_secret_resolution_failed",
+			ReasonCode:  infisicalSecretFailureReason(secretName),
+			Severity:    "error",
+		})
 	}
 }
 
 func (c Config) Validate() error {
+	if err := c.validateOperationalLogging(); err != nil {
+		return err
+	}
 	if c.APIKeyPepper == "" {
 		return fmt.Errorf("API_KEY_PEPPER is required")
 	}
@@ -389,6 +408,13 @@ func (c Config) Validate() error {
 	if err := billing.ValidateDatabaseSchema(c.DatabaseSchema); err != nil {
 		return err
 	}
+	if err := validateTinybirdConfig(
+		c.TinybirdHost,
+		c.TinybirdToken,
+		c.Confidential.Environment == "local" && c.AllowPrivateProviderNetwork,
+	); err != nil {
+		return err
+	}
 	if !c.Confidential.ControlConfigured() && c.ChutesAPIKey == "" {
 		return fmt.Errorf("CHUTES_API_KEY is required")
 	}
@@ -409,6 +435,29 @@ func (c Config) Validate() error {
 	}
 	if err := c.Confidential.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c Config) validateOperationalLogging() error {
+	switch schemas.LogLevel(c.LogLevel) {
+	case schemas.LogLevelDebug, schemas.LogLevelInfo, schemas.LogLevelWarn, schemas.LogLevelError:
+	default:
+		return fmt.Errorf("unsupported log level")
+	}
+	switch schemas.LoggerOutputType(c.LogOutputStyle) {
+	case schemas.LoggerOutputTypeJSON, schemas.LoggerOutputTypePretty:
+	default:
+		return fmt.Errorf("unsupported log output style")
+	}
+	if !c.Confidential.Enabled || c.Confidential.Environment == "local" {
+		return nil
+	}
+	if schemas.LogLevel(c.LogLevel) == schemas.LogLevelDebug {
+		return fmt.Errorf("debug logging is not permitted in a non-local confidential runtime")
+	}
+	if schemas.LoggerOutputType(c.LogOutputStyle) != schemas.LoggerOutputTypeJSON {
+		return fmt.Errorf("JSON logging is required in a non-local confidential runtime")
 	}
 	return nil
 }
@@ -452,6 +501,25 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 	}
 	if strings.TrimSpace(config.ChutesAPIKey) == "" {
 		return fmt.Errorf("CHUTES_API_KEY is required before provider runtime starts")
+	}
+	return validateTinybirdConfig(
+		config.TinybirdHost,
+		config.TinybirdToken,
+		config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
+	)
+}
+
+func validateTinybirdConfig(host string, token string, allowInsecurePrivateNetwork bool) error {
+	host = strings.TrimSpace(host)
+	token = strings.TrimSpace(token)
+	if host == "" && token == "" {
+		return nil
+	}
+	if host == "" || token == "" {
+		return fmt.Errorf("TB_HOST_URL and TB_GATEWAY_REQUESTS_TOKEN must be configured together")
+	}
+	if _, err := billing.NormalizeTinybirdHost(host, allowInsecurePrivateNetwork); err != nil {
+		return fmt.Errorf("invalid TB_HOST_URL: %w", err)
 	}
 	return nil
 }
@@ -617,18 +685,6 @@ func envInt32(name string, defaultValue int32) (int32, error) {
 	return int32(value), nil
 }
 
-func envInt(name string, defaultValue int) int {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return defaultValue
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil {
-		return defaultValue
-	}
-	return value
-}
-
 func splitCSV(value string) []string {
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
@@ -651,28 +707,4 @@ func validateHashHex(name string, value string) error {
 		}
 	}
 	return nil
-}
-
-func validateChipID(name string, value string) error {
-	if len(value) != 128 {
-		return fmt.Errorf("%s must be 64-byte lowercase hex", name)
-	}
-	for _, ch := range value {
-		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') {
-			return fmt.Errorf("%s must be 64-byte lowercase hex", name)
-		}
-	}
-	return nil
-}
-
-func envDurationSeconds(name string, defaultValue int64) time.Duration {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return time.Duration(defaultValue) * time.Second
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0
-	}
-	return time.Duration(value) * time.Second
 }

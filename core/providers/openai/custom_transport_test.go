@@ -15,13 +15,17 @@ func (*markerFastHTTPTransport) RoundTrip(_ *fasthttp.HostClient, _ *fasthttp.Re
 
 func TestNewOpenAIProviderPropagatesCustomTransportToUnaryAndStreamingClients(t *testing.T) {
 	marker := &markerFastHTTPTransport{}
+	const responseCap = 123456
 	provider := NewOpenAIProvider(&schemas.ProviderConfig{
-		NetworkConfig: schemas.NetworkConfig{Transport: marker},
+		NetworkConfig: schemas.NetworkConfig{Transport: marker, MaxResponseBodySize: responseCap},
 	}, testNoopLogger{})
 	if provider.client.Transport != marker {
 		t.Fatal("unary client did not retain the custom transport")
 	}
 	if provider.streamingClient.Transport != marker {
 		t.Fatal("streaming client did not retain the custom transport")
+	}
+	if provider.client.MaxResponseBodySize != responseCap || provider.streamingClient.MaxResponseBodySize != responseCap {
+		t.Fatalf("response cap did not reach both clients: unary=%d stream=%d", provider.client.MaxResponseBodySize, provider.streamingClient.MaxResponseBodySize)
 	}
 }

@@ -159,6 +159,70 @@ func TestPrepareProviderRequestAppliesPinnedAnthropicLimitBeforeSerialization(t 
 	}
 }
 
+func TestPrepareProviderRequestUsesNativeAnthropicBodiesForAzureClaude(t *testing.T) {
+	text := "hello"
+	for _, requestType := range []schemas.RequestType{schemas.ChatCompletionRequest, schemas.ResponsesRequest} {
+		t.Run(string(requestType), func(t *testing.T) {
+			request := &schemas.BifrostRequest{RequestType: requestType}
+			if requestType == schemas.ChatCompletionRequest {
+				request.ChatRequest = &schemas.BifrostChatRequest{
+					Provider: schemas.Azure,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ChatMessage{{
+						Role:    schemas.ChatMessageRoleUser,
+						Content: &schemas.ChatMessageContent{ContentStr: &text},
+					}},
+					Params: &schemas.ChatParameters{Store: schemas.Ptr(true)},
+				}
+			} else {
+				role := schemas.ResponsesInputMessageRoleUser
+				request.ResponsesRequest = &schemas.BifrostResponsesRequest{
+					Provider: schemas.Azure,
+					Model:    "claude-sonnet-4-6",
+					Input: []schemas.ResponsesMessage{{
+						Role:    &role,
+						Content: &schemas.ResponsesMessageContent{ContentStr: &text},
+					}},
+					Params: &schemas.ResponsesParameters{Store: schemas.Ptr(true)},
+				}
+			}
+
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, requestType)
+			state := providerRequestTestState(schemas.Azure, "claude-sonnet-4-6", requestType, 128000)
+			state.Resolution.Deployment.ModelID = "claude-sonnet-4-6"
+
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+			}
+			var body []byte
+			if request.ChatRequest != nil {
+				if request.ChatRequest.Params.Store != nil || request.ChatRequest.Params.MaxCompletionTokens == nil || *request.ChatRequest.Params.MaxCompletionTokens != 128000 {
+					t.Fatalf("unexpected sanitized Azure Claude chat params: %#v", request.ChatRequest.Params)
+				}
+				body = preparedProviderBody(t, ctx, request.ChatRequest)
+			} else {
+				if request.ResponsesRequest.Params.Store != nil || request.ResponsesRequest.Params.MaxOutputTokens == nil || *request.ResponsesRequest.Params.MaxOutputTokens != 128000 {
+					t.Fatalf("unexpected sanitized Azure Claude Responses params: %#v", request.ResponsesRequest.Params)
+				}
+				body = preparedProviderBody(t, ctx, request.ResponsesRequest)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode prepared Azure Claude body: %v", err)
+			}
+			if payload["model"] != "claude-sonnet-4-6" || payload["max_tokens"] != float64(128000) {
+				t.Fatalf("Azure Claude did not use the native Messages body: %s", body)
+			}
+			for _, invalid := range []string{"max_completion_tokens", "max_output_tokens", "store"} {
+				if _, exists := payload[invalid]; exists {
+					t.Fatalf("Azure Claude body retained OpenAI field %s: %s", invalid, body)
+				}
+			}
+		})
+	}
+}
+
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
 	wrongLimit := 100000

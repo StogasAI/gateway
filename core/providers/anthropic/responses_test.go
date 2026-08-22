@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -24,6 +25,214 @@ func makeResponsesTextFormat(schemaName string) *schemas.ResponsesTextConfig {
 				Required:   []string{"color", "animal"},
 			},
 		},
+	}
+}
+
+func TestAnthropicResponsesCompletionStatusTranslation(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		stopReason     AnthropicStopReason
+		wantStatus     string
+		wantIncomplete bool
+	}{
+		{name: "end turn", stopReason: AnthropicStopReasonEndTurn, wantStatus: schemas.ResponsesResponseStatusCompleted},
+		{name: "max tokens", stopReason: AnthropicStopReasonMaxTokens, wantStatus: schemas.ResponsesResponseStatusIncomplete, wantIncomplete: true},
+		{name: "context window", stopReason: AnthropicStopReasonModelContextWindowExceeded, wantStatus: schemas.ResponsesResponseStatusIncomplete, wantIncomplete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := (&AnthropicMessageResponse{
+				ID: "msg_status", Type: "message", Role: string(AnthropicMessageRoleAssistant),
+				Model: "claude-sonnet-4-6", StopReason: tc.stopReason, Usage: &AnthropicUsage{},
+			}).ToBifrostResponsesResponse(schemas.NewBifrostContext(nil, time.Time{}))
+			if response.Object != "response" || response.Status == nil || *response.Status != tc.wantStatus {
+				t.Fatalf("translated object/status = %q/%v, want response/%s", response.Object, response.Status, tc.wantStatus)
+			}
+			if got := response.IncompleteDetails != nil; got != tc.wantIncomplete {
+				t.Fatalf("incomplete_details present = %t, want %t: %#v", got, tc.wantIncomplete, response.IncompleteDetails)
+			}
+			if tc.wantIncomplete && response.IncompleteDetails.Reason != schemas.ResponsesResponseIncompleteReasonMaxOutputTokens {
+				t.Fatalf("incomplete reason = %q", response.IncompleteDetails.Reason)
+			}
+		})
+	}
+}
+
+func TestAnthropicResponsesStreamUsesIncompleteTerminalForTokenLimit(t *testing.T) {
+	state := AcquireAnthropicResponsesStreamState()
+	defer ReleaseAnthropicResponsesStreamState(state)
+	ctx := context.Background()
+	stopReason := AnthropicStopReasonMaxTokens
+	events := []*AnthropicStreamEvent{
+		{
+			Type: AnthropicStreamEventTypeMessageStart,
+			Message: &AnthropicMessageResponse{
+				ID: "msg_incomplete", Model: "claude-sonnet-4-6",
+			},
+		},
+		{
+			Type:  AnthropicStreamEventTypeMessageDelta,
+			Delta: &AnthropicStreamDelta{StopReason: &stopReason},
+		},
+		{Type: AnthropicStreamEventTypeMessageStop},
+	}
+
+	var converted []*schemas.BifrostResponsesStreamResponse
+	sequence := 0
+	for _, event := range events {
+		responses, bifrostErr, _ := event.ToBifrostResponsesStream(ctx, sequence, state)
+		if bifrostErr != nil {
+			t.Fatalf("convert %s: %v", event.Type, bifrostErr)
+		}
+		converted = append(converted, responses...)
+		sequence += len(responses)
+	}
+	if len(converted) != 3 {
+		t.Fatalf("converted event count = %d, want 3", len(converted))
+	}
+	for index, event := range converted[:2] {
+		if event.Response == nil || event.Response.Object != "response" || event.Response.Status == nil ||
+			*event.Response.Status != schemas.ResponsesResponseStatusInProgress {
+			t.Fatalf("start event %d lacks in-progress response identity: %#v", index, event.Response)
+		}
+	}
+	terminal := converted[2]
+	if terminal.Type != schemas.ResponsesStreamResponseTypeIncomplete || terminal.Response == nil ||
+		terminal.Response.Status == nil || *terminal.Response.Status != schemas.ResponsesResponseStatusIncomplete ||
+		terminal.Response.IncompleteDetails == nil ||
+		terminal.Response.IncompleteDetails.Reason != schemas.ResponsesResponseIncompleteReasonMaxOutputTokens {
+		t.Fatalf("terminal event was not translated as incomplete: %#v", terminal)
+	}
+}
+
+func TestAnthropicResponsesPingIsOnlyPreservedForAnthropicWireClients(t *testing.T) {
+	event := &AnthropicStreamEvent{Type: AnthropicStreamEventTypePing}
+	state := AcquireAnthropicResponsesStreamState()
+	defer ReleaseAnthropicResponsesStreamState(state)
+
+	converted, bifrostErr, _ := event.ToBifrostResponsesStream(context.Background(), 0, state)
+	if bifrostErr != nil || len(converted) != 0 {
+		t.Fatalf("translated Responses ping = %#v, %v; want filtered", converted, bifrostErr)
+	}
+	ctx := context.WithValue(context.Background(), schemas.BifrostContextKeyIntegrationType, "anthropic")
+	converted, bifrostErr, _ = event.ToBifrostResponsesStream(ctx, 0, state)
+	if bifrostErr != nil || len(converted) != 1 || converted[0].Type != schemas.ResponsesStreamResponseTypePing {
+		t.Fatalf("Anthropic-wire ping = %#v, %v; want one preserved ping", converted, bifrostErr)
+	}
+}
+
+func TestAnthropicResponsesIncompleteReverseTranslationUsesMaxTokens(t *testing.T) {
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	events := ToAnthropicResponsesStreamResponse(ctx, &schemas.BifrostResponsesStreamResponse{
+		Type: schemas.ResponsesStreamResponseTypeIncomplete,
+		Response: &schemas.BifrostResponsesResponse{
+			Status: schemas.Ptr(schemas.ResponsesResponseStatusIncomplete),
+			IncompleteDetails: &schemas.ResponsesResponseIncompleteDetails{
+				Reason: schemas.ResponsesResponseIncompleteReasonMaxOutputTokens,
+			},
+		},
+	})
+	if len(events) != 2 || events[0].Type != AnthropicStreamEventTypeMessageDelta ||
+		events[0].Delta == nil || events[0].Delta.StopReason == nil ||
+		*events[0].Delta.StopReason != AnthropicStopReasonMaxTokens ||
+		events[1].Type != AnthropicStreamEventTypeMessageStop {
+		t.Fatalf("incomplete reverse translation = %#v", events)
+	}
+}
+
+func TestToBifrostResponsesStreamStructuredOutputUsesCompleteTextLifecycle(t *testing.T) {
+	state := AcquireAnthropicResponsesStreamState()
+	defer ReleaseAnthropicResponsesStreamState(state)
+	state.StructuredOutputToolName = "bf_so_schema"
+
+	index := 0
+	toolID := "toolu_structured"
+	toolName := state.StructuredOutputToolName
+	payload := `{"answer":"safe"}`
+	events := []*AnthropicStreamEvent{
+		{
+			Type: AnthropicStreamEventTypeMessageStart,
+			Message: &AnthropicMessageResponse{
+				ID: "msg_structured", Model: "claude-sonnet-4-6",
+			},
+		},
+		{
+			Type: AnthropicStreamEventTypeContentBlockStart, Index: &index,
+			ContentBlock: &AnthropicContentBlock{
+				Type: AnthropicContentBlockTypeToolUse, ID: &toolID, Name: &toolName,
+			},
+		},
+		{
+			Type: AnthropicStreamEventTypeContentBlockDelta, Index: &index,
+			Delta: &AnthropicStreamDelta{Type: AnthropicStreamDeltaTypeInputJSON, PartialJSON: &payload},
+		},
+		{Type: AnthropicStreamEventTypeContentBlockStop, Index: &index},
+		{Type: AnthropicStreamEventTypeMessageStop},
+	}
+
+	var responses []*schemas.BifrostResponsesStreamResponse
+	sequence := 0
+	for _, event := range events {
+		converted, bifrostErr, _ := event.ToBifrostResponsesStream(context.Background(), sequence, state)
+		if bifrostErr != nil {
+			t.Fatalf("convert %s: %v", event.Type, bifrostErr)
+		}
+		responses = append(responses, converted...)
+		sequence += len(converted)
+	}
+
+	wantLifecycle := []schemas.ResponsesStreamResponseType{
+		schemas.ResponsesStreamResponseTypeOutputItemAdded,
+		schemas.ResponsesStreamResponseTypeContentPartAdded,
+		schemas.ResponsesStreamResponseTypeOutputTextDelta,
+		schemas.ResponsesStreamResponseTypeOutputTextDone,
+		schemas.ResponsesStreamResponseTypeContentPartDone,
+		schemas.ResponsesStreamResponseTypeOutputItemDone,
+	}
+	var lifecycle []*schemas.BifrostResponsesStreamResponse
+	var terminal *schemas.BifrostResponsesStreamResponse
+	for _, response := range responses {
+		switch response.Type {
+		case schemas.ResponsesStreamResponseTypeOutputItemAdded,
+			schemas.ResponsesStreamResponseTypeContentPartAdded,
+			schemas.ResponsesStreamResponseTypeOutputTextDelta,
+			schemas.ResponsesStreamResponseTypeOutputTextDone,
+			schemas.ResponsesStreamResponseTypeContentPartDone,
+			schemas.ResponsesStreamResponseTypeOutputItemDone:
+			lifecycle = append(lifecycle, response)
+		case schemas.ResponsesStreamResponseTypeCompleted:
+			terminal = response
+		}
+	}
+	if len(lifecycle) != len(wantLifecycle) {
+		t.Fatalf("structured output lifecycle length = %d, want %d", len(lifecycle), len(wantLifecycle))
+	}
+	for index, want := range wantLifecycle {
+		if lifecycle[index].Type != want {
+			t.Fatalf("lifecycle[%d] = %s, want %s", index, lifecycle[index].Type, want)
+		}
+		if lifecycle[index].SequenceNumber != lifecycle[0].SequenceNumber+index {
+			t.Fatalf("lifecycle[%d] sequence = %d, want %d", index, lifecycle[index].SequenceNumber, lifecycle[0].SequenceNumber+index)
+		}
+	}
+	if lifecycle[0].Item == nil || lifecycle[0].Item.Status == nil || *lifecycle[0].Item.Status != "in_progress" ||
+		lifecycle[0].Item.Content == nil || len(lifecycle[0].Item.Content.ContentBlocks) != 0 {
+		t.Fatalf("structured output added item is not empty and in progress: %#v", lifecycle[0].Item)
+	}
+	if lifecycle[2].Delta == nil || *lifecycle[2].Delta != payload || lifecycle[3].Text == nil || *lifecycle[3].Text != payload {
+		t.Fatalf("structured output text events lost payload %q", payload)
+	}
+	done := lifecycle[len(lifecycle)-1].Item
+	if done == nil || done.Status == nil || *done.Status != "completed" || done.Content == nil ||
+		len(done.Content.ContentBlocks) != 1 || done.Content.ContentBlocks[0].Text == nil ||
+		*done.Content.ContentBlocks[0].Text != payload {
+		t.Fatalf("structured output done item is incomplete: %#v", done)
+	}
+	if terminal == nil || terminal.Response == nil || len(terminal.Response.Output) != 1 ||
+		terminal.Response.Output[0].Content == nil || len(terminal.Response.Output[0].Content.ContentBlocks) != 1 ||
+		terminal.Response.Output[0].Content.ContentBlocks[0].Text == nil ||
+		*terminal.Response.Output[0].Content.ContentBlocks[0].Text != payload {
+		t.Fatalf("terminal response lost structured output: %#v", terminal)
 	}
 }
 

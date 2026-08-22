@@ -44,6 +44,9 @@ type inputHoldStats struct {
 	AnthropicStrict bool
 }
 
+// inputTokenHoldEstimate reserves funds; it is not a request-admission token
+// limit. The selected provider remains authoritative for its tokenizer and
+// context window, including future one- and two-million-token deployments.
 func inputTokenHoldEstimate(body []byte, rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route, maxInputTokens int) int {
 	stats := requestInputHoldStats(rawData, route)
 	if maxInputTokens < 0 {
@@ -78,6 +81,9 @@ func requestInputHoldStats(rawData map[string]json.RawMessage, route Route) inpu
 	appendToolDefinitions(rawData["tools"], &stats)
 	appendCompactJSONText(rawData["response_format"], &stats)
 	appendCompactJSONText(rawData["functions"], &stats)
+	appendCompactJSONText(rawData["context_management"], &stats)
+	appendCompactJSONText(rawData["task_budget"], &stats)
+	appendCompactJSONText(rawData["stop_sequences"], &stats)
 	if route == RouteResponses {
 		appendCompactJSONText(rawData["text"], &stats)
 	}
@@ -118,7 +124,10 @@ func anthropicInputTokenHold(stats inputHoldStats) int {
 		textHold += ceilMulDiv(estimate, anthropicInputHoldTextBufferBps, 10000) + 8
 	}
 	if stats.AnthropicStrict {
-		textHold = maxInt(textHold, ceilMulDiv(stats.TextBytes, 85, 100))
+		// A byte-level floor is conservative for adversarial text because a
+		// byte-fallback tokenizer cannot emit more than one token per UTF-8
+		// byte. Anthropic does not publish a local tokenizer.
+		textHold = maxInt(textHold, stats.TextBytes)
 	}
 	return textHold +
 		anthropicInputHoldBaseTokens +
@@ -178,7 +187,7 @@ func collectMessageList(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	var messages []json.RawMessage
 	if err := sonic.Unmarshal(raw, &messages); err != nil {
-		collectTextLike(raw, "", stats)
+		collectTextLike(raw, stats)
 		return
 	}
 	for _, message := range messages {
@@ -213,7 +222,7 @@ func collectResponsesInput(raw json.RawMessage, stats *inputHoldStats) {
 func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	var object map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &object); err != nil {
-		collectTextLike(raw, "", stats)
+		collectTextLike(raw, stats)
 		return
 	}
 	if rawStringValue(object["role"]) == "tool" {
@@ -224,6 +233,7 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 	}
 	if rawToolCalls, ok := object["tool_calls"]; ok {
 		stats.ToolEvents += rawArrayLen(rawToolCalls)
+		collectTextLike(rawToolCalls, stats)
 	}
 	if rawContent, ok := object["content"]; ok {
 		collectContent(rawContent, stats)
@@ -233,7 +243,7 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 		case "content", "role", "type", "tool_calls", "tools", "response_format", "metadata":
 			continue
 		default:
-			collectTextLike(value, key, stats)
+			collectTextLike(value, stats)
 		}
 	}
 }
@@ -247,18 +257,18 @@ func collectContent(raw json.RawMessage, stats *inputHoldStats) {
 	if err := sonic.Unmarshal(raw, &blocks); err == nil {
 		for _, block := range blocks {
 			stats.ContentBlocks++
-			collectTextLike(block, "", stats)
+			collectTextLike(block, stats)
 		}
 		return
 	}
-	collectTextLike(raw, "content", stats)
+	collectTextLike(raw, stats)
 }
 
-func collectTextLike(raw json.RawMessage, key string, stats *inputHoldStats) {
+func collectTextLike(raw json.RawMessage, stats *inputHoldStats) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return
 	}
-	if isTextBearingKey(key) && appendStringValue(raw, stats) {
+	if appendStringValue(raw, stats) {
 		return
 	}
 	var object map[string]json.RawMessage
@@ -267,24 +277,15 @@ func collectTextLike(raw json.RawMessage, key string, stats *inputHoldStats) {
 			if childKey == "authorization_token" || childKey == "metadata" {
 				continue
 			}
-			collectTextLike(child, childKey, stats)
+			collectTextLike(child, stats)
 		}
 		return
 	}
 	var array []json.RawMessage
 	if err := sonic.Unmarshal(raw, &array); err == nil {
 		for _, child := range array {
-			collectTextLike(child, key, stats)
+			collectTextLike(child, stats)
 		}
-	}
-}
-
-func isTextBearingKey(key string) bool {
-	switch key {
-	case "arguments", "content", "description", "developer", "instructions", "input", "name", "output", "summary", "system", "text":
-		return true
-	default:
-		return false
 	}
 }
 

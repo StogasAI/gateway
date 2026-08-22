@@ -344,6 +344,10 @@ func (resp *BifrostResponsesResponse) WithDefaults() *BifrostResponsesResponse {
 	result.Prompt = resp.Prompt
 	result.StreamOptions = resp.StreamOptions
 	result.StopReason = resp.StopReason
+	result.StopDetails = resp.StopDetails
+	result.Container = resp.Container
+	result.Speed = resp.Speed
+	result.InferenceGeo = resp.InferenceGeo
 	result.ExtraFields = resp.ExtraFields
 	result.SearchResults = resp.SearchResults
 	result.Videos = resp.Videos
@@ -1715,7 +1719,7 @@ type ResponsesWebFetchSource struct {
 // caller that produced it (e.g. programmatic tool calling from inside the code
 // execution sandbox). Nil for direct top-level calls.
 type ResponsesToolCaller struct {
-	Type   string  `json:"type"`              // "direct" | "code_execution_20250825" | "code_execution_20260120"
+	Type   string  `json:"type"`              // "direct" | "code_execution_20250825" | "code_execution_20260120" | "code_execution_20260521"
 	ToolID *string `json:"tool_id,omitempty"` // required for code_execution_* caller types
 }
 
@@ -1740,7 +1744,7 @@ type ResponsesCodeExecutionCall struct {
 	Input *string `json:"code_execution_input,omitempty"`
 	// ResultType is the inner result-content discriminator, e.g.
 	// "bash_code_execution_result" | "code_execution_result" |
-	// "text_editor_code_execution_result" | "*_tool_result_error".
+	// "text_editor_code_execution_{view,create,str_replace}_result" | "*_tool_result_error".
 	ResultType string `json:"code_execution_result_type,omitempty"`
 
 	// Execution result fields (bash / python variants).
@@ -1764,7 +1768,8 @@ type ResponsesCodeExecutionCall struct {
 
 	// ErrorCode is set for *_tool_result_error variants (e.g. "unavailable",
 	// "execution_time_exceeded", "container_expired", "file_not_found").
-	ErrorCode *string `json:"code_execution_error_code,omitempty"`
+	ErrorCode    *string `json:"code_execution_error_code,omitempty"`
+	ErrorMessage *string `json:"code_execution_error_message,omitempty"` // text_editor error detail
 
 	// Files lists outputs created during execution (charts, generated files).
 	Files []ResponsesCodeExecutionFileOutput `json:"code_execution_files,omitempty"`
@@ -1832,7 +1837,7 @@ func (action *ResponsesToolMessageActionStruct) UnmarshalJSON(data []byte) error
 		action.ResponsesMCPApprovalRequestAction = &mcpApprovalRequestAction
 		return nil
 
-	case "search", "open_page", "find":
+	case "search", "open_page", "find_in_page":
 		var webSearchToolCallAction ResponsesWebSearchToolCallAction
 		if err := Unmarshal(data, &webSearchToolCallAction); err != nil {
 			return fmt.Errorf("failed to unmarshal web search tool call action: %w", err)
@@ -1986,7 +1991,7 @@ type ResponsesComputerToolCallAcknowledgedSafetyCheck struct {
 
 // ResponsesWebSearchToolCallAction represents the different types of web search actions
 type ResponsesWebSearchToolCallAction struct {
-	Type    string                                         `json:"type"`          // "search" | "open_page" | "find"
+	Type    string                                         `json:"type"`          // "search" | "open_page" | "find_in_page"
 	URL     *string                                        `json:"url,omitempty"` // Common URL field (OpenPage, Find)
 	Query   *string                                        `json:"query,omitempty"`
 	Queries []string                                       `json:"queries,omitempty"`
@@ -3491,6 +3496,7 @@ type BifrostResponsesStreamResponse struct {
 	Refusal *string `json:"refusal,omitempty"`
 
 	Arguments *string `json:"arguments,omitempty"`
+	Input     *string `json:"input,omitempty"` // Full custom tool input on response.custom_tool_call_input.done
 
 	PartialImageB64   *string `json:"partial_image_b64,omitempty"`
 	PartialImageIndex *int    `json:"partial_image_index,omitempty"`
@@ -3559,6 +3565,7 @@ func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStre
 	result.Text = resp.Text
 	result.Refusal = resp.Refusal
 	result.Arguments = resp.Arguments
+	result.Input = resp.Input
 	result.PartialImageB64 = resp.PartialImageB64
 	result.PartialImageIndex = resp.PartialImageIndex
 	result.Annotation = resp.Annotation

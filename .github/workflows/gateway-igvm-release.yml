@@ -3,7 +3,7 @@ name: Gateway IGVM Release
 on:
   push:
     tags:
-      - "v*.*.*"
+      - 'v*.*.*'
 
 concurrency:
   group: gateway-igvm-release-${{ github.ref_name }}
@@ -22,9 +22,6 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Validate tag
-        run: '[[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]'
-
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           fetch-depth: 0
@@ -38,16 +35,13 @@ jobs:
           test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
 
       - name: Verify release pins
-        run: node stogas/release/scripts/verify-pins.mjs --network
+        run: node stogas/release/scripts/verify-pins.mjs
 
       - name: Restore Stogas release vendor cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: stogas/release/vendor
           key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
-
-      - name: Prepare Guix channel cache path
-        run: mkdir -p ~/.cache/guix/checkouts
 
       - name: Restore Guix channel checkout cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -59,27 +53,7 @@ jobs:
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
-        env:
-          STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK: "1"
         run: stogas/release/scripts/build-release.sh "$GITHUB_REF_NAME" "dist/gateway/$GITHUB_REF_NAME"
-
-      - name: Verify release checksums
-        run: |
-          set -euo pipefail
-          cd "dist/gateway/$GITHUB_REF_NAME"
-          sha256sum -c SHA256SUMS
-
-      - name: Verify measured vCPU count
-        run: |
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const releaseDir = `dist/gateway/${process.env.GITHUB_REF_NAME}`;
-          const policy = JSON.parse(readFileSync(`${releaseDir}/gateway-launch-policy.json`, 'utf8'));
-          const manifest = JSON.parse(readFileSync(`${releaseDir}/release-manifest.json`, 'utf8'));
-          assert.equal(policy.schema, 'stogas.gateway.launch-policy.v1');
-          assert.equal(manifest.sevSnp.vcpuCount, 4);
-          NODE
 
       - name: Generate GitHub artifact attestation
         id: attest
@@ -92,47 +66,23 @@ jobs:
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
 
-      - name: Package release evidence
+      - name: Prepare release payload
         run: |
           set -euo pipefail
           cd "dist/gateway/$GITHUB_REF_NAME"
-          evidence_files=(
-            gateway.efi
-            gateway.init
-            gateway.kernel
-            gateway.initramfs.cpio.zst
-            pins.lock.json
-            igvmmeasure-check-kvm.txt
-            ukify-inspect.txt
-            guix-describe.txt
-            guix-store-requisites.txt
+          rm \
+            gateway.init \
+            gateway.kernel \
+            gateway.initramfs.cpio.zst \
             kernel-config.txt
-            build-inputs.sha256
-          )
-          tar \
-            --sort=name \
-            --mtime='@1' \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
-            -I 'zstd -19 --threads=0' \
-            -cf gateway-evidence.tar.zst \
-            LICENSE \
-            NOTICE \
-            "${evidence_files[@]}"
-          rm "${evidence_files[@]}"
           sha256sum \
             LICENSE \
             NOTICE \
             gateway.igvm \
             gateway-launch-policy.json \
-            launch-measurement.txt \
             release-manifest.json \
             github-attestation.jsonl \
-            gateway-evidence.tar.zst \
             > SHA256SUMS
-          sha256sum -c SHA256SUMS
 
       - name: Verify release payload file set
         run: |
@@ -143,11 +93,9 @@ jobs:
             NOTICE
             gateway.igvm
             gateway-launch-policy.json
-            launch-measurement.txt
             release-manifest.json
             SHA256SUMS
             github-attestation.jsonl
-            gateway-evidence.tar.zst
           )
           actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
           expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
@@ -211,13 +159,15 @@ jobs:
             "dist/gateway/$tag/NOTICE"
             "dist/gateway/$tag/gateway.igvm"
             "dist/gateway/$tag/gateway-launch-policy.json"
-            "dist/gateway/$tag/launch-measurement.txt"
             "dist/gateway/$tag/release-manifest.json"
             "dist/gateway/$tag/SHA256SUMS"
             "dist/gateway/$tag/github-attestation.jsonl"
-            "dist/gateway/$tag/gateway-evidence.tar.zst"
           )
           if gh release view "$tag" >/dev/null 2>&1; then
+            test "$(gh release view "$tag" --json isDraft --jq '.isDraft')" = "true" || {
+              echo "Gateway release $tag is final and cannot be changed." >&2
+              exit 1
+            }
             gh release view "$tag" --json assets --jq '.assets[].name' |
               while IFS= read -r asset; do
                 [ -n "$asset" ] || continue

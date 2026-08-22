@@ -3,11 +3,11 @@ name: PR Dependencies
 on:
   pull_request:
     paths:
-      - "**/*.go"
-      - "**/go.mod"
-      - "**/go.sum"
-      - ".github/workflows/pr-dependencies.yml"
-      - "stogas/release/**"
+      - '**/*.go'
+      - '**/go.mod'
+      - '**/go.sum'
+      - '.github/workflows/pr-dependencies.yml'
+      - 'stogas/release/**'
   workflow_dispatch:
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           cd transports
-          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@latest
+          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           GOWORK=off "$(go env GOPATH)/bin/govulncheck" ./...
       - name: Verify module files did not change
         run: git diff --exit-code -- transports/go.mod transports/go.sum

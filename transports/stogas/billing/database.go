@@ -25,7 +25,8 @@ type DatabasePoolConfig struct {
 }
 
 type GatewayDB struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	schemaName string
 }
 
 type DatabaseDiagnostics struct {
@@ -44,7 +45,7 @@ type DatabaseDiagnostics struct {
 }
 
 func ValidateDatabaseSchema(databaseSchema string) error {
-	_, err := pgrollSearchPath(databaseSchema)
+	_, err := validatePgrollSchemaName(databaseSchema)
 	return err
 }
 
@@ -52,7 +53,7 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 	if err := databasePool.Validate(); err != nil {
 		return nil, err
 	}
-	searchPath, err := pgrollSearchPath(databaseSchema)
+	schemaName, err := validatePgrollSchemaName(databaseSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -73,8 +74,6 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "stogas-gateway"
-	poolConfig.ConnConfig.RuntimeParams["search_path"] = searchPath
-	poolConfig.ConnConfig.RuntimeParams["TimeZone"] = "UTC"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
@@ -88,7 +87,11 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	return &GatewayDB{pool: pool}, nil
+	return &GatewayDB{pool: pool, schemaName: schemaName}, nil
+}
+
+func (db *GatewayDB) functionQuery(functionName string, arguments string) string {
+	return "select * from " + pgx.Identifier{db.schemaName, functionName}.Sanitize() + "(\n" + arguments + "\n);"
 }
 
 func (db *GatewayDB) Close() {
@@ -143,7 +146,7 @@ func queryExecMode(mode string) pgx.QueryExecMode {
 func validatePgrollSchemaName(databaseSchema string) (string, error) {
 	schemaName := strings.TrimSpace(databaseSchema)
 	if schemaName == "" {
-		schemaName = "public"
+		return "", fmt.Errorf("DATABASE_SCHEMA is required")
 	}
 	for index, r := range schemaName {
 		if index == 0 {
@@ -158,17 +161,6 @@ func validatePgrollSchemaName(databaseSchema string) (string, error) {
 		return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
 	}
 	return schemaName, nil
-}
-
-func pgrollSearchPath(databaseSchema string) (string, error) {
-	schemaName, err := validatePgrollSchemaName(databaseSchema)
-	if err != nil {
-		return "", err
-	}
-	if schemaName == "public" {
-		return "public", nil
-	}
-	return schemaName + ",public", nil
 }
 
 func (c DatabasePoolConfig) Validate() error {

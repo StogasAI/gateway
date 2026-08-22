@@ -3,6 +3,7 @@ package catalog
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,20 +12,132 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-func TestEmbeddedCatalogV5LoadsFiveNodeGraph(t *testing.T) {
+func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
+	return snapshotFromRelease(data, nil, Identity{})
+}
+
+func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
+	return DeploymentForRouteServiceTier(provider, model, route, nil)
+}
+
+func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 	snap := loadTestCatalog(t)
 	if snap.identity.Sequence != 0 || !strings.HasPrefix(snap.identity.Digest, "sha256:") {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
-	if len(snap.graph.Authors) != 9 ||
-		len(snap.graph.Models) < 10 ||
+	if len(snap.graph.Authors) != 10 ||
+		len(snap.graph.Models) != 36 ||
 		len(snap.graph.Providers) != 4 ||
-		len(snap.graph.Routes) != 6 ||
-		len(snap.graph.Deployments) < 40 {
-		t.Fatalf("unexpected v4 graph sizes: %#v", snap.graph)
+		len(snap.graph.Routes) != 7 ||
+		len(snap.graph.Deployments) != 114 {
+		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
+			len(snap.graph.Authors),
+			len(snap.graph.Models),
+			len(snap.graph.Providers),
+			len(snap.graph.Routes),
+			len(snap.graph.Deployments),
+		)
 	}
 	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; !exists {
 		t.Fatal("historical search preview deployment must remain reproducible")
+	}
+	euDeployment := snap.graph.Deployments["azure-gpt-5.6-sol-eu"]
+	for routeID, handling := range euDeployment.DataHandlingByRoute {
+		if handling.ProcessingLocation != "europe" || handling.StorageLocation != "europe" {
+			t.Fatalf("Azure EU Data Zone route %s has invalid boundaries: %#v", routeID, handling)
+		}
+	}
+}
+
+func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *testing.T) {
+	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, Identity{})
+	if err != nil {
+		t.Fatalf("public informational models were rejected: %v", err)
+	}
+
+	var public map[string]any
+	if err := json.Unmarshal(embeddedPublicCatalogJSON, &public); err != nil {
+		t.Fatal(err)
+	}
+	models := public["graph"].(map[string]any)["models"].(map[string]any)
+	delete(models, "gpt-5.6-sol")
+	missingRuntimeModel, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, Identity{}); err == nil ||
+		!strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
+	}
+
+	if len(snap.graph.Models) != 36 {
+		t.Fatalf("runtime catalog unexpectedly contains informational-only models: %d", len(snap.graph.Models))
+	}
+}
+
+func TestSnapshotValidationRejectsInvalidAzureFormatHostingAndInstantCombinations(t *testing.T) {
+	mutate := func(t *testing.T, deploymentID string, apply func(map[string]any)) []byte {
+		t.Helper()
+		var runtime map[string]any
+		if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			t.Fatal(err)
+		}
+		deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
+		apply(deployment["upstream"].(map[string]any))
+		data, err := json.Marshal(runtime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+
+	for _, test := range []struct {
+		name         string
+		deploymentID string
+		apply        func(map[string]any)
+	}{
+		{
+			name:         "format hosting mismatch",
+			deploymentID: "azure-gpt-5.6-sol",
+			apply:        func(upstream map[string]any) { upstream["hosting"] = "nvidia" },
+		},
+		{
+			name:         "instant non-default tier",
+			deploymentID: "azure-gpt-5.6-sol-instant",
+			apply:        func(upstream map[string]any) { upstream["serviceTier"] = "priority" },
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := snapshotFromCatalogBytes(mutate(t, test.deploymentID, test.apply)); err == nil {
+				t.Fatal("invalid Azure selector was accepted")
+			}
+		})
+	}
+}
+
+func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	deployments := runtime["graph"].(map[string]any)["deployments"].(map[string]any)
+	uncached := deployments["azure-gpt-oss-120b"].(map[string]any)
+	if _, present := uncached["pricing"].(map[string]any)[billing.MeterCachedInputTokens]; present {
+		t.Fatal("test fixture unexpectedly has a cached-input price")
+	}
+	if _, err := snapshotFromCatalogBytes(embeddedRuntimeCatalogJSON); err != nil {
+		t.Fatalf("uncached deployment was rejected: %v", err)
+	}
+
+	cached := deployments["azure-gpt-5.6-sol"].(map[string]any)
+	delete(cached["pricing"].(map[string]any), billing.MeterCachedInputTokens)
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "missing required pricing meter cached_input_tokens") {
+		t.Fatalf("cache-capable deployment without a cache rate was accepted: %v", err)
 	}
 }
 
@@ -114,7 +227,7 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 					}
 				})
 			}
-			if _, ok := DeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
+			if _, ok := testDeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
 				t.Fatalf("%s was exposed on Chat Completions", deploymentID)
 			}
 		}
@@ -179,7 +292,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"open-ai/gpt-5.5",
 		"open-ai/open-ai/gpt-5.5",
 	} {
-		provider, ok, err := ProviderForRouteModel(RouteResponses, requested)
+		provider, ok, err := ProviderForRouteModelRouting(RouteResponses, requested, ProviderRoutingPreference{})
 		if err != nil || !ok || provider != schemas.OpenAI {
 			t.Fatalf("%s: provider=%q ok=%v err=%v", requested, provider, ok, err)
 		}
@@ -191,8 +304,38 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"openai/openai/openai/gpt-5.5",
 		"gpt-5.5-latest",
 	} {
-		if _, ok, err := ProviderForRouteModel(RouteResponses, requested); err != nil || ok {
+		if _, ok, err := ProviderForRouteModelRouting(RouteResponses, requested, ProviderRoutingPreference{}); err != nil || ok {
 			t.Fatalf("%s: expected a closed miss, ok=%v err=%v", requested, ok, err)
+		}
+	}
+	for _, requested := range []string{
+		"claude-haiku-4-5",
+		"claude-haiku-4.5",
+		"anthropic/claude-haiku-4.5",
+	} {
+		deployment, ok := testDeploymentForRoute(schemas.Anthropic, requested, RouteChat)
+		if !ok || deployment.ID != "anthropic-claude-haiku-4-5-20251001" ||
+			deployment.Upstream.Model != "claude-haiku-4-5-20251001" {
+			t.Fatalf("%s did not resolve through the simple model node: %#v", requested, deployment)
+		}
+	}
+	if _, ok := testDeploymentForRoute(
+		schemas.Anthropic,
+		"anthropic-claude-haiku-4.5-20251001",
+		RouteChat,
+	); ok {
+		t.Fatal("an unlisted deployment alias was generated")
+	}
+	for _, rotated := range []struct {
+		provider schemas.ModelProvider
+		route    Route
+		selector string
+	}{
+		{provider: schemas.Anthropic, route: RouteResponses, selector: "anthropic-claude-opus-4-8-us-fast"},
+		{provider: schemas.OpenAI, route: RouteResponses, selector: "gpt-5.6-sol-fast-pro"},
+	} {
+		if _, ok := testDeploymentForRoute(rotated.provider, rotated.selector, rotated.route); ok {
+			t.Fatalf("rotated deployment modifier alias %s was generated", rotated.selector)
 		}
 	}
 }
@@ -200,18 +343,208 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.T) {
 	loadTestCatalog(t)
 	for _, route := range []Route{RouteChat, RouteResponses} {
-		provider, ok, err := ProviderForRouteModel(route, "gpt-5.6-sol")
+		provider, ok, err := ProviderForRouteModelRouting(route, "gpt-5.6-sol", ProviderRoutingPreference{})
 		if err != nil || !ok || provider != schemas.OpenAI {
 			t.Fatalf("unqualified GPT-5.6 must default to OpenAI: provider=%q ok=%v err=%v", provider, ok, err)
 		}
-		provider, ok, err = ProviderForRouteModel(route, "azure/gpt-5.6-sol")
+		provider, ok, err = ProviderForRouteModelRouting(route, "azure/gpt-5.6-sol", ProviderRoutingPreference{})
 		if err != nil || !ok || provider != schemas.Azure {
 			t.Fatalf("qualified GPT-5.6 must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
 		}
-		provider, ok, err = ProviderForRouteModelPreference(route, "gpt-5.6-sol", "azure")
+		provider, ok, err = ProviderForRouteModelRouting(route, "gpt-5.6-sol", ProviderRoutingPreference{Only: []string{"azure"}})
 		if err != nil || !ok || provider != schemas.Azure {
 			t.Fatalf("provider preference must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
 		}
+	}
+}
+
+func TestCredentialProviderConstraintCannotCrossProviders(t *testing.T) {
+	loadTestCatalog(t)
+	resolution, err := ResolveRequest(RequestInput{
+		Method:             "POST",
+		Path:               "/v1/responses",
+		Body:               []byte(`{"model":"gpt-5.6-sol","input":"hello"}`),
+		ProviderConstraint: "azure",
+	})
+	if err != nil {
+		t.Fatalf("resolve Azure-constrained request: %v", err)
+	}
+	if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-gpt-5.6-sol" {
+		t.Fatalf("pass-through provider constraint selected the wrong target: %#v", resolution)
+	}
+
+	for _, body := range []string{
+		`{"model":"gpt-5.6-sol","provider":"openai","input":"hello"}`,
+		`{"model":"gpt-5.6-sol","provider":{"only":["openai"]},"input":"hello"}`,
+	} {
+		_, err := ResolveRequest(RequestInput{
+			Method:             "POST",
+			Path:               "/v1/responses",
+			Body:               []byte(body),
+			ProviderConstraint: "azure",
+		})
+		if !errors.Is(err, ErrCredentialProviderConflict) {
+			t.Fatalf("conflicting request routing error = %v, want credential provider conflict", err)
+		}
+	}
+	if _, err := ResolveRequest(RequestInput{
+		Method:             "POST",
+		Path:               "/v1/responses",
+		Body:               []byte(`{"model":"openai/gpt-5.6-sol","input":"hello"}`),
+		ProviderConstraint: "azure",
+	}); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("provider-qualified cross-provider request error = %v, want unavailable model", err)
+	}
+}
+
+func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
+	loadTestCatalog(t)
+	for _, tier := range []string{"sol", "terra"} {
+		model := "gpt-5.6-" + tier
+		priorityID := "azure-" + model + "-fast"
+		for _, serviceTier := range []string{"fast", "priority"} {
+			resolution, err := ResolveRequest(RequestInput{
+				Method: "POST",
+				Path:   "/v1/responses",
+				Body:   []byte(`{"model":"` + model + `","provider":"azure","input":"hello","service_tier":"` + serviceTier + `"}`),
+			})
+			if err != nil {
+				t.Fatalf("resolve Azure %s %s request: %v", model, serviceTier, err)
+			}
+			if resolution.Deployment.ID != priorityID ||
+				resolution.Deployment.Upstream.ServiceTier != "priority" ||
+				resolution.Deployment.Upstream.ReasoningMode != "" {
+				t.Fatalf("unexpected Azure Priority deployment: %#v", resolution.Deployment)
+			}
+			request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+			if err != nil || request.ResponsesRequest == nil ||
+				request.ResponsesRequest.Params.ServiceTier == nil ||
+				*request.ResponsesRequest.Params.ServiceTier != schemas.BifrostServiceTierPriority {
+				t.Fatalf("Azure Priority did not reach the provider request: request=%#v err=%v", request, err)
+			}
+		}
+
+		proPriorityID := "azure-" + model + "-pro-fast"
+		resolution, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"azure-` + model + `-pro-fast","input":"hello"}`),
+		})
+		if err != nil {
+			t.Fatalf("resolve Azure Pro Priority alias: %v", err)
+		}
+		if resolution.Deployment.ID != proPriorityID ||
+			resolution.Deployment.Upstream.ReasoningMode != "pro" ||
+			resolution.Deployment.Upstream.ServiceTier != "priority" {
+			t.Fatalf("unexpected Azure Pro Priority deployment: %#v", resolution.Deployment)
+		}
+		request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+		if err != nil || request.ResponsesRequest == nil ||
+			request.ResponsesRequest.Params.Reasoning == nil ||
+			request.ResponsesRequest.Params.Reasoning.Mode == nil ||
+			*request.ResponsesRequest.Params.Reasoning.Mode != "pro" ||
+			request.ResponsesRequest.Params.ServiceTier == nil ||
+			*request.ResponsesRequest.Params.ServiceTier != schemas.BifrostServiceTierPriority {
+			t.Fatalf("Azure Pro Priority axes did not reach the provider request: request=%#v err=%v", request, err)
+		}
+
+		actualTier := schemas.BifrostServiceTierDefault
+		actual, ok := DeploymentForActualExecution(
+			schemas.Azure,
+			RouteResponses,
+			resolution.Deployment,
+			&actualTier,
+			"",
+		)
+		if !ok || actual.ID != "azure-"+model+"-pro" ||
+			actual.Upstream.Hosting != resolution.Deployment.Upstream.Hosting ||
+			actual.Upstream.DeploymentType != resolution.Deployment.Upstream.DeploymentType {
+			t.Fatalf("Azure Priority downgrade lost Pro, host, or deployment type: %#v", actual)
+		}
+	}
+
+	for _, model := range []string{"azure-gpt-5.6-luna", "azure-gpt-5.6-luna-pro"} {
+		if _, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"` + model + `","input":"hello","service_tier":"priority"}`),
+		}); !errors.Is(err, ErrModelUnavailable) {
+			t.Fatalf("%s Priority error = %v, want unavailable model", model, err)
+		}
+	}
+}
+
+func TestAzureClaudeUsesNativeRouteAndManualReasoningBudget(t *testing.T) {
+	loadTestCatalog(t)
+	for _, input := range []RequestInput{
+		{
+			Method: "POST",
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"azure/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":8192,"reasoning":{"max_tokens":4096}}`),
+		},
+		{
+			Method: "POST",
+			Path:   "/v1/responses",
+			Body:   []byte(`{"model":"azure/claude-sonnet-4-6","input":"hello","max_output_tokens":8192,"reasoning":{"max_tokens":4096}}`),
+		},
+	} {
+		resolution, err := ResolveRequest(input)
+		if err != nil {
+			t.Fatalf("resolve Azure Claude request: %v", err)
+		}
+		if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-claude-sonnet-4-6" ||
+			len(resolution.Deployment.RouteIDs) != 1 || resolution.Deployment.RouteIDs[0] != "azure-anthropic-messages" ||
+			resolution.Deployment.ReasoningMaxTokens == nil || resolution.Deployment.ReasoningMaxTokens.Minimum != 1024 ||
+			resolution.Deployment.ReasoningMaxTokens.Maximum != 127999 {
+			t.Fatalf("unexpected Azure Claude resolution: %#v", resolution)
+		}
+	}
+}
+
+func TestGPT56ReasoningEffortsFollowTheSelectedRoute(t *testing.T) {
+	loadTestCatalog(t)
+	for _, test := range []struct {
+		provider schemas.ModelProvider
+		model    string
+	}{
+		{provider: schemas.OpenAI, model: "openai-gpt-5.6-sol"},
+		{provider: schemas.Azure, model: "azure-gpt-5.6-sol"},
+	} {
+		chat, ok := testDeploymentForRoute(test.provider, test.model, RouteChat)
+		if !ok || !sameStrings(chat.ReasoningEfforts, []string{"low", "medium", "high", "xhigh"}) {
+			t.Fatalf("%s Chat reasoning efforts = %#v", test.model, chat.ReasoningEfforts)
+		}
+		responses, ok := testDeploymentForRoute(test.provider, test.model, RouteResponses)
+		if !ok || !sameStrings(responses.ReasoningEfforts, []string{"low", "medium", "high", "xhigh", "max"}) {
+			t.Fatalf("%s Responses reasoning efforts = %#v", test.model, responses.ReasoningEfforts)
+		}
+	}
+
+	resolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"reasoning":{"effort":"max"}}`),
+	})
+	if err != nil {
+		t.Fatalf("resolve Azure GPT-5.6 Chat request: %v", err)
+	}
+	effort, ok := resolution.ReasoningEffort()
+	if !ok || effort != "xhigh" {
+		t.Fatalf("Azure GPT-5.6 Chat max effort = %q, present=%v", effort, ok)
+	}
+
+	resolution, err = ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"azure-gpt-5.6-sol","input":"hello","reasoning":{"effort":"max"}}`),
+	})
+	if err != nil {
+		t.Fatalf("resolve Azure GPT-5.6 Responses request: %v", err)
+	}
+	if resolution.responses == nil || resolution.responses.ResponsesParameters.Reasoning == nil ||
+		resolution.responses.ResponsesParameters.Reasoning.Effort == nil ||
+		*resolution.responses.ResponsesParameters.Reasoning.Effort != "max" {
+		t.Fatalf("Azure GPT-5.6 Responses did not preserve max: %#v", resolution.responses)
 	}
 }
 
@@ -240,9 +573,32 @@ func TestDeploymentLifecycleCutoffsFailClosed(t *testing.T) {
 	}
 }
 
+func TestRetiredAnthropicOpus41IsNotRoutableOrListed(t *testing.T) {
+	loadTestCatalog(t)
+	for _, selector := range []string{
+		"claude-opus-4-1",
+		"claude-opus-4.1",
+		"anthropic-claude-opus-4-1-20250805",
+	} {
+		if deployment, ok := testDeploymentForRoute(schemas.Anthropic, selector, RouteChat); ok {
+			t.Fatalf("retired selector %q remained routable: %#v", selector, deployment)
+		}
+	}
+
+	models, ok := PublicModelsPayload()
+	if !ok {
+		t.Fatal("public model list unavailable")
+	}
+	for _, model := range models.Data {
+		if strings.Contains(model.ID, "claude-opus-4-1") || model.ID == "claude-opus-4.1" {
+			t.Fatalf("retired Claude Opus 4.1 selector remained listed: %q", model.ID)
+		}
+	}
+}
+
 func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	loadTestCatalog(t)
-	flex, ok := DeploymentForRoute(schemas.OpenAI, "openai-gpt-5.5-2026-04-23-flex", RouteResponses)
+	flex, ok := testDeploymentForRoute(schemas.OpenAI, "openai-gpt-5.5-2026-04-23-flex", RouteResponses)
 	if !ok || flex.Upstream.ServiceTier != "flex" ||
 		flex.ImpliedServiceTier == nil ||
 		*flex.ImpliedServiceTier != schemas.BifrostServiceTierFlex {
@@ -285,7 +641,7 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 			t.Fatalf("conflicting %q request tier accepted for exact flex deployment: %#v", requestedFastTier, flex)
 		}
 	}
-	if retired, retiredOK := DeploymentForRoute(
+	if retired, retiredOK := testDeploymentForRoute(
 		schemas.OpenAI,
 		"openai-gpt-5.5-2026-04-23-priority",
 		RouteResponses,
@@ -325,7 +681,7 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 	if !actualOK || actual.ID != "openai-gpt-5.5-2026-04-23-fast" {
 		t.Fatalf("returned fast tier did not settle against the Fast deployment: %#v", actual)
 	}
-	fastUS, ok := DeploymentForRoute(
+	fastUS, ok := testDeploymentForRoute(
 		schemas.Anthropic,
 		"anthropic-claude-opus-4-8-fast-us",
 		RouteResponses,
@@ -403,7 +759,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 	}
 }
 
-func TestPublicCatalogDisclosesEffectiveModerationAndDataHandling(t *testing.T) {
+func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 	loadTestCatalog(t)
 	payload, ok := PublicCatalogPayload()
 	if !ok || payload.Schema != PublicCatalogVersion {
@@ -414,32 +770,54 @@ func TestPublicCatalogDisclosesEffectiveModerationAndDataHandling(t *testing.T) 
 		payload.RuntimeDigest == payload.PublicDigest {
 		t.Fatalf("public catalog identities are incomplete: %#v", payload)
 	}
-	rawDeployments := payload.Graph["deployments"]
-	var deployments map[string]struct {
-		DataHandling map[string]any `json:"dataHandling"`
-		Moderated    bool           `json:"moderated"`
+	var providers map[string]struct {
+		DataHandling map[string]any            `json:"dataHandling"`
+		Moderated    bool                      `json:"moderated"`
+		Pricing      map[string]map[string]any `json:"pricing"`
 	}
-	if err := json.Unmarshal(rawDeployments, &deployments); err != nil {
+	if err := json.Unmarshal(payload.Graph["providers"], &providers); err != nil {
+		t.Fatalf("decode public providers: %v", err)
+	}
+	for id, provider := range providers {
+		_, hasTEE := provider.DataHandling["tee"]
+		if provider.DataHandling["processingLocation"] == nil ||
+			provider.DataHandling["storageLocation"] == nil ||
+			provider.DataHandling["endToEndEncrypted"] != nil || !hasTEE {
+			t.Fatalf("%s provider data handling is incomplete: %#v", id, provider.DataHandling)
+		}
+	}
+	if providers["anthropic"].Pricing[meterAnthropicWebSearchCalls][billing.RatePerThousandCalls] == nil {
+		t.Fatalf("Anthropic provider-wide web-search pricing is absent: %#v", providers["anthropic"].Pricing)
+	}
+	var routes map[string]map[string]any
+	if err := json.Unmarshal(payload.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode public routes: %v", err)
+	}
+	if handling, ok := routes["anthropic-messages"]["dataHandling"].(map[string]any); !ok ||
+		handling["endToEndEncrypted"] == nil ||
+		handling["processingLocation"] != nil || handling["storageLocation"] != nil {
+		t.Fatalf("Anthropic route transport handling is incomplete: %#v", handling)
+	}
+	if _, misplaced := routes["anthropic-messages"]["pricing"]; misplaced {
+		t.Fatal("Anthropic route owns provider-wide pricing")
+	}
+	var deployments map[string]map[string]any
+	if err := json.Unmarshal(payload.Graph["deployments"], &deployments); err != nil {
 		t.Fatalf("decode public deployments: %v", err)
 	}
-	for id, deployment := range deployments {
-		if deployment.Moderated != !strings.HasPrefix(id, "chutes-") {
-			t.Fatalf("%s has incorrect effective moderation: %v", id, deployment.Moderated)
-		}
-		if deployment.DataHandling["processingRegions"] == nil || deployment.DataHandling["storageRegions"] == nil {
-			t.Fatalf("%s data handling is incomplete: %#v", id, deployment.DataHandling)
-		}
+	if _, duplicated := deployments["chutes-qwen3-32b"]["dataHandling"]; duplicated {
+		t.Fatal("Chutes deployment duplicates provider data handling")
+	}
+	if _, duplicated := deployments["chutes-qwen3-32b"]["moderated"]; duplicated {
+		t.Fatal("Chutes deployment duplicates provider moderation")
 	}
 }
 
-func TestFlattenedPricingNeedsNoProviderOverlay(t *testing.T) {
+func TestPricingIsMaterializedOnDeployments(t *testing.T) {
 	loadTestCatalog(t)
-	deployment, ok := DeploymentForRoute(schemas.OpenAI, "gpt-5.5", RouteResponses)
+	deployment, ok := testDeploymentForRoute(schemas.OpenAI, "gpt-5.5", RouteResponses)
 	if !ok {
 		t.Fatal("gpt-5.5 deployment unavailable")
-	}
-	if ProviderPricing(schemas.OpenAI) != nil {
-		t.Fatal("v4 pricing must be fully materialized on deployments")
 	}
 	if deployment.Pricing["openai_responses_web_search_calls"][billing.RatePerThousandCalls] == "" {
 		t.Fatalf("route pricing was not materialized: %#v", deployment.Pricing)
@@ -448,21 +826,57 @@ func TestFlattenedPricingNeedsNoProviderOverlay(t *testing.T) {
 
 func TestChutesTEEPolicyIsMaterializedPerDeployment(t *testing.T) {
 	loadTestCatalog(t)
-	blocked, ok := DeploymentForRoute(
+	blocked, ok := testDeploymentForRoute(
 		ProviderChutes,
 		"chutes-qwen3-32b",
 		RouteChat,
 	)
-	if !ok || blocked.TEE == nil || blocked.TEE.ExternalNetworkEgress != "blocked" {
-		t.Fatalf("unexpected blocked Chutes TEE policy: %#v", blocked.TEE)
+	if !ok || blocked.DataHandling.TEE == nil || blocked.DataHandling.TEE.ExternalNetworkEgress != "blocked" {
+		t.Fatalf("unexpected blocked Chutes TEE policy: %#v", blocked.DataHandling.TEE)
 	}
-	allowed, ok := DeploymentForRoute(
+	allowed, ok := testDeploymentForRoute(
 		ProviderChutes,
 		"chutes-nemotron-3-nano-omni-30b",
 		RouteChat,
 	)
-	if !ok || allowed.TEE == nil || allowed.TEE.ExternalNetworkEgress != "allowed" {
-		t.Fatalf("unexpected Nemotron Chutes TEE policy: %#v", allowed.TEE)
+	if !ok || allowed.DataHandling.TEE == nil || allowed.DataHandling.TEE.ExternalNetworkEgress != "allowed" {
+		t.Fatalf("unexpected Nemotron Chutes TEE policy: %#v", allowed.DataHandling.TEE)
+	}
+}
+
+func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	deployments := graph["deployments"].(map[string]any)
+	deployment := deployments["azure-gpt-5.6-sol"].(map[string]any)
+	byRoute := deployment["dataHandlingByRoute"].(map[string]any)
+	byRoute["azure-chat-completions"].(map[string]any)["storageLocation"] = "US"
+	byRoute["azure-responses"].(map[string]any)["storageLocation"] = "eu"
+	data, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := snapshotFromCatalogBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, ok := snap.deploymentFromCompiled(
+		"azure-gpt-5.6-sol",
+		snap.graph.Routes["azure-chat-completions"],
+	)
+	if !ok || chat.DataHandling.StorageLocation != "US" {
+		t.Fatalf("chat route handling = %#v", chat.DataHandling)
+	}
+	responses, ok := snap.deploymentFromCompiled(
+		"azure-gpt-5.6-sol",
+		snap.graph.Routes["azure-responses"],
+	)
+	if !ok || responses.DataHandling.StorageLocation != "eu" {
+		t.Fatalf("responses route handling = %#v", responses.DataHandling)
 	}
 }
 
@@ -485,23 +899,80 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	}
 }
 
-func TestSnapshotValidationRejectsAzureDeploymentModelMaps(t *testing.T) {
+func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph := runtime["graph"].(map[string]any)
+	models := graph["models"].(map[string]any)
+	model := models["claude-haiku-4-5"].(map[string]any)
+	aliases := make([]any, maxAliasesPerNode+1)
+	for index := range aliases {
+		aliases[index] = fmt.Sprintf("bounded-alias-%d", index)
+	}
+	model["aliases"] = aliases
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "too many aliases") {
+		t.Fatalf("catalog with an unbounded alias list was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationBindsThePublicCatalog(t *testing.T) {
+	var public map[string]any
+	if err := json.Unmarshal(embeddedPublicCatalogJSON, &public); err != nil {
+		t.Fatal(err)
+	}
+	graph := public["graph"].(map[string]any)
+	authors := graph["authors"].(map[string]any)
+	author := authors["anthropic"].(map[string]any)
+	author["name"] = "changed"
+	changed, err := json.Marshal(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, Identity{}); err == nil ||
+		!strings.Contains(err.Error(), "public catalog digest does not match") {
+		t.Fatalf("mismatched public catalog was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationRequiresThePublicDigestCommitment(t *testing.T) {
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	runtime["publicDigest"] = "sha256:invalid"
+	broken, err := json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "public digest is invalid") {
+		t.Fatalf("invalid public digest commitment was accepted: %v", err)
+	}
+}
+
+func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T) {
 	var runtime map[string]any
 	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
 		t.Fatal(err)
 	}
 	graph := runtime["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	deployment := deployments["azure-gpt-5.6-sol"].(map[string]any)
+	deployment := deployments["azure-deepseek-v4-pro"].(map[string]any)
 	upstream := deployment["upstream"].(map[string]any)
-	upstream["model"] = "customer-specific-deployment"
+	upstream["model"] = "reviewed-provider-selector"
 	broken, err := json.Marshal(runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
-		!strings.Contains(err.Error(), "invalid Azure upstream selector") {
-		t.Fatalf("Azure deployment model map was accepted: %v", err)
+	if _, err := snapshotFromCatalogBytes(broken); err != nil {
+		t.Fatalf("distinct signed Azure provider selector was rejected: %v", err)
 	}
 }
 
@@ -555,6 +1026,26 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 		!strings.Contains(err.Error(), "canonical order") {
 		t.Fatalf("catalog with unordered reasoning efforts was accepted: %v", err)
 	}
+
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	graph = runtime["graph"].(map[string]any)
+	deployments = graph["deployments"].(map[string]any)
+	deployment = deployments["openai-gpt-5.6-sol"].(map[string]any)
+	deployment["routeOverrides"] = map[string]any{
+		"openai-responses": map[string]any{
+			"reasoningEfforts": []any{"low", "medium", "high", "xhigh", "max"},
+		},
+	}
+	broken, err = json.Marshal(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
+		!strings.Contains(err.Error(), "redundantly repeats") {
+		t.Fatalf("catalog with redundant route reasoning efforts was accepted: %v", err)
+	}
 }
 
 func TestSnapshotValidationRejectsInvalidChutesTEEPolicy(t *testing.T) {
@@ -565,7 +1056,8 @@ func TestSnapshotValidationRejectsInvalidChutesTEEPolicy(t *testing.T) {
 	graph := runtime["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["chutes-qwen3-32b"].(map[string]any)
-	tee := deployment["tee"].(map[string]any)
+	dataHandling := deployment["dataHandlingByRoute"].(map[string]any)["chutes-chat-completions"].(map[string]any)
+	tee := dataHandling["tee"].(map[string]any)
 	tee["externalNetworkEgress"] = "sometimes"
 	broken, err := json.Marshal(runtime)
 	if err != nil {
@@ -584,7 +1076,7 @@ func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
 	}
 	graph := runtime["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	deployment := deployments["chutes-qwen3-235b-a22b-thinking-2507"].(map[string]any)
+	deployment := deployments["chutes-kimi-k3"].(map[string]any)
 	deployment["reasoningAvailability"] = "unsupported"
 	deployment["reasoningEfforts"] = []any{}
 	broken, err := json.Marshal(runtime)
@@ -635,6 +1127,34 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 		t.Fatalf("mismatched public projection was accepted: %v", err)
 	}
 
+}
+
+func TestCanonicalDataLocationContainment(t *testing.T) {
+	tests := map[string]struct {
+		actual   string
+		boundary string
+		allowed  bool
+	}{
+		"exact country":            {actual: "US", boundary: "US", allowed: true},
+		"country outside country":  {actual: "CA", boundary: "US", allowed: false},
+		"EU country":               {actual: "SE", boundary: "eu", allowed: true},
+		"non-EU European country":  {actual: "CH", boundary: "eu", allowed: false},
+		"European country":         {actual: "CH", boundary: "europe", allowed: true},
+		"EU within Europe":         {actual: "eu", boundary: "europe", allowed: true},
+		"APAC country":             {actual: "JP", boundary: "apac", allowed: true},
+		"country outside APAC":     {actual: "US", boundary: "apac", allowed: false},
+		"global boundary":          {actual: "US", boundary: "global", allowed: true},
+		"unknown boundary":         {actual: "unknown", boundary: "unknown", allowed: true},
+		"unknown actual is not EU": {actual: "unknown", boundary: "eu", allowed: false},
+		"invalid country":          {actual: "ZZ", boundary: "global", allowed: false},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := DataLocationWithin(test.actual, test.boundary); got != test.allowed {
+				t.Fatalf("DataLocationWithin(%q, %q) = %v, want %v", test.actual, test.boundary, got, test.allowed)
+			}
+		})
+	}
 }
 
 func stringPointer(value string) *string {

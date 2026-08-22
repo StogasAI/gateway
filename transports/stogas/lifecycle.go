@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,15 +23,19 @@ type PublicBillingError struct {
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequest(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string) (*gatewaybilling.Authorization, error)
-	AuthorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
-	AuthorizeSingleUseRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
-	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, amountUSDAtoms string, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
+	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, amountUSDAtoms string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
-func (e PublicBillingError) Error() string {
-	return e.Message
+type passthroughDashboardError struct{}
+
+func (passthroughDashboardError) Error() string {
+	return "Pass-through BYOK requires a standard Stogas API key"
+}
+
+func (passthroughDashboardError) StatusCode() int {
+	return 400
 }
 
 func PublicBillingErrorFor(err error) PublicBillingError {
@@ -67,6 +72,10 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
+	passthroughSecret := state.PassthroughByokSecret
+	defer func() {
+		state.PassthroughByokSecret = ""
+	}()
 	if state.StartedAt.IsZero() {
 		state.StartedAt = time.Now()
 	}
@@ -82,13 +91,21 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	}
 	hold := state.Hold
 	if hold.MaxUSDAtoms == "" {
-		hold = baseHoldEstimate(state)
+		var holdErr error
+		hold, holdErr = baseHoldEstimate(state)
+		if holdErr != nil {
+			return holdErr
+		}
 		state.Hold = hold
 	}
 
 	var authorization *gatewaybilling.Authorization
 	var err error
+	upstreamTarget := billingUpstreamTarget(state.Resolution)
 	if state.DashboardCredential != nil {
+		if passthroughSecret != "" {
+			return passthroughDashboardError{}
+		}
 		authorization, err = billing.AuthorizeDashboardRequestWithDuration(
 			ctx,
 			state.DashboardCredential,
@@ -96,19 +113,18 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 			hold.ProviderKey,
 			hold.ProductKey,
 			hold.MaxUSDAtoms,
+			upstreamTarget,
 			state.RequestLifetime,
 		)
-	} else if state.SingleUseRequestID {
-		authorization, err = billing.AuthorizeSingleUseRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
 	} else {
-		authorization, err = billing.AuthorizeRequestWithDuration(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, state.RequestLifetime)
+		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
 	}
 	if err != nil && authorization != nil {
 		state.Authorization = authorization
 		return err
 	}
 	if err != nil && !state.SingleUseRequestID {
-		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, requestID, hold, state.RequestLifetime, err)
+		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, hold, passthroughSecret, upstreamTarget, state.RequestLifetime, err)
 	}
 	if err != nil {
 		return err
@@ -117,9 +133,24 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	return nil
 }
 
-// ApplyUpstreamCredentials installs the request-scoped provider credential.
-// PrepareProviderRequest has already fixed the provider body, so this function
-// must not mutate request fields.
+func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.UpstreamTarget {
+	if resolution == nil || resolution.Provider != schemas.Azure {
+		return nil
+	}
+	upstream := resolution.Deployment.Upstream
+	return &gatewaybilling.UpstreamTarget{
+		DeploymentType:     upstream.DeploymentType,
+		Hosting:            upstream.Hosting,
+		Model:              upstream.Model,
+		ModelFormat:        upstream.ModelFormat,
+		ModelVersion:       upstream.ModelVersion,
+		ProcessingLocation: resolution.Deployment.DataHandling.ProcessingLocation,
+		StorageLocation:    resolution.Deployment.DataHandling.StorageLocation,
+	}
+}
+
+// ApplyUpstreamCredentials installs the request-scoped provider credential and
+// binds provider-owned target names before the provider body is serialized.
 func ApplyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
@@ -149,9 +180,13 @@ func ApplyUpstreamCredentials(
 		}
 		if state.Resolution.Provider == schemas.Azure {
 			var err error
-			directKey, err = azureDirectKey(authorization, state.Resolution)
+			var deploymentName string
+			directKey, deploymentName, err = azureDirectKey(authorization, state.Resolution)
 			if err != nil {
 				return err
+			}
+			if err := state.Resolution.SetWireModel(deploymentName); err != nil {
+				return gatewaybilling.ErrByok
 			}
 		}
 		ctx.SetValue(schemas.BifrostContextKeyDirectKey, directKey)
@@ -169,7 +204,13 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		return
 	}
 	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event); err != nil {
-		fmt.Printf("stogas billing settlement scheduling failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
+		writeOperationalLog(operationalLogEvent{
+			ErrorType:  safeOperationalErrorType(err),
+			Event:      "billing_settlement_schedule_failed",
+			ReasonCode: "finalization_failed",
+			RequestID:  state.Authorization.RequestID,
+			Severity:   "error",
+		})
 	}
 }
 
@@ -182,22 +223,31 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 	if state.FinalEvent != nil {
 		return state.FinalEvent
 	}
+	pricingFailed := false
 	if state.FinalCostUSDAtoms == "" {
 		adapter := state.Adapter
 		if adapter == nil {
 			adapter = DefaultAdapter{}
 		}
 		if err := adapter.FinalPrice(state); err != nil {
-			fmt.Printf("stogas final price calculation failed: request_id=%s err=%v\n", state.Authorization.RequestID, err)
+			markFinalPricingFailure(state, err)
+			pricingFailed = true
 		}
 	}
-	if len(state.FinalMeters) > 0 {
-		state.FinalMeters = compactMeterEstimates(state.FinalMeters, effectivePricingForState(state))
-		state.FinalCostUSDAtoms = sumMeterAmounts(state.FinalMeters)
+	if !pricingFailed {
+		if err := validateCanonicalMeterSummary(
+			state.FinalMeters,
+			effectivePricingForState(state),
+			state.FinalCostUSDAtoms,
+		); err != nil {
+			markFinalPricingFailure(state, err)
+			pricingFailed = true
+		}
 	}
+	rejectFinalCostOutsideHold(state)
 	catalogIdentity := state.Resolution.CatalogIdentity()
 	executionDeployment := ExecutionDeployment(state)
-	event := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
+	event, err := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		ActualCostUSDAtoms:    state.FinalCostUSDAtoms,
 		Authorization:         state.Authorization,
 		Cancelled:             state.Cancelled,
@@ -205,6 +255,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		CatalogDigest:         catalogIdentity.Digest,
 		Error:                 state.BifrostError,
 		Pricing:               pricingForState(state),
+		ProviderAttempts:      state.providerAttemptInputs(),
 		ProviderCompletedAt:   state.ProviderCompletedAt,
 		ProviderStartedAt:     state.ProviderStartedAt,
 		ProviderFirstOutputMS: state.ProviderFirstOutputMS,
@@ -215,69 +266,152 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		Response:              state.Response,
 		StartedAt:             state.StartedAt,
 	})
+	if err != nil {
+		markFinalPricingFailure(state, err)
+		pricingFailed = true
+		event, err = gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
+			ActualCostUSDAtoms: gatewaybilling.ZeroChargeUSDAtoms,
+			Authorization:      state.Authorization,
+			CatalogDigest:      catalogIdentity.Digest,
+			Error:              state.BifrostError,
+			NodeID:             state.NodeID,
+			GatewayVersion:     state.GatewayVersion,
+			RequestType:        state.RequestType,
+			CatalogNodeIDs:     state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
+			StartedAt:          state.StartedAt,
+		})
+		if err != nil {
+			return nil
+		}
+	}
+	if pricingFailed {
+		event.StogasProcessingSuccess = false
+	}
 	state.FinalEvent = &event
 	return state.FinalEvent
 }
 
-func pricingForState(state *State) map[string]any {
-	out := map[string]any{}
+func markFinalPricingFailure(state *State, err error) {
+	writeOperationalLog(operationalLogEvent{
+		ErrorType:  safeOperationalErrorType(err),
+		Event:      "billing_final_price_failed",
+		ReasonCode: "price_calculation_failed",
+		RequestID:  state.Authorization.RequestID,
+		Severity:   "error",
+	})
+	statusCode := 500
+	errorType := "internal_error"
+	code := "billing_price_invalid"
+	allowFallbacks := false
+	state.BifrostError = &schemas.BifrostError{
+		IsBifrostError: true,
+		StatusCode:     &statusCode,
+		Type:           &errorType,
+		AllowFallbacks: &allowFallbacks,
+		Error: &schemas.ErrorField{
+			Type:    &errorType,
+			Code:    &code,
+			Message: "Internal server error",
+		},
+	}
+	state.Signals = nil
+	state.FinalMeters = nil
+	state.FinalCostUSDAtoms = gatewaybilling.ZeroChargeUSDAtoms
+}
+
+func rejectFinalCostOutsideHold(state *State) {
+	if state == nil || state.FinalCostUSDAtoms == "" {
+		return
+	}
+	hold, holdOK := new(big.Int).SetString(state.Hold.MaxUSDAtoms, 10)
+	final, finalOK := new(big.Int).SetString(state.FinalCostUSDAtoms, 10)
+	zeroCost := finalOK && final.Sign() == 0 && len(state.FinalMeters) == 0
+	authorizedCost := holdOK && finalOK && hold.Sign() >= 0 && final.Sign() > 0 && final.Cmp(hold) <= 0 &&
+		len(state.FinalMeters) > 0 && finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters)
+	if zeroCost || authorizedCost {
+		return
+	}
+	if state.BifrostError == nil {
+		state.BifrostError = UpstreamProtocolError(ErrProviderUsageExceedsHold)
+	}
+	state.Signals = nil
+	state.FinalMeters = nil
+	state.FinalCostUSDAtoms = gatewaybilling.ZeroChargeUSDAtoms
+}
+
+func finalMeterQuantitiesWithinHold(holdMeters []catalog.MeterEstimate, finalMeters []catalog.MeterEstimate) bool {
+	capacities := map[string]*big.Int{}
+	for _, meter := range holdMeters {
+		if !meter.HoldRequired {
+			continue
+		}
+		class, ok := meterQuantityClass(meter.MeterKey)
+		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
+		if !ok || !quantityOK || quantity.Sign() < 0 {
+			return false
+		}
+		if capacities[class] == nil {
+			capacities[class] = big.NewInt(0)
+		}
+		capacities[class].Add(capacities[class], quantity)
+	}
+	used := map[string]*big.Int{}
+	for _, meter := range finalMeters {
+		class, ok := meterQuantityClass(meter.MeterKey)
+		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
+		if !ok || !quantityOK || quantity.Sign() < 0 {
+			return false
+		}
+		if used[class] == nil {
+			used[class] = big.NewInt(0)
+		}
+		used[class].Add(used[class], quantity)
+	}
+	for class, quantity := range used {
+		capacity := capacities[class]
+		if capacity == nil || quantity.Cmp(capacity) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func meterQuantityClass(meterKey string) (string, bool) {
+	switch {
+	case isInputTokenMeter(meterKey):
+		return "input_tokens", true
+	case isOutputTokenMeter(meterKey):
+		return "output_tokens", true
+	case strings.TrimSpace(meterKey) != "":
+		return "meter:" + meterKey, true
+	default:
+		return "", false
+	}
+}
+
+func pricingForState(state *State) gatewaybilling.EventPricing {
+	out := gatewaybilling.EventPricing{}
 	if state == nil {
 		return out
 	}
-	pricing := effectivePricingForState(state)
-	mergePricingMeters(out, compactMeterEstimates(state.FinalMeters, pricing), pricing)
-	return out
-}
-
-func mergePricingMeters(out map[string]any, meters []catalog.MeterEstimate, pricing catalog.Pricing) {
-	for _, meter := range meters {
-		if meter.MeterKey == "" || meter.RateKey == "" {
-			continue
-		}
+	for _, meter := range state.FinalMeters {
 		key := meter.MeterKey
-		if existing, ok := out[key].(map[string]any); ok {
-			if fmt.Sprint(existing["rateKey"]) != meter.RateKey {
+		if existing, ok := out[key]; ok {
+			if existing.RateKey != meter.RateKey {
 				key = meter.MeterKey + ":" + meter.RateKey
 			}
 		}
-		rateUSDAtoms := meter.RateUSDAtoms
-		if rateUSDAtoms == "" {
-			rateUSDAtoms = pricing[meter.MeterKey][meter.RateKey]
-		}
-		out[key] = mergeMeterMetric(out[key], meter, rateUSDAtoms)
-	}
-}
-
-func mergeMeterMetric(existing any, meter catalog.MeterEstimate, rateUSDAtoms string) map[string]any {
-	metric, _ := existing.(map[string]any)
-	if metric == nil {
-		return map[string]any{
-			"quantity":     meter.Quantity,
-			"rateKey":      meter.RateKey,
-			"rateUsdAtoms": rateUSDAtoms,
-			"usdAtoms":     meter.AmountUSDAtoms,
+		out[key] = gatewaybilling.EventMeter{
+			Quantity:     meter.Quantity,
+			RateKey:      meter.RateKey,
+			RateUSDAtoms: meter.RateUSDAtoms,
+			USDAtoms:     meter.AmountUSDAtoms,
 		}
 	}
-	metric["quantity"] = addDecimalStrings(fmt.Sprint(metric["quantity"]), meter.Quantity)
-	metric["usdAtoms"] = addDecimalStrings(fmt.Sprint(metric["usdAtoms"]), meter.AmountUSDAtoms)
-	metric["rateKey"] = meter.RateKey
-	metric["rateUsdAtoms"] = rateUSDAtoms
-	return metric
+	return out
 }
 
-func addDecimalStrings(left string, right string) string {
-	leftValue, ok := new(big.Int).SetString(left, 10)
-	if !ok {
-		leftValue = big.NewInt(0)
-	}
-	rightValue, ok := new(big.Int).SetString(right, 10)
-	if !ok {
-		rightValue = big.NewInt(0)
-	}
-	return leftValue.Add(leftValue, rightValue).String()
-}
-
-func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, requestID string, hold HoldEstimate, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {
+func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, hold HoldEstimate, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {
 	if gatewaybilling.ErrorStatus(authorizeErr) != 409 {
 		return nil, authorizeErr
 	}
@@ -287,10 +421,10 @@ func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAut
 		if idErr != nil {
 			return nil, fmt.Errorf("generate retry request id: %w", idErr)
 		}
-		requestID = nextRequestID.String()
+		requestID := nextRequestID.String()
 		ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 
-		authorization, err := billing.AuthorizeRequestWithDuration(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, requestLifetime)
+		authorization, err := billing.AuthorizeRequestWithPassthrough(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.MaxUSDAtoms, passthroughSecret, upstreamTarget, requestLifetime, false)
 		if err == nil {
 			return authorization, nil
 		}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
-	"net/url"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -12,6 +11,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 const (
@@ -179,11 +179,9 @@ func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (i
 		if !exists {
 			return nil
 		}
-		blockType := rawStringField(object, "type")
-		allowed := (route == catalog.RouteChat && stringInSet(blockType,
-			"text", "image_url", "input_audio", "file", "refusal")) ||
-			(route == catalog.RouteResponses && stringInSet(blockType,
-				"input_text", "input_image", "input_file"))
+		blockType := rawjson.NormalizedStringField(object, "type")
+		allowed := (route == catalog.RouteChat && stringInSet(blockType, "text", "refusal")) ||
+			(route == catalog.RouteResponses && blockType == "input_text")
 		if !allowed {
 			return invalidRequest("prompt_cache_breakpoint is not supported on this prompt block")
 		}
@@ -221,7 +219,10 @@ func validateOpenAIWireChatPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	for _, name := range []string{"cache_control", "context_management", "mcp_servers", "stop_sequences", "task_budget", "top_k"} {
+	if err := validateOpenAIChatScalarPolicy(raw); err != nil {
+		return err
+	}
+	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is only supported for Anthropic deployments")
 		}
@@ -232,11 +233,11 @@ func validateOpenAIWireChatPolicy(state *State) error {
 	if err := validateOpenAIChatWebSearchOptions(raw["web_search_options"]); err != nil {
 		return err
 	}
-	tools, err := validateChatTools(raw["tools"], chatToolCapabilities{allowCustom: true})
+	tools, err := validateChatTools(raw["tools"])
 	if err != nil {
 		return err
 	}
-	if err := validateChatToolChoice(raw["tool_choice"], tools, chatToolCapabilities{allowCustom: true}); err != nil {
+	if err := validateChatToolChoice(raw["tool_choice"], tools); err != nil {
 		return err
 	}
 	return nil
@@ -246,6 +247,9 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
+	if err := validateOpenAIResponsesInclude(raw["include"]); err != nil {
+		return err
+	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
 			return invalidRequest(name + " is only supported for Anthropic deployments")
@@ -254,20 +258,51 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	if err := rejectOpenAIResponsesCacheControls(raw); err != nil {
 		return err
 	}
-	tools, err := parseResponsesTools(state, raw["tools"])
+	return validateResponsesToolPolicy(state, raw, func(tools []schemas.ResponsesTool) error {
+		if !responsesHasHostedTool(tools) {
+			if _, ok := raw["max_tool_calls"]; ok {
+				return invalidRequest("max_tool_calls is supported only for priced hosted Responses tools")
+			}
+		}
+		return nil
+	})
+}
+
+func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
+	if rawJSONValueSet(raw["repetition_penalty"]) {
+		return invalidRequest("repetition_penalty is only supported for Chutes deployments")
+	}
+	if rawJSONValueSet(raw["reasoning_display"]) {
+		return invalidRequest("reasoning_display is only supported for Anthropic-format deployments")
+	}
+	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
+		return invalidRequest("reasoning.display is only supported for Anthropic-format deployments")
+	}
+	if err := validateJSONBool(raw, "logprobs"); err != nil {
+		return err
+	}
+	return validateChatPrediction(raw["prediction"])
+}
+
+func validateOpenAIResponsesInclude(raw json.RawMessage) error {
+	values, err := validateStringArray(raw, "include", 0)
 	if err != nil {
 		return err
 	}
-	if len(tools) == 0 {
-		if _, ok := raw["max_tool_calls"]; ok {
-			return invalidRequest("max_tool_calls requires supported tools")
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		if seen[value] {
+			return invalidRequest("include must not contain duplicate values")
 		}
-		if _, ok := raw["parallel_tool_calls"]; ok {
-			return invalidRequest("parallel_tool_calls requires supported tools")
+		seen[value] = true
+		if !stringInSet(value,
+			"web_search_call.action.sources",
+			"web_search_call.results",
+			"message.output_text.logprobs",
+			"reasoning.encrypted_content",
+		) {
+			return invalidRequest("include contains a value that is not supported by the text-only Stogas API")
 		}
-	}
-	if err := validateResponsesToolChoice(state, raw["tool_choice"], tools); err != nil {
-		return err
 	}
 	return nil
 }
@@ -308,6 +343,17 @@ func validateOpenAIChatWebSearchUserLocation(raw json.RawMessage) error {
 	if !ok {
 		return invalidRequest("web_search_options.user_location must be an object")
 	}
+	for key := range location {
+		if key != "type" && key != "approximate" {
+			return invalidRequest("web_search_options.user_location." + key + " is not supported by Stogas API")
+		}
+	}
+	if _, exists := location["type"]; !exists {
+		return invalidRequest("web_search_options.user_location.type is required")
+	}
+	if _, exists := location["approximate"]; !exists {
+		return invalidRequest("web_search_options.user_location.approximate is required")
+	}
 	for key, value := range location {
 		switch key {
 		case "type":
@@ -333,8 +379,6 @@ func validateOpenAIChatWebSearchUserLocation(raw json.RawMessage) error {
 					return invalidRequest("web_search_options.user_location.approximate." + field + " is not supported by Stogas API")
 				}
 			}
-		default:
-			return invalidRequest("web_search_options.user_location." + key + " is not supported by Stogas API")
 		}
 	}
 	return nil
@@ -352,82 +396,17 @@ func rejectOpenAIChatCacheControls(raw map[string]json.RawMessage) error {
 	if rawJSONValueSet(raw["cache_control"]) {
 		return invalidRequest("cache_control is only supported for Anthropic deployments")
 	}
-	if openAIChatCacheControlExists(raw["messages"]) || openAIChatCacheControlExists(raw["tools"]) {
+	if rawChatCacheControlExists(raw["messages"], true) || rawChatCacheControlExists(raw["tools"], true) {
 		return invalidRequest("cache_control is only supported for Anthropic deployments")
 	}
 	return nil
-}
-
-func openAIChatCacheControlExists(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var values []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &values); err != nil {
-		return false
-	}
-	for _, value := range values {
-		if _, ok := value["cache_control"]; ok {
-			return true
-		}
-		contentRaw := value["content"]
-		if len(contentRaw) == 0 {
-			continue
-		}
-		trimmed := strings.TrimSpace(string(contentRaw))
-		if trimmed == "" || trimmed == "null" || trimmed[0] != '[' {
-			continue
-		}
-		var blocks []map[string]json.RawMessage
-		if err := sonic.Unmarshal(contentRaw, &blocks); err != nil {
-			continue
-		}
-		for _, block := range blocks {
-			if _, ok := block["cache_control"]; ok {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func rejectOpenAIResponsesCacheControls(raw map[string]json.RawMessage) error {
-	if rawJSONValueSet(raw["cache_control"]) || openAIResponsesCacheControlExists(raw["input"]) || openAIResponsesCacheControlExists(raw["tools"]) {
+	if rawJSONValueSet(raw["cache_control"]) || rawResponsesCacheControlExists(raw["input"]) || rawResponsesCacheControlExists(raw["tools"]) {
 		return invalidRequest("cache_control is only supported for Anthropic deployments")
 	}
 	return nil
-}
-
-func openAIResponsesCacheControlExists(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" || trimmed[0] == '"' {
-		return false
-	}
-	switch trimmed[0] {
-	case '{':
-		object, ok := rawObject(raw)
-		if !ok {
-			return false
-		}
-		if _, ok := object["cache_control"]; ok {
-			return true
-		}
-		return openAIResponsesCacheControlExists(object["content"])
-	case '[':
-		var array []json.RawMessage
-		if err := sonic.Unmarshal(raw, &array); err != nil {
-			return false
-		}
-		for _, child := range array {
-			if openAIResponsesCacheControlExists(child) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (a OpenAIAdapter) EstimateHold(state *State) error {
@@ -437,9 +416,13 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForDeployment(state, state.Resolution.Deployment), state.Resolution.OutputTokenLimit(), state.Resolution.InputTokenLimit())...)
-	state.Hold.Meters = compactMeterEstimates(state.Hold.Meters, effectivePricingForState(state))
-	state.Hold.MaxUSDAtoms = sumMeterAmounts(state.Hold.Meters)
+	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForHold(state), state.Resolution.OutputTokenLimit(), state.Resolution.InputTokenLimit())...)
+	meters, total, err := canonicalizeMeters(state.Hold.Meters, holdPricingForState(state))
+	if err != nil {
+		return err
+	}
+	state.Hold.Meters = meters
+	state.Hold.MaxUSDAtoms = total
 	return nil
 }
 
@@ -463,19 +446,20 @@ func (OpenAIAdapter) FinalPrice(state *State) error {
 	if state == nil {
 		return nil
 	}
-	state.FinalCostUSDAtoms = baseFinalPrice(state, openAIFinalMeters(openAIAdapterContextForFinalPrice(state)))
+	price, err := baseFinalPrice(state, openAIFinalMeters(openAIAdapterContextForFinalPrice(state)))
+	if err != nil {
+		return err
+	}
+	state.FinalCostUSDAtoms = price
 	return nil
 }
 
 func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	rawType := rawString(tool["type"])
+	if rawType == "mcp" {
+		return invalidRequest("Remote MCP tools are not supported because provider execution cannot be bounded or approved per request")
+	}
 	if openAIResponsesToolTypeSupported(rawType) {
-		switch rawType {
-		case "mcp":
-			if err := validateOpenAIResponsesMCPToolApproval(tool); err != nil {
-				return err
-			}
-		}
 		if openAIWebSearchToolType(rawType) {
 			if state != nil && state.Resolution != nil && !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
 				return nil
@@ -496,17 +480,6 @@ func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]
 	return invalidRequest(openAIUnsupportedResponsesToolMessage(rawType))
 }
 
-func validateOpenAIResponsesMCPToolApproval(tool map[string]json.RawMessage) error {
-	rawApproval, ok := tool["require_approval"]
-	if !ok {
-		return invalidRequest(`OpenAI MCP tools require require_approval="never"`)
-	}
-	if rawString(rawApproval) != "never" {
-		return invalidRequest(`OpenAI MCP tools require require_approval="never"`)
-	}
-	return nil
-}
-
 func ensureOpenAIResponsesHostedToolCap(state *State) {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
 		return
@@ -523,9 +496,18 @@ func openAIAdapterContextForState(state *State) openAIAdapterContext {
 	return openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
 }
 
+func openAIAdapterContextForHold(state *State) openAIAdapterContext {
+	if state == nil || state.Resolution == nil {
+		return openAIAdapterContext{}
+	}
+	req := openAIAdapterContextForDeployment(state, state.Resolution.Deployment)
+	req.Deployment.Pricing = holdPricingForState(state)
+	return req
+}
+
 func openAIAdapterContextForFinalPrice(state *State) openAIAdapterContext {
 	req := openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
-	req.ActualWebSearchCalls = openAIBillableHostedToolCalls(state)
+	req.ActualWebSearchCalls = actualWebSearchCalls(state)
 	return req
 }
 
@@ -534,7 +516,7 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 		return openAIAdapterContext{}
 	}
 	resolution := state.Resolution
-	pricing := mergePricing(catalog.ProviderPricing(resolution.Provider), deployment.Pricing)
+	pricing := clonePricing(deployment.Pricing)
 	return openAIAdapterContext{
 		Route: openAIAdapterRoute(resolution.Route),
 		Deployment: openAIAdapterDeployment{
@@ -552,18 +534,6 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 		RawTools:             resolution.RawTools(),
 		ActualWebSearchCalls: actualWebSearchCalls(state),
 	}
-}
-
-func openAIBillableHostedToolCalls(state *State) int {
-	actual := actualWebSearchCalls(state)
-	if actual <= 0 {
-		return 0
-	}
-	allowed := responsesTopLevelMaxToolCallsOrDefault(state)
-	if allowed > 0 && actual > allowed {
-		return allowed
-	}
-	return actual
 }
 
 func openAIGuardrailError(err error) error {
@@ -614,7 +584,7 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 
 func openAIResponsesToolTypeSupported(rawType string) bool {
 	switch strings.TrimSpace(rawType) {
-	case "function", "custom", "mcp":
+	case "function", "custom":
 		return true
 	default:
 		return openAIWebSearchToolType(rawType)
@@ -627,6 +597,8 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	switch {
 	case rawType == "":
 		return "tools must declare a type"
+	case normalized == "mcp":
+		return "Remote MCP tools are not supported because provider execution cannot be bounded or approved per request"
 	case strings.HasPrefix(normalized, "file_search"):
 		return "file_search is not supported because hosted retrieval and file storage have separate pricing and provider state"
 	case normalized == "code_interpreter" || strings.HasPrefix(normalized, "code_execution"):
@@ -642,27 +614,17 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case normalized == "tool_search" || normalized == "namespace" || normalized == "memory":
 		return rawType + " is not supported until Stogas exposes the required tool-loading or provider-state lifecycle"
 	default:
-		return "Only function, custom, mcp, and priced hosted web search tools are supported"
+		return "Only function, custom, and priced hosted web search tools are supported"
 	}
 }
 
 func openAIWebSearchToolType(rawType string) bool {
-	rawType = strings.TrimSpace(rawType)
-	switch {
-	case rawType == "web_search", rawType == "web_search_preview":
+	switch strings.TrimSpace(rawType) {
+	case "web_search", "web_search_2025_08_26", "web_search_preview", "web_search_preview_2025_03_11":
 		return true
-	case strings.HasPrefix(rawType, "web_search_preview_"):
-		return meaningfulToolAliasSuffix(strings.TrimPrefix(rawType, "web_search_preview_"))
-	case strings.HasPrefix(rawType, "web_search_"):
-		suffix := strings.TrimPrefix(rawType, "web_search_")
-		return meaningfulToolAliasSuffix(suffix) && !strings.HasPrefix(suffix, "preview")
 	default:
 		return false
 	}
-}
-
-func meaningfulToolAliasSuffix(suffix string) bool {
-	return strings.Trim(suffix, "_- ") != ""
 }
 
 func validateReasoningSupport(req openAIAdapterContext) error {
@@ -782,9 +744,6 @@ func openAIResponsesHostedToolFinalMeters(req openAIAdapterContext) []billing.Me
 	if quantity <= 0 {
 		return meters
 	}
-	if cap := responsesHostedToolHoldQuantity(req); cap > 0 && quantity > cap {
-		quantity = cap
-	}
 	searchKind := responsesSearchKind(req)
 	if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
 		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, false, billing.TokenRateStandard)
@@ -811,7 +770,7 @@ func openAIChatSearchModelFinalMeters(req openAIAdapterContext) []billing.MeterE
 
 func validateChatInput(raw json.RawMessage) error {
 	return openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
-		switch rawStringField(object, "type") {
+		switch rawjson.NormalizedStringField(object, "type") {
 		case "file", "image_url", "input_audio":
 			return errOpenAIUnsupportedInput
 		default:
@@ -822,7 +781,7 @@ func validateChatInput(raw json.RawMessage) error {
 
 func validateResponsesInput(raw json.RawMessage) error {
 	return openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
-		switch rawStringField(object, "type") {
+		switch rawjson.NormalizedStringField(object, "type") {
 		case "input_image", "input_audio":
 			return errOpenAIUnsupportedInput
 		case "input_file":
@@ -866,8 +825,11 @@ func openAIWalkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessag
 }
 
 func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) error {
-	toolType := rawStringField(tool, "type")
+	toolType := rawjson.NormalizedStringField(tool, "type")
 	if route == openAIAdapterRouteResponses {
+		if !openAIResponsesToolTypeSupported(toolType) {
+			return errOpenAIUnsupportedTool
+		}
 		raw, err := sonic.Marshal(tool)
 		if err != nil {
 			return errOpenAIInvalidProviderToolSpec
@@ -879,12 +841,8 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 		switch responsesTool.Type {
 		case schemas.ResponsesToolTypeFunction,
 			schemas.ResponsesToolTypeCustom,
-			schemas.ResponsesToolTypeMCP,
 			schemas.ResponsesToolTypeWebSearch,
 			schemas.ResponsesToolTypeWebSearchPreview:
-			if responsesTool.Type == schemas.ResponsesToolTypeMCP {
-				return validateMCPTool(tool)
-			}
 			return nil
 		default:
 			return errOpenAIUnsupportedTool
@@ -894,7 +852,7 @@ func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) err
 		switch toolType {
 		case "":
 			return errOpenAIInvalidProviderToolSpec
-		case "function", "custom":
+		case "function":
 			return nil
 		default:
 			return errOpenAIUnsupportedTool
@@ -923,57 +881,6 @@ func responsesHostedToolHoldQuantity(req openAIAdapterContext) int {
 		return defaultResponsesHostedToolCalls
 	}
 	return quantity
-}
-
-func validateMCPTool(tool map[string]json.RawMessage) error {
-	if rawStringField(tool, "server_label") == "" {
-		return errOpenAIInvalidProviderToolSpec
-	}
-	serverURL := strings.TrimSpace(rawStringField(tool, "server_url"))
-	connectorID := strings.TrimSpace(rawStringField(tool, "connector_id"))
-	if (serverURL == "") == (connectorID == "") {
-		return errOpenAIInvalidProviderToolSpec
-	}
-	if serverURL != "" {
-		parsed, err := url.Parse(serverURL)
-		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil {
-			return errOpenAIInvalidProviderToolSpec
-		}
-	}
-	if allowedToolsRaw, ok := tool["allowed_tools"]; ok {
-		if strings.TrimSpace(string(allowedToolsRaw)) != "null" {
-			var allowedTools schemas.ResponsesToolMCPAllowedTools
-			if err := sonic.Unmarshal(allowedToolsRaw, &allowedTools); err != nil {
-				return errOpenAIInvalidProviderToolSpec
-			}
-			if allowedTools.ToolNames == nil && allowedTools.Filter == nil {
-				return errOpenAIInvalidProviderToolSpec
-			}
-			for _, name := range allowedTools.ToolNames {
-				if strings.TrimSpace(name) == "" {
-					return errOpenAIInvalidProviderToolSpec
-				}
-			}
-			if allowedTools.Filter != nil {
-				for _, name := range allowedTools.Filter.ToolNames {
-					if strings.TrimSpace(name) == "" {
-						return errOpenAIInvalidProviderToolSpec
-					}
-				}
-			}
-		}
-	}
-	if rawStringField(tool, "require_approval") != "never" {
-		return errOpenAIUnsupportedTool
-	}
-	for key := range tool {
-		switch key {
-		case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "connector_id", "headers", "require_approval":
-		default:
-			return errOpenAIUnsupportedTool
-		}
-	}
-	return nil
 }
 
 func chatSearchMeter(ctx openAIAdapterContext) (string, string) {
@@ -1030,10 +937,6 @@ func responsesSearchKind(ctx openAIAdapterContext) string {
 	}
 }
 
-func webSearchContentTokensBilledAtModelRates(ctx openAIAdapterContext) bool {
-	return webSearchContentTokensBilledAtModelRatesForKind(ctx, responsesSearchKind(ctx))
-}
-
 func webSearchContentTokensBilledAtModelRatesForKind(ctx openAIAdapterContext, kind string) bool {
 	if ctx.Route != openAIAdapterRouteResponses {
 		return false
@@ -1042,13 +945,6 @@ func webSearchContentTokensBilledAtModelRatesForKind(ctx openAIAdapterContext, k
 		return true
 	}
 	return kind == "web_search_preview" && ctx.Deployment.ReasoningSupported
-}
-
-func webSearchFixedContentTokens(model string, toolTypes []string) int {
-	if !usesWebSearchKind(toolTypes, "web_search") {
-		return 0
-	}
-	return webSearchFixedContentTokensForKind(model, "web_search")
 }
 
 func webSearchFixedContentTokensForKind(model string, kind string) int {
@@ -1145,18 +1041,6 @@ func callRate(pricing billing.Pricing, meterKey string) *big.Int {
 		return nil
 	}
 	return rate
-}
-
-func rawStringField(object map[string]json.RawMessage, key string) string {
-	raw, ok := object[key]
-	if !ok {
-		return ""
-	}
-	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func hasDateSuffix(value string) bool {

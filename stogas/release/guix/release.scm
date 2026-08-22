@@ -20,7 +20,8 @@
   (dirname %guix-dir))
 
 (define %gateway-root
-  (dirname (dirname %release-root)))
+  (or (getenv "STOGAS_GATEWAY_SOURCE_ROOT")
+      (dirname (dirname %release-root))))
 
 (define %release-tag
   (or (getenv "STOGAS_RELEASE_TAG") "v0.0.0"))
@@ -33,22 +34,38 @@
   (or (getenv "STOGAS_RELEASE_TREE")
       "0000000000000000000000000000000000000000"))
 
-(define %snp-policy-profile
-  (or (getenv "STOGAS_SNP_POLICY_PROFILE") "milan-v1"))
-
 (define %snp-policy-product
   (or (getenv "STOGAS_SNP_POLICY_PRODUCT") "Milan"))
 
 (define %snp-policy
-  (or (getenv "STOGAS_SNP_POLICY") "0x000000000213013a"))
+  (or (getenv "STOGAS_SNP_POLICY") "0x000000000212013a"))
+
+(define (canonical-version-part text)
+  (let ((value (string->number text 10)))
+    (and value
+         (integer? value)
+         (>= value 0)
+         (string=? text (number->string value))
+         value)))
 
 (define (release-sequence tag)
-  (let* ((version (substring tag 1))
-         (parts (map string->number (string-split version #\.))))
-    (match parts
-      ((major minor patch)
-       (+ (* major 1000000000000) (* minor 1000000) patch))
-      (_ 0))))
+  (unless (and (> (string-length tag) 1)
+               (string-prefix? "v" tag))
+    (error "release tag must use canonical vX.Y.Z form" tag))
+  (match (string-split (substring tag 1) #\.)
+    ((major-text minor-text patch-text)
+     (let ((major (canonical-version-part major-text))
+           (minor (canonical-version-part minor-text))
+           (patch (canonical-version-part patch-text)))
+       (unless (and major minor patch
+                    (< minor 1000000)
+                    (< patch 1000000))
+         (error "release tag must use canonical vX.Y.Z form" tag))
+       (let ((sequence (+ (* major 1000000000000) (* minor 1000000) patch)))
+         (when (> sequence 9007199254740991)
+           (error "release tag sequence exceeds the safe integer range" tag))
+         sequence)))
+    (_ (error "release tag must use canonical vX.Y.Z form" tag))))
 
 (define (runtime-source-path? file)
   (or (string=? file "core")
@@ -92,11 +109,14 @@
               name
               #:recursive? #t))
 
-(define %go-modcache
-  (source-directory "vendor/go-modcache" "stogas-go-modcache"))
+(define %go-vendor
+  (source-directory "vendor/go-vendor" "stogas-go-vendor"))
 
 (define %go-vendor-sha256
   (source-file "vendor/go-vendor.sha256" "go-vendor.sha256"))
+
+(define %tree-sha256
+  (source-file "scripts/tree-sha256.sh" "tree-sha256.sh"))
 
 (package
   (name "stogas-gateway-igvm-release")
@@ -128,21 +148,9 @@
 	                   (command-output "sha256sum" path))
 	                  #\space)))
 
-	          (define (write-sha256-lines target inputs)
-	            (call-with-output-file target
-	              (lambda (port)
-	                (for-each
-	                 (match-lambda
-	                   ((path . store-path)
-	                    (format port "~a  ~a~%" (sha256 store-path) path)))
-	                 inputs))))
-
 	          (define (tree-sha256 path)
 	            (string-trim-both
-	             (command-output
-	              "bash" "-c"
-	              "cd \"$1\" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1"
-	              "tree-sha256" path)))
+	             (command-output "bash" #$%tree-sha256 path)))
 
           (define (json-string value)
             (call-with-output-string
@@ -225,9 +233,8 @@
 		                  (format port "\"tree\":~a}," (json-string #$%release-tree))
 		                  (display "\"vcpu_count\":4}\n" port)))))
 
-		          (define (write-artifact-manifest out igvm efi init kernel initramfs launch-policy ca-bundle measurement
-		                                           vendor-modules build-inputs
-		                                           build-inputs-sha256)
+		          (define (write-artifact-manifest out igvm efi launch-policy ca-bundle measurement
+		                                           build-inputs)
             (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
                    (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
                    (core-go-mod (string-append #$source "/core/go.mod"))
@@ -257,8 +264,6 @@
 	                  (format port "    \"tree\": ~a\n" (json-string #$%release-tree))
 	                  (display "  },\n" port)
 	                  (display "  \"build\": {\n" port)
-	                  (format port "    \"buildInputsSha256\": ~a,\n"
-	                          (json-string (sha256 build-inputs-sha256)))
 	                  (display "    \"environment\": {\n" port)
 	                  (display "      \"lcAll\": \"C\",\n" port)
 	                  (display "      \"sourceDateEpoch\": \"1\",\n" port)
@@ -270,7 +275,6 @@
 	                  (format port "    \"coreGoSumSha256\": ~a,\n" (json-string (sha256 core-go-sum)))
 	                  (format port "    \"goModSha256\": ~a,\n" (json-string (sha256 go-mod)))
 	                  (format port "    \"goSumSha256\": ~a,\n" (json-string (sha256 go-sum)))
-	                  (format port "    \"goVendorModulesSha256\": ~a,\n" (json-string (sha256 vendor-modules)))
 	                  (format port "    \"goVendorTreeSha256\": ~a,\n"
 	                          (json-string expected-go-vendor-tree-sha256))
 	                  (format port "    \"goVersion\": ~a,\n"
@@ -301,28 +305,10 @@
 		                  (display "    \"gateway-launch-policy.json\": {\n" port)
 		                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 launch-policy)))
 		                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat launch-policy)))
-		                  (display "    },\n" port)
-		                  (display "    \"gateway.efi\": {\n" port)
-	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 efi)))
-	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat efi)))
-	                  (display "    },\n" port)
-	                  (display "    \"gateway.init\": {\n" port)
-	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 init)))
-	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat init)))
-	                  (display "    },\n" port)
-	                  (display "    \"gateway.kernel\": {\n" port)
-	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 kernel)))
-	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat kernel)))
-	                  (display "    },\n" port)
-	                  (display "    \"gateway.initramfs.cpio.zst\": {\n" port)
-	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 initramfs)))
-	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat initramfs)))
 	                  (display "    }\n" port)
-                  (display "  },\n" port)
-                  (display "  \"sevSnp\": {\n" port)
-                  (display "    \"platform\": \"SEV_SNP\",\n" port)
-	                  (format port "    \"policyProfile\": ~a,\n"
-	                          (json-string #$%snp-policy-profile))
+	                  (display "  },\n" port)
+	                  (display "  \"sevSnp\": {\n" port)
+	                  (display "    \"platform\": \"SEV_SNP\",\n" port)
 	                  (format port "    \"product\": ~a,\n"
 	                          (json-string #$%snp-policy-product))
                   (display "    \"vmm\": \"qemu-kvm\",\n" port)
@@ -343,21 +329,16 @@
           (define source #$source)
           (define work (string-append (getcwd) "/work"))
           (define build-source (string-append work "/source"))
-          (define go-modcache (string-append work "/go-modcache"))
           (define rootfs (string-append work "/rootfs"))
 	          (define initramfs (string-append work "/initramfs.cpio.zst"))
-	          (define efi (string-append out "/gateway.efi"))
+	          (define efi (string-append work "/gateway.efi"))
 	          (define igvm (string-append out "/gateway.igvm"))
 	          (define init (string-append out "/gateway.init"))
 	          (define release-kernel (string-append out "/gateway.kernel"))
 		          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
-		          (define measurement-path (string-append out "/launch-measurement.txt"))
+		          (define measurement-path (string-append work "/measurement.txt"))
 		          (define launch-policy (string-append out "/gateway-launch-policy.json"))
-		          (define igvmmeasure-check-kvm
-	            (string-append out "/igvmmeasure-check-kvm.txt"))
-	          (define ukify-inspect (string-append out "/ukify-inspect.txt"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
-	          (define build-inputs-sha256 (string-append out "/build-inputs.sha256"))
 	          (define license #$(gateway-file "LICENSE" "LICENSE"))
 	          (define notice #$(gateway-file "NOTICE" "NOTICE"))
 	          (define pins #$(source-file "pins.lock.json" "pins.lock.json"))
@@ -383,49 +364,18 @@
 	                   #$(source-file "guix/channels.scm" "channels.scm"))
 	             (cons "stogas/release/guix/release.scm"
 	                   #$(source-file "guix/release.scm" "release.scm"))
+	             (cons "stogas/release/guix/cmdline.txt"
+	                   #$(source-file "guix/cmdline.txt" "cmdline.txt"))
+	             (cons "stogas/release/guix/os-release"
+	                   #$(source-file "guix/os-release" "os-release"))
 	             (cons "stogas/release/guix/modules/stogas/release/packages.scm"
 	                   #$(source-file "guix/modules/stogas/release/packages.scm"
 	                                  "packages.scm"))
-	             (cons "stogas/release/scripts/build-release.sh"
-	                   #$(source-file "scripts/build-release.sh" "build-release.sh"))
-	             (cons "stogas/release/scripts/hydrate-go-vendor.sh"
-	                   #$(source-file "scripts/hydrate-go-vendor.sh"
-	                                  "hydrate-go-vendor.sh"))
-	             (cons "stogas/release/scripts/hydrate-guix-closure.sh"
-	                   #$(source-file "scripts/hydrate-guix-closure.sh"
-	                                  "hydrate-guix-closure.sh"))
-	             (cons "stogas/release/scripts/hydrate-rust-vendor.sh"
-	                   #$(source-file "scripts/hydrate-rust-vendor.sh"
-	                                  "hydrate-rust-vendor.sh"))
-	             (cons "stogas/release/scripts/install-guix-bootstrap.sh"
-	                   #$(source-file "scripts/install-guix-bootstrap.sh"
-	                                  "install-guix-bootstrap.sh"))
-	             (cons "stogas/release/scripts/verify-pins.mjs"
-	                   #$(source-file "scripts/verify-pins.mjs" "verify-pins.mjs"))
-	             (cons "stogas/release/snp-policy-profiles.json"
-	                   #$(source-file "snp-policy-profiles.json"
-	                                  "snp-policy-profiles.json"))
-	             (cons "stogas/release/patches/svsm-igvmmeasure-standalone-cargo.patch"
-	                   #$(source-file "patches/svsm-igvmmeasure-standalone-cargo.patch"
-	                                  "svsm-igvmmeasure-standalone-cargo.patch"))
-	             (cons "stogas/release/patches/virt-firmware-rs-kvm-vmsa-last.patch"
-	                   #$(source-file "patches/virt-firmware-rs-kvm-vmsa-last.patch"
-	                                  "virt-firmware-rs-kvm-vmsa-last.patch"))
-	             (cons "stogas/release/patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch"
-	                   #$(source-file "patches/virt-firmware-rs-kvm-real-mode-cr0-ne.patch"
-	                                  "virt-firmware-rs-kvm-real-mode-cr0-ne.patch"))
-	             (cons "stogas/release/patches/virt-firmware-rs-snp-cpu-count.patch"
-	                   #$(source-file "patches/virt-firmware-rs-snp-cpu-count.patch"
-	                                  "virt-firmware-rs-snp-cpu-count.patch"))
-	             (cons "stogas/release/locks/igvmmeasure.Cargo.lock"
-	                   #$(source-file "locks/igvmmeasure.Cargo.lock"
-	                                  "igvmmeasure.Cargo.lock"))
-	             (cons "stogas/release/patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch"
-	                   #$(source-file "patches/svsm-igvmmeasure-kvm-vmsa-normalization.patch"
-	                                  "svsm-igvmmeasure-kvm-vmsa-normalization.patch"))
-	             (cons "stogas/release/locks/virt-firmware-rs.Cargo.lock"
-	                   #$(source-file "locks/virt-firmware-rs.Cargo.lock"
-	                                  "virt-firmware-rs.Cargo.lock"))
+	             (cons "stogas/release/scripts/tree-sha256.sh"
+	                   #$%tree-sha256)
+	             (cons "stogas/release/snp-launch-policy.json"
+	                   #$(source-file "snp-launch-policy.json"
+	                                  "snp-launch-policy.json"))
 	             (cons "core/go.mod"
 	                   (string-append #$source "/core/go.mod"))
 	             (cons "core/go.sum"
@@ -446,22 +396,18 @@
 	          (setenv "TZ" "UTC")
           (setenv "GOPROXY" "off")
           (setenv "GOSUMDB" "off")
+	          (setenv "GOENV" "off")
           (setenv "GOTOOLCHAIN" "local")
           (setenv "GOWORK" "off")
           (setenv "CGO_ENABLED" "0")
           (setenv "HOME" work)
-          (setenv "GOMODCACHE" go-modcache)
           (setenv "GOCACHE" (string-append work "/go-build-cache"))
           (setenv "PATH"
                   (string-append #$(file-append (pkg "bash-minimal") "/bin") ":"
                                  #$(file-append (pkg "coreutils") "/bin") ":"
                                  #$(file-append (pkg "cpio") "/bin") ":"
                                  #$(file-append (pkg "findutils") "/bin") ":"
-                                 #$(file-append (pkg "grep") "/bin") ":"
                                  #$(file-append stogas-go-1-26 "/bin") ":"
-                                 #$(file-append (pkg "gzip") "/bin") ":"
-                                 #$(file-append (pkg "sed") "/bin") ":"
-                                 #$(file-append (pkg "tar") "/bin") ":"
                                  #$(file-append (pkg "zstd") "/bin") ":"
                                  #$(file-append stogas-igvmmeasure "/bin") ":"
                                  #$(file-append stogas-virt-firmware-rs-tools "/bin")))
@@ -471,18 +417,10 @@
           (mkdir-p work)
           (copy-recursively/quiet source build-source)
           (invoke "chmod" "-R" "u+w" build-source)
-          (copy-recursively/quiet #$%go-modcache go-modcache)
-          (invoke "chmod" "-R" "u+w" go-modcache)
-          (mkdir-p rootfs)
-          (mkdir-p (string-append rootfs "/stogas"))
-          (mkdir-p (string-append rootfs "/etc"))
-	          (mkdir-p (string-append rootfs "/etc/stogas"))
-	          (call-with-output-file (string-append rootfs "/etc/stogas/snp-policy-profile")
-	            (lambda (port)
-	              (display #$%snp-policy-profile port)
-	              (newline port)))
-	          (chmod (string-append rootfs "/etc/stogas/snp-policy-profile") #o444)
-          (call-with-output-file (string-append rootfs "/etc/resolv.conf")
+	          (mkdir-p rootfs)
+	          (mkdir-p (string-append rootfs "/stogas"))
+	          (mkdir-p (string-append rootfs "/etc"))
+	          (call-with-output-file (string-append rootfs "/etc/resolv.conf")
             (lambda (port)
               (display "nameserver 10.0.2.3\noptions timeout:2 attempts:2\n" port)))
           (chmod (string-append rootfs "/etc/resolv.conf") #o444)
@@ -493,10 +431,7 @@
           (with-directory-excursion (string-append build-source "/transports")
             (when (file-exists? "vendor")
 	              (delete-file-recursively "vendor"))
-	            (invoke "bash" "-c" "sha256sum go.mod go.sum > /tmp/go-before.sha256")
-	            (invoke "go" "mod" "verify")
-	            (invoke "go" "mod" "vendor")
-	            (invoke "sha256sum" "-c" "/tmp/go-before.sha256")
+	            (copy-recursively/quiet #$%go-vendor "vendor")
 	            (let ((actual-go-vendor-tree-sha256 (tree-sha256 "vendor")))
 	              (unless (string=? actual-go-vendor-tree-sha256
 	                                expected-go-vendor-tree-sha256)
@@ -541,9 +476,6 @@
 	                  "--cmdline" (string-append "@" #$(source-file "guix/cmdline.txt"
 	                                                                 "cmdline.txt"))
 	                  "--output" efi)
-	          (call-with-output-file ukify-inspect
-	            (lambda (port)
-	              (display (command-output ukify "inspect" efi) port)))
 	          (invoke "igvm-wrap"
                    "--input" ovmf
                    "--snp"
@@ -556,39 +488,27 @@
 	                  "--add-hash-sha256"
 	                  "--profile" "none"
 	                  "--output" igvm)
-	          (call-with-output-file igvmmeasure-check-kvm
-	            (lambda (port)
-	              (display (command-output "igvmmeasure" "--check-kvm" igvm "measure")
-	                       port)))
-	          (call-with-output-file measurement-path
-	            (lambda (port)
-		              (display (launch-digest
-		                        (call-with-input-file igvmmeasure-check-kvm
-		                                              get-string-all))
-		                       port)
-		              (newline port)))
+	          (let ((measurement-output
+	                 (command-output "igvmmeasure" "--check-kvm" igvm "measure")))
+	            (call-with-output-file measurement-path
+	              (lambda (port)
+	                (display (launch-digest measurement-output) port)
+	                (newline port))))
 		          (write-gateway-launch-policy
 		           out
 		           igvm
 		           (call-with-input-file measurement-path get-string-all))
-		          (copy-file pins (string-append out "/pins.lock.json"))
 	          (copy-file (string-append #$stogas-linux-6-18 "/.config") kernel-config)
 	          (copy-file license (string-append out "/LICENSE"))
 	          (copy-file notice (string-append out "/NOTICE"))
-	          (write-sha256-lines build-inputs-sha256 build-inputs)
 	          (write-artifact-manifest
 	           out
 	           igvm
 	           efi
-		           init
-		           release-kernel
-		           release-initramfs
 		           launch-policy
 		           ca-bundle
 		           (call-with-input-file measurement-path get-string-all)
-	           (string-append build-source "/transports/vendor/modules.txt")
-	           build-inputs
-	           build-inputs-sha256)
+	           build-inputs)
           (call-with-output-file (string-append out "/SHA256SUMS")
             (lambda (port)
               (for-each
@@ -598,28 +518,18 @@
 		                 "LICENSE"
 		                 "NOTICE"
 		                 "gateway-launch-policy.json"
-		                 "gateway.efi"
 	                 "gateway.init"
 	                 "gateway.kernel"
 	                 "gateway.initramfs.cpio.zst"
-	                 "launch-measurement.txt"
 	                 "release-manifest.json"
-	                 "pins.lock.json"
-	                 "igvmmeasure-check-kvm.txt"
-	                 "ukify-inspect.txt"
-	                 "kernel-config.txt"
-	                 "build-inputs.sha256"))))))))
+	                 "kernel-config.txt"))))))))
   (native-inputs
    (list (pkg "bash-minimal")
          (pkg "coreutils")
          (pkg "cpio")
          (pkg "findutils")
          stogas-go-1-26
-         (pkg "grep")
-         (pkg "gzip")
          (pkg "nss-certs")
-         (pkg "sed")
-         (pkg "tar")
          (pkg "zstd")
          stogas-edk2-amdsev-ovmf
          stogas-igvmmeasure

@@ -26,6 +26,25 @@ func TestByokDecryptorMatchesControlWebCryptoFormat(t *testing.T) {
 	}
 }
 
+func TestByokCredentialIDMatchesControlWebCryptoFormat(t *testing.T) {
+	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
+	if err != nil {
+		t.Fatalf("newByokDecryptor returned error: %v", err)
+	}
+	id, err := decryptor.credentialID(
+		"sk-upstream-test-secret",
+		"org-test",
+		"workspace-test",
+		"openai",
+	)
+	if err != nil {
+		t.Fatalf("credentialID returned error: %v", err)
+	}
+	if id != "8d5010b5-e602-8cd7-8610-10df01f11875" {
+		t.Fatalf("credential ID = %q", id)
+	}
+}
+
 func TestByokDecryptorBindsEveryScopeField(t *testing.T) {
 	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
 	if err != nil {

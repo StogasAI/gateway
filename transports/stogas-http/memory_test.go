@@ -4,21 +4,39 @@ import "testing"
 
 func TestRequestMemoryAdmissionUsesBoundedWeightedCapacity(t *testing.T) {
 	admission := &requestMemoryAdmission{}
-	release, ok := admission.acquire(16 * 1024 * 1024)
-	if !ok || release == nil {
+	lease, ok := admission.acquire(16 * 1024 * 1024)
+	if !ok || lease == nil {
 		t.Fatal("expected normal request to be admitted")
 	}
 	if got, want := admission.used.Load(), int64(80*1024*1024); got != want {
 		t.Fatalf("reserved bytes = %d, want %d", got, want)
 	}
-	release()
-	release()
+	lease.release()
+	lease.release()
 	if got := admission.used.Load(); got != 0 {
 		t.Fatalf("release must be idempotent, used = %d", got)
 	}
 
-	if release, ok := admission.acquire(int(requestMemoryBudgetBytes)); ok || release != nil {
+	if lease, ok := admission.acquire(int(requestMemoryBudgetBytes)); ok || lease != nil {
 		t.Fatal("expected an individually oversized weighted request to be rejected")
+	}
+}
+
+func TestRequestMemoryLeaseCanShrinkBeforeTransfer(t *testing.T) {
+	admission := &requestMemoryAdmission{}
+	lease, ok := admission.acquire(128 * 1024 * 1024)
+	if !ok {
+		t.Fatal("expected maximum request reservation")
+	}
+	if !lease.resize(2 * 1024 * 1024) {
+		t.Fatal("expected reservation to shrink")
+	}
+	if got, want := admission.used.Load(), int64(10*1024*1024); got != want {
+		t.Fatalf("resized bytes = %d, want %d", got, want)
+	}
+	lease.release()
+	if got := admission.used.Load(); got != 0 {
+		t.Fatalf("resized lease release left %d bytes", got)
 	}
 }
 

@@ -79,6 +79,10 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 	for _, raw := range []string{
 		`{"type":"code_execution_20250825","name":"code_execution"}`,
 		`{"type":"code_execution"}`,
+		`{"type":"custom","name":"freeform"}`,
+		`{"type":"web_search_latest"}`,
+		`{"type":"web_search_20270101"}`,
+		`{"type":"web_fetch_latest"}`,
 		`{"type":"web_fetch_20260309","name":"web_fetch","use_cache":true}`,
 	} {
 		if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, raw)); err == nil {
@@ -310,8 +314,8 @@ func TestAnthropicFinalMeters(t *testing.T) {
 	}
 
 	req.RawBody = mustObject(t, `{"max_tool_calls":2}`)
-	if meter := findMeter(anthropicFinalMeters(req), meterAnthropicWebSearchCalls, "2"); meter == nil {
-		t.Fatalf("expected web search settlement meter to be capped by max_tool_calls, got %#v", anthropicFinalMeters(req))
+	if meter := findMeter(anthropicFinalMeters(req), meterAnthropicWebSearchCalls, "3"); meter == nil {
+		t.Fatalf("expected settlement to preserve the observed quantity for terminal authorization checks, got %#v", anthropicFinalMeters(req))
 	}
 
 	req.ToolChoiceAllowsCalls = false
@@ -370,6 +374,79 @@ func TestResponsesHostedToolChoiceAllowsCallsCanonicalizesVersionedTypes(t *test
 				t.Fatalf("responsesHostedToolChoiceAllowsCalls() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
+	for model, want := range map[string]int{
+		"claude-fable-5":             804,
+		"claude-haiku-4-5-20251001":  588,
+		"claude-mythos-5":            804,
+		"claude-mythos-preview":      804,
+		"claude-opus-4-1-20250805":   315,
+		"claude-opus-4-5-20251101":   588,
+		"claude-opus-4-6":            589,
+		"claude-opus-4-7":            804,
+		"claude-opus-4.8":            410,
+		"claude-opus-5":              406,
+		"claude-sonnet-4-5-20250929": 588,
+		"claude-sonnet-4-6":          589,
+		"claude-sonnet-5":            474,
+	} {
+		t.Run(model, func(t *testing.T) {
+			got, known := anthropicToolSystemPromptTokensForModel(model)
+			if !known || got != want {
+				t.Fatalf("tool-system prompt tokens = %d, %v; want %d, true", got, known, want)
+			}
+		})
+	}
+	if got, known := anthropicToolSystemPromptTokensForModel("claude-future-99"); known || got != 0 {
+		t.Fatalf("unknown model must remain visible to catalog drift tests: %d, %v", got, known)
+	}
+	if got := anthropicToolSystemPromptHoldTokens("claude-future-99", []string{"function"}); got != maxAnthropicToolSystemPromptTokens {
+		t.Fatalf("runtime fallback must use the largest conservative tool overhead, got %d", got)
+	}
+}
+
+func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
+	type matrixDeployment struct {
+		RouteIDs []string `json:"routeIds"`
+		Upstream struct {
+			Model       string `json:"model"`
+			ModelFormat string `json:"modelFormat"`
+		} `json:"upstream"`
+	}
+	type matrixRoute struct {
+		ProviderID string `json:"providerId"`
+	}
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	routes := map[string]matrixRoute{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode catalog routes: %v", err)
+	}
+	checked := 0
+	for deploymentID, deployment := range deployments {
+		anthropicWire := deployment.Upstream.ModelFormat == "Anthropic"
+		for _, routeID := range deployment.RouteIDs {
+			anthropicWire = anthropicWire || routes[routeID].ProviderID == "anthropic"
+		}
+		if !anthropicWire {
+			continue
+		}
+		checked++
+		if tokens, known := anthropicToolSystemPromptTokensForModel(deployment.Upstream.Model); !known || tokens <= 0 {
+			t.Fatalf("%s has no reviewed Anthropic tool-system prompt token row for %q", deploymentID, deployment.Upstream.Model)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("catalog contains no Anthropic-wire deployments")
 	}
 }
 

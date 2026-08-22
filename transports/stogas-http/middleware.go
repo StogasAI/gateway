@@ -3,12 +3,14 @@ package stogashttp
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
+
+const requestMemoryLeaseContextKey = "stogas.request-memory-lease"
 
 var allowedProviderResponseHeaders = map[string]bool{
 	"openai-processing-ms": true,
@@ -30,12 +32,28 @@ func safeProviderResponseHeaders(headers map[string]string) map[string]string {
 		return nil
 	}
 
-	filtered := make(map[string]string)
+	type headerValue struct {
+		name  string
+		value string
+	}
+	byName := make(map[string]headerValue)
+	ambiguous := make(map[string]bool)
 	for name, value := range headers {
 		trimmed := strings.TrimSpace(name)
-		if isSafeProviderResponseHeader(trimmed) && safeProviderResponseHeaderValue(value) {
-			filtered[trimmed] = value
+		normalized := strings.ToLower(trimmed)
+		if !isSafeProviderResponseHeader(trimmed) || !safeProviderResponseHeaderValue(value) || ambiguous[normalized] {
+			continue
 		}
+		if _, duplicate := byName[normalized]; duplicate {
+			delete(byName, normalized)
+			ambiguous[normalized] = true
+			continue
+		}
+		byName[normalized] = headerValue{name: trimmed, value: value}
+	}
+	filtered := make(map[string]string, len(byName))
+	for _, entry := range byName {
+		filtered[entry.name] = entry.value
 	}
 	if len(filtered) == 0 {
 		return nil
@@ -44,7 +62,15 @@ func safeProviderResponseHeaders(headers map[string]string) map[string]string {
 }
 
 func safeProviderResponseHeaderValue(value string) bool {
-	return utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
+	if value == "" || len(value) > 16*1024 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for index := range len(value) {
+		if value[index] != '\t' && (value[index] < 0x20 || value[index] > 0x7e) {
+			return false
+		}
+	}
+	return true
 }
 
 func securityHeaders(next fasthttp.RequestHandler) fasthttp.RequestHandler {
@@ -70,6 +96,9 @@ func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 		ctx.Response.Header.Set("Access-Control-Allow-Headers", corsAllowedHeaders(ctx))
 
 		if string(ctx.Method()) == fasthttp.MethodOptions {
+			if ctx.Request.IsBodyStream() {
+				ctx.SetConnectionClose()
+			}
 			ctx.SetStatusCode(fasthttp.StatusNoContent)
 			return
 		}
@@ -116,6 +145,129 @@ func validHTTPFieldName(name string) bool {
 	return true
 }
 
+func (s *Server) requestBodyAdmission(next fasthttp.RequestHandler) fasthttp.RequestHandler {
+	return func(ctx *fasthttp.RequestCtx) {
+		if !isInferencePath(ctx.Path()) {
+			if ctx.Request.IsBodyStream() {
+				ctx.SetConnectionClose()
+			}
+			next(ctx)
+			return
+		}
+		if string(ctx.Method()) != fasthttp.MethodPost {
+			if ctx.Request.IsBodyStream() {
+				ctx.SetConnectionClose()
+			}
+			next(ctx)
+			return
+		}
+		if _, ok := s.requireInferenceHeaders(ctx); !ok {
+			if ctx.Request.IsBodyStream() {
+				ctx.SetConnectionClose()
+			}
+			return
+		}
+
+		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
+		contentLength := ctx.Request.Header.ContentLength()
+		if contentLength > maxRequestBodyBytes {
+			ctx.SetConnectionClose()
+			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
+			return
+		}
+		reservationBytes := contentLength
+		if reservationBytes < 0 || len(ctx.Request.Header.ContentEncoding()) > 0 {
+			reservationBytes = maxRequestBodyBytes
+		}
+		if s.memory == nil {
+			s.memory = &requestMemoryAdmission{}
+		}
+		lease, admitted := s.memory.acquire(reservationBytes)
+		if !admitted {
+			ctx.SetConnectionClose()
+			s.writeRequestMemoryCapacity(ctx)
+			return
+		}
+		defer func() {
+			if !lease.transferred {
+				lease.release()
+			}
+		}()
+
+		body, err := readRequestBodyWithLimit(ctx, maxRequestBodyBytes)
+		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
+			ctx.SetConnectionClose()
+			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
+			return
+		}
+		if err != nil {
+			ctx.SetConnectionClose()
+			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+				"error": map[string]any{"message": "Invalid request body", "type": "invalid_request_error"},
+			})
+			return
+		}
+		if len(ctx.Request.Header.ContentEncoding()) == 0 && !lease.resize(len(body)) {
+			ctx.SetConnectionClose()
+			s.writeRequestMemoryCapacity(ctx)
+			return
+		}
+		ctx.SetUserValue(requestMemoryLeaseContextKey, lease)
+		next(ctx)
+	}
+}
+
+func readRequestBodyWithLimit(ctx *fasthttp.RequestCtx, maxBytes int) ([]byte, error) {
+	if !ctx.Request.IsBodyStream() {
+		body := ctx.Request.Body()
+		if len(body) > maxBytes {
+			return nil, fasthttp.ErrBodyTooLarge
+		}
+		return body, nil
+	}
+	reader := ctx.RequestBodyStream()
+	body, err := io.ReadAll(io.LimitReader(reader, int64(maxBytes)+1))
+	closeErr := ctx.Request.CloseBodyStream()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(body) > maxBytes {
+		return nil, fasthttp.ErrBodyTooLarge
+	}
+	ctx.Request.SetBodyRaw(body)
+	return body, nil
+}
+
+func requestMemoryLeaseForInference(ctx *fasthttp.RequestCtx) *requestMemoryLease {
+	lease, _ := ctx.UserValue(requestMemoryLeaseContextKey).(*requestMemoryLease)
+	if lease == nil || lease.transferred {
+		return nil
+	}
+	lease.transferred = true
+	return lease
+}
+
+func resizeRequestMemoryLease(ctx *fasthttp.RequestCtx, bodyBytes int) bool {
+	lease, _ := ctx.UserValue(requestMemoryLeaseContextKey).(*requestMemoryLease)
+	return lease == nil || lease.resize(bodyBytes)
+}
+
+func (s *Server) writeRequestBodyTooLarge(ctx *fasthttp.RequestCtx, maxRequestBodyBytes int) {
+	s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
+		"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
+	})
+}
+
+func (s *Server) writeRequestMemoryCapacity(ctx *fasthttp.RequestCtx) {
+	ctx.Response.Header.Set("Retry-After", "1")
+	s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
+		"error": map[string]any{"message": "Gateway is at request memory capacity", "type": "service_unavailable"},
+	})
+}
+
 func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		if len(ctx.Request.Header.ContentEncoding()) == 0 {
@@ -131,9 +283,7 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
 		body, err := ctx.Request.BodyUncompressedWithLimit(maxRequestBodyBytes)
 		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
-			s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
-				"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
-			})
+			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
 			return
 		}
 		if err != nil {
@@ -144,9 +294,11 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 		}
 
 		if len(body) > maxRequestBodyBytes {
-			s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
-				"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
-			})
+			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
+			return
+		}
+		if !resizeRequestMemoryLease(ctx, len(body)) {
+			s.writeRequestMemoryCapacity(ctx)
 			return
 		}
 

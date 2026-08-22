@@ -97,8 +97,10 @@ func TestEncryptedStreamInteroperability(t *testing.T) {
 	}
 	initialization, streamKey := streamInitializationForTest(t, responseKey)
 	event := encryptStreamEventForTest(t, streamKey, `data: {"id":"chunk","choices":[]}`)
+	completion := encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")
 	outer := sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
 		sseEnvelopeForTest(t, map[string]any{"e2e": event}) +
+		sseEnvelopeForTest(t, map[string]any{"e2e": completion}) +
 		"data: [DONE]\n\n"
 
 	var failures atomic.Int32
@@ -132,6 +134,116 @@ func TestEncryptedStreamAcceptsAuthenticatedCompletionMarker(t *testing.T) {
 	if string(decrypted) != "data: [DONE]\n\n" {
 		t.Fatalf("decrypted completion = %q", decrypted)
 	}
+}
+
+func TestEncryptedStreamClosesTransportAtAuthenticatedCompletionWithOuterMarker(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, streamKey := streamInitializationForTest(t, responseKey)
+	completion := encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")
+	stream := &completionTrackingReader{Reader: strings.NewReader(
+		sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
+			sseEnvelopeForTest(t, map[string]any{"e2e": completion}) +
+			"data: [DONE]\n\n",
+	)}
+	decrypted, err := io.ReadAll(newStreamReader(stream, responseKey, nil))
+	if err != nil {
+		t.Fatalf("read encrypted stream: %v", err)
+	}
+	if string(decrypted) != "data: [DONE]\n\n" || !stream.closed {
+		t.Fatalf("completed stream = %q closed=%t", decrypted, stream.closed)
+	}
+}
+
+func TestEncryptedStreamDiscardsPlaintextUsageAfterAuthenticatedCompletion(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, streamKey := streamInitializationForTest(t, responseKey)
+	completion := encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")
+	stream := &completionTrackingReader{Reader: strings.NewReader(
+		sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
+			sseEnvelopeForTest(t, map[string]any{"e2e": completion}) +
+			sseEnvelopeForTest(t, map[string]any{"usage": map[string]any{"total_tokens": 3}}) +
+			"data: [DONE]\n\n",
+	)}
+	decrypted, err := io.ReadAll(newStreamReader(stream, responseKey, nil))
+	if err != nil {
+		t.Fatalf("read encrypted stream: %v", err)
+	}
+	if string(decrypted) != "data: [DONE]\n\n" || !stream.closed {
+		t.Fatalf("completed stream = %q closed=%t", decrypted, stream.closed)
+	}
+}
+
+func TestEncryptedStreamEmitsAuthenticatedUsageBeforeCompletion(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, streamKey := streamInitializationForTest(t, responseKey)
+	completion := encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")
+	usage := encryptStreamEventForTest(t, streamKey, `data: {"choices":[],"usage":{"total_tokens":3}}`)
+	stream := &completionTrackingReader{Reader: strings.NewReader(
+		sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
+			sseEnvelopeForTest(t, map[string]any{"e2e": usage}) +
+			sseEnvelopeForTest(t, map[string]any{"e2e": completion}) +
+			"data: [DONE]\n\n",
+	)}
+	decrypted, err := io.ReadAll(newStreamReader(stream, responseKey, nil))
+	if err != nil {
+		t.Fatalf("read encrypted stream: %v", err)
+	}
+	want := "data: {\"choices\":[],\"usage\":{\"total_tokens\":3}}\n\ndata: [DONE]\n\n"
+	if string(decrypted) != want || !stream.closed {
+		t.Fatalf("completed stream = %q closed=%t", decrypted, stream.closed)
+	}
+}
+
+func TestEncryptedStreamRejectsUnauthenticatedCompletion(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, _ := streamInitializationForTest(t, responseKey)
+	outer := sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) + "data: [DONE]\n\n"
+	if _, err := io.ReadAll(newStreamReader(strings.NewReader(outer), responseKey, nil)); !errors.Is(err, ErrInvalidE2EEResponse) {
+		t.Fatalf("unauthenticated completion error = %v", err)
+	}
+}
+
+func TestEncryptedStreamDiscardsDataAfterAuthenticatedCompletion(t *testing.T) {
+	responseKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialization, streamKey := streamInitializationForTest(t, responseKey)
+	completion := encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")
+	stream := &completionTrackingReader{Reader: strings.NewReader(
+		sseEnvelopeForTest(t, map[string]any{"e2e_init": initialization}) +
+			sseEnvelopeForTest(t, map[string]any{"e2e": completion}) +
+			"data: [DONE]\n\ndata: {\"unexpected\":true}\n\n",
+	)}
+	decrypted, err := io.ReadAll(newStreamReader(stream, responseKey, nil))
+	if err != nil {
+		t.Fatalf("read encrypted stream: %v", err)
+	}
+	if string(decrypted) != "data: [DONE]\n\n" || !stream.closed {
+		t.Fatalf("completed stream = %q closed=%t", decrypted, stream.closed)
+	}
+}
+
+type completionTrackingReader struct {
+	*strings.Reader
+	closed bool
+}
+
+func (r *completionTrackingReader) Close() error {
+	r.closed = true
+	return nil
 }
 
 func TestEncryptedStreamFailsClosed(t *testing.T) {

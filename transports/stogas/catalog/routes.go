@@ -22,6 +22,8 @@ var routeSpecs = map[Route]routeSpec{
 			"content-type",
 			"accept",
 			"x-stogas-extra-fields",
+			"x-stogas-upstream-api-key",
+			"x-stogas-upstream-provider",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -40,7 +42,6 @@ var routeSpecs = map[Route]routeSpec{
 			"logprobs",
 			"max_tokens",
 			"max_completion_tokens",
-			"mcp_servers",
 			"metadata",
 			"modalities",
 			"n",
@@ -89,6 +90,8 @@ var routeSpecs = map[Route]routeSpec{
 			"content-type",
 			"accept",
 			"x-stogas-extra-fields",
+			"x-stogas-upstream-api-key",
+			"x-stogas-upstream-provider",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -120,6 +123,7 @@ var routeSpecs = map[Route]routeSpec{
 			"rules",
 			"stream_options",
 			"store",
+			"stop",
 			"temperature",
 			"text",
 			"top_logprobs",
@@ -144,10 +148,37 @@ var routeByPath = func() map[string]Route {
 	return routes
 }()
 
-var (
-	allClientHeaderNamesValue = buildAllClientHeaders()
-	allClientHeadersValue     = strings.Join(allClientHeaderNamesValue, ", ")
-)
+var commonClientHeaders = [...]string{
+	"accept-language",
+	"baggage",
+	"cache-control",
+	"openai-organization",
+	"openai-project",
+	"pragma",
+	"request-id",
+	"sentry-trace",
+	"traceparent",
+	"tracestate",
+	"x-client-request-id",
+	"x-correlation-id",
+	"x-datadog-origin",
+	"x-datadog-parent-id",
+	"x-datadog-sampling-priority",
+	"x-datadog-trace-id",
+	"x-request-id",
+	"x-stainless-arch",
+	"x-stainless-async",
+	"x-stainless-helper-method",
+	"x-stainless-lang",
+	"x-stainless-os",
+	"x-stainless-package-version",
+	"x-stainless-retry-count",
+	"x-stainless-runtime",
+	"x-stainless-runtime-version",
+	"x-stainless-timeout",
+}
+
+var allClientHeadersValue = strings.Join(buildAllClientHeaders(), ", ")
 
 func specForRoute(route Route) (routeSpec, bool) {
 	spec, ok := routeSpecs[route]
@@ -179,7 +210,7 @@ func buildAllClientHeaders() []string {
 			names = append(names, normalized)
 		}
 	}
-	for _, name := range compatibilityClientHeaders() {
+	for _, name := range commonClientHeaders {
 		normalized := strings.ToLower(strings.TrimSpace(name))
 		if normalized == "" || seen[normalized] {
 			continue
@@ -188,36 +219,4 @@ func buildAllClientHeaders() []string {
 		names = append(names, normalized)
 	}
 	return stableHeaderOrder(names)
-}
-
-func compatibilityClientHeaders() []string {
-	return []string{
-		"accept-language",
-		"baggage",
-		"cache-control",
-		"openai-organization",
-		"openai-project",
-		"pragma",
-		"request-id",
-		"sentry-trace",
-		"traceparent",
-		"tracestate",
-		"x-client-request-id",
-		"x-correlation-id",
-		"x-datadog-origin",
-		"x-datadog-parent-id",
-		"x-datadog-sampling-priority",
-		"x-datadog-trace-id",
-		"x-request-id",
-		"x-stainless-arch",
-		"x-stainless-async",
-		"x-stainless-helper-method",
-		"x-stainless-lang",
-		"x-stainless-os",
-		"x-stainless-package-version",
-		"x-stainless-retry-count",
-		"x-stainless-runtime",
-		"x-stainless-runtime-version",
-		"x-stainless-timeout",
-	}
 }

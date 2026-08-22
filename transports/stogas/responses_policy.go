@@ -2,10 +2,8 @@ package stogas
 
 import (
 	"encoding/json"
-	"errors"
-	"net/url"
+	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -37,8 +35,7 @@ func validateCommonResponsesPolicy(state *State) error {
 		"conversation",
 		"fallbacks",
 		"previous_response_id",
-		"safety_identifier",
-		"user",
+		"stop",
 	} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
@@ -74,13 +71,71 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateMetadata(raw["metadata"]); err != nil {
 		return err
 	}
+	if err := validateResponsesTextConfig(state, raw["text"]); err != nil {
+		return err
+	}
 	if err := validateResponsesReasoning(raw); err != nil {
 		return err
 	}
-	if err := validateResponsesTruncation(raw["truncation"]); err != nil {
+	if err := validateResponsesTruncation(state, raw["truncation"]); err != nil {
 		return err
 	}
 	return validateResponsesInputTextOnly(state, raw["input"])
+}
+
+func validateResponsesTextConfig(state *State, raw json.RawMessage) error {
+	if !rawJSONValueSet(raw) {
+		return nil
+	}
+	text, ok := rawObject(raw)
+	if !ok || !onlyRawKeysOptional(text, "format", "verbosity") {
+		return invalidRequest("text must contain only format and verbosity")
+	}
+	if verbosity, exists := text["verbosity"]; exists && rawJSONValueSet(verbosity) {
+		if responsesUsesAnthropicWire(state) {
+			return invalidRequest("text.verbosity cannot be preserved on Anthropic-format deployments")
+		}
+		if _, ok := rawStringValue(verbosity); !ok {
+			return invalidRequest("text.verbosity must be a string")
+		}
+	}
+	formatRaw, exists := text["format"]
+	if !exists || !rawJSONValueSet(formatRaw) {
+		return nil
+	}
+	format, ok := rawObject(formatRaw)
+	if !ok {
+		return invalidRequest("text.format must be an object")
+	}
+	formatType, ok := rawStringValue(format["type"])
+	if !ok {
+		return invalidRequest("text.format.type must be a string")
+	}
+	if responsesUsesAnthropicWire(state) && formatType != "json_schema" {
+		return invalidRequest("text.format.type must be json_schema for Anthropic-format deployments")
+	}
+	switch formatType {
+	case "text", "json_object":
+		if !onlyRawKeys(format, "type") {
+			return invalidRequest("text.format type " + formatType + " supports only type")
+		}
+	case "json_schema":
+		if !onlyRawKeysOptional(format, "type", "name", "description", "schema", "strict") {
+			return invalidRequest("text.format json_schema contains an unsupported field")
+		}
+		definition := make(map[string]json.RawMessage, len(format)-1)
+		for name, value := range format {
+			if name != "type" {
+				definition[name] = value
+			}
+		}
+		if err := validateStructuredOutputDefinitionMap(definition, "text.format"); err != nil {
+			return err
+		}
+	default:
+		return invalidRequest("text.format.type must be text, json_object, or json_schema")
+	}
+	return nil
 }
 
 func validateJSONBool(raw map[string]json.RawMessage, name string) error {
@@ -151,13 +206,16 @@ func validateResponsesReasoning(raw map[string]json.RawMessage) error {
 	return nil
 }
 
-func validateResponsesTruncation(raw json.RawMessage) error {
+func validateResponsesTruncation(state *State, raw json.RawMessage) error {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
 	var value string
 	if err := sonic.Unmarshal(raw, &value); err != nil {
 		return invalidRequest("truncation must be a string")
+	}
+	if responsesUsesAnthropicWire(state) {
+		return invalidRequest("truncation is not supported for Anthropic-format deployments")
 	}
 	return nil
 }
@@ -170,9 +228,30 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	if err := sonic.Unmarshal(raw, &rawTools); err != nil {
 		return nil, invalidRequest("tools must be an array")
 	}
-	for _, rawTool := range rawTools {
+	if len(rawTools) > maxClientTools {
+		return nil, invalidRequest("tools must contain at most 128 definitions")
+	}
+	seenNames := make(map[string]bool, len(rawTools))
+	seenHostedTypes := make(map[schemas.ResponsesToolType]bool, len(rawTools))
+	for index, rawTool := range rawTools {
 		if err := validateRawResponsesToolType(state, rawTool); err != nil {
 			return nil, err
+		}
+		toolType, name, err := validateRawResponsesToolShape(state, rawTool, index)
+		if err != nil {
+			return nil, err
+		}
+		switch toolType {
+		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+			if seenNames[name] {
+				return nil, invalidRequest(fmt.Sprintf("tools[%d].name duplicates another client tool", index))
+			}
+			seenNames[name] = true
+		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+			if seenHostedTypes[toolType] {
+				return nil, invalidRequest(fmt.Sprintf("tools[%d].type duplicates another hosted tool", index))
+			}
+			seenHostedTypes[toolType] = true
 		}
 	}
 	var tools []schemas.ResponsesTool
@@ -182,23 +261,385 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	for _, tool := range tools {
 		switch tool.Type {
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
-			name := ""
-			if tool.Name != nil {
-				name = strings.TrimSpace(*tool.Name)
-			}
-			if name == "" {
-				return nil, invalidRequest(string(tool.Type) + " tools require a name")
-			}
-		case schemas.ResponsesToolTypeMCP:
-			if err := validateResponsesMCPTool(raw, tool); err != nil {
-				return nil, err
-			}
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
 		default:
-			return nil, invalidRequest("Only function, custom, mcp, web_fetch, and priced hosted web search tools are supported")
+			return nil, invalidRequest("Only function, custom, web_fetch, and priced hosted web search tools are supported")
 		}
 	}
 	return tools, nil
+}
+
+func validateResponsesToolPolicy(
+	state *State,
+	raw map[string]json.RawMessage,
+	validateNonempty func([]schemas.ResponsesTool) error,
+) error {
+	tools, err := parseResponsesTools(state, raw["tools"])
+	if err != nil {
+		return err
+	}
+	if len(tools) == 0 {
+		if _, ok := raw["max_tool_calls"]; ok {
+			return invalidRequest("max_tool_calls requires supported tools")
+		}
+		if _, ok := raw["parallel_tool_calls"]; ok {
+			return invalidRequest("parallel_tool_calls requires supported tools")
+		}
+	} else if err := validateNonempty(tools); err != nil {
+		return err
+	}
+	return validateResponsesToolChoice(state, raw["tool_choice"], tools)
+}
+
+func validateRawResponsesToolShape(state *State, tool map[string]json.RawMessage, index int) (schemas.ResponsesToolType, string, error) {
+	path := fmt.Sprintf("tools[%d]", index)
+	toolType := canonicalResponsesToolType(rawString(tool["type"]))
+	switch toolType {
+	case schemas.ResponsesToolTypeFunction:
+		name, err := validateResponsesFunctionTool(tool, path)
+		return toolType, name, err
+	case schemas.ResponsesToolTypeCustom:
+		name, err := validateResponsesCustomTool(tool, path)
+		return toolType, name, err
+	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview:
+		return toolType, "", validateResponsesWebSearchTool(state, tool, path, toolType)
+	case schemas.ResponsesToolTypeWebFetch:
+		return toolType, "", validateResponsesWebFetchTool(state, tool, path)
+	default:
+		return toolType, "", nil
+	}
+}
+
+func validateResponsesFunctionTool(tool map[string]json.RawMessage, path string) (string, error) {
+	name, err := validateNamedResponsesTool(tool, path, "parameters", "strict")
+	if err != nil {
+		return "", err
+	}
+	if parameters, ok := tool["parameters"]; ok {
+		var schema map[string]json.RawMessage
+		if err := sonic.Unmarshal(parameters, &schema); err != nil || schema == nil {
+			return "", invalidRequest(path + ".parameters must be an object")
+		}
+	}
+	if strict, ok := tool["strict"]; ok {
+		var value bool
+		if err := sonic.Unmarshal(strict, &value); err != nil {
+			return "", invalidRequest(path + ".strict must be a boolean")
+		}
+	}
+	if err := validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control"); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func validateResponsesCustomTool(tool map[string]json.RawMessage, path string) (string, error) {
+	name, err := validateNamedResponsesTool(tool, path, "format")
+	if err != nil {
+		return "", err
+	}
+	if formatRaw, ok := tool["format"]; ok {
+		format, ok := rawObject(formatRaw)
+		if !ok || format == nil {
+			return "", invalidRequest(path + ".format must be an object")
+		}
+		switch rawString(format["type"]) {
+		case "text":
+			if err := rejectUnsupportedResponsesToolKeys(format, path+".format", "type"); err != nil {
+				return "", err
+			}
+		case "grammar":
+			if err := rejectUnsupportedResponsesToolKeys(format, path+".format", "type", "definition", "syntax"); err != nil {
+				return "", err
+			}
+			if _, err := requiredInputString(format, "definition", path+".format", false); err != nil {
+				return "", err
+			}
+			syntax, err := requiredInputString(format, "syntax", path+".format", false)
+			if err != nil {
+				return "", err
+			}
+			if syntax != "lark" && syntax != "regex" {
+				return "", invalidRequest(path + ".format.syntax must be lark or regex")
+			}
+		default:
+			return "", invalidRequest(path + ".format.type must be text or grammar")
+		}
+	}
+	if err := validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control"); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func validateNamedResponsesTool(tool map[string]json.RawMessage, path string, additionalKeys ...string) (string, error) {
+	keys := append([]string{"type", "name", "description", "cache_control"}, additionalKeys...)
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, keys...); err != nil {
+		return "", err
+	}
+	name, err := requiredInputString(tool, "name", path, false)
+	if err != nil {
+		return "", err
+	}
+	if !validClientToolName(name) {
+		return "", invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	}
+	if err := validateResponsesToolDescription(tool["description"], path+".description"); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessage, path string, toolType schemas.ResponsesToolType) error {
+	if responsesUsesAnthropicWire(state) {
+		if toolType == schemas.ResponsesToolTypeWebSearchPreview {
+			return invalidRequest("web_search_preview tools are not supported for Anthropic-format deployments")
+		}
+		if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "max_uses", "filters", "user_location", "cache_control"); err != nil {
+			return err
+		}
+		if err := validateHostedToolName(tool["name"], path+".name", "web_search"); err != nil {
+			return err
+		}
+		if err := validateResponsesHostedToolMaxUses(tool["max_uses"], path+".max_uses"); err != nil {
+			return err
+		}
+		if err := validateResponsesDomainFilters(tool["filters"], path+".filters", true); err != nil {
+			return err
+		}
+		if err := validateResponsesUserLocation(tool["user_location"], path+".user_location", false); err != nil {
+			return err
+		}
+		return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
+	}
+
+	allowed := []string{"type", "search_context_size", "user_location"}
+	if toolType == schemas.ResponsesToolTypeWebSearch {
+		allowed = append(allowed, "filters")
+	}
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, allowed...); err != nil {
+		return err
+	}
+	if err := validateResponsesSearchContextSize(tool["search_context_size"], path+".search_context_size"); err != nil {
+		return err
+	}
+	if err := validateResponsesUserLocation(tool["user_location"], path+".user_location", true); err != nil {
+		return err
+	}
+	if toolType == schemas.ResponsesToolTypeWebSearch {
+		return validateResponsesDomainFilters(tool["filters"], path+".filters", false)
+	}
+	return nil
+}
+
+func validateResponsesWebFetchTool(state *State, tool map[string]json.RawMessage, path string) error {
+	if !responsesUsesAnthropicWire(state) {
+		return nil
+	}
+	if err := rejectUnsupportedResponsesToolKeys(tool, path, "type", "name", "max_uses", "max_content_tokens", "filters", "cache_control"); err != nil {
+		return err
+	}
+	if err := validateHostedToolName(tool["name"], path+".name", "web_fetch"); err != nil {
+		return err
+	}
+	if err := validateResponsesHostedToolMaxUses(tool["max_uses"], path+".max_uses"); err != nil {
+		return err
+	}
+	if value, exists, err := rawInteger(tool["max_content_tokens"], path+".max_content_tokens"); err != nil {
+		return err
+	} else if exists {
+		maximum := 0
+		if state != nil && state.Resolution != nil {
+			maximum = state.Resolution.Deployment.ContextWindowTokens
+		}
+		if value < 1 || maximum > 0 && value > maximum {
+			return invalidRequest(path + ".max_content_tokens is outside the supported range")
+		}
+	}
+	if err := validateResponsesDomainFilters(tool["filters"], path+".filters", true); err != nil {
+		return err
+	}
+	return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
+}
+
+func validateResponsesToolDescription(raw json.RawMessage, path string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	value, ok := rawStringValue(raw)
+	if !ok {
+		return invalidRequest(path + " must be a string")
+	}
+	if len(value) > maxToolDescriptionBytes {
+		return invalidRequest(path + " exceeds 1024 bytes")
+	}
+	return nil
+}
+
+func validateResponsesToolCacheControl(raw json.RawMessage, path string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	value, ok := rawObject(raw)
+	if !ok || value == nil {
+		return invalidRequest(path + " must be an object")
+	}
+	return nil
+}
+
+func validateHostedToolName(raw json.RawMessage, path string, expected string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	name, ok := rawStringValue(raw)
+	if !ok || name != expected {
+		return invalidRequest(path + " must be " + expected)
+	}
+	return nil
+}
+
+func validateResponsesHostedToolMaxUses(raw json.RawMessage, path string) error {
+	value, exists, err := rawInteger(raw, path)
+	if err != nil || !exists {
+		return err
+	}
+	if value < 1 || value > maxResponsesToolCalls {
+		return invalidRequest(path + " is outside the supported range")
+	}
+	return nil
+}
+
+func validateResponsesSearchContextSize(raw json.RawMessage, path string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	value, ok := rawStringValue(raw)
+	if !ok {
+		return invalidRequest(path + " must be a string")
+	}
+	if value != "low" && value != "medium" && value != "high" {
+		return invalidRequest(path + " must be low, medium, or high")
+	}
+	return nil
+}
+
+func validateResponsesUserLocation(raw json.RawMessage, path string, allowRegion bool) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	location, ok := rawObject(raw)
+	if !ok || location == nil {
+		return invalidRequest(path + " must be an object")
+	}
+	allowed := []string{"type", "city", "country", "timezone"}
+	if allowRegion {
+		allowed = append(allowed, "region")
+	}
+	if err := rejectUnsupportedResponsesToolKeys(location, path, allowed...); err != nil {
+		return err
+	}
+	if rawString(location["type"]) != "approximate" {
+		return invalidRequest(path + ".type must be approximate")
+	}
+	for _, key := range []string{"city", "region", "timezone"} {
+		if value, exists := location[key]; exists {
+			if text, ok := rawStringValue(value); !ok || strings.TrimSpace(text) == "" {
+				return invalidRequest(path + "." + key + " must be a non-empty string")
+			}
+		}
+	}
+	if country, exists := location["country"]; exists {
+		value, ok := rawStringValue(country)
+		if !ok || len(value) != 2 || !isASCIIAlpha(value[0]) || !isASCIIAlpha(value[1]) {
+			return invalidRequest(path + ".country must be a two-letter country code")
+		}
+	}
+	return nil
+}
+
+func validateResponsesDomainFilters(raw json.RawMessage, path string, allowBlocked bool) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	filters, ok := rawObject(raw)
+	if !ok || filters == nil {
+		return invalidRequest(path + " must be an object")
+	}
+	allowed := []string{"allowed_domains"}
+	if allowBlocked {
+		allowed = append(allowed, "blocked_domains")
+	}
+	if err := rejectUnsupportedResponsesToolKeys(filters, path, allowed...); err != nil {
+		return err
+	}
+	seen := make(map[string]string)
+	count := 0
+	for _, key := range allowed {
+		rawDomains, exists := filters[key]
+		if !exists {
+			continue
+		}
+		var domains []string
+		if err := sonic.Unmarshal(rawDomains, &domains); err != nil || len(domains) == 0 || len(domains) > 100 {
+			return invalidRequest(path + "." + key + " must contain 1 to 100 domains")
+		}
+		for _, domain := range domains {
+			normalized := strings.ToLower(strings.TrimSpace(domain))
+			if !validWebSearchDomain(normalized) {
+				return invalidRequest(path + "." + key + " contains an invalid domain")
+			}
+			if previous, duplicate := seen[normalized]; duplicate {
+				return invalidRequest(path + "." + key + " duplicates a domain from " + previous)
+			}
+			seen[normalized] = key
+			count++
+		}
+	}
+	if count == 0 {
+		return invalidRequest(path + " must contain a domain list")
+	}
+	return nil
+}
+
+func validWebSearchDomain(domain string) bool {
+	if domain == "" || len(domain) > 253 || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for index := 0; index < len(label); index++ {
+			value := label[index]
+			if !isASCIIAlpha(value) && (value < '0' || value > '9') && value != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCIIAlpha(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
+}
+
+func rejectUnsupportedResponsesToolKeys(object map[string]json.RawMessage, path string, keys ...string) error {
+	allowed := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		allowed[key] = true
+	}
+	for key := range object {
+		if !allowed[key] {
+			return invalidRequest(path + "." + key + " is not supported")
+		}
+	}
+	return nil
+}
+
+func responsesUsesAnthropicWire(state *State) bool {
+	return state != nil && state.Resolution != nil &&
+		(state.Resolution.Provider == schemas.Anthropic ||
+			(state.Resolution.Provider == schemas.Azure && azureDeploymentUsesAnthropicWire(state)))
 }
 
 func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
@@ -207,183 +648,12 @@ func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage)
 		return invalidRequest("tools must declare a type")
 	}
 	if state == nil || state.Resolution == nil {
-		return invalidRequest("Only function, custom, mcp, and priced hosted web search tools are supported")
+		return invalidRequest("Only function, custom, and priced hosted web search tools are supported")
 	}
 	if state.Adapter == nil {
-		return invalidRequest("Only function, custom, mcp, and priced hosted web search tools are supported")
+		return invalidRequest("Only function, custom, and priced hosted web search tools are supported")
 	}
 	return state.Adapter.ValidateRawResponsesToolType(state, tool)
-}
-
-func validateResponsesMCPTool(rawTools json.RawMessage, selected schemas.ResponsesTool) error {
-	if selected.ResponsesToolMCP == nil {
-		return invalidRequest("mcp tools require server_label and exactly one server_url or connector_id")
-	}
-	label := strings.TrimSpace(selected.ResponsesToolMCP.ServerLabel)
-	if label == "" || strings.ContainsAny(label, "\x00\r\n") || !utf8.ValidString(label) {
-		return invalidRequest("mcp tools require a non-empty server_label")
-	}
-	serverURL := ""
-	if selected.ResponsesToolMCP.ServerURL != nil {
-		serverURL = strings.TrimSpace(*selected.ResponsesToolMCP.ServerURL)
-		if serverURL == "" {
-			return invalidRequest("mcp server_url must be non-empty when provided")
-		}
-		if serverURL != *selected.ResponsesToolMCP.ServerURL {
-			return invalidRequest("mcp server_url must not contain leading or trailing whitespace")
-		}
-	}
-	connectorID := ""
-	if selected.ResponsesToolMCP.ConnectorID != nil {
-		connectorID = strings.TrimSpace(*selected.ResponsesToolMCP.ConnectorID)
-		if connectorID == "" {
-			return invalidRequest("mcp connector_id must be non-empty when provided")
-		}
-		if connectorID != *selected.ResponsesToolMCP.ConnectorID {
-			return invalidRequest("mcp connector_id must not contain leading or trailing whitespace")
-		}
-	}
-	if (serverURL == "") == (connectorID == "") {
-		return invalidRequest("mcp tools require exactly one server_url or connector_id")
-	}
-	if serverURL != "" {
-		parsed, err := url.Parse(serverURL)
-		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil {
-			return invalidRequest("mcp tools require an HTTPS server_url")
-		}
-	}
-	if connectorID != "" && (len(connectorID) > 128 || strings.ContainsAny(connectorID, "\x00\r\n") || !utf8.ValidString(connectorID)) {
-		return invalidRequest("mcp connector_id must be a non-empty string up to 128 bytes without control line breaks")
-	}
-	if selected.ResponsesToolMCP.Authorization != nil {
-		token := *selected.ResponsesToolMCP.Authorization
-		if token == "" || len(token) > maxMCPAuthTokenBytes || strings.ContainsAny(token, "\x00\r\n") || !utf8.ValidString(token) {
-			return invalidRequest("mcp authorization must be a non-empty string up to 4096 bytes without control line breaks")
-		}
-	}
-	if selected.ResponsesToolMCP.Headers != nil {
-		if err := validateResponsesMCPHeaders(*selected.ResponsesToolMCP.Headers); err != nil {
-			return err
-		}
-	}
-	if selected.ResponsesToolMCP.AllowedTools != nil {
-		if err := validateResponsesMCPAllowedTools(selected.ResponsesToolMCP.AllowedTools); err != nil {
-			return err
-		}
-	}
-
-	var rawList []map[string]json.RawMessage
-	if err := sonic.Unmarshal(rawTools, &rawList); err != nil {
-		return invalidRequest("tools must be an array")
-	}
-	matchedRawTool := false
-	for _, rawTool := range rawList {
-		if rawString(rawTool["type"]) != string(schemas.ResponsesToolTypeMCP) {
-			continue
-		}
-		if rawString(rawTool["server_label"]) != label {
-			continue
-		}
-		matchedRawTool = true
-		for name := range rawTool {
-			switch name {
-			case "type", "name", "server_label", "server_url", "server_description", "authorization", "allowed_tools", "connector_id", "headers", "require_approval", "cache_control":
-			default:
-				return invalidRequest("mcp." + name + " is not supported by Stogas API")
-			}
-		}
-		if allowedRaw, ok := rawTool["allowed_tools"]; ok {
-			if err := validateResponsesMCPAllowedToolsRaw(allowedRaw); err != nil {
-				return err
-			}
-		}
-	}
-	if !matchedRawTool {
-		return invalidRequest("mcp tools require server_label")
-	}
-	return nil
-}
-
-func validateResponsesMCPHeaders(headers map[string]string) error {
-	if len(headers) > maxMCPHeaders {
-		return invalidRequest("mcp headers must contain at most 32 entries")
-	}
-	for name, value := range headers {
-		if !validMCPHeaderName(name) {
-			return invalidRequest("mcp header names must be valid HTTP field names up to 128 bytes")
-		}
-		if len(value) > maxMCPHeaderValueBytes || strings.ContainsAny(value, "\x00\r\n") || !utf8.ValidString(value) {
-			return invalidRequest("mcp header values must be valid UTF-8 up to 4096 bytes without control line breaks")
-		}
-	}
-	return nil
-}
-
-func validMCPHeaderName(name string) bool {
-	if name == "" || len(name) > maxMCPHeaderNameBytes {
-		return false
-	}
-	for index := 0; index < len(name); index++ {
-		value := name[index]
-		if (value >= 'a' && value <= 'z') ||
-			(value >= 'A' && value <= 'Z') ||
-			(value >= '0' && value <= '9') ||
-			strings.ContainsRune("!#$%&'*+-.^_`|~", rune(value)) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-func validateResponsesMCPAllowedTools(allowed *schemas.ResponsesToolMCPAllowedTools) error {
-	if allowed == nil {
-		return nil
-	}
-	if allowed.ToolNames != nil && allowed.Filter != nil {
-		return invalidRequest("mcp allowed_tools must contain either a string array or a filter")
-	}
-	if allowed.ToolNames != nil {
-		return validateResponsesMCPToolNames(allowed.ToolNames)
-	}
-	if allowed.Filter == nil {
-		return invalidRequest("mcp allowed_tools must be a string array or filter")
-	}
-	return validateResponsesMCPToolNames(allowed.Filter.ToolNames)
-}
-
-func validateResponsesMCPAllowedToolsRaw(raw json.RawMessage) error {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "null" {
-		return nil
-	}
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		var filter map[string]json.RawMessage
-		if err := sonic.Unmarshal(raw, &filter); err != nil {
-			return invalidRequest("mcp allowed_tools must be a string array or filter")
-		}
-		for name := range filter {
-			switch name {
-			case "read_only", "tool_names":
-			default:
-				return invalidRequest("mcp allowed_tools." + name + " is not supported by Stogas API")
-			}
-		}
-	}
-	var allowed schemas.ResponsesToolMCPAllowedTools
-	if err := sonic.Unmarshal(raw, &allowed); err != nil {
-		return invalidRequest("mcp allowed_tools must be a string array or filter")
-	}
-	return validateResponsesMCPAllowedTools(&allowed)
-}
-
-func validateResponsesMCPToolNames(names []string) error {
-	for _, name := range names {
-		if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\x00\r\n") || !utf8.ValidString(name) {
-			return invalidRequest("mcp allowed_tools values must be non-empty strings")
-		}
-	}
-	return nil
 }
 
 func responsesHasHostedTool(tools []schemas.ResponsesTool) bool {
@@ -526,43 +796,50 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 	if !ok {
 		return invalidRequest("tool_choice must be auto, none, required, or a supported tool selector")
 	}
-	if rawString(choice["type"]) == "allowed_tools" {
+	rawType := rawString(choice["type"])
+	if rawType == "allowed_tools" {
+		if responsesUsesAnthropicWire(state) {
+			return invalidRequest("tool_choice.allowed_tools is supported only for OpenAI-format deployments")
+		}
+		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type", "mode", "tools"); err != nil {
+			return err
+		}
+		mode, err := requiredInputString(choice, "mode", "tool_choice", false)
+		if err != nil {
+			return err
+		}
+		if mode != "auto" && mode != "required" {
+			return invalidRequest("tool_choice.mode must be auto or required")
+		}
 		rawAllowed, ok := choice["tools"]
 		if !ok {
 			return invalidRequest("tool_choice.allowed_tools requires tools")
 		}
-		return validateResponsesAllowedToolChoice(rawAllowed, tools)
+		return validateResponsesAllowedToolChoice(state, rawAllowed, tools)
 	}
-	var selected schemas.ResponsesTool
-	if err := sonic.Unmarshal(raw, &selected); err != nil {
-		return invalidRequest("tool_choice must select a supported tool")
+	selectedType, err := validateResponsesToolSelectorType(state, rawType)
+	if err != nil {
+		return err
 	}
-	selected.Type = canonicalResponsesToolType(rawString(choice["type"]))
-	switch selected.Type {
+	switch selectedType {
 	case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type", "name"); err != nil {
+			return err
+		}
 		name := strings.TrimSpace(rawString(choice["name"]))
-		if name == "" {
-			name = strings.TrimSpace(rawString(choice["function"]))
+		if !validClientToolName(name) {
+			return invalidRequest("tool_choice must name a " + string(selectedType) + " tool")
 		}
-		if name == "" {
-			return invalidRequest("tool_choice must name a " + string(selected.Type) + " tool")
-		}
-		if !responsesNamedToolExists(tools, selected.Type, name) {
-			return invalidRequest("tool_choice selects an unknown " + string(selected.Type) + " tool")
+		if !responsesNamedToolExists(tools, selectedType, name) {
+			return invalidRequest("tool_choice selects an unknown " + string(selectedType) + " tool")
 		}
 		return nil
 	case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
-		if !responsesToolTypeExists(tools, selected.Type) {
-			return invalidRequest("tool_choice selects an unknown " + string(selected.Type) + " tool")
+		if err := rejectUnsupportedResponsesToolKeys(choice, "tool_choice", "type"); err != nil {
+			return err
 		}
-		return nil
-	case schemas.ResponsesToolTypeMCP:
-		label := strings.TrimSpace(rawString(choice["server_label"]))
-		if label == "" {
-			return invalidRequest("tool_choice must name an mcp server_label")
-		}
-		if !responsesMCPToolExists(tools, label) {
-			return invalidRequest("tool_choice selects an unknown mcp tool")
+		if !responsesToolTypeExists(tools, selectedType) || !responsesRawHostedToolExists(state, rawType) {
+			return invalidRequest("tool_choice selects an undeclared hosted tool version")
 		}
 		return nil
 	default:
@@ -570,38 +847,92 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 	}
 }
 
-func validateResponsesAllowedToolChoice(raw json.RawMessage, tools []schemas.ResponsesTool) error {
+func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
 	var allowedTools []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &allowedTools); err != nil {
-		return invalidRequest("tool_choice.allowed_tools requires tools")
+	if err := sonic.Unmarshal(raw, &allowedTools); err != nil || len(allowedTools) == 0 || len(allowedTools) > maxClientTools {
+		return invalidRequest("tool_choice.allowed_tools requires 1 to 128 tools")
 	}
-	for _, allowed := range allowedTools {
-		switch toolType := canonicalResponsesToolType(rawString(allowed["type"])); toolType {
+	seen := make(map[string]bool, len(allowedTools))
+	for index, allowed := range allowedTools {
+		path := fmt.Sprintf("tool_choice.tools[%d]", index)
+		toolType, err := validateResponsesToolSelectorType(state, rawString(allowed["type"]))
+		if err != nil {
+			return err
+		}
+		switch toolType {
 		case schemas.ResponsesToolTypeFunction, schemas.ResponsesToolTypeCustom:
+			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type", "name"); err != nil {
+				return err
+			}
 			name := strings.TrimSpace(rawString(allowed["name"]))
-			if name == "" {
+			if !validClientToolName(name) {
 				return invalidRequest("tool_choice.allowed_tools " + string(toolType) + " entries require name")
 			}
 			if !responsesNamedToolExists(tools, toolType, name) {
 				return invalidRequest("tool_choice selects an unknown " + string(toolType) + " tool")
 			}
-		case schemas.ResponsesToolTypeMCP:
-			label := strings.TrimSpace(rawString(allowed["server_label"]))
-			if label == "" {
-				return invalidRequest("tool_choice.allowed_tools mcp entries require server_label")
+			identity := string(toolType) + ":" + name
+			if seen[identity] {
+				return invalidRequest(path + " duplicates another allowed tool")
 			}
-			if !responsesMCPToolExists(tools, label) {
-				return invalidRequest("tool_choice selects an unknown mcp tool")
-			}
+			seen[identity] = true
 		case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
-			if !responsesToolTypeExists(tools, toolType) {
-				return invalidRequest("tool_choice selects an unknown " + string(toolType) + " tool")
+			if err := rejectUnsupportedResponsesToolKeys(allowed, path, "type"); err != nil {
+				return err
 			}
+			if !responsesToolTypeExists(tools, toolType) || !responsesRawHostedToolExists(state, rawString(allowed["type"])) {
+				return invalidRequest("tool_choice selects an undeclared hosted tool version")
+			}
+			identity := string(toolType)
+			if seen[identity] {
+				return invalidRequest(path + " duplicates another allowed tool")
+			}
+			seen[identity] = true
 		default:
 			return invalidRequest("tool_choice must select a supported tool")
 		}
 	}
 	return nil
+}
+
+func responsesRawHostedToolExists(state *State, rawType string) bool {
+	if state == nil || state.Resolution == nil {
+		return false
+	}
+	rawType = strings.TrimSpace(rawType)
+	for _, tool := range state.Resolution.RawTools() {
+		if strings.TrimSpace(rawString(tool["type"])) == rawType {
+			return true
+		}
+	}
+	return false
+}
+
+func validateResponsesToolSelectorType(state *State, rawType string) (schemas.ResponsesToolType, error) {
+	rawType = strings.TrimSpace(rawType)
+	toolType := canonicalResponsesToolType(rawType)
+	if responsesUsesAnthropicWire(state) && rawType != "function" {
+		return toolType, invalidRequest("Anthropic-format deployments support only string tool_choice modes or named function selectors")
+	}
+	switch toolType {
+	case schemas.ResponsesToolTypeFunction:
+		if rawType == "function" {
+			return toolType, nil
+		}
+	case schemas.ResponsesToolTypeCustom:
+		if rawType == "custom" && !responsesUsesAnthropicWire(state) {
+			return toolType, nil
+		}
+	case schemas.ResponsesToolTypeWebSearch:
+		if state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI && openAIWebSearchToolType(rawType) {
+			return toolType, nil
+		}
+	case schemas.ResponsesToolTypeWebSearchPreview:
+		if state != nil && state.Resolution != nil && state.Resolution.Provider == schemas.OpenAI && openAIWebSearchToolType(rawType) {
+			return toolType, nil
+		}
+	}
+	return toolType, invalidRequest("tool_choice must select a supported tool")
 }
 
 func canonicalResponsesToolType(rawType string) schemas.ResponsesToolType {
@@ -644,15 +975,6 @@ func responsesNamedToolExists(tools []schemas.ResponsesTool, toolType schemas.Re
 	return false
 }
 
-func responsesMCPToolExists(tools []schemas.ResponsesTool, serverLabel string) bool {
-	for _, tool := range tools {
-		if tool.Type == schemas.ResponsesToolTypeMCP && tool.ResponsesToolMCP != nil && tool.ResponsesToolMCP.ServerLabel == serverLabel {
-			return true
-		}
-	}
-	return false
-}
-
 func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
 	if len(object) != len(keys) {
 		return false
@@ -665,71 +987,516 @@ func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
 	return true
 }
 
+type responsesInputValidation struct {
+	calls            map[string]string
+	meaningful       bool
+	outputs          map[string]bool
+	pendingCalls     int
+	seenConversation bool
+}
+
 func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return invalidRequest("input is required")
 	}
-	return walkRawJSON(raw, func(object map[string]json.RawMessage) error {
-		if rawString(object["type"]) == "reasoning" {
-			if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI || !state.Resolution.Deployment.ReasoningSupported {
-				return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
-			}
-			if strings.TrimSpace(rawString(object["encrypted_content"])) == "" {
-				return invalidRequest("reasoning input items require encrypted_content")
-			}
-			return errSkipRawJSONChildren
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return invalidRequest("input must be a non-empty string or array")
+	}
+	if trimmed[0] == '"' {
+		var input string
+		if err := sonic.Unmarshal(raw, &input); err != nil {
+			return invalidRequest("input must be a string or array")
 		}
-		if err := validateTextOnlyMediaFields(object, "Only text input is supported"); err != nil {
-			return err
+		if strings.TrimSpace(input) == "" {
+			return invalidRequest("input must contain non-empty text")
 		}
-		switch rawString(object["type"]) {
-		case "", "message", "input_text", "output_text", "refusal":
-			return nil
+		return nil
+	}
+	if trimmed[0] != '[' {
+		return invalidRequest("input must be a string or array")
+	}
+	var items []json.RawMessage
+	if err := sonic.Unmarshal(raw, &items); err != nil {
+		return invalidRequest("input must be a string or array")
+	}
+	if len(items) == 0 {
+		return invalidRequest("input must contain at least one item")
+	}
+	validation := responsesInputValidation{
+		calls:   make(map[string]string),
+		outputs: make(map[string]bool),
+	}
+	for index, itemRaw := range items {
+		var item map[string]json.RawMessage
+		if err := sonic.Unmarshal(itemRaw, &item); err != nil || item == nil {
+			return invalidRequest("input items must be objects")
+		}
+		path := fmt.Sprintf("input[%d]", index)
+		itemType := rawString(item["type"])
+		role := rawString(item["role"])
+		isSystemMessage := (itemType == "" || itemType == "message") && (role == "system" || role == "developer")
+		if rawType, exists := item["type"]; exists {
+			value, ok := rawStringValue(rawType)
+			if !ok || strings.TrimSpace(value) == "" {
+				return invalidRequest(path + ".type must be a string")
+			}
+		}
+		if validation.pendingCalls > 0 {
+			switch itemType {
+			case "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output":
+			default:
+				return invalidRequest(path + " must resolve the preceding client tool calls before adding another input item")
+			}
+		}
+		switch itemType {
+		case "", "message":
+			if err := validateResponsesMessageInput(state, item, path, &validation); err != nil {
+				return err
+			}
+			if responsesUsesAnthropicWire(state) && index == len(items)-1 && role == "assistant" {
+				if err := rejectTrailingAssistantWhitespace(item["content"], path+".content"); err != nil {
+					return err
+				}
+			}
+		case "function_call":
+			if err := validateResponsesToolCallInput(state, item, path, "function", &validation); err != nil {
+				return err
+			}
+		case "function_call_output":
+			if err := validateResponsesToolCallOutputInput(item, path, "function", &validation); err != nil {
+				return err
+			}
+		case "custom_tool_call":
+			if !responsesCustomCallInputSupported(state) {
+				return invalidRequest("custom_tool_call input items are supported only for OpenAI-format deployments")
+			}
+			if err := validateResponsesToolCallInput(state, item, path, "custom", &validation); err != nil {
+				return err
+			}
+		case "custom_tool_call_output":
+			if !responsesCustomCallInputSupported(state) {
+				return invalidRequest("custom_tool_call_output input items are supported only for OpenAI-format deployments")
+			}
+			if err := validateResponsesToolCallOutputInput(item, path, "custom", &validation); err != nil {
+				return err
+			}
+		case "reasoning":
+			if err := validateResponsesReasoningInput(state, item, path); err != nil {
+				return err
+			}
 		case "input_file":
 			return invalidRequest("file inputs are not supported")
 		default:
-			return invalidRequest("Only text input is supported")
-		}
-	})
-}
-
-var errSkipRawJSONChildren = errors.New("skip raw JSON children")
-
-func walkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) error) error {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
-		return nil
-	}
-	switch trimmed[0] {
-	case '{':
-		var object map[string]json.RawMessage
-		if err := sonic.Unmarshal(raw, &object); err != nil {
-			return invalidRequest("input must be valid JSON")
-		}
-		if err := visit(object); err != nil {
-			if errors.Is(err, errSkipRawJSONChildren) {
-				return nil
-			}
-			return err
-		}
-		for key, child := range object {
-			if key == "cache_control" {
-				continue
-			}
-			if err := walkRawJSON(child, visit); err != nil {
+			if err := validateTextOnlyMediaFields(item, "Only text input is supported"); err != nil {
 				return err
 			}
+			return invalidRequest("Only text messages, client tool calls and outputs, and encrypted reasoning input are supported")
 		}
-	case '[':
-		var array []json.RawMessage
-		if err := sonic.Unmarshal(raw, &array); err != nil {
-			return invalidRequest("input must be valid JSON")
+		if responsesUsesAnthropicWire(state) {
+			if isSystemMessage && validation.seenConversation {
+				if !anthropicWireSupportsMidConversationSystem(state) {
+					return invalidRequest(path + ".role cannot be preserved after the conversation starts on this Anthropic-format deployment")
+				}
+				if index+1 < len(items) && !responsesInputCreatesAnthropicAssistantTurn(items[index+1]) {
+					return invalidRequest(path + ".role must be last or immediately precede an assistant turn on this Anthropic-format deployment")
+				}
+			} else if !isSystemMessage {
+				validation.seenConversation = true
+			}
 		}
-		for _, child := range array {
-			if err := walkRawJSON(child, visit); err != nil {
+	}
+	for callID, kind := range validation.calls {
+		if !validation.outputs[callID] {
+			return invalidRequest(kind + " tool calls require one matching output in the same stateless input")
+		}
+	}
+	if !validation.meaningful {
+		return invalidRequest("input must contain non-empty text or a client tool result")
+	}
+	return nil
+}
+
+func validateResponsesMessageInput(state *State, item map[string]json.RawMessage, path string, validation *responsesInputValidation) error {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "role", "content"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	if rawType, exists := item["type"]; exists && rawString(rawType) != "message" {
+		return invalidRequest(path + ".type must be message")
+	}
+	role, ok := rawStringValue(item["role"])
+	if !ok {
+		return invalidRequest(path + ".role must be a string")
+	}
+	switch role {
+	case "assistant", "developer", "system", "user":
+	default:
+		return invalidRequest(path + ".role is not supported")
+	}
+	content, ok := item["content"]
+	if !ok {
+		return invalidRequest(path + ".content is required")
+	}
+	meaningful, err := validateResponsesMessageContent(state, content, path+".content", role)
+	if err != nil {
+		return err
+	}
+	validation.meaningful = validation.meaningful || meaningful
+	return nil
+}
+
+func validateResponsesMessageContent(state *State, raw json.RawMessage, path string, role string) (bool, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return false, invalidRequest(path + " must contain text")
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := sonic.Unmarshal(raw, &text); err != nil {
+			return false, invalidRequest(path + " must be text or an array of text blocks")
+		}
+		if strings.TrimSpace(text) == "" {
+			return false, invalidRequest(path + " must contain non-empty text")
+		}
+		return true, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &blocks); err != nil || len(blocks) == 0 {
+		return false, invalidRequest(path + " must be text or a non-empty array of text blocks")
+	}
+	meaningful := false
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		switch rawString(block["type"]) {
+		case "input_text":
+			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "cache_control", "prompt_cache_breakpoint"); err != nil {
+				return false, err
+			}
+			if role == "assistant" {
+				return false, invalidRequest(blockPath + ".type must be output_text or refusal for assistant history")
+			}
+			text, ok := rawStringValue(block["text"])
+			if !ok {
+				return false, invalidRequest(blockPath + ".text must be a string")
+			}
+			meaningful = meaningful || strings.TrimSpace(text) != ""
+		case "output_text":
+			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "annotations", "logprobs", "cache_control"); err != nil {
+				return false, err
+			}
+			if role != "assistant" {
+				return false, invalidRequest(blockPath + ".type is supported only for assistant history")
+			}
+			text, ok := rawStringValue(block["text"])
+			if !ok {
+				return false, invalidRequest(blockPath + ".text must be a string")
+			}
+			if err := validateResponsesOutputAnnotations(state, block["annotations"], blockPath+".annotations"); err != nil {
+				return false, err
+			}
+			if err := validateResponsesOutputLogProbs(state, block["logprobs"], blockPath+".logprobs"); err != nil {
+				return false, err
+			}
+			meaningful = meaningful || strings.TrimSpace(text) != ""
+		case "refusal":
+			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "refusal"); err != nil {
+				return false, err
+			}
+			if role != "assistant" {
+				return false, invalidRequest(blockPath + ".type is supported only for assistant history")
+			}
+			if responsesUsesAnthropicWire(state) {
+				return false, invalidRequest("refusal history is not supported for Anthropic-format deployments")
+			}
+			text, ok := rawStringValue(block["refusal"])
+			if !ok {
+				return false, invalidRequest(blockPath + ".refusal must be a string")
+			}
+			meaningful = meaningful || strings.TrimSpace(text) != ""
+		case "input_file":
+			return false, invalidRequest("file inputs are not supported")
+		default:
+			if err := validateTextOnlyMediaFields(block, "Only text input is supported"); err != nil {
+				return false, err
+			}
+			return false, invalidRequest("Only input_text, output_text, and refusal content blocks are supported")
+		}
+	}
+	if !meaningful {
+		return false, invalidRequest(path + " must contain non-empty text")
+	}
+	return true, nil
+}
+
+func validateResponsesOutputAnnotations(state *State, raw json.RawMessage, path string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var annotations []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &annotations); err != nil || annotations == nil {
+		return invalidRequest(path + " must be an array")
+	}
+	for index, annotation := range annotations {
+		annotationPath := fmt.Sprintf("%s[%d]", path, index)
+		allowed := []string{"type", "start_index", "end_index", "title", "url"}
+		if responsesUsesAnthropicWire(state) {
+			allowed = append(allowed, "text", "encrypted_index")
+		}
+		if err := rejectUnsupportedInputKeys(annotation, annotationPath, allowed...); err != nil {
+			return err
+		}
+		if rawString(annotation["type"]) != "url_citation" {
+			return invalidRequest(annotationPath + ".type must be url_citation")
+		}
+		start, startExists, startErr := rawInteger(annotation["start_index"], annotationPath+".start_index")
+		if startErr != nil || !startExists || start < 0 {
+			return invalidRequest(annotationPath + ".start_index must be a non-negative integer")
+		}
+		end, endExists, endErr := rawInteger(annotation["end_index"], annotationPath+".end_index")
+		if endErr != nil || !endExists || end < start {
+			return invalidRequest(annotationPath + ".end_index must be an integer at or after start_index")
+		}
+		if _, err := requiredInputString(annotation, "url", annotationPath, false); err != nil {
+			return err
+		}
+		if _, err := requiredInputString(annotation, "title", annotationPath, true); err != nil {
+			return err
+		}
+		for _, key := range []string{"text", "encrypted_index"} {
+			if value, exists := annotation[key]; exists {
+				if _, ok := rawStringValue(value); !ok {
+					return invalidRequest(annotationPath + "." + key + " must be a string")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateResponsesOutputLogProbs(state *State, raw json.RawMessage, path string) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var entries []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &entries); err != nil || entries == nil {
+		return invalidRequest(path + " must be an array")
+	}
+	if responsesUsesAnthropicWire(state) && len(entries) > 0 {
+		return invalidRequest(path + " cannot be preserved on Anthropic-format deployments")
+	}
+	for index, entry := range entries {
+		if err := validateResponsesOutputLogProb(entry, fmt.Sprintf("%s[%d]", path, index), true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateResponsesOutputLogProb(entry map[string]json.RawMessage, path string, allowTop bool) error {
+	allowed := []string{"token", "logprob", "bytes"}
+	if allowTop {
+		allowed = append(allowed, "top_logprobs")
+	}
+	if err := rejectUnsupportedInputKeys(entry, path, allowed...); err != nil {
+		return err
+	}
+	if _, err := requiredInputString(entry, "token", path, true); err != nil {
+		return err
+	}
+	var probability float64
+	if value, exists := entry["logprob"]; !exists || sonic.Unmarshal(value, &probability) != nil {
+		return invalidRequest(path + ".logprob must be a number")
+	}
+	if rawBytes, exists := entry["bytes"]; exists && strings.TrimSpace(string(rawBytes)) != "null" {
+		var values []int
+		if err := sonic.Unmarshal(rawBytes, &values); err != nil {
+			return invalidRequest(path + ".bytes must be an array of bytes or null")
+		}
+		for _, value := range values {
+			if value < 0 || value > 255 {
+				return invalidRequest(path + ".bytes must contain integers from 0 to 255")
+			}
+		}
+	}
+	if !allowTop {
+		return nil
+	}
+	if rawTop, exists := entry["top_logprobs"]; exists && strings.TrimSpace(string(rawTop)) != "null" {
+		var top []map[string]json.RawMessage
+		if err := sonic.Unmarshal(rawTop, &top); err != nil {
+			return invalidRequest(path + ".top_logprobs must be an array or null")
+		}
+		for index, candidate := range top {
+			if err := validateResponsesOutputLogProb(candidate, fmt.Sprintf("%s.top_logprobs[%d]", path, index), false); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+func validateResponsesToolCallInput(state *State, item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
+	allowed := []string{"type", "id", "status", "call_id", "name"}
+	payloadField := "arguments"
+	if kind == "custom" {
+		payloadField = "input"
+	}
+	allowed = append(allowed, payloadField)
+	if err := rejectUnsupportedInputKeys(item, path, allowed...); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	if err := validateProviderToolCallID(state, callID, path+".call_id"); err != nil {
+		return err
+	}
+	if _, exists := validation.calls[callID]; exists {
+		return invalidRequest(path + ".call_id duplicates another client tool call")
+	}
+	name, err := requiredInputString(item, "name", path, false)
+	if err != nil {
+		return err
+	}
+	if !validClientToolName(name) {
+		return invalidRequest(path + ".name must contain 1 to 64 letters, digits, underscores, or hyphens")
+	}
+	payload, err := requiredInputString(item, payloadField, path, true)
+	if err != nil {
+		return err
+	}
+	if kind == "function" {
+		if !catalog.ValidateJSONObjectText(payload) {
+			return invalidRequest(path + ".arguments must encode a JSON object")
+		}
+	}
+	validation.calls[callID] = kind
+	validation.pendingCalls++
+	return nil
+}
+
+func responsesInputCreatesAnthropicAssistantTurn(raw json.RawMessage) bool {
+	var item map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &item); err != nil || item == nil {
+		return false
+	}
+	switch rawString(item["type"]) {
+	case "function_call":
+		return true
+	case "", "message":
+		return rawString(item["role"]) == "assistant"
+	default:
+		return false
+	}
+}
+
+func validateResponsesToolCallOutputInput(item map[string]json.RawMessage, path string, kind string, validation *responsesInputValidation) error {
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "call_id", "output"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	callID, err := requiredInputString(item, "call_id", path, false)
+	if err != nil {
+		return err
+	}
+	callKind, exists := validation.calls[callID]
+	if !exists {
+		return invalidRequest(path + ".call_id must match an earlier client tool call")
+	}
+	if callKind != kind {
+		return invalidRequest(path + ".call_id selects a different client tool type")
+	}
+	if validation.outputs[callID] {
+		return invalidRequest(path + ".call_id duplicates a client tool output")
+	}
+	if _, err := requiredInputString(item, "output", path, true); err != nil {
+		return err
+	}
+	validation.outputs[callID] = true
+	validation.pendingCalls--
+	validation.meaningful = true
+	return nil
+}
+
+func validateResponsesReasoningInput(state *State, item map[string]json.RawMessage, path string) error {
+	if state == nil || state.Resolution == nil || state.Resolution.Provider != schemas.OpenAI || !state.Resolution.Deployment.ReasoningSupported {
+		return invalidRequest("reasoning input items are only supported for OpenAI reasoning deployments")
+	}
+	if err := rejectUnsupportedInputKeys(item, path, "type", "id", "status", "summary", "content", "encrypted_content"); err != nil {
+		return err
+	}
+	if err := validateResponsesInputItemIdentity(item, path); err != nil {
+		return err
+	}
+	if _, err := requiredInputString(item, "encrypted_content", path, false); err != nil {
+		return invalidRequest("reasoning input items require encrypted_content")
+	}
+	if raw, ok := item["summary"]; ok {
+		if err := validateResponsesReasoningTextBlocks(raw, path+".summary", "summary_text"); err != nil {
+			return err
+		}
+	}
+	if raw, ok := item["content"]; ok {
+		if err := validateResponsesReasoningTextBlocks(raw, path+".content", "reasoning_text"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateResponsesReasoningTextBlocks(raw json.RawMessage, path string, expectedType string) error {
+	var blocks []map[string]json.RawMessage
+	if err := sonic.Unmarshal(raw, &blocks); err != nil {
+		return invalidRequest(path + " must be an array")
+	}
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text"); err != nil {
+			return err
+		}
+		if rawString(block["type"]) != expectedType {
+			return invalidRequest(blockPath + ".type must be " + expectedType)
+		}
+		if _, err := requiredInputString(block, "text", blockPath, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateResponsesInputItemIdentity(item map[string]json.RawMessage, path string) error {
+	if raw, ok := item["id"]; ok {
+		if _, err := requiredInputString(map[string]json.RawMessage{"id": raw}, "id", path, false); err != nil {
+			return err
+		}
+	}
+	if raw, ok := item["status"]; ok {
+		status, ok := rawStringValue(raw)
+		if !ok {
+			return invalidRequest(path + ".status must be a string")
+		}
+		switch status {
+		case "completed", "in_progress", "incomplete":
+		default:
+			return invalidRequest(path + ".status is not supported")
+		}
+	}
+	return nil
+}
+
+func responsesCustomCallInputSupported(state *State) bool {
+	if state == nil || state.Resolution == nil {
+		return false
+	}
+	return state.Resolution.Provider == schemas.OpenAI ||
+		(state.Resolution.Provider == schemas.Azure && !azureDeploymentUsesAnthropicWire(state))
 }

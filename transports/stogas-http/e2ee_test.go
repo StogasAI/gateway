@@ -30,7 +30,11 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 			APIKey:      "sk-encrypted",
 			Accept:      "text/event-stream",
 			ExtraFields: true,
-			Body:        json.RawMessage(`{"model":"gpt-5.5","stream":true}`),
+			UpstreamCredential: &e2ee.UpstreamCredential{
+				Provider: "openai",
+				APIKey:   "sk-upstream",
+			},
+			Body: json.RawMessage(`{"model":"gpt-5.5","stream":true}`),
 		},
 	)
 	if err != nil {
@@ -55,6 +59,12 @@ func TestEncryptedInferenceRestoresOrdinaryRequestAndUsesBoundRequestID(t *testi
 	}
 	if got := string(ctx.Request.Header.Peek(stogasHeaderExtraFields)); got != "true" {
 		t.Fatalf("extra fields = %q", got)
+	}
+	if got := string(ctx.Request.Header.Peek("X-Stogas-Upstream-API-Key")); got != "sk-upstream" {
+		t.Fatalf("upstream credential = %q", got)
+	}
+	if got := string(ctx.Request.Header.Peek("X-Stogas-Upstream-Provider")); got != "openai" {
+		t.Fatalf("upstream provider = %q", got)
 	}
 	if got := string(ctx.Request.Body()); got != `{"model":"gpt-5.5","stream":true}` {
 		t.Fatalf("inner body = %q", got)
@@ -143,6 +153,20 @@ func TestEncryptedStreamingResponseAuthenticatesEOFAndPropagatesClose(t *testing
 	}
 }
 
+func TestEncryptedResponseSessionCannotReuseResponseNonceSequence(t *testing.T) {
+	server, material := encryptedTestServer(t)
+	ctx, _ := encryptedRequestContext(t, server, material)
+	session := encryptedSession(ctx)
+	metadata := e2ee.ResponseMetadata{StatusCode: fasthttp.StatusOK, ContentType: "application/json"}
+	if _, err := session.EncodeResponse(metadata, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("first response encoding failed: %v", err)
+	}
+	if _, err := session.EncodeResponse(metadata, []byte(`{"ok":false}`)); err == nil ||
+		!strings.Contains(err.Error(), "single-use") {
+		t.Fatalf("response nonce sequence reuse error = %v", err)
+	}
+}
+
 func TestEncryptedInferenceFailsClosedBeforeDecryption(t *testing.T) {
 	server, _ := encryptedTestServer(t)
 	for _, body := range []string{
@@ -159,6 +183,48 @@ func TestEncryptedInferenceFailsClosedBeforeDecryption(t *testing.T) {
 		if ctx.Response.StatusCode() != fasthttp.StatusBadRequest || !bytes.Contains(ctx.Response.Body(), []byte("Invalid encrypted request")) {
 			t.Fatalf("response = %d %s", ctx.Response.StatusCode(), ctx.Response.Body())
 		}
+	}
+}
+
+func TestEncryptedInferenceRejectsUnboundQueryParameters(t *testing.T) {
+	server, material := encryptedTestServer(t)
+	body, _, err := e2ee.SealRequestWithID(
+		"POST",
+		"/v1/chat/completions",
+		"018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		time.Now().UTC().Add(time.Minute),
+		strings.Repeat("1", 64),
+		[]e2ee.PublicRecipient{{PublicKey: material.HPKEPrivateKey.PublicKey().Bytes()}},
+		e2ee.InnerRequest{APIKey: "sk-encrypted", Body: json.RawMessage(`{"model":"gpt-5.5"}`)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.SetRequestURI("/v1/chat/completions?unbound=true")
+	ctx.Request.SetBody(body)
+	if session, ok := server.openEncryptedInference(ctx); ok || session != nil {
+		t.Fatal("encrypted request with query parameters was accepted")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
+		t.Fatalf("response status = %d", ctx.Response.StatusCode())
+	}
+}
+
+func TestPlainInferenceRejectsQueryParametersOutsideTheProofTranscript(t *testing.T) {
+	server := &Server{}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
+	ctx.Request.SetRequestURI("/v1/chat/completions?unbound=true")
+	ctx.Request.SetBodyString(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`)
+
+	if session, ok := server.openEncryptedInference(ctx); ok || session != nil {
+		t.Fatal("plaintext request with query parameters was accepted")
+	}
+	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest ||
+		!bytes.Contains(ctx.Response.Body(), []byte("Query parameters are not supported")) {
+		t.Fatalf("unexpected query rejection: status=%d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
 	}
 }
 

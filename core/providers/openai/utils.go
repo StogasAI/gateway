@@ -22,10 +22,11 @@ func ConvertOpenAIMessagesToBifrostMessages(messages []OpenAIMessage) []schemas.
 		}
 		if message.OpenAIChatAssistantMessage != nil {
 			bifrostMessages[i].ChatAssistantMessage = &schemas.ChatAssistantMessage{
-				Refusal:     message.OpenAIChatAssistantMessage.Refusal,
-				Reasoning:   message.OpenAIChatAssistantMessage.Reasoning,
-				Annotations: message.OpenAIChatAssistantMessage.Annotations,
-				ToolCalls:   message.OpenAIChatAssistantMessage.ToolCalls,
+				Refusal:          message.OpenAIChatAssistantMessage.Refusal,
+				Reasoning:        message.OpenAIChatAssistantMessage.Reasoning,
+				ReasoningDetails: message.OpenAIChatAssistantMessage.ReasoningDetails,
+				Annotations:      message.OpenAIChatAssistantMessage.Annotations,
+				ToolCalls:        message.OpenAIChatAssistantMessage.ToolCalls,
 			}
 		}
 	}
@@ -77,10 +78,11 @@ func ConvertBifrostMessagesToOpenAIMessages(messages []schemas.ChatMessage) []Op
 				toolCalls = cloned
 			}
 			openaiMessages[i].OpenAIChatAssistantMessage = &OpenAIChatAssistantMessage{
-				Refusal:     message.ChatAssistantMessage.Refusal,
-				Reasoning:   message.ChatAssistantMessage.Reasoning,
-				Annotations: message.ChatAssistantMessage.Annotations,
-				ToolCalls:   toolCalls,
+				Refusal:          message.ChatAssistantMessage.Refusal,
+				Reasoning:        message.ChatAssistantMessage.Reasoning,
+				ReasoningDetails: message.ChatAssistantMessage.ReasoningDetails,
+				Annotations:      message.ChatAssistantMessage.Annotations,
+				ToolCalls:        toolCalls,
 			}
 		}
 	}

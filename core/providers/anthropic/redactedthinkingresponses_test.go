@@ -31,6 +31,92 @@ func driveResponsesStream(t *testing.T, events []*AnthropicStreamEvent) []*schem
 	return out
 }
 
+func TestToBifrostResponsesStream_CitationIndicesAreSequential(t *testing.T) {
+	t.Parallel()
+
+	index := 0
+	firstURL := "https://example.com/first"
+	secondURL := "https://example.com/second"
+	title := "Source"
+	responses := driveResponsesStream(t, []*AnthropicStreamEvent{
+		{
+			Type: AnthropicStreamEventTypeMessageStart,
+			Message: &AnthropicMessageResponse{
+				ID:    "msg_citations",
+				Model: "claude-sonnet-4-5-20250929",
+			},
+		},
+		{
+			Type:  AnthropicStreamEventTypeContentBlockStart,
+			Index: &index,
+			ContentBlock: &AnthropicContentBlock{
+				Type: AnthropicContentBlockTypeText,
+			},
+		},
+		{
+			Type:  AnthropicStreamEventTypeContentBlockDelta,
+			Index: &index,
+			Delta: &AnthropicStreamDelta{
+				Type: AnthropicStreamDeltaTypeCitations,
+				Citation: &AnthropicTextCitation{
+					Type:      AnthropicCitationTypeWebSearchResultLocation,
+					CitedText: "first",
+					URL:       &firstURL,
+					Title:     &title,
+				},
+			},
+		},
+		{
+			Type:  AnthropicStreamEventTypeContentBlockDelta,
+			Index: &index,
+			Delta: &AnthropicStreamDelta{
+				Type: AnthropicStreamDeltaTypeCitations,
+				Citation: &AnthropicTextCitation{
+					Type:      AnthropicCitationTypeWebSearchResultLocation,
+					CitedText: "second",
+					URL:       &secondURL,
+					Title:     &title,
+				},
+			},
+		},
+		{Type: AnthropicStreamEventTypeContentBlockStop, Index: &index},
+		{Type: AnthropicStreamEventTypeMessageStop},
+	})
+
+	var annotationIndices []int
+	for _, response := range responses {
+		if response.Type != schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded {
+			continue
+		}
+		if response.AnnotationIndex == nil {
+			t.Fatal("citation event is missing annotation_index")
+		}
+		annotationIndices = append(annotationIndices, *response.AnnotationIndex)
+	}
+	if len(annotationIndices) != 2 || annotationIndices[0] != 0 || annotationIndices[1] != 1 {
+		t.Fatalf("annotation indices = %v, want [0 1]", annotationIndices)
+	}
+	var doneAnnotations, terminalAnnotations []schemas.ResponsesOutputMessageContentTextAnnotation
+	for _, response := range responses {
+		switch response.Type {
+		case schemas.ResponsesStreamResponseTypeOutputItemDone:
+			if response.Item != nil && response.Item.Content != nil && len(response.Item.Content.ContentBlocks) == 1 &&
+				response.Item.Content.ContentBlocks[0].ResponsesOutputMessageContentText != nil {
+				doneAnnotations = response.Item.Content.ContentBlocks[0].ResponsesOutputMessageContentText.Annotations
+			}
+		case schemas.ResponsesStreamResponseTypeCompleted:
+			if response.Response != nil && len(response.Response.Output) == 1 && response.Response.Output[0].Content != nil &&
+				len(response.Response.Output[0].Content.ContentBlocks) == 1 &&
+				response.Response.Output[0].Content.ContentBlocks[0].ResponsesOutputMessageContentText != nil {
+				terminalAnnotations = response.Response.Output[0].Content.ContentBlocks[0].ResponsesOutputMessageContentText.Annotations
+			}
+		}
+	}
+	if len(doneAnnotations) != 2 || len(terminalAnnotations) != 2 {
+		t.Fatalf("citations were not preserved through completion: done=%d terminal=%d", len(doneAnnotations), len(terminalAnnotations))
+	}
+}
+
 // redactedThinkingLifecycle returns the real Anthropic SSE shape of a response
 // whose only content block is a redacted_thinking block: the block arrives
 // complete in content_block_start (no deltas follow).

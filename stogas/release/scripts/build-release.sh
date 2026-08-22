@@ -1,72 +1,141 @@
 #!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
 set -euo pipefail
+umask 022
 
 tag="${1:?usage: build-release.sh <vX.Y.Z> <out-dir>}"
 out_dir="${2:?usage: build-release.sh <vX.Y.Z> <out-dir>}"
 
-case "$tag" in
-  v[0-9]*.[0-9]*.[0-9]*) ;;
-  *) echo "release tag must be vX.Y.Z" >&2; exit 64 ;;
-esac
+if [ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]; then
+  echo "release builds require an x86_64 Linux host" >&2
+  exit 69
+fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 release_root="$repo_root/stogas/release"
-profile_catalog="$release_root/snp-policy-profiles.json"
+launch_policy_file="$release_root/snp-launch-policy.json"
+# shellcheck source=release-tag.sh
+source "$release_root/scripts/release-tag.sh"
+stogas_release_sequence "$tag" >/dev/null
 
-profile_data="$(
-  node --input-type=module - "$profile_catalog" "${STOGAS_SNP_POLICY_PROFILE:-}" <<'NODE'
-import { readFileSync } from 'node:fs';
+out_dir="$(
+  node --input-type=module - "$repo_root" "$out_dir" <<'NODE'
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const [catalogPath, requestedProfile] = process.argv.slice(2);
-const catalog = JSON.parse(readFileSync(catalogPath, 'utf8'));
-const rootKeys = Object.keys(catalog).sort();
-if (
-  JSON.stringify(rootKeys) !== JSON.stringify(['active', 'profiles', 'schema']) ||
-  catalog.schema !== 'stogas.snp-policy-profiles.v1' ||
-  typeof catalog.active !== 'string' ||
-  !catalog.profiles ||
-  typeof catalog.profiles !== 'object' ||
-  Array.isArray(catalog.profiles)
-) {
-  throw new Error('invalid SNP policy profile catalog');
+const [repoInput, outputInput] = process.argv.slice(2);
+const repoRoot = realpathSync(repoInput);
+const output = isAbsolute(outputInput) ? resolve(outputInput) : resolve(repoRoot, outputInput);
+
+function inside(path, root) {
+  const child = relative(root, path);
+  return child !== '' && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 }
-const profileName = requestedProfile || catalog.active;
-if (!/^[a-z0-9-]{1,32}$/.test(profileName)) throw new Error('invalid SNP policy profile name');
-const profile = catalog.profiles[profileName];
+
+const repositoryRoots = [
+  join(repoRoot, 'dist/gateway'),
+  join(repoRoot, 'dist/gateway-igvm')
+];
+let trustedRoot = repositoryRoots.some((root) => inside(output, root)) ? repoRoot : undefined;
+const temporaryRoot = resolve(tmpdir());
 if (
-  !profile ||
-  JSON.stringify(Object.keys(profile).sort()) !== JSON.stringify(['amdProduct', 'policy']) ||
-  !/^[A-Za-z0-9-]{1,32}$/.test(profile.amdProduct) ||
-  !/^0x[0-9a-f]{16}$/.test(profile.policy)
+  !trustedRoot &&
+  dirname(output) === temporaryRoot &&
+  /^stogas-gateway-audit-[A-Za-z0-9_-]+$/.test(basename(output))
 ) {
-  throw new Error(`invalid or unknown SNP policy profile: ${profileName}`);
+  trustedRoot = temporaryRoot;
 }
-console.log(`${profileName}|${profile.amdProduct}|${profile.policy}`);
+if (!trustedRoot) {
+  throw new Error(
+    'Release output must be below dist/gateway, dist/gateway-igvm, or a managed audit directory.'
+  );
+}
+
+let current = trustedRoot;
+if (existsSync(current) && lstatSync(current).isSymbolicLink()) {
+  throw new Error(`Release output root is a symbolic link: ${current}`);
+}
+for (const component of relative(trustedRoot, output).split(sep).filter(Boolean)) {
+  current = join(current, component);
+  if (existsSync(current) && lstatSync(current).isSymbolicLink()) {
+    throw new Error(`Release output contains a symbolic-link path component: ${current}`);
+  }
+}
+
+console.log(output);
 NODE
 )"
-IFS='|' read -r snp_policy_profile snp_policy_product snp_policy <<<"$profile_data"
-export STOGAS_SNP_POLICY_PROFILE="$snp_policy_profile"
+
+policy_data="$(
+  node --input-type=module - "$launch_policy_file" <<'NODE'
+import { readFileSync } from 'node:fs';
+
+const [policyPath] = process.argv.slice(2);
+const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
+if (
+  JSON.stringify(Object.keys(policy).sort()) !==
+    JSON.stringify(['amd_product', 'policy', 'schema']) ||
+  policy.schema !== 'stogas.snp-launch-policy.v1' ||
+  !/^[A-Za-z0-9-]{1,32}$/.test(policy.amd_product) ||
+  !/^0x[0-9a-f]{16}$/.test(policy.policy)
+) {
+  throw new Error('invalid SNP launch policy');
+}
+console.log(`${policy.amd_product}|${policy.policy}`);
+NODE
+)"
+IFS='|' read -r snp_policy_product snp_policy <<<"$policy_data"
 export STOGAS_SNP_POLICY_PRODUCT="$snp_policy_product"
 export STOGAS_SNP_POLICY="$snp_policy"
 
-if [ "${STOGAS_RELEASE_ALLOW_DIRTY:-0}" != "1" ]; then
+assert_clean_tree() {
   git -C "$repo_root" diff --quiet --exit-code || {
     echo "release build requires a clean gateway worktree" >&2
-    exit 65
+    return 65
   }
 
   if [ -n "$(git -C "$repo_root" status --porcelain=v1 --untracked-files=normal)" ]; then
     echo "release build requires no untracked gateway files" >&2
-    exit 65
+    return 65
   fi
+}
+
+if [ "${STOGAS_RELEASE_ALLOW_DIRTY:-0}" != "1" ]; then
+  assert_clean_tree
 fi
 
+STOGAS_RELEASE_COMMIT="$(git -C "$repo_root" rev-parse HEAD)"
+STOGAS_RELEASE_TREE="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
+export STOGAS_RELEASE_COMMIT STOGAS_RELEASE_TREE
+
 node "$release_root/scripts/verify-pins.mjs"
+unset STOGAS_GUIX STOGAS_GUIX_RESOLVED
+# shellcheck source=guix.sh
+source "$release_root/scripts/guix.sh"
+resolve_stogas_guix "$release_root"
+
+source_snapshot="$(mktemp -d /tmp/stogas-gateway-source-XXXXXX)"
+cleanup() {
+  rm -rf -- "$source_snapshot"
+}
+trap cleanup EXIT
+cp -a -- \
+  "$repo_root/core" \
+  "$repo_root/transports" \
+  "$repo_root/LICENSE" \
+  "$repo_root/NOTICE" \
+  "$source_snapshot/"
+export STOGAS_GATEWAY_SOURCE_ROOT="$source_snapshot"
+
 "$release_root/scripts/hydrate-guix-closure.sh" "$tag" >/dev/null
 
-check_args=(--check)
-if [ "${STOGAS_RELEASE_CI_SKIP_REBUILD_CHECK:-0}" = "1" ]; then
-  check_args=()
+if [ "${STOGAS_RELEASE_ALLOW_DIRTY:-0}" != "1" ]; then
+  assert_clean_tree
+  if [ "$(git -C "$repo_root" rev-parse HEAD)" != "$STOGAS_RELEASE_COMMIT" ]; then
+    echo "release source commit changed during the build" >&2
+    exit 65
+  fi
 fi
 
 export SOURCE_DATE_EPOCH=1
@@ -74,24 +143,22 @@ export LC_ALL=C
 export TZ=UTC
 export STOGAS_RELEASE_TAG="$tag"
 export STOGAS_RELEASE_ROOT="$release_root"
-export STOGAS_RELEASE_COMMIT="$(git -C "$repo_root" rev-parse HEAD)"
-export STOGAS_RELEASE_TREE="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
 
 result="$(
-  guix time-machine \
-    -C "$release_root/guix/channels.scm" \
-    -- \
-    build \
-      -L "$release_root/guix/modules" \
-      --no-substitutes \
-      --substitute-urls='' \
-      --no-offload \
-      --timeout=3600 \
-      --max-silent-time=900 \
-      "${check_args[@]}" \
-      -f "$release_root/guix/release.scm" \
-      | tail -n 1
+  "$STOGAS_GUIX" build \
+    -L "$release_root/guix/modules" \
+    --no-substitutes \
+    --substitute-urls='' \
+    --no-offload \
+    --timeout=3600 \
+    --max-silent-time=900 \
+    -f "$release_root/guix/release.scm" \
+    | tail -n 1
 )"
+if [[ ! "$result" =~ ^/gnu/store/[a-z0-9]{32}-stogas-gateway-igvm-release- ]] || [ ! -d "$result" ]; then
+  echo "Guix returned an invalid release output: $result" >&2
+  exit 70
+fi
 
 if [ -e "$out_dir" ]; then
   chmod -R u+w "$out_dir"
@@ -100,8 +167,6 @@ fi
 mkdir -p "$out_dir"
 cp -a "$result"/. "$out_dir"/
 chmod -R u+w "$out_dir"
-guix time-machine -C "$release_root/guix/channels.scm" -- describe > "$out_dir/guix-describe.txt"
-guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
 (
   cd "$out_dir"
   expected_files=(
@@ -109,40 +174,13 @@ guix gc -R "$result" > "$out_dir/guix-store-requisites.txt"
     NOTICE
     gateway.igvm
     gateway-launch-policy.json
-    gateway.efi
     gateway.init
     gateway.kernel
     gateway.initramfs.cpio.zst
-    launch-measurement.txt
     release-manifest.json
-    pins.lock.json
-    igvmmeasure-check-kvm.txt
-    ukify-inspect.txt
-    guix-describe.txt
-    guix-store-requisites.txt
     kernel-config.txt
-    build-inputs.sha256
     SHA256SUMS
   )
-  sha256sum \
-    LICENSE \
-    NOTICE \
-    gateway.igvm \
-    gateway-launch-policy.json \
-    gateway.efi \
-    gateway.init \
-    gateway.kernel \
-    gateway.initramfs.cpio.zst \
-    launch-measurement.txt \
-    release-manifest.json \
-    pins.lock.json \
-    igvmmeasure-check-kvm.txt \
-    ukify-inspect.txt \
-    guix-describe.txt \
-    guix-store-requisites.txt \
-    kernel-config.txt \
-    build-inputs.sha256 \
-    > SHA256SUMS
   actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
   expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
   if [ "$actual_files" != "$expected_file_list" ]; then

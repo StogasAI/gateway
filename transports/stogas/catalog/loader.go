@@ -15,12 +15,34 @@ import (
 )
 
 const (
-	catalogSchema    = 1
-	runtimeSchema    = "stogas.catalog.runtime.v1"
-	publicSchema     = "stogas.catalog.public.v1"
-	runtimeSizeLimit = 16 * 1024 * 1024
-	publicSizeLimit  = 64 * 1024 * 1024
+	catalogSchema     = 1
+	runtimeSchema     = "stogas.catalog.runtime.v2"
+	publicSchema      = "stogas.catalog.public.v2"
+	runtimeSizeLimit  = 16 * 1024 * 1024
+	publicSizeLimit   = 64 * 1024 * 1024
+	maxAliasesPerNode = 8
 )
+
+const isoCountryCodes = "|AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|" +
+	"BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|" +
+	"CA|CC|CD|CF|CG|CH|CI|CK|CL|CM|CN|CO|CR|CU|CV|CW|CX|CY|CZ|" +
+	"DE|DJ|DK|DM|DO|DZ|EC|EE|EG|EH|ER|ES|ET|FI|FJ|FK|FM|FO|FR|" +
+	"GA|GB|GD|GE|GF|GG|GH|GI|GL|GM|GN|GP|GQ|GR|GS|GT|GU|GW|GY|" +
+	"HK|HM|HN|HR|HT|HU|ID|IE|IL|IM|IN|IO|IQ|IR|IS|IT|JE|JM|JO|JP|" +
+	"KE|KG|KH|KI|KM|KN|KP|KR|KW|KY|KZ|LA|LB|LC|LI|LK|LR|LS|LT|LU|LV|LY|" +
+	"MA|MC|MD|ME|MF|MG|MH|MK|ML|MM|MN|MO|MP|MQ|MR|MS|MT|MU|MV|MW|MX|MY|MZ|" +
+	"NA|NC|NE|NF|NG|NI|NL|NO|NP|NR|NU|NZ|OM|PA|PE|PF|PG|PH|PK|PL|PM|PN|PR|PS|PT|PW|PY|" +
+	"QA|RE|RO|RS|RU|RW|SA|SB|SC|SD|SE|SG|SH|SI|SJ|SK|SL|SM|SN|SO|SR|SS|ST|SV|SX|SY|SZ|" +
+	"TC|TD|TF|TG|TH|TJ|TK|TL|TM|TN|TO|TR|TT|TV|TW|TZ|UA|UG|UM|US|UY|UZ|" +
+	"VA|VC|VE|VG|VI|VN|VU|WF|WS|YE|YT|ZA|ZM|ZW|"
+
+const euCountryCodes = "|AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE|"
+
+const europeCountryCodes = "|AD|AL|AT|AX|BA|BE|BG|BY|CH|CZ|DE|DK|EE|ES|FI|FO|FR|GB|GG|GI|GR|" +
+	"HR|HU|IE|IM|IS|IT|JE|LI|LT|LU|LV|MC|MD|ME|MK|MT|NL|NO|PL|PT|RO|RS|RU|SE|SI|SJ|SK|SM|UA|VA|"
+
+const apacCountryCodes = "|AF|AM|AS|AU|AZ|BD|BN|BT|CC|CK|CN|CX|FJ|FM|GE|GU|HK|ID|IN|IO|JP|KG|KH|KI|KP|KR|KZ|" +
+	"LA|LK|MH|MM|MN|MO|MP|MV|MY|NC|NF|NP|NR|NU|NZ|PF|PG|PH|PK|PN|PW|SB|SG|TH|TJ|TK|TL|TM|TO|TR|TV|TW|UM|UZ|VU|WF|WS|VN|"
 
 var compiledRouteContracts = map[string]struct {
 	providerID string
@@ -28,6 +50,10 @@ var compiledRouteContracts = map[string]struct {
 }{
 	"anthropic-messages": {
 		providerID: "anthropic",
+		interfaces: []string{"chat_completions", "responses"},
+	},
+	"azure-anthropic-messages": {
+		providerID: "azure",
 		interfaces: []string{"chat_completions", "responses"},
 	},
 	"azure-chat-completions": {
@@ -96,10 +122,6 @@ func loadSnapshot() (*snapshot, error) {
 	return snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, Identity{})
 }
 
-func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
-	return snapshotFromRelease(data, nil, Identity{})
-}
-
 func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*snapshot, error) {
 	if len(runtimeData) == 0 || len(runtimeData) > runtimeSizeLimit {
 		return nil, fmt.Errorf("runtime catalog size is outside the accepted range")
@@ -110,6 +132,9 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 	}
 	if catalog.Schema != runtimeSchema {
 		return nil, fmt.Errorf("runtime catalog schema %q is unsupported", catalog.Schema)
+	}
+	if !validSHA256Digest(catalog.PublicDigest) {
+		return nil, fmt.Errorf("runtime catalog public digest is invalid")
 	}
 	if err := validateCompiledCatalog(catalog); err != nil {
 		return nil, err
@@ -135,7 +160,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 			!sameKeys(publicHeader.Graph.Authors, catalog.Graph.Authors) ||
 			!sameKeys(publicHeader.Graph.Providers, catalog.Graph.Providers) ||
 			!sameKeys(publicHeader.Graph.Routes, catalog.Graph.Routes) ||
-			!sameKeys(publicHeader.Graph.Models, catalog.Graph.Models) ||
+			!hasEveryKey(publicHeader.Graph.Models, catalog.Graph.Models) ||
 			!sameKeys(publicHeader.Graph.Deployments, catalog.Graph.Deployments) {
 			return nil, fmt.Errorf("public catalog does not match the runtime graph")
 		}
@@ -148,10 +173,13 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 	} else if identity.Digest != digest {
 		return nil, fmt.Errorf("runtime catalog digest does not match the signed release")
 	}
-	publicDigest := ""
+	publicDigest := catalog.PublicDigest
 	if len(publicData) > 0 {
 		sum := sha256.Sum256(publicData)
-		publicDigest = "sha256:" + hex.EncodeToString(sum[:])
+		actualPublicDigest := "sha256:" + hex.EncodeToString(sum[:])
+		if actualPublicDigest != catalog.PublicDigest {
+			return nil, fmt.Errorf("public catalog digest does not match the runtime catalog")
+		}
 	}
 
 	routeDeployments := make(map[string][]string, len(catalog.Graph.Routes))
@@ -191,6 +219,14 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 	}, nil
 }
 
+func validSHA256Digest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil
+}
+
 func validateCompiledCatalog(catalog compiledCatalog) error {
 	graph := catalog.Graph
 	if len(graph.Authors) == 0 ||
@@ -200,12 +236,49 @@ func validateCompiledCatalog(catalog compiledCatalog) error {
 		len(graph.Deployments) == 0 {
 		return fmt.Errorf("compiled catalog is missing required graph nodes")
 	}
+	if err := validateCompiledAuthors(graph); err != nil {
+		return err
+	}
+	if err := validateCompiledProviders(graph); err != nil {
+		return err
+	}
+	selectors := make(selectorRegistry)
+	if err := validateCompiledModels(graph, selectors); err != nil {
+		return err
+	}
+	if err := validateCompiledRoutes(graph); err != nil {
+		return err
+	}
+	if err := validateCompiledDeployments(graph, selectors); err != nil {
+		return err
+	}
+	return validateCanonicalRouteDeployments(graph)
+}
+
+type selectorRegistry map[string]string
+
+func (selectors selectorRegistry) add(selector, owner string) error {
+	if strings.TrimSpace(selector) != selector || selector == "" || strings.Contains(selector, "/") {
+		return fmt.Errorf("selector %q is not canonical", selector)
+	}
+	if existing := selectors[selector]; existing != "" {
+		return fmt.Errorf("selector %s is shared by %s and %s", selector, existing, owner)
+	}
+	selectors[selector] = owner
+	return nil
+}
+
+func validateCompiledAuthors(graph compiledGraph) error {
 	authorQualifiers := make(map[string]string)
 	for authorID, author := range graph.Authors {
 		if err := validateQualifierAliases(authorQualifiers, "author", authorID, author.Aliases); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func validateCompiledProviders(graph compiledGraph) error {
 	providerQualifiers := make(map[string]string)
 	for providerID, provider := range graph.Providers {
 		if err := validateQualifierAliases(providerQualifiers, "provider", providerID, provider.Aliases); err != nil {
@@ -215,33 +288,33 @@ func validateCompiledCatalog(catalog compiledCatalog) error {
 			return fmt.Errorf("provider %s has invalid credential modes", providerID)
 		}
 	}
-	selectors := make(map[string]string)
-	addSelector := func(selector, owner string) error {
-		if strings.TrimSpace(selector) != selector || selector == "" || strings.Contains(selector, "/") {
-			return fmt.Errorf("selector %q is not canonical", selector)
-		}
-		if existing := selectors[selector]; existing != "" {
-			return fmt.Errorf("selector %s is shared by %s and %s", selector, existing, owner)
-		}
-		selectors[selector] = owner
-		return nil
-	}
+	return nil
+}
+
+func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) error {
 	for modelID, model := range graph.Models {
+		if len(model.Aliases) > maxAliasesPerNode {
+			return fmt.Errorf("model %s has too many aliases", modelID)
+		}
 		if _, ok := graph.Authors[model.AuthorID]; !ok {
 			return fmt.Errorf("model %s references unknown author %s", modelID, model.AuthorID)
 		}
 		if err := validateModelReasoning(modelID, model); err != nil {
 			return err
 		}
-		if err := addSelector(modelID, "model:"+modelID); err != nil {
+		if err := selectors.add(modelID, "model:"+modelID); err != nil {
 			return err
 		}
 		for _, alias := range model.Aliases {
-			if err := addSelector(alias, "model:"+modelID); err != nil {
+			if err := selectors.add(alias, "model:"+modelID); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+func validateCompiledRoutes(graph compiledGraph) error {
 	for routeID, route := range graph.Routes {
 		contract, allowed := compiledRouteContracts[routeID]
 		if !allowed ||
@@ -256,98 +329,235 @@ func validateCompiledCatalog(catalog compiledCatalog) error {
 			return fmt.Errorf("route %s has no supported interface", routeID)
 		}
 	}
+	return nil
+}
+
+func validateCompiledDeployments(graph compiledGraph, selectors selectorRegistry) error {
 	for deploymentID, deployment := range graph.Deployments {
-		model, ok := graph.Models[deployment.ModelID]
+		if err := validateCompiledDeployment(graph, selectors, deploymentID, deployment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry, deploymentID string, deployment compiledDeployment) error {
+	if len(deployment.Aliases) > maxAliasesPerNode {
+		return fmt.Errorf("deployment %s has too many aliases", deploymentID)
+	}
+	model, ok := graph.Models[deployment.ModelID]
+	if !ok {
+		return fmt.Errorf("deployment %s references unknown model %s", deploymentID, deployment.ModelID)
+	}
+	if deployment.Upstream.Model == "" ||
+		deployment.ContextWindowTokens <= 0 ||
+		deployment.MaxOutputTokens <= 0 ||
+		deployment.MaxOutputTokens > deployment.ContextWindowTokens ||
+		len(deployment.InputModalities) == 0 ||
+		len(deployment.OutputModalities) == 0 {
+		return fmt.Errorf("deployment %s is not executable", deploymentID)
+	}
+	if len(deployment.Capabilities.InputModalities) != 0 ||
+		len(deployment.Capabilities.OutputModalities) != 0 ||
+		!validModalities(deployment.InputModalities) ||
+		!validModalities(deployment.OutputModalities) {
+		return fmt.Errorf("deployment %s has invalid modalities", deploymentID)
+	}
+	if !validDeprecationDate(deployment.DeprecationDate) {
+		return fmt.Errorf("deployment %s has invalid deprecationDate", deploymentID)
+	}
+	if err := selectors.add(deploymentID, "deployment:"+deploymentID); err != nil {
+		return err
+	}
+
+	providerID, err := validateDeploymentRoutes(graph, deploymentID, deployment)
+	if err != nil {
+		return err
+	}
+	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, model, deployment); err != nil {
+		return err
+	}
+	if err := validateDeploymentRouteDataHandling(deploymentID, providerID, deployment); err != nil {
+		return err
+	}
+	if err := validateDeploymentPricing(deploymentID, providerID, model.AuthorID, deployment); err != nil {
+		return err
+	}
+	if err := validateReasoningEfforts("deployment "+deploymentID, deployment.ReasoningEfforts); err != nil {
+		return err
+	}
+	if err := validateDeploymentRouteOverrides(deploymentID, deployment); err != nil {
+		return err
+	}
+	if err := validateReasoningConfiguration(deploymentID, providerID, model.AuthorID, deployment, graph); err != nil {
+		return err
+	}
+	if err := validateDeploymentReasoningInheritance(deploymentID, model, deployment); err != nil {
+		return err
+	}
+	for _, alias := range deployment.Aliases {
+		if err := selectors.add(alias, "deployment:"+deploymentID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployment compiledDeployment) (string, error) {
+	providerID := ""
+	routeIDs := make(map[string]struct{}, len(deployment.RouteIDs))
+	for _, routeID := range deployment.RouteIDs {
+		if _, repeated := routeIDs[routeID]; repeated {
+			return "", fmt.Errorf("deployment %s repeats route %s", deploymentID, routeID)
+		}
+		routeIDs[routeID] = struct{}{}
+		route, ok := graph.Routes[routeID]
 		if !ok {
-			return fmt.Errorf("deployment %s references unknown model %s", deploymentID, deployment.ModelID)
+			return "", fmt.Errorf("deployment %s references unknown route %s", deploymentID, routeID)
 		}
-		if deployment.Upstream.Model == "" ||
-			deployment.ContextWindowTokens <= 0 ||
-			deployment.MaxOutputTokens <= 0 ||
-			deployment.MaxOutputTokens > deployment.ContextWindowTokens ||
-			len(deployment.InputModalities) == 0 ||
-			len(deployment.OutputModalities) == 0 {
-			return fmt.Errorf("deployment %s is not executable", deploymentID)
+		if providerID != "" && route.ProviderID != providerID {
+			return "", fmt.Errorf("deployment %s spans multiple providers", deploymentID)
 		}
-		if len(deployment.Capabilities.InputModalities) != 0 ||
-			len(deployment.Capabilities.OutputModalities) != 0 ||
-			!validModalities(deployment.InputModalities) ||
-			!validModalities(deployment.OutputModalities) {
-			return fmt.Errorf("deployment %s has invalid modalities", deploymentID)
+		providerID = route.ProviderID
+	}
+	if providerID == "" {
+		return "", fmt.Errorf("deployment %s has no route", deploymentID)
+	}
+	if len(deployment.DataHandlingByRoute) != len(routeIDs) {
+		return "", fmt.Errorf("deployment %s does not define exact route data handling", deploymentID)
+	}
+	for routeID := range deployment.DataHandlingByRoute {
+		if _, attached := routeIDs[routeID]; !attached {
+			return "", fmt.Errorf("deployment %s defines data handling for unattached route %s", deploymentID, routeID)
 		}
-		if !validDeprecationDate(deployment.DeprecationDate) {
-			return fmt.Errorf("deployment %s has invalid deprecationDate", deploymentID)
+	}
+	return providerID, nil
+}
+
+func validateDeploymentUpstreamSelector(deploymentID, providerID string, model compiledModel, deployment compiledDeployment) error {
+	selector := deployment.Upstream
+	switch providerID {
+	case "openai":
+		if selector.ChuteID != "" || selector.GPUCount != 0 || selector.InferenceGeo != "" || selector.Speed != "" ||
+			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" ||
+			(selector.ReasoningMode != "" && selector.ReasoningMode != "pro") ||
+			(selector.ServiceTier != "default" && selector.ServiceTier != "flex" && selector.ServiceTier != "priority") {
+			return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
 		}
-		if err := addSelector(deploymentID, "deployment:"+deploymentID); err != nil {
+	case "anthropic":
+		if selector.ChuteID != "" || selector.GPUCount != 0 || selector.ReasoningMode != "" || selector.ServiceTier != "" ||
+			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" ||
+			(selector.Speed != "" && selector.Speed != "standard" && selector.Speed != "fast") ||
+			(selector.InferenceGeo != "" && selector.InferenceGeo != "global" && selector.InferenceGeo != "us") {
+			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
+		}
+	case "chutes":
+		if !canonicalUUIDPattern.MatchString(selector.ChuteID) ||
+			selector.GPUCount < 1 || selector.GPUCount > 8 || selector.InferenceGeo != "" ||
+			selector.ReasoningMode != "" || selector.ServiceTier != "" || selector.Speed != "" ||
+			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+			return fmt.Errorf("deployment %s has an invalid Chutes upstream selector", deploymentID)
+		}
+	case "azure":
+		return validateAzureUpstreamSelector(deploymentID, model, deployment)
+	default:
+		return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
+	}
+	return nil
+}
+
+func validateAzureUpstreamSelector(deploymentID string, model compiledModel, deployment compiledDeployment) error {
+	selector := deployment.Upstream
+	modelFormat := strings.ToLower(selector.ModelFormat)
+	if selector.ChuteID != "" || selector.GPUCount != 0 || selector.InferenceGeo != "" || selector.Speed != "" ||
+		strings.TrimSpace(selector.ModelFormat) == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
+		(selector.ReasoningMode != "" && selector.ReasoningMode != "pro") ||
+		(selector.ServiceTier != "" && selector.ServiceTier != "default" && selector.ServiceTier != "priority") ||
+		!stringIn([]string{"azure", "anthropic", "fireworks", "nvidia"}, selector.Hosting) ||
+		!stringIn([]string{"global_standard", "data_zone_standard_us", "data_zone_standard_eu", "data_zone_standard_apac", "instant"}, selector.DeploymentType) {
+		return fmt.Errorf("deployment %s has an invalid Azure upstream selector", deploymentID)
+	}
+	validFormatHost := (modelFormat == "anthropic" && stringIn([]string{"anthropic", "azure"}, selector.Hosting)) ||
+		(modelFormat == "fireworks" && selector.Hosting == "fireworks") ||
+		(stringIn([]string{"deepseek", "openai", "openai-oss"}, modelFormat) && selector.Hosting == "azure") ||
+		(modelFormat == "nvidia" && selector.Hosting == "nvidia")
+	if !validFormatHost {
+		return fmt.Errorf("deployment %s has mismatched Azure model format and hosting", deploymentID)
+	}
+	usesAnthropicMessages := stringIn(deployment.RouteIDs, "azure-anthropic-messages")
+	if usesAnthropicMessages != (model.AuthorID == "anthropic") {
+		return fmt.Errorf("deployment %s has an invalid Azure protocol route", deploymentID)
+	}
+	if model.AuthorID == "anthropic" && selector.Hosting != "azure" && selector.Hosting != "anthropic" {
+		return fmt.Errorf("deployment %s has an invalid Azure Claude host", deploymentID)
+	}
+	if selector.Hosting == "anthropic" && selector.DeploymentType != "global_standard" {
+		return fmt.Errorf("deployment %s has an invalid Anthropic-hosted deployment type", deploymentID)
+	}
+	if selector.DeploymentType != "global_standard" && selector.Hosting != "azure" && selector.Hosting != "fireworks" {
+		return fmt.Errorf("deployment %s has an invalid Data Zone host", deploymentID)
+	}
+	if selector.ServiceTier == "priority" &&
+		(!stringIn([]string{"gpt-5.6-sol", "gpt-5.6-terra"}, selector.Model) || selector.DeploymentType != "global_standard") {
+		return fmt.Errorf("deployment %s enables Azure Priority for an unsupported model", deploymentID)
+	}
+	if selector.DeploymentType == "instant" &&
+		(selector.Hosting != "azure" ||
+			modelFormat != "openai" ||
+			!stringIn([]string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}, selector.Model) ||
+			selector.ServiceTier != "default") {
+		return fmt.Errorf("deployment %s has an unsupported Azure Instant target", deploymentID)
+	}
+	if modelFormat == "fireworks" &&
+		(selector.DeploymentType != "data_zone_standard_us" ||
+			len(deployment.RouteIDs) != 1 || deployment.RouteIDs[0] != "azure-chat-completions") {
+		return fmt.Errorf("deployment %s has an invalid Azure Fireworks target", deploymentID)
+	}
+	return nil
+}
+
+func validateDeploymentRouteDataHandling(deploymentID, providerID string, deployment compiledDeployment) error {
+	for _, routeID := range deployment.RouteIDs {
+		handling, exists := deployment.DataHandlingByRoute[routeID]
+		if !exists {
+			return fmt.Errorf("deployment %s has no data handling for route %s", deploymentID, routeID)
+		}
+		if err := validateDeploymentDataHandling(deploymentID, routeID, providerID, handling); err != nil {
 			return err
 		}
-		providerID := ""
-		for _, routeID := range deployment.RouteIDs {
-			route, ok := graph.Routes[routeID]
-			if !ok {
-				return fmt.Errorf("deployment %s references unknown route %s", deploymentID, routeID)
-			}
-			if providerID != "" && route.ProviderID != providerID {
-				return fmt.Errorf("deployment %s spans multiple providers", deploymentID)
-			}
-			providerID = route.ProviderID
-		}
-		if providerID == "" {
-			return fmt.Errorf("deployment %s has no route", deploymentID)
-		}
-		selector := deployment.Upstream
-		switch providerID {
-		case "openai":
-			if selector.ChuteID != "" || selector.InferenceGeo != "" || selector.Speed != "" ||
-				(selector.ReasoningMode != "" && selector.ReasoningMode != "pro") ||
-				(selector.ServiceTier != "default" &&
-					selector.ServiceTier != "flex" &&
-					selector.ServiceTier != "priority") {
-				return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
-			}
-		case "anthropic":
-			if selector.ChuteID != "" || selector.ReasoningMode != "" || selector.ServiceTier != "standard_only" ||
-				(selector.Speed != "" && selector.Speed != "standard" && selector.Speed != "fast") ||
-				(selector.InferenceGeo != "" &&
-					selector.InferenceGeo != "global" &&
-					selector.InferenceGeo != "us") {
-				return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
-			}
-		case "chutes":
-			if !canonicalUUIDPattern.MatchString(selector.ChuteID) ||
-				selector.InferenceGeo != "" || selector.ReasoningMode != "" || selector.ServiceTier != "" || selector.Speed != "" {
-				return fmt.Errorf("deployment %s has an invalid Chutes upstream selector", deploymentID)
-			}
-		case "azure":
-			if selector.Model != deployment.ModelID ||
-				selector.ChuteID != "" || selector.InferenceGeo != "" || selector.ReasoningMode != "" ||
-				selector.ServiceTier != "" || selector.Speed != "" {
-				return fmt.Errorf("deployment %s has an invalid Azure upstream selector", deploymentID)
-			}
-		default:
-			return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
-		}
-		if err := validateDeploymentTEE(deploymentID, providerID, deployment.TEE); err != nil {
-			return err
-		}
-		if err := validateDeploymentPricing(deploymentID, providerID, deployment); err != nil {
-			return err
-		}
-		if err := validateReasoningEfforts("deployment "+deploymentID, deployment.ReasoningEfforts); err != nil {
-			return err
-		}
-		if err := validateReasoningConfiguration(deploymentID, providerID, deployment, graph); err != nil {
-			return err
-		}
-		if err := validateDeploymentReasoningInheritance(deploymentID, model, deployment); err != nil {
-			return err
-		}
-		for _, alias := range deployment.Aliases {
-			if err := addSelector(alias, "deployment:"+deploymentID); err != nil {
+		if providerID == "azure" {
+			if err := validateAzureDataHandling(deploymentID, routeID, deployment.Upstream, handling); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+func validateAzureDataHandling(deploymentID, routeID string, selector compiledUpstream, handling DataHandling) error {
+	if selector.Hosting == "azure" {
+		type locations struct {
+			processing string
+			storage    string
+		}
+		expected, constrained := map[string]locations{
+			"data_zone_standard_us":   {processing: "US", storage: "US"},
+			"data_zone_standard_eu":   {processing: "europe", storage: "europe"},
+			"data_zone_standard_apac": {processing: "apac", storage: "apac"},
+		}[selector.DeploymentType]
+		if constrained &&
+			(handling.ProcessingLocation != expected.processing || handling.StorageLocation != expected.storage) {
+			return fmt.Errorf("deployment %s route %s has invalid Data Zone handling", deploymentID, routeID)
+		}
+	}
+	if selector.Hosting != "" && selector.Hosting != "azure" &&
+		(handling.ProcessingLocation != "unknown" || handling.StorageLocation != "unknown") {
+		return fmt.Errorf("deployment %s route %s has disclosed locations for externally hosted Azure inference", deploymentID, routeID)
+	}
+	return nil
+}
+
+func validateCanonicalRouteDeployments(graph compiledGraph) error {
 	for routeID, deploymentIDs := range routeDeploymentsForGraph(graph) {
 		route := graph.Routes[routeID]
 		deploymentsByModel := make(map[string][]string)
@@ -376,27 +586,63 @@ func validateCompiledCatalog(catalog compiledCatalog) error {
 	return nil
 }
 
-func validateDeploymentTEE(deploymentID, providerID string, tee *TEE) error {
+func validateDeploymentDataHandling(deploymentID, routeID, providerID string, handling DataHandling) error {
+	if !IsCanonicalDataLocation(handling.ProcessingLocation, false) ||
+		!IsCanonicalDataLocation(handling.StorageLocation, true) {
+		return fmt.Errorf("deployment %s route %s has an invalid data handling location", deploymentID, routeID)
+	}
+	tee := handling.TEE
 	if providerID != "chutes" {
 		if tee != nil {
-			return fmt.Errorf("deployment %s has an unexpected TEE policy", deploymentID)
+			return fmt.Errorf("deployment %s route %s has an unexpected TEE policy", deploymentID, routeID)
 		}
 		return nil
 	}
-	if tee == nil || tee.Mechanism != "tdx" {
-		return fmt.Errorf("deployment %s has an invalid Chutes TEE policy", deploymentID)
+	if !handling.EndToEndEncrypted || tee == nil || tee.Technology != "intel-tdx" {
+		return fmt.Errorf("deployment %s route %s has an invalid Chutes TEE policy", deploymentID, routeID)
 	}
-	switch tee.Status {
-	case "attested", "claimed", "unverified", "unknown":
+	switch tee.Attestation {
+	case "verified", "provider-claimed", "unverified", "unknown":
 	default:
-		return fmt.Errorf("deployment %s has an invalid Chutes TEE status", deploymentID)
+		return fmt.Errorf("deployment %s route %s has an invalid Chutes TEE attestation", deploymentID, routeID)
 	}
 	switch tee.ExternalNetworkEgress {
 	case "blocked", "allowed", "unknown":
 	default:
-		return fmt.Errorf("deployment %s has an invalid Chutes external network egress policy", deploymentID)
+		return fmt.Errorf("deployment %s route %s has an invalid Chutes external network egress policy", deploymentID, routeID)
 	}
 	return nil
+}
+
+// IsCanonicalDataLocation reports whether value uses the catalog's closed location vocabulary.
+func IsCanonicalDataLocation(value string, allowNone bool) bool {
+	if value == "global" || value == "apac" || value == "eu" || value == "europe" || value == "unknown" || (allowNone && value == "none") {
+		return true
+	}
+	return len(value) == 2 && strings.Contains(isoCountryCodes, "|"+value+"|")
+}
+
+// DataLocationWithin reports whether actual is at least as geographically narrow as boundary.
+func DataLocationWithin(actual, boundary string) bool {
+	if !IsCanonicalDataLocation(actual, true) || !IsCanonicalDataLocation(boundary, true) {
+		return false
+	}
+	if actual == boundary || boundary == "global" || boundary == "unknown" {
+		return true
+	}
+	if actual == "unknown" || actual == "global" || actual == "none" || boundary == "none" {
+		return false
+	}
+	switch boundary {
+	case "eu":
+		return strings.Contains(euCountryCodes, "|"+actual+"|")
+	case "europe":
+		return actual == "eu" || strings.Contains(europeCountryCodes, "|"+actual+"|")
+	case "apac":
+		return strings.Contains(apacCountryCodes, "|"+actual+"|")
+	default:
+		return false
+	}
 }
 
 func validModalities(values []string) bool {
@@ -415,15 +661,18 @@ func validModalities(values []string) bool {
 	return len(seen) > 0
 }
 
-func validateDeploymentPricing(deploymentID, providerID string, deployment compiledDeployment) error {
+func validateDeploymentPricing(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment) error {
 	for _, required := range []string{
 		billing.MeterInputTokens,
-		billing.MeterCachedInputTokens,
 		billing.MeterOutputTokens,
 	} {
 		if len(deployment.Pricing[required]) == 0 {
 			return fmt.Errorf("deployment %s is missing required pricing meter %s", deploymentID, required)
 		}
+	}
+	if (deployment.Capabilities.ImplicitPromptCaching || deployment.Capabilities.ExplicitPromptCaching) &&
+		len(deployment.Pricing[billing.MeterCachedInputTokens]) == 0 {
+		return fmt.Errorf("deployment %s is missing required pricing meter %s", deploymentID, billing.MeterCachedInputTokens)
 	}
 	for meterKey, rates := range deployment.Pricing {
 		switch {
@@ -456,6 +705,28 @@ func validateDeploymentPricing(deploymentID, providerID string, deployment compi
 		}
 		return false
 	}
+	usesAnthropicPricing := providerID == "anthropic" || (providerID == "azure" && modelAuthorID == "anthropic")
+	if usesAnthropicPricing {
+		if len(deployment.Pricing[billing.MeterCacheWriteInputTokens]) > 0 {
+			return fmt.Errorf("deployment %s uses OpenAI cache-write pricing", deploymentID)
+		}
+		for _, required := range []string{
+			billing.MeterCacheWrite5mInputTokens,
+			billing.MeterCacheWrite1hInputTokens,
+		} {
+			if len(deployment.Pricing[required]) == 0 {
+				return fmt.Errorf("deployment %s is missing provider pricing meter %s", deploymentID, required)
+			}
+		}
+		if providerID == "anthropic" && len(deployment.Pricing[meterAnthropicWebSearchCalls]) == 0 {
+			return fmt.Errorf("deployment %s is missing provider pricing meter %s", deploymentID, meterAnthropicWebSearchCalls)
+		}
+		if providerID == "azure" && len(deployment.Pricing[meterAnthropicWebSearchCalls]) > 0 {
+			return fmt.Errorf("deployment %s uses unavailable Azure Anthropic web-search pricing", deploymentID)
+		}
+		return nil
+	}
+
 	switch providerID {
 	case "openai", "azure":
 		if len(deployment.Pricing[billing.MeterCacheWrite5mInputTokens]) > 0 ||
@@ -471,19 +742,6 @@ func validateDeploymentPricing(deploymentID, providerID string, deployment compi
 				if len(deployment.Pricing[required]) == 0 {
 					return fmt.Errorf("deployment %s is missing route pricing meter %s", deploymentID, required)
 				}
-			}
-		}
-	case "anthropic":
-		if len(deployment.Pricing[billing.MeterCacheWriteInputTokens]) > 0 {
-			return fmt.Errorf("deployment %s uses OpenAI cache-write pricing", deploymentID)
-		}
-		for _, required := range []string{
-			billing.MeterCacheWrite5mInputTokens,
-			billing.MeterCacheWrite1hInputTokens,
-			meterAnthropicWebSearchCalls,
-		} {
-			if len(deployment.Pricing[required]) == 0 {
-				return fmt.Errorf("deployment %s is missing provider pricing meter %s", deploymentID, required)
 			}
 		}
 	}
@@ -576,7 +834,31 @@ func validateDeploymentReasoningInheritance(deploymentID string, model compiledM
 	return nil
 }
 
-func validateReasoningConfiguration(deploymentID, providerID string, deployment compiledDeployment, graph compiledGraph) error {
+func validateDeploymentRouteOverrides(deploymentID string, deployment compiledDeployment) error {
+	deploymentEfforts := make(map[string]struct{}, len(deployment.ReasoningEfforts))
+	for _, effort := range deployment.ReasoningEfforts {
+		deploymentEfforts[effort] = struct{}{}
+	}
+	for routeID, override := range deployment.RouteOverrides {
+		if !stringIn(deployment.RouteIDs, routeID) {
+			return fmt.Errorf("deployment %s overrides unattached route %s", deploymentID, routeID)
+		}
+		if err := validateReasoningEfforts("deployment "+deploymentID+" route "+routeID, override.ReasoningEfforts); err != nil {
+			return err
+		}
+		if sameStrings(override.ReasoningEfforts, deployment.ReasoningEfforts) {
+			return fmt.Errorf("deployment %s route %s redundantly repeats reasoning efforts", deploymentID, routeID)
+		}
+		for _, effort := range override.ReasoningEfforts {
+			if _, ok := deploymentEfforts[effort]; !ok {
+				return fmt.Errorf("deployment %s route %s enables an unsupported reasoning effort", deploymentID, routeID)
+			}
+		}
+	}
+	return nil
+}
+
+func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment, graph compiledGraph) error {
 	switch deployment.ReasoningAvailability {
 	case "optional", "required", "unsupported":
 	default:
@@ -587,14 +869,15 @@ func validateReasoningConfiguration(deploymentID, providerID string, deployment 
 		return fmt.Errorf("deployment %s exposes controls for unsupported reasoning", deploymentID)
 	}
 	if budget := deployment.ReasoningMaxTokens; budget != nil {
-		if providerID != "anthropic" || budget.Minimum < 1 || budget.Maximum < budget.Minimum || budget.Maximum >= deployment.MaxOutputTokens {
+		supportsManualBudget := providerID == "anthropic" || (providerID == "azure" && modelAuthorID == "anthropic")
+		if !supportsManualBudget || budget.Minimum < 1 || budget.Maximum < budget.Minimum || budget.Maximum >= deployment.MaxOutputTokens {
 			return fmt.Errorf("deployment %s has an invalid manual reasoning token limit", deploymentID)
 		}
 	}
 	if deployment.Upstream.ReasoningMode == "" {
 		return nil
 	}
-	if providerID != "openai" || deployment.Upstream.ReasoningMode != "pro" ||
+	if (providerID != "openai" && providerID != "azure") || deployment.Upstream.ReasoningMode != "pro" ||
 		!strings.HasPrefix(deployment.Upstream.Model, "gpt-5.6-") {
 		return fmt.Errorf("deployment %s has an invalid fixed reasoning mode", deploymentID)
 	}
@@ -627,6 +910,9 @@ func validateQualifierAliases(
 	id string,
 	aliases []string,
 ) error {
+	if len(aliases) > maxAliasesPerNode {
+		return fmt.Errorf("%s %s has too many aliases", kind, id)
+	}
 	for _, qualifier := range append([]string{id}, aliases...) {
 		if strings.TrimSpace(qualifier) != qualifier ||
 			qualifier == "" ||
@@ -671,6 +957,17 @@ func sameKeys[A, B any](left map[string]A, right map[string]B) bool {
 	}
 	for key := range left {
 		if _, ok := right[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// The public graph can include reviewed models that have no executable
+// deployment. Every executable runtime model must still exist publicly.
+func hasEveryKey[A, B any](superset map[string]A, required map[string]B) bool {
+	for key := range required {
+		if _, ok := superset[key]; !ok {
 			return false
 		}
 	}

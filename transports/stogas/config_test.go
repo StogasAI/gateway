@@ -5,8 +5,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
+
+func TestConfigRejectsUnsafeNonLocalConfidentialLogging(t *testing.T) {
+	base := Config{
+		Confidential:   ConfidentialConfig{Enabled: true, Environment: "staging"},
+		LogLevel:       string(schemas.LogLevelInfo),
+		LogOutputStyle: string(schemas.LoggerOutputTypeJSON),
+	}
+
+	debug := base
+	debug.LogLevel = string(schemas.LogLevelDebug)
+	if err := debug.Validate(); err == nil || !strings.Contains(err.Error(), "debug logging") {
+		t.Fatalf("expected debug logging rejection, got %v", err)
+	}
+
+	pretty := base
+	pretty.LogOutputStyle = string(schemas.LoggerOutputTypePretty)
+	if err := pretty.Validate(); err == nil || !strings.Contains(err.Error(), "JSON logging") {
+		t.Fatalf("expected pretty logging rejection, got %v", err)
+	}
+
+	local := base
+	local.Confidential.Environment = "local"
+	local.LogLevel = string(schemas.LogLevelDebug)
+	local.LogOutputStyle = string(schemas.LoggerOutputTypePretty)
+	if err := local.validateOperationalLogging(); err != nil {
+		t.Fatalf("local debug logging should remain available: %v", err)
+	}
+}
 
 func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
 	setRequiredEnv(t)
@@ -26,6 +55,9 @@ func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
 	}
 	if config.DatabasePool.QueryExecMode != defaultDatabaseQueryExecMode {
 		t.Fatalf("QueryExecMode = %s, want %s", config.DatabasePool.QueryExecMode, defaultDatabaseQueryExecMode)
+	}
+	if config.MaxRequestBodyMiB != maxRequestBodyMiB {
+		t.Fatalf("MaxRequestBodyMiB = %d, want %d", config.MaxRequestBodyMiB, maxRequestBodyMiB)
 	}
 }
 
@@ -69,6 +101,30 @@ func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
 	}
 	if config.TinybirdToken != "gateway-requests-rw-token" {
 		t.Fatalf("TinybirdToken = %s, want gateway requests token", config.TinybirdToken)
+	}
+}
+
+func TestLoadFromEnvRejectsUnsafeTinybirdConfiguration(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		host  string
+		token string
+	}{
+		{name: "host only", host: "https://api.tinybird.co"},
+		{name: "token only", token: "gateway-requests-rw-token"},
+		{name: "remote HTTP", host: "http://api.tinybird.co", token: "gateway-requests-rw-token"},
+		{name: "credentials", host: "https://user:password@api.tinybird.co", token: "gateway-requests-rw-token"},
+		{name: "path", host: "https://api.tinybird.co/private", token: "gateway-requests-rw-token"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("TB_HOST_URL", test.host)
+			t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", test.token)
+
+			if _, err := LoadFromEnv(); err == nil {
+				t.Fatal("LoadFromEnv returned nil error for unsafe Tinybird configuration")
+			}
+		})
 	}
 }
 
@@ -220,13 +276,13 @@ func TestLoadFromEnvRejectsUnsupportedConfidentialKnobs(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnvRejectsLegacyControlURLOverride(t *testing.T) {
+func TestLoadFromEnvRejectsUnsupportedControlURLOverride(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
 
 	_, err := LoadFromEnv()
 	if err == nil || !strings.Contains(err.Error(), "STOGAS_CONFIDENTIAL_CONTROL_URL is not supported") {
-		t.Fatalf("expected legacy Control URL rejection, got %v", err)
+		t.Fatalf("expected unsupported Control URL rejection, got %v", err)
 	}
 }
 

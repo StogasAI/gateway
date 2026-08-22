@@ -14,6 +14,78 @@ import (
 	"time"
 )
 
+func TestNormalizeTinybirdHost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+
+	for _, test := range []struct {
+		allowInsecurePrivateNetwork bool
+		name                        string
+		host                        string
+		want                        string
+		wantErr                     bool
+	}{
+		{name: "HTTPS origin", host: "https://api.tinybird.co/", want: "https://api.tinybird.co"},
+		{name: "loopback HTTP", host: server.URL, want: server.URL},
+		{name: "remote HTTP", host: "http://tinybird.example", wantErr: true},
+		{name: "private HTTP", host: "http://10.0.2.2:7181", wantErr: true},
+		{
+			name:                        "explicit local private HTTP",
+			host:                        "http://10.0.2.2:7181",
+			allowInsecurePrivateNetwork: true,
+			want:                        "http://10.0.2.2:7181",
+		},
+		{
+			name:                        "private hostname remains blocked",
+			host:                        "http://tinybird.internal",
+			allowInsecurePrivateNetwork: true,
+			wantErr:                     true,
+		},
+		{name: "credentials", host: "https://token@tinybird.example", wantErr: true},
+		{name: "path", host: "https://tinybird.example/private", wantErr: true},
+		{name: "query", host: "https://tinybird.example?token=value", wantErr: true},
+		{name: "empty query", host: "https://tinybird.example?", wantErr: true},
+		{name: "fragment", host: "https://tinybird.example#fragment", wantErr: true},
+		{name: "missing scheme", host: "tinybird.example", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := NormalizeTinybirdHost(test.host, test.allowInsecurePrivateNetwork)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("NormalizeTinybirdHost(%q) = %q, want error", test.host, got)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("NormalizeTinybirdHost(%q) = %q, %v; want %q", test.host, got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestTinybirdClientRefusesRedirects(t *testing.T) {
+	var redirectedRequests atomic.Int32
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectedRequests.Add(1)
+		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
+	}))
+	defer destination.Close()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("location", destination.URL)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+
+	err := newTestTinybirdClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
+	if err == nil || !strings.Contains(err.Error(), "status 307") {
+		t.Fatalf("AppendGatewayRequest error = %v, want redirect status rejection", err)
+	}
+	if got := redirectedRequests.Load(); got != 0 {
+		t.Fatalf("redirect destination requests = %d, want 0", got)
+	}
+}
+
 func TestTinybirdAppendMicrobatchesConcurrentEvents(t *testing.T) {
 	const eventCount = 32
 
@@ -120,6 +192,49 @@ func TestTinybirdBatchRequiresExactCommittedRowCount(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "expected_rows=3 successful_rows=2") {
 			t.Fatalf("AppendGatewayRequest error = %v, want exact batch acknowledgement failure", err)
 		}
+	}
+}
+
+func TestTinybirdCircuitSkipsRequestsUntilTheProbeWindow(t *testing.T) {
+	var requests atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		if fail.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
+	}))
+	defer server.Close()
+
+	client := newTestTinybirdClient(t, server.URL)
+	client.circuitOpenDuration = time.Hour
+	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
+		t.Fatal("first Tinybird failure did not open the circuit")
+	}
+	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil ||
+		!strings.Contains(err.Error(), "circuit is open") {
+		t.Fatalf("second Tinybird append error = %v, want open circuit", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("Tinybird requests while circuit open = %d, want 1 initial request", got)
+	}
+	if diagnostics := client.Diagnostics(); !diagnostics.CircuitOpen || diagnostics.ShortCircuits != 1 {
+		t.Fatalf("Tinybird circuit diagnostics = %#v", diagnostics)
+	}
+
+	client.circuitOpenUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	fail.Store(false)
+	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err != nil {
+		t.Fatalf("Tinybird recovery probe returned error: %v", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("Tinybird requests after recovery probe = %d, want 2", got)
+	}
+	if diagnostics := client.Diagnostics(); diagnostics.CircuitOpen {
+		t.Fatalf("Tinybird circuit remained open after recovery: %#v", diagnostics)
 	}
 }
 
@@ -256,7 +371,12 @@ func TestTinybirdAppendRejectsOversizedEventBeforeAdmission(t *testing.T) {
 
 	client := newTestTinybirdClient(t, server.URL)
 	event := testGatewayRequestEvent()
-	event.Pricing = map[string]any{"oversized": strings.Repeat("x", tinybirdMaxEventBytes)}
+	event.Pricing = EventPricing{"oversized": {
+		Quantity:     "1",
+		RateKey:      strings.Repeat("x", tinybirdMaxEventBytes),
+		RateUSDAtoms: "1",
+		USDAtoms:     "1",
+	}}
 
 	err := client.AppendGatewayRequest(context.Background(), event)
 	if err == nil || !strings.Contains(err.Error(), "encoded event") {
@@ -275,7 +395,10 @@ func TestTinybirdCloseFlushesPendingBatchAndRejectsNewEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewTinybirdClient(server.URL, "gateway-requests-token")
+	client, err := NewTinybirdClient(server.URL, "gateway-requests-token", false)
+	if err != nil {
+		t.Fatalf("NewTinybirdClient returned error: %v", err)
+	}
 	client.batchWindow = time.Hour
 
 	line, err := json.Marshal(tinybirdGatewayRequestEvent(testGatewayRequestEvent()))
@@ -309,7 +432,10 @@ func TestTinybirdCloseFlushesPendingBatchAndRejectsNewEvents(t *testing.T) {
 
 func newTestTinybirdClient(t *testing.T, host string) *TinybirdClient {
 	t.Helper()
-	client := NewTinybirdClient(host, "gateway-requests-token")
+	client, err := NewTinybirdClient(host, "gateway-requests-token", false)
+	if err != nil {
+		t.Fatalf("NewTinybirdClient returned error: %v", err)
+	}
 	client.batchWindow = time.Millisecond
 	client.minRequestInterval = time.Millisecond
 	t.Cleanup(client.Close)

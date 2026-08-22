@@ -67,17 +67,7 @@ func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey stri
 		return meters
 	}
 	amount := CostPerMillion(quantity, rateAtoms)
-	if amount.Sign() == 0 {
-		return meters
-	}
-	return append(meters, MeterEstimate{
-		MeterKey:       meterKey,
-		RateKey:        rateKey,
-		RateUSDAtoms:   rateAtoms.String(),
-		Quantity:       big.NewInt(int64(quantity)).String(),
-		AmountUSDAtoms: amount.String(),
-		HoldRequired:   holdRequired,
-	})
+	return appendMeterCost(meters, meterKey, rateKey, rateAtoms, quantity, amount, holdRequired)
 }
 
 func AppendCallMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool) []MeterEstimate {
@@ -97,6 +87,10 @@ func AppendCallMeterCostWithRate(meters []MeterEstimate, pricing Pricing, meterK
 		return meters
 	}
 	amount := CostPerThousand(quantity, rateAtoms)
+	return appendMeterCost(meters, meterKey, rateKey, rateAtoms, quantity, amount, holdRequired)
+}
+
+func appendMeterCost(meters []MeterEstimate, meterKey string, rateKey string, rateAtoms *big.Int, quantity int, amount *big.Int, holdRequired bool) []MeterEstimate {
 	if amount.Sign() == 0 {
 		return meters
 	}
@@ -156,8 +150,8 @@ func HighestRate(rates map[string]string) (string, *big.Int, bool) {
 }
 
 func ParseRate(raw string) (*big.Int, bool) {
-	rate, ok := new(big.Int).SetString(strings.TrimSpace(raw), 10)
-	return rate, ok && rate.Sign() >= 0
+	rate, err := ParseUSDAtoms(raw)
+	return rate, err == nil
 }
 
 func CostPerMillion(quantity int, rateAtoms *big.Int) *big.Int {

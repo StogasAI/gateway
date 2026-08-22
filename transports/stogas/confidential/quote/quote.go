@@ -16,12 +16,6 @@ type Attester interface {
 	Quote(ctx context.Context, reportData [64]byte) ([]byte, error)
 }
 
-type AttesterFunc func(ctx context.Context, reportData [64]byte) ([]byte, error)
-
-func (f AttesterFunc) Quote(ctx context.Context, reportData [64]byte) ([]byte, error) {
-	return f(ctx, reportData)
-}
-
 type PayloadFunc func(ctx context.Context) (reportdata.Payload, error)
 
 type Snapshot struct {
@@ -43,7 +37,6 @@ type Manager struct {
 	lastErr   error
 	failures  int
 	running   bool
-	stopOnce  sync.Once
 }
 
 func New(attester Attester, build PayloadFunc, interval time.Duration) (*Manager, error) {

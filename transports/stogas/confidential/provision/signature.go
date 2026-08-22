@@ -52,7 +52,7 @@ func heartbeatSignatureTranscript(input HeartbeatInput) ([]byte, error) {
 	} else {
 		fields = append(fields, []byte{0})
 	}
-	fields = append(fields, []byte(input.Health.LastQuoteError))
+	fields = append(fields, []byte(input.Health.LastQuoteFailureClass))
 
 	names := make([]string, 0, len(input.Health.SecretVersions))
 	for name := range input.Health.SecretVersions {

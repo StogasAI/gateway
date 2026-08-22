@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -19,6 +20,14 @@ const (
 	testRequestID  = "018f4f70-7c88-7b9a-baf8-31a93d2cf613"
 	testBundleHash = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
 )
+
+func (s *Session) encodeResponseWithNonce(metadata ResponseMetadata, body []byte, responseNonce [responseNonceSize]byte) ([]byte, error) {
+	reader, err := s.newResponseReaderWithNonce(bytes.NewReader(body), metadata, responseNonce)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(reader)
+}
 
 func TestRequestRoundTripForEveryRecipient(t *testing.T) {
 	keys := make([]hpke.PrivateKey, 3)
@@ -33,6 +42,8 @@ func TestRequestRoundTripForEveryRecipient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	seenResponseNonces := make(map[[responseNonceSize]byte]struct{}, len(keys))
+	seenResponses := make(map[string]struct{}, len(keys))
 
 	for _, key := range keys {
 		opened, serverSession, err := OpenRequest(body, "POST", "/v1/responses", key, now)
@@ -50,6 +61,19 @@ func TestRequestRoundTripForEveryRecipient(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if len(response) < len(responseMagic)+responseNonceSize || !bytes.Equal(response[:len(responseMagic)], responseMagic) {
+			t.Fatal("response is missing its versioned nonce preamble")
+		}
+		var responseNonce [responseNonceSize]byte
+		copy(responseNonce[:], response[len(responseMagic):len(responseMagic)+responseNonceSize])
+		if _, duplicate := seenResponseNonces[responseNonce]; duplicate {
+			t.Fatal("two recipients reused an E2EE response nonce")
+		}
+		seenResponseNonces[responseNonce] = struct{}{}
+		if _, duplicate := seenResponses[string(response)]; duplicate {
+			t.Fatal("two recipients produced the same encrypted response")
+		}
+		seenResponses[string(response)] = struct{}{}
 		decoded, err := clientSession.DecodeResponse(response)
 		if err != nil {
 			t.Fatal(err)
@@ -110,11 +134,16 @@ func TestRustClientInteropVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := session.EncodeResponse(fixture.ResponseMetadata, responseBody)
+	expectedResponse, err := base64.RawURLEncoding.DecodeString(fixture.Response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedResponse, err := base64.RawURLEncoding.DecodeString(fixture.Response)
+	if len(expectedResponse) < len(responseMagic)+responseNonceSize {
+		t.Fatal("interop response is missing its nonce")
+	}
+	var responseNonce [responseNonceSize]byte
+	copy(responseNonce[:], expectedResponse[len(responseMagic):len(responseMagic)+responseNonceSize])
+	response, err := session.encodeResponseWithNonce(fixture.ResponseMetadata, responseBody, responseNonce)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +232,11 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 		{name: "invalid recipient", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: []byte("invalid")}}, inner: valid},
 		{name: "missing api key", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{Body: valid.Body}},
 		{name: "api key injection", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: "sk-test\r\nX-Evil: yes", Body: valid.Body}},
+		{name: "api key whitespace", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: "sk-test two", Body: valid.Body}},
+		{name: "api key non-ascii", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: "sk-test-é", Body: valid.Body}},
 		{name: "accept injection", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: "application/json\r\nX-Evil: yes", Body: valid.Body}},
+		{name: "accept control", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: "application/json\x01", Body: valid.Body}},
+		{name: "accept surrounding whitespace", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: " application/json", Body: valid.Body}},
 		{name: "invalid body", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Body: json.RawMessage(`{`)}},
 	}
 	for _, test := range tests {
@@ -326,7 +359,7 @@ func TestInspectReservesEnvelopeFieldAndLeavesPlainJSONAlone(t *testing.T) {
 	}
 }
 
-func TestResponseRejectsTamperingTruncationAndTrailingData(t *testing.T) {
+func TestResponseRejectsTamperingAndTruncationButIgnoresPostTerminalData(t *testing.T) {
 	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	_, session, err := SealRequestWithID(
@@ -351,16 +384,29 @@ func TestResponseRejectsTamperingTruncationAndTrailingData(t *testing.T) {
 
 	tampered := append([]byte(nil), encoded...)
 	tampered[len(tampered)/2] ^= 1
+	nonceTampered := append([]byte(nil), encoded...)
+	nonceTampered[len(responseMagic)] ^= 1
+	unsupportedVersion := append([]byte(nil), encoded...)
+	unsupportedVersion[len(responseMagic)-1] = Version + 1
 	for name, value := range map[string][]byte{
-		"tampered":  tampered,
-		"truncated": encoded[:len(encoded)-1],
-		"trailing":  append(append([]byte(nil), encoded...), 0),
+		"tampered":            tampered,
+		"response nonce":      nonceTampered,
+		"unsupported version": unsupportedVersion,
+		"truncated":           encoded[:len(encoded)-1],
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := session.DecodeResponse(value); err == nil {
 				t.Fatal("invalid response was accepted")
 			}
 		})
+	}
+	withTrailing := append(append([]byte(nil), encoded...), []byte("ignored outer noise")...)
+	decoded, err := session.DecodeResponse(withTrailing)
+	if err != nil {
+		t.Fatalf("post-terminal bytes changed the response: %v", err)
+	}
+	if !bytes.Equal(decoded.Body, bytes.Repeat([]byte("stream-data"), 20_000)) {
+		t.Fatal("post-terminal bytes changed the authenticated body")
 	}
 }
 
@@ -379,7 +425,7 @@ func TestResponseReaderStreamsAndClosesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := &trackedReader{Reader: bytes.NewReader(bytes.Repeat([]byte("x"), maxResponseFrameSize+17))}
+	source := &trackedReader{Reader: bytes.NewReader(bytes.Repeat([]byte("x"), maxResponseRecordSize+17))}
 	reader, err := session.NewResponseReader(source, ResponseMetadata{StatusCode: 200, ContentType: "text/event-stream"})
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +438,7 @@ func TestResponseReaderStreamsAndClosesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.Body) != maxResponseFrameSize+17 {
+	if len(decoded.Body) != maxResponseRecordSize+17 {
 		t.Fatalf("decoded body length = %d", len(decoded.Body))
 	}
 	if err := reader.Close(); err != nil {
@@ -414,17 +460,53 @@ func TestResponseReaderRejectsPermanentlyStalledSource(t *testing.T) {
 	}
 }
 
+func TestResponseReaderEnforcesAggregateBodyLimit(t *testing.T) {
+	_, session := testSession(t)
+	reader, err := session.NewResponseReader(bytes.NewReader([]byte("x")), ResponseMetadata{StatusCode: 200, ContentType: "application/json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.bodyBytes = MaxResponseBodySize
+	if _, err := io.ReadAll(reader); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("oversized response error = %v", err)
+	}
+}
+
 func TestResponseMetadataRejectsHeaderInjectionAndInvalidStatus(t *testing.T) {
 	_, session := testSession(t)
 	for _, metadata := range []ResponseMetadata{
 		{StatusCode: 99, ContentType: "application/json"},
 		{StatusCode: 200, ContentType: ""},
+		{StatusCode: 200, ContentType: "applicationjson"},
+		{StatusCode: 200, ContentType: "application/json\x01"},
 		{StatusCode: 200, ContentType: "application/json", Headers: map[string]string{"X-Test\r\nX-Evil": "yes"}},
 		{StatusCode: 200, ContentType: "application/json", Headers: map[string]string{"X-Test": "yes\r\nX-Evil: yes"}},
+		{StatusCode: 200, ContentType: "application/json", Headers: map[string]string{"X Test": "yes"}},
+		{StatusCode: 200, ContentType: "application/json", Headers: map[string]string{"X-Test": "yes\x01"}},
+		{StatusCode: 200, ContentType: "application/json", Headers: map[string]string{"X-Test": "one", "x-test": "two"}},
 	} {
 		if _, err := session.EncodeResponse(metadata, nil); err == nil {
 			t.Fatalf("invalid metadata was accepted: %#v", metadata)
 		}
+	}
+}
+
+func TestResponseReaderRejectsAggregateMetadataOverRecordLimit(t *testing.T) {
+	_, session := testSession(t)
+	headers := make(map[string]string, 5)
+	for index := range 5 {
+		headers[fmt.Sprintf("X-Large-%d", index)] = strings.Repeat("a", 16*1024)
+	}
+	reader, err := session.NewResponseReader(bytes.NewReader(nil), ResponseMetadata{
+		StatusCode:  200,
+		ContentType: "application/json",
+		Headers:     headers,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(reader); err == nil || !strings.Contains(err.Error(), "metadata is too large") {
+		t.Fatalf("oversized metadata error = %v", err)
 	}
 }
 

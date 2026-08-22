@@ -44,6 +44,7 @@ func NewOpenAIProvider(config *schemas.ProviderConfig, logger schemas.Logger) *O
 	client := &fasthttp.Client{
 		ReadTimeout:         requestTimeout,
 		WriteTimeout:        requestTimeout,
+		MaxResponseBodySize: config.NetworkConfig.MaxResponseBodySize,
 		MaxConnsPerHost:     config.NetworkConfig.MaxConnsPerHost,
 		MaxIdleConnDuration: time.Second * time.Duration(config.NetworkConfig.KeepAliveTimeoutInSeconds),
 		MaxConnWaitTimeout:  requestTimeout,

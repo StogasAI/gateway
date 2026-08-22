@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -12,6 +13,15 @@ import (
 	"syscall"
 	"testing"
 )
+
+func TestStartupEventContainsOnlyFixedFields(t *testing.T) {
+	var output bytes.Buffer
+	writeStartupEvent(&output, "gateway_startup_failed", "error", startupConfigurationLoadFailed)
+	const expected = "{\"errorType\":\"Error\",\"event\":\"gateway_startup_failed\",\"reasonCode\":\"configuration_load_failed\",\"severity\":\"error\"}\n"
+	if output.String() != expected {
+		t.Fatalf("startup event = %q, want %q", output.String(), expected)
+	}
+}
 
 func TestEnsureOpenFileLimit(t *testing.T) {
 	t.Run("raises soft limit and preserves hard limit", func(t *testing.T) {

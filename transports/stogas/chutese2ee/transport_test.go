@@ -471,7 +471,7 @@ func TestTicketReservationErrorClassification(t *testing.T) {
 			name:       "BYOK authentication",
 			err:        errors.Join(ErrNoUsableTicket, &httpStatusError{StatusCode: http.StatusUnauthorized}),
 			wantStatus: http.StatusUnauthorized,
-			wantCode:   "invalid_api_key",
+			wantCode:   "upstream_authentication_failed",
 		},
 		{
 			name:       "BYOK access",
@@ -484,7 +484,7 @@ func TestTicketReservationErrorClassification(t *testing.T) {
 			err:        errors.Join(ErrNoUsableTicket, &httpStatusError{StatusCode: http.StatusUnauthorized}),
 			managed:    true,
 			wantStatus: http.StatusServiceUnavailable,
-			wantCode:   "upstream_unavailable",
+			wantCode:   "upstream_configuration_error",
 		},
 		{
 			name: "rate limit retains bounded retry advice",
@@ -499,7 +499,13 @@ func TestTicketReservationErrorClassification(t *testing.T) {
 			name:       "attestation failure is unavailable",
 			err:        errors.Join(ErrNoUsableTicket, ErrAttestationFailed),
 			wantStatus: http.StatusServiceUnavailable,
-			wantCode:   "upstream_unavailable",
+			wantCode:   "upstream_verification_failed",
+		},
+		{
+			name:       "empty verified capacity is unavailable",
+			err:        ErrNoUsableTicket,
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "upstream_capacity_unavailable",
 		},
 	}
 	for _, test := range tests {
@@ -690,8 +696,8 @@ func TestAuthorizationIsStrictlyParsed(t *testing.T) {
 
 func TestInvokeClientKeepsRequestWriteTimeoutForStreams(t *testing.T) {
 	client := newInvokeClient(false, true)
-	if client.WriteTimeout != 30*time.Second {
-		t.Fatalf("stream write timeout = %s, want 30s", client.WriteTimeout)
+	if client.WriteTimeout != 5*time.Minute {
+		t.Fatalf("stream write timeout = %s, want 5m", client.WriteTimeout)
 	}
 	if client.ReadTimeout != 0 {
 		t.Fatalf("stream read timeout = %s, want unlimited", client.ReadTimeout)

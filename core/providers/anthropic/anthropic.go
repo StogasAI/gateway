@@ -86,6 +86,7 @@ func NewAnthropicProvider(config *schemas.ProviderConfig, logger schemas.Logger)
 	client := &fasthttp.Client{
 		ReadTimeout:         requestTimeout,
 		WriteTimeout:        requestTimeout,
+		MaxResponseBodySize: config.NetworkConfig.MaxResponseBodySize,
 		MaxConnsPerHost:     config.NetworkConfig.MaxConnsPerHost,
 		MaxIdleConnDuration: time.Second * time.Duration(config.NetworkConfig.KeepAliveTimeoutInSeconds),
 		MaxConnWaitTimeout:  requestTimeout,
@@ -634,6 +635,11 @@ func accumulateAnthropicResponsesUsage(usage *schemas.ResponsesResponseUsage, bi
 	if usage == nil || usageToProcess == nil {
 		return
 	}
+	if len(usageToProcess.Iterations) > 0 {
+		converted := ConvertAnthropicUsageToBifrostUsage(usageToProcess)
+		usage.Iterations = converted.Iterations
+	}
+	usageToProcess = usageToProcess.BillingTotals()
 	// Web search request count → billed as search queries (server tool use). The
 	// terminal chunk overwrites Response.Usage with this accumulator, so the count
 	// must live here (not only on the per-event message_delta usage).
@@ -919,8 +925,10 @@ func HandleAnthropicChatCompletionStreaming(
 		var finishReason *string
 
 		usage := &schemas.BifrostLLMUsage{}
-		// Served billing modifiers (top-level response fields, not usage) captured
-		// across events and set on the final chunk: fast mode and data residency.
+		// Served execution metadata is captured across events. Metadata reported at
+		// message_start is forwarded immediately; terminal metadata is also latched
+		// onto the final billing chunk.
+		var servedServiceTier *schemas.BifrostServiceTier
 		var servedSpeed *string
 		var servedInferenceGeo *string
 		// Model that actually served the turn after a server-side fallback handoff.
@@ -1006,6 +1014,7 @@ func HandleAnthropicChatCompletionStreaming(
 				usageToProcess = event.Message.Usage
 			}
 			if usageToProcess != nil {
+				usageToProcess = usageToProcess.BillingTotals()
 				// Web search request count → billed as search queries (server tool use).
 				if usageToProcess.ServerToolUse != nil && usageToProcess.ServerToolUse.WebSearchRequests > 0 {
 					if usage.CompletionTokensDetails == nil {
@@ -1026,9 +1035,13 @@ func HandleAnthropicChatCompletionStreaming(
 						usage.CompletionTokensDetails.ReasoningTokens = t
 					}
 				}
-				// Capture served fast mode + inference geography (top-level response fields).
+				// Capture served execution metadata (top-level response fields).
 				// Mirror onto the billing usage handle so a mid-stream cancel/timeout can
 				// still apply the served-tier multiplier (billed usage is otherwise bare).
+				if usageToProcess.ServiceTier != nil {
+					mapped := MapAnthropicServiceTierToBifrost(*usageToProcess.ServiceTier)
+					servedServiceTier = &mapped
+				}
 				if usageToProcess.Speed != nil {
 					servedSpeed = usageToProcess.Speed
 					usage.Speed = usageToProcess.Speed
@@ -1123,6 +1136,7 @@ func HandleAnthropicChatCompletionStreaming(
 						content := *event.Delta.PartialJSON
 						response := &schemas.BifrostChatResponse{
 							ID:     messageID,
+							Model:  modelName,
 							Object: "chat.completion.chunk",
 							Choices: []schemas.BifrostResponseChoice{
 								{
@@ -1138,6 +1152,15 @@ func HandleAnthropicChatCompletionStreaming(
 								ChunkIndex: chunkIndex,
 								Latency:    time.Since(lastChunkTime).Milliseconds(),
 							},
+						}
+						if servedServiceTier != nil {
+							response.ServiceTier = servedServiceTier
+						}
+						if servedSpeed != nil {
+							response.Speed = servedSpeed
+						}
+						if servedInferenceGeo != nil {
+							response.InferenceGeo = servedInferenceGeo
 						}
 						lastChunkTime = time.Now()
 						chunkIndex++
@@ -1179,7 +1202,17 @@ func HandleAnthropicChatCompletionStreaming(
 						continue
 					}
 				}
+				if servedServiceTier != nil {
+					response.ServiceTier = servedServiceTier
+				}
+				if servedSpeed != nil {
+					response.Speed = servedSpeed
+				}
+				if servedInferenceGeo != nil {
+					response.InferenceGeo = servedInferenceGeo
+				}
 				response.ID = messageID
+				response.Model = modelName
 				lastChunkTime = time.Now()
 				chunkIndex++
 
@@ -1221,7 +1254,10 @@ func HandleAnthropicChatCompletionStreaming(
 				return
 			}
 		}
-		// Forward served fast mode + data residency so the final chunk bills correctly.
+		// Forward served execution metadata so the final chunk bills correctly.
+		if servedServiceTier != nil {
+			response.ServiceTier = servedServiceTier
+		}
 		if servedSpeed != nil {
 			response.Speed = servedSpeed
 		}
@@ -1590,6 +1626,7 @@ func HandleAnthropicResponsesStream(
 		}
 
 		var modelName string
+		var servedServiceTier *schemas.BifrostServiceTier
 		var servedSpeed *string
 		var servedInferenceGeo *string
 		// Model that served the turn after a server-side fallback handoff. Latched
@@ -1649,6 +1686,10 @@ func HandleAnthropicResponsesStream(
 				accumulateAnthropicResponsesUsage(usage, billedUsage, usageToProcess)
 				// Mirror served tier onto billedUsage so a mid-stream cancel/timeout can
 				// still apply the served-tier multiplier (billed usage is otherwise bare).
+				if usageToProcess.ServiceTier != nil {
+					mapped := MapAnthropicServiceTierToBifrost(*usageToProcess.ServiceTier)
+					servedServiceTier = &mapped
+				}
 				if usageToProcess.Speed != nil {
 					servedSpeed = usageToProcess.Speed
 					if billedUsage != nil {
@@ -1711,6 +1752,20 @@ func HandleAnthropicResponsesStream(
 							continue
 						}
 					}
+					if response.Response != nil {
+						if modelName != "" {
+							response.Response.Model = modelName
+						}
+						if servedServiceTier != nil {
+							response.Response.ServiceTier = servedServiceTier
+						}
+						if servedSpeed != nil {
+							response.Response.Speed = servedSpeed
+						}
+						if servedInferenceGeo != nil {
+							response.Response.InferenceGeo = servedInferenceGeo
+						}
+					}
 					lastChunkTime = time.Now()
 					chunkIndex++
 
@@ -1727,6 +1782,9 @@ func HandleAnthropicResponsesStream(
 							usage.TotalTokens = usage.TotalTokens + usage.InputTokensDetails.CachedReadTokens + usage.InputTokensDetails.CachedWriteTokens
 						}
 						response.Response.Usage = usage
+						if servedServiceTier != nil {
+							response.Response.ServiceTier = servedServiceTier
+						}
 						if servedSpeed != nil {
 							response.Response.Speed = servedSpeed
 						}

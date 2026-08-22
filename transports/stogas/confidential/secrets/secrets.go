@@ -60,11 +60,22 @@ func (s *Store) Install(input InstallInput) error {
 	}
 	next := make(map[string]Secret, len(secrets))
 	for _, secret := range secrets {
+		if _, exists := next[secret.Name]; exists {
+			return fmt.Errorf("secret release contains duplicate secret %s", secret.Name)
+		}
 		next[secret.Name] = secret
 	}
+	for _, name := range requiredSecretNames {
+		if _, ok := next[name]; !ok {
+			return fmt.Errorf("secret release is missing required secret %s", name)
+		}
+	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.secrets) > 0 {
+		return errors.New("runtime configuration is already installed; replace the guest to apply changes")
+	}
 	s.secrets = next
-	s.mu.Unlock()
 	return nil
 }
 

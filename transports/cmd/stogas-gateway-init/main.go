@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -18,6 +20,23 @@ const (
 	gatewayPath     = "/stogas/gateway.init"
 )
 
+type initReasonCode string
+
+const (
+	initConfigurationOpenFailed  initReasonCode = "configuration_open_failed"
+	initConfigurationReadFailed  initReasonCode = "configuration_read_failed"
+	initExecFailed               initReasonCode = "gateway_exec_failed"
+	initInvalidConfiguration     initReasonCode = "invalid_configuration_line"
+	initMountDevFailed           initReasonCode = "mount_dev_failed"
+	initMountFailed              initReasonCode = "mount_failed"
+	initMountProcFailed          initReasonCode = "mount_proc_failed"
+	initMountSysFailed           initReasonCode = "mount_sys_failed"
+	initUnsupportedConfigKey     initReasonCode = "unsupported_configuration_key"
+	initUpstreamConnectionFailed initReasonCode = "upstream_connection_failed"
+	initUpstreamConnectionOK     initReasonCode = "upstream_connection_succeeded"
+	initUpstreamURLInvalid       initReasonCode = "upstream_url_invalid"
+)
+
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var forwardConfigKeys = map[string]struct{}{
 	"STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID":     {},
@@ -26,15 +45,15 @@ var forwardConfigKeys = map[string]struct{}{
 }
 
 func main() {
-	mount("proc", "/proc", "proc")
-	mount("sysfs", "/sys", "sysfs")
-	mount("devtmpfs", "/dev", "devtmpfs")
+	mount(os.Stderr, "proc", "/proc", "proc")
+	mount(os.Stderr, "sysfs", "/sys", "sysfs")
+	mount(os.Stderr, "devtmpfs", "/dev", "devtmpfs")
 
-	loadEnv(envFWCfgPath, forwardConfigKeys)
+	loadEnv(os.Stderr, envFWCfgPath, forwardConfigKeys)
 	if localEnvironment(os.Getenv("STOGAS_ENVIRONMENT")) {
-		loadEnv(envFallbackPath, nil)
+		loadEnv(os.Stderr, envFallbackPath, nil)
 	}
-	probeURL("OPENAI_BASE_URL")
+	probeURL(os.Stderr, "OPENAI_BASE_URL")
 
 	args := []string{
 		gatewayPath,
@@ -44,30 +63,35 @@ func main() {
 		"-log-level", "info",
 	}
 	if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: exec %s failed: %v\n", gatewayPath, err)
+		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
 		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
 		os.Exit(127)
 	}
 }
 
-func mount(source, target, fstype string) {
-	_ = os.MkdirAll(target, 0o755)
+func mount(output io.Writer, source, target, fstype string) {
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		writeInitEvent(output, "guest_init_warning", "warn", mountFailureReason(target))
+		return
+	}
 	if err := syscall.Mount(source, target, fstype, 0, ""); err != nil && err != syscall.EBUSY {
-		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: mount %s failed: %v\n", target, err)
+		writeInitEvent(output, "guest_init_warning", "warn", mountFailureReason(target))
 	}
 }
 
-func loadEnv(path string, allowedKeys map[string]struct{}) {
+func loadEnv(output io.Writer, path string, allowedKeys map[string]struct{}) {
 	file, err := os.Open(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			_, _ = fmt.Fprintf(os.Stderr, "stogas-init: open %s failed: %v\n", path, err)
+			writeInitEvent(output, "guest_init_warning", "warn", initConfigurationOpenFailed)
 		}
 		return
 	}
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
+	invalidLineReported := false
+	unsupportedKeyReported := false
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -76,31 +100,54 @@ func loadEnv(path string, allowedKeys map[string]struct{}) {
 		key, value, ok := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
 		if !ok || !envKeyPattern.MatchString(key) {
-			_, _ = fmt.Fprintf(os.Stderr, "stogas-init: ignored invalid env line in %s\n", path)
+			if !invalidLineReported {
+				writeInitEvent(output, "guest_init_warning", "warn", initInvalidConfiguration)
+				invalidLineReported = true
+			}
 			continue
 		}
 		if allowedKeys != nil {
 			if _, allowed := allowedKeys[key]; !allowed {
-				_, _ = fmt.Fprintf(os.Stderr, "stogas-init: ignored unsupported forward config key %s\n", key)
+				if !unsupportedKeyReported {
+					writeInitEvent(output, "guest_init_warning", "warn", initUnsupportedConfigKey)
+					unsupportedKeyReported = true
+				}
 				continue
 			}
 		}
-		_ = os.Setenv(key, strings.TrimSpace(value))
+		if err := os.Setenv(key, strings.TrimSpace(value)); err != nil && !invalidLineReported {
+			writeInitEvent(output, "guest_init_warning", "warn", initInvalidConfiguration)
+			invalidLineReported = true
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: read %s failed: %v\n", path, err)
+		writeInitEvent(output, "guest_init_warning", "warn", initConfigurationReadFailed)
 	}
 }
 
-func probeURL(name string) {
+func probeURL(output io.Writer, name string) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return
 	}
-	parsed, err := url.Parse(raw)
+	address, err := probeAddress(raw)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: %s parse failed: %v\n", name, err)
+		writeInitEvent(output, "guest_init_warning", "warn", initUpstreamURLInvalid)
 		return
+	}
+	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
+	if err != nil {
+		writeInitEvent(output, "guest_init_warning", "warn", initUpstreamConnectionFailed)
+		return
+	}
+	_ = conn.Close()
+	writeInitEvent(output, "guest_init_probe", "info", initUpstreamConnectionOK)
+}
+
+func probeAddress(raw string) (string, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" {
+		return "", fmt.Errorf("invalid upstream URL")
 	}
 	port := parsed.Port()
 	if port == "" {
@@ -110,14 +157,44 @@ func probeURL(name string) {
 			port = "80"
 		}
 	}
-	address := net.JoinHostPort(parsed.Hostname(), port)
-	conn, err := net.DialTimeout("tcp", address, 3*time.Second)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "stogas-init: %s tcp probe %s failed: %v\n", name, address, err)
-		return
+	return net.JoinHostPort(parsed.Hostname(), port), nil
+}
+
+func mountFailureReason(target string) initReasonCode {
+	switch target {
+	case "/proc":
+		return initMountProcFailed
+	case "/sys":
+		return initMountSysFailed
+	case "/dev":
+		return initMountDevFailed
+	default:
+		return initMountFailed
 	}
-	_ = conn.Close()
-	_, _ = fmt.Fprintf(os.Stderr, "stogas-init: %s tcp probe %s ok\n", name, address)
+}
+
+func writeInitEvent(output io.Writer, event string, severity string, reasonCode initReasonCode) {
+	payload, err := json.Marshal(struct {
+		ErrorType  string `json:"errorType,omitempty"`
+		Event      string `json:"event"`
+		ReasonCode string `json:"reasonCode"`
+		Severity   string `json:"severity"`
+	}{
+		ErrorType:  initErrorType(severity),
+		Event:      event,
+		ReasonCode: string(reasonCode),
+		Severity:   severity,
+	})
+	if err == nil {
+		_, _ = fmt.Fprintln(output, string(payload))
+	}
+}
+
+func initErrorType(severity string) string {
+	if severity == "info" {
+		return ""
+	}
+	return "Error"
 }
 
 func envDefault(name string, fallback string) string {
@@ -129,10 +206,5 @@ func envDefault(name string, fallback string) string {
 }
 
 func localEnvironment(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "local", "test", "testing":
-		return true
-	default:
-		return false
-	}
+	return strings.EqualFold(strings.TrimSpace(value), "local")
 }

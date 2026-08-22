@@ -14,15 +14,26 @@ import (
 const e2eeSessionContextKey = "stogas.e2ee_session"
 
 func (s *Server) openEncryptedInference(ctx *fasthttp.RequestCtx) (*e2ee.Session, bool) {
-	encrypted, err := e2ee.Inspect(ctx.Request.Body())
-	if err != nil {
-		s.writeEncryptedRequestError(ctx)
+	if len(ctx.URI().QueryString()) != 0 {
+		encrypted, err := e2ee.Inspect(ctx.Request.Body())
+		if err != nil || encrypted {
+			s.writeEncryptedRequestError(ctx)
+		} else {
+			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+				"error": map[string]any{"message": "Query parameters are not supported", "type": "invalid_request_error"},
+			})
+		}
 		return nil, false
 	}
-	if !encrypted {
-		return nil, true
-	}
 	if s.secure == nil || s.secure.Identity == nil || s.secure.Identity.HPKEPrivateKey == nil {
+		encrypted, err := e2ee.Inspect(ctx.Request.Body())
+		if err != nil {
+			s.writeEncryptedRequestError(ctx)
+			return nil, false
+		}
+		if !encrypted {
+			return nil, true
+		}
 		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
 			"error": map[string]any{"message": "Encrypted inference is unavailable", "type": "service_unavailable"},
 		})
@@ -36,6 +47,9 @@ func (s *Server) openEncryptedInference(ctx *fasthttp.RequestCtx) (*e2ee.Session
 		time.Now().UTC(),
 	)
 	if err != nil {
+		if errors.Is(err, e2ee.ErrNotEnvelope) {
+			return nil, true
+		}
 		if errors.Is(err, e2ee.ErrRecipientNotFound) {
 			s.writeError(ctx, fasthttp.StatusMisdirectedRequest, map[string]any{
 				"error": map[string]any{"message": "Encrypted request is not addressed to this node", "type": "invalid_request_error"},
@@ -47,6 +61,7 @@ func (s *Server) openEncryptedInference(ctx *fasthttp.RequestCtx) (*e2ee.Session
 	}
 
 	clearInferenceCredentials(ctx)
+	clearUpstreamCredentialHeaders(ctx)
 	ctx.Request.Header.Set("Authorization", "Bearer "+inner.APIKey)
 	ctx.Request.Header.SetContentType("application/json")
 	ctx.Request.Header.Del(fasthttp.HeaderContentEncoding)
@@ -61,6 +76,10 @@ func (s *Server) openEncryptedInference(ctx *fasthttp.RequestCtx) (*e2ee.Session
 	} else {
 		ctx.Request.Header.Del(stogasHeaderExtraFields)
 	}
+	if inner.UpstreamCredential != nil {
+		ctx.Request.Header.Set("X-Stogas-Upstream-API-Key", inner.UpstreamCredential.APIKey)
+		ctx.Request.Header.Set("X-Stogas-Upstream-Provider", inner.UpstreamCredential.Provider)
+	}
 	ctx.Request.SetBodyRaw(append([]byte(nil), inner.Body...))
 	ctx.SetUserValue(e2eeSessionContextKey, session)
 	return session, true
@@ -72,6 +91,11 @@ func clearInferenceCredentials(ctx *fasthttp.RequestCtx) {
 			ctx.Request.Header.Del(header)
 		}
 	}
+}
+
+func clearUpstreamCredentialHeaders(ctx *fasthttp.RequestCtx) {
+	ctx.Request.Header.Del("X-Stogas-Upstream-API-Key")
+	ctx.Request.Header.Del("X-Stogas-Upstream-Provider")
 }
 
 func (s *Server) writeEncryptedRequestError(ctx *fasthttp.RequestCtx) {
@@ -90,7 +114,7 @@ func (s *Server) sealBufferedEncryptedResponse(ctx *fasthttp.RequestCtx, session
 		return
 	}
 	metadata := encryptedResponseMetadata(ctx)
-	encoded, err := session.EncodeResponse(metadata, append([]byte(nil), ctx.Response.Body()...))
+	encoded, err := session.EncodeResponse(metadata, ctx.Response.Body())
 	if err != nil {
 		ctx.Response.Reset()
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
@@ -116,7 +140,7 @@ func (s *Server) sealStreamingEncryptedResponse(ctx *fasthttp.RequestCtx, sessio
 
 func encryptedResponseMetadata(ctx *fasthttp.RequestCtx) e2ee.ResponseMetadata {
 	headers := make(map[string]string)
-	ctx.Response.Header.VisitAll(func(key, value []byte) {
+	for key, value := range ctx.Response.Header.All() {
 		name := strings.TrimSpace(string(key))
 		normalized := strings.ToLower(name)
 		if normalized == "cache-control" ||
@@ -124,7 +148,7 @@ func encryptedResponseMetadata(ctx *fasthttp.RequestCtx) e2ee.ResponseMetadata {
 			isSafeProviderResponseHeader(normalized) {
 			headers[name] = string(value)
 		}
-	})
+	}
 	if len(headers) == 0 {
 		headers = nil
 	}
@@ -141,7 +165,7 @@ func encryptedResponseMetadata(ctx *fasthttp.RequestCtx) e2ee.ResponseMetadata {
 
 func prepareEncryptedOuterResponse(ctx *fasthttp.RequestCtx) {
 	var remove []string
-	ctx.Response.Header.VisitAll(func(key, _ []byte) {
+	for key := range ctx.Response.Header.All() {
 		normalized := strings.ToLower(strings.TrimSpace(string(key)))
 		if normalized == "cache-control" ||
 			normalized == "connection" ||
@@ -150,7 +174,7 @@ func prepareEncryptedOuterResponse(ctx *fasthttp.RequestCtx) {
 			isSafeProviderResponseHeader(normalized) {
 			remove = append(remove, string(key))
 		}
-	})
+	}
 	for _, header := range remove {
 		ctx.Response.Header.Del(header)
 	}
