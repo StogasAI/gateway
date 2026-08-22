@@ -201,7 +201,7 @@ function verifyLaunchPolicy() {
 	);
 	assert(policy.schema === 'stogas.snp-launch-policy.v1', 'Unsupported SNP launch policy.');
 	assert(policy.amd_product === 'Milan', 'The SNP launch policy must target Milan.');
-	assert(policy.policy === '0x000000000212013a', 'The reviewed Milan policy changed.');
+	assert(policy.policy === '0x000000000213013a', 'The reviewed Milan policy changed.');
 }
 
 function verifyWorkflows() {

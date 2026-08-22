@@ -38,7 +38,7 @@
   (or (getenv "STOGAS_SNP_POLICY_PRODUCT") "Milan"))
 
 (define %snp-policy
-  (or (getenv "STOGAS_SNP_POLICY") "0x000000000212013a"))
+  (or (getenv "STOGAS_SNP_POLICY") "0x000000000213013a"))
 
 (define (canonical-version-part text)
   (let ((value (string->number text 10)))
