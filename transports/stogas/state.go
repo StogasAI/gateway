@@ -8,6 +8,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
 type contextKey string
@@ -38,13 +39,17 @@ type State struct {
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
 	FinalEvent              *billing.RequestEvent
-	FinalCostUSDAtoms       string
+	UpstreamCostUSDAtoms    string
 	FinalMeters             []catalog.MeterEstimate
+	PluginMetrics           plugins.Metrics
 	ProviderStartedAt       time.Time
 	ProviderCompletedAt     time.Time
-	ProviderFirstOutputMS   *uint32
+	TTFTMS                  *uint32
+	ProviderOutputObserved  bool
+	providerOutputEmitted   bool
 	ClientStoppedAt         time.Time
 	Cancelled               bool
+	clientStateMu           sync.RWMutex
 	GatewayVersion          string
 	NodeID                  string
 	ActualServiceTier       *schemas.BifrostServiceTier
@@ -117,29 +122,37 @@ type providerResponsesAnnotation struct {
 }
 
 type providerAttemptObservation struct {
-	Provider              string
-	StartedAt             time.Time
-	CompletedAt           time.Time
-	ProviderFirstOutputMS *uint32
-	Response              *schemas.BifrostResponse
-	Error                 *schemas.BifrostError
+	Provider       string
+	StartedAt      time.Time
+	CompletedAt    time.Time
+	OutputObserved bool
+	Response       *schemas.BifrostResponse
+	Error          *schemas.BifrostError
 }
 
 type HoldEstimate struct {
-	MaxUSDAtoms string
-	ProductKey  string
-	ProviderKey string
-	Meters      []catalog.MeterEstimate
+	EstimatedUpstreamCostUSDAtoms string
+	ProductKey                    string
+	ProviderKey                   string
+	Meters                        []catalog.MeterEstimate
 }
 
 func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *billing.APIKeyClaims, adapter Adapter) *State {
-	return &State{
+	state := &State{
 		Resolution:     resolution,
 		Adapter:        adapter,
 		RawAPIKey:      rawAPIKey,
 		APIKeyClaims:   claims,
 		GatewayVersion: GatewayVersion,
 	}
+	if resolution != nil {
+		summary := resolution.StructuredPIIRedactionSummary()
+		state.PluginMetrics.StogasStructuredPIIRedaction = &plugins.StogasStructuredPIIRedactionMetrics{
+			ItemsRedacted: summary.ItemsRedacted,
+			DurationUS:    summary.DurationUS,
+		}
+	}
+	return state
 }
 
 func (s *State) SetDashboardCredential(credential *billing.DashboardCredential) {
@@ -167,20 +180,34 @@ func (s *State) MarkProviderCompleted() {
 }
 
 func (s *State) MarkClientStopped() {
-	if s == nil || !s.ClientStoppedAt.IsZero() {
+	if s == nil {
 		return
 	}
-	s.ClientStoppedAt = time.Now()
+	s.clientStateMu.Lock()
+	defer s.clientStateMu.Unlock()
+	s.Cancelled = true
+	if s.ClientStoppedAt.IsZero() {
+		s.ClientStoppedAt = time.Now()
+	}
 }
 
-// observeProviderFirstOutput records the gateway-observed elapsed provider call
-// time until Bifrost yields the first usable output.
-func (s *State) observeProviderFirstOutput() {
-	if s == nil || s.ProviderFirstOutputMS != nil || s.ProviderStartedAt.IsZero() {
+func (s *State) ClientStatus() (cancelled bool, stoppedAt time.Time) {
+	if s == nil {
+		return false, time.Time{}
+	}
+	s.clientStateMu.RLock()
+	defer s.clientStateMu.RUnlock()
+	return s.Cancelled, s.ClientStoppedAt
+}
+
+// observeTTFT records request start through the first generated token-bearing
+// payload accepted by the downstream stream. This includes all gateway work,
+// retries, provider time, and any backpressure before that payload.
+func (s *State) observeTTFT() {
+	if s == nil || s.TTFTMS != nil || s.StartedAt.IsZero() {
 		return
 	}
-	observedAt := time.Now()
-	latencyMS := observedAt.Sub(s.ProviderStartedAt).Milliseconds()
+	latencyMS := time.Since(s.StartedAt).Milliseconds()
 	if latencyMS < 0 {
 		return
 	}
@@ -188,8 +215,19 @@ func (s *State) observeProviderFirstOutput() {
 	if latencyMS > int64(^uint32(0)) {
 		value = ^uint32(0)
 	}
-	s.ProviderFirstOutputMS = &value
-	s.observeCurrentProviderAttemptFirstOutput(observedAt, latencyMS)
+	s.TTFTMS = &value
+}
+
+func (s *State) observeProviderOutput() {
+	if s == nil {
+		return
+	}
+	s.ProviderOutputObserved = true
+	s.providerAttemptsMu.Lock()
+	if len(s.providerAttempts) > 0 {
+		s.providerAttempts[len(s.providerAttempts)-1].OutputObserved = true
+	}
+	s.providerAttemptsMu.Unlock()
 }
 
 func (s *State) beginProviderAttempt(startedAt time.Time) int {
@@ -251,30 +289,6 @@ func (s *State) completeLatestProviderAttempt(completedAt time.Time) {
 	}
 }
 
-func (s *State) observeCurrentProviderAttemptFirstOutput(observedAt time.Time, fallbackLatencyMS int64) {
-	s.providerAttemptsMu.Lock()
-	defer s.providerAttemptsMu.Unlock()
-	if len(s.providerAttempts) == 0 {
-		return
-	}
-	attempt := &s.providerAttempts[len(s.providerAttempts)-1]
-	if attempt.ProviderFirstOutputMS != nil {
-		return
-	}
-	latencyMS := fallbackLatencyMS
-	if !attempt.StartedAt.IsZero() {
-		latencyMS = observedAt.Sub(attempt.StartedAt).Milliseconds()
-	}
-	if latencyMS < 0 {
-		return
-	}
-	value := uint32(latencyMS)
-	if latencyMS > int64(^uint32(0)) {
-		value = ^uint32(0)
-	}
-	attempt.ProviderFirstOutputMS = &value
-}
-
 func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	if s == nil {
 		return nil
@@ -288,12 +302,12 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	attempts := make([]billing.ProviderAttemptInput, len(s.providerAttempts))
 	for index, attempt := range s.providerAttempts {
 		attempts[index] = billing.ProviderAttemptInput{
-			Provider:              attempt.Provider,
-			StartedAt:             attempt.StartedAt,
-			CompletedAt:           attempt.CompletedAt,
-			ProviderFirstOutputMS: cloneUint32(attempt.ProviderFirstOutputMS),
-			Response:              attempt.Response,
-			Error:                 attempt.Error,
+			Provider:       attempt.Provider,
+			StartedAt:      attempt.StartedAt,
+			CompletedAt:    attempt.CompletedAt,
+			OutputObserved: attempt.OutputObserved,
+			Response:       attempt.Response,
+			Error:          attempt.Error,
 		}
 	}
 	finalAttempt := &attempts[len(attempts)-1]
@@ -328,26 +342,67 @@ func maxProviderAttemptTime(value time.Time, minimum time.Time) time.Time {
 	return value
 }
 
-func cloneUint32(value *uint32) *uint32 {
-	if value == nil {
-		return nil
+func (s *State) ObserveChatStreamOutput(response *schemas.BifrostChatResponse) {
+	if chatResponseHasOutput(response) {
+		s.observeProviderOutput()
 	}
-	copy := *value
-	return &copy
+	if chatResponseHasToken(response) {
+		s.observeTTFT()
+	}
 }
 
-func (s *State) ObserveChatProviderOutput(response *schemas.BifrostChatResponse) {
-	if !chatResponseHasOutput(response) {
-		return
+func (s *State) observeChatProviderOutputEmitted(response *schemas.BifrostChatResponse) {
+	if s != nil && chatResponseHasProviderOutput(response) {
+		s.providerOutputEmitted = true
 	}
-	s.observeProviderFirstOutput()
 }
 
-func (s *State) ObserveResponsesProviderOutput(response *schemas.BifrostResponsesStreamResponse) {
-	if !responsesEventHasOutput(response) {
-		return
+func (s *State) observeResponsesProviderOutputEmitted(response *schemas.BifrostResponsesStreamResponse) {
+	if s != nil && responsesEventHasOutput(response) {
+		s.providerOutputEmitted = true
 	}
-	s.observeProviderFirstOutput()
+}
+
+func (s *State) observeProviderResponseOutputEmitted(response *schemas.BifrostResponse) {
+	if s != nil && providerResponseHasOutput(response) {
+		s.providerOutputEmitted = true
+		// A buffered response is observed as one complete provider result. Record
+		// the output fact without creating TTFT, which only exists for streams.
+		s.observeProviderOutput()
+	}
+}
+
+func (s *State) ObserveResponsesStreamOutput(response *schemas.BifrostResponsesStreamResponse) {
+	if responsesEventHasOutput(response) {
+		s.observeProviderOutput()
+	}
+	if responsesEventHasToken(response) {
+		s.observeTTFT()
+	}
+}
+
+func chatResponseHasToken(response *schemas.BifrostChatResponse) bool {
+	if response == nil {
+		return false
+	}
+	for _, choice := range response.Choices {
+		stream := choice.ChatStreamResponseChoice
+		if stream != nil && stream.Delta != nil {
+			delta := stream.Delta
+			if nonEmptyString(delta.Content) ||
+				nonEmptyString(delta.Refusal) ||
+				nonEmptyString(delta.Reasoning) ||
+				chatAudioHasOutput(delta.Audio) ||
+				chatReasoningDetailsHaveToken(delta.ReasoningDetails) ||
+				chatToolCallsHaveToken(delta.ToolCalls) {
+				return true
+			}
+		}
+		if nonStream := choice.ChatNonStreamResponseChoice; nonStream != nil && chatMessageHasToken(nonStream.Message) {
+			return true
+		}
+	}
+	return false
 }
 
 func chatResponseHasOutput(response *schemas.BifrostChatResponse) bool {
@@ -355,20 +410,149 @@ func chatResponseHasOutput(response *schemas.BifrostChatResponse) bool {
 		return false
 	}
 	for _, choice := range response.Choices {
-		if choice.FinishReason != nil {
+		stream := choice.ChatStreamResponseChoice
+		if stream != nil && stream.Delta != nil {
+			delta := stream.Delta
+			if nonEmptyString(delta.Content) ||
+				nonEmptyString(delta.Refusal) ||
+				nonEmptyString(delta.Reasoning) ||
+				chatAudioHasOutput(delta.Audio) ||
+				chatReasoningDetailsHaveOutput(delta.ReasoningDetails) ||
+				chatToolCallsHaveOutput(delta.ToolCalls) ||
+				chatAnnotationsHaveOutput(delta.Annotations) {
+				return true
+			}
+		}
+		if nonStream := choice.ChatNonStreamResponseChoice; nonStream != nil && chatMessageHasOutput(nonStream.Message) {
 			return true
 		}
-		stream := choice.ChatStreamResponseChoice
-		if stream == nil || stream.Delta == nil {
-			continue
+	}
+	return false
+}
+
+func chatResponseHasProviderOutput(response *schemas.BifrostChatResponse) bool {
+	if chatResponseHasOutput(response) {
+		return true
+	}
+	if response == nil {
+		return false
+	}
+	for _, choice := range response.Choices {
+		if stream := choice.ChatStreamResponseChoice; stream != nil && stream.Delta != nil &&
+			chatReasoningDetailsHaveSignature(stream.Delta.ReasoningDetails) {
+			return true
 		}
-		delta := stream.Delta
-		if nonEmptyString(delta.Content) ||
-			nonEmptyString(delta.Refusal) ||
-			nonEmptyString(delta.Reasoning) ||
-			delta.Audio != nil ||
-			len(delta.ReasoningDetails) > 0 ||
-			len(delta.ToolCalls) > 0 {
+		if nonStream := choice.ChatNonStreamResponseChoice; nonStream != nil && chatMessageHasOutput(nonStream.Message) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatMessageHasOutput(message *schemas.ChatMessage) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content != nil {
+		if nonEmptyString(message.Content.ContentStr) {
+			return true
+		}
+		for index := range message.Content.ContentBlocks {
+			block := &message.Content.ContentBlocks[index]
+			if nonEmptyString(block.Text) || nonEmptyString(block.Refusal) ||
+				block.ImageURLStruct != nil && (block.ImageURLStruct.URL != "" || nonEmptyString(block.ImageURLStruct.FileID)) ||
+				block.InputAudio != nil && block.InputAudio.Data != "" ||
+				block.File != nil && (nonEmptyString(block.File.FileData) || nonEmptyString(block.File.FileURL) || nonEmptyString(block.File.FileID)) {
+				return true
+			}
+		}
+	}
+	assistant := message.ChatAssistantMessage
+	return assistant != nil && (nonEmptyString(assistant.Refusal) ||
+		nonEmptyString(assistant.Reasoning) ||
+		chatAudioHasOutput(assistant.Audio) ||
+		chatReasoningDetailsHaveOutput(assistant.ReasoningDetails) ||
+		chatReasoningDetailsHaveSignature(assistant.ReasoningDetails) ||
+		chatToolCallsHaveOutput(assistant.ToolCalls) ||
+		chatAnnotationsHaveOutput(assistant.Annotations))
+}
+
+func chatMessageHasToken(message *schemas.ChatMessage) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content != nil {
+		if nonEmptyString(message.Content.ContentStr) {
+			return true
+		}
+		for index := range message.Content.ContentBlocks {
+			block := &message.Content.ContentBlocks[index]
+			if nonEmptyString(block.Text) || nonEmptyString(block.Refusal) {
+				return true
+			}
+		}
+	}
+	assistant := message.ChatAssistantMessage
+	return assistant != nil && (nonEmptyString(assistant.Refusal) ||
+		nonEmptyString(assistant.Reasoning) ||
+		chatAudioHasOutput(assistant.Audio) ||
+		chatReasoningDetailsHaveToken(assistant.ReasoningDetails) ||
+		chatToolCallsHaveToken(assistant.ToolCalls))
+}
+
+func chatAudioHasOutput(audio *schemas.ChatAudioMessageAudio) bool {
+	return audio != nil && (audio.Data != "" || audio.Transcript != "")
+}
+
+func chatReasoningDetailsHaveOutput(details []schemas.ChatReasoningDetails) bool {
+	for _, detail := range details {
+		if nonEmptyString(detail.Summary) || nonEmptyString(detail.Text) || nonEmptyString(detail.Data) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatReasoningDetailsHaveToken(details []schemas.ChatReasoningDetails) bool {
+	for _, detail := range details {
+		if nonEmptyString(detail.Summary) || nonEmptyString(detail.Text) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatReasoningDetailsHaveSignature(details []schemas.ChatReasoningDetails) bool {
+	for _, detail := range details {
+		if nonEmptyString(detail.Signature) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatToolCallsHaveOutput(calls []schemas.ChatAssistantMessageToolCall) bool {
+	for _, call := range calls {
+		if nonEmptyString(call.ID) || nonEmptyString(call.Function.Name) || call.Function.Arguments != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func chatToolCallsHaveToken(calls []schemas.ChatAssistantMessageToolCall) bool {
+	for _, call := range calls {
+		if nonEmptyString(call.Function.Name) || call.Function.Arguments != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func chatAnnotationsHaveOutput(annotations []schemas.ChatAssistantMessageAnnotation) bool {
+	for _, annotation := range annotations {
+		citation := annotation.URLCitation
+		if nonEmptyString(citation.URL) || nonEmptyString(citation.Text) || citation.Title != "" {
 			return true
 		}
 	}
@@ -380,14 +564,311 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		return false
 	}
 	switch response.Type {
-	case schemas.ResponsesStreamResponseTypePing,
-		schemas.ResponsesStreamResponseTypeCreated,
-		schemas.ResponsesStreamResponseTypeInProgress,
-		schemas.ResponsesStreamResponseTypeQueued:
-		return false
+	case schemas.ResponsesStreamResponseTypeOutputTextDelta,
+		schemas.ResponsesStreamResponseTypeRefusalDelta,
+		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta,
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		return nonEmptyString(response.Delta)
+	case schemas.ResponsesStreamResponseTypeOutputTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		return nonEmptyString(response.Text)
+	case schemas.ResponsesStreamResponseTypeRefusalDone:
+		return nonEmptyString(response.Refusal)
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+		return nonEmptyString(response.Arguments)
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		return nonEmptyString(response.Code)
+	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
+		return nonEmptyString(response.Input)
+	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
+		return nonEmptyString(response.PartialImageB64)
+	case schemas.ResponsesStreamResponseTypeContentPartAdded,
+		schemas.ResponsesStreamResponseTypeContentPartDone,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone:
+		return responsesContentBlockHasOutput(response.Part)
+	case schemas.ResponsesStreamResponseTypeOutputItemAdded,
+		schemas.ResponsesStreamResponseTypeOutputItemDone:
+		return responsesMessageHasOutput(response.Item)
+	case schemas.ResponsesStreamResponseTypeCompleted,
+		schemas.ResponsesStreamResponseTypeIncomplete:
+		return responsesResponseHasOutput(response.Response)
+	case schemas.ResponsesStreamResponseTypeFileSearchCallResultsAdded,
+		schemas.ResponsesStreamResponseTypeFileSearchCallResultsCompleted,
+		schemas.ResponsesStreamResponseTypeWebSearchCallResultsAdded,
+		schemas.ResponsesStreamResponseTypeWebSearchCallResultsCompleted:
+		return len(response.SearchResults) > 0 || len(response.Videos) > 0 || len(response.Citations) > 0
 	default:
+		// Unknown and lifecycle-only events are not evidence that usable output
+		// reached the caller. New event types must opt in with a payload check.
+		return false
+	}
+}
+
+func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bool {
+	if response == nil {
+		return false
+	}
+	switch response.Type {
+	case schemas.ResponsesStreamResponseTypeOutputTextDelta,
+		schemas.ResponsesStreamResponseTypeRefusalDelta,
+		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
+		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta,
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
+		return nonEmptyString(response.Delta)
+	case schemas.ResponsesStreamResponseTypeOutputTextDone,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
+		return nonEmptyString(response.Text)
+	case schemas.ResponsesStreamResponseTypeRefusalDone:
+		return nonEmptyString(response.Refusal)
+	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
+		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
+		return nonEmptyString(response.Arguments)
+	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+		return nonEmptyString(response.Code)
+	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
+		return nonEmptyString(response.Input)
+	case schemas.ResponsesStreamResponseTypeContentPartAdded,
+		schemas.ResponsesStreamResponseTypeContentPartDone,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
+		schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone:
+		return responsesContentBlockHasToken(response.Part)
+	case schemas.ResponsesStreamResponseTypeOutputItemAdded,
+		schemas.ResponsesStreamResponseTypeOutputItemDone:
+		return responsesMessageHasToken(response.Item)
+	case schemas.ResponsesStreamResponseTypeCompleted,
+		schemas.ResponsesStreamResponseTypeIncomplete:
+		return responsesResponseHasToken(response.Response)
+	default:
+		return false
+	}
+}
+
+func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content != nil {
+		if nonEmptyString(message.Content.ContentStr) {
+			return true
+		}
+		for index := range message.Content.ContentBlocks {
+			if responsesContentBlockHasOutput(&message.Content.ContentBlocks[index]) {
+				return true
+			}
+		}
+	}
+	if message.ResponsesReasoning != nil {
+		if nonEmptyString(message.ResponsesReasoning.EncryptedContent) {
+			return true
+		}
+		for _, summary := range message.ResponsesReasoning.Summary {
+			if summary.Text != "" {
+				return true
+			}
+		}
+	}
+	tool := message.ResponsesToolMessage
+	if tool == nil {
+		return false
+	}
+	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasOutput(tool.Action) {
 		return true
 	}
+	if tool.Output != nil {
+		if nonEmptyString(tool.Output.ResponsesToolCallOutputStr) || responsesComputerOutputHasOutput(tool.Output.ResponsesComputerToolCallOutput) {
+			return true
+		}
+		for index := range tool.Output.ResponsesFunctionToolCallOutputBlocks {
+			if responsesContentBlockHasOutput(&tool.Output.ResponsesFunctionToolCallOutputBlocks[index]) {
+				return true
+			}
+		}
+	}
+	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
+		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
+		tool.ResponsesCodeInterpreterToolCall != nil &&
+			(nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) || len(tool.ResponsesCodeInterpreterToolCall.Outputs) > 0) ||
+		tool.ResponsesFileSearchToolCall != nil &&
+			(len(tool.ResponsesFileSearchToolCall.Queries) > 0 || len(tool.ResponsesFileSearchToolCall.Results) > 0) ||
+		tool.ResponsesAdvisorCall != nil &&
+			(nonEmptyString(tool.ResponsesAdvisorCall.Text) || nonEmptyString(tool.ResponsesAdvisorCall.EncryptedContent)) ||
+		tool.ResponsesWebFetchCall != nil &&
+			(nonEmptyString(tool.ResponsesWebFetchCall.URL) ||
+				tool.ResponsesWebFetchCall.Document != nil && nonEmptyString(tool.ResponsesWebFetchCall.Document.Text))
+}
+
+func providerResponseHasOutput(response *schemas.BifrostResponse) bool {
+	if response == nil {
+		return false
+	}
+	switch {
+	case response.ChatResponse != nil:
+		return chatResponseHasProviderOutput(response.ChatResponse)
+	case response.ResponsesResponse != nil:
+		return responsesResponseHasOutput(response.ResponsesResponse)
+	case response.ResponsesStreamResponse != nil:
+		return responsesEventHasOutput(response.ResponsesStreamResponse)
+	default:
+		return false
+	}
+}
+
+func responsesResponseHasOutput(response *schemas.BifrostResponsesResponse) bool {
+	if response == nil {
+		return false
+	}
+	for index := range response.Output {
+		if responsesMessageHasOutput(&response.Output[index]) {
+			return true
+		}
+	}
+	return len(response.SearchResults) > 0 || len(response.Videos) > 0 || len(response.Citations) > 0
+}
+
+func responsesResponseHasToken(response *schemas.BifrostResponsesResponse) bool {
+	if response == nil {
+		return false
+	}
+	for index := range response.Output {
+		if responsesMessageHasToken(&response.Output[index]) {
+			return true
+		}
+	}
+	return false
+}
+
+func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content != nil {
+		if nonEmptyString(message.Content.ContentStr) {
+			return true
+		}
+		for index := range message.Content.ContentBlocks {
+			if responsesContentBlockHasToken(&message.Content.ContentBlocks[index]) {
+				return true
+			}
+		}
+	}
+	if message.ResponsesReasoning != nil {
+		for _, summary := range message.ResponsesReasoning.Summary {
+			if summary.Text != "" {
+				return true
+			}
+		}
+	}
+	tool := message.ResponsesToolMessage
+	if tool == nil {
+		return false
+	}
+	if nonEmptyString(tool.Name) || nonEmptyString(tool.Arguments) || responsesToolActionHasToken(tool.Action) {
+		return true
+	}
+	return tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
+		tool.ResponsesCodeInterpreterToolCall != nil && nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) ||
+		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0 ||
+		tool.ResponsesCodeExecutionCall != nil && nonEmptyString(tool.ResponsesCodeExecutionCall.Input)
+}
+
+func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruct) bool {
+	if action == nil {
+		return false
+	}
+	if computer := action.ResponsesComputerToolCallAction; computer != nil &&
+		(computer.Type != "" || computer.X != nil || computer.Y != nil || computer.Button != nil || len(computer.Path) > 0 ||
+			len(computer.Keys) > 0 || computer.ScrollX != nil || computer.ScrollY != nil ||
+			computer.Text != nil || len(computer.Region) > 0) {
+		return true
+	}
+	if search := action.ResponsesWebSearchToolCallAction; search != nil &&
+		(search.Type != "" || nonEmptyString(search.URL) || nonEmptyString(search.Query) || len(search.Queries) > 0 ||
+			len(search.Sources) > 0 || nonEmptyString(search.Pattern) || len(search.ImageQueries) > 0) {
+		return true
+	}
+	if fetch := action.ResponsesWebFetchToolCallAction; fetch != nil && (fetch.Type != "" || fetch.URL != "") {
+		return true
+	}
+	if shell := action.ResponsesLocalShellToolCallAction; shell != nil &&
+		(shell.Type != "" || len(shell.Command) > 0 || len(shell.Env) > 0 || shell.TimeoutMS != nil ||
+			shell.User != nil || shell.WorkingDirectory != nil) {
+		return true
+	}
+	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
+		return approval.Name != "" || approval.ServerLabel != "" || approval.Arguments != ""
+	}
+	return false
+}
+
+func responsesToolActionHasOutput(action *schemas.ResponsesToolMessageActionStruct) bool {
+	if action == nil {
+		return false
+	}
+	if computer := action.ResponsesComputerToolCallAction; computer != nil &&
+		(computer.Type != "" || computer.X != nil || computer.Y != nil || computer.Button != nil ||
+			len(computer.Path) > 0 || len(computer.Keys) > 0 || computer.ScrollX != nil ||
+			computer.ScrollY != nil || computer.Text != nil || len(computer.Region) > 0) {
+		return true
+	}
+	if search := action.ResponsesWebSearchToolCallAction; search != nil &&
+		(search.Type != "" || nonEmptyString(search.URL) || nonEmptyString(search.Query) ||
+			len(search.Queries) > 0 || len(search.Sources) > 0 || nonEmptyString(search.Pattern) ||
+			len(search.ImageQueries) > 0) {
+		return true
+	}
+	if fetch := action.ResponsesWebFetchToolCallAction; fetch != nil && (fetch.Type != "" || fetch.URL != "") {
+		return true
+	}
+	if shell := action.ResponsesLocalShellToolCallAction; shell != nil &&
+		(shell.Type != "" || len(shell.Command) > 0 || len(shell.Env) > 0 || shell.TimeoutMS != nil ||
+			shell.User != nil || shell.WorkingDirectory != nil) {
+		return true
+	}
+	if approval := action.ResponsesMCPApprovalRequestAction; approval != nil {
+		return approval.ID != "" || approval.Type != "" || approval.Name != "" ||
+			approval.ServerLabel != "" || approval.Arguments != ""
+	}
+	return false
+}
+
+func responsesComputerOutputHasOutput(output *schemas.ResponsesComputerToolCallOutputData) bool {
+	return output != nil && (output.Type != "" || nonEmptyString(output.FileID) || nonEmptyString(output.ImageURL))
+}
+
+func responsesContentBlockHasOutput(block *schemas.ResponsesMessageContentBlock) bool {
+	if block == nil {
+		return false
+	}
+	if nonEmptyString(block.Text) || nonEmptyString(block.EncryptedContent) {
+		return true
+	}
+	if block.ResponsesOutputMessageContentRefusal != nil && block.ResponsesOutputMessageContentRefusal.Refusal != "" {
+		return true
+	}
+	if block.ResponsesOutputMessageContentRenderedContent != nil && block.ResponsesOutputMessageContentRenderedContent.RenderedContent != "" {
+		return true
+	}
+	return block.ResponsesOutputMessageContentCompaction != nil && block.ResponsesOutputMessageContentCompaction.Summary != ""
+}
+
+func responsesContentBlockHasToken(block *schemas.ResponsesMessageContentBlock) bool {
+	if block == nil {
+		return false
+	}
+	if nonEmptyString(block.Text) {
+		return true
+	}
+	if block.ResponsesOutputMessageContentRefusal != nil && block.ResponsesOutputMessageContentRefusal.Refusal != "" {
+		return true
+	}
+	return block.ResponsesOutputMessageContentCompaction != nil && block.ResponsesOutputMessageContentCompaction.Summary != ""
 }
 
 func nonEmptyString(value *string) bool {

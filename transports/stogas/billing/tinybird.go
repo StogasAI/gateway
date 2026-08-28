@@ -15,6 +15,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
 const (
@@ -54,6 +56,7 @@ type TinybirdClient struct {
 	batches             atomic.Uint64
 	batchFailures       atomic.Uint64
 	circuitOpenUntil    atomic.Int64
+	circuitProbeActive  atomic.Bool
 	rows                atomic.Uint64
 	shortCircuits       atomic.Uint64
 }
@@ -62,6 +65,7 @@ type TinybirdDiagnostics struct {
 	BatchFailures uint64 `json:"batchFailures"`
 	Batches       uint64 `json:"batches"`
 	CircuitOpen   bool   `json:"circuitOpen"`
+	CircuitProbe  bool   `json:"circuitProbe"`
 	Closed        bool   `json:"closed"`
 	QueueCapacity int    `json:"queueCapacity"`
 	QueueDepth    int    `json:"queueDepth"`
@@ -71,43 +75,49 @@ type TinybirdDiagnostics struct {
 
 type tinybirdAppendRequest struct {
 	line   []byte
+	probe  bool
 	result chan error
 }
 
 type ProviderAttempt struct {
-	Provider              string  `json:"provider"`
-	Status                string  `json:"status"`
-	StatusCode            *int    `json:"status_code"`
-	LatencyMS             uint32  `json:"latency_ms"`
-	ProviderFirstOutputMS *uint32 `json:"provider_first_output_ms"`
-	ProviderRequestID     string  `json:"provider_request_id"`
-	FinishReason          string  `json:"finish_reason"`
-	UpstreamByok          string  `json:"upstream_byok"`
+	Provider          string `json:"provider"`
+	Status            string `json:"status"`
+	StatusCode        *int   `json:"status_code"`
+	LatencyMS         uint32 `json:"latency_ms"`
+	OutputObserved    bool   `json:"output_observed"`
+	ProviderRequestID string `json:"provider_request_id"`
+	FinishReason      string `json:"finish_reason"`
+	UpstreamByok      string `json:"upstream_byok"`
 }
 
 type RequestEvent struct {
-	RequestID               string            `json:"request_id"`
-	CreatedAt               string            `json:"created_at"`
-	StogasAPIKeyID          string            `json:"stogas_api_key_id"`
-	StogasProvisioningKeyID *string           `json:"stogas_provisioning_key_id"`
-	StogasUserID            string            `json:"stogas_user_id"`
-	StogasOrganizationID    string            `json:"stogas_organization_id"`
-	StogasWorkspaceID       string            `json:"stogas_workspace_id"`
-	RequestType             string            `json:"request_type"`
-	Cancelled               bool              `json:"cancelled"`
-	ClientStopMS            *uint32           `json:"client_stop_ms"`
-	CatalogDigest           string            `json:"catalog_digest"`
-	ProviderAttempts        []ProviderAttempt `json:"provider_attempts"`
-	StogasProcessingSuccess bool              `json:"stogas_processing_success"`
-	StogasBillingStatus     string            `json:"stogas_billing_status"`
-	NodeID                  string            `json:"node_id"`
-	TotalTimeMS             uint32            `json:"total_time_ms"`
-	UpstreamCostUSDAtoms    string            `json:"upstream_cost_usd_atoms"`
-	BilledCostUSDAtoms      string            `json:"billed_cost_usd_atoms"`
-	Pricing                 EventPricing      `json:"pricing"`
-	GatewayVersion          string            `json:"gateway_version"`
-	CatalogNodeIDs          []string          `json:"catalog_node_ids"`
-	analyticsQuantities     map[string]uint64
+	RequestID                  string            `json:"request_id"`
+	CreatedAt                  string            `json:"created_at"`
+	StogasAPIKeyID             string            `json:"stogas_api_key_id"`
+	StogasGrantID              *string           `json:"stogas_grant_id"`
+	StogasUserID               string            `json:"stogas_user_id"`
+	StogasOrganizationID       string            `json:"stogas_organization_id"`
+	StogasWorkspaceID          string            `json:"stogas_workspace_id"`
+	RequestType                string            `json:"request_type"`
+	Cancelled                  bool              `json:"cancelled"`
+	ClientStopMS               *uint32           `json:"client_stop_ms"`
+	CatalogDigest              string            `json:"catalog_digest"`
+	ProviderAttempts           []ProviderAttempt `json:"provider_attempts"`
+	StogasProcessingSuccess    bool              `json:"stogas_processing_success"`
+	StogasBillingStatus        string            `json:"stogas_billing_status"`
+	NodeID                     string            `json:"node_id"`
+	TotalTimeMS                uint32            `json:"total_time_ms"`
+	TTFTMS                     *uint32           `json:"ttft_ms"`
+	UpstreamCostUSDAtoms       string            `json:"upstream_cost_usd_atoms"`
+	BilledCostUSDAtoms         string            `json:"billed_cost_usd_atoms"`
+	CacheReadSavingsUSDAtoms   *string           `json:"cache_read_savings_usd_atoms"`
+	CacheWriteOverheadUSDAtoms *string           `json:"cache_write_overhead_usd_atoms"`
+	Pricing                    EventPricing      `json:"pricing"`
+	Plugins                    plugins.Metrics   `json:"plugins"`
+	GatewayVersion             string            `json:"gateway_version"`
+	CatalogNodeIDs             []string          `json:"catalog_node_ids"`
+	analyticsQuantities        map[string]uint64
+	holdParamsHash             string
 }
 
 type EventMeter struct {
@@ -178,34 +188,46 @@ func NormalizeTinybirdHost(host string, allowInsecurePrivateNetwork bool) (strin
 }
 
 func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event RequestEvent) error {
+	return c.appendGatewayRequest(ctx, event, false)
+}
+
+func (c *TinybirdClient) appendGatewayRequestAfterRetry(ctx context.Context, event RequestEvent) error {
+	return c.appendGatewayRequest(ctx, event, true)
+}
+
+func (c *TinybirdClient) appendGatewayRequest(ctx context.Context, event RequestEvent, joinProbe bool) error {
 	if c == nil {
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("append tinybird event: %w", err)
 	}
-	if c.circuitOpen(time.Now()) {
-		c.shortCircuits.Add(1)
-		return errTinybirdCircuitOpen
+	probe, err := c.admitCircuitRequest(time.Now(), joinProbe)
+	if err != nil {
+		return err
 	}
 
 	line, err := json.Marshal(tinybirdGatewayRequestEvent(event))
 	if err != nil {
+		c.releaseCircuitProbe(probe)
 		return fmt.Errorf("marshal tinybird event: %w", err)
 	}
 	line = append(line, '\n')
 	if len(line) > tinybirdMaxEventBytes {
+		c.releaseCircuitProbe(probe)
 		return fmt.Errorf("append tinybird event: encoded event is %d bytes, limit is %d", len(line), tinybirdMaxEventBytes)
 	}
 
 	appendRequest := tinybirdAppendRequest{
 		line:   line,
+		probe:  probe,
 		result: make(chan error, 1),
 	}
 
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
+		c.releaseCircuitProbe(probe)
 		return fmt.Errorf("append tinybird event: client is closed")
 	}
 	c.startOnce.Do(func() {
@@ -217,6 +239,7 @@ func (c *TinybirdClient) AppendGatewayRequest(ctx context.Context, event Request
 		c.mu.RUnlock()
 	default:
 		c.mu.RUnlock()
+		c.releaseCircuitProbe(probe)
 		return fmt.Errorf("append tinybird event: microbatch queue is full")
 	}
 
@@ -287,6 +310,12 @@ func (c *TinybirdClient) run() {
 			c.batchFailures.Add(1)
 		}
 		for _, appendRequest := range batch {
+			if appendRequest.probe {
+				c.circuitProbeActive.Store(false)
+				break
+			}
+		}
+		for _, appendRequest := range batch {
 			appendRequest.result <- err
 		}
 	}
@@ -299,15 +328,42 @@ func (c *TinybirdClient) Diagnostics() *TinybirdDiagnostics {
 	c.mu.RLock()
 	closed := c.closed
 	c.mu.RUnlock()
+	probe := c.circuitProbeActive.Load()
 	return &TinybirdDiagnostics{
 		BatchFailures: c.batchFailures.Load(),
 		Batches:       c.batches.Load(),
-		CircuitOpen:   c.circuitOpen(time.Now()),
+		CircuitOpen:   c.circuitOpen(time.Now()) || probe,
+		CircuitProbe:  probe,
 		Closed:        closed,
 		QueueCapacity: cap(c.queue),
 		QueueDepth:    len(c.queue),
 		Rows:          c.rows.Load(),
 		ShortCircuits: c.shortCircuits.Load(),
+	}
+}
+
+func (c *TinybirdClient) admitCircuitRequest(now time.Time, joinProbe bool) (bool, error) {
+	openUntil := c.circuitOpenUntil.Load()
+	if openUntil == 0 {
+		return false, nil
+	}
+	if now.UnixNano() < openUntil {
+		c.shortCircuits.Add(1)
+		return false, errTinybirdCircuitOpen
+	}
+	if c.circuitProbeActive.CompareAndSwap(false, true) {
+		return true, nil
+	}
+	if joinProbe {
+		return false, nil
+	}
+	c.shortCircuits.Add(1)
+	return false, errTinybirdCircuitOpen
+}
+
+func (c *TinybirdClient) releaseCircuitProbe(probe bool) {
+	if probe {
+		c.circuitProbeActive.Store(false)
 	}
 }
 
@@ -499,43 +555,49 @@ func (c *TinybirdClient) appendBatch(batch []tinybirdAppendRequest) error {
 }
 
 type tinybirdGatewayRequestEventPayload struct {
-	RequestID                    string   `json:"request_id"`
-	CreatedAt                    string   `json:"created_at"`
-	StogasAPIKeyID               string   `json:"stogas_api_key_id"`
-	StogasProvisioningKeyID      *string  `json:"stogas_provisioning_key_id"`
-	StogasUserID                 string   `json:"stogas_user_id"`
-	StogasOrganizationID         string   `json:"stogas_organization_id"`
-	StogasWorkspaceID            string   `json:"stogas_workspace_id"`
-	RequestType                  string   `json:"request_type"`
-	Cancelled                    uint8    `json:"cancelled"`
-	ClientStopMS                 *uint32  `json:"client_stop_ms"`
-	CatalogDigest                string   `json:"catalog_digest"`
-	ProviderAttempts             string   `json:"provider_attempts"`
-	AnalyticsProviderStatus      string   `json:"analytics_provider_status"`
-	AnalyticsProviderLatencyMS   uint32   `json:"analytics_provider_latency_ms"`
-	AnalyticsTimeToFirstOutputMS *uint32  `json:"analytics_time_to_first_output_ms"`
-	AnalyticsProviders           []string `json:"analytics_providers"`
-	AnalyticsProviderStatuses    []string `json:"analytics_provider_statuses"`
-	StogasProcessingSuccess      uint8    `json:"stogas_processing_success"`
-	StogasBillingStatus          string   `json:"stogas_billing_status"`
-	NodeID                       string   `json:"node_id"`
-	TotalTimeMS                  uint32   `json:"total_time_ms"`
-	UpstreamCostUSDAtoms         string   `json:"upstream_cost_usd_atoms"`
-	BilledCostUSDAtoms           string   `json:"billed_cost_usd_atoms"`
-	AnalyticsUpstreamByok        []string `json:"analytics_upstream_byok"`
-	Pricing                      string   `json:"pricing"`
-	AnalyticsInputTokens         uint64   `json:"analytics_input_tokens"`
-	AnalyticsCachedInputTokens   uint64   `json:"analytics_cached_input_tokens"`
-	AnalyticsCacheWriteTokens    uint64   `json:"analytics_cache_write_input_tokens"`
-	AnalyticsOutputTokens        uint64   `json:"analytics_output_tokens"`
-	AnalyticsReasoningTokens     uint64   `json:"analytics_reasoning_tokens"`
-	GatewayVersion               string   `json:"gateway_version"`
-	CatalogNodeIDs               string   `json:"catalog_node_ids"`
+	RequestID                       string   `json:"request_id"`
+	CreatedAt                       string   `json:"created_at"`
+	StogasAPIKeyID                  string   `json:"stogas_api_key_id"`
+	StogasGrantID                   *string  `json:"stogas_grant_id"`
+	StogasUserID                    string   `json:"stogas_user_id"`
+	StogasOrganizationID            string   `json:"stogas_organization_id"`
+	StogasWorkspaceID               string   `json:"stogas_workspace_id"`
+	RequestType                     string   `json:"request_type"`
+	Cancelled                       uint8    `json:"cancelled"`
+	ClientStopMS                    *uint32  `json:"client_stop_ms"`
+	CatalogDigest                   string   `json:"catalog_digest"`
+	ProviderAttempts                string   `json:"provider_attempts"`
+	AnalyticsProviderStatus         string   `json:"analytics_provider_status"`
+	AnalyticsProviderOutputObserved uint8    `json:"analytics_provider_output_observed"`
+	AnalyticsProviderLatencyMS      uint32   `json:"analytics_provider_latency_ms"`
+	AnalyticsProviders              []string `json:"analytics_providers"`
+	AnalyticsProviderStatuses       []string `json:"analytics_provider_statuses"`
+	StogasProcessingSuccess         uint8    `json:"stogas_processing_success"`
+	StogasBillingStatus             string   `json:"stogas_billing_status"`
+	NodeID                          string   `json:"node_id"`
+	TotalTimeMS                     uint32   `json:"total_time_ms"`
+	TTFTMS                          *uint32  `json:"ttft_ms"`
+	UpstreamCostUSDAtoms            string   `json:"upstream_cost_usd_atoms"`
+	BilledCostUSDAtoms              string   `json:"billed_cost_usd_atoms"`
+	CacheReadSavingsUSDAtoms        *string  `json:"cache_read_savings_usd_atoms"`
+	CacheWriteOverheadUSDAtoms      *string  `json:"cache_write_overhead_usd_atoms"`
+	AnalyticsUpstreamByok           []string `json:"analytics_upstream_byok"`
+	Pricing                         string   `json:"pricing"`
+	Plugins                         string   `json:"plugins"`
+	AnalyticsInputTokens            uint64   `json:"analytics_input_tokens"`
+	AnalyticsCachedInputTokens      uint64   `json:"analytics_cached_input_tokens"`
+	AnalyticsCacheWriteTokens       uint64   `json:"analytics_cache_write_input_tokens"`
+	AnalyticsOutputTokens           uint64   `json:"analytics_output_tokens"`
+	AnalyticsReasoningTokens        uint64   `json:"analytics_reasoning_tokens"`
+	GatewayVersion                  string   `json:"gateway_version"`
+	CatalogNodeIDs                  string   `json:"catalog_node_ids"`
+	HoldParamsHash                  string   `json:"hold_params_hash"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
 	pricingJSON := mustJSONString(event.Pricing, "{}")
+	pluginsJSON := mustJSONString(event.Plugins, `{}`)
 	catalogNodeIDsJSON := mustJSONString(event.CatalogNodeIDs, "[]")
 	processed := uint8(0)
 	if event.StogasProcessingSuccess {
@@ -546,12 +608,16 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		cancelled = 1
 	}
 	providerStatus := ""
-	providerLatencyMS, timeToFirstOutputMS := event.ProviderTiming()
+	providerOutputObserved := uint8(0)
+	providerLatencyMS := event.ProviderDurationMS()
 	upstreamByok := make([]string, 0, len(event.ProviderAttempts))
 	providers := make([]string, 0, len(event.ProviderAttempts))
 	providerStatuses := make([]string, 0, len(event.ProviderAttempts))
 	if finalAttempt, ok := event.FinalProviderAttempt(); ok {
 		providerStatus = finalAttempt.Status
+		if finalAttempt.OutputObserved {
+			providerOutputObserved = 1
+		}
 	}
 	for _, attempt := range event.ProviderAttempts {
 		if provider := strings.TrimSpace(attempt.Provider); provider != "" {
@@ -572,38 +638,43 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 			event.analyticsPricingQuantity(MeterCacheWrite5mInputTokens) +
 			event.analyticsPricingQuantity(MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
-		AnalyticsCachedInputTokens:   event.analyticsPricingQuantity(MeterCachedInputTokens),
-		AnalyticsCacheWriteTokens:    cacheWriteTokens,
-		AnalyticsInputTokens:         event.analyticsPricingQuantity(MeterInputTokens),
-		AnalyticsOutputTokens:        event.analyticsPricingQuantity(MeterOutputTokens),
-		AnalyticsProviderLatencyMS:   providerLatencyMS,
-		AnalyticsProviderStatus:      providerStatus,
-		AnalyticsProviders:           providers,
-		AnalyticsProviderStatuses:    providerStatuses,
-		AnalyticsReasoningTokens:     event.analyticsPricingQuantity(MeterReasoningTokens),
-		AnalyticsTimeToFirstOutputMS: timeToFirstOutputMS,
-		AnalyticsUpstreamByok:        upstreamByok,
-		Cancelled:                    cancelled,
-		ClientStopMS:                 event.ClientStopMS,
-		CatalogDigest:                strings.TrimSpace(event.CatalogDigest),
-		CreatedAt:                    event.CreatedAt,
-		Pricing:                      pricingJSON,
-		ProviderAttempts:             attemptsJSON,
-		NodeID:                       strings.ToLower(strings.TrimSpace(event.NodeID)),
-		GatewayVersion:               strings.TrimSpace(event.GatewayVersion),
-		RequestID:                    event.RequestID,
-		RequestType:                  event.RequestType,
-		CatalogNodeIDs:               catalogNodeIDsJSON,
-		StogasAPIKeyID:               event.StogasAPIKeyID,
-		StogasProvisioningKeyID:      event.StogasProvisioningKeyID,
-		StogasBillingStatus:          event.StogasBillingStatus,
-		StogasOrganizationID:         event.StogasOrganizationID,
-		StogasProcessingSuccess:      processed,
-		StogasUserID:                 event.StogasUserID,
-		StogasWorkspaceID:            event.StogasWorkspaceID,
-		UpstreamCostUSDAtoms:         event.UpstreamCostUSDAtoms,
-		BilledCostUSDAtoms:           event.BilledCostUSDAtoms,
-		TotalTimeMS:                  event.TotalTimeMS,
+		AnalyticsCachedInputTokens:      event.analyticsPricingQuantity(MeterCachedInputTokens),
+		AnalyticsCacheWriteTokens:       cacheWriteTokens,
+		AnalyticsInputTokens:            event.analyticsPricingQuantity(MeterInputTokens),
+		AnalyticsOutputTokens:           event.analyticsPricingQuantity(MeterOutputTokens),
+		AnalyticsProviderLatencyMS:      providerLatencyMS,
+		AnalyticsProviderStatus:         providerStatus,
+		AnalyticsProviderOutputObserved: providerOutputObserved,
+		AnalyticsProviders:              providers,
+		AnalyticsProviderStatuses:       providerStatuses,
+		AnalyticsReasoningTokens:        event.analyticsPricingQuantity(MeterReasoningTokens),
+		TTFTMS:                          event.TTFTMS,
+		AnalyticsUpstreamByok:           upstreamByok,
+		Cancelled:                       cancelled,
+		ClientStopMS:                    event.ClientStopMS,
+		CatalogDigest:                   strings.TrimSpace(event.CatalogDigest),
+		CreatedAt:                       event.CreatedAt,
+		Pricing:                         pricingJSON,
+		Plugins:                         pluginsJSON,
+		ProviderAttempts:                attemptsJSON,
+		NodeID:                          strings.ToLower(strings.TrimSpace(event.NodeID)),
+		GatewayVersion:                  strings.TrimSpace(event.GatewayVersion),
+		RequestID:                       event.RequestID,
+		RequestType:                     event.RequestType,
+		CatalogNodeIDs:                  catalogNodeIDsJSON,
+		HoldParamsHash:                  event.holdParamsHash,
+		StogasAPIKeyID:                  event.StogasAPIKeyID,
+		StogasGrantID:                   event.StogasGrantID,
+		StogasBillingStatus:             event.StogasBillingStatus,
+		StogasOrganizationID:            event.StogasOrganizationID,
+		StogasProcessingSuccess:         processed,
+		StogasUserID:                    event.StogasUserID,
+		StogasWorkspaceID:               event.StogasWorkspaceID,
+		UpstreamCostUSDAtoms:            event.UpstreamCostUSDAtoms,
+		BilledCostUSDAtoms:              event.BilledCostUSDAtoms,
+		CacheReadSavingsUSDAtoms:        event.CacheReadSavingsUSDAtoms,
+		CacheWriteOverheadUSDAtoms:      event.CacheWriteOverheadUSDAtoms,
+		TotalTimeMS:                     event.TotalTimeMS,
 	}
 }
 

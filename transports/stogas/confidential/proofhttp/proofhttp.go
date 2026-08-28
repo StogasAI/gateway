@@ -13,16 +13,11 @@ import (
 )
 
 const (
-	HeaderProof      = "X-Stogas-Proof"
 	SSECommentPrefix = "stogas "
 )
 
 type SnapshotProvider interface {
 	Current(ctx context.Context) (*quote.Snapshot, error)
-}
-
-type snapshotRefresher interface {
-	Refresh(ctx context.Context) error
 }
 
 type Service struct {
@@ -33,41 +28,21 @@ type Service struct {
 type Input = proof.Input
 
 type Output struct {
-	Headers map[string]string
-	Object  proof.Object
+	JSON   []byte
+	Object proof.Object
 }
 
-// ValidateCatalog requires the active request catalog to match the current quote snapshot.
-// A refresh-capable provider gets one synchronous refresh before the request fails closed.
-func (s *Service) ValidateCatalog(ctx context.Context, catalogDigest string, catalogSequence uint64) error {
+// ValidateCatalog checks that the receipt signer still matches current attested report data.
+// The catalog identity is signed in the receipt and verified against its independent approval.
+func (s *Service) ValidateCatalog(ctx context.Context, catalogDigest string, _ uint64) error {
 	if s == nil {
 		return nil
 	}
 	if catalogDigest == "" {
 		return errors.New("catalog identity is required")
 	}
-	snapshot, err := s.currentValidatedSnapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if snapshot.Payload.Catalog.Digest == catalogDigest && snapshot.Payload.Catalog.Sequence == catalogSequence {
-		return nil
-	}
-	refresher, ok := s.Quotes.(snapshotRefresher)
-	if !ok {
-		return errors.New("active catalog does not match the current quote snapshot")
-	}
-	if err := refresher.Refresh(ctx); err != nil {
-		return err
-	}
-	snapshot, err = s.currentValidatedSnapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if snapshot.Payload.Catalog.Digest != catalogDigest || snapshot.Payload.Catalog.Sequence != catalogSequence {
-		return errors.New("active catalog does not match the current quote snapshot")
-	}
-	return nil
+	_, err := s.currentValidatedSnapshot(ctx)
+	return err
 }
 
 func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
@@ -134,8 +109,8 @@ func (s *Service) outputForPayload(payload proof.Payload) (*Output, error) {
 		return nil, errors.New("response proof exceeds its encoded size limit")
 	}
 	return &Output{
-		Headers: map[string]string{HeaderProof: base64.RawURLEncoding.EncodeToString(encoded)},
-		Object:  object,
+		JSON:   encoded,
+		Object: object,
 	}, nil
 }
 
@@ -173,7 +148,7 @@ func newStream(input Input) (*Stream, error) {
 	if input.Metadata.Catalog.Digest == "" {
 		return nil, errors.New("catalog digest is required")
 	}
-	if !proof.ValidCatalogNodeIDs(input.Metadata.Catalog.NodeIDs) {
+	if !proof.ValidCatalogSelectionIDs(input.Metadata.Catalog.SelectionIDs) {
 		return nil, errors.New("all five resolved catalog nodes are required")
 	}
 	streamingInput := proof.StreamingInput{
@@ -206,6 +181,7 @@ func (svc *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, 
 	payload := stream.hasher.FinalPayload()
 	if !proof.ValidMetadata(proof.Metadata{
 		RequestID:            payload.RequestID,
+		CreatedAt:            payload.CreatedAt,
 		NodeID:               payload.NodeID,
 		Catalog:              payload.Catalog,
 		Pricing:              payload.Pricing,

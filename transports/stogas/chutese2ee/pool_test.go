@@ -1,6 +1,7 @@
 package chutese2ee
 
 import (
+	"context"
 	"crypto/mlkem"
 	"encoding/base64"
 	"encoding/json"
@@ -187,7 +188,7 @@ func TestColdBurstCanUseTwoDiscoveryBatches(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			ticket, reserveErr := state.reserve(testModelTarget)
+			ticket, reserveErr := state.reserve(t.Context(), testModelTarget)
 			if reserveErr != nil {
 				errorsFound <- reserveErr
 				return
@@ -215,6 +216,32 @@ func TestColdBurstCanUseTwoDiscoveryBatches(t *testing.T) {
 	if got := discoveryCalls.Load(); got != 2 {
 		t.Fatalf("discovery calls = %d, want 2", got)
 	}
+}
+
+func TestTicketReservationStopsWaitingAtRequestDeadline(t *testing.T) {
+	state := newPoolState(nil, nil, &diagnostics{})
+	defer state.close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	flight := state.refills.DoChan(modelTargetKey(testModelTarget), func() (any, error) {
+		close(started)
+		<-release
+		return nil, nil
+	})
+	<-started
+
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	_, err := state.reserve(ctx, testModelTarget)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reservation error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
+		t.Fatalf("reservation deadline took %s, want a bounded wait", elapsed)
+	}
+	close(release)
+	<-flight
 }
 
 func TestTicketReservationUsesRoundRobinAcrossVerifiedInstances(t *testing.T) {
@@ -557,7 +584,7 @@ func TestColdReservationWaitsForShortTransientRefillBackoff(t *testing.T) {
 	}
 
 	started := time.Now()
-	ticket, err := state.reserve(testModelTarget)
+	ticket, err := state.reserve(t.Context(), testModelTarget)
 	if err != nil || ticket.Value != strings.Repeat("R", 32) {
 		t.Fatalf("reserve after short backoff: ticket=%#v error=%v", ticket, err)
 	}

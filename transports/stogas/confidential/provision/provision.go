@@ -32,12 +32,19 @@ type Client struct {
 }
 
 type HeartbeatInput struct {
-	CertExpiresAt time.Time
-	Health        NodeHealth
-	NodeID        string
-	ObservedAt    time.Time
-	Quote         *quote.Snapshot
-	SigningKey    ed25519.PrivateKey
+	ActiveCertSHA256 string
+	Catalog          CatalogIdentity
+	CertExpiresAt    time.Time
+	Health           NodeHealth
+	NodeID           string
+	ObservedAt       time.Time
+	Quote            *quote.Snapshot
+	SigningKey       ed25519.PrivateKey
+}
+
+type CatalogIdentity struct {
+	Digest   string `json:"digest"`
+	Sequence uint64 `json:"sequence"`
 }
 
 type NodeHealth struct {
@@ -147,6 +154,13 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 	if input.CertExpiresAt.IsZero() {
 		return nil, errors.New("heartbeat cert expiry is required")
 	}
+	if !isLowerHash(input.ActiveCertSHA256) {
+		return nil, errors.New("heartbeat active certificate hash is invalid")
+	}
+	if !strings.HasPrefix(input.Catalog.Digest, "sha256:") ||
+		!isLowerHash(strings.TrimPrefix(input.Catalog.Digest, "sha256:")) {
+		return nil, errors.New("heartbeat catalog digest is invalid")
+	}
 	if input.ObservedAt.IsZero() {
 		input.ObservedAt = time.Now().UTC()
 	}
@@ -155,7 +169,9 @@ func (c Client) SendHeartbeat(ctx context.Context, input HeartbeatInput) (*Heart
 		return nil, err
 	}
 	body := map[string]any{
+		"active_cert_sha256": input.ActiveCertSHA256,
 		"cert_expires_at":    formatTime(input.CertExpiresAt),
+		"catalog":            input.Catalog,
 		"health":             input.Health,
 		"node_id":            input.NodeID,
 		"observed_at":        formatTime(input.ObservedAt),
@@ -390,6 +406,9 @@ func parseCertificateInstruction(input *certificateInstructionJSON) (*Certificat
 	case "install_renewed_chain", "install_active_chain":
 		if strings.TrimSpace(instruction.CertChainPEM) == "" {
 			return nil, errors.New("control certificate install instruction missing certificate chain")
+		}
+		if len(instruction.DNSNames) == 0 {
+			return nil, errors.New("control certificate install instruction missing DNS names")
 		}
 		if !isLowerHash(instruction.NewCertSHA256) {
 			return nil, errors.New("control certificate install instruction has invalid new certificate hash")

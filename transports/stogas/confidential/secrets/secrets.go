@@ -20,6 +20,14 @@ const (
 	hpkeTagSize           = 16
 )
 
+var (
+	ErrInvalidReleaseContents = errors.New("confidential secret release contents are invalid")
+	ErrInvalidReleaseEncoding = errors.New("confidential secret release encoding is invalid")
+	ErrInvalidReleaseIdentity = errors.New("confidential secret release identity is invalid")
+	ErrReleaseAuthentication  = errors.New("confidential secret release authentication failed")
+	ErrReleaseBindingMismatch = errors.New("confidential secret release binding mismatch")
+)
+
 type Store struct {
 	mu      sync.RWMutex
 	secrets map[string]Secret
@@ -52,7 +60,7 @@ func NewStore() *Store {
 
 func (s *Store) Install(input InstallInput) error {
 	if s == nil {
-		return errors.New("secret store is nil")
+		return fmt.Errorf("%w: secret store is nil", ErrInvalidReleaseContents)
 	}
 	secrets, err := DecryptRelease(input)
 	if err != nil {
@@ -61,19 +69,19 @@ func (s *Store) Install(input InstallInput) error {
 	next := make(map[string]Secret, len(secrets))
 	for _, secret := range secrets {
 		if _, exists := next[secret.Name]; exists {
-			return fmt.Errorf("secret release contains duplicate secret %s", secret.Name)
+			return fmt.Errorf("%w: secret release contains duplicate secret %s", ErrInvalidReleaseContents, secret.Name)
 		}
 		next[secret.Name] = secret
 	}
 	for _, name := range requiredSecretNames {
 		if _, ok := next[name]; !ok {
-			return fmt.Errorf("secret release is missing required secret %s", name)
+			return fmt.Errorf("%w: secret release is missing required secret %s", ErrInvalidReleaseContents, name)
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.secrets) > 0 {
-		return errors.New("runtime configuration is already installed; replace the guest to apply changes")
+		return fmt.Errorf("%w: runtime configuration is already installed; replace the guest to apply changes", ErrInvalidReleaseContents)
 	}
 	s.secrets = next
 	return nil
@@ -122,20 +130,20 @@ func (s *Store) Get(name string) (Secret, bool) {
 
 func DecryptRelease(input InstallInput) ([]Secret, error) {
 	if input.Identity == nil || input.Identity.HPKEPrivateKey == nil {
-		return nil, errors.New("identity HPKE private key is required")
+		return nil, fmt.Errorf("%w: identity HPKE private key is required", ErrInvalidReleaseIdentity)
 	}
 	if input.Bundle == nil {
-		return nil, errors.New("secret release is required")
+		return nil, fmt.Errorf("%w: secret release is required", ErrInvalidReleaseContents)
 	}
 	out := make([]Secret, 0, len(input.Bundle.Secrets))
 	for _, encrypted := range input.Bundle.Secrets {
 		aad, err := secretReleaseAAD(input.Bundle, encrypted)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %w", ErrReleaseBindingMismatch, err)
 		}
 		sum := sha256.Sum256(aad)
 		if hex.EncodeToString(sum[:]) != encrypted.AADSHA256 {
-			return nil, fmt.Errorf("secret %s AAD hash mismatch", encrypted.Name)
+			return nil, fmt.Errorf("%w: secret %s AAD hash mismatch", ErrReleaseBindingMismatch, encrypted.Name)
 		}
 		plaintext, err := decryptSecret(input.Identity.HPKEPrivateKey, encrypted, aad)
 		if err != nil {
@@ -149,7 +157,7 @@ func DecryptRelease(input InstallInput) ([]Secret, error) {
 		})
 	}
 	if len(out) == 0 {
-		return nil, errors.New("secret release contained no secrets")
+		return nil, fmt.Errorf("%w: secret release contained no secrets", ErrInvalidReleaseContents)
 	}
 	return out, nil
 }
@@ -157,17 +165,17 @@ func DecryptRelease(input InstallInput) ([]Secret, error) {
 func decryptSecret(privateKey hpke.PrivateKey, encrypted provision.SecretCiphertext, aad []byte) ([]byte, error) {
 	encapsulated, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.EncapsulatedKey)
 	if err != nil {
-		return nil, fmt.Errorf("decode encapsulated key: %w", err)
+		return nil, fmt.Errorf("%w: decode encapsulated key: %w", ErrInvalidReleaseEncoding, err)
 	}
 	if len(encapsulated) != hpkeEncapsulationSize {
-		return nil, errors.New("encapsulated key has an invalid length")
+		return nil, fmt.Errorf("%w: encapsulated key has an invalid length", ErrInvalidReleaseEncoding)
 	}
 	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.Ciphertext)
 	if err != nil {
-		return nil, fmt.Errorf("decode ciphertext: %w", err)
+		return nil, fmt.Errorf("%w: decode ciphertext: %w", ErrInvalidReleaseEncoding, err)
 	}
 	if len(ciphertext) < hpkeTagSize {
-		return nil, errors.New("ciphertext is too short")
+		return nil, fmt.Errorf("%w: ciphertext is too short", ErrInvalidReleaseEncoding)
 	}
 	recipient, err := hpke.NewRecipient(
 		encapsulated,
@@ -177,11 +185,11 @@ func decryptSecret(privateKey hpke.PrivateKey, encrypted provision.SecretCiphert
 		[]byte(hpkeInfo),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("initialize HPKE recipient: %w", err)
+		return nil, fmt.Errorf("%w: initialize HPKE recipient: %w", ErrInvalidReleaseEncoding, err)
 	}
 	plaintext, err := recipient.Open(aad, ciphertext)
 	if err != nil {
-		return nil, errors.New("HPKE ciphertext authentication failed")
+		return nil, fmt.Errorf("%w: HPKE ciphertext authentication failed", ErrReleaseAuthentication)
 	}
 	return plaintext, nil
 }

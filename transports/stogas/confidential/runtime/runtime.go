@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -77,6 +78,10 @@ type ControlDiagnostics struct {
 	LastSuccessAt       *time.Time `json:"last_success_at"`
 }
 
+type startOptions struct {
+	certificateRoots *x509.CertPool
+}
+
 type entropyWaiter func(context.Context, time.Duration) error
 
 func waitForSystemEntropy(ctx context.Context, timeout time.Duration) error {
@@ -95,11 +100,18 @@ const localQuoteReadyWindow = 45 * time.Second
 const maxConsecutiveQuoteRefreshFailures = 2
 const runtimeDependencyTimeout = time.Second
 
+var (
+	ErrCertificateInstruction    = errors.New("confidential certificate instruction failed")
+	ErrHeartbeatConfirmation     = errors.New("confidential heartbeat confirmation failed")
+	ErrHeartbeatExchange         = errors.New("confidential heartbeat exchange failed")
+	ErrSecretReleaseInstallation = errors.New("confidential secret release installation failed")
+)
+
 func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
 	return start(ctx, config, waitForSystemEntropy)
 }
 
-func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy entropyWaiter) (*Runtime, error) {
+func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy entropyWaiter, options ...startOptions) (*Runtime, error) {
 	if !config.Enabled {
 		return nil, nil
 	}
@@ -118,7 +130,11 @@ func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy
 	if err != nil {
 		return nil, err
 	}
-	certs, err := newCertificateStore(material, config)
+	var certificateRoots *x509.CertPool
+	if len(options) > 0 {
+		certificateRoots = options[0].certificateRoots
+	}
+	certs, err := newCertificateStore(material, config, certificateRoots)
 	if err != nil {
 		return nil, err
 	}
@@ -138,18 +154,9 @@ func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy
 		if err != nil {
 			return reportdata.Payload{}, err
 		}
-		activeCatalog, ok := catalog.ActiveIdentity()
-		if !ok {
-			return reportdata.Payload{}, errors.New("active catalog identity is unavailable")
-		}
 		certState := certs.State()
 		return reportdata.NewPayload(reportdata.Payload{
-			Catalog: reportdata.CatalogIdentity{
-				Digest:   activeCatalog.Digest,
-				Sequence: activeCatalog.Sequence,
-			},
 			TLSSPKISHA256:      material.TLSSPKISHA256,
-			ActiveCertSHA256:   certState.ActiveCertSHA256,
 			AcceptedCertSHA256: append([]string(nil), certState.AcceptedCertSHA256...),
 			HPKEPublicKey:      material.HPKEPublicKey,
 			Ed25519PublicKey:   material.Ed25519PublicKey,
@@ -210,15 +217,16 @@ func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy
 	}, nil
 }
 
-func newCertificateStore(material *identity.Material, config stogas.ConfidentialConfig) (*identity.CertificateStore, error) {
+func newCertificateStore(material *identity.Material, config stogas.ConfidentialConfig, certificateRoots *x509.CertPool) (*identity.CertificateStore, error) {
 	if strings.TrimSpace(config.ActiveCertSHA256) == "" && len(config.AcceptedCertSHA256) == 0 && config.CertExpiresAt.IsZero() {
-		return identity.NewProvisionalCertificateStore(material, time.Now().UTC())
+		return identity.NewProvisionalCertificateStore(material, time.Now().UTC(), certificateRoots)
 	}
 	return identity.NewCertificateStore(
 		material,
 		config.ActiveCertSHA256,
 		config.AcceptedCertSHA256,
 		config.CertExpiresAt,
+		certificateRoots,
 	)
 }
 
@@ -384,8 +392,9 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 		if provision.IsAuthoritativeRejection(err) {
 			l.revokeAdmission()
 		}
-		attemptErr = err
-		return err
+		wrapped := fmt.Errorf("%w: %w", ErrHeartbeatExchange, err)
+		attemptErr = wrapped
+		return wrapped
 	}
 	if response.Shutdown {
 		return nil
@@ -397,8 +406,9 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 			Identity: l.identity,
 		}); err != nil {
 			l.recordSecretError(err)
-			attemptErr = err
-			return err
+			wrapped := fmt.Errorf("%w: %w", ErrSecretReleaseInstallation, err)
+			attemptErr = wrapped
+			return wrapped
 		}
 		l.recordSecretError(nil)
 		changed = true
@@ -406,14 +416,16 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	certificateChanged, err := l.handleCertificateInstruction(ctx, response.CertificateInstruction)
 	if err != nil {
 		l.recordCertificateError(err)
-		attemptErr = err
-		return err
+		wrapped := fmt.Errorf("%w: %w", ErrCertificateInstruction, err)
+		attemptErr = wrapped
+		return wrapped
 	}
 	changed = changed || certificateChanged
 	if changed {
 		if _, err := l.sendHeartbeatOnce(ctx); err != nil {
-			attemptErr = err
-			return err
+			wrapped := fmt.Errorf("%w: %w", ErrHeartbeatConfirmation, err)
+			attemptErr = wrapped
+			return wrapped
 		}
 	}
 	l.recordCertificateError(nil)
@@ -436,8 +448,18 @@ func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.Heartbe
 	if nodeID == "" {
 		nodeID = l.candidateNodeID
 	}
+	activeCatalog, ok := catalog.ActiveIdentity()
+	if !ok {
+		return nil, errors.New("active catalog identity is unavailable")
+	}
+	certState := l.certs.State()
 	input := provision.HeartbeatInput{
-		CertExpiresAt: l.certs.State().ExpiresAt,
+		ActiveCertSHA256: certState.ActiveCertSHA256,
+		Catalog: provision.CatalogIdentity{
+			Digest:   activeCatalog.Digest,
+			Sequence: activeCatalog.Sequence,
+		},
+		CertExpiresAt: certState.ExpiresAt,
 		Health: provision.NodeHealth{
 			LastQuoteFailureClass: quoteFailureClass(l.quotes.LastError()),
 			Ready:                 l.localReadinessResultAt(time.Now()).Ready,
@@ -502,7 +524,11 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 		if current.ActiveCertSHA256 == instruction.NewCertSHA256 && containsString(current.AcceptedCertSHA256, instruction.NewCertSHA256) {
 			return false, nil
 		}
-		state, err := l.certs.StageRenewedChain([]byte(instruction.CertChainPEM))
+		state, err := l.certs.StageRenewedChain(identity.CertificateChainInput{
+			ChainPEM:       []byte(instruction.CertChainPEM),
+			DNSNames:       instruction.DNSNames,
+			ExpectedSHA256: instruction.NewCertSHA256,
+		})
 		if err != nil {
 			return false, fmt.Errorf("stage renewed certificate chain: %w", err)
 		}
@@ -518,14 +544,18 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 		if current.ActiveCertSHA256 == instruction.NewCertSHA256 && len(current.AcceptedCertSHA256) == 1 && current.AcceptedCertSHA256[0] == instruction.NewCertSHA256 {
 			return false, nil
 		}
-		state, err := l.certs.InstallActiveChainWithExpectedHash([]byte(instruction.CertChainPEM), instruction.NewCertSHA256)
+		state, err := l.certs.InstallActiveChain(identity.CertificateChainInput{
+			ChainPEM:       []byte(instruction.CertChainPEM),
+			DNSNames:       instruction.DNSNames,
+			ExpectedSHA256: instruction.NewCertSHA256,
+		})
 		if err != nil {
 			return false, fmt.Errorf("install active certificate chain: %w", err)
 		}
 		if state.ActiveCertSHA256 != instruction.NewCertSHA256 || len(state.AcceptedCertSHA256) != 1 || state.AcceptedCertSHA256[0] != instruction.NewCertSHA256 {
 			return false, errors.New("installed active certificate state did not match control instruction")
 		}
-		if err := l.refreshQuoteAfterCertificateChange(ctx); err != nil {
+		if err := l.replaceQuoteAfterCertificateChange(ctx); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -540,16 +570,13 @@ func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruct
 		if state.ActiveCertSHA256 != instruction.CertSHA256 {
 			return false, errors.New("active certificate hash did not match control instruction")
 		}
-		if err := l.refreshQuoteAfterCertificateChange(ctx); err != nil {
-			return false, err
-		}
 		return true, nil
 	case "prune_accepted":
 		before := l.certs.State()
 		if before.ActiveCertSHA256 != instruction.ActiveCertSHA256 {
 			return false, errors.New("cannot prune accepted certificates for non-active control hash")
 		}
-		state, err := l.certs.PruneAcceptedToActive()
+		state, err := l.certs.PruneAcceptedToActive(instruction.ActiveCertSHA256)
 		if err != nil {
 			return false, fmt.Errorf("prune accepted certificates: %w", err)
 		}
@@ -576,6 +603,14 @@ func (l *ControlLoop) refreshQuoteAfterCertificateChange(ctx context.Context) er
 		return fmt.Errorf("refresh quote after certificate state change: %w", err)
 	}
 	return nil
+}
+
+func (l *ControlLoop) replaceQuoteAfterCertificateChange(ctx context.Context) error {
+	if l == nil || l.quotes == nil {
+		return errors.New("confidential quote manager is not initialized")
+	}
+	l.quotes.Invalidate()
+	return l.refreshQuoteAfterCertificateChange(ctx)
 }
 
 func (l *ControlLoop) readinessResult() readiness.Result {

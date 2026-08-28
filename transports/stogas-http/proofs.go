@@ -1,6 +1,8 @@
 package stogashttp
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -23,7 +25,7 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 		})
 		return
 	}
-	if wantsExtraFields(bifrostCtx) {
+	if wantsReceipt(bifrostCtx) {
 		if s.proofs == nil {
 			s.writeProofError(ctx)
 			return
@@ -38,7 +40,11 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 			s.writeProofError(ctx)
 			return
 		}
-		applyProofHeaders(ctx, output)
+		data, err = appendStogasReceipt(data, output.JSON)
+		if err != nil {
+			s.writeProofError(ctx)
+			return
+		}
 	}
 	ctx.SetStatusCode(statusCode)
 	ctx.SetContentType("application/json")
@@ -46,7 +52,7 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 }
 
 func (s *Server) newStreamProof(requestCtx *fasthttp.RequestCtx, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
-	if !wantsExtraFields(ctx) {
+	if !wantsReceipt(ctx) {
 		return nil, nil
 	}
 	if s.proofs == nil {
@@ -82,11 +88,12 @@ func proofMetadata(state *stogas.State, transcriptSHA256 string) proof.Metadata 
 	executionDeployment := stogas.ExecutionDeployment(state)
 	return proof.Metadata{
 		RequestID: state.RequestID,
+		CreatedAt: proofCreatedAt(state.FinalEvent),
 		NodeID:    state.NodeID,
 		Catalog: proof.Catalog{
-			Digest:   catalogIdentity.Digest,
-			Sequence: catalogIdentity.Sequence,
-			NodeIDs:  state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
+			Digest:       catalogIdentity.Digest,
+			Sequence:     catalogIdentity.Sequence,
+			SelectionIDs: state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
 		},
 		Pricing:              proofPricing(state.FinalEvent),
 		Timing:               proofTiming(state.FinalEvent),
@@ -121,18 +128,35 @@ func proofTiming(event *billing.RequestEvent) proof.Timing {
 	if event == nil {
 		return proof.Timing{}
 	}
-	result := proof.Timing{TotalMS: event.TotalTimeMS}
-	result.ProviderMS, result.TimeToFirstOutputMS = event.ProviderTiming()
+	result := proof.Timing{
+		TotalMS:    event.TotalTimeMS,
+		ProviderMS: event.ProviderDurationMS(),
+		TTFTMS:     event.TTFTMS,
+	}
 	return result
 }
 
-func applyProofHeaders(ctx *fasthttp.RequestCtx, output *proofhttp.Output) {
-	if output == nil {
-		return
+func proofCreatedAt(event *billing.RequestEvent) string {
+	if event == nil {
+		return ""
 	}
-	for key, value := range output.Headers {
-		ctx.Response.Header.Set(key, value)
+	return event.CreatedAt
+}
+
+func appendStogasReceipt(responseJSON, receiptJSON []byte) ([]byte, error) {
+	if len(responseJSON) < 2 || responseJSON[0] != '{' || responseJSON[len(responseJSON)-1] != '}' ||
+		!json.Valid(responseJSON) || len(receiptJSON) == 0 || len(receiptJSON) > proof.MaxObjectBytes || !json.Valid(receiptJSON) {
+		return nil, errors.New("response proof JSON is invalid")
 	}
+	separator := []byte(`,"stogas":`)
+	if bytes.Equal(responseJSON, []byte("{}")) {
+		separator = []byte(`"stogas":`)
+	}
+	result := make([]byte, 0, len(responseJSON)+len(separator)+len(receiptJSON))
+	result = append(result, responseJSON[:len(responseJSON)-1]...)
+	result = append(result, separator...)
+	result = append(result, receiptJSON...)
+	return append(result, '}'), nil
 }
 
 func (s *Server) writeProofError(ctx *fasthttp.RequestCtx) {

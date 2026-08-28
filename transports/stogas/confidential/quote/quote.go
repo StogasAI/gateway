@@ -152,6 +152,17 @@ func (m *Manager) ConsecutiveFailures() int {
 	return m.failures
 }
 
+// Invalidate removes a quote after data bound into report_data changes. A failed refresh must not
+// leave the old quote available for readiness or the next heartbeat.
+func (m *Manager) Invalidate() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.current = nil
+	m.mu.Unlock()
+}
+
 func (m *Manager) recordErr(err error) {
 	m.mu.Lock()
 	m.lastErr = err
@@ -168,7 +179,7 @@ func cloneSnapshot(snapshot *Snapshot) *Snapshot {
 		return nil
 	}
 	out := *snapshot
-	out.Payload.AcceptedCertSHA256 = append([]string(nil), snapshot.Payload.AcceptedCertSHA256...)
+	out.Payload.AcceptedCertSHA256 = append([]string{}, snapshot.Payload.AcceptedCertSHA256...)
 	out.Quote = append([]byte(nil), snapshot.Quote...)
 	return &out
 }

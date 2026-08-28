@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -71,6 +72,23 @@ func TestCheckFirstStreamChunk_ValidFirstChunk(t *testing.T) {
 	if ok {
 		t.Error("expected wrapped channel to be closed")
 	}
+}
+
+func TestCheckFirstStreamChunk_DefaultBufferKeepsBackpressure(t *testing.T) {
+	stream := make(chan *schemas.BifrostStreamChunk, schemas.DefaultStreamBufferSize)
+	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{ID: "first"}}
+	close(stream)
+
+	wrapped, drainDone, err := CheckFirstStreamChunkForError(context.Background(), stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cap(wrapped); got != 1 {
+		t.Fatalf("wrapped stream capacity = %d, want 1", got)
+	}
+	for range wrapped {
+	}
+	<-drainDone
 }
 
 func TestCheckFirstStreamChunk_EmptyStream(t *testing.T) {
@@ -238,7 +256,7 @@ func TestAttachBilledUsageFromContext_KeepsUsageWithOnlyDetails(t *testing.T) {
 	ctx.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, usage)
 
 	bifrostErr := &schemas.BifrostError{}
-	attachBilledUsageFromContext(ctx, bifrostErr)
+	AttachBilledUsageFromContext(ctx, bifrostErr)
 
 	if bifrostErr.ExtraFields.BilledUsage == nil {
 		t.Fatal("BilledUsage should be attached when cache details are present")
@@ -264,7 +282,7 @@ func TestAttachBilledUsageFromContext_CopiesUsage(t *testing.T) {
 	ctx.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, usage)
 
 	bifrostErr := &schemas.BifrostError{}
-	attachBilledUsageFromContext(ctx, bifrostErr)
+	AttachBilledUsageFromContext(ctx, bifrostErr)
 
 	// Mutating the original (top-level AND nested pointers) must not change the
 	// billed snapshot - BilledUsage is meant to be a fully decoupled record.
@@ -288,9 +306,93 @@ func TestAttachBilledUsageFromContext_NoOpWhenEmpty(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, &schemas.BifrostLLMUsage{})
 	bifrostErr := &schemas.BifrostError{}
-	attachBilledUsageFromContext(ctx, bifrostErr)
+	AttachBilledUsageFromContext(ctx, bifrostErr)
 	if bifrostErr.ExtraFields.BilledUsage != nil {
 		t.Fatal("BilledUsage should stay nil when nothing measurable accumulated")
+	}
+}
+
+func TestProcessAndSendErrorKeepsObservedUsageAndStopsRetries(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyStreamAccumulatedUsage, &schemas.BifrostLLMUsage{
+		PromptTokens:     11,
+		CompletionTokens: 3,
+		TotalTokens:      14,
+	})
+	responseChan := make(chan *schemas.BifrostStreamChunk, 1)
+	postHook := func(
+		_ *schemas.BifrostContext,
+		response *schemas.BifrostResponse,
+		bifrostErr *schemas.BifrostError,
+	) (*schemas.BifrostResponse, *schemas.BifrostError) {
+		return response, bifrostErr
+	}
+
+	ProcessAndSendError(ctx, postHook, errors.New("connection reset"), responseChan, nil, nil)
+	chunk := <-responseChan
+	if chunk == nil || chunk.BifrostError == nil {
+		t.Fatal("expected a stream error chunk")
+	}
+	bifrostErr := chunk.BifrostError
+	if !bifrostErr.IsBifrostError {
+		t.Fatal("ambiguous stream read errors must stop automatic retries")
+	}
+	if bifrostErr.AllowFallbacks == nil || *bifrostErr.AllowFallbacks {
+		t.Fatal("ambiguous stream read errors must stop provider fallbacks")
+	}
+	if bifrostErr.StatusCode == nil || *bifrostErr.StatusCode != 502 ||
+		bifrostErr.Error == nil || bifrostErr.Error.Type == nil ||
+		*bifrostErr.Error.Type != schemas.ProviderConnectionFailed {
+		t.Fatalf("unexpected normalized stream error: %#v", bifrostErr)
+	}
+	if billed := bifrostErr.ExtraFields.BilledUsage; billed == nil ||
+		billed.PromptTokens != 11 || billed.CompletionTokens != 3 || billed.TotalTokens != 14 {
+		t.Fatalf("observed stream usage was not preserved: %#v", billed)
+	}
+}
+
+func TestStreamTerminationErrorsBlockRetryAndFallback(t *testing.T) {
+	postHook := func(
+		_ *schemas.BifrostContext,
+		response *schemas.BifrostResponse,
+		bifrostErr *schemas.BifrostError,
+	) (*schemas.BifrostResponse, *schemas.BifrostError) {
+		return response, bifrostErr
+	}
+	tests := []struct {
+		name string
+		run  func(*schemas.BifrostContext, chan *schemas.BifrostStreamChunk)
+	}{
+		{
+			name: "client cancellation",
+			run: func(ctx *schemas.BifrostContext, responseChan chan *schemas.BifrostStreamChunk) {
+				HandleStreamCancellation(ctx, postHook, responseChan, nil, nil, nil)
+			},
+		},
+		{
+			name: "provider timeout",
+			run: func(ctx *schemas.BifrostContext, responseChan chan *schemas.BifrostStreamChunk) {
+				HandleStreamTimeout(ctx, postHook, responseChan, nil, nil, nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			responseChan := make(chan *schemas.BifrostStreamChunk, 1)
+			tt.run(ctx, responseChan)
+			chunk := <-responseChan
+			if chunk == nil || chunk.BifrostError == nil {
+				t.Fatal("expected a stream error chunk")
+			}
+			if !chunk.BifrostError.IsBifrostError {
+				t.Fatal("stream termination must stop the core retry loop")
+			}
+			if chunk.BifrostError.AllowFallbacks == nil || *chunk.BifrostError.AllowFallbacks {
+				t.Fatal("stream termination must stop provider fallbacks")
+			}
+		})
 	}
 }
 

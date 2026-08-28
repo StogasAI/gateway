@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,16 +25,19 @@ const (
 	settleRetryWindow          = 90 * time.Second
 	settleRetryInitialDelay    = 250 * time.Millisecond
 	settleRetryMaxDelay        = 5 * time.Second
-	maxConcurrentSettleRetries = 64
+	settleRetryWorkerCount     = 64
+	settleRetryQueueCapacity   = 8192
 	holdSettlementExpiryBuffer = 10 * time.Minute
 
-	// GatewayRequestLifetime bounds direct inference streams so reconciliation never races a live request.
+	// GatewayRequestLifetime bounds direct inference so reconciliation never races a live request.
 	GatewayRequestLifetime = 60 * time.Minute
+	ManagedUpstreamByok    = "stogas"
 )
 
 var (
 	ErrAPIKeyDisabled      = errors.New("API key is disabled")
 	ErrAPIKeyExpired       = errors.New("API key is expired")
+	ErrGrantDisabled       = errors.New("grant is disabled")
 	ErrInvalidAPIKey       = errors.New("invalid API key")
 	ErrRequestAlreadyUsed  = errors.New("request already finalized; generate a new requestId")
 	ErrAuthorizationClosed = errors.New("authorization already completed; generate a new requestId")
@@ -62,7 +68,7 @@ const authorizeHoldArguments = `
   $10::timestamptz,
   $11::text,
   $12::jsonb,
-  $13::uuid,
+  $13::text,
   $14::boolean
 `
 
@@ -77,45 +83,44 @@ const settleHoldArguments = `
 `
 
 type authorizeRow struct {
-	Result                 string
-	HoldID                 *string
-	UserID                 *string
-	KeyID                  *string
-	ProvisioningKeyID      *string
-	OrganizationID         *string
-	WorkspaceID            *string
-	AuthorizedAmount       *string
-	CreatedAt              *time.Time
-	ExpiresAt              *time.Time
-	AvailableAfter         *string
-	UpstreamByok           *string
-	UpstreamByokCiphertext *string
+	Result                       string
+	HoldID                       *string
+	UserID                       *string
+	KeyID                        *string
+	GrantID                      *string
+	OrganizationID               *string
+	WorkspaceID                  *string
+	AuthorizedBilledCostUSDAtoms *string
+	CreatedAt                    *time.Time
+	ExpiresAt                    *time.Time
+	AvailableBalanceUSDAtoms     *string
+	UpstreamByok                 *string
+	UpstreamByokCiphertext       *string
 }
 
 type settleRow struct {
-	Result         string
-	FinalCost      *string
-	RefundAmount   *string
-	AvailableAfter *string
+	Result                    string
+	BilledCostUSDAtoms        *string
+	BalanceAdjustmentUSDAtoms *string
+	AvailableBalanceUSDAtoms  *string
 }
 
 type Authorization struct {
-	AuthorizedAmount   *big.Int
-	AvailableAfter     *big.Int
-	CreatedAt          time.Time
-	KeyID              string
-	OrganizationID     string
-	ProvisioningKeyID  *string
-	ProductKey         string
-	ProviderKey        string
-	RequestID          string
-	UserID             string
-	WorkspaceID        string
-	UpstreamByok       string
-	UpstreamByokSecret string
-	AzureBinding       *AzureBinding
-	PassthroughByokID  string
-	UpstreamTargetJSON string
+	AuthorizedBilledCostUSDAtoms *big.Int
+	AvailableBalanceUSDAtoms     *big.Int
+	CreatedAt                    time.Time
+	GrantID                      *string
+	KeyID                        string
+	OrganizationID               string
+	ProductKey                   string
+	ProviderKey                  string
+	RequestID                    string
+	UserID                       string
+	WorkspaceID                  string
+	UpstreamByok                 string
+	UpstreamByokSecret           string
+	AzureBinding                 *AzureBinding
+	UpstreamTargetJSON           string
 }
 
 type UpstreamTarget struct {
@@ -177,25 +182,30 @@ func parseAzureBoundCiphertext(raw string) (azureBoundCiphertext, error) {
 }
 
 type passthroughCredential struct {
-	ID     string
+	Hash   string
 	Secret string
 }
 
 type Service struct {
 	db                        *GatewayDB
 	authorizeHoldQuery        string
-	localAuthorizations       localAuthorizationLimiter
+	localAuthorizations       *localAuthorizationLimiter
 	localRequests             localRequestLimiter
+	apiKeys                   verifiedAPIKeyCache
 	rejections                authorizationRejectionCache
 	retryInitialDelay         time.Duration
 	retryMaxDelay             time.Duration
 	retryWindow               time.Duration
-	retryWG                   sync.WaitGroup
 	retryActive               atomic.Int64
 	retryDeferred             atomic.Int64
-	retrySlots                chan struct{}
-	retrySlotsOnce            sync.Once
-	settleFunc                func(context.Context, *Authorization, string, string, string, bool) error
+	retryLastDeferredAt       atomic.Int64
+	retryMu                   sync.Mutex
+	retryQueue                chan settlementRetryTask
+	retryWorkerCount          int
+	retryWorkersStarted       bool
+	retryWorkersWG            sync.WaitGroup
+	retryClosed               bool
+	settleFunc                settleHoldFunc
 	tinybird                  *TinybirdClient
 	settleHoldQuery           string
 	settleHoldWithOutboxQuery string
@@ -204,11 +214,33 @@ type Service struct {
 	byok                      *byokDecryptor
 }
 
+type settlementRetryTask struct {
+	authorization        Authorization
+	holdParamsHash       string
+	upstreamCostUSDAtoms string
+	requestEventPayload  string
+	writeOutbox          bool
+	deadline             time.Time
+}
+
+type settleHoldFunc func(
+	ctx context.Context,
+	authorization *Authorization,
+	holdParamsHash string,
+	upstreamCostUSDAtoms string,
+	requestEventPayload string,
+	writeOutbox bool,
+) error
+
 type DiagnosticsSnapshot struct {
-	Database                 *DatabaseDiagnostics `json:"database,omitempty"`
-	SettlementRetries        int64                `json:"settlementRetries"`
-	SettlementRetryDeferrals int64                `json:"settlementRetryDeferrals"`
-	Tinybird                 *TinybirdDiagnostics `json:"tinybird,omitempty"`
+	Database                      *DatabaseDiagnostics      `json:"database,omitempty"`
+	LocalAdmission                LocalAdmissionDiagnostics `json:"localAdmission"`
+	SettlementRetries             int64                     `json:"settlementRetries"`
+	SettlementRetryDeferrals      int64                     `json:"settlementRetryDeferrals"`
+	SettlementRetryLastDeferredAt *time.Time                `json:"settlementRetryLastDeferredAt,omitempty"`
+	SettlementRetryQueueCapacity  int                       `json:"settlementRetryQueueCapacity"`
+	SettlementRetryQueueDepth     int                       `json:"settlementRetryQueueDepth"`
+	Tinybird                      *TinybirdDiagnostics      `json:"tinybird,omitempty"`
 }
 
 type billingError struct {
@@ -261,6 +293,7 @@ func NewService(
 		db:                        db,
 		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
 		inferenceTokenPublicKey:   publicKey,
+		localAuthorizations:       newLocalAuthorizationLimiter(databasePool.MaxConns),
 		tinybird:                  tinybird,
 		settleHoldQuery:           db.functionQuery("settle_gateway_hold", settleHoldArguments),
 		settleHoldWithOutboxQuery: db.functionQuery("settle_gateway_hold_with_outbox", settleHoldArguments),
@@ -270,7 +303,15 @@ func NewService(
 }
 
 func (s *Service) Close() {
-	s.retryWG.Wait()
+	s.retryMu.Lock()
+	if !s.retryClosed {
+		s.retryClosed = true
+		if s.retryQueue != nil {
+			close(s.retryQueue)
+		}
+	}
+	s.retryMu.Unlock()
+	s.retryWorkersWG.Wait()
 	if s.tinybird != nil {
 		s.tinybird.Close()
 	}
@@ -290,23 +331,58 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 	if s == nil {
 		return DiagnosticsSnapshot{}
 	}
-	return DiagnosticsSnapshot{
-		Database:                 s.db.Diagnostics(),
-		SettlementRetries:        s.retryActive.Load(),
-		SettlementRetryDeferrals: s.retryDeferred.Load(),
-		Tinybird:                 s.tinybird.Diagnostics(),
+	retryQueueDepth, retryQueueCapacity := s.retryQueueDiagnostics()
+	var retryLastDeferredAt *time.Time
+	if unixMilliseconds := s.retryLastDeferredAt.Load(); unixMilliseconds > 0 {
+		value := time.UnixMilli(unixMilliseconds).UTC()
+		retryLastDeferredAt = &value
 	}
+	return DiagnosticsSnapshot{
+		Database:                      s.db.Diagnostics(),
+		LocalAdmission:                localAdmissionDiagnostics(&s.localRequests, s.localAuthorizations, &s.rejections, &s.apiKeys),
+		SettlementRetries:             s.retryActive.Load(),
+		SettlementRetryDeferrals:      s.retryDeferred.Load(),
+		SettlementRetryLastDeferredAt: retryLastDeferredAt,
+		SettlementRetryQueueCapacity:  retryQueueCapacity,
+		SettlementRetryQueueDepth:     retryQueueDepth,
+		Tinybird:                      s.tinybird.Diagnostics(),
+	}
+}
+
+func (s *Service) retryQueueDiagnostics() (int, int) {
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if s.retryQueue == nil {
+		return 0, settleRetryQueueCapacity
+	}
+	return len(s.retryQueue), cap(s.retryQueue)
+}
+
+func (s *Service) parseVerifiedAPIKey(rawAPIKey string) (*APIKeyClaims, string, string, error) {
+	if s == nil || !hasSignedAPIKeyShape(rawAPIKey) {
+		return nil, "", "", errInvalidAPIKeyShape
+	}
+	apiKeyHash := hashAPIKey(rawAPIKey, s.apiKeyPepper)
+	cacheKey := "api:" + apiKeyHash
+	if claims, ok := s.apiKeys.get(cacheKey); ok {
+		return claims, apiKeyHash, cacheKey, nil
+	}
+	claims, err := parseSignedAPIKey(rawAPIKey, s.apiKeyPepper)
+	if err != nil {
+		return nil, "", cacheKey, err
+	}
+	s.apiKeys.put(cacheKey, claims)
+	return claims, apiKeyHash, cacheKey, nil
 }
 
 func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if s == nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
-	claims, err := parseSignedAPIKey(rawAPIKey, s.apiKeyPepper)
+	claims, _, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
-	cacheKey := apiKeyRejectionCacheKey(rawAPIKey, s.apiKeyPepper)
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
 		return nil, &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
 	}
@@ -324,7 +400,7 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 	if err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
-	cacheKey := dashboardRejectionCacheKey(credential)
+	cacheKey := dashboardAdmissionKey(credential)
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
 		return nil, &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
 	}
@@ -340,48 +416,47 @@ func (s *Service) AuthorizeRequestWithPassthrough(
 	requestID string,
 	providerKey string,
 	productKey string,
-	amountUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string,
 	passthroughSecret string,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, amountUSDAtoms, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
-	claims, err := parseSignedAPIKey(rawAPIKey, s.apiKeyPepper)
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
+	claims, apiKeyHash, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 	}
-	cacheKey := apiKeyRejectionCacheKey(rawAPIKey, s.apiKeyPepper)
 	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
 		return nil, authorizationResultError(result)
 	}
 	var passthrough *passthroughCredential
 	if passthroughSecret != "" {
-		id, identityErr := s.byok.credentialID(
+		credentialHash, hashErr := s.byok.credentialHash(
 			passthroughSecret,
 			claims.OrganizationID,
 			claims.WorkspaceID,
 			providerKey,
 		)
-		if identityErr != nil {
+		if hashErr != nil {
 			return nil, &billingError{err: ErrByok, statusCode: 503}
 		}
-		passthrough = &passthroughCredential{ID: id, Secret: passthroughSecret}
+		passthrough = &passthroughCredential{Hash: credentialHash, Secret: passthroughSecret}
 	}
 
 	return s.authorizeResolvedRequest(
 		ctx,
-		hashAPIKey(rawAPIKey, s.apiKeyPepper),
+		apiKeyHash,
 		cacheKey,
 		nil,
 		claims,
 		requestID,
 		providerKey,
 		productKey,
-		amountUSDAtoms,
+		estimatedUpstreamCostUSDAtoms,
 		passthrough,
 		upstreamTarget,
 		requestLifetime,
@@ -395,7 +470,7 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	requestID string,
 	providerKey string,
 	productKey string,
-	amountUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 ) (*Authorization, error) {
@@ -405,13 +480,13 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	return s.authorizeResolvedRequest(
 		ctx,
 		"",
-		dashboardRejectionCacheKey(credential),
+		dashboardAdmissionKey(credential),
 		credential,
 		nil,
 		requestID,
 		providerKey,
 		productKey,
-		amountUSDAtoms,
+		estimatedUpstreamCostUSDAtoms,
 		nil,
 		upstreamTarget,
 		requestLifetime,
@@ -428,29 +503,20 @@ func (s *Service) authorizeResolvedRequest(
 	requestID string,
 	providerKey string,
 	productKey string,
-	amountUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string,
 	passthrough *passthroughCredential,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	if requestLifetime <= 0 {
-		requestLifetime = GatewayRequestLifetime
-	}
-	releaseAuthorization, acquired := s.localAuthorizations.acquire(rejectionCacheKey)
-	if !acquired {
-		return nil, &billingError{err: ErrLocalAdmissionLimit, statusCode: 429}
-	}
-	defer releaseAuthorization()
-
-	expiresAt := time.Now().UTC().Add(requestLifetime + holdSettlementExpiryBuffer)
+	expiresAt := requestHoldExpiresAt(time.Now().UTC(), requestLifetime)
 	holdID, err := newUUIDV7String()
 	if err != nil {
 		return nil, fmt.Errorf("generate hold id: %w", err)
 	}
-	passthroughByokID := ""
+	passthroughHash := ""
 	if passthrough != nil {
-		passthroughByokID = passthrough.ID
+		passthroughHash = passthrough.Hash
 	}
 	upstreamTargetJSON := ""
 	if upstreamTarget != nil {
@@ -460,7 +526,12 @@ func (s *Service) authorizeResolvedRequest(
 		}
 		upstreamTargetJSON = string(encoded)
 	}
-	paramsHash := createHoldParamsHash(providerKey, productKey, passthroughByokID, upstreamTargetJSON)
+	holdParamsHash := createHoldParamsHash(providerKey, productKey, upstreamTargetJSON)
+	releaseAuthorization, acquired := s.localAuthorizations.acquire(rejectionCacheKey)
+	if !acquired {
+		return nil, &billingError{err: ErrLocalAdmissionLimit, statusCode: 429}
+	}
+	defer releaseAuthorization()
 
 	row := authorizeRow{}
 	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
@@ -486,14 +557,14 @@ func (s *Service) authorizeResolvedRequest(
 		holdID,
 		providerKey,
 		productKey,
-		amountUSDAtoms,
+		estimatedUpstreamCostUSDAtoms,
 		expiresAt,
-		paramsHash,
+		holdParamsHash,
 		nullableString(upstreamTargetJSON),
-		nullableString(passthroughByokID),
+		nullableString(passthroughHash),
 		singleUse,
 	).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.ProvisioningKeyID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedAmount, &row.CreatedAt, &row.ExpiresAt, &row.AvailableAfter, &row.UpstreamByok, &row.UpstreamByokCiphertext,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedBilledCostUSDAtoms, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSDAtoms, &row.UpstreamByok, &row.UpstreamByokCiphertext,
 	)
 	if err != nil {
 		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
@@ -510,7 +581,7 @@ func (s *Service) authorizeResolvedRequest(
 		organizationID := derefString(row.OrganizationID)
 		userID := derefString(row.UserID)
 		workspaceID := derefString(row.WorkspaceID)
-		provisioningKeyID := row.ProvisioningKeyID
+		grantID := row.GrantID
 		if dashboard != nil {
 			if keyID != dashboard.KeyID || userID != dashboard.ActorUserID {
 				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
@@ -522,26 +593,29 @@ func (s *Service) authorizeResolvedRequest(
 				organizationID != claims.OrganizationID ||
 				userID != claims.ResponsibleID ||
 				workspaceID != claims.WorkspaceID ||
-				!equalOptionalString(provisioningKeyID, claims.ProvisioningID) {
+				!equalOptionalString(grantID, claims.GrantID) {
 				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
 				return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
 			}
 		}
 		upstreamByok := derefString(row.UpstreamByok)
-		authorizedAmount, amountErr := parseDatabaseMoney(row.AuthorizedAmount, "authorized amount")
+		authorizedBilledCostUSDAtoms, amountErr := parseDatabaseMoney(row.AuthorizedBilledCostUSDAtoms, "authorized billed cost")
 		if amountErr != nil {
 			return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr), statusCode: 503}
 		}
-		availableAfter, amountErr := parseDatabaseMoney(row.AvailableAfter, "available balance")
+		availableBalanceUSDAtoms, amountErr := parseDatabaseMoney(row.AvailableBalanceUSDAtoms, "available balance")
 		if amountErr != nil {
 			return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr), statusCode: 503}
 		}
-		authorization := &Authorization{AuthorizedAmount: authorizedAmount, AvailableAfter: availableAfter, CreatedAt: derefTime(row.CreatedAt), KeyID: keyID, OrganizationID: organizationID, PassthroughByokID: passthroughByokID, ProvisioningKeyID: provisioningKeyID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID, WorkspaceID: workspaceID}
+		authorization := &Authorization{AuthorizedBilledCostUSDAtoms: authorizedBilledCostUSDAtoms, AvailableBalanceUSDAtoms: availableBalanceUSDAtoms, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID, WorkspaceID: workspaceID}
 		if upstreamByok == "" {
 			return authorization, &billingError{err: ErrByok, statusCode: 503}
 		}
-		if upstreamByok != "stogas" && derefString(row.UpstreamByokCiphertext) != "" {
-			ciphertext := derefString(row.UpstreamByokCiphertext)
+		ciphertext := derefString(row.UpstreamByokCiphertext)
+		if ciphertext != "" {
+			if upstreamByok == ManagedUpstreamByok || validCredentialHash(upstreamByok) {
+				return authorization, &billingError{err: ErrByok, statusCode: 503}
+			}
 			if providerKey == "azure" {
 				bound, parseErr := parseAzureBoundCiphertext(ciphertext)
 				if parseErr != nil {
@@ -560,11 +634,13 @@ func (s *Service) authorizeResolvedRequest(
 			if err != nil {
 				return authorization, &billingError{err: ErrByok, statusCode: 503}
 			}
-		} else if upstreamByok != "stogas" {
-			if passthrough == nil || upstreamByok != passthrough.ID {
+		} else if validCredentialHash(upstreamByok) {
+			if passthrough == nil || !hmac.Equal([]byte(upstreamByok), []byte(passthrough.Hash)) {
 				return authorization, &billingError{err: ErrByok, statusCode: 503}
 			}
 			authorization.UpstreamByokSecret = passthrough.Secret
+		} else if upstreamByok != ManagedUpstreamByok {
+			return authorization, &billingError{err: ErrByok, statusCode: 503}
 		}
 		s.rejections.clear(rejectionCacheKey)
 		return authorization, nil
@@ -589,6 +665,8 @@ func authorizationResultError(result string) error {
 		return &billingError{err: ErrInsufficientBalance, statusCode: 402}
 	case "key_disabled":
 		return &billingError{err: ErrAPIKeyDisabled, statusCode: 403}
+	case "grant_disabled":
+		return &billingError{err: ErrGrantDisabled, statusCode: 403}
 	case "byok_disabled":
 		return &billingError{err: ErrByok, statusCode: 503}
 	case "byok_required":
@@ -608,7 +686,7 @@ func authorizationResultError(result string) error {
 	case "api_key_limit":
 		return &billingError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "invalid_amount":
-		return &billingError{err: errors.New("invalid authorization amount"), statusCode: 400}
+		return &billingError{err: errors.New("invalid estimated upstream cost"), statusCode: 400}
 	default:
 		return nil
 	}
@@ -618,11 +696,12 @@ func apiKeyRejectionCacheKey(rawAPIKey string, apiKeyPepper string) string {
 	return "api:" + hashAPIKey(rawAPIKey, apiKeyPepper)
 }
 
-func dashboardRejectionCacheKey(credential *DashboardCredential) string {
+func dashboardAdmissionKey(credential *DashboardCredential) string {
 	if credential == nil {
 		return ""
 	}
-	return "dashboard:" + credential.SessionID + ":" + credential.KeyID
+	// KeyID is an unsigned database selector and cannot scope local admission.
+	return "dashboard:" + credential.ActorUserID + ":" + credential.SessionID
 }
 
 func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorization, event RequestEvent) error {
@@ -630,20 +709,21 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		return nil
 	}
 
-	paramsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.PassthroughByokID, authorization.UpstreamTargetJSON)
-	actualCostRaw := event.UpstreamCostUSDAtoms
-	if actualCostRaw == "" {
-		actualCostRaw = ZeroChargeUSDAtoms
+	holdParamsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON)
+	event.holdParamsHash = holdParamsHash
+	upstreamCostRaw := event.UpstreamCostUSDAtoms
+	if upstreamCostRaw == "" {
+		upstreamCostRaw = ZeroChargeUSDAtoms
 	}
-	actualCost, err := ParseUSDAtoms(actualCostRaw)
+	upstreamCostUSDAtoms, err := ParseUSDAtoms(upstreamCostRaw)
 	if err != nil {
 		return fmt.Errorf("invalid upstream cost: %w", err)
 	}
-	event.UpstreamCostUSDAtoms = actualCost.String()
-	billedCost := billedRequestCost(authorization, actualCost)
-	event.BilledCostUSDAtoms = billedCost.String()
-	event.StogasBillingStatus = settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, billedCost)
-	payload, err := encodeGatewayRequestEvent(event)
+	event.UpstreamCostUSDAtoms = upstreamCostUSDAtoms.String()
+	billedCostUSDAtoms := calculateBilledCostUSDAtoms(authorization, upstreamCostUSDAtoms)
+	event.BilledCostUSDAtoms = billedCostUSDAtoms.String()
+	event.StogasBillingStatus = calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms)
+	requestEventPayload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		return err
 	}
@@ -653,11 +733,11 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
 	}
 
-	if err := s.settleOnce(ctx, authorization, paramsHash, actualCost.String(), payload, writeOutbox); err != nil {
+	if err := s.settleOnce(ctx, authorization, holdParamsHash, upstreamCostUSDAtoms.String(), requestEventPayload, writeOutbox); err != nil {
 		if isPermanentSettleError(err) {
 			return nil
 		}
-		if !s.startSettleRetry(authorization, paramsHash, actualCost.String(), payload, event, writeOutbox) && writeOutbox {
+		if !s.startSettleRetry(authorization, holdParamsHash, upstreamCostUSDAtoms.String(), requestEventPayload, writeOutbox) && writeOutbox {
 			s.publishUncommittedFallback(authorization, event)
 		}
 		return nil
@@ -668,37 +748,80 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 
 func (s *Service) startSettleRetry(
 	authorization *Authorization,
-	paramsHash string,
-	actualCost string,
-	payload string,
-	event RequestEvent,
+	holdParamsHash string,
+	upstreamCostUSDAtoms string,
+	requestEventPayload string,
 	writeOutbox bool,
 ) bool {
-	s.retrySlotsOnce.Do(func() {
-		if s.retrySlots == nil {
-			s.retrySlots = make(chan struct{}, maxConcurrentSettleRetries)
-		}
-	})
+	if authorization == nil {
+		return false
+	}
+	task := settlementRetryTask{
+		authorization: Authorization{
+			KeyID:       authorization.KeyID,
+			ProductKey:  authorization.ProductKey,
+			ProviderKey: authorization.ProviderKey,
+			RequestID:   authorization.RequestID,
+		},
+		holdParamsHash:       holdParamsHash,
+		upstreamCostUSDAtoms: upstreamCostUSDAtoms,
+		requestEventPayload:  requestEventPayload,
+		writeOutbox:          writeOutbox,
+		deadline:             time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
+	}
+
+	s.retryMu.Lock()
+	defer s.retryMu.Unlock()
+	if s.retryClosed {
+		s.recordSettleRetryDeferral()
+		return false
+	}
+	if s.retryQueue == nil {
+		s.retryQueue = make(chan settlementRetryTask, settleRetryQueueCapacity)
+	}
+	s.startRetryWorkersLocked()
 	select {
-	case s.retrySlots <- struct{}{}:
-		s.retryWG.Add(1)
-		s.retryActive.Add(1)
-		go func() {
-			defer s.retryWG.Done()
-			defer s.retryActive.Add(-1)
-			defer func() { <-s.retrySlots }()
-			s.retrySettle(authorization, paramsHash, actualCost, payload, event, writeOutbox)
-		}()
+	case s.retryQueue <- task:
 		return true
 	default:
-		s.retryDeferred.Add(1)
+		s.recordSettleRetryDeferral()
 		return false
 	}
 }
 
-func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, paramsHash string, actualCost string, payload string, writeOutbox bool) error {
+func (s *Service) recordSettleRetryDeferral() {
+	s.retryDeferred.Add(1)
+	s.retryLastDeferredAt.Store(time.Now().UTC().UnixMilli())
+}
+
+func (s *Service) startRetryWorkersLocked() {
+	if s.retryWorkersStarted {
+		return
+	}
+	s.retryWorkersStarted = true
+	workers := s.retryWorkerCount
+	if workers <= 0 {
+		workers = settleRetryWorkerCount
+	}
+	queue := s.retryQueue
+	s.retryWorkersWG.Add(workers)
+	for range workers {
+		go func() {
+			defer s.retryWorkersWG.Done()
+			for task := range queue {
+				s.retryActive.Add(1)
+				s.retrySettleTask(task)
+				s.retryActive.Add(-1)
+			}
+		}()
+	}
+}
+
+// settleOnce sends the upstream cost basis. PostgreSQL derives billed cost from
+// the hold's frozen credential source and verifies the request-event payload.
+func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, holdParamsHash string, upstreamCostUSDAtoms string, requestEventPayload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, paramsHash, actualCost, payload, writeOutbox)
+		return s.settleFunc(ctx, authorization, holdParamsHash, upstreamCostUSDAtoms, requestEventPayload, writeOutbox)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
@@ -716,10 +839,10 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 		authorization.KeyID,
 		authorization.ProviderKey,
 		authorization.ProductKey,
-		paramsHash,
-		actualCost,
-		payload,
-	).Scan(&row.Result, &row.FinalCost, &row.RefundAmount, &row.AvailableAfter)
+		holdParamsHash,
+		upstreamCostUSDAtoms,
+		requestEventPayload,
+	).Scan(&row.Result, &row.BilledCostUSDAtoms, &row.BalanceAdjustmentUSDAtoms, &row.AvailableBalanceUSDAtoms)
 	if err != nil {
 		return fmt.Errorf("settle gateway hold: %w", err)
 	}
@@ -738,13 +861,43 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	}
 }
 
-func (s *Service) retrySettle(authorization *Authorization, paramsHash string, actualCost string, payload string, event RequestEvent, writeOutbox bool) {
-	deadline := time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow))
+func (s *Service) retrySettle(authorization *Authorization, holdParamsHash string, upstreamCostUSDAtoms string, requestEventPayload string, writeOutbox bool) {
+	if authorization == nil {
+		return
+	}
+	s.retrySettleTask(settlementRetryTask{
+		authorization:        *authorization,
+		holdParamsHash:       holdParamsHash,
+		upstreamCostUSDAtoms: upstreamCostUSDAtoms,
+		requestEventPayload:  requestEventPayload,
+		writeOutbox:          writeOutbox,
+		deadline:             time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
+	})
+}
+
+func (s *Service) retrySettleTask(task settlementRetryTask) {
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
-	for time.Now().Before(deadline) {
-		time.Sleep(delay)
-		err := s.settleOnce(context.Background(), authorization, paramsHash, actualCost, payload, writeOutbox)
+	retryCtx, cancel := context.WithDeadline(context.Background(), task.deadline)
+	defer cancel()
+	for retryCtx.Err() == nil {
+		wait := jitteredSettleRetryDelay(delay)
+		timer := time.NewTimer(wait)
+		select {
+		case <-timer.C:
+		case <-retryCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			break
+		}
+		if retryCtx.Err() != nil {
+			break
+		}
+		err := s.settleOnce(retryCtx, &task.authorization, task.holdParamsHash, task.upstreamCostUSDAtoms, task.requestEventPayload, task.writeOutbox)
 		if err == nil {
 			return
 		}
@@ -759,9 +912,20 @@ func (s *Service) retrySettle(authorization *Authorization, paramsHash string, a
 		}
 	}
 
-	if writeOutbox {
-		s.publishUncommittedFallback(authorization, event)
+	if task.writeOutbox {
+		event, err := decodeGatewayRequestEvent(task.requestEventPayload)
+		if err == nil {
+			s.publishUncommittedFallbackAfterRetry(&task.authorization, task.holdParamsHash, event)
+		}
 	}
+}
+
+func jitteredSettleRetryDelay(delay time.Duration) time.Duration {
+	if delay <= time.Nanosecond {
+		return delay
+	}
+	half := delay / 2
+	return half + time.Duration(rand.Int64N(int64(delay-half)+1))
 }
 
 func isPermanentSettleError(err error) bool {
@@ -776,6 +940,10 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 	return fallback
 }
 
+func requestHoldExpiresAt(now time.Time, requestLifetime time.Duration) time.Time {
+	return now.Add(durationOrDefault(requestLifetime, GatewayRequestLifetime) + holdSettlementExpiryBuffer)
+}
+
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
 	if event.Pricing == nil {
 		event.Pricing = EventPricing{}
@@ -784,10 +952,50 @@ func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
 	}
+	if len(encoded)+1 > tinybirdMaxEventBytes {
+		return "", fmt.Errorf("gateway request log payload is %d bytes, limit is %d", len(encoded), tinybirdMaxEventBytes-1)
+	}
 	return string(encoded), nil
 }
 
+func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
+	event := RequestEvent{}
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		return RequestEvent{}, fmt.Errorf("unmarshal gateway request log payload: %w", err)
+	}
+	pricing, analyticsQuantities, err := validateEventPricing(event.Pricing)
+	if err != nil {
+		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
+	}
+	event.Pricing = pricing
+	event.analyticsQuantities = analyticsQuantities
+	event.CacheReadSavingsUSDAtoms, err = requestOptionalUSDAtoms(
+		event.CacheReadSavingsUSDAtoms,
+		"cache read savings",
+	)
+	if err != nil {
+		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
+	}
+	event.CacheWriteOverheadUSDAtoms, err = requestOptionalUSDAtoms(
+		event.CacheWriteOverheadUSDAtoms,
+		"cache write overhead",
+	)
+	if err != nil {
+		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
+	}
+	return event, nil
+}
+
 func (s *Service) publishUncommittedFallback(authorization *Authorization, event RequestEvent) {
+	s.publishUncommittedFallbackWithMode(authorization, event, false)
+}
+
+func (s *Service) publishUncommittedFallbackAfterRetry(authorization *Authorization, holdParamsHash string, event RequestEvent) {
+	event.holdParamsHash = holdParamsHash
+	s.publishUncommittedFallbackWithMode(authorization, event, true)
+}
+
+func (s *Service) publishUncommittedFallbackWithMode(authorization *Authorization, event RequestEvent, joinProbe bool) {
 	if authorization == nil {
 		return
 	}
@@ -796,6 +1004,10 @@ func (s *Service) publishUncommittedFallback(authorization *Authorization, event
 	}
 	appendCtx, cancel := context.WithTimeout(context.Background(), tinybirdAppendTimeout)
 	defer cancel()
+	if joinProbe {
+		_ = s.tinybird.appendGatewayRequestAfterRetry(appendCtx, event)
+		return
+	}
 	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
 }
 
@@ -835,6 +1047,18 @@ func nullableString(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func validCredentialHash(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for index := range len(value) {
+		if (value[index] < '0' || value[index] > '9') && (value[index] < 'a' || value[index] > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func equalOptionalString(left *string, right *string) bool {

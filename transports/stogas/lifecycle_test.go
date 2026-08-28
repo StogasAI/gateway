@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"slices"
 	"strconv"
@@ -52,11 +53,11 @@ func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorizat
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, amountUSDAtoms string, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, amountUSDAtoms string, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
@@ -122,7 +123,7 @@ func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, authorizer.errors[0])
+	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, authorizer.errors[0])
 	if err != nil {
 		t.Fatalf("authorizeWithFreshRequestID returned error: %v", err)
 	}
@@ -150,7 +151,7 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := authorizeWithFreshRequestID(ctx, &fakeBillingAuthorizer{}, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, expectedErr)
+	authorization, err := authorizeWithFreshRequestID(ctx, &fakeBillingAuthorizer{}, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, expectedErr)
 	if authorization != nil {
 		t.Fatalf("expected no authorization for non-conflict error")
 	}
@@ -176,7 +177,7 @@ func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
 		Model:       "gpt-5",
 	}, "sk-user", nil, DefaultAdapter{})
 	state.SingleUseRequestID = true
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
 
 	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrAuthorizationClosed) {
 		t.Fatalf("AuthorizeState error = %v, want authorization closed", err)
@@ -201,7 +202,7 @@ func TestAuthorizeStateClearsPassThroughCredentialAfterFailure(t *testing.T) {
 		Model:       "gpt-5",
 	}, "sk-user", nil, DefaultAdapter{})
 	state.PassthroughByokSecret = "sk-upstream-secret"
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", MaxUSDAtoms: "1000"}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
 	authorizer := &fakeBillingAuthorizer{errors: []error{
 		&statusError{err: billing.ErrInvalidAPIKey, statusCode: 401},
 	}}
@@ -211,6 +212,41 @@ func TestAuthorizeStateClearsPassThroughCredentialAfterFailure(t *testing.T) {
 	}
 	if state.PassthroughByokSecret != "" {
 		t.Fatal("pass-through credential remained in request state after authorization failed")
+	}
+}
+
+func TestAuthorizeStateRejectsPassThroughWithDashboardCredential(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyRequestID, "11111111-1111-1111-1111-111111111111")
+	state := NewState(&catalog.ResolvedRequest{
+		Route:       catalog.RouteChat,
+		RequestType: schemas.ChatCompletionRequest,
+		Provider:    schemas.OpenAI,
+		Model:       "gpt-5",
+	}, "", nil, DefaultAdapter{})
+	state.SetDashboardCredential(&billing.DashboardCredential{
+		ActorUserID: "actor",
+		KeyID:       "key",
+		SessionID:   "session",
+	})
+	state.PassthroughByokSecret = "sk-upstream-secret"
+	state.Hold = HoldEstimate{
+		ProviderKey:                   "openai",
+		ProductKey:                    "gpt-5",
+		EstimatedUpstreamCostUSDAtoms: "1000",
+	}
+	authorizer := &fakeBillingAuthorizer{}
+
+	err := AuthorizeState(ctx, authorizer, state)
+	var dashboardErr passthroughDashboardError
+	if !errors.As(err, &dashboardErr) || dashboardErr.StatusCode() != 400 {
+		t.Fatalf("AuthorizeState error = %v, want dashboard pass-through rejection", err)
+	}
+	if authorizer.callCount != 0 {
+		t.Fatal("dashboard pass-through reached hold authorization")
+	}
+	if state.PassthroughByokSecret != "" {
+		t.Fatal("rejected dashboard pass-through credential remained in request state")
 	}
 }
 
@@ -289,6 +325,33 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 	}
 }
 
+func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *testing.T) {
+	const upstreamSecret = "sk-upstream-secret"
+	const credentialHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	state := &State{
+		Authorization: &billing.Authorization{
+			UpstreamByok:       credentialHash,
+			UpstreamByokSecret: upstreamSecret,
+		},
+		Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
+	}
+
+	if err := ApplyUpstreamCredentials(ctx, state); err != nil {
+		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
+	}
+	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
+	if !ok {
+		t.Fatal("pass-through request did not install a direct provider key")
+	}
+	if directKey.ID != credentialHash || directKey.Name != credentialHash {
+		t.Fatalf("direct key attribution = %#v, want credential hash", directKey)
+	}
+	if directKey.Value.GetValue() != upstreamSecret {
+		t.Fatal("pass-through secret was not installed")
+	}
+}
+
 func TestApplyUpstreamCredentialsRejectsIncompleteBYOKAuthorization(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
@@ -326,7 +389,7 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 	}
 }
 
-func TestDefaultAdapterFinalPriceUsesSignals(t *testing.T) {
+func TestDefaultAdapterCalculateUpstreamCostUsesSignals(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
@@ -336,11 +399,11 @@ func TestDefaultAdapterFinalPriceUsesSignals(t *testing.T) {
 		},
 		Signals: &StandardSignals{Prompt: 1000, Completion: 2000},
 	}
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "5000" {
-		t.Fatalf("expected signal-derived final cost 5000, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "5000" {
+		t.Fatalf("expected signal-derived final cost 5000, got %s", state.UpstreamCostUSDAtoms)
 	}
 	if len(state.FinalMeters) != 2 {
 		t.Fatalf("expected final price to retain two pricing meters, got %#v", state.FinalMeters)
@@ -353,7 +416,7 @@ func TestDefaultAdapterFinalPriceUsesSignals(t *testing.T) {
 	}
 }
 
-func TestFinalPricePartitionsEveryInputAndOutputCategoryExactlyOnce(t *testing.T) {
+func TestCalculateUpstreamCostPartitionsEveryInputAndOutputCategoryExactlyOnce(t *testing.T) {
 	pricing := catalog.Pricing{
 		billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
 		billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
@@ -375,8 +438,8 @@ func TestFinalPricePartitionsEveryInputAndOutputCategoryExactlyOnce(t *testing.T
 			Reasoning:    40,
 		},
 	}
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	wantQuantities := map[string]string{
 		billing.MeterInputTokens:             "350",
@@ -393,12 +456,84 @@ func TestFinalPricePartitionsEveryInputAndOutputCategoryExactlyOnce(t *testing.T
 			t.Fatalf("%s meter = %#v, want quantity %s", meterKey, meter, want)
 		}
 	}
-	if state.FinalCostUSDAtoms != "1613" {
-		t.Fatalf("exact partition cost = %s, want 1613; meters=%#v", state.FinalCostUSDAtoms, state.FinalMeters)
+	if state.UpstreamCostUSDAtoms != "1613" {
+		t.Fatalf("exact partition cost = %s, want 1613; meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
 	}
 }
 
-func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
+func TestCalculateUpstreamCostKeepsUsablePromptWhenCacheBreakdownIsImpossible(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
+			billing.MeterCachedInputTokens:     {billing.RatePerMillionTokens: "100000"},
+			billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
+		}}},
+		Signals: &StandardSignals{Prompt: 100, Cached: 80, CacheWrite: 30},
+	}
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+	}
+	if state.UpstreamCostUSDAtoms != "100" {
+		t.Fatalf("final cost = %s, want 100 from the usable aggregate prompt; meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+	}
+	if meter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens); meterQuantity(meter) != "100" {
+		t.Fatalf("ordinary input meter = %#v, want quantity 100", meter)
+	}
+	for _, meterKey := range []string{billing.MeterCachedInputTokens, billing.MeterCacheWriteInputTokens} {
+		if meter := findMeterEstimate(state.FinalMeters, meterKey); meter != nil {
+			t.Fatalf("invalid cache detail must be discarded, got %s meter %#v", meterKey, meter)
+		}
+	}
+	if savings, err := cacheReadSavingsUSDAtoms(state); err != nil || savings == nil || *savings != "0" {
+		t.Fatalf("cache savings = %#v, %v; want 0", savings, err)
+	}
+}
+
+func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		signals *StandardSignals
+	}{
+		{name: "cache read", signals: &StandardSignals{Prompt: 100, Cached: 100}},
+		{name: "generic cache write", signals: &StandardSignals{Prompt: 100, CacheWrite: 100}},
+		{name: "five-minute cache write", signals: &StandardSignals{Prompt: 100, CacheWrite5m: 100}},
+		{name: "one-hour cache write", signals: &StandardSignals{Prompt: 100, CacheWrite1h: 100}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &State{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens: {billing.RatePerMillionTokens: "1000000"},
+				}}},
+				Signals: tt.signals,
+			}
+			cost, err := calculateBaseUpstreamCost(state, nil)
+			if err != nil {
+				t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+			}
+			if cost != "100" || meterQuantity(findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)) != "100" {
+				t.Fatalf("unpriced cache detail changed ordinary input billing: cost=%s meters=%#v", cost, state.FinalMeters)
+			}
+			for _, meterKey := range []string{
+				billing.MeterCachedInputTokens,
+				billing.MeterCacheWriteInputTokens,
+				billing.MeterCacheWrite5mInputTokens,
+				billing.MeterCacheWrite1hInputTokens,
+			} {
+				if meter := findMeterEstimate(state.FinalMeters, meterKey); meter != nil {
+					t.Fatalf("unpriced cache detail produced %s meter %#v", meterKey, meter)
+				}
+			}
+			savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+			overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
+				t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+			}
+		})
+	}
+}
+
+func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 	longText := strings.Repeat("a", (billing.LongContextThresholdTokens+1)*4)
 	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
@@ -421,8 +556,8 @@ func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
 	}
 
 	state.Signals = &StandardSignals{Prompt: 1000, Completion: 2000}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice below threshold returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost below threshold returned error: %v", err)
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
@@ -432,8 +567,8 @@ func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
 	}
 
 	state.Signals = &StandardSignals{Prompt: billing.LongContextThresholdTokens + 1, Completion: 1}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice above threshold returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost above threshold returned error: %v", err)
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
@@ -441,13 +576,13 @@ func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
 			t.Fatalf("expected high-context final meter for %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover high-context final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover high-context final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 
 	state.Signals = &StandardSignals{Prompt: 1000, Completion: billing.LongContextThresholdTokens + 1}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice large output returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost large output returned error: %v", err)
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
@@ -457,7 +592,7 @@ func TestFinalPriceSelectsContextTierFromActualUsage(t *testing.T) {
 	}
 }
 
-func TestFinalPricePartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t *testing.T) {
+func TestCalculateUpstreamCostPartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
@@ -477,11 +612,11 @@ func TestFinalPricePartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t
 			AcceptedPredictionTokens: 10,
 		},
 	})
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "1500" {
-		t.Fatalf("expected aggregate-token final cost 1500, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "1500" {
+		t.Fatalf("expected aggregate-token final cost 1500, got %s", state.UpstreamCostUSDAtoms)
 	}
 	if len(state.FinalMeters) != 3 {
 		t.Fatalf("expected three final meters, got %#v", state.FinalMeters)
@@ -496,7 +631,7 @@ func TestFinalPricePartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t
 	}
 }
 
-func TestFinalPriceUsesExplicitReasoningRateAndHoldReservesTheHigherOutputRate(t *testing.T) {
+func TestCalculateUpstreamCostUsesExplicitReasoningRateAndHoldReservesTheHigherOutputRate(t *testing.T) {
 	pricing := catalog.Pricing{
 		billing.MeterOutputTokens:    {billing.RatePerMillionTokens: "2000000"},
 		billing.MeterReasoningTokens: {billing.RatePerMillionTokens: "5000000"},
@@ -510,11 +645,11 @@ func TestFinalPriceUsesExplicitReasoningRateAndHoldReservesTheHigherOutputRate(t
 			ReasoningTokens: 180,
 		},
 	})
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "1040" {
-		t.Fatalf("expected distinct output and reasoning rates to cost 1040, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "1040" {
+		t.Fatalf("expected distinct output and reasoning rates to cost 1040, got %s", state.UpstreamCostUSDAtoms)
 	}
 	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
 	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSDAtoms != "900" {
@@ -569,7 +704,7 @@ func TestSignalsFromUsageFallsBackWhenProviderAggregateUsageIsPartial(t *testing
 	})
 }
 
-func TestFinalPriceDefensivelyBoundsDirectInvalidReasoningSignals(t *testing.T) {
+func TestCalculateUpstreamCostIgnoresImpossibleReasoningDetailAndKeepsCompletion(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
 			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
@@ -581,49 +716,48 @@ func TestFinalPriceDefensivelyBoundsDirectInvalidReasoningSignals(t *testing.T) 
 			ReasoningTokens: 20,
 		},
 	})
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens) != nil {
-		t.Fatalf("invalid provider detail produced negative/non-reasoning output: %#v", state.FinalMeters)
+	output := findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens)
+	if output == nil || output.Quantity != "10" || output.AmountUSDAtoms != "20" {
+		t.Fatalf("usable completion aggregate was not retained: %#v", state.FinalMeters)
 	}
-	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
-	if reasoning == nil || reasoning.Quantity != "10" || reasoning.AmountUSDAtoms != "20" {
-		t.Fatalf("reasoning detail was not clamped to aggregate completion: %#v", state.FinalMeters)
+	if findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens) != nil {
+		t.Fatalf("impossible reasoning detail was priced: %#v", state.FinalMeters)
 	}
 }
 
-func TestDefaultAdapterFinalPriceClassifiesNoUsageErrors(t *testing.T) {
+func TestDefaultAdapterCalculateUpstreamCostDoesNotChargeWithoutUsage(t *testing.T) {
 	tests := []struct {
 		name       string
 		statusCode *int
 		message    string
-		wantCost   string
 	}{
-		{name: "bad request captures hold", statusCode: lifecycleIntPtr(400), message: "messages.0.content is required", wantCost: "123"},
-		{name: "request too large captures hold", statusCode: lifecycleIntPtr(413), message: "request exceeds maximum size", wantCost: "123"},
-		{name: "bad request budget parameter captures hold", statusCode: lifecycleIntPtr(400), message: "task_budget.total is below the provider minimum", wantCost: "123"},
-		{name: "bad request rate limit parameter captures hold", statusCode: lifecycleIntPtr(400), message: "rate_limit field is not valid for this model", wantCost: "123"},
-		{name: "bad request timeout parameter captures hold", statusCode: lifecycleIntPtr(400), message: "timeout parameter is not supported", wantCost: "123"},
-		{name: "bad request network option captures hold", statusCode: lifecycleIntPtr(400), message: "network setting is invalid", wantCost: "123"},
-		{name: "conversion failure without status captures hold", message: "failed to marshal request: missing required field messages", wantCost: "123"},
-		{name: "missing required field without status captures hold", message: "missing required 'type' field in ResponsesTool", wantCost: "123"},
-		{name: "nil bifrost request without status captures hold", message: "bifrost request cannot be nil", wantCost: "123"},
-		{name: "unsupported request without status captures hold", message: "unsupported request type: responses_stream", wantCost: "123"},
-		{name: "provider auth is insured", statusCode: lifecycleIntPtr(401), message: "provider API key invalid", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider permission policy is insured", statusCode: lifecycleIntPtr(403), message: "organization policy disabled provider access", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "cataloged provider model not found is insured", statusCode: lifecycleIntPtr(404), message: "model not found", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider rate limit is insured", statusCode: lifecycleIntPtr(429), message: "rate_limit exceeded", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider network failure is insured", message: "dial tcp: connection refused", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider server failure is insured", statusCode: lifecycleIntPtr(500), message: "provider failed", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider server invalid request wording is insured", statusCode: lifecycleIntPtr(500), message: "provider invalid request processor failed", wantCost: billing.ZeroChargeUSDAtoms},
-		{name: "provider safety backend failure is insured", statusCode: lifecycleIntPtr(500), message: "provider safety service unavailable", wantCost: billing.ZeroChargeUSDAtoms},
+		{name: "bad request", statusCode: lifecycleIntPtr(400), message: "messages.0.content is required"},
+		{name: "request too large", statusCode: lifecycleIntPtr(413), message: "request exceeds maximum size"},
+		{name: "bad request budget parameter", statusCode: lifecycleIntPtr(400), message: "task_budget.total is below the provider minimum"},
+		{name: "bad request rate limit parameter", statusCode: lifecycleIntPtr(400), message: "rate_limit field is not valid for this model"},
+		{name: "bad request timeout parameter", statusCode: lifecycleIntPtr(400), message: "timeout parameter is not supported"},
+		{name: "bad request network option", statusCode: lifecycleIntPtr(400), message: "network setting is invalid"},
+		{name: "conversion failure without status", message: "failed to marshal request: missing required field messages"},
+		{name: "missing required field without status", message: "missing required 'type' field in ResponsesTool"},
+		{name: "nil bifrost request without status", message: "bifrost request cannot be nil"},
+		{name: "unsupported request without status", message: "unsupported request type: responses_stream"},
+		{name: "provider auth", statusCode: lifecycleIntPtr(401), message: "provider API key invalid"},
+		{name: "provider permission policy", statusCode: lifecycleIntPtr(403), message: "organization policy disabled provider access"},
+		{name: "cataloged provider model not found", statusCode: lifecycleIntPtr(404), message: "model not found"},
+		{name: "provider rate limit", statusCode: lifecycleIntPtr(429), message: "rate_limit exceeded"},
+		{name: "provider network failure", message: "dial tcp: connection refused"},
+		{name: "provider server failure", statusCode: lifecycleIntPtr(500), message: "provider failed"},
+		{name: "provider server invalid request wording", statusCode: lifecycleIntPtr(500), message: "provider invalid request processor failed"},
+		{name: "provider safety backend failure", statusCode: lifecycleIntPtr(500), message: "provider safety service unavailable"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &State{
-				Authorization: &billing.Authorization{AuthorizedAmount: big.NewInt(123)},
+				Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(123)},
 				BifrostError: &schemas.BifrostError{
 					StatusCode: tt.statusCode,
 					Error: &schemas.ErrorField{
@@ -631,22 +765,25 @@ func TestDefaultAdapterFinalPriceClassifiesNoUsageErrors(t *testing.T) {
 					},
 				},
 			}
-			if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.FinalCostUSDAtoms != tt.wantCost {
-				t.Fatalf("FinalCostUSDAtoms = %s, want %s", state.FinalCostUSDAtoms, tt.wantCost)
+			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+				t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
+			}
+			if len(state.FinalMeters) != 0 {
+				t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
 			}
 		})
 	}
 }
 
-func TestDefaultAdapterFinalPriceCapturesHoldForSuccessfulResponseWithoutUsage(t *testing.T) {
+func TestDefaultAdapterCalculateUpstreamCostReturnsHoldWithoutUsage(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
 			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
 		}}},
-		Authorization: &billing.Authorization{AuthorizedAmount: big.NewInt(123)},
+		Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(123)},
 		Signals:       &StandardSignals{},
 		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
 			MeterKey:       billing.MeterOutputTokens,
@@ -657,18 +794,42 @@ func TestDefaultAdapterFinalPriceCapturesHoldForSuccessfulResponseWithoutUsage(t
 			HoldRequired:   true,
 		}}},
 	}
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "123" {
-		t.Fatalf("FinalCostUSDAtoms = %s, want captured hold 123", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+		t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
 	}
-	if len(state.FinalMeters) != 1 || state.FinalMeters[0].HoldRequired {
-		t.Fatalf("expected captured hold meter as a settled final meter, got %#v", state.FinalMeters)
+	if len(state.FinalMeters) != 0 {
+		t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
 	}
 }
 
-func TestDefaultAdapterFinalPriceChargesUsageEvenWhenProviderErrorIsInsured(t *testing.T) {
+func TestCalculateBaseUpstreamCostChargesProviderMetersWithoutTokenUsage(t *testing.T) {
+	const meterKey = "provider_tool_calls"
+	pricing := catalog.Pricing{
+		meterKey: {billing.RatePerThousandCalls: "1000"},
+	}
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
+			MeterKey:     meterKey,
+			Quantity:     "1",
+			HoldRequired: true,
+		}},
+		},
+	}
+	extraMeters := billing.AppendCallMeterCost(nil, pricing, meterKey, 1, false)
+	cost, err := calculateBaseUpstreamCost(state, extraMeters)
+	if err != nil {
+		t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+	}
+	if cost != "1" || len(state.FinalMeters) != 1 || state.FinalMeters[0].Quantity != "1" {
+		t.Fatalf("provider meter was not billed independently: cost=%s meters=%#v", cost, state.FinalMeters)
+	}
+}
+
+func TestDefaultAdapterCalculateUpstreamCostChargesReportedUsageWithProviderError(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
@@ -683,11 +844,11 @@ func TestDefaultAdapterFinalPriceChargesUsageEvenWhenProviderErrorIsInsured(t *t
 		Signals: &StandardSignals{Prompt: 1000, Completion: 250},
 	}
 
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "1500" {
-		t.Fatalf("FinalCostUSDAtoms = %s, want usage-derived 1500", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "1500" {
+		t.Fatalf("UpstreamCostUSDAtoms = %s, want usage-derived 1500", state.UpstreamCostUSDAtoms)
 	}
 	if len(state.FinalMeters) != 2 {
 		t.Fatalf("expected usage-derived final meters despite provider error, got %#v", state.FinalMeters)
@@ -700,14 +861,107 @@ func TestDefaultAdapterFinalPriceChargesUsageEvenWhenProviderErrorIsInsured(t *t
 	}
 }
 
-func TestNoUsageClientErrorLogsCapturedHoldMetersAsFinalMeters(t *testing.T) {
+func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		errorType  string
+		code       string
+		wantStatus string
+	}{
+		{name: "authentication", statusCode: 401, wantStatus: "authentication_error"},
+		{name: "permission", statusCode: 403, wantStatus: "permission_error"},
+		{name: "quota through rate HTTP status", statusCode: 429, code: "insufficient_quota", wantStatus: "over_budget"},
+		{name: "rate limit", statusCode: 429, errorType: "rate_limit_error", wantStatus: "rate_limited"},
+		{name: "cancellation", statusCode: 499, errorType: schemas.RequestCancelled, wantStatus: "cancelled"},
+		{name: "timeout", statusCode: 504, errorType: schemas.RequestTimedOut, wantStatus: "network_error"},
+		{name: "content filter", statusCode: 400, code: "content_filter", wantStatus: "content_filter"},
+		{name: "invalid request", statusCode: 400, errorType: "invalid_request_error", wantStatus: "invalid_request"},
+		{name: "server failure", statusCode: 500, errorType: "api_error", wantStatus: "provider_error"},
+		{name: "unknown future rejection", statusCode: 418, errorType: "future_error", wantStatus: "provider_error"},
+	}
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
+		billing.MeterCachedInputTokens:     {billing.RatePerMillionTokens: "100000"},
+		billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
+		billing.MeterOutputTokens:          {billing.RatePerMillionTokens: "2000000"},
+	}
+	usage := &schemas.BifrostLLMUsage{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		TotalTokens:      120,
+		PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+			CachedReadTokens:  10,
+			CachedWriteTokens: 20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			providerErr := &schemas.BifrostError{
+				StatusCode: &tt.statusCode,
+				Error:      &schemas.ErrorField{Message: "untrusted provider message"},
+				ExtraFields: schemas.BifrostErrorExtraFields{
+					BilledUsage: usage,
+				},
+			}
+			if tt.errorType != "" {
+				providerErr.Error.Type = &tt.errorType
+			}
+			if tt.code != "" {
+				providerErr.Error.Code = &tt.code
+			}
+			if got := billing.NormalizeUpstreamStatus(providerErr); got != tt.wantStatus {
+				t.Fatalf("normalized status = %q, want %q", got, tt.wantStatus)
+			}
+
+			withUsage := &State{
+				Adapter: OpenAIAdapter{},
+				Resolution: &catalog.ResolvedRequest{
+					Provider:   schemas.OpenAI,
+					Route:      catalog.RouteChat,
+					Deployment: catalog.Deployment{Pricing: pricing},
+				},
+			}
+			if err := withUsage.Adapter.IngestResponse(withUsage, nil, providerErr); err != nil {
+				t.Fatalf("IngestResponse returned error: %v", err)
+			}
+			if err := withUsage.Adapter.CalculateUpstreamCost(withUsage); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+			if withUsage.UpstreamCostUSDAtoms != "136" {
+				t.Fatalf("usage-backed cost = %s, want 136; meters=%#v", withUsage.UpstreamCostUSDAtoms, withUsage.FinalMeters)
+			}
+			savings, savingsErr := cacheReadSavingsUSDAtoms(withUsage)
+			overhead, overheadErr := cacheWriteOverheadUSDAtoms(withUsage)
+			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "9" || *overhead != "5" {
+				t.Fatalf("usage-backed cache economics = %#v/%#v (%v/%v), want 9/5", savings, overhead, savingsErr, overheadErr)
+			}
+
+			withoutUsage := &State{
+				Resolution:   &catalog.ResolvedRequest{Provider: schemas.OpenAI, Deployment: catalog.Deployment{Pricing: pricing}},
+				BifrostError: providerErr,
+			}
+			providerErr.ExtraFields.BilledUsage = nil
+			if err := (DefaultAdapter{}).CalculateUpstreamCost(withoutUsage); err != nil {
+				t.Fatalf("zero-usage CalculateUpstreamCost returned error: %v", err)
+			}
+			if withoutUsage.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(withoutUsage.FinalMeters) != 0 {
+				t.Fatalf("zero-usage error was charged: cost=%s meters=%#v", withoutUsage.UpstreamCostUSDAtoms, withoutUsage.FinalMeters)
+			}
+			providerErr.ExtraFields.BilledUsage = usage
+		})
+	}
+}
+
+func TestNoUsageClientErrorHasNoFinalMeters(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
 			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
 		}}},
-		Authorization: &billing.Authorization{AuthorizedAmount: big.NewInt(2000)},
+		Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(2000)},
 		Hold: HoldEstimate{
-			MaxUSDAtoms: "2000",
+			EstimatedUpstreamCostUSDAtoms: "2000",
 			Meters: []catalog.MeterEstimate{{
 				MeterKey:       billing.MeterOutputTokens,
 				RateKey:        billing.RatePerMillionTokens,
@@ -723,28 +977,27 @@ func TestNoUsageClientErrorLogsCapturedHoldMetersAsFinalMeters(t *testing.T) {
 		},
 	}
 
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2000" {
-		t.Fatalf("FinalCostUSDAtoms = %s, want 2000", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+		t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
 	}
-	if len(state.FinalMeters) != 1 {
-		t.Fatalf("expected captured hold meter to be logged as final meter, got %#v", state.FinalMeters)
-	}
-	if state.FinalMeters[0].HoldRequired {
-		t.Fatalf("final meter must not require hold: %#v", state.FinalMeters[0])
+	if len(state.FinalMeters) != 0 {
+		t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
 	}
 
 	pricing := pricingForState(state)
-	assertPricingBagEntry(t, pricing, billing.MeterOutputTokens, billing.RatePerMillionTokens, "1000", "2000")
+	if len(pricing) != 0 {
+		t.Fatalf("no-usage request produced pricing: %#v", pricing)
+	}
 }
 
 func lifecycleIntPtr(value int) *int {
 	return &value
 }
 
-func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testing.T) {
+func TestCalculateUpstreamCostUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -756,11 +1009,11 @@ func TestFinalPriceUsesActualOpenAIServiceTierWhenExplicitTierReturned(t *testin
 	actualTier := schemas.BifrostServiceTierPriority
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 	state.Signals = &StandardSignals{Prompt: 1000, ActualServiceTier: &actualTier}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "12500000000000000" {
-		t.Fatalf("expected Fast input pricing from returned priority tier, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "12500000000000000" {
+		t.Fatalf("expected Fast input pricing from returned priority tier, got %s", state.UpstreamCostUSDAtoms)
 	}
 }
 
@@ -783,8 +1036,8 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 		t.Fatalf("missing input-token authorization: %#v", state.Hold.Meters)
 	}
 	state.Signals = &StandardSignals{Prompt: inputTokens, ActualServiceTier: &actualTier}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
 	if input == nil || input.RateUSDAtoms != "5000000000000000000" || input.Quantity != strconv.Itoa(inputTokens) {
@@ -796,16 +1049,16 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 	}
 
 	authorizer := &fakeBillingAuthorizer{}
-	authorizedAmount, ok := new(big.Int).SetString(state.Hold.MaxUSDAtoms, 10)
+	authorizedBilledCostUSDAtoms, ok := new(big.Int).SetString(state.Hold.EstimatedUpstreamCostUSDAtoms, 10)
 	if !ok {
-		t.Fatalf("invalid hold amount %q", state.Hold.MaxUSDAtoms)
+		t.Fatalf("invalid hold amount %q", state.Hold.EstimatedUpstreamCostUSDAtoms)
 	}
 	state.Authorization = &billing.Authorization{
-		AuthorizedAmount: authorizedAmount,
-		CreatedAt:        time.Now().UTC(),
-		ProviderKey:      "openai",
-		ProductKey:       resolution.Deployment.ID,
-		RequestID:        "fast-downgrade",
+		AuthorizedBilledCostUSDAtoms: authorizedBilledCostUSDAtoms,
+		CreatedAt:                    time.Now().UTC(),
+		ProviderKey:                  "openai",
+		ProductKey:                   resolution.Deployment.ID,
+		RequestID:                    "fast-downgrade",
 	}
 	state.RequestType = string(schemas.ChatCompletionRequest)
 	state.StartedAt = time.Now().UTC()
@@ -844,11 +1097,11 @@ func TestOpenAIFastHoldCoversActualPriorityServiceTier(t *testing.T) {
 		Completion:        resolution.OutputTokenLimit(),
 		ActualServiceTier: &actualTier,
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("Fast hold must cover the returned priority-tier cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("Fast hold must cover the returned priority-tier cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23-fast" {
 		t.Fatalf("expected Fast deployment hold product key, got %#v", state.Hold)
@@ -936,7 +1189,7 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 	}
 }
 
-func TestOpenAICacheReadFinalPriceStaysCoveredByNoCacheHold(t *testing.T) {
+func TestOpenAICacheReadCalculateUpstreamCostStaysCoveredByNoCacheHold(t *testing.T) {
 	for _, item := range []struct {
 		name string
 		path string
@@ -979,20 +1232,20 @@ func TestOpenAICacheReadFinalPriceStaysCoveredByNoCacheHold(t *testing.T) {
 				Completion: resolution.OutputTokenLimit(),
 				Cached:     cachedTokens,
 			}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
 			if findMeterEstimate(state.FinalMeters, billing.MeterCachedInputTokens) == nil {
 				t.Fatalf("expected cached input final meter, got %#v", state.FinalMeters)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover OpenAI cached-read final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover OpenAI cached-read final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
 }
 
-func TestAzureGPT56FinalPriceConservativelyClassifiesUnreportedCacheWrites(t *testing.T) {
+func TestMissingCacheWriteUsageDoesNotInventAWritePremium(t *testing.T) {
 	pricing := catalog.Pricing{
 		billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
 		billing.MeterCachedInputTokens:     {billing.RatePerMillionTokens: "100000"},
@@ -1008,12 +1261,10 @@ func TestAzureGPT56FinalPriceConservativelyClassifiesUnreportedCacheWrites(t *te
 		wantInput      string
 		wantCacheWrite string
 	}{
-		{name: "Azure cacheable miss", provider: schemas.Azure, prompt: 2048, wantCacheWrite: "2048"},
-		{name: "Azure exact cache threshold", provider: schemas.Azure, prompt: 1024, wantCacheWrite: "1024"},
-		{name: "Azure partial hit", provider: schemas.Azure, prompt: 2048, cached: 512, wantCacheWrite: "1536"},
+		{name: "Azure cacheable miss remains ordinary input", provider: schemas.Azure, prompt: 2048, wantInput: "2048"},
+		{name: "Azure partial hit retains uncached input", provider: schemas.Azure, prompt: 2048, cached: 512, wantInput: "1536"},
 		{name: "Azure exact report wins", provider: schemas.Azure, prompt: 2048, cached: 512, reportedWrite: 1024, wantInput: "512", wantCacheWrite: "1024"},
-		{name: "Azure prompt below threshold", provider: schemas.Azure, prompt: 1023, wantInput: "1023"},
-		{name: "OpenAI is not inferred", provider: schemas.OpenAI, prompt: 2048, wantInput: "2048"},
+		{name: "OpenAI missing write remains ordinary input", provider: schemas.OpenAI, prompt: 2048, wantInput: "2048"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1027,8 +1278,8 @@ func TestAzureGPT56FinalPriceConservativelyClassifiesUnreportedCacheWrites(t *te
 				},
 				Signals: &StandardSignals{Prompt: tt.prompt, Cached: tt.cached, CacheWrite: tt.reportedWrite},
 			}
-			if _, err := baseFinalPrice(state, nil); err != nil {
-				t.Fatalf("baseFinalPrice returned error: %v", err)
+			if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+				t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
 			}
 			if meter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens); meterQuantity(meter) != tt.wantInput {
 				t.Fatalf("input quantity = %q, want %q; meters=%#v", meterQuantity(meter), tt.wantInput, state.FinalMeters)
@@ -1125,7 +1376,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 				if err := state.Adapter.EstimateHold(state); err != nil {
 					t.Fatalf("%s/%s: estimate hold: %v", deploymentID, interfaceName, err)
 				}
-				if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == billing.ZeroChargeUSDAtoms {
+				if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms {
 					t.Fatalf("%s/%s: token hold is empty", deploymentID, interfaceName)
 				}
 
@@ -1210,20 +1461,20 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 				for _, scenario := range scenarios {
 					t.Run(deploymentID+"/"+interfaceName+"/"+scenario.name, func(t *testing.T) {
 						state.Signals = scenario.signals
-						if err := state.Adapter.FinalPrice(state); err != nil {
+						if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 							t.Fatalf("calculate final price: %v", err)
 						}
-						if state.FinalCostUSDAtoms == billing.ZeroChargeUSDAtoms {
+						if state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms {
 							t.Fatalf("final token price is zero: meters=%#v", state.FinalMeters)
 						}
 						if findMeterEstimate(state.FinalMeters, scenario.meter) == nil {
 							t.Fatalf("final price omitted %s: %#v", scenario.meter, state.FinalMeters)
 						}
-						if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
+						if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
 							t.Fatalf(
 								"hold does not cover final price: hold=%s final=%s holdMeters=%#v finalMeters=%#v",
-								state.Hold.MaxUSDAtoms,
-								state.FinalCostUSDAtoms,
+								state.Hold.EstimatedUpstreamCostUSDAtoms,
+								state.UpstreamCostUSDAtoms,
 								state.Hold.Meters,
 								state.FinalMeters,
 							)
@@ -1235,7 +1486,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 	}
 }
 
-func TestFinalPriceUsesSelectedDeploymentForUnknownActualTier(t *testing.T) {
+func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -1247,11 +1498,11 @@ func TestFinalPriceUsesSelectedDeploymentForUnknownActualTier(t *testing.T) {
 	actualTier := schemas.BifrostServiceTier("unexpected_vendor_tier")
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 	state.Signals = &StandardSignals{Prompt: 1000, ActualServiceTier: &actualTier}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "50000000000000" {
-		t.Fatalf("expected selected default deployment pricing for unknown actual tier, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "50000000000000" {
+		t.Fatalf("expected selected default deployment pricing for unknown actual tier, got %s", state.UpstreamCostUSDAtoms)
 	}
 }
 
@@ -1313,7 +1564,75 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 	}
 }
 
-func TestAnthropicFinalPriceUsesReturnedServiceTierDeployment(t *testing.T) {
+func TestAnthropicNoOutputRefusalDoesNotChargeInformationalUsage(t *testing.T) {
+	refusal := "refusal"
+	stop := "stop"
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
+		billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
+	}
+	tests := []struct {
+		name          string
+		response      *schemas.BifrostResponse
+		outputEmitted bool
+		wantCost      string
+	}{
+		{
+			name: "chat refusal before output",
+			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+				FinishReason: &refusal,
+			}}}},
+			wantCost: billing.ZeroChargeUSDAtoms,
+		},
+		{
+			name: "responses refusal before output",
+			response: &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
+				StopReason: &refusal,
+			}},
+			wantCost: billing.ZeroChargeUSDAtoms,
+		},
+		{
+			name: "refusal after provider output reaches a disconnected caller",
+			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+				FinishReason: &refusal,
+			}}}},
+			outputEmitted: true,
+			wantCost:      "13",
+		},
+		{
+			name: "ordinary empty terminal still uses reported usage",
+			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+				FinishReason: &stop,
+			}}}},
+			wantCost: "13",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := &State{
+				Resolution: &catalog.ResolvedRequest{
+					Provider:   schemas.Anthropic,
+					Deployment: catalog.Deployment{Pricing: pricing},
+				},
+				Signals:               &StandardSignals{Prompt: 10, Completion: 3},
+				Response:              tt.response,
+				providerOutputEmitted: tt.outputEmitted,
+			}
+			if err := (AnthropicAdapter{}).CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+			if state.UpstreamCostUSDAtoms != tt.wantCost {
+				t.Fatalf("cost = %s, want %s; meters=%#v", state.UpstreamCostUSDAtoms, tt.wantCost, state.FinalMeters)
+			}
+			if tt.wantCost == billing.ZeroChargeUSDAtoms && len(state.FinalMeters) != 0 {
+				t.Fatalf("informational refusal usage produced priced meters: %#v", state.FinalMeters)
+			}
+		})
+	}
+}
+
+func TestAnthropicCalculateUpstreamCostUsesReturnedServiceTierDeployment(t *testing.T) {
 	tests := []struct {
 		name       string
 		body       string
@@ -1345,6 +1664,9 @@ func TestAnthropicFinalPriceUsesReturnedServiceTierDeployment(t *testing.T) {
 			if state.Hold.ProductKey != tt.wantHold {
 				t.Fatalf("expected hold product %q, got %#v", tt.wantHold, state.Hold)
 			}
+			// This test isolates execution-price selection. Authorization-bound
+			// quantity clipping is covered separately.
+			state.Hold.Meters = nil
 
 			mutatedPricing := copyPricing(resolution.Deployment.Pricing)
 			mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "999000000000000000000"}
@@ -1356,11 +1678,11 @@ func TestAnthropicFinalPriceUsesReturnedServiceTierDeployment(t *testing.T) {
 				Completion:        1000,
 				ActualServiceTier: &tt.actualTier,
 			}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.FinalCostUSDAtoms != "30000000000000000" {
-				t.Fatalf("expected cataloged actual service-tier pricing, got %s meters=%#v", state.FinalCostUSDAtoms, state.FinalMeters)
+			if state.UpstreamCostUSDAtoms != "30000000000000000" {
+				t.Fatalf("expected cataloged actual service-tier pricing, got %s meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
 			}
 		})
 	}
@@ -1402,11 +1724,11 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 				Completion:        resolution.OutputTokenLimit(),
 				ActualServiceTier: &tt.actualTier,
 			}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("Anthropic mapped service-tier hold must cover final: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("Anthropic mapped service-tier hold must cover final: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -1430,19 +1752,19 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 			},
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedAmount: big.NewInt(3000),
-			AvailableAfter:   big.NewInt(0),
-			CreatedAt:        time.Now().UTC(),
-			KeyID:            "key",
-			OrganizationID:   "org",
-			ProviderKey:      "openai",
-			ProductKey:       "gpt-5",
-			RequestID:        "request",
-			UserID:           "user",
-			WorkspaceID:      "workspace",
+			AuthorizedBilledCostUSDAtoms: big.NewInt(3000),
+			AvailableBalanceUSDAtoms:     big.NewInt(0),
+			CreatedAt:                    time.Now().UTC(),
+			KeyID:                        "key",
+			OrganizationID:               "org",
+			ProviderKey:                  "openai",
+			ProductKey:                   "gpt-5",
+			RequestID:                    "request",
+			UserID:                       "user",
+			WorkspaceID:                  "workspace",
 		},
 		Hold: HoldEstimate{
-			MaxUSDAtoms: "3000",
+			EstimatedUpstreamCostUSDAtoms: "3000",
 			Meters: []catalog.MeterEstimate{
 				{
 					MeterKey:       billing.MeterInputTokens,
@@ -1462,11 +1784,11 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 				},
 			},
 		},
-		RequestType:       string(schemas.ChatCompletionRequest),
-		Model:             "gpt-5",
-		GatewayVersion:    "v1.5.13",
-		StartedAt:         time.Now().UTC(),
-		FinalCostUSDAtoms: "1000",
+		RequestType:          string(schemas.ChatCompletionRequest),
+		Model:                "gpt-5",
+		GatewayVersion:       "v1.5.13",
+		StartedAt:            time.Now().UTC(),
+		UpstreamCostUSDAtoms: "1000",
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:       billing.MeterInputTokens,
 			RateKey:        billing.RatePerMillionTokens,
@@ -1503,15 +1825,15 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	}
 }
 
-func TestUnaryProviderLatencyDoesNotFabricateFirstOutput(t *testing.T) {
+func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 	state := &State{
 		Authorization: &billing.Authorization{
-			AuthorizedAmount: big.NewInt(0),
-			AvailableAfter:   big.NewInt(0),
-			RequestID:        "request",
+			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
+			AvailableBalanceUSDAtoms:     big.NewInt(0),
+			RequestID:                    "request",
 		},
-		FinalCostUSDAtoms: billing.ZeroChargeUSDAtoms,
-		RequestType:       string(schemas.ChatCompletionRequest),
+		UpstreamCostUSDAtoms: billing.ZeroChargeUSDAtoms,
+		RequestType:          string(schemas.ChatCompletionRequest),
 		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 81},
 		}},
@@ -1523,59 +1845,403 @@ func TestUnaryProviderLatencyDoesNotFabricateFirstOutput(t *testing.T) {
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
-	attempt := authorizer.finalEvents[0].ProviderAttempts[0]
+	event := authorizer.finalEvents[0]
+	attempt := event.ProviderAttempts[0]
 	if attempt.LatencyMS != 81 {
 		t.Fatalf("expected provider total latency 81, got %#v", attempt)
 	}
-	if attempt.ProviderFirstOutputMS != nil {
-		t.Fatalf("buffered requests must not report streaming first output, got %#v", attempt)
+	if event.TTFTMS != nil {
+		t.Fatalf("buffered requests must not report TTFT, got %#v", event.TTFTMS)
 	}
 }
 
-func TestProviderFirstOutputUsesGatewayClockAcrossProviderEvents(t *testing.T) {
-	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
-	state.observeProviderFirstOutput()
-	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 || *state.ProviderFirstOutputMS > 100 {
-		t.Fatalf("expected the gateway provider clock, got %#v", state.ProviderFirstOutputMS)
+func TestTTFTUsesRequestClockAndRemainsFirstObservation(t *testing.T) {
+	state := &State{
+		StartedAt:         time.Now().UTC().Add(-30 * time.Millisecond),
+		ProviderStartedAt: time.Now().UTC().Add(-10 * time.Millisecond),
 	}
-	first := *state.ProviderFirstOutputMS
-	state.ProviderStartedAt = time.Now().UTC().Add(-time.Second)
-	state.observeProviderFirstOutput()
-	if *state.ProviderFirstOutputMS != first {
-		t.Fatalf("first provider output must remain authoritative, got %#v", state.ProviderFirstOutputMS)
+	state.observeTTFT()
+	if state.TTFTMS == nil || *state.TTFTMS < 25 || *state.TTFTMS > 100 {
+		t.Fatalf("expected the gateway request clock, got %#v", state.TTFTMS)
+	}
+	first := *state.TTFTMS
+	state.StartedAt = time.Now().UTC().Add(-time.Second)
+	state.observeTTFT()
+	if *state.TTFTMS != first {
+		t.Fatalf("the first generated token must remain authoritative, got %#v", state.TTFTMS)
 	}
 }
 
-func TestProviderFirstOutputIgnoresProtocolMetadata(t *testing.T) {
-	state := &State{ProviderStartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
-	state.ObserveChatProviderOutput(&schemas.BifrostChatResponse{
+func TestTTFTIgnoresProtocolMetadata(t *testing.T) {
+	state := &State{StartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
+	finishReason := "stop"
+	state.ObserveChatStreamOutput(&schemas.BifrostChatResponse{
 		Choices: []schemas.BifrostResponseChoice{{
+			FinishReason: &finishReason,
 			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
 				Delta: &schemas.ChatStreamResponseChoiceDelta{Role: stringPointer("assistant")},
 			},
 		}},
 	})
-	state.ObserveResponsesProviderOutput(&schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeCreated,
-	})
-	if state.ProviderFirstOutputMS != nil {
-		t.Fatalf("protocol metadata must not count as provider output, got %#v", state.ProviderFirstOutputMS)
+	for _, eventType := range []schemas.ResponsesStreamResponseType{
+		schemas.ResponsesStreamResponseTypePing,
+		schemas.ResponsesStreamResponseTypeCreated,
+		schemas.ResponsesStreamResponseTypeInProgress,
+		schemas.ResponsesStreamResponseTypeCompleted,
+		schemas.ResponsesStreamResponseTypeFailed,
+		schemas.ResponsesStreamResponseTypeIncomplete,
+		schemas.ResponsesStreamResponseTypeError,
+	} {
+		state.ObserveResponsesStreamOutput(&schemas.BifrostResponsesStreamResponse{Type: eventType})
+	}
+	if state.TTFTMS != nil || state.ProviderOutputObserved {
+		t.Fatalf("protocol and terminal metadata must not count as provider output: %#v", state)
 	}
 
 	text := "hello"
-	state.ObserveResponsesProviderOutput(&schemas.BifrostResponsesStreamResponse{
+	state.ObserveResponsesStreamOutput(&schemas.BifrostResponsesStreamResponse{
 		Delta: &text,
 		Type:  schemas.ResponsesStreamResponseTypeOutputTextDelta,
 	})
-	if state.ProviderFirstOutputMS == nil || *state.ProviderFirstOutputMS < 15 {
-		t.Fatalf("output delta did not record first provider output: %#v", state.ProviderFirstOutputMS)
+	if state.TTFTMS == nil || *state.TTFTMS < 15 {
+		t.Fatalf("output delta did not record TTFT: %#v", state.TTFTMS)
 	}
 }
 
-func TestProviderFirstOutputRequiresGatewayClock(t *testing.T) {
+func TestTTFTIsNarrowerThanProviderOutputObservation(t *testing.T) {
+	annotationURL := "https://example.com/source"
+	text := "answer"
+	state := &State{StartedAt: time.Now().UTC().Add(-20 * time.Millisecond)}
+	state.ObserveChatStreamOutput(&schemas.BifrostChatResponse{
+		Choices: []schemas.BifrostResponseChoice{{
+			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: &schemas.ChatStreamResponseChoiceDelta{
+				Annotations: []schemas.ChatAssistantMessageAnnotation{{
+					URLCitation: schemas.ChatAssistantMessageAnnotationCitation{URL: &annotationURL},
+				}},
+			}},
+		}},
+	})
+	if !state.ProviderOutputObserved || state.TTFTMS != nil {
+		t.Fatalf("citation output must not start TTFT: %#v", state)
+	}
+	state.ObserveChatStreamOutput(&schemas.BifrostChatResponse{
+		Choices: []schemas.BifrostResponseChoice{{
+			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: &schemas.ChatStreamResponseChoiceDelta{Content: &text}},
+		}},
+	})
+	if state.TTFTMS == nil {
+		t.Fatal("generated text did not start TTFT")
+	}
+}
+
+func TestTTFTRejectsFutureClockAndSaturates(t *testing.T) {
+	future := &State{StartedAt: time.Now().UTC().Add(time.Second)}
+	future.observeTTFT()
+	if future.TTFTMS != nil {
+		t.Fatalf("future request clock produced TTFT: %#v", future.TTFTMS)
+	}
+
+	maximum := uint64(^uint32(0))
+	saturated := &State{StartedAt: time.Now().UTC().Add(-time.Duration(maximum+1_000) * time.Millisecond)}
+	saturated.observeTTFT()
+	if saturated.TTFTMS == nil || *saturated.TTFTMS != ^uint32(0) {
+		t.Fatalf("TTFT did not saturate: %#v", saturated.TTFTMS)
+	}
+}
+
+func TestChatOutputObservationRequiresUsablePayload(t *testing.T) {
+	text := "hello"
+	arguments := `{"city":"Paris"}`
+	refusal := "I cannot help with that"
+	summary := "I should use the weather tool"
+	encrypted := "encrypted"
+	signature := "signature"
+	toolID := "call_1"
+	toolName := "lookup"
+	annotationURL := "https://example.com"
+	streamResponse := func(delta *schemas.ChatStreamResponseChoiceDelta) *schemas.BifrostChatResponse {
+		return &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: delta},
+		}}}
+	}
+	tests := []struct {
+		name       string
+		response   *schemas.BifrostChatResponse
+		wantOutput bool
+		wantToken  bool
+	}{
+		{name: "role only", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Role: schemas.Ptr("assistant")})},
+		{name: "empty audio", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Audio: &schemas.ChatAudioMessageAudio{}})},
+		{name: "empty reasoning detail", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Type: schemas.BifrostReasoningDetailsTypeText}}})},
+		{name: "placeholder tool call", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{}}})},
+		{name: "signature only", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Type: schemas.BifrostReasoningDetailsTypeEncrypted, Signature: &signature}}})},
+		{name: "text", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Content: &text}), wantOutput: true, wantToken: true},
+		{name: "refusal", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Refusal: &refusal}), wantOutput: true, wantToken: true},
+		{name: "audio data", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Audio: &schemas.ChatAudioMessageAudio{Data: "base64-audio"}}), wantOutput: true, wantToken: true},
+		{name: "audio transcript", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Audio: &schemas.ChatAudioMessageAudio{Transcript: text}}), wantOutput: true, wantToken: true},
+		{name: "reasoning summary", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Type: schemas.BifrostReasoningDetailsTypeSummary, Summary: &summary}}}), wantOutput: true, wantToken: true},
+		{name: "reasoning text", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Reasoning: &text}), wantOutput: true, wantToken: true},
+		{name: "encrypted reasoning", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ReasoningDetails: []schemas.ChatReasoningDetails{{Type: schemas.BifrostReasoningDetailsTypeEncrypted, Data: &encrypted}}}), wantOutput: true},
+		{name: "tool ID", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{ID: &toolID}}}), wantOutput: true},
+		{name: "tool name", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{Function: schemas.ChatAssistantMessageToolCallFunction{Name: &toolName}}}}), wantOutput: true, wantToken: true},
+		{name: "tool arguments", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{ToolCalls: []schemas.ChatAssistantMessageToolCall{{Function: schemas.ChatAssistantMessageToolCallFunction{Arguments: arguments}}}}), wantOutput: true, wantToken: true},
+		{name: "citation", response: streamResponse(&schemas.ChatStreamResponseChoiceDelta{Annotations: []schemas.ChatAssistantMessageAnnotation{{URLCitation: schemas.ChatAssistantMessageAnnotationCitation{URL: &annotationURL}}}}), wantOutput: true},
+		{
+			name: "complete response choice",
+			response: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+				ChatNonStreamResponseChoice: &schemas.ChatNonStreamResponseChoice{Message: &schemas.ChatMessage{
+					Role:    schemas.ChatMessageRoleAssistant,
+					Content: &schemas.ChatMessageContent{ContentStr: &text},
+				}},
+			}}},
+			wantOutput: true,
+			wantToken:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := chatResponseHasOutput(tt.response); got != tt.wantOutput {
+				t.Fatalf("chatResponseHasOutput() = %v, want %v", got, tt.wantOutput)
+			}
+			if got := chatResponseHasToken(tt.response); got != tt.wantToken {
+				t.Fatalf("chatResponseHasToken() = %v, want %v", got, tt.wantToken)
+			}
+		})
+	}
+}
+
+func TestProviderOutputEmissionIsIndependentOfCallerDelivery(t *testing.T) {
+	signature := "signed-thinking"
+	streamSignature := &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+		ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{Delta: &schemas.ChatStreamResponseChoiceDelta{
+			ReasoningDetails: []schemas.ChatReasoningDetails{{Signature: &signature}},
+		}},
+	}}}
+	if chatResponseHasOutput(streamSignature) {
+		t.Fatal("a signature alone is not usable caller output")
+	}
+	if !chatResponseHasProviderOutput(streamSignature) {
+		t.Fatal("a signature proves that the provider emitted generated reasoning")
+	}
+
+	text := "generated"
+	buffered := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
+		ChatNonStreamResponseChoice: &schemas.ChatNonStreamResponseChoice{Message: &schemas.ChatMessage{
+			Role:    schemas.ChatMessageRoleAssistant,
+			Content: &schemas.ChatMessageContent{ContentStr: &text},
+		}},
+	}}}}
+	if !providerResponseHasOutput(buffered) {
+		t.Fatal("buffered assistant text was not recognized as provider output")
+	}
+
+	terminalOnly := &schemas.BifrostResponse{ResponsesStreamResponse: &schemas.BifrostResponsesStreamResponse{
+		Type: schemas.ResponsesStreamResponseTypeCompleted,
+	}}
+	if providerResponseHasOutput(terminalOnly) {
+		t.Fatal("terminal protocol metadata was mistaken for provider output")
+	}
+}
+
+func TestResponsesOutputObservationRequiresUsablePayload(t *testing.T) {
+	text := "hello"
+	empty := ""
+	encrypted := "encrypted"
+	toolOutput := `{"temperature":21}`
+	toolType := schemas.ResponsesMessageTypeFunctionCall
+	messageType := schemas.ResponsesMessageTypeMessage
+	emptyToolType := schemas.ResponsesMessageTypeComputerCall
+	messageWithText := func() *schemas.ResponsesMessage {
+		return &schemas.ResponsesMessage{
+			Type:    &messageType,
+			Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
+			Content: &schemas.ResponsesMessageContent{ContentStr: &text},
+		}
+	}
+	tests := []struct {
+		name       string
+		response   *schemas.BifrostResponsesStreamResponse
+		wantOutput bool
+		wantToken  bool
+	}{
+		{
+			name:     "unknown event",
+			response: &schemas.BifrostResponsesStreamResponse{Type: "response.future_metadata"},
+		},
+		{
+			name:     "empty text delta",
+			response: &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, Delta: &empty},
+		},
+		{
+			name: "role-only item",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{Type: &messageType, Role: schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant)},
+			},
+		},
+		{
+			name: "empty tool action",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{
+					Type: &emptyToolType,
+					ResponsesToolMessage: &schemas.ResponsesToolMessage{
+						Action: &schemas.ResponsesToolMessageActionStruct{},
+					},
+				},
+			},
+		},
+		{
+			name: "empty computer output",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					Output: &schemas.ResponsesToolMessageOutputStruct{
+						ResponsesComputerToolCallOutput: &schemas.ResponsesComputerToolCallOutputData{},
+					},
+				}},
+			},
+		},
+		{
+			name:     "terminal metadata with empty response",
+			response: &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCompleted, Response: &schemas.BifrostResponsesResponse{}},
+		},
+		{
+			name:       "text delta",
+			response:   &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDelta, Delta: &text},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name:       "text done without delta",
+			response:   &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputTextDone, Text: &text},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name: "completed function call",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{
+					Type: &toolType,
+					ResponsesToolMessage: &schemas.ResponsesToolMessage{
+						Name: schemas.Ptr("lookup"), Arguments: schemas.Ptr(`{}`),
+					},
+				},
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name: "function call in added item",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemAdded,
+				Item: &schemas.ResponsesMessage{
+					Type:                 &toolType,
+					ResponsesToolMessage: &schemas.ResponsesToolMessage{Name: schemas.Ptr("lookup")},
+				},
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name: "computer action",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					Action: &schemas.ResponsesToolMessageActionStruct{
+						ResponsesComputerToolCallAction: &schemas.ResponsesComputerToolCallAction{Type: "wait"},
+					},
+				}},
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name: "completed image",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					ResponsesImageGenerationCall: &schemas.ResponsesImageGenerationCall{Result: "base64-image"},
+				}},
+			},
+			wantOutput: true,
+		},
+		{
+			name: "search results",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type:          schemas.ResponsesStreamResponseTypeWebSearchCallResultsCompleted,
+				SearchResults: []schemas.SearchResult{{}},
+			},
+			wantOutput: true,
+		},
+		{
+			name: "rendered search content",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeContentPartDone,
+				Part: &schemas.ResponsesMessageContentBlock{
+					ResponsesOutputMessageContentRenderedContent: &schemas.ResponsesOutputMessageContentRenderedContent{RenderedContent: "<p>result</p>"},
+				},
+			},
+			wantOutput: true,
+		},
+		{
+			name: "encrypted reasoning",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{ResponsesReasoning: &schemas.ResponsesReasoning{
+					EncryptedContent: &encrypted,
+				}},
+			},
+			wantOutput: true,
+		},
+		{
+			name: "tool result",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type: schemas.ResponsesStreamResponseTypeOutputItemDone,
+				Item: &schemas.ResponsesMessage{ResponsesToolMessage: &schemas.ResponsesToolMessage{
+					Output: &schemas.ResponsesToolMessageOutputStruct{ResponsesToolCallOutputStr: &toolOutput},
+				}},
+			},
+			wantOutput: true,
+		},
+		{
+			name: "completed response with output",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type:     schemas.ResponsesStreamResponseTypeCompleted,
+				Response: &schemas.BifrostResponsesResponse{Output: []schemas.ResponsesMessage{*messageWithText()}},
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+		{
+			name: "incomplete response with output",
+			response: &schemas.BifrostResponsesStreamResponse{
+				Type:     schemas.ResponsesStreamResponseTypeIncomplete,
+				Response: &schemas.BifrostResponsesResponse{Output: []schemas.ResponsesMessage{*messageWithText()}},
+			},
+			wantOutput: true,
+			wantToken:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := responsesEventHasOutput(tt.response); got != tt.wantOutput {
+				t.Fatalf("responsesEventHasOutput() = %v, want %v", got, tt.wantOutput)
+			}
+			if got := responsesEventHasToken(tt.response); got != tt.wantToken {
+				t.Fatalf("responsesEventHasToken() = %v, want %v", got, tt.wantToken)
+			}
+		})
+	}
+}
+
+func TestTTFTRequiresGatewayRequestClock(t *testing.T) {
 	text := "hello"
 	state := &State{}
-	state.ObserveChatProviderOutput(&schemas.BifrostChatResponse{
+	state.ObserveChatStreamOutput(&schemas.BifrostChatResponse{
 		Choices: []schemas.BifrostResponseChoice{{
 			ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
 				Delta: &schemas.ChatStreamResponseChoiceDelta{Content: &text},
@@ -1583,8 +2249,745 @@ func TestProviderFirstOutputRequiresGatewayClock(t *testing.T) {
 		}},
 		ExtraFields: schemas.BifrostResponseExtraFields{Latency: 20},
 	})
-	if state.ProviderFirstOutputMS != nil {
-		t.Fatalf("provider metadata created a gateway timing observation: %#v", state.ProviderFirstOutputMS)
+	if state.TTFTMS != nil {
+		t.Fatalf("provider metadata created a gateway timing observation: %#v", state.TTFTMS)
+	}
+	if !state.ProviderOutputObserved {
+		t.Fatal("usable provider output must remain recorded when the timing clock is unavailable")
+	}
+}
+
+func TestBufferedOutputIsObservedWithoutTTFT(t *testing.T) {
+	state := &State{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+	response := validUnaryChatProviderResponse()
+	response.Choices[0].ChatNonStreamResponseChoice.Message.Content = &schemas.ChatMessageContent{
+		ContentStr: schemas.Ptr("hello"),
+	}
+	if err := (DefaultAdapter{}).IngestResponse(state, &schemas.BifrostResponse{
+		ChatResponse: response,
+	}, nil); err != nil {
+		t.Fatalf("IngestResponse returned error: %v", err)
+	}
+
+	if !state.ProviderOutputObserved || !state.providerOutputEmitted {
+		t.Fatalf("buffered provider output was not recorded: %#v", state)
+	}
+	if state.TTFTMS != nil {
+		t.Fatalf("buffered provider output must not record TTFT: %#v", state.TTFTMS)
+	}
+}
+
+func TestCacheReadSavingsUsesSettledMeterAndComparableInputRate(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1000000"},
+			billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+		}}},
+		FinalMeters: []catalog.MeterEstimate{{
+			MeterKey:       billing.MeterCachedInputTokens,
+			RateKey:        billing.RatePerMillionTokens,
+			RateUSDAtoms:   "100000",
+			Quantity:       "100",
+			AmountUSDAtoms: "10",
+		}},
+	}
+
+	savings, err := cacheReadSavingsUSDAtoms(state)
+	if err != nil {
+		t.Fatalf("cacheReadSavingsUSDAtoms returned error: %v", err)
+	}
+	if savings == nil || *savings != "90" {
+		t.Fatalf("cache savings = %#v, want 90", savings)
+	}
+}
+
+func TestCacheReadSavingsUsesPromptContextTier(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens: {
+				billing.RatePerMillionContextLTE272K: "1000000",
+				billing.RatePerMillionContextGT272K:  "2000000",
+			},
+			billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+		}}},
+		Signals: &StandardSignals{Prompt: billing.LongContextThresholdTokens + 1, Cached: 100},
+		FinalMeters: []catalog.MeterEstimate{{
+			MeterKey:       billing.MeterCachedInputTokens,
+			RateKey:        billing.RatePerMillionTokens,
+			RateUSDAtoms:   "100000",
+			Quantity:       "100",
+			AmountUSDAtoms: "10",
+		}},
+	}
+
+	savings, err := cacheReadSavingsUSDAtoms(state)
+	if err != nil {
+		t.Fatalf("cacheReadSavingsUSDAtoms returned error: %v", err)
+	}
+	if savings == nil || *savings != "190" {
+		t.Fatalf("long-context cache savings = %#v, want 190", savings)
+	}
+}
+
+func TestCacheReadSavingsDoesNotTreatCacheWritesAsSavings(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
+			billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
+		}}},
+		Signals: &StandardSignals{Prompt: 100, CacheWrite: 100},
+		FinalMeters: []catalog.MeterEstimate{{
+			MeterKey:       billing.MeterCacheWriteInputTokens,
+			RateKey:        billing.RatePerMillionTokens,
+			RateUSDAtoms:   "1250000",
+			Quantity:       "100",
+			AmountUSDAtoms: "125",
+		}},
+	}
+	savings, err := cacheReadSavingsUSDAtoms(state)
+	if err != nil || savings == nil || *savings != "0" {
+		t.Fatalf("cache-write savings = %#v, %v; want 0", savings, err)
+	}
+	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	if err != nil || overhead == nil || *overhead != "25" {
+		t.Fatalf("cache-write overhead = %#v, %v; want 25", overhead, err)
+	}
+}
+
+func TestCacheWriteOverheadKeepsAnthropicTTLMetersSeparate(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
+			billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
+			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
+		}}},
+		Signals: &StandardSignals{Prompt: 500, CacheWrite5m: 200, CacheWrite1h: 300},
+		FinalMeters: []catalog.MeterEstimate{
+			{
+				MeterKey:       billing.MeterCacheWrite5mInputTokens,
+				RateKey:        billing.RatePerMillionTokens,
+				RateUSDAtoms:   "1250000",
+				Quantity:       "200",
+				AmountUSDAtoms: "250",
+			},
+			{
+				MeterKey:       billing.MeterCacheWrite1hInputTokens,
+				RateKey:        billing.RatePerMillionTokens,
+				RateUSDAtoms:   "2000000",
+				Quantity:       "300",
+				AmountUSDAtoms: "600",
+			},
+		},
+	}
+
+	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	if err != nil || overhead == nil || *overhead != "350" {
+		t.Fatalf("split cache-write overhead = %#v, %v; want 350", overhead, err)
+	}
+}
+
+func TestCacheWriteOverheadUsesPromptContextTier(t *testing.T) {
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+			billing.MeterInputTokens: {
+				billing.RatePerMillionContextLTE272K: "1000000",
+				billing.RatePerMillionContextGT272K:  "2000000",
+			},
+			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "4000000"},
+		}}},
+		Signals: &StandardSignals{
+			Prompt:       billing.LongContextThresholdTokens + 1,
+			CacheWrite1h: 100,
+		},
+		FinalMeters: []catalog.MeterEstimate{{
+			MeterKey:       billing.MeterCacheWrite1hInputTokens,
+			RateKey:        billing.RatePerMillionTokens,
+			RateUSDAtoms:   "4000000",
+			Quantity:       "100",
+			AmountUSDAtoms: "400",
+		}},
+	}
+
+	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	if err != nil || overhead == nil || *overhead != "200" {
+		t.Fatalf("long-context cache-write overhead = %#v, %v; want 200", overhead, err)
+	}
+}
+
+func TestCacheEconomicsUseTheRequestLevelOrdinaryInputCounterfactual(t *testing.T) {
+	t.Run("cache read savings include ordinary-meter rounding", func(t *testing.T) {
+		state := &State{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1500000"},
+				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+			}}},
+			FinalMeters: []catalog.MeterEstimate{
+				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1500000", Quantity: "1", AmountUSDAtoms: "2"},
+				{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "100000", Quantity: "1", AmountUSDAtoms: "1"},
+			},
+		}
+		savings, err := cacheReadSavingsUSDAtoms(state)
+		if err != nil || savings == nil || *savings != "0" {
+			t.Fatalf("cache read savings = %#v, %v; want 0", savings, err)
+		}
+	})
+
+	t.Run("cache write overhead includes ordinary-meter rounding", func(t *testing.T) {
+		state := &State{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "500000"},
+				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1500000"},
+			}}},
+			FinalMeters: []catalog.MeterEstimate{
+				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "500000", Quantity: "1", AmountUSDAtoms: "1"},
+				{MeterKey: billing.MeterCacheWriteInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1500000", Quantity: "1", AmountUSDAtoms: "2"},
+			},
+		}
+		overhead, err := cacheWriteOverheadUSDAtoms(state)
+		if err != nil || overhead == nil || *overhead != "2" {
+			t.Fatalf("cache write overhead = %#v, %v; want 2", overhead, err)
+		}
+	})
+}
+
+func TestMixedCacheEconomicsMatchRequestLevelCounterfactual(t *testing.T) {
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1234567"},
+		billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "123456"},
+		billing.MeterCacheWriteInputTokens:   {billing.RatePerMillionTokens: "1600000"},
+		billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1800000"},
+		billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2500000"},
+	}
+	rate := func(meter string) *big.Int {
+		value, ok := new(big.Int).SetString(pricing[meter][billing.RatePerMillionTokens], 10)
+		if !ok {
+			t.Fatalf("invalid test rate for %s", meter)
+		}
+		return value
+	}
+	ordinaryRate := rate(billing.MeterInputTokens)
+
+	for _, ordinary := range []int{0, 1, 999, 1000} {
+		for _, read := range []int{0, 1, 17} {
+			for _, genericWrite := range []int{0, 1, 11} {
+				for _, write5m := range []int{0, 3} {
+					for _, write1h := range []int{0, 5} {
+						name := fmt.Sprintf("ordinary=%d/read=%d/generic=%d/5m=%d/1h=%d", ordinary, read, genericWrite, write5m, write1h)
+						t.Run(name, func(t *testing.T) {
+							state := &State{
+								Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+								Signals: &StandardSignals{
+									Prompt:       ordinary + read + genericWrite + write5m + write1h,
+									Cached:       read,
+									CacheWrite:   genericWrite,
+									CacheWrite5m: write5m,
+									CacheWrite1h: write1h,
+								},
+							}
+							if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+								t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+							}
+
+							ordinaryCost := billing.CostPerMillion(ordinary, ordinaryRate)
+							readCost := billing.CostPerMillion(read, rate(billing.MeterCachedInputTokens))
+							readAsOrdinary := new(big.Int).Sub(
+								billing.CostPerMillion(ordinary+read, ordinaryRate),
+								ordinaryCost,
+							)
+							wantSavings := big.NewInt(0)
+							if readAsOrdinary.Cmp(readCost) > 0 {
+								wantSavings.Sub(readAsOrdinary, readCost)
+							}
+
+							writeQuantity := genericWrite + write5m + write1h
+							writeCost := new(big.Int).Add(
+								billing.CostPerMillion(genericWrite, rate(billing.MeterCacheWriteInputTokens)),
+								billing.CostPerMillion(write5m, rate(billing.MeterCacheWrite5mInputTokens)),
+							)
+							writeCost.Add(writeCost, billing.CostPerMillion(write1h, rate(billing.MeterCacheWrite1hInputTokens)))
+							writeAsOrdinary := new(big.Int).Sub(
+								billing.CostPerMillion(ordinary+writeQuantity, ordinaryRate),
+								ordinaryCost,
+							)
+							wantOverhead := big.NewInt(0)
+							if writeCost.Cmp(writeAsOrdinary) > 0 {
+								wantOverhead.Sub(writeCost, writeAsOrdinary)
+							}
+
+							savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+							overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+							if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
+								t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+							}
+							if *savings != wantSavings.String() || *overhead != wantOverhead.String() {
+								t.Fatalf("cache economics = savings %s overhead %s, want %s and %s", *savings, *overhead, wantSavings, wantOverhead)
+							}
+						})
+					}
+				}
+			}
+		}
+	}
+}
+
+func FuzzCacheEconomicsMatchIndependentRequestCounterfactual(f *testing.F) {
+	seeds := []struct {
+		ordinary, read, genericWrite, write5m, write1h   uint32
+		inputRate, readRate, genericRate, rate5m, rate1h uint32
+	}{
+		{},
+		{ordinary: 1, read: 1, genericWrite: 1, write5m: 1, write1h: 1, inputRate: 1_500_000, readRate: 100_000, genericRate: 1_600_000, rate5m: 1_800_000, rate1h: 2_500_000},
+		{ordinary: 271_996, read: 1, genericWrite: 1, write5m: 1, write1h: 1, inputRate: 999_999, readRate: 1, genericRate: 1_000_000, rate5m: 1_000_001, rate1h: 4_000_000},
+		{ordinary: 271_997, read: 1, genericWrite: 1, write5m: 1, write1h: 1, inputRate: 1_000_001, readRate: 2_000_000, genericRate: 500_000, rate5m: 1_000_001, rate1h: 1},
+		{ordinary: 999_999, read: 1, genericWrite: 999_999, write5m: 1, write1h: 1_000_000, inputRate: 1, readRate: 999_999, genericRate: 1_000_000, rate5m: 1_000_001, rate1h: 10_000_000},
+	}
+	for _, seed := range seeds {
+		f.Add(seed.ordinary, seed.read, seed.genericWrite, seed.write5m, seed.write1h, seed.inputRate, seed.readRate, seed.genericRate, seed.rate5m, seed.rate1h)
+	}
+
+	f.Fuzz(func(t *testing.T, ordinaryRaw uint32, readRaw uint32, genericRaw uint32, write5mRaw uint32, write1hRaw uint32, inputRateRaw uint32, readRateRaw uint32, genericRateRaw uint32, rate5mRaw uint32, rate1hRaw uint32) {
+		const quantityRange = uint32(1_000_002)
+		const rateRange = uint32(10_000_001)
+		ordinary := int(ordinaryRaw % quantityRange)
+		read := int(readRaw % quantityRange)
+		genericWrite := int(genericRaw % quantityRange)
+		write5m := int(write5mRaw % quantityRange)
+		write1h := int(write1hRaw % quantityRange)
+		inputRate := uint64(inputRateRaw%rateRange) + 1
+		readRate := uint64(readRateRaw%rateRange) + 1
+		genericRate := uint64(genericRateRaw%rateRange) + 1
+		rate5m := uint64(rate5mRaw%rateRange) + 1
+		rate1h := uint64(rate1hRaw%rateRange) + 1
+
+		pricing := catalog.Pricing{
+			billing.MeterInputTokens:             {billing.RatePerMillionTokens: strconv.FormatUint(inputRate, 10)},
+			billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: strconv.FormatUint(readRate, 10)},
+			billing.MeterCacheWriteInputTokens:   {billing.RatePerMillionTokens: strconv.FormatUint(genericRate, 10)},
+			billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: strconv.FormatUint(rate5m, 10)},
+			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: strconv.FormatUint(rate1h, 10)},
+		}
+		state := &State{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+			Signals: &StandardSignals{
+				Prompt:       ordinary + read + genericWrite + write5m + write1h,
+				Cached:       read,
+				CacheWrite:   genericWrite,
+				CacheWrite5m: write5m,
+				CacheWrite1h: write1h,
+			},
+		}
+		actualTotal, err := calculateBaseUpstreamCost(state, nil)
+		if err != nil {
+			t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+		}
+
+		ordinaryCost := referenceCostPerMillion(ordinary, inputRate)
+		readCost := referenceCostPerMillion(read, readRate)
+		genericCost := referenceCostPerMillion(genericWrite, genericRate)
+		write5mCost := referenceCostPerMillion(write5m, rate5m)
+		write1hCost := referenceCostPerMillion(write1h, rate1h)
+		wantTotal := new(big.Int).Add(ordinaryCost, readCost)
+		wantTotal.Add(wantTotal, genericCost)
+		wantTotal.Add(wantTotal, write5mCost)
+		wantTotal.Add(wantTotal, write1hCost)
+		if actualTotal != wantTotal.String() {
+			t.Fatalf("settled cache total = %s, want %s; meters=%#v", actualTotal, wantTotal, state.FinalMeters)
+		}
+
+		readMarginal := new(big.Int).Sub(referenceCostPerMillion(ordinary+read, inputRate), ordinaryCost)
+		wantSavings := big.NewInt(0)
+		if readMarginal.Cmp(readCost) > 0 {
+			wantSavings.Sub(readMarginal, readCost)
+		}
+		writeQuantity := genericWrite + write5m + write1h
+		writeMarginal := new(big.Int).Sub(referenceCostPerMillion(ordinary+writeQuantity, inputRate), ordinaryCost)
+		writeCost := new(big.Int).Add(genericCost, write5mCost)
+		writeCost.Add(writeCost, write1hCost)
+		wantOverhead := big.NewInt(0)
+		if writeCost.Cmp(writeMarginal) > 0 {
+			wantOverhead.Sub(writeCost, writeMarginal)
+		}
+
+		savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+		overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+		if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
+			t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+		}
+		if *savings != wantSavings.String() || *overhead != wantOverhead.String() {
+			t.Fatalf("cache economics = %s/%s, want %s/%s", *savings, *overhead, wantSavings, wantOverhead)
+		}
+	})
+}
+
+func TestCacheEconomicsDoNotAffectSettlementWhenComparableInputRateIsMissing(t *testing.T) {
+	for _, meterKey := range []string{
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWriteInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens,
+	} {
+		t.Run(meterKey, func(t *testing.T) {
+			state := &State{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					meterKey: {billing.RatePerMillionTokens: "2000000"},
+				}}},
+				Signals: &StandardSignals{Prompt: 100},
+			}
+			switch meterKey {
+			case billing.MeterCachedInputTokens:
+				state.Signals.(*StandardSignals).Cached = 100
+			case billing.MeterCacheWriteInputTokens:
+				state.Signals.(*StandardSignals).CacheWrite = 100
+			case billing.MeterCacheWrite5mInputTokens:
+				state.Signals.(*StandardSignals).CacheWrite5m = 100
+			case billing.MeterCacheWrite1hInputTokens:
+				state.Signals.(*StandardSignals).CacheWrite1h = 100
+			}
+			cost, err := calculateBaseUpstreamCost(state, nil)
+			if err != nil || cost != "200" || len(state.FinalMeters) != 1 {
+				t.Fatalf("settlement = cost %q meters %#v error %v", cost, state.FinalMeters, err)
+			}
+			if _, err := cacheReadSavingsUSDAtoms(state); meterKey == billing.MeterCachedInputTokens && err == nil {
+				t.Fatal("cache-read derivation unexpectedly invented a comparable input rate")
+			}
+			if _, err := cacheWriteOverheadUSDAtoms(state); meterKey != billing.MeterCachedInputTokens && err == nil {
+				t.Fatal("cache-write derivation unexpectedly invented a comparable input rate")
+			}
+		})
+	}
+}
+
+func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
+	tests := []struct {
+		name         string
+		meterKey     string
+		meterRate    string
+		wantSavings  string
+		wantOverhead string
+	}{
+		{
+			name:         "no cache usage",
+			wantSavings:  "0",
+			wantOverhead: "0",
+		},
+		{
+			name:         "cache read at ordinary input rate",
+			meterKey:     billing.MeterCachedInputTokens,
+			meterRate:    "1000000",
+			wantSavings:  "0",
+			wantOverhead: "0",
+		},
+		{
+			name:         "cache read above ordinary input rate",
+			meterKey:     billing.MeterCachedInputTokens,
+			meterRate:    "2000000",
+			wantSavings:  "0",
+			wantOverhead: "0",
+		},
+		{
+			name:         "cache write at ordinary input rate",
+			meterKey:     billing.MeterCacheWriteInputTokens,
+			meterRate:    "1000000",
+			wantSavings:  "0",
+			wantOverhead: "0",
+		},
+		{
+			name:         "cache write below ordinary input rate",
+			meterKey:     billing.MeterCacheWriteInputTokens,
+			meterRate:    "500000",
+			wantSavings:  "0",
+			wantOverhead: "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pricing := catalog.Pricing{
+				billing.MeterInputTokens: {billing.RatePerMillionTokens: "1000000"},
+			}
+			signals := &StandardSignals{}
+			if tt.meterKey != "" {
+				pricing[tt.meterKey] = map[string]string{billing.RatePerMillionTokens: tt.meterRate}
+				signals.Prompt = 100
+				switch tt.meterKey {
+				case billing.MeterCachedInputTokens:
+					signals.Cached = 100
+				case billing.MeterCacheWriteInputTokens:
+					signals.CacheWrite = 100
+				}
+			}
+			state := &State{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+				Signals:    signals,
+			}
+			if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+				t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+			}
+			savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+			overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
+				t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+			}
+			if *savings != tt.wantSavings || *overhead != tt.wantOverhead {
+				t.Fatalf("cache economics = savings %s, overhead %s; want %s, %s", *savings, *overhead, tt.wantSavings, tt.wantOverhead)
+			}
+		})
+	}
+}
+
+func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
+	type matrixDeployment struct {
+		Pricing  catalog.Pricing `json:"pricing"`
+		RouteIDs []string        `json:"routeIds"`
+	}
+	type matrixRoute struct {
+		ProviderID string `json:"providerId"`
+	}
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	routes := map[string]matrixRoute{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+		t.Fatalf("decode catalog routes: %v", err)
+	}
+
+	cacheMeters := []string{
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWriteInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens,
+	}
+	providerMeters := map[string]map[string]bool{}
+	deploymentIDs := make([]string, 0, len(deployments))
+	for deploymentID := range deployments {
+		deploymentIDs = append(deploymentIDs, deploymentID)
+	}
+	slices.Sort(deploymentIDs)
+
+	for _, deploymentID := range deploymentIDs {
+		deployment := deployments[deploymentID]
+		if len(deployment.RouteIDs) == 0 {
+			t.Fatalf("%s has no route", deploymentID)
+		}
+		providerID := routes[deployment.RouteIDs[0]].ProviderID
+		if providerID == "" {
+			t.Fatalf("%s has no provider", deploymentID)
+		}
+		for _, routeID := range deployment.RouteIDs[1:] {
+			if routes[routeID].ProviderID != providerID {
+				t.Fatalf("%s spans providers", deploymentID)
+			}
+		}
+
+		for _, meterKey := range cacheMeters {
+			meterRates := deployment.Pricing[meterKey]
+			priced := len(meterRates) > 0
+			if priced {
+				if providerMeters[providerID] == nil {
+					providerMeters[providerID] = map[string]bool{}
+				}
+				providerMeters[providerID][meterKey] = true
+			}
+
+			modes := []struct {
+				name     string
+				prompt   int
+				rateMode billing.TokenRateMode
+			}{
+				{name: "standard", prompt: 1000, rateMode: billing.TokenRateStandard},
+			}
+			if _, inputLong := deployment.Pricing[billing.MeterInputTokens][billing.RatePerMillionContextGT272K]; inputLong {
+				modes = append(modes, struct {
+					name     string
+					prompt   int
+					rateMode billing.TokenRateMode
+				}{name: "long-context", prompt: billing.LongContextThresholdTokens + 1, rateMode: billing.TokenRateLongContext})
+			}
+
+			for _, mode := range modes {
+				t.Run(deploymentID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
+					signals := &StandardSignals{Prompt: mode.prompt}
+					switch meterKey {
+					case billing.MeterCachedInputTokens:
+						signals.Cached = mode.prompt
+					case billing.MeterCacheWriteInputTokens:
+						signals.CacheWrite = mode.prompt
+					case billing.MeterCacheWrite5mInputTokens:
+						signals.CacheWrite5m = mode.prompt
+					case billing.MeterCacheWrite1hInputTokens:
+						signals.CacheWrite1h = mode.prompt
+					}
+					state := &State{
+						Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployment.Pricing}},
+						Signals:    signals,
+					}
+					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+					}
+					meter := findMeterEstimate(state.FinalMeters, meterKey)
+					if !priced {
+						if meter != nil {
+							t.Fatalf("unpriced cache detail produced %s: %#v", meterKey, state.FinalMeters)
+						}
+						inputMeter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
+						if meterQuantity(inputMeter) != strconv.Itoa(mode.prompt) {
+							t.Fatalf("unpriced %s did not remain ordinary input: %#v", meterKey, state.FinalMeters)
+						}
+						savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+						overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+						if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
+							t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+						}
+						return
+					}
+					if meter == nil {
+						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
+					}
+					meterCostUSDAtoms, err := billing.ParseUSDAtoms(meter.AmountUSDAtoms)
+					if err != nil {
+						t.Fatalf("parse settled cache cost: %v", err)
+					}
+					_, inputRate, ok := billing.PricingRate(deployment.Pricing, billing.MeterInputTokens, mode.rateMode)
+					if !ok {
+						t.Fatal("deployment has no comparable ordinary input rate")
+					}
+					ordinaryCost := billing.CostPerMillion(mode.prompt, inputRate)
+					wantSavings := big.NewInt(0)
+					wantOverhead := big.NewInt(0)
+					if meterKey == billing.MeterCachedInputTokens && ordinaryCost.Cmp(meterCostUSDAtoms) > 0 {
+						wantSavings.Sub(ordinaryCost, meterCostUSDAtoms)
+					}
+					if meterKey != billing.MeterCachedInputTokens && meterCostUSDAtoms.Cmp(ordinaryCost) > 0 {
+						wantOverhead.Sub(meterCostUSDAtoms, ordinaryCost)
+					}
+					savings, savingsErr := cacheReadSavingsUSDAtoms(state)
+					overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+					if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
+						t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+					}
+					if *savings != wantSavings.String() || *overhead != wantOverhead.String() {
+						t.Fatalf("cache economics = savings %s, overhead %s; want %s, %s", *savings, *overhead, wantSavings, wantOverhead)
+					}
+				})
+			}
+		}
+	}
+
+	wantProviderMeters := map[string][]string{
+		"anthropic": {
+			billing.MeterCachedInputTokens,
+			billing.MeterCacheWrite5mInputTokens,
+			billing.MeterCacheWrite1hInputTokens,
+		},
+		"azure": {
+			billing.MeterCachedInputTokens,
+			billing.MeterCacheWriteInputTokens,
+			billing.MeterCacheWrite5mInputTokens,
+			billing.MeterCacheWrite1hInputTokens,
+		},
+		"chutes": {
+			billing.MeterCachedInputTokens,
+		},
+		"openai": {
+			billing.MeterCachedInputTokens,
+			billing.MeterCacheWriteInputTokens,
+		},
+	}
+	if len(providerMeters) != len(wantProviderMeters) {
+		t.Fatalf("cache-priced providers = %#v, want %#v", providerMeters, wantProviderMeters)
+	}
+	for providerID, wantMeters := range wantProviderMeters {
+		actual := providerMeters[providerID]
+		if len(actual) != len(wantMeters) {
+			t.Fatalf("%s cache meters = %#v, want %#v", providerID, actual, wantMeters)
+		}
+		for _, meterKey := range wantMeters {
+			if !actual[meterKey] {
+				t.Fatalf("%s does not exercise %s", providerID, meterKey)
+			}
+		}
+	}
+}
+
+func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
+		billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
+		billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
+		billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
+	}
+	state := &State{
+		Authorization: &billing.Authorization{
+			AuthorizedBilledCostUSDAtoms: big.NewInt(1200),
+			AvailableBalanceUSDAtoms:     big.NewInt(0),
+			KeyID:                        "key",
+			OrganizationID:               "org",
+			ProviderKey:                  "anthropic",
+			ProductKey:                   "claude",
+			RequestID:                    "request",
+			UpstreamByok:                 "stogas",
+			UserID:                       "user",
+			WorkspaceID:                  "workspace",
+		},
+		UpstreamCostUSDAtoms: "860",
+		FinalMeters: []catalog.MeterEstimate{
+			{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "100000", Quantity: "100", AmountUSDAtoms: "10"},
+			{MeterKey: billing.MeterCacheWrite5mInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1250000", Quantity: "200", AmountUSDAtoms: "250"},
+			{MeterKey: billing.MeterCacheWrite1hInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "2000000", Quantity: "300", AmountUSDAtoms: "600"},
+		},
+		Hold: HoldEstimate{
+			EstimatedUpstreamCostUSDAtoms: "1200",
+			Meters: []catalog.MeterEstimate{{
+				MeterKey:       billing.MeterCacheWrite1hInputTokens,
+				RateKey:        billing.RatePerMillionTokens,
+				RateUSDAtoms:   "2000000",
+				Quantity:       "600",
+				AmountUSDAtoms: "1200",
+				HoldRequired:   true,
+			}},
+		},
+		RequestType: string(schemas.ChatCompletionRequest),
+		Resolution: &catalog.ResolvedRequest{
+			Provider: schemas.Anthropic,
+			Route:    catalog.RouteChat,
+			Model:    "claude",
+			Deployment: catalog.Deployment{
+				ID:       "anthropic-claude",
+				ModelID:  "claude",
+				Pricing:  pricing,
+				RouteIDs: []string{"anthropic-messages"},
+			},
+		},
+		Signals:   &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
+		StartedAt: time.Now().UTC(),
+	}
+
+	event := PrepareFinalState(state)
+	if event == nil {
+		t.Fatal("PrepareFinalState returned nil")
+	}
+	if event.CacheReadSavingsUSDAtoms == nil || *event.CacheReadSavingsUSDAtoms != "90" {
+		t.Fatalf("cache-read savings = %#v, want 90", event.CacheReadSavingsUSDAtoms)
+	}
+	if event.CacheWriteOverheadUSDAtoms == nil || *event.CacheWriteOverheadUSDAtoms != "350" {
+		t.Fatalf("cache-write overhead = %#v, want 350", event.CacheWriteOverheadUSDAtoms)
+	}
+	if event.UpstreamCostUSDAtoms != "860" || event.BilledCostUSDAtoms != "860" {
+		t.Fatalf("cache economics changed billing: upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
+	}
+	for _, meterKey := range []string{
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens,
+	} {
+		if _, ok := event.Pricing[meterKey]; !ok {
+			t.Fatalf("pricing bag omitted %s: %#v", meterKey, event.Pricing)
+		}
 	}
 }
 
@@ -1620,7 +3023,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		t.Fatalf("canonicalizeMeters returned error: %v", err)
 	}
 	state.FinalMeters = meters
-	state.FinalCostUSDAtoms = total
+	state.UpstreamCostUSDAtoms = total
 	pricing := pricingForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "2", "1")
 	if total != "1" {
@@ -1629,11 +3032,11 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 
 	authorizer := &fakeBillingAuthorizer{}
 	state.Authorization = &billing.Authorization{
-		AuthorizedAmount: big.NewInt(2),
-		AvailableAfter:   big.NewInt(0),
-		RequestID:        "request",
+		AuthorizedBilledCostUSDAtoms: big.NewInt(2),
+		AvailableBalanceUSDAtoms:     big.NewInt(0),
+		RequestID:                    "request",
 	}
-	state.Hold.MaxUSDAtoms = "2"
+	state.Hold.EstimatedUpstreamCostUSDAtoms = "2"
 	state.Hold.Meters = []catalog.MeterEstimate{{
 		AmountUSDAtoms: "2",
 		HoldRequired:   true,
@@ -1641,7 +3044,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		Quantity:       "2",
 		RateKey:        billing.RatePerMillionTokens,
 	}}
-	state.FinalCostUSDAtoms = total
+	state.UpstreamCostUSDAtoms = total
 	state.StartedAt = time.Now().UTC()
 	FinalizeState(context.Background(), authorizer, state)
 	if len(authorizer.finalEvents) != 1 {
@@ -1735,22 +3138,22 @@ func TestCanonicalizeMetersRejectsInvalidBillingData(t *testing.T) {
 	}
 }
 
-func TestPrepareFinalStateRejectsCostsOutsideAuthorizedHold(t *testing.T) {
+func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProviderOutcome(t *testing.T) {
 	tests := []struct {
 		name          string
 		hold          string
 		final         string
 		providerError bool
 		pricingError  bool
-		wantError     bool
+		wantDiscard   bool
 	}{
 		{name: "exact hold", hold: "100", final: "100"},
-		{name: "above hold", hold: "100", final: "101", wantError: true},
-		{name: "provider error above hold", hold: "100", final: "101", providerError: true, wantError: true},
-		{name: "missing hold", final: "1", wantError: true},
-		{name: "malformed hold", hold: "invalid", final: "1", wantError: true},
-		{name: "malformed final", hold: "100", final: "invalid", pricingError: true, wantError: true},
-		{name: "negative final", hold: "100", final: "-1", pricingError: true, wantError: true},
+		{name: "above hold", hold: "100", final: "101", wantDiscard: true},
+		{name: "provider error above hold", hold: "100", final: "101", providerError: true, wantDiscard: true},
+		{name: "missing hold", final: "1", wantDiscard: true},
+		{name: "malformed hold", hold: "invalid", final: "1", wantDiscard: true},
+		{name: "malformed final", hold: "100", final: "invalid", pricingError: true, wantDiscard: true},
+		{name: "negative final", hold: "100", final: "-1", pricingError: true, wantDiscard: true},
 	}
 
 	for _, tc := range tests {
@@ -1782,14 +3185,14 @@ func TestPrepareFinalStateRejectsCostsOutsideAuthorizedHold(t *testing.T) {
 			}
 			state := &State{
 				Authorization: &billing.Authorization{
-					AuthorizedAmount: big.NewInt(100),
-					AvailableAfter:   big.NewInt(0),
-					RequestID:        "request",
+					AuthorizedBilledCostUSDAtoms: big.NewInt(100),
+					AvailableBalanceUSDAtoms:     big.NewInt(0),
+					RequestID:                    "request",
 				},
-				FinalCostUSDAtoms: tc.final,
-				BifrostError:      providerErr,
-				FinalMeters:       finalMeters,
-				Hold:              HoldEstimate{MaxUSDAtoms: tc.hold, Meters: holdMeters},
+				UpstreamCostUSDAtoms: tc.final,
+				BifrostError:         providerErr,
+				FinalMeters:          finalMeters,
+				Hold:                 HoldEstimate{EstimatedUpstreamCostUSDAtoms: tc.hold, Meters: holdMeters},
 				Resolution: &catalog.ResolvedRequest{
 					Provider: schemas.OpenAI,
 					Route:    catalog.RouteChat,
@@ -1804,17 +3207,23 @@ func TestPrepareFinalStateRejectsCostsOutsideAuthorizedHold(t *testing.T) {
 			if event == nil {
 				t.Fatal("PrepareFinalState returned nil")
 			}
-			if !tc.wantError {
+			if !tc.wantDiscard {
 				if state.BifrostError != nil || event.UpstreamCostUSDAtoms != tc.final {
 					t.Fatalf("authorized final cost was changed: state=%#v event=%#v", state, event)
 				}
 				return
 			}
-			if state.BifrostError == nil || state.FinalCostUSDAtoms != billing.ZeroChargeUSDAtoms || event.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
-				t.Fatalf("unsafe final cost did not fail closed: state=%#v event=%#v", state, event)
+			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || event.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+				t.Fatalf("unsafe final cost was not discarded: state=%#v event=%#v", state, event)
 			}
-			if tc.pricingError && event.StogasProcessingSuccess {
-				t.Fatal("pricing failure was recorded as a successful request")
+			if event.StogasProcessingSuccess {
+				t.Fatal("discarded settlement was recorded as successful Stogas processing")
+			}
+			if tc.pricingError && state.BifrostError == nil {
+				t.Fatal("internal pricing failure did not retain its Stogas error")
+			}
+			if !tc.pricingError && providerErr == nil && state.BifrostError != nil {
+				t.Fatalf("settlement guard changed the provider outcome: %#v", state.BifrostError)
 			}
 			if providerErr != nil && state.BifrostError != providerErr {
 				t.Fatal("final-cost guard replaced the original provider error")
@@ -1884,6 +3293,26 @@ func TestFinalMeterQuantitiesStayWithinAuthorizedDimensions(t *testing.T) {
 				t.Fatalf("finalMeterQuantitiesWithinHold() = %t, want %t", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFinalMetersAreCappedToAuthorizedDimensions(t *testing.T) {
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:     {billing.RatePerMillionTokens: "1000000"},
+		meterAnthropicWebSearchCalls: {billing.RatePerThousandCalls: "1000"},
+	}
+	final := billing.AppendTokenMeterCost(nil, pricing, billing.MeterInputTokens, 5, false, billing.TokenRateStandard)
+	final = billing.AppendCallMeterCost(final, pricing, meterAnthropicWebSearchCalls, 3, false)
+	hold := []catalog.MeterEstimate{
+		{MeterKey: billing.MeterInputTokens, Quantity: "3", HoldRequired: true},
+		{MeterKey: meterAnthropicWebSearchCalls, Quantity: "2", HoldRequired: true},
+	}
+	bounded, total, err := capFinalMetersToHold(final, hold, pricing)
+	if err != nil {
+		t.Fatalf("capFinalMetersToHold returned error: %v", err)
+	}
+	if total != "5" || len(bounded) != 2 || bounded[0].Quantity != "3" || bounded[1].Quantity != "2" {
+		t.Fatalf("final meters were not capped exactly: total=%s meters=%#v", total, bounded)
 	}
 }
 
@@ -1988,7 +3417,7 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	if searchMeter.MeterKey != MeterOpenAIChatCompletionSearchModelCalls || searchMeter.RateKey != billing.RatePerThousandCalls {
 		t.Fatalf("expected search model call meter, got %#v", searchMeter)
 	}
-	if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == "0" {
+	if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
 		t.Fatalf("expected non-zero hold after search meter, got %#v", state.Hold)
 	}
 }
@@ -2030,11 +3459,11 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 				Prompt:     resolution.InputTokenLimit(),
 				Completion: resolution.OutputTokenLimit(),
 			}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover final search-model cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover final search-model cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 			}
 			holdMeter := findMeterEstimate(state.Hold.Meters, tt.meterKey)
 			if holdMeter == nil {
@@ -2124,11 +3553,11 @@ func TestOpenAIPromptCacheHoldCoversAllPossibleWrites(t *testing.T) {
 				signals.CacheWrite = resolution.InputTokenLimit()
 			}
 			state.Signals = signals
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover all cache writes: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover all cache writes: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms)
 			}
 		})
 	}
@@ -2163,7 +3592,7 @@ func TestAnthropicProviderHoldReservesCacheWrite(t *testing.T) {
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("cache-write hold must not reserve the same prompt as ordinary input: %#v", state.Hold.Meters)
 	}
-	if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == "0" {
+	if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
 		t.Fatalf("expected non-zero Anthropic hold, got %#v", state.Hold)
 	}
 }
@@ -2186,11 +3615,11 @@ func TestAnthropicHoldCoversWorstCaseOneHourCacheWrite(t *testing.T) {
 		Completion:   resolution.OutputTokenLimit(),
 		CacheWrite1h: resolution.InputTokenLimit(),
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover worst-case 1h cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover worst-case 1h cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -2218,11 +3647,11 @@ func TestAnthropicHoldCoversDefaultFiveMinuteCacheWrite(t *testing.T) {
 		Completion:   resolution.OutputTokenLimit(),
 		CacheWrite5m: resolution.InputTokenLimit(),
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover default 5m cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover default 5m cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -2255,11 +3684,11 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 		Prompt:     resolution.InputTokenLimit() + anthropicToolSystemPromptHoldTokens(resolution.Deployment.Upstream.Model, resolution.ToolTypes()),
 		Completion: resolution.OutputTokenLimit(),
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover Anthropic tool overhead final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover Anthropic tool overhead final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -2288,11 +3717,11 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 		CacheWrite1h: resolution.InputTokenLimit(),
 		WebSearch:    2,
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover combined fast US cache/tool final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover combined fast US cache/tool final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 	if findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens) == nil {
 		t.Fatalf("expected 1h cache write hold meter, got %#v", state.Hold.Meters)
@@ -2359,4 +3788,17 @@ func TestSignalsFromUsageKeepsProviderUnspecifiedCacheWritesGeneric(t *testing.T
 	if signals.CacheWrite != 200 || signals.CacheWrite5m != 0 || signals.CacheWrite1h != 0 {
 		t.Fatalf("expected unspecified cache write tokens to remain generic, got %#v", signals)
 	}
+}
+
+func referenceCostPerMillion(quantity int, rate uint64) *big.Int {
+	if quantity <= 0 || rate == 0 {
+		return big.NewInt(0)
+	}
+	numerator := new(big.Int).Mul(big.NewInt(int64(quantity)), new(big.Int).SetUint64(rate))
+	divisor := big.NewInt(billing.MillionTokens)
+	quotient, remainder := new(big.Int).QuoRem(numerator, divisor, new(big.Int))
+	if remainder.Sign() > 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	return quotient
 }

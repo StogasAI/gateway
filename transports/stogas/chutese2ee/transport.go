@@ -1,6 +1,7 @@
 package chutese2ee
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,7 @@ type Options struct {
 	ResolveModel            ModelResolver
 	RequireProductionOrigin bool
 	RequirePostQuantumTLS   bool
+	StreamTimeout           time.Duration
 }
 
 type Transport struct {
@@ -42,6 +44,9 @@ type Transport struct {
 func New(options Options) (*Transport, error) {
 	if options.ResolveModel == nil {
 		return nil, errors.New("missing Chutes catalog model resolver")
+	}
+	if options.StreamTimeout <= 0 {
+		return nil, errors.New("missing Chutes stream timeout")
 	}
 	api, err := newAPIClient(
 		options.APIKey,
@@ -73,12 +78,12 @@ func New(options Options) (*Transport, error) {
 	}
 	transport.managedFingerprint = fingerprintCredential(api.apiKey)
 	transport.credentials = make(map[credentialFingerprint]*credentialState)
-	transport.unaryClient = newInvokeClient(options.RequirePostQuantumTLS, false)
-	transport.streamClient = newInvokeClient(options.RequirePostQuantumTLS, true)
+	transport.unaryClient = newInvokeClient(options.RequirePostQuantumTLS, false, 0)
+	transport.streamClient = newInvokeClient(options.RequirePostQuantumTLS, true, options.StreamTimeout)
 	return transport, nil
 }
 
-func newInvokeClient(requirePostQuantumTLS, streaming bool) *fasthttp.Client {
+func newInvokeClient(requirePostQuantumTLS, streaming bool, streamTimeout time.Duration) *fasthttp.Client {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	if requirePostQuantumTLS {
 		tlsConfig.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
@@ -101,7 +106,7 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool) *fasthttp.Client {
 		},
 	}
 	if streaming {
-		client.ReadTimeout = 0
+		client.ReadTimeout = streamTimeout
 		client.MaxConnDuration = 0
 	}
 	return client
@@ -166,6 +171,23 @@ func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 }
 
 func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request, response *fasthttp.Response) (bool, error) {
+	return t.roundTrip(context.Background(), request, response)
+}
+
+// DoRequestWithContext lets Bifrost pass the route context through the custom
+// transport so cold-path admission and the inner socket share one deadline.
+func (t *Transport) DoRequestWithContext(ctx context.Context, request *fasthttp.Request, response *fasthttp.Response) error {
+	_, err := t.roundTrip(ctx, request, response)
+	return err
+}
+
+func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, response *fasthttp.Response) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if t == nil || t.closed.Load() {
 		setSyntheticError(response, http.StatusServiceUnavailable, "upstream_configuration_error", "Chutes private inference is unavailable", 0)
 		return false, nil
@@ -208,8 +230,11 @@ func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request,
 	}()
 	credential.diagnostics.registerModel(chuteID, metadata.Model)
 	for attempt := 0; attempt < maximumInvokeAttempts; attempt++ {
-		ticket, reserveErr := credential.pools.reserve(target)
+		ticket, reserveErr := credential.pools.reserve(ctx, target)
 		if reserveErr != nil {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			setTicketReservationError(response, reserveErr, credential == t.managedCredential)
 			return false, nil
 		}
@@ -219,9 +244,14 @@ func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request,
 			setSyntheticError(response, http.StatusBadGateway, "upstream_protocol_error", "Chutes private inference encryption failed", 0)
 			return false, nil
 		}
+		if err := ctx.Err(); err != nil {
+			clear(encrypted.Body)
+			return false, err
+		}
 		configureInvokeRequest(request, credential, ticket, encrypted.Body, metadata.Stream, originalPath)
 		if metadata.Stream {
 			streamOwnsCredential, streamErr := t.roundTripStream(
+				ctx,
 				credential,
 				request,
 				response,
@@ -240,7 +270,7 @@ func (t *Transport) RoundTrip(_ *fasthttp.HostClient, request *fasthttp.Request,
 			response.Reset()
 			continue
 		}
-		unaryErr := t.roundTripUnary(credential, request, response, ticket, encrypted)
+		unaryErr := t.roundTripUnary(ctx, credential, request, response, ticket, encrypted)
 		clear(encrypted.Body)
 		if unaryErr != nil || attempt+1 >= maximumInvokeAttempts ||
 			!safeInvokeFallbackResponse(response) {
@@ -337,8 +367,14 @@ func safeInvokeFallbackResponse(response *fasthttp.Response) bool {
 	}
 }
 
-func (t *Transport) roundTripUnary(credential *credentialState, request *fasthttp.Request, response *fasthttp.Response, ticket reservedTicket, encrypted *encryptedRequest) error {
-	err := t.unaryClient.Do(request, response)
+func (t *Transport) roundTripUnary(ctx context.Context, credential *credentialState, request *fasthttp.Request, response *fasthttp.Response, ticket reservedTicket, encrypted *encryptedRequest) error {
+	var err error
+	if deadline, ok := ctx.Deadline(); ok {
+		err = t.unaryClient.DoDeadline(request, response, deadline)
+	} else {
+		err = t.unaryClient.Do(request, response)
+	}
+	err = requestContextError(ctx, err)
 	status := response.StatusCode()
 	credential.pools.observeInvoke(ticket, status, parseRetryAfter(string(response.Header.Peek("Retry-After")), time.Now()), err)
 	if err != nil {
@@ -361,6 +397,7 @@ func (t *Transport) roundTripUnary(credential *credentialState, request *fasthtt
 }
 
 func (t *Transport) roundTripStream(
+	ctx context.Context,
 	credential *credentialState,
 	request *fasthttp.Request,
 	response *fasthttp.Response,
@@ -369,7 +406,14 @@ func (t *Transport) roundTripStream(
 	releaseCredential func(),
 ) (bool, error) {
 	upstream := fasthttp.AcquireResponse()
-	if err := t.streamClient.Do(request, upstream); err != nil {
+	var err error
+	if deadline, ok := ctx.Deadline(); ok {
+		err = t.streamClient.DoDeadline(request, upstream, deadline)
+	} else {
+		err = t.streamClient.Do(request, upstream)
+	}
+	err = requestContextError(ctx, err)
+	if err != nil {
 		fasthttp.ReleaseResponse(upstream)
 		credential.pools.observeInvoke(ticket, 0, 0, err)
 		return false, err
@@ -395,6 +439,23 @@ func (t *Transport) roundTripStream(
 	})
 	response.SetBodyStream(decrypted, -1)
 	return true, nil
+}
+
+func requestContextError(ctx context.Context, requestErr error) error {
+	if ctx == nil || requestErr == nil {
+		return requestErr
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return contextErr
+	}
+	deadline, ok := ctx.Deadline()
+	if ok && !time.Now().Before(deadline) && errors.Is(requestErr, fasthttp.ErrTimeout) {
+		// DoDeadline and the context use the same instant. The socket deadline can
+		// win the race before ctx.Err is visible, but this is still the caller's
+		// deadline and must have the same stable result.
+		return context.DeadlineExceeded
+	}
+	return requestErr
 }
 
 type ownedInvokeStream struct {

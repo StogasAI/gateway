@@ -12,14 +12,16 @@ import (
 )
 
 const (
-	DefaultMaxRetries                 = 0
-	DefaultRetryBackoffInitial        = 500 * time.Millisecond
-	DefaultRetryBackoffMax            = 5 * time.Second
-	DefaultRequestTimeoutInSeconds    = 300
-	DefaultMaxConnDurationInSeconds   = 300 // 5 minutes — forces connection recycling to prevent stale connections from NAT/LB silent drops
-	DefaultBufferSize                 = 5000
-	DefaultConcurrency                = 1000
-	DefaultStreamBufferSize           = 256
+	DefaultMaxRetries               = 0
+	DefaultRetryBackoffInitial      = 500 * time.Millisecond
+	DefaultRetryBackoffMax          = 5 * time.Second
+	DefaultRequestTimeoutInSeconds  = 300
+	DefaultMaxConnDurationInSeconds = 300 // 5 minutes — forces connection recycling to prevent stale connections from NAT/LB silent drops
+	DefaultBufferSize               = 5000
+	DefaultConcurrency              = 1000
+	// Keep provider output coupled to its consumer. Stream chunks can be large,
+	// so a count-based queue of hundreds of chunks is not a safe memory bound.
+	DefaultStreamBufferSize           = 1
 	DefaultStreamIdleTimeoutInSeconds = 120 // Idle timeout per stream chunk — if no data for this many seconds, bifrost closes the connection
 	DefaultKeepAliveTimeoutInSeconds  = 30  // Idle keep-alive for pooled connections — how long an idle connection is kept for reuse before being closed
 	DefaultMaxConnsPerHost            = 5000

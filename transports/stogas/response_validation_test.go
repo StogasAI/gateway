@@ -118,6 +118,11 @@ func TestProviderUnaryChatResponseShape(t *testing.T) {
 	if err := validateProviderChatResponse(chatResponseValidationState(), validUnaryChatProviderResponse(), false); err != nil {
 		t.Fatalf("valid unary response rejected: %v", err)
 	}
+	refusal := validUnaryChatProviderResponse()
+	refusal.Choices[0].FinishReason = schemas.Ptr("refusal")
+	if err := validateProviderChatResponse(chatResponseValidationState(), refusal, false); err != nil {
+		t.Fatalf("valid no-output refusal rejected: %v", err)
+	}
 
 	tests := map[string]func(*schemas.BifrostChatResponse){
 		"missing id": func(response *schemas.BifrostChatResponse) { response.ID = "" },

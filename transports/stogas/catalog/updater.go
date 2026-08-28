@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ type UpdaterConfig struct {
 	PollInterval   time.Duration
 	HTTPClient     *http.Client
 	RequireInitial bool
+	GatewayVersion string
 }
 
 type UpdateStatus struct {
@@ -74,7 +76,13 @@ type catalogPollResult struct {
 func StartUpdater(parent context.Context, config UpdaterConfig) (*Updater, error) {
 	config.ReleaseURL = strings.TrimSpace(config.ReleaseURL)
 	if config.ReleaseURL == "" {
+		if config.RequireInitial {
+			return nil, errors.New("initial signed catalog URL is required")
+		}
 		return nil, nil
+	}
+	if _, err := gatewayReleaseSequence(config.GatewayVersion); err != nil {
+		return nil, err
 	}
 	releaseURLs, err := catalogReleaseURLs(config.ReleaseURL)
 	if err != nil {
@@ -138,23 +146,13 @@ func (u *Updater) Status() UpdateStatus {
 	return u.status
 }
 
-func (u *Updater) Ready(now time.Time) (bool, string) {
+func (u *Updater) Ready(_ time.Time) (bool, string) {
 	if u == nil {
 		return true, ""
 	}
 	status := u.Status()
 	if status.Active.Sequence == 0 || status.Active.Digest == "" || status.LastSuccess.IsZero() {
 		return false, "catalog_unavailable"
-	}
-	interval := u.config.PollInterval
-	if interval <= 0 {
-		interval = defaultPollInterval
-	}
-	if !status.CheckedAt.IsZero() && now.Sub(status.CheckedAt) > 2*interval {
-		return false, "catalog_poll_stalled"
-	}
-	if status.ConsecutiveFailures >= 3 && now.Sub(status.LastSuccess) > 3*interval {
-		return false, "catalog_refresh_failing"
 	}
 	return true, ""
 }
@@ -342,6 +340,14 @@ func (u *Updater) pollSource(ctx context.Context, releaseURL *url.URL) catalogPo
 		return result
 	}
 	result.etag = response.Header.Get("ETag")
+	compatible, err := u.catalogCompatible(manifest)
+	if err != nil {
+		result.err = fmt.Errorf("%s: %w", releaseURL.Host, err)
+		return result
+	}
+	if !compatible {
+		return result
+	}
 	if current := active.Load(); current != nil && manifest.Sequence <= current.identity.Sequence {
 		if manifest.Sequence == current.identity.Sequence &&
 			manifest.Runtime == current.identity.Digest &&
@@ -395,6 +401,58 @@ func (u *Updater) pollSource(ctx context.Context, releaseURL *url.URL) catalogPo
 		snapshot: candidate,
 	}
 	return result
+}
+
+func (u *Updater) catalogCompatible(manifest releaseManifest) (bool, error) {
+	sequence, err := gatewayReleaseSequence(u.config.GatewayVersion)
+	if err != nil {
+		return false, err
+	}
+	if sequence >= manifest.MinimumGatewaySequence {
+		return true, nil
+	}
+	u.mu.RLock()
+	hasSuccessfulPoll := !u.status.LastSuccess.IsZero()
+	u.mu.RUnlock()
+	if u.config.RequireInitial && !hasSuccessfulPoll {
+		return false, fmt.Errorf(
+			"catalog requires gateway sequence %d, but this gateway is sequence %d",
+			manifest.MinimumGatewaySequence,
+			sequence,
+		)
+	}
+	return false, nil
+}
+
+func gatewayReleaseSequence(version string) (uint64, error) {
+	const maximumSafeSequence = uint64(9_007_199_254_740_991)
+
+	if version == "" || version == "dev" {
+		return ^uint64(0), nil
+	}
+	parts := strings.Split(strings.TrimPrefix(version, "v"), ".")
+	if !strings.HasPrefix(version, "v") || len(parts) != 3 {
+		return 0, fmt.Errorf("gateway version must be dev or vMAJOR.MINOR.PATCH")
+	}
+	values := [3]uint64{}
+	for index, part := range parts {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return 0, fmt.Errorf("gateway version must be dev or vMAJOR.MINOR.PATCH")
+		}
+		value, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("gateway version must be dev or vMAJOR.MINOR.PATCH")
+		}
+		values[index] = value
+	}
+	if values[1] >= 1_000_000 || values[2] >= 1_000_000 || values[0] > (^uint64(0)-values[1]*1_000_000-values[2])/1_000_000_000_000 {
+		return 0, fmt.Errorf("gateway version exceeds the release sequence range")
+	}
+	sequence := values[0]*1_000_000_000_000 + values[1]*1_000_000 + values[2]
+	if sequence == 0 || sequence > maximumSafeSequence {
+		return 0, fmt.Errorf("gateway version exceeds the release sequence range")
+	}
+	return sequence, nil
 }
 
 func (u *Updater) rememberEtags(results []catalogPollResult) {
@@ -473,8 +531,12 @@ func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseMani
 	if err := decodeStrict(envelope.Manifest, &manifest); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode catalog manifest: %w", err)
 	}
+	const maximumSafeSequence = uint64(9_007_199_254_740_991)
 	if manifest.Schema != "stogas.catalog.release.v1" ||
 		manifest.Sequence == 0 ||
+		manifest.Sequence > maximumSafeSequence ||
+		manifest.MinimumGatewaySequence == 0 ||
+		manifest.MinimumGatewaySequence > maximumSafeSequence ||
 		manifest.CatalogSchema != catalogSchema ||
 		manifest.Source.Repository != "https://github.com/StogasAI/catalog" ||
 		manifest.Source.Tag != fmt.Sprintf("catalog-v%d", manifest.Sequence) ||

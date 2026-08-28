@@ -73,14 +73,14 @@ func TestParseTranscriptionFormDataBodyFromRequest_OrdersMetadataBeforeFile(t *t
 	t.Parallel()
 
 	req := &MistralTranscriptionRequest{
-		Model:          "voxtral-mini-latest",
-		File:           createMinimalAudioFile(),
-		Filename:       "sample.wav",
-		Stream:         schemas.Ptr(true),
-		Language:       schemas.Ptr("en"),
-		Prompt:         schemas.Ptr("hello"),
-		ResponseFormat: schemas.Ptr("json"),
-		Temperature:    schemas.Ptr(0.2),
+		Model:                  "voxtral-mini-latest",
+		File:                   createMinimalAudioFile(),
+		Filename:               "sample.wav",
+		Stream:                 schemas.Ptr(true),
+		Language:               schemas.Ptr("en"),
+		Prompt:                 schemas.Ptr("hello"),
+		ResponseFormat:         schemas.Ptr("json"),
+		Temperature:            schemas.Ptr(0.2),
 		TimestampGranularities: []string{"word", "segment"},
 	}
 
@@ -1318,7 +1318,7 @@ func TestTranscriptionStreamEdgeCases(t *testing.T) {
 func TestTranscriptionStreamContextCancellation(t *testing.T) {
 	t.Parallel()
 
-	// Create a server that sends events slowly
+	clientCancelled := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
@@ -1330,12 +1330,13 @@ func TestTranscriptionStreamContextCancellation(t *testing.T) {
 		w.Write([]byte("event: transcription.text.delta\ndata: {\"text\": \"Starting...\"}\n\n"))
 		flusher.Flush()
 
-		// Wait longer than the context timeout
-		time.Sleep(5 * time.Second)
-
-		// This should not be received
-		w.Write([]byte("event: transcription.done\ndata: {}\n\n"))
-		flusher.Flush()
+		select {
+		case <-r.Context().Done():
+			clientCancelled <- struct{}{}
+		case <-time.After(2 * time.Second):
+			w.Write([]byte("event: transcription.done\ndata: {}\n\n"))
+			flusher.Flush()
+		}
 	}))
 	defer server.Close()
 
@@ -1373,6 +1374,11 @@ func TestTranscriptionStreamContextCancellation(t *testing.T) {
 
 	// Should receive at most the first event before timeout
 	assert.LessOrEqual(t, receivedCount, 2, "Should receive limited events due to context cancellation")
+	select {
+	case <-clientCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("stream cancellation did not close the upstream request")
+	}
 }
 
 // TestTranscriptionExtraParamsEdgeCases tests edge cases for extra parameters.

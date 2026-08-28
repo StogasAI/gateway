@@ -17,7 +17,7 @@ import (
 
 const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-var testCatalogNodeIDs = []string{
+var testCatalogSelectionIDs = []string{
 	"author:openai",
 	"model:gpt-5.5",
 	"deployment:openai-gpt-5.5",
@@ -25,7 +25,7 @@ var testCatalogNodeIDs = []string{
 	"provider:openai",
 }
 
-func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
+func TestBuildReturnsJSONAndVerifiableSignature(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("a", 128)))
 	if err != nil {
 		t.Fatal(err)
@@ -40,19 +40,12 @@ func TestBuildReturnsHeadersAndVerifiableSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Headers) != 1 || output.Headers[HeaderProof] == "" {
-		t.Fatalf("expected one compact proof header: %#v", output.Headers)
-	}
-	encoded, err := base64.RawURLEncoding.DecodeString(output.Headers[HeaderProof])
-	if err != nil {
-		t.Fatal(err)
-	}
 	var object proof.Object
-	if err := json.Unmarshal(encoded, &object); err != nil {
+	if err := json.Unmarshal(output.JSON, &object); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(object, output.Object) {
-		t.Fatalf("proof header and output object diverged: %#v %#v", object, output.Object)
+		t.Fatalf("proof JSON and output object diverged: %#v %#v", object, output.Object)
 	}
 	if object.Schema != proof.DomainV1 {
 		t.Fatalf("proof identity context mismatch: %#v", object)
@@ -153,62 +146,8 @@ func TestEnabledServiceFailsClosedWhenSnapshotReportDataHashDoesNotMatchPayload(
 	}
 }
 
-func TestValidateCatalogRefreshesOnceAndFailsClosedOnAStaleSnapshot(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("f", 128)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	current := testSnapshot(t, publicKey)
-	current.Payload.Catalog.Digest = "sha256:" + strings.Repeat("b", 64)
-	current.ReportDataHex, err = reportdata.HashHex(current.Payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next := testSnapshot(t, publicKey)
-	provider := &refreshingQuotes{current: current, next: next}
-	service := &Service{Quotes: provider, Signer: privateKey}
-
-	if err := service.ValidateCatalog(
-		context.Background(), testCatalogDigest, next.Payload.Catalog.Sequence,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if provider.refreshes != 1 {
-		t.Fatalf("catalog quote refreshes = %d, want 1", provider.refreshes)
-	}
-	stale := &Service{Quotes: staticQuotes{snapshot: current}, Signer: privateKey}
-	if err := stale.ValidateCatalog(
-		context.Background(), testCatalogDigest, next.Payload.Catalog.Sequence,
-	); err == nil ||
-		!strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("expected stale catalog quote failure, got %v", err)
-	}
-	matchingDigest := &Service{Quotes: staticQuotes{snapshot: next}, Signer: privateKey}
-	if err := matchingDigest.ValidateCatalog(
-		context.Background(), testCatalogDigest, next.Payload.Catalog.Sequence+1,
-	); err == nil || !strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("expected catalog sequence mismatch failure, got %v", err)
-	}
-}
-
 type staticQuotes struct {
 	snapshot *quote.Snapshot
-}
-
-type refreshingQuotes struct {
-	current   *quote.Snapshot
-	next      *quote.Snapshot
-	refreshes int
-}
-
-func (q *refreshingQuotes) Current(context.Context) (*quote.Snapshot, error) {
-	return q.current, nil
-}
-
-func (q *refreshingQuotes) Refresh(context.Context) error {
-	q.refreshes++
-	q.current = q.next
-	return nil
 }
 
 func (s staticQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
@@ -218,9 +157,7 @@ func (s staticQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
 func testSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		Catalog:            reportdata.CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
-		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
 		HPKEPublicKey:      "aHBrZQ",
 		Ed25519PublicKey:   base64.RawURLEncoding.EncodeToString(publicKey),
@@ -246,14 +183,15 @@ func testSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
 }
 
 func testMetadata() proof.Metadata {
-	firstOutput := uint32(4)
+	ttft := uint32(4)
 	return proof.Metadata{
 		RequestID: "req_1",
+		CreatedAt: "2026-08-24T12:34:56.789Z",
 		NodeID:    strings.Repeat("3", 64),
 		Catalog: proof.Catalog{
-			Digest:   testCatalogDigest,
-			Sequence: 7,
-			NodeIDs:  append([]string(nil), testCatalogNodeIDs...),
+			Digest:       testCatalogDigest,
+			Sequence:     7,
+			SelectionIDs: append([]string(nil), testCatalogSelectionIDs...),
 		},
 		Pricing: proof.Pricing{
 			Meters: map[string]proof.Meter{
@@ -267,9 +205,9 @@ func testMetadata() proof.Metadata {
 			TotalCostUSDAtoms: "20",
 		},
 		Timing: proof.Timing{
-			TotalMS:             20,
-			ProviderMS:          15,
-			TimeToFirstOutputMS: &firstOutput,
+			TotalMS:    20,
+			ProviderMS: 15,
+			TTFTMS:     &ttft,
 		},
 		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	}

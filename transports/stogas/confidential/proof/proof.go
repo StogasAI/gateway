@@ -8,26 +8,28 @@ import (
 	"encoding/json"
 	"hash"
 	"strings"
+	"time"
 )
 
 const (
-	DomainV1       = "stogas.response-proof.v1"
-	MaxObjectBytes = 8 * 1024
+	DomainV1        = "stogas.response-proof.v1"
+	MaxObjectBytes  = 8 * 1024
+	createdAtLayout = "2006-01-02T15:04:05.000Z"
 )
 
 var catalogNodeKinds = [...]string{"author", "model", "deployment", "route", "provider"}
 
 type Meter struct {
 	Quantity     string `json:"quantity"`
-	RateKey      string `json:"rateKey"`
-	RateUSDAtoms string `json:"rateUsdAtoms"`
-	USDAtoms     string `json:"usdAtoms"`
+	RateKey      string `json:"rate_key"`
+	RateUSDAtoms string `json:"rate_usd_atoms"`
+	USDAtoms     string `json:"usd_atoms"`
 }
 
 type Catalog struct {
-	Digest   string   `json:"digest"`
-	Sequence uint64   `json:"sequence"`
-	NodeIDs  []string `json:"node_ids"`
+	Digest       string   `json:"digest"`
+	Sequence     uint64   `json:"sequence"`
+	SelectionIDs []string `json:"selection_ids"`
 }
 
 type Pricing struct {
@@ -37,13 +39,14 @@ type Pricing struct {
 }
 
 type Timing struct {
-	TotalMS             uint32  `json:"total_ms"`
-	ProviderMS          uint32  `json:"provider_ms"`
-	TimeToFirstOutputMS *uint32 `json:"time_to_first_output_ms,omitempty"`
+	TotalMS    uint32  `json:"total_ms"`
+	ProviderMS uint32  `json:"provider_ms"`
+	TTFTMS     *uint32 `json:"ttft_ms,omitempty"`
 }
 
 type Metadata struct {
 	RequestID            string
+	CreatedAt            string
 	NodeID               string
 	Catalog              Catalog
 	Pricing              Pricing
@@ -71,6 +74,7 @@ type Claims struct {
 type Payload struct {
 	Schema    string  `json:"schema"`
 	RequestID string  `json:"request_id"`
+	CreatedAt string  `json:"created_at"`
 	NodeID    string  `json:"node_id"`
 	Catalog   Catalog `json:"catalog"`
 	Pricing   Pricing `json:"pricing"`
@@ -86,6 +90,7 @@ type SignedClaims struct {
 type Object struct {
 	Schema    string       `json:"schema"`
 	RequestID string       `json:"request_id"`
+	CreatedAt string       `json:"created_at"`
 	NodeID    string       `json:"node_id"`
 	Catalog   Catalog      `json:"catalog"`
 	Pricing   Pricing      `json:"pricing"`
@@ -105,6 +110,7 @@ func ObjectFor(payload Payload, signature string) Object {
 	return Object{
 		Schema:    payload.Schema,
 		RequestID: payload.RequestID,
+		CreatedAt: payload.CreatedAt,
 		NodeID:    payload.NodeID,
 		Catalog:   payload.Catalog,
 		Pricing:   payload.Pricing,
@@ -120,6 +126,7 @@ func PayloadFromObject(object Object) Payload {
 	return Payload{
 		Schema:    object.Schema,
 		RequestID: object.RequestID,
+		CreatedAt: object.CreatedAt,
 		NodeID:    object.NodeID,
 		Catalog:   object.Catalog,
 		Pricing:   object.Pricing,
@@ -128,11 +135,11 @@ func PayloadFromObject(object Object) Payload {
 	}
 }
 
-func ValidCatalogNodeIDs(nodeIDs []string) bool {
-	if len(nodeIDs) != len(catalogNodeKinds) {
+func ValidCatalogSelectionIDs(selectionIDs []string) bool {
+	if len(selectionIDs) != len(catalogNodeKinds) {
 		return false
 	}
-	for index, value := range nodeIDs {
+	for index, value := range selectionIDs {
 		id, ok := strings.CutPrefix(value, catalogNodeKinds[index]+":")
 		if !ok || !validIdentifier(id, 128) {
 			return false
@@ -143,12 +150,13 @@ func ValidCatalogNodeIDs(nodeIDs []string) bool {
 
 func ValidMetadata(metadata Metadata) bool {
 	if metadata.RequestID == "" || len(metadata.RequestID) > 128 ||
+		!validCreatedAt(metadata.CreatedAt) ||
 		!isLowerHex(metadata.NodeID, 32) ||
 		!validCatalogDigest(metadata.Catalog.Digest) ||
-		!ValidCatalogNodeIDs(metadata.Catalog.NodeIDs) ||
+		!ValidCatalogSelectionIDs(metadata.Catalog.SelectionIDs) ||
 		!validPricing(metadata.Pricing) ||
 		metadata.Timing.ProviderMS > metadata.Timing.TotalMS ||
-		(metadata.Timing.TimeToFirstOutputMS != nil && *metadata.Timing.TimeToFirstOutputMS > metadata.Timing.ProviderMS) ||
+		(metadata.Timing.TTFTMS != nil && *metadata.Timing.TTFTMS > metadata.Timing.TotalMS) ||
 		(metadata.E2EETranscriptSHA256 != "" && !isLowerHex(metadata.E2EETranscriptSHA256, 32)) {
 		return false
 	}
@@ -228,6 +236,7 @@ func payloadForHashes(metadata Metadata, requestSHA256 string, responseSHA256 st
 	return Payload{
 		Schema:    DomainV1,
 		RequestID: metadata.RequestID,
+		CreatedAt: metadata.CreatedAt,
 		NodeID:    metadata.NodeID,
 		Catalog:   metadata.Catalog,
 		Pricing:   metadata.Pricing,
@@ -241,15 +250,15 @@ func payloadForHashes(metadata Metadata, requestSHA256 string, responseSHA256 st
 }
 
 func cloneMetadata(metadata Metadata) Metadata {
-	metadata.Catalog.NodeIDs = append([]string(nil), metadata.Catalog.NodeIDs...)
+	metadata.Catalog.SelectionIDs = append([]string(nil), metadata.Catalog.SelectionIDs...)
 	meters := make(map[string]Meter, len(metadata.Pricing.Meters))
 	for key, meter := range metadata.Pricing.Meters {
 		meters[key] = meter
 	}
 	metadata.Pricing.Meters = meters
-	if metadata.Timing.TimeToFirstOutputMS != nil {
-		value := *metadata.Timing.TimeToFirstOutputMS
-		metadata.Timing.TimeToFirstOutputMS = &value
+	if metadata.Timing.TTFTMS != nil {
+		value := *metadata.Timing.TTFTMS
+		metadata.Timing.TTFTMS = &value
 	}
 	return metadata
 }
@@ -290,7 +299,7 @@ func validIdentifier(value string, maxLength int) bool {
 }
 
 func isDecimal(value string) bool {
-	if value == "" {
+	if value == "" || (len(value) > 1 && value[0] == '0') {
 		return false
 	}
 	for _, character := range []byte(value) {
@@ -299,6 +308,11 @@ func isDecimal(value string) bool {
 		}
 	}
 	return true
+}
+
+func validCreatedAt(value string) bool {
+	parsed, err := time.Parse(createdAtLayout, value)
+	return err == nil && parsed.Format(createdAtLayout) == value
 }
 
 func isLowerHex(value string, bytes int) bool {

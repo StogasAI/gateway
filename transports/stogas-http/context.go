@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -17,20 +16,20 @@ import (
 type stogasContextKey string
 
 const (
-	stogasExtraFieldsKey stogasContextKey = "stogas.extra_fields"
+	stogasReceiptKey stogasContextKey = "stogas.receipt"
 
-	stogasHeaderExtraFields = "X-Stogas-Extra-Fields"
-
-	chatRequestLifetime   = 10 * time.Minute
-	chatStreamIdleTimeout = 2 * time.Minute
+	stogasHeaderReceipt = "Stogas-Receipt"
 )
 
 func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
-	lifetime := requestLifetime(resolution)
+	lifetime := billing.GatewayRequestLifetime
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
 		lifetime,
 	)
+	if deadline, ok := bifrostCtx.Deadline(); ok {
+		setDownstreamWriteLimit(ctx.Conn(), deadline.Add(downstreamWriteIdleTimeout))
+	}
 	requestID := ""
 	if session := encryptedSession(ctx); session != nil {
 		requestID = session.RequestID
@@ -47,10 +46,10 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
 	state.SetDashboardCredential(credential.Dashboard)
-	if credential.Upstream != nil {
+	if upstreamSecret := credential.Upstream.get(string(resolution.Provider)); upstreamSecret != "" {
 		plaintext, credentialErr := stogas.CanonicalPassthroughCredential(
 			resolution.Provider,
-			credential.Upstream.APIKey,
+			upstreamSecret,
 		)
 		if credentialErr != nil {
 			cancel()
@@ -64,73 +63,52 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	state.SingleUseRequestID = encryptedSession(ctx) != nil
 	stogas.SetState(bifrostCtx, state)
 
-	extraFields, err := extraFieldsHeader(ctx)
+	receipt, err := receiptHeader(ctx)
 	if err != nil {
 		cancel()
 		return nil, nil, nil, err
 	}
-	if extraFields {
-		bifrostCtx.SetValue(stogasExtraFieldsKey, true)
+	if receipt {
+		bifrostCtx.SetValue(stogasReceiptKey, true)
 	}
 
 	return bifrostCtx, state, cancel, nil
 }
 
-func requestLifetime(resolution *catalog.ResolvedRequest) time.Duration {
-	if resolution == nil {
-		return billing.GatewayRequestLifetime
+func configureProviderStreamIdleTimeout(
+	ctx *schemas.BifrostContext,
+	state *stogas.State,
+) {
+	if ctx == nil || state == nil || state.RequestLifetime <= 0 {
+		return
 	}
-	switch resolution.Route {
-	case catalog.RouteChat:
-		return chatRequestLifetime
-	case catalog.RouteResponses:
-		return billing.GatewayRequestLifetime
-	default:
-		return billing.GatewayRequestLifetime
-	}
+	ctx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, state.RequestLifetime)
 }
 
-func streamIdleTimeout(state *stogas.State, configured time.Duration) time.Duration {
-	if state == nil || state.Resolution == nil {
-		return 0
-	}
-	switch state.Resolution.Route {
-	case catalog.RouteChat:
-		if configured > 0 {
-			return configured
-		}
-		return chatStreamIdleTimeout
-	default:
-		return 0
-	}
-}
-
-func extraFieldsHeader(ctx *fasthttp.RequestCtx) (bool, error) {
-	values := ctx.Request.Header.PeekAll(stogasHeaderExtraFields)
+func receiptHeader(ctx *fasthttp.RequestCtx) (bool, error) {
+	values := ctx.Request.Header.PeekAll(stogasHeaderReceipt)
 	if len(values) > 1 {
-		return false, fmt.Errorf("%s must appear at most once", stogasHeaderExtraFields)
+		return false, fmt.Errorf("%s must appear at most once", stogasHeaderReceipt)
 	}
 	raw := ""
 	if len(values) == 1 {
-		raw = strings.ToLower(strings.TrimSpace(string(values[0])))
+		raw = strings.TrimSpace(string(values[0]))
 	}
 	if raw == "" {
 		return false, nil
 	}
 	switch raw {
-	case "true":
+	case "v1":
 		return true, nil
-	case "false":
-		return false, nil
 	default:
-		return false, fmt.Errorf("%s must be true or false", stogasHeaderExtraFields)
+		return false, fmt.Errorf("%s must be v1", stogasHeaderReceipt)
 	}
 }
 
-func wantsExtraFields(ctx *schemas.BifrostContext) bool {
+func wantsReceipt(ctx *schemas.BifrostContext) bool {
 	if ctx == nil {
 		return false
 	}
-	value, _ := ctx.Value(stogasExtraFieldsKey).(bool)
+	value, _ := ctx.Value(stogasReceiptKey).(bool)
 	return value
 }

@@ -31,6 +31,7 @@ func TestLiveChutesE2EE(t *testing.T) {
 		APIKey:                  apiKey,
 		APIBaseURL:              productionAPIBaseURL,
 		RequireProductionOrigin: true,
+		StreamTimeout:           10 * time.Minute,
 		ResolveModel: func(value string) (ModelTarget, bool) {
 			target, ok := byModel[value]
 			return target, ok

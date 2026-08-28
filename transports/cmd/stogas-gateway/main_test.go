@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
+	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
 func TestStartupEventContainsOnlyFixedFields(t *testing.T) {
@@ -20,6 +24,34 @@ func TestStartupEventContainsOnlyFixedFields(t *testing.T) {
 	const expected = "{\"errorType\":\"Error\",\"event\":\"gateway_startup_failed\",\"reasonCode\":\"configuration_load_failed\",\"severity\":\"error\"}\n"
 	if output.String() != expected {
 		t.Fatalf("startup event = %q, want %q", output.String(), expected)
+	}
+}
+
+func TestRuntimeInitializationReasonUsesOnlyFixedStages(t *testing.T) {
+	tests := []struct {
+		err  error
+		want startupReasonCode
+	}{
+		{errors.New("unknown"), startupRuntimeInitFailed},
+		{fmt.Errorf("wrapped: %w", stogashttp.ErrCatalogInitialization), startupCatalogInitFailed},
+		{fmt.Errorf("wrapped: %w", secretstore.ErrReleaseAuthentication), startupConfidentialSecretReleaseAuthenticationFailed},
+		{secretstore.ErrReleaseBindingMismatch, startupConfidentialSecretReleaseBindingFailed},
+		{secretstore.ErrInvalidReleaseContents, startupConfidentialSecretReleaseContentsInvalid},
+		{secretstore.ErrInvalidReleaseEncoding, startupConfidentialSecretReleaseEncodingInvalid},
+		{secretstore.ErrInvalidReleaseIdentity, startupConfidentialSecretReleaseIdentityInvalid},
+		{stogashttp.ErrConfidentialSecretReleaseInstallation, startupConfidentialSecretReleaseFailed},
+		{stogashttp.ErrConfidentialCertificateProvisioning, startupCertificateProvisioningFailed},
+		{stogashttp.ErrConfidentialHeartbeatConfirmation, startupConfidentialHeartbeatConfirmationFailed},
+		{stogashttp.ErrConfidentialHeartbeat, startupConfidentialHeartbeatFailed},
+		{stogashttp.ErrConfidentialRuntimeSecretApplication, startupConfidentialRuntimeSecretApplicationFailed},
+		{stogashttp.ErrConfidentialRuntimeInitialization, startupConfidentialRuntimeInitFailed},
+		{stogashttp.ErrGatewayRuntimeInitialization, startupGatewayRuntimeInitFailed},
+		{stogashttp.ErrRouteInitialization, startupRouteInitFailed},
+	}
+	for _, test := range tests {
+		if got := runtimeInitializationReason(test.err); got != test.want {
+			t.Fatalf("runtimeInitializationReason(%v) = %q, want %q", test.err, got, test.want)
+		}
 	}
 }
 

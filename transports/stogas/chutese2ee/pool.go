@@ -60,7 +60,10 @@ func newPoolState(api *apiClient, attestor *attestor, diagnostics *diagnostics) 
 	return state
 }
 
-func (s *poolState) reserve(target ModelTarget) (reservedTicket, error) {
+func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTicket, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !validModelTarget(target) {
 		return reservedTicket{}, ErrMeasurementPolicy
 	}
@@ -69,27 +72,43 @@ func (s *poolState) reserve(target ModelTarget) (reservedTicket, error) {
 	}
 	chuteID := target.ChuteID
 	for attempt := 0; attempt < maximumSynchronousRefills; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return reservedTicket{}, err
+		}
 		if ticket, ok := s.take(target, time.Now()); ok {
 			s.diagnostics.recordTicketAvailable(chuteID)
 			s.maybeWarm(target)
 			return ticket, nil
 		}
-		_, err, _ := s.refills.Do(modelTargetKey(target), func() (any, error) {
+		resultChannel := s.refills.DoChan(modelTargetKey(target), func() (any, error) {
 			if s.hasUsable(target, time.Now()) {
 				return nil, nil
 			}
 			return nil, s.refill(target)
 		})
+		var err error
+		select {
+		case result := <-resultChannel:
+			err = result.Err
+		case <-ctx.Done():
+			return reservedTicket{}, ctx.Err()
+		}
 		if err != nil {
 			if attempt+1 < maximumSynchronousRefills && retryableChutesRead(err, true) {
 				if delay, ok := s.shortRefillBackoff(chuteID, time.Now()); ok &&
-					waitForChutesRetry(s.ctx, delay) {
+					waitForChutesRetry(ctx, delay) {
 					continue
 				}
 			}
 			s.diagnostics.recordTicketStarvation(chuteID)
 			return reservedTicket{}, errors.Join(ErrNoUsableTicket, err)
 		}
+		if err := ctx.Err(); err != nil {
+			return reservedTicket{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return reservedTicket{}, err
 	}
 	if ticket, ok := s.take(target, time.Now()); ok {
 		s.diagnostics.recordTicketAvailable(chuteID)

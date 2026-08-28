@@ -192,18 +192,6 @@ function verifyChannels() {
 	}
 }
 
-function verifyLaunchPolicy() {
-	const policy = JSON.parse(read(resolve(releaseRoot, 'snp-launch-policy.json')));
-	assert(
-		JSON.stringify(Object.keys(policy).sort()) ===
-			JSON.stringify(['amd_product', 'policy', 'schema']),
-		'The SNP launch policy has unsupported fields.'
-	);
-	assert(policy.schema === 'stogas.snp-launch-policy.v1', 'Unsupported SNP launch policy.');
-	assert(policy.amd_product === 'Milan', 'The SNP launch policy must target Milan.');
-	assert(policy.policy === '0x000000000213013a', 'The reviewed Milan policy changed.');
-}
-
 function verifyWorkflows() {
 	const paths = [
 		resolve(repoRoot, '.github/workflows/gateway-igvm-release.yml'),
@@ -238,15 +226,29 @@ function verifyWorkflows() {
 		'Publish Draft Release',
 		'actions/attest@',
 		'gateway.igvm',
-		'gateway-launch-policy.json',
+		'release-manifest.json',
+		'snp-launch-policies.json',
 		'github-attestation.jsonl',
 		'Verify release payload file set',
+		'find . -mindepth 1 -maxdepth 1',
+		'release payload entry is not a regular file',
+		'gh attestation verify',
+		'Downloaded release payload does not match its attested manifest.',
 		'gh release delete-asset'
 	]) {
 		assertContains(release, value, `Release workflow is missing: ${value}`);
 	}
 	assert(!release.includes('workflow_dispatch:'), 'Release builds must start from protected tags.');
 	assert(!release.includes('restore-keys:'), 'Release caches must not use partial matches.');
+	assert(
+		!release.includes('SHA256SUMS'),
+		'The manifest makes a separate checksum asset redundant.'
+	);
+	assertContains(
+		release,
+		'subject-path: dist/gateway/${{ github.ref_name }}/release-manifest.json',
+		'GitHub must attest the manifest that links the full release.'
+	);
 	assert(
 		!release.includes('gateway-evidence.tar'),
 		'Release assets must not contain a redundant evidence archive.'
@@ -319,8 +321,9 @@ function verifyReleaseGraph() {
 		'"--cpus" "4"',
 		'"--real16"',
 		'igvmmeasure" "--check-kvm"',
-		'\\"vcpuCount\\": 4',
-		'\\"vcpu_count\\":4',
+		'\\"launchPolicies\\":~a',
+		'%snp-launch-policies',
+		'\\"vcpuCount\\":4',
 		'(invoke "scripts/config" "--set-val" "NR_CPUS" "4")',
 		'(gateway-file "LICENSE" "LICENSE")',
 		'(gateway-file "NOTICE" "NOTICE")'
@@ -333,6 +336,7 @@ function verifyReleaseGraph() {
 		'guix-store-requisites.txt',
 		'igvmmeasure-check-kvm.txt',
 		'launch-measurement.txt',
+		'SHA256SUMS',
 		'ukify-inspect.txt'
 	]) {
 		assert(!release.includes(removed), `The release still emits redundant file: ${removed}`);
@@ -351,8 +355,9 @@ function verifyReleaseGraph() {
 		'resolve_stogas_guix "$release_root"',
 		'export STOGAS_GATEWAY_SOURCE_ROOT="$source_snapshot"',
 		'expected_files=(',
+		'find . -mindepth 1 -maxdepth 1',
 		'release output contains unexpected files',
-		'sha256sum -c SHA256SUMS'
+		'release output entry is not a regular file'
 	]) {
 		assertContains(build, value, `The build wrapper is missing: ${value}`);
 	}
@@ -492,7 +497,6 @@ function verifyTreeHasher() {
 verifyLock();
 verifyPatches();
 verifyChannels();
-verifyLaunchPolicy();
 verifyWorkflows();
 verifyReleaseGraph();
 verifyTreeHasher();

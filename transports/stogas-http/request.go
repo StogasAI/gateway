@@ -15,13 +15,46 @@ type apiCredential struct {
 	Claims    *billing.APIKeyClaims
 	Dashboard *billing.DashboardCredential
 	Raw       string
-	Upstream  *upstreamCredentialInput
+	Upstream  upstreamCredentialInputs
 }
 
-type upstreamCredentialInput struct {
-	Provider string
-	APIKey   string
+type upstreamCredentialInputs struct {
+	Anthropic string
+	Chutes    string
+	OpenAI    string
 }
+
+func (inputs upstreamCredentialInputs) only(provider string) upstreamCredentialInputs {
+	switch provider {
+	case "anthropic":
+		return upstreamCredentialInputs{Anthropic: inputs.Anthropic}
+	case "chutes":
+		return upstreamCredentialInputs{Chutes: inputs.Chutes}
+	case "openai":
+		return upstreamCredentialInputs{OpenAI: inputs.OpenAI}
+	default:
+		return upstreamCredentialInputs{}
+	}
+}
+
+func (inputs upstreamCredentialInputs) get(provider string) string {
+	switch provider {
+	case "anthropic":
+		return inputs.Anthropic
+	case "chutes":
+		return inputs.Chutes
+	case "openai":
+		return inputs.OpenAI
+	default:
+		return ""
+	}
+}
+
+const (
+	upstreamAnthropicHeader = "X-Stogas-Upstream-Anthropic-API-Key"
+	upstreamChutesHeader    = "X-Stogas-Upstream-Chutes-API-Key"
+	upstreamOpenAIHeader    = "X-Stogas-Upstream-OpenAI-API-Key"
+)
 
 const inferenceCredentialContextKey = "stogas.inference_credential"
 const inferenceRouteContextKey = "stogas.inference_route"
@@ -162,7 +195,7 @@ func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredentia
 	if cached, ok := ctx.UserValue(inferenceCredentialContextKey).(apiCredential); ok {
 		return cached, true
 	}
-	upstream, upstreamErr := takeUpstreamCredential(ctx)
+	upstream, upstreamErr := takeUpstreamCredentials(ctx)
 	credential, ok := s.requireAPIKey(ctx)
 	if !ok {
 		return apiCredential{}, false
@@ -204,8 +237,12 @@ func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredentia
 }
 
 func isJSONContentType(raw []byte) bool {
+	return isContentType(raw, "application/json")
+}
+
+func isContentType(raw []byte, expected string) bool {
 	mediaType, parameters, err := mime.ParseMediaType(string(raw))
-	if err != nil || !strings.EqualFold(mediaType, "application/json") {
+	if err != nil || !strings.EqualFold(mediaType, expected) {
 		return false
 	}
 	for name, value := range parameters {
@@ -232,63 +269,53 @@ func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx) string {
 func internalOrProviderControlHeader(name string) bool {
 	return strings.HasPrefix(name, "x-bf-") ||
 		(strings.HasPrefix(name, "x-stogas-") &&
-			name != "x-stogas-extra-fields" &&
-			name != "x-stogas-upstream-api-key" &&
-			name != "x-stogas-upstream-provider")
+			name != strings.ToLower(upstreamAnthropicHeader) &&
+			name != strings.ToLower(upstreamChutesHeader) &&
+			name != strings.ToLower(upstreamOpenAIHeader))
 }
 
-func takeUpstreamCredential(ctx *fasthttp.RequestCtx) (*upstreamCredentialInput, error) {
-	apiKey, apiKeyOK := consistentHeaderValue(ctx.Request.Header.PeekAll("X-Stogas-Upstream-API-Key"), false)
-	provider, providerOK := consistentHeaderValue(ctx.Request.Header.PeekAll("X-Stogas-Upstream-Provider"), true)
+func takeUpstreamCredentials(ctx *fasthttp.RequestCtx) (upstreamCredentialInputs, error) {
+	legacyAPIKey := ctx.Request.Header.PeekAll("X-Stogas-Upstream-API-Key")
+	legacyProvider := ctx.Request.Header.PeekAll("X-Stogas-Upstream-Provider")
 	ctx.Request.Header.Del("X-Stogas-Upstream-API-Key")
 	ctx.Request.Header.Del("X-Stogas-Upstream-Provider")
-	if !apiKeyOK || !providerOK {
-		return nil, fmt.Errorf("conflicting upstream credential headers")
-	}
-	if apiKey == "" {
-		if provider != "" {
-			return nil, fmt.Errorf("X-Stogas-Upstream-API-Key is required with upstream credential metadata")
+
+	values := make([]string, 3)
+	headers := [...]string{upstreamAnthropicHeader, upstreamChutesHeader, upstreamOpenAIHeader}
+	var parseErr error
+	for index, header := range headers {
+		values[index], parseErr = takeUpstreamCredentialHeader(ctx, header)
+		if parseErr != nil {
+			for _, remaining := range headers[index+1:] {
+				ctx.Request.Header.Del(remaining)
+			}
+			return upstreamCredentialInputs{}, parseErr
 		}
-		return nil, nil
 	}
-	if !validCredentialValue(apiKey) {
-		return nil, fmt.Errorf("X-Stogas-Upstream-API-Key is invalid")
+	if len(legacyAPIKey) != 0 || len(legacyProvider) != 0 {
+		return upstreamCredentialInputs{}, fmt.Errorf("generic upstream credential headers are unsupported; use a provider-specific upstream API key header")
 	}
-	if provider == "" {
-		return nil, fmt.Errorf("X-Stogas-Upstream-Provider is required with a pass-through credential")
-	}
-	if len(provider) > 64 || strings.ContainsAny(provider, "\x00\r\n") {
-		return nil, fmt.Errorf("X-Stogas-Upstream-Provider is invalid")
-	}
-	switch provider {
-	case "anthropic", "chutes", "openai":
-	case "azure":
-		return nil, fmt.Errorf("unsupported Azure pass-through credentials")
-	default:
-		return nil, fmt.Errorf("X-Stogas-Upstream-Provider is invalid")
-	}
-	return &upstreamCredentialInput{Provider: provider, APIKey: apiKey}, nil
+	return upstreamCredentialInputs{
+		Anthropic: values[0],
+		Chutes:    values[1],
+		OpenAI:    values[2],
+	}, nil
 }
 
-func consistentHeaderValue(values [][]byte, trim bool) (string, bool) {
-	value := ""
-	for _, raw := range values {
-		next := string(raw)
-		if trim {
-			next = strings.TrimSpace(next)
-		}
-		if next == "" {
-			continue
-		}
-		if value == "" {
-			value = next
-			continue
-		}
-		if next != value {
-			return "", false
-		}
+func takeUpstreamCredentialHeader(ctx *fasthttp.RequestCtx, header string) (string, error) {
+	values := ctx.Request.Header.PeekAll(header)
+	ctx.Request.Header.Del(header)
+	if len(values) == 0 {
+		return "", nil
 	}
-	return value, true
+	if len(values) != 1 {
+		return "", fmt.Errorf("%s must appear at most once", header)
+	}
+	value := string(values[0])
+	if !validCredentialValue(value) {
+		return "", fmt.Errorf("%s is invalid", header)
+	}
+	return value, nil
 }
 
 func validateAcceptHeader(raw []byte) bool {

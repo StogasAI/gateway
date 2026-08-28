@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,7 +42,10 @@ func heartbeatSignatureTranscript(input HeartbeatInput) ([]byte, error) {
 	quoteHash := sha256.Sum256(input.Quote.Quote)
 	fields := [][]byte{
 		[]byte(input.NodeID),
+		[]byte(input.ActiveCertSHA256),
 		[]byte(formatTime(input.CertExpiresAt)),
+		[]byte(input.Catalog.Digest),
+		[]byte(strconv.FormatUint(input.Catalog.Sequence, 10)),
 		[]byte(formatTime(input.ObservedAt)),
 		[]byte(formatTime(input.Quote.GeneratedAt)),
 		quoteHash[:],

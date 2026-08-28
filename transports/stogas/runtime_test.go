@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
@@ -54,6 +55,12 @@ func TestRuntimeAccountDisablesOpenAIProviderStorage(t *testing.T) {
 		}
 		if providerConfig == nil || providerConfig.NetworkConfig.MaxResponseBodySize != maxProviderResponseBodySize {
 			t.Fatalf("%s provider response cap = %#v, want %d", provider, providerConfig, maxProviderResponseBodySize)
+		}
+		if providerConfig.NetworkConfig.MaxRetries != 0 {
+			t.Fatalf("%s must not replay inference requests, got MaxRetries=%d", provider, providerConfig.NetworkConfig.MaxRetries)
+		}
+		if got, want := providerConfig.NetworkConfig.DefaultRequestTimeoutInSeconds, int(billing.GatewayRequestLifetime.Seconds()); got != want {
+			t.Fatalf("%s provider request timeout = %d seconds, want %d", provider, got, want)
 		}
 	}
 

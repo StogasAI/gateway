@@ -3,29 +3,49 @@ package stogashttp
 import (
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/valyala/fasthttp"
 )
 
 type privateNodeDiagnostics struct {
 	Billing     billing.DiagnosticsSnapshot    `json:"billing"`
 	ChutesE2EE  chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
 	GeneratedAt time.Time                      `json:"generatedAt"`
+	Listeners   listenerDiagnostics            `json:"listeners"`
 	Process     processDiagnostics             `json:"process"`
 	Requests    requestDiagnostics             `json:"requests"`
 }
 
+type listenerDiagnostics struct {
+	Private serverListenerDiagnostics `json:"private"`
+	Public  serverListenerDiagnostics `json:"public"`
+}
+
+type serverListenerDiagnostics struct {
+	CurrentConnections  uint32 `json:"currentConnections"`
+	MaximumConnections  int    `json:"maximumConnections"`
+	OpenConnections     int32  `json:"openConnections"`
+	RejectedConnections uint32 `json:"rejectedConnections"`
+}
+
 type processDiagnostics struct {
 	GCCount                  uint32  `json:"gcCount"`
+	GCCPUFraction            float64 `json:"gcCpuFraction"`
 	GCPauseTotalMS           uint64  `json:"gcPauseTotalMs"`
+	GoManagedBytes           uint64  `json:"goManagedBytes"`
+	GoMemoryLimitBytes       int64   `json:"goMemoryLimitBytes"`
 	GOMAXPROCS               int     `json:"gomaxprocs"`
 	Goroutines               int     `json:"goroutines"`
 	HeapAllocBytes           uint64  `json:"heapAllocBytes"`
 	HeapInUseBytes           uint64  `json:"heapInUseBytes"`
+	HeapReleasedBytes        uint64  `json:"heapReleasedBytes"`
+	HeapSystemBytes          uint64  `json:"heapSystemBytes"`
 	HostMemoryAvailableBytes uint64  `json:"hostMemoryAvailableBytes,omitempty"`
 	HostMemoryTotalBytes     uint64  `json:"hostMemoryTotalBytes,omitempty"`
 	Load1                    float64 `json:"load1,omitempty"`
@@ -51,6 +71,10 @@ func (s *Server) privateDiagnostics() privateNodeDiagnostics {
 		return result
 	}
 	result.Process = currentProcessDiagnostics(s.startedAt)
+	result.Listeners = listenerDiagnostics{
+		Private: currentListenerDiagnostics(s.readinessServer, readinessConcurrency),
+		Public:  currentListenerDiagnostics(s.server, serverConcurrency),
+	}
 	result.Requests = requestDiagnostics{
 		Drain:  s.requests.diagnostics(),
 		Memory: s.memory.diagnostics(),
@@ -59,6 +83,20 @@ func (s *Server) privateDiagnostics() privateNodeDiagnostics {
 		result.Billing = s.runtime.BillingDiagnostics()
 		result.ChutesE2EE = s.runtime.ChutesE2EEDiagnostics()
 	}
+	return result
+}
+
+func currentListenerDiagnostics(server *fasthttp.Server, defaultMaximum int) serverListenerDiagnostics {
+	result := serverListenerDiagnostics{MaximumConnections: defaultMaximum}
+	if server == nil {
+		return result
+	}
+	if server.Concurrency > 0 {
+		result.MaximumConnections = server.Concurrency
+	}
+	result.CurrentConnections = server.GetCurrentConcurrency()
+	result.OpenConnections = max(0, server.GetOpenConnectionsCount())
+	result.RejectedConnections = server.GetRejectedConnectionsCount()
 	return result
 }
 
@@ -71,13 +109,24 @@ func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
 	if !startedAt.IsZero() {
 		uptime = max(0, int64(time.Since(startedAt).Seconds()))
 	}
+	goManagedBytes := memory.Sys
+	if memory.HeapReleased <= goManagedBytes {
+		goManagedBytes -= memory.HeapReleased
+	} else {
+		goManagedBytes = 0
+	}
 	return processDiagnostics{
 		GCCount:                  memory.NumGC,
+		GCCPUFraction:            memory.GCCPUFraction,
 		GCPauseTotalMS:           memory.PauseTotalNs / uint64(time.Millisecond),
+		GoManagedBytes:           goManagedBytes,
+		GoMemoryLimitBytes:       debug.SetMemoryLimit(-1),
 		GOMAXPROCS:               runtime.GOMAXPROCS(0),
 		Goroutines:               runtime.NumGoroutine(),
 		HeapAllocBytes:           memory.HeapAlloc,
 		HeapInUseBytes:           memory.HeapInuse,
+		HeapReleasedBytes:        memory.HeapReleased,
+		HeapSystemBytes:          memory.HeapSys,
 		HostMemoryAvailableBytes: availableMemory,
 		HostMemoryTotalBytes:     totalMemory,
 		Load1:                    load1,

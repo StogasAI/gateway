@@ -102,14 +102,70 @@ func TestAnthropicStreamingUsageAccumulatesIterationBillingTotals(t *testing.T) 
 	}
 }
 
-func TestAnthropicUsageBillingTotalsMakesMalformedCountsRejectable(t *testing.T) {
+func TestAnthropicUsageBillingTotalsRetainsUsableMalformedCounts(t *testing.T) {
 	negative := (&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: 10}, {InputTokens: -1}}}).BillingTotals()
-	if negative.InputTokens != -1 {
-		t.Fatalf("negative iteration usage was hidden: %#v", negative)
+	if negative.InputTokens != 10 {
+		t.Fatalf("negative iteration usage erased a usable count: %#v", negative)
+	}
+	converted := ConvertAnthropicUsageToBifrostUsage(&AnthropicUsage{InputTokens: -1, OutputTokens: 7})
+	if converted.TotalTokens != 7 {
+		t.Fatalf("negative input usage erased usable output usage: %#v", converted)
 	}
 	overflow := (&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: math.MaxInt}, {InputTokens: 1}}}).BillingTotals()
 	if overflow.InputTokens != math.MaxInt {
 		t.Fatalf("overflowing iteration usage was not saturated: %#v", overflow)
+	}
+}
+
+func TestAnthropicCompactionNegativeFieldsCannotPoisonOtherUsableIterationUsage(t *testing.T) {
+	tests := []struct {
+		name string
+		set  func(*AnthropicUsage, int)
+		get  func(*AnthropicUsage) int
+	}{
+		{name: "input", set: func(usage *AnthropicUsage, value int) { usage.InputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.InputTokens }},
+		{name: "cache creation", set: func(usage *AnthropicUsage, value int) { usage.CacheCreationInputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.CacheCreationInputTokens }},
+		{name: "cache read", set: func(usage *AnthropicUsage, value int) { usage.CacheReadInputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.CacheReadInputTokens }},
+		{name: "five minute cache write", set: func(usage *AnthropicUsage, value int) { usage.CacheCreation.Ephemeral5mInputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.CacheCreation.Ephemeral5mInputTokens }},
+		{name: "one hour cache write", set: func(usage *AnthropicUsage, value int) { usage.CacheCreation.Ephemeral1hInputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.CacheCreation.Ephemeral1hInputTokens }},
+		{name: "output", set: func(usage *AnthropicUsage, value int) { usage.OutputTokens = value }, get: func(usage *AnthropicUsage) int { return usage.OutputTokens }},
+		{
+			name: "thinking",
+			set: func(usage *AnthropicUsage, value int) {
+				usage.OutputTokensDetails = &AnthropicOutputTokensDetails{ThinkingTokens: value}
+			},
+			get: func(usage *AnthropicUsage) int {
+				if usage.OutputTokensDetails == nil {
+					return 0
+				}
+				return usage.OutputTokensDetails.ThinkingTokens
+			},
+		},
+		{
+			name: "web search",
+			set: func(usage *AnthropicUsage, value int) {
+				usage.ServerToolUse = &AnthropicServerToolUseUsage{WebSearchRequests: value}
+			},
+			get: func(usage *AnthropicUsage) int {
+				if usage.ServerToolUse == nil {
+					return 0
+				}
+				return usage.ServerToolUse.WebSearchRequests
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usable := AnthropicUsage{}
+			malformed := AnthropicUsage{}
+			test.set(&usable, 10)
+			test.set(&malformed, -1)
+			total := (&AnthropicUsage{Iterations: []AnthropicUsage{usable, malformed}}).BillingTotals()
+			if got := test.get(total); got != 10 {
+				t.Fatalf("usable %s count was poisoned: got %d, want 10; total=%#v", test.name, got, total)
+			}
+		})
 	}
 }
 

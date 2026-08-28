@@ -70,14 +70,14 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 			Model:       "gpt-5",
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedAmount: big.NewInt(0),
-			AvailableAfter:   big.NewInt(0),
-			ProviderKey:      "openai",
-			RequestID:        "request-real-retry",
+			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
+			AvailableBalanceUSDAtoms:     big.NewInt(0),
+			ProviderKey:                  "openai",
+			RequestID:                    "request-real-retry",
 		},
-		StartedAt:         time.Now().UTC(),
-		RequestType:       string(schemas.ChatCompletionRequest),
-		FinalCostUSDAtoms: "0",
+		StartedAt:            time.Now().UTC(),
+		RequestType:          string(schemas.ChatCompletionRequest),
+		UpstreamCostUSDAtoms: "0",
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
 	SetState(ctx, state)
@@ -115,10 +115,9 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 	if event.ProviderAttempts[0].LatencyMS == 0 || event.ProviderAttempts[1].LatencyMS == 0 {
 		t.Fatalf("provider attempt timing was not captured: %#v", event.ProviderAttempts)
 	}
-	providerMS, firstOutputMS := event.ProviderTiming()
 	wantProviderMS := event.ProviderAttempts[0].LatencyMS + event.ProviderAttempts[1].LatencyMS
-	if providerMS != wantProviderMS || firstOutputMS != nil {
-		t.Fatalf("canonical provider timing = %d,%#v, want %d,nil", providerMS, firstOutputMS, wantProviderMS)
+	if providerMS := event.ProviderDurationMS(); providerMS != wantProviderMS {
+		t.Fatalf("canonical provider duration = %d, want %d", providerMS, wantProviderMS)
 	}
 }
 
@@ -155,17 +154,17 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 			Model:       "gpt-5",
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedAmount: big.NewInt(0),
-			AvailableAfter:   big.NewInt(0),
-			ProviderKey:      "openai",
-			RequestID:        "request-1",
+			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
+			AvailableBalanceUSDAtoms:     big.NewInt(0),
+			ProviderKey:                  "openai",
+			RequestID:                    "request-1",
 		},
-		StartedAt:           base,
-		RequestType:         string(schemas.ChatCompletionRequest),
-		ProviderStartedAt:   base.Add(5 * time.Millisecond),
-		ProviderCompletedAt: base.Add(150 * time.Millisecond),
-		Response:            finalResponse,
-		FinalCostUSDAtoms:   "0",
+		StartedAt:            base,
+		RequestType:          string(schemas.ChatCompletionRequest),
+		ProviderStartedAt:    base.Add(5 * time.Millisecond),
+		ProviderCompletedAt:  base.Add(150 * time.Millisecond),
+		Response:             finalResponse,
+		UpstreamCostUSDAtoms: "0",
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	SetState(ctx, state)
@@ -200,9 +199,8 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 	if retryAttempt.ProviderRequestID != "provider-request" {
 		t.Fatalf("final provider request ID = %q", retryAttempt.ProviderRequestID)
 	}
-	providerMS, firstOutputMS := event.ProviderTiming()
-	if providerMS != 120 || firstOutputMS != nil {
-		t.Fatalf("provider timing = %d,%#v, want 120,nil", providerMS, firstOutputMS)
+	if providerMS := event.ProviderDurationMS(); providerMS != 120 {
+		t.Fatalf("provider duration = %d, want 120", providerMS)
 	}
 }
 

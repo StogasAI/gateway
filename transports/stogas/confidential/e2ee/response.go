@@ -162,9 +162,6 @@ func (s *Session) DecodeResponse(data []byte) (*DecodedResponse, error) {
 	if s == nil || s.responseAEAD == nil {
 		return nil, errors.New("E2EE response session is unavailable")
 	}
-	if len(data) > MaxResponseWireSize {
-		return nil, errors.New("E2EE response is too large")
-	}
 	preambleSize := len(responseMagic) + responseNonceSize
 	if len(data) < preambleSize || !bytes.Equal(data[:len(responseMagic)], responseMagic) {
 		return nil, errors.New("invalid E2EE response magic")
@@ -176,9 +173,17 @@ func (s *Session) DecodeResponse(data []byte) (*DecodedResponse, error) {
 	sequence := uint64(0)
 	metadataSeen := false
 	for reader.Len() > 0 {
+		consumed := len(data) - reader.Len()
+		if consumed > MaxResponseWireSize-4 {
+			return nil, errors.New("E2EE response is too large")
+		}
 		var ciphertextLength uint32
 		if err := binary.Read(reader, binary.BigEndian, &ciphertextLength); err != nil {
 			return nil, errors.New("truncated E2EE response record")
+		}
+		remainingWireBytes := MaxResponseWireSize - (len(data) - reader.Len())
+		if uint64(ciphertextLength) > uint64(remainingWireBytes) {
+			return nil, errors.New("E2EE response is too large")
 		}
 		if int64(ciphertextLength) > int64(reader.Len()) || ciphertextLength < uint32(s.responseAEAD.Overhead()) {
 			return nil, errors.New("invalid E2EE response record length")
@@ -267,7 +272,7 @@ func responseNonceFor(base [12]byte, sequence uint64) [12]byte {
 }
 
 func validateResponseMetadata(metadata ResponseMetadata) error {
-	if metadata.StatusCode < 100 || metadata.StatusCode > 599 {
+	if metadata.StatusCode < 200 || metadata.StatusCode > 599 {
 		return errors.New("invalid inner HTTP status")
 	}
 	if !validContentType(metadata.ContentType) {

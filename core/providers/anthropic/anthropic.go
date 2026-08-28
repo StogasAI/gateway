@@ -626,9 +626,12 @@ func normalizeCachedUsage(usage *schemas.BifrostLLMUsage) {
 	if usage == nil || usage.PromptTokensDetails == nil {
 		return
 	}
-	cached := usage.PromptTokensDetails.CachedReadTokens + usage.PromptTokensDetails.CachedWriteTokens
-	usage.PromptTokens += cached
-	usage.TotalTokens += cached
+	cached := addAnthropicUsageCount(
+		usage.PromptTokensDetails.CachedReadTokens,
+		usage.PromptTokensDetails.CachedWriteTokens,
+	)
+	usage.PromptTokens = addAnthropicUsageCount(usage.PromptTokens, cached)
+	usage.TotalTokens = addAnthropicUsageCount(usage.TotalTokens, cached)
 }
 
 func accumulateAnthropicResponsesUsage(usage *schemas.ResponsesResponseUsage, billedUsage *schemas.BifrostLLMUsage, usageToProcess *AnthropicUsage) {
@@ -692,7 +695,7 @@ func accumulateAnthropicResponsesUsage(usage *schemas.ResponsesResponseUsage, bi
 			billedUsage.CompletionTokens = usageToProcess.OutputTokens
 		}
 	}
-	calculatedTotal := usage.InputTokens + usage.OutputTokens
+	calculatedTotal := addAnthropicUsageCount(usage.InputTokens, usage.OutputTokens)
 	if calculatedTotal > usage.TotalTokens {
 		usage.TotalTokens = calculatedTotal
 		if billedUsage != nil {
@@ -988,6 +991,7 @@ func HandleAnthropicChatCompletionStreaming(
 				if readErr != io.EOF {
 					ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 					logger.Warn("Error reading %s stream: %v", providerName, readErr)
+					normalizeUsage()
 					providerUtils.ProcessAndSendError(ctx, postHookRunner, readErr, responseChan, logger, postHookSpanFinalizer)
 					return
 				}
@@ -1064,7 +1068,7 @@ func HandleAnthropicChatCompletionStreaming(
 				if usageToProcess.OutputTokens > usage.CompletionTokens {
 					usage.CompletionTokens = usageToProcess.OutputTokens
 				}
-				calculatedTotal := usage.PromptTokens + usage.CompletionTokens
+				calculatedTotal := addAnthropicUsageCount(usage.PromptTokens, usage.CompletionTokens)
 				if calculatedTotal > usage.TotalTokens {
 					usage.TotalTokens = calculatedTotal
 				}
@@ -1184,6 +1188,11 @@ func HandleAnthropicChatCompletionStreaming(
 
 			response, bifrostErr, isLastChunk := event.ToBifrostChatCompletionStream(ctx, structuredOutputToolName, streamState)
 			if bifrostErr != nil {
+				// Anthropic can send an error event after reporting input, cache, or
+				// cumulative output usage. Preserve every usable quantity on the error
+				// before the billing hook runs.
+				normalizeUsage()
+				providerUtils.AttachBilledUsageFromContext(ctx, bifrostErr)
 				ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 				providerUtils.ProcessAndSendBifrostError(ctx, postHookRunner, bifrostErr, responseChan, logger, postHookSpanFinalizer)
 				// Already reported; returning (rather than breaking) keeps the
@@ -1648,6 +1657,7 @@ func HandleAnthropicResponsesStream(
 				if readErr != io.EOF {
 					ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 					logger.Warn("Error reading %s stream: %v", providerName, readErr)
+					normalizeBilledUsage()
 					providerUtils.ProcessAndSendError(ctx, postHookRunner, readErr, responseChan, logger, postHookSpanFinalizer)
 					// Already reported; returning (rather than breaking) keeps the
 					// post-loop truncation check from reporting the same stream twice.
@@ -1721,6 +1731,10 @@ func HandleAnthropicResponsesStream(
 				if ctx.Err() != nil {
 					return
 				}
+				// A provider error event can follow usable message_start or
+				// message_delta usage. Snapshot that usage before the billing hook.
+				normalizeBilledUsage()
+				providerUtils.AttachBilledUsageFromContext(ctx, bifrostErr)
 				ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 				providerUtils.ProcessAndSendBifrostError(ctx, postHookRunner, bifrostErr, responseChan, logger, postHookSpanFinalizer)
 				// Already reported; returning (rather than breaking) keeps the
@@ -1778,8 +1792,12 @@ func HandleAnthropicResponsesStream(
 							response.Response = &schemas.BifrostResponsesResponse{}
 						}
 						if usage.InputTokensDetails != nil {
-							usage.InputTokens = usage.InputTokens + usage.InputTokensDetails.CachedReadTokens + usage.InputTokensDetails.CachedWriteTokens
-							usage.TotalTokens = usage.TotalTokens + usage.InputTokensDetails.CachedReadTokens + usage.InputTokensDetails.CachedWriteTokens
+							cached := addAnthropicUsageCount(
+								usage.InputTokensDetails.CachedReadTokens,
+								usage.InputTokensDetails.CachedWriteTokens,
+							)
+							usage.InputTokens = addAnthropicUsageCount(usage.InputTokens, cached)
+							usage.TotalTokens = addAnthropicUsageCount(usage.TotalTokens, cached)
 						}
 						response.Response.Usage = usage
 						if servedServiceTier != nil {

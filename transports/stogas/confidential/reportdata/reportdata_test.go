@@ -8,9 +8,7 @@ import (
 
 func testPayload() Payload {
 	return Payload{
-		Catalog:            CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
-		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("e", 64), strings.Repeat("d", 64)},
 		HPKEPublicKey:      base64.RawURLEncoding.EncodeToString([]byte("hpke-public-key")),
 		Ed25519PublicKey:   base64.RawURLEncoding.EncodeToString([]byte("ed25519-public-key")),
@@ -42,6 +40,9 @@ func TestCanonicalJSONIsDeterministicAndSortsAcceptedCertHashes(t *testing.T) {
 	if !strings.Contains(string(first), QuicknetChainHash) {
 		t.Fatalf("quicknet chain hash missing from canonical payload: %s", first)
 	}
+	if strings.Contains(string(first), "catalog") || strings.Contains(string(first), "active_cert") {
+		t.Fatalf("operational state must not be quote-bound: %s", first)
+	}
 }
 
 func TestHashHexIsSHA512ReportData(t *testing.T) {
@@ -61,11 +62,22 @@ func TestHashHexIsSHA512ReportData(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsMissingActiveCertInAcceptedSet(t *testing.T) {
+func TestValidateAllowsNoProvisionedPublicCertificate(t *testing.T) {
 	payload := testPayload()
-	payload.AcceptedCertSHA256 = []string{strings.Repeat("e", 64)}
-	if _, err := NewPayload(payload); err == nil {
-		t.Fatal("expected active cert hash membership validation error")
+	payload.AcceptedCertSHA256 = nil
+	validated, err := NewPayload(payload)
+	if err != nil {
+		t.Fatalf("empty public certificate stack was rejected: %v", err)
+	}
+	if validated.AcceptedCertSHA256 == nil {
+		t.Fatal("empty public certificate stack must remain a JSON array")
+	}
+	canonical, err := CanonicalJSON(validated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(canonical), `"accepted_cert_sha256":[]`) {
+		t.Fatalf("empty public certificate stack was not encoded as an array: %s", canonical)
 	}
 }
 
