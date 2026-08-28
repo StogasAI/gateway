@@ -422,7 +422,7 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 		return err
 	}
 	state.Hold.Meters = meters
-	state.Hold.MaxUSDAtoms = total
+	state.Hold.EstimatedUpstreamCostUSDAtoms = total
 	return nil
 }
 
@@ -442,15 +442,15 @@ func (a OpenAIAdapter) IngestResponse(state *State, resp *schemas.BifrostRespons
 	return nil
 }
 
-func (OpenAIAdapter) FinalPrice(state *State) error {
+func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	price, err := baseFinalPrice(state, openAIFinalMeters(openAIAdapterContextForFinalPrice(state)))
+	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, openAIFinalMeters(openAIAdapterContextForUpstreamCost(state)))
 	if err != nil {
 		return err
 	}
-	state.FinalCostUSDAtoms = price
+	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
 	return nil
 }
 
@@ -505,7 +505,7 @@ func openAIAdapterContextForHold(state *State) openAIAdapterContext {
 	return req
 }
 
-func openAIAdapterContextForFinalPrice(state *State) openAIAdapterContext {
+func openAIAdapterContextForUpstreamCost(state *State) openAIAdapterContext {
 	req := openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
 	req.ActualWebSearchCalls = actualWebSearchCalls(state)
 	return req

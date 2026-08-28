@@ -26,14 +26,14 @@ var errInvalidAPIKeyShape = errors.New("invalid API key")
 type APIKeyClaims struct {
 	KeyID          string
 	FormatVersion  uint32
+	GrantID        *string
 	OrganizationID string
-	ProvisioningID *string
 	ResponsibleID  string
 	WorkspaceID    string
 }
 
 func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error) {
-	if !strings.HasPrefix(rawKey, apiKeyPrefix) {
+	if !hasSignedAPIKeyShape(rawKey) {
 		return nil, errInvalidAPIKeyShape
 	}
 	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
@@ -72,14 +72,14 @@ func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error
 		return nil, errInvalidAPIKeyShape
 	}
 
-	provisioningID, err := uuid.FromBytes(payload[68:84])
+	grantID, err := uuid.FromBytes(payload[68:84])
 	if err != nil {
 		return nil, errInvalidAPIKeyShape
 	}
-	var provisioningIDString *string
-	if provisioningID != uuid.Nil {
-		value := provisioningID.String()
-		provisioningIDString = &value
+	var grantIDString *string
+	if grantID != uuid.Nil {
+		value := grantID.String()
+		grantIDString = &value
 	}
 	issuanceEntropyIsZero := true
 	for _, value := range payload[84:100] {
@@ -95,11 +95,16 @@ func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error
 	return &APIKeyClaims{
 		KeyID:          keyID.String(),
 		FormatVersion:  formatVersion,
+		GrantID:        grantIDString,
 		OrganizationID: organizationID.String(),
-		ProvisioningID: provisioningIDString,
 		ResponsibleID:  responsibleID.String(),
 		WorkspaceID:    workspaceID.String(),
 	}, nil
+}
+
+func hasSignedAPIKeyShape(rawKey string) bool {
+	return len(rawKey) == len(apiKeyPrefix)+base64.RawURLEncoding.EncodedLen(apiKeyBodyBytes) &&
+		strings.HasPrefix(rawKey, apiKeyPrefix)
 }
 
 func hashAPIKey(token string, apiKeyPepper string) string {

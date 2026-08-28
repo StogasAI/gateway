@@ -66,10 +66,11 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 	}
 
 	client, err := bifrost.Init(runtimeCtx, schemas.BifrostConfig{
-		Account:         newAccount(config, chutesTransport),
-		InitialPoolSize: schemas.DefaultInitialPoolSize,
-		Logger:          logger,
-		Tracer:          newProviderAttemptTracer(schemas.DefaultTracer()),
+		Account: newAccount(config, chutesTransport),
+		// sync.Pool allocates on demand and Go may clear it during any GC.
+		// Do not prewarm a speculative number of request objects.
+		Logger: logger,
+		Tracer: newProviderAttemptTracer(schemas.DefaultTracer()),
 	})
 	if err != nil {
 		billingService.Close()
@@ -220,6 +221,7 @@ func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
 		APIKey:                  config.ChutesAPIKey,
 		APIBaseURL:              apiBaseURL,
 		RequireProductionOrigin: confidentialProduction,
+		StreamTimeout:           billing.GatewayRequestLifetime,
 		ResolveModel: func(upstreamModel string) (chutese2ee.ModelTarget, bool) {
 			deployment, ok := catalog.DeploymentForUpstreamModel(catalog.ProviderChutes, upstreamModel, catalog.RouteChat)
 			if !ok || deployment.Upstream.ChuteID == "" || deployment.Upstream.GPUCount < 1 {
@@ -250,6 +252,11 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 		NetworkConfig:            schemas.DefaultNetworkConfig,
 	}
+	// A transport failure does not prove that the provider did not start work.
+	// Keep retries at the Stogas lifecycle boundary, where every new dispatch
+	// can be authorized, billed, and recorded as its own attempt.
+	config.NetworkConfig.DefaultRequestTimeoutInSeconds = int(billing.GatewayRequestLifetime.Seconds())
+	config.NetworkConfig.MaxRetries = 0
 	if baseURL != "" {
 		config.NetworkConfig.BaseURL = baseURL
 	}

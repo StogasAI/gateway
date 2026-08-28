@@ -196,7 +196,7 @@ func TestOpenAIAdapterNormalizesOutputCapsBelowProviderMinimum(t *testing.T) {
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
-			if state.Hold.MaxUSDAtoms == "" || state.Hold.MaxUSDAtoms == "0" {
+			if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
 				t.Fatalf("expected normalized output limit to contribute to hold, got %#v", state.Hold)
 			}
 		})

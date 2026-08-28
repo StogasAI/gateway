@@ -13,7 +13,6 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 release_root="$repo_root/stogas/release"
-launch_policy_file="$release_root/snp-launch-policy.json"
 # shellcheck source=release-tag.sh
 source "$release_root/scripts/release-tag.sh"
 stogas_release_sequence "$tag" >/dev/null
@@ -66,28 +65,6 @@ for (const component of relative(trustedRoot, output).split(sep).filter(Boolean)
 console.log(output);
 NODE
 )"
-
-policy_data="$(
-  node --input-type=module - "$launch_policy_file" <<'NODE'
-import { readFileSync } from 'node:fs';
-
-const [policyPath] = process.argv.slice(2);
-const policy = JSON.parse(readFileSync(policyPath, 'utf8'));
-if (
-  JSON.stringify(Object.keys(policy).sort()) !==
-    JSON.stringify(['amd_product', 'policy', 'schema']) ||
-  policy.schema !== 'stogas.snp-launch-policy.v1' ||
-  !/^[A-Za-z0-9-]{1,32}$/.test(policy.amd_product) ||
-  !/^0x[0-9a-f]{16}$/.test(policy.policy)
-) {
-  throw new Error('invalid SNP launch policy');
-}
-console.log(`${policy.amd_product}|${policy.policy}`);
-NODE
-)"
-IFS='|' read -r snp_policy_product snp_policy <<<"$policy_data"
-export STOGAS_SNP_POLICY_PRODUCT="$snp_policy_product"
-export STOGAS_SNP_POLICY="$snp_policy"
 
 assert_clean_tree() {
   git -C "$repo_root" diff --quiet --exit-code || {
@@ -173,20 +150,24 @@ chmod -R u+w "$out_dir"
     LICENSE
     NOTICE
     gateway.igvm
-    gateway-launch-policy.json
     gateway.init
     gateway.kernel
     gateway.initramfs.cpio.zst
     release-manifest.json
+    snp-launch-policies.json
     kernel-config.txt
-    SHA256SUMS
   )
-  actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
+  actual_files="$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)"
   expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
   if [ "$actual_files" != "$expected_file_list" ]; then
     echo "release output contains unexpected files" >&2
     printf 'expected files:\n%s\nactual files:\n%s\n' "$expected_file_list" "$actual_files" >&2
     exit 70
   fi
-  sha256sum -c SHA256SUMS
+  for file in "${expected_files[@]}"; do
+    test -f "$file" && test ! -L "$file" || {
+      echo "release output entry is not a regular file: $file" >&2
+      exit 70
+    }
+  done
 )

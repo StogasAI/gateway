@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,16 +104,19 @@ func collectChunks(t *testing.T, stream chan *schemas.BifrostStreamChunk) []*sch
 	}
 }
 
-// assertTruncationError checks the error carries the retryable upstream-connection
-// shape. IsBifrostError must stay false and the status 502 so that
-// executeRequestWithRetries retries / falls back instead of breaking out early.
+// assertTruncationError checks the error keeps the stable upstream-connection
+// shape while explicitly blocking retries and fallbacks after an ambiguous
+// provider dispatch.
 func assertTruncationError(t *testing.T, err *schemas.BifrostError) {
 	t.Helper()
 	if err == nil {
 		t.Fatal("expected a truncation error, got nil")
 	}
-	if err.IsBifrostError {
-		t.Error("truncation error must have IsBifrostError=false so the retry loop does not break early")
+	if !err.IsBifrostError {
+		t.Error("truncation error must stop the core retry loop")
+	}
+	if err.AllowFallbacks == nil || *err.AllowFallbacks {
+		t.Error("truncation error must block provider fallbacks")
 	}
 	if err.StatusCode == nil || *err.StatusCode != 502 {
 		t.Errorf("expected StatusCode 502, got %v", err.StatusCode)
@@ -193,6 +197,56 @@ func TestChatStreamTruncatedMidStream(t *testing.T) {
 		t.Fatalf("expected the first chunk to be the forwarded content, got %+v", chunks[0])
 	}
 	assertTruncationError(t, chunks[1].BifrostError)
+}
+
+func TestChatStreamTruncationDoesNotPoisonNextPost(t *testing.T) {
+	stop := "stop"
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if requests.Add(1) == 1 {
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Error("test server ResponseWriter is not an http.Flusher")
+				return
+			}
+			if _, err := w.Write([]byte(chatChunk("partial answer", nil))); err != nil {
+				t.Errorf("failed writing SSE prelude: %v", err)
+				return
+			}
+			flusher.Flush()
+			panic(http.ErrAbortHandler)
+		}
+		if _, err := w.Write([]byte(chatChunk("healthy answer", nil) + chatChunk("", &stop) + "data: [DONE]\n\n")); err != nil {
+			t.Errorf("failed writing healthy SSE response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	provider := newStreamTestProvider(server.URL)
+	first, bifrostErr := provider.ChatCompletionStream(newStreamTestContext(), passthroughPostHook, nil, testKey(), basicChatRequest())
+	if bifrostErr != nil {
+		t.Fatalf("first stream setup failed: %v", bifrostErr)
+	}
+	firstChunks := collectChunks(t, first)
+	if len(firstChunks) == 0 {
+		t.Fatal("truncated stream returned no error chunk")
+	}
+	assertTruncationError(t, firstChunks[len(firstChunks)-1].BifrostError)
+
+	second, bifrostErr := provider.ChatCompletionStream(newStreamTestContext(), passthroughPostHook, nil, testKey(), basicChatRequest())
+	if bifrostErr != nil {
+		t.Fatalf("healthy stream after truncation failed to start: %v", bifrostErr)
+	}
+	for index, chunk := range collectChunks(t, second) {
+		if chunk.BifrostError != nil {
+			t.Fatalf("healthy chunk %d carried an error: %+v", index, chunk.BifrostError)
+		}
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("provider received %d POST requests, want exactly 2", got)
+	}
 }
 
 // Guard against false positives: a well-formed stream must still get its
@@ -325,8 +379,8 @@ func TestResponsesStreamTruncatedBeforeCompleted(t *testing.T) {
 
 // A non-EOF read error is already a reported failure. The truncation guard that
 // follows the read loop must not fire a second time for the same dead stream, or
-// the client sees two errors for one request and the retryable 502 synthesized by
-// SendStreamTruncatedError muddies which failure the retry logic reacted to. The
+// the client sees two errors for one request and the second 502 synthesized by
+// SendStreamTruncatedError muddies which failure the lifecycle reacted to. The
 // handler signals "already reported" by latching BifrostContextKeyStreamEndIndicator.
 
 // failingSSEDataReader yields queued data lines and then a non-EOF error,

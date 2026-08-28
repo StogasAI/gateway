@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"strings"
@@ -52,7 +53,8 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate identity: %v", err)
 	}
-	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC())
+	nextChain, nextRoots := testCertificateChainPEM(t, material, time.Now().UTC().Add(90*24*time.Hour))
+	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC(), nextRoots)
 	if err != nil {
 		t.Fatalf("create certificate store: %v", err)
 	}
@@ -67,8 +69,15 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	}
 	firstHash := identity.CertSHA256Hex(first.Certificate[0])
 
-	nextChain := testCertificateChainPEM(t, material, time.Now().UTC().Add(90*24*time.Hour))
-	state, err := store.InstallActiveChain(nextChain)
+	certs, err := parseTestCertificateChain(nextChain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.InstallActiveChain(identity.CertificateChainInput{
+		ChainPEM:       nextChain,
+		DNSNames:       []string{"api-staging.stogas.ai"},
+		ExpectedSHA256: identity.CertSHA256Hex(certs[0].Raw),
+	})
 	if err != nil {
 		t.Fatalf("install active chain: %v", err)
 	}
@@ -245,14 +254,14 @@ func testCertificateStore(t *testing.T) *identity.CertificateStore {
 	if err != nil {
 		t.Fatalf("generate identity: %v", err)
 	}
-	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC())
+	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC(), nil)
 	if err != nil {
 		t.Fatalf("create certificate store: %v", err)
 	}
 	return store
 }
 
-func testCertificateChainPEM(t *testing.T, material *identity.Material, notAfter time.Time) []byte {
+func testCertificateChainPEM(t *testing.T, material *identity.Material, notAfter time.Time) ([]byte, *x509.CertPool) {
 	t.Helper()
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serial, err := rand.Int(rand.Reader, serialLimit)
@@ -276,5 +285,23 @@ func testCertificateChainPEM(t *testing.T, material *identity.Material, notAfter
 	if err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse test certificate: %v", err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(cert)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), roots
+}
+
+func parseTestCertificateChain(chain []byte) ([]*x509.Certificate, error) {
+	block, _ := pem.Decode(chain)
+	if block == nil {
+		return nil, errors.New("test certificate PEM is invalid")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return []*x509.Certificate{cert}, nil
 }

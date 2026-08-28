@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"math"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -43,6 +44,36 @@ func TestNormalizeCachedUsage(t *testing.T) {
 
 	t.Run("nil is safe", func(t *testing.T) {
 		normalizeCachedUsage(nil)
+	})
+
+	t.Run("retains usable cache counts beside malformed totals", func(t *testing.T) {
+		usage := &schemas.BifrostLLMUsage{
+			PromptTokens: -1,
+			TotalTokens:  -1,
+			PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+				CachedReadTokens:  3,
+				CachedWriteTokens: 7,
+			},
+		}
+		normalizeCachedUsage(usage)
+		if usage.PromptTokens != 10 || usage.TotalTokens != 10 {
+			t.Fatalf("malformed totals erased usable cache usage: %+v", usage)
+		}
+	})
+
+	t.Run("saturates overflow for downstream hold capping", func(t *testing.T) {
+		usage := &schemas.BifrostLLMUsage{
+			PromptTokens: math.MaxInt,
+			TotalTokens:  math.MaxInt,
+			PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+				CachedReadTokens:  math.MaxInt,
+				CachedWriteTokens: 1,
+			},
+		}
+		normalizeCachedUsage(usage)
+		if usage.PromptTokens != math.MaxInt || usage.TotalTokens != math.MaxInt {
+			t.Fatalf("overflow did not saturate: %+v", usage)
+		}
 	})
 }
 

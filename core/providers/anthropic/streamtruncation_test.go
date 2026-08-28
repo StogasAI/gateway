@@ -1,6 +1,8 @@
 package anthropic
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -58,6 +60,32 @@ func anthropicSSEServer(t *testing.T, prelude string, truncate bool) *httptest.S
 	}))
 }
 
+func anthropicCorruptGzipSSEServer(t *testing.T, payload string) *httptest.Server {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	if _, err := writer.Write([]byte(payload)); err != nil {
+		t.Fatalf("compress SSE fixture: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("finish SSE fixture compression: %v", err)
+	}
+	encoded := compressed.Bytes()
+	if len(encoded) <= 8 {
+		t.Fatal("compressed SSE fixture is unexpectedly short")
+	}
+	encoded = encoded[:len(encoded)-8]
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(encoded); err != nil {
+			t.Errorf("write corrupt gzip SSE fixture: %v", err)
+		}
+	}))
+}
+
 func newTruncationTestProvider(baseURL string) *AnthropicProvider {
 	return NewAnthropicProvider(&schemas.ProviderConfig{
 		NetworkConfig: schemas.NetworkConfig{BaseURL: baseURL},
@@ -104,14 +132,36 @@ func assertAnthropicTruncationError(t *testing.T, err *schemas.BifrostError) {
 	if err == nil {
 		t.Fatal("expected a truncation error, got nil")
 	}
-	if err.IsBifrostError {
-		t.Error("truncation error must have IsBifrostError=false so the retry loop does not break early")
+	if !err.IsBifrostError {
+		t.Error("truncation error must stop the core retry loop")
+	}
+	if err.AllowFallbacks == nil || *err.AllowFallbacks {
+		t.Error("truncation error must block provider fallbacks")
 	}
 	if err.StatusCode == nil || *err.StatusCode != 502 {
 		t.Errorf("expected StatusCode 502, got %v", err.StatusCode)
 	}
 	if err.Error == nil || err.Error.Message != schemas.ErrProviderStreamTruncated {
 		t.Errorf("expected message %q, got %+v", schemas.ErrProviderStreamTruncated, err.Error)
+	}
+}
+
+func assertAnthropicStreamReadError(t *testing.T, err *schemas.BifrostError) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected a stream read error, got nil")
+	}
+	if !err.IsBifrostError {
+		t.Fatal("ambiguous stream read errors must not trigger an automatic retry")
+	}
+	if err.AllowFallbacks == nil || *err.AllowFallbacks {
+		t.Fatal("ambiguous stream read errors must not trigger a provider fallback")
+	}
+	if err.StatusCode == nil || *err.StatusCode != 502 {
+		t.Fatalf("stream read status = %v, want 502", err.StatusCode)
+	}
+	if err.Error == nil || err.Error.Type == nil || *err.Error.Type != schemas.ProviderConnectionFailed {
+		t.Fatalf("stream read type = %#v, want %q", err.Error, schemas.ProviderConnectionFailed)
 	}
 }
 
@@ -158,7 +208,8 @@ const anthropicMessageStop = "event: content_block_stop\n" +
 	`data: {"type":"message_stop"}` + "\n\n"
 
 // Pre-first-byte death: the error must be the stream's first chunk so
-// CheckFirstStreamChunkForError can turn it into a synchronous, retryable error.
+// CheckFirstStreamChunkForError can surface it synchronously without replaying
+// the ambiguous provider dispatch.
 func TestAnthropicChatStreamTruncatedPreFirstByte(t *testing.T) {
 	server := anthropicSSEServer(t, "", true)
 	defer server.Close()
@@ -390,34 +441,47 @@ const (
 	truncationCacheInputTokens  = 5
 	truncationCacheReadTokens   = 100
 	truncationCacheWriteTokens  = 20
+	truncationInitialOutput     = 3
 	truncationCacheFoldedTokens = truncationCacheInputTokens + truncationCacheReadTokens + truncationCacheWriteTokens
 )
 
 const anthropicCachedMessageStart = "event: message_start\n" +
 	`data: {"type":"message_start","message":{"id":"msg_repro","type":"message","role":"assistant","model":"claude-repro","content":[],` +
-	`"usage":{"input_tokens":5,"output_tokens":0,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}` + "\n\n" +
+	`"usage":{"input_tokens":5,"output_tokens":3,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}}` + "\n\n" +
 	"event: content_block_start\n" +
 	`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n"
+
+const anthropicUsageThenProviderError = "event: message_delta\n" +
+	`data: {"type":"message_delta","delta":{},"usage":{"output_tokens":7}}` + "\n\n" +
+	"event: error\n" +
+	`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}` + "\n\n"
 
 // assertCacheFoldedBilledUsage pins the billed snapshot carried by a truncation
 // error: the cache counters must survive intact *and* already be folded into the
 // top-level prompt/total, which is what the cost calculation downstream charges on.
 func assertCacheFoldedBilledUsage(t *testing.T, err *schemas.BifrostError) {
+	assertCacheFoldedBilledUsageWithOutput(t, err, truncationInitialOutput)
+}
+
+func assertCacheFoldedBilledUsageWithOutput(t *testing.T, err *schemas.BifrostError, outputTokens int) {
 	t.Helper()
 	if err == nil {
-		t.Fatal("expected a truncation error carrying billed usage, got nil")
+		t.Fatal("expected a provider error carrying billed usage, got nil")
 	}
 	billed := err.ExtraFields.BilledUsage
 	if billed == nil {
-		t.Fatal("truncated stream must bill for tokens the provider already reported")
+		t.Fatal("failed stream must bill for tokens the provider already reported")
 	}
 	if billed.PromptTokens != truncationCacheFoldedTokens {
 		t.Errorf("PromptTokens = %d, want %d (input %d + cache read %d + cache write %d)",
 			billed.PromptTokens, truncationCacheFoldedTokens,
 			truncationCacheInputTokens, truncationCacheReadTokens, truncationCacheWriteTokens)
 	}
-	if billed.TotalTokens != truncationCacheFoldedTokens {
-		t.Errorf("TotalTokens = %d, want %d", billed.TotalTokens, truncationCacheFoldedTokens)
+	if billed.CompletionTokens != outputTokens {
+		t.Errorf("CompletionTokens = %d, want %d", billed.CompletionTokens, outputTokens)
+	}
+	if want := truncationCacheFoldedTokens + outputTokens; billed.TotalTokens != want {
+		t.Errorf("TotalTokens = %d, want %d", billed.TotalTokens, want)
 	}
 	if billed.PromptTokensDetails == nil {
 		t.Fatal("expected the cache breakdown to survive onto the billed snapshot")
@@ -428,6 +492,55 @@ func assertCacheFoldedBilledUsage(t *testing.T, err *schemas.BifrostError) {
 	if billed.PromptTokensDetails.CachedWriteTokens != truncationCacheWriteTokens {
 		t.Errorf("CachedWriteTokens = %d, want %d", billed.PromptTokensDetails.CachedWriteTokens, truncationCacheWriteTokens)
 	}
+}
+
+func assertAnthropicProviderStreamError(t *testing.T, err *schemas.BifrostError) {
+	t.Helper()
+	if err == nil || err.Error == nil || err.Error.Type == nil {
+		t.Fatalf("expected a normalized Anthropic stream error, got %#v", err)
+	}
+	if *err.Error.Type != "overloaded_error" {
+		t.Fatalf("provider stream error type = %q, want overloaded_error", *err.Error.Type)
+	}
+	assertCacheFoldedBilledUsageWithOutput(t, err, 7)
+}
+
+func TestAnthropicChatProviderErrorBillsAllObservedUsage(t *testing.T) {
+	server := anthropicSSEServer(t, anthropicCachedMessageStart+anthropicTextDelta+anthropicUsageThenProviderError, false)
+	defer server.Close()
+
+	provider := newTruncationTestProvider(server.URL)
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ChatCompletionStream(ctx, truncationPassthroughPostHook, nil,
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationChatRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+
+	chunks := collectTruncationChunks(t, stream)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least the provider error chunk")
+	}
+	assertAnthropicProviderStreamError(t, chunks[len(chunks)-1].BifrostError)
+}
+
+func TestAnthropicResponsesProviderErrorBillsAllObservedUsage(t *testing.T) {
+	server := anthropicSSEServer(t, anthropicCachedMessageStart+anthropicTextDelta+anthropicUsageThenProviderError, false)
+	defer server.Close()
+
+	provider := newTruncationTestProvider(server.URL)
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ResponsesStream(ctx, truncationPassthroughPostHook, nil,
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationResponsesRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+
+	chunks := collectTruncationChunks(t, stream)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least the provider error chunk")
+	}
+	assertAnthropicProviderStreamError(t, chunks[len(chunks)-1].BifrostError)
 }
 
 func TestAnthropicChatStreamTruncatedBillsCachedTokens(t *testing.T) {
@@ -469,5 +582,47 @@ func TestAnthropicResponsesStreamTruncatedBillsCachedTokens(t *testing.T) {
 	}
 	final := chunks[len(chunks)-1]
 	assertAnthropicTruncationError(t, final.BifrostError)
+	assertCacheFoldedBilledUsage(t, final.BifrostError)
+}
+
+func TestAnthropicChatStreamReadErrorBillsCachedTokensWithoutRetry(t *testing.T) {
+	server := anthropicCorruptGzipSSEServer(t, anthropicCachedMessageStart+anthropicTextDelta)
+	defer server.Close()
+
+	provider := newTruncationTestProvider(server.URL)
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ChatCompletionStream(ctx, truncationPassthroughPostHook, nil,
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationChatRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+
+	chunks := collectTruncationChunks(t, stream)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least the error chunk")
+	}
+	final := chunks[len(chunks)-1]
+	assertAnthropicStreamReadError(t, final.BifrostError)
+	assertCacheFoldedBilledUsage(t, final.BifrostError)
+}
+
+func TestAnthropicResponsesStreamReadErrorBillsCachedTokensWithoutRetry(t *testing.T) {
+	server := anthropicCorruptGzipSSEServer(t, anthropicCachedMessageStart+anthropicTextDelta)
+	defer server.Close()
+
+	provider := newTruncationTestProvider(server.URL)
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	stream, bifrostErr := provider.ResponsesStream(ctx, truncationPassthroughPostHook, nil,
+		schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationResponsesRequest())
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+
+	chunks := collectTruncationChunks(t, stream)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least the error chunk")
+	}
+	final := chunks[len(chunks)-1]
+	assertAnthropicStreamReadError(t, final.BifrostError)
 	assertCacheFoldedBilledUsage(t, final.BifrostError)
 }

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -621,6 +624,20 @@ func (c *countingStreamCloser) CloseWithError(error) error {
 	return nil
 }
 
+type failingStreamCloser struct {
+	closeCount atomic.Int32
+	closeErr   error
+	readErr    error
+}
+
+func (c *failingStreamCloser) Read([]byte) (int, error) { return 0, c.readErr }
+
+func (c *failingStreamCloser) CloseWithError(err error) error {
+	c.closeCount.Add(1)
+	c.closeErr = err
+	return nil
+}
+
 // TestStreamClose_ExactlyOnceAcrossOwners drives the idle-timeout timer and the
 // cancellation goroutine concurrently against one shared stream + context and
 // asserts the underlying CloseWithError fires exactly once. Before the fix the
@@ -731,5 +748,116 @@ func TestReleaseStreamingResponse_NoBodyDoesNotClaimConnection(t *testing.T) {
 
 	if closed, _ := ctx.Value(schemas.BifrostContextKeyConnectionClosed).(bool); closed {
 		t.Fatal("ReleaseStreamingResponse claimed connection ownership without a body stream")
+	}
+}
+
+func TestReleaseStreamingResponse_ClosesMarkedBrokenConnection(t *testing.T) {
+	t.Parallel()
+
+	streamErr := errors.New("truncated stream")
+	ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+	markStreamConnectionBroken(ctx, streamErr)
+	body := &failingStreamCloser{readErr: io.EOF}
+	resp := fasthttp.AcquireResponse()
+	resp.SetBodyStream(body, -1)
+
+	ReleaseStreamingResponse(ctx, resp)
+
+	if got := body.closeCount.Load(); got != 1 {
+		t.Fatalf("CloseWithError called %d times, want exactly 1", got)
+	}
+	if !errors.Is(body.closeErr, streamErr) {
+		t.Fatalf("CloseWithError error = %v, want %v", body.closeErr, streamErr)
+	}
+}
+
+func TestReleaseStreamingResponse_ClosesConnectionWhenDrainFails(t *testing.T) {
+	t.Parallel()
+
+	drainErr := errors.New("connection reset")
+	ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+	body := &failingStreamCloser{readErr: drainErr}
+	resp := fasthttp.AcquireResponse()
+	resp.SetBodyStream(body, -1)
+
+	ReleaseStreamingResponse(ctx, resp)
+
+	if got := body.closeCount.Load(); got != 1 {
+		t.Fatalf("CloseWithError called %d times, want exactly 1", got)
+	}
+	if !errors.Is(body.closeErr, drainErr) {
+		t.Fatalf("CloseWithError error = %v, want %v", body.closeErr, drainErr)
+	}
+}
+
+func TestReleaseStreamingResponse_DoesNotPoolBrokenStream(t *testing.T) {
+	var connections atomic.Int32
+	var requests atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requests.Add(1) == 1 {
+			_, _ = io.WriteString(w, "data: {\"partial\":true}\n\n")
+			return
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	client := &fasthttp.Client{StreamResponseBody: true}
+	do := func() (*fasthttp.Response, error) {
+		request := fasthttp.AcquireRequest()
+		response := fasthttp.AcquireResponse()
+		request.Header.SetMethod(http.MethodPost)
+		request.SetRequestURI(server.URL)
+		request.SetBodyString(`{"model":"test","input":"hello"}`)
+		err := client.Do(request, response)
+		fasthttp.ReleaseRequest(request)
+		return response, err
+	}
+
+	first, err := do()
+	if err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	firstBody := first.BodyStream()
+	if firstBody == nil {
+		t.Fatal("first response did not expose a streaming body")
+	}
+	if _, err := io.ReadAll(firstBody); err != nil {
+		t.Fatalf("read framed but semantically truncated response: %v", err)
+	}
+	firstContext := schemas.NewBifrostContext(context.Background(), time.Time{})
+	markStreamConnectionBroken(firstContext, io.ErrUnexpectedEOF)
+	ReleaseStreamingResponse(firstContext, first)
+
+	second, err := do()
+	if err != nil {
+		t.Fatalf("healthy request after broken stream: %v", err)
+	}
+	secondBody := second.BodyStream()
+	if secondBody == nil {
+		t.Fatal("second response did not expose a streaming body")
+	}
+	body, err := io.ReadAll(secondBody)
+	if err != nil {
+		t.Fatalf("read healthy response: %v", err)
+	}
+	secondContext := schemas.NewBifrostContext(context.Background(), time.Time{})
+	ReleaseStreamingResponse(secondContext, second)
+
+	if got := string(body); got != "data: [DONE]\n\n" {
+		t.Fatalf("healthy response body = %q", got)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("server received %d requests, want 2", got)
+	}
+	if got := connections.Load(); got != 2 {
+		t.Fatalf("broken stream connection was reused: server accepted %d connections, want 2", got)
 	}
 }

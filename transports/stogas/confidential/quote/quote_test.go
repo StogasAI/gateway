@@ -19,9 +19,7 @@ func (f AttesterFunc) Quote(ctx context.Context, reportData [64]byte) ([]byte, e
 
 func testPayload() reportdata.Payload {
 	return reportdata.Payload{
-		Catalog:            reportdata.CatalogIdentity{Digest: "sha256:" + strings.Repeat("a", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("c", 64),
-		ActiveCertSHA256:   strings.Repeat("d", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
 		HPKEPublicKey:      "aHBrZQ",
 		Ed25519PublicKey:   "ZWQyNTUxOQ",
@@ -116,6 +114,39 @@ func TestRefreshFailureKeepsLastValidQuote(t *testing.T) {
 	}
 	if manager.ConsecutiveFailures() != 0 || manager.LastError() != nil {
 		t.Fatal("successful refresh did not clear failure state")
+	}
+}
+
+func TestInvalidateDropsQuoteUntilChangedReportDataCanBeAttested(t *testing.T) {
+	fail := atomic.Bool{}
+	manager, err := New(AttesterFunc(func(ctx context.Context, reportData [64]byte) ([]byte, error) {
+		if fail.Load() {
+			return nil, errors.New("psp unavailable")
+		}
+		return []byte("current-quote"), nil
+	}), func(ctx context.Context) (reportdata.Payload, error) {
+		return testPayload(), nil
+	}, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	manager.Invalidate()
+	fail.Store(true)
+	if snapshot, err := manager.Current(context.Background()); err == nil || snapshot != nil {
+		t.Fatalf("invalidated quote remained usable after refresh failure: snapshot=%#v err=%v", snapshot, err)
+	}
+
+	fail.Store(false)
+	snapshot, err := manager.Current(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(snapshot.Quote) != "current-quote" {
+		t.Fatalf("unexpected recovered quote: %q", snapshot.Quote)
 	}
 }
 

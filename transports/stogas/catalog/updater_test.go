@@ -41,6 +41,13 @@ func TestVerifyEnvelopeAuthenticatesTheMinimalReleaseIdentity(t *testing.T) {
 	}
 }
 
+func TestStartUpdaterRequiresConfiguredInitialRelease(t *testing.T) {
+	updater, err := StartUpdater(context.Background(), UpdaterConfig{RequireInitial: true})
+	if err == nil || !strings.Contains(err.Error(), "initial signed catalog URL is required") {
+		t.Fatalf("missing initial release URL returned updater=%#v err=%v", updater, err)
+	}
+}
+
 func TestUpdaterBuildsCandidateBeforeAtomicActivation(t *testing.T) {
 	previous := active.Load()
 	defer active.Store(previous)
@@ -245,7 +252,7 @@ func TestUpdaterDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
-func TestUpdaterReadinessToleratesTransientFailuresAndRejectsStaleRefreshes(t *testing.T) {
+func TestUpdaterReadinessDependsOnVerifiedActiveCatalog(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	updater := &Updater{
 		config: UpdaterConfig{PollInterval: 5 * time.Minute},
@@ -258,32 +265,69 @@ func TestUpdaterReadinessToleratesTransientFailuresAndRejectsStaleRefreshes(t *t
 		},
 	}
 	if ready, reason := updater.Ready(now); !ready || reason != "" {
-		t.Fatalf("one transient failure should remain ready: ready=%v reason=%q", ready, reason)
+		t.Fatalf("verified active catalog should remain ready: ready=%v reason=%q", ready, reason)
 	}
 	updater.status.ConsecutiveFailures = 3
 	updater.status.LastSuccess = now.Add(-16 * time.Minute)
-	if ready, reason := updater.Ready(now); ready || reason != "catalog_refresh_failing" {
-		t.Fatalf("stale repeated failures should fail readiness: ready=%v reason=%q", ready, reason)
+	if ready, reason := updater.Ready(now); !ready || reason != "" {
+		t.Fatalf("refresh failure must not invalidate a verified catalog: ready=%v reason=%q", ready, reason)
 	}
 	updater.status.CheckedAt = now.Add(-11 * time.Minute)
-	if ready, reason := updater.Ready(now); ready || reason != "catalog_poll_stalled" {
-		t.Fatalf("stalled polling should fail readiness: ready=%v reason=%q", ready, reason)
+	if ready, reason := updater.Ready(now); !ready || reason != "" {
+		t.Fatalf("stalled polling must not invalidate a verified catalog: ready=%v reason=%q", ready, reason)
+	}
+	updater.status.Active = Identity{}
+	if ready, reason := updater.Ready(now); ready || reason != "catalog_unavailable" {
+		t.Fatalf("missing active catalog should fail readiness: ready=%v reason=%q", ready, reason)
 	}
 }
 
 func testReleaseManifest(sequence uint64) releaseManifest {
 	return releaseManifest{
-		Schema:        "stogas.catalog.release.v1",
-		Sequence:      sequence,
-		CatalogSchema: catalogSchema,
-		Runtime:       testDigest(embeddedRuntimeCatalogJSON),
-		Public:        testDigest(embeddedPublicCatalogJSON),
+		Schema:                 "stogas.catalog.release.v1",
+		Sequence:               sequence,
+		CatalogSchema:          catalogSchema,
+		MinimumGatewaySequence: 1,
+		Runtime:                testDigest(embeddedRuntimeCatalogJSON),
+		Public:                 testDigest(embeddedPublicCatalogJSON),
 		Source: catalogReleaseSource{
 			Commit:     strings.Repeat("a", 40),
 			Repository: "https://github.com/StogasAI/catalog",
 			Tag:        fmt.Sprintf("catalog-v%d", sequence),
 			Tree:       strings.Repeat("b", 40),
 		},
+	}
+}
+
+func TestCatalogGatewayCompatibility(t *testing.T) {
+	for version, expected := range map[string]uint64{
+		"v0.0.1": 1,
+		"v1.2.3": 1_000_002_000_003,
+	} {
+		actual, err := gatewayReleaseSequence(version)
+		if err != nil || actual != expected {
+			t.Fatalf("sequence %q = %d, %v", version, actual, err)
+		}
+	}
+	for _, version := range []string{"1.2.3", "v1.02.3", "v1.1000000.0", "v1.2"} {
+		if _, err := gatewayReleaseSequence(version); err == nil {
+			t.Fatalf("invalid gateway version %q was accepted", version)
+		}
+	}
+
+	manifest := testReleaseManifest(9)
+	manifest.MinimumGatewaySequence = 2
+	updater := &Updater{config: UpdaterConfig{GatewayVersion: "v0.0.1", RequireInitial: true}}
+	if compatible, err := updater.catalogCompatible(manifest); compatible || err == nil {
+		t.Fatalf("incompatible initial catalog was accepted: compatible=%v err=%v", compatible, err)
+	}
+	updater.status.LastSuccess = time.Now()
+	if compatible, err := updater.catalogCompatible(manifest); compatible || err != nil {
+		t.Fatalf("incompatible hot update did not retain the active catalog: compatible=%v err=%v", compatible, err)
+	}
+	updater.config.GatewayVersion = "v0.0.2"
+	if compatible, err := updater.catalogCompatible(manifest); !compatible || err != nil {
+		t.Fatalf("compatible catalog was rejected: compatible=%v err=%v", compatible, err)
 	}
 }
 

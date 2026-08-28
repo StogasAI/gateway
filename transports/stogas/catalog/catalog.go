@@ -459,25 +459,6 @@ func ProviderForRouteModelRouting(route Route, requestedModel string, preference
 	if err != nil {
 		return "", false, err
 	}
-	var constraint []schemas.ModelProvider
-	if strings.TrimSpace(preference.Constraint) != "" {
-		constraint, err = snap.resolveProviderPreferences([]string{preference.Constraint})
-		if err != nil {
-			return "", false, err
-		}
-	}
-	if len(constraint) == 1 {
-		constrainedProvider := constraint[0]
-		if len(only) > 0 && !providerInList(constrainedProvider, only) {
-			return "", false, ErrCredentialProviderConflict
-		}
-		allowed := map[schemas.ModelProvider]bool{constrainedProvider: true}
-		candidates := snap.routeModelProviders(route, requested, allowed)
-		if len(candidates) != 1 || candidates[0] != constrainedProvider {
-			return "", false, ErrModelUnavailable
-		}
-		return constrainedProvider, true, nil
-	}
 	allowed := map[schemas.ModelProvider]bool(nil)
 	if len(only) > 0 {
 		allowed = make(map[schemas.ModelProvider]bool, len(only))

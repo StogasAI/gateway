@@ -10,9 +10,6 @@ import (
 )
 
 var (
-	ErrProviderUsageMissing      = errors.New("upstream response did not report token usage")
-	ErrProviderUsageMalformed    = errors.New("upstream response reported invalid token usage")
-	ErrProviderUsageExceedsHold  = errors.New("upstream response usage exceeds the authorized request bounds")
 	ErrProviderExecutionMismatch = errors.New("upstream response reported unauthorized or inconsistent execution metadata")
 	ErrProviderResponseMalformed = errors.New("upstream response violated the selected API contract")
 	ErrProviderResponseTooLarge  = errors.New("upstream response exceeded the gateway response limit")
@@ -65,12 +62,9 @@ func HasMeasuredUsage(state *State) bool {
 	return state != nil && hasMeasuredUsage(state.Signals)
 }
 
-func validateReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
+func validateReportedUsageMetadata(state *State, usage *schemas.BifrostLLMUsage) error {
 	if usage == nil {
-		return ErrProviderUsageMissing
-	}
-	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 || usage.ReasoningTokens < 0 {
-		return ErrProviderUsageMalformed
+		return nil
 	}
 	if err := validateActualExecutionReport(state, nil, usage.Speed, usage.InferenceGeo); err != nil {
 		return err
@@ -81,101 +75,7 @@ func validateReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
 		// the deployment that the gateway authorized.
 		return ErrProviderExecutionMismatch
 	}
-	promptTokens, completionTokens, ok := reportedUsageTokenTotals(usage)
-	if !ok {
-		return ErrProviderUsageMalformed
-	}
-	if usage.TotalTokens > 0 {
-		total, ok := addTokenCounts(promptTokens, completionTokens)
-		if !ok || total != usage.TotalTokens {
-			return ErrProviderUsageMalformed
-		}
-	}
-	if details := usage.PromptTokensDetails; details != nil {
-		if details.TextTokens < 0 || details.AudioTokens != 0 || details.ImageTokens != 0 ||
-			details.CachedReadTokens < 0 || details.CachedWriteTokens < 0 {
-			return ErrProviderUsageMalformed
-		}
-		if split := details.CachedWriteTokenDetails; split != nil &&
-			(split.CachedWriteTokens5m < 0 || split.CachedWriteTokens1h < 0) {
-			return ErrProviderUsageMalformed
-		}
-		cacheWriteTokens, ok := cacheWriteTokenTotalChecked(details)
-		if !ok {
-			return ErrProviderUsageMalformed
-		}
-		if split := details.CachedWriteTokenDetails; split != nil {
-			splitTotal, ok := addTokenCounts(split.CachedWriteTokens5m, split.CachedWriteTokens1h)
-			if !ok || (details.CachedWriteTokens > 0 && splitTotal > 0 && details.CachedWriteTokens != splitTotal) {
-				return ErrProviderUsageMalformed
-			}
-		}
-		cachePartition, ok := addTokenCounts(details.CachedReadTokens, cacheWriteTokens)
-		if !ok || cachePartition > promptTokens {
-			return ErrProviderUsageMalformed
-		}
-		promptDetails, ok := promptTokenFallbackChecked(details)
-		if !ok || promptDetails > promptTokens {
-			return ErrProviderUsageMalformed
-		}
-	}
-	if details := usage.CompletionTokensDetails; details != nil {
-		if details.TextTokens < 0 || details.AcceptedPredictionTokens < 0 || details.AudioTokens != 0 ||
-			details.ReasoningTokens < 0 || details.RejectedPredictionTokens < 0 ||
-			(details.ImageTokens != nil && *details.ImageTokens != 0) ||
-			(details.CitationTokens != nil && *details.CitationTokens < 0) ||
-			(details.NumSearchQueries != nil && *details.NumSearchQueries < 0) {
-			return ErrProviderUsageMalformed
-		}
-		completionDetails, ok := completionTokenFallbackChecked(details)
-		if !ok || completionDetails > completionTokens || details.ReasoningTokens > completionTokens {
-			return ErrProviderUsageMalformed
-		}
-		if usage.ReasoningTokens > 0 && details.ReasoningTokens > 0 && usage.ReasoningTokens != details.ReasoningTokens {
-			return ErrProviderUsageMalformed
-		}
-	}
-	if usage.ReasoningTokens > completionTokens {
-		return ErrProviderUsageMalformed
-	}
-	if usageRegresses(state, usage) {
-		return ErrProviderUsageMalformed
-	}
-	if exceedsTokenHold(state, promptTokens, completionTokens) {
-		return ErrProviderUsageExceedsHold
-	}
 	return nil
-}
-
-func usageRegresses(state *State, usage *schemas.BifrostLLMUsage) bool {
-	if state == nil || usage == nil {
-		return false
-	}
-	current, ok := state.Signals.(*StandardSignals)
-	if !ok || current == nil {
-		return false
-	}
-	next := signalsFromUsage(usage)
-	if next == nil {
-		return false
-	}
-	return next.Prompt < current.Prompt ||
-		next.Completion < current.Completion ||
-		next.Reasoning < current.Reasoning ||
-		next.Cached < current.Cached ||
-		next.CacheWrite < current.CacheWrite ||
-		next.CacheWrite5m < current.CacheWrite5m ||
-		next.CacheWrite1h < current.CacheWrite1h
-}
-
-func exceedsTokenHold(state *State, promptTokens int, completionTokens int) bool {
-	if inputLimit, ok := tokenHoldCapacity(state, true); ok && promptTokens > inputLimit {
-		return true
-	}
-	if outputLimit, ok := tokenHoldCapacity(state, false); ok && completionTokens > outputLimit {
-		return true
-	}
-	return false
 }
 
 func tokenHoldCapacity(state *State, input bool) (int, bool) {
@@ -222,85 +122,54 @@ func isInputTokenMeter(meterKey string) bool {
 	}
 }
 
-func reportedUsageTokenTotals(usage *schemas.BifrostLLMUsage) (int, int, bool) {
+func reportedUsageTokenTotals(usage *schemas.BifrostLLMUsage) (int, int) {
 	if usage == nil {
-		return 0, 0, false
+		return 0, 0
 	}
-	promptTokens := usage.PromptTokens
-	completionTokens := usage.CompletionTokens
+	promptTokens := nonnegativeTokenCount(usage.PromptTokens)
+	completionTokens := nonnegativeTokenCount(usage.CompletionTokens)
+	totalTokens := nonnegativeTokenCount(usage.TotalTokens)
 	promptKnown := promptTokens > 0
 	completionKnown := completionTokens > 0
 
-	if usage.TotalTokens > 0 &&
-		((promptKnown && promptTokens > usage.TotalTokens) || (completionKnown && completionTokens > usage.TotalTokens)) {
-		return 0, 0, false
-	}
-	// Aggregate partitions are stronger than detail counters. Derive one absent
-	// partition from a valid total before consulting optional detail counters.
-	if usage.TotalTokens > 0 {
-		if promptKnown && !completionKnown && promptTokens <= usage.TotalTokens {
-			completionTokens = usage.TotalTokens - promptTokens
+	// Aggregate prompt and completion counts are independent billing evidence.
+	// Use a coherent total only to fill one missing side; a contradictory total
+	// does not invalidate the two usable aggregates.
+	if totalTokens > 0 {
+		if promptKnown && !completionKnown && promptTokens <= totalTokens {
+			completionTokens = totalTokens - promptTokens
 			completionKnown = true
-		} else if completionKnown && !promptKnown && completionTokens <= usage.TotalTokens {
-			promptTokens = usage.TotalTokens - completionTokens
+		} else if completionKnown && !promptKnown && completionTokens <= totalTokens {
+			promptTokens = totalTokens - completionTokens
 			promptKnown = true
 		}
 	}
 	if !promptKnown && usage.PromptTokensDetails != nil {
-		var ok bool
-		promptTokens, ok = promptTokenFallbackChecked(usage.PromptTokensDetails)
-		if !ok {
-			return 0, 0, false
-		}
+		promptTokens = promptTokenFallback(usage.PromptTokensDetails)
 		promptKnown = promptTokens > 0
 	}
 	if !completionKnown && usage.CompletionTokensDetails != nil {
-		var ok bool
-		completionTokens, ok = completionTokenFallbackChecked(usage.CompletionTokensDetails)
-		if !ok {
-			return 0, 0, false
-		}
+		completionTokens = completionTokenFallback(usage.CompletionTokensDetails)
 		completionKnown = completionTokens > 0
 	}
-	if usage.TotalTokens <= 0 {
-		if !promptKnown && !completionKnown {
-			// Streaming providers can attach an empty usage object before the
-			// terminal event. Keep it structurally valid; the terminal boundary
-			// still requires HasMeasuredUsage before a successful response is sent.
-			return 0, 0, true
-		}
-		_, ok := addTokenCounts(promptTokens, completionTokens)
-		return promptTokens, completionTokens, ok
-	}
-	if !promptKnown && !completionKnown {
-		return 0, 0, false
-	}
-	if !promptKnown && completionTokens <= usage.TotalTokens {
-		promptTokens = usage.TotalTokens - completionTokens
+	if !promptKnown && completionKnown && completionTokens <= totalTokens {
+		promptTokens = totalTokens - completionTokens
 		promptKnown = true
-	} else if !completionKnown && promptTokens <= usage.TotalTokens {
-		completionTokens = usage.TotalTokens - promptTokens
+	} else if !completionKnown && promptKnown && promptTokens <= totalTokens {
+		completionTokens = totalTokens - promptTokens
 		completionKnown = true
 	}
-	if !promptKnown || !completionKnown {
-		return 0, 0, false
-	}
-	total, ok := addTokenCounts(promptTokens, completionTokens)
-	return promptTokens, completionTokens, ok && total == usage.TotalTokens
+	return promptTokens, completionTokens
 }
 
 // UpstreamProtocolError converts an untrusted provider response failure into a
-// stable protocol error. The public HTTP layer hides the internal distinction
-// while billing treats the request as an insured provider failure.
+// stable protocol error. The public HTTP layer hides the internal distinction.
 func UpstreamProtocolError(err error) *schemas.BifrostError {
 	statusCode := 502
 	errorType := "upstream_protocol_error"
-	code := "upstream_usage_invalid"
-	message := "Upstream response reported invalid token usage"
-	if errors.Is(err, ErrProviderUsageMissing) {
-		code = "upstream_usage_missing"
-		message = "Upstream response did not report token usage"
-	} else if errors.Is(err, ErrProviderExecutionMismatch) {
+	code := "upstream_response_invalid"
+	message := "Upstream response violated the selected API contract"
+	if errors.Is(err, ErrProviderExecutionMismatch) {
 		code = "upstream_execution_invalid"
 		message = "Upstream response reported invalid execution metadata"
 	} else if errors.Is(err, ErrProviderResponseTooLarge) {
@@ -491,86 +360,89 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	if usage == nil {
 		return nil
 	}
-	promptTokens, completionTokens, ok := reportedUsageTokenTotals(usage)
-	if !ok {
-		return nil
-	}
+	promptTokens, completionTokens := reportedUsageTokenTotals(usage)
 
 	cached := 0
 	cacheWrite := 0
 	cacheWrite5m := 0
 	cacheWrite1h := 0
 	if usage.PromptTokensDetails != nil {
-		cached = usage.PromptTokensDetails.CachedReadTokens
+		cached = nonnegativeTokenCount(usage.PromptTokensDetails.CachedReadTokens)
 		if usage.PromptTokensDetails.CachedWriteTokenDetails != nil {
-			cacheWrite5m = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens5m
-			cacheWrite1h = usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h
-			if splitTotal, ok := addTokenCounts(cacheWrite5m, cacheWrite1h); ok &&
-				usage.PromptTokensDetails.CachedWriteTokens > splitTotal {
-				cacheWrite = usage.PromptTokensDetails.CachedWriteTokens - splitTotal
+			cacheWrite5m = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens5m)
+			cacheWrite1h = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokenDetails.CachedWriteTokens1h)
+			splitTotal := saturatingTokenTotal(cacheWrite5m, cacheWrite1h)
+			reportedWrite := nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokens)
+			if reportedWrite > 0 && splitTotal > 0 && reportedWrite != splitTotal {
+				if splitTotal < reportedWrite {
+					// Keep the usable TTL split and leave only the unexplained
+					// remainder unspecified.
+					cacheWrite = reportedWrite - splitTotal
+				} else {
+					// The details exceed the usable aggregate, so their TTL
+					// classification cannot be trusted.
+					cacheWrite = reportedWrite
+					cacheWrite5m = 0
+					cacheWrite1h = 0
+				}
+			} else if splitTotal == 0 {
+				cacheWrite = reportedWrite
 			}
 		} else {
-			cacheWrite = usage.PromptTokensDetails.CachedWriteTokens
+			cacheWrite = nonnegativeTokenCount(usage.PromptTokensDetails.CachedWriteTokens)
 		}
 	}
 	webSearch := 0
-	reasoningTokens := usage.ReasoningTokens
+	reasoningTokens := nonnegativeTokenCount(usage.ReasoningTokens)
 	if usage.CompletionTokensDetails != nil {
 		if usage.CompletionTokensDetails.ReasoningTokens > 0 {
 			reasoningTokens = usage.CompletionTokensDetails.ReasoningTokens
 		}
-		if usage.CompletionTokensDetails.NumSearchQueries != nil {
+		if usage.CompletionTokensDetails.NumSearchQueries != nil && *usage.CompletionTokensDetails.NumSearchQueries > 0 {
 			webSearch = *usage.CompletionTokensDetails.NumSearchQueries
 		}
 	}
-	if promptTokens <= 0 && completionTokens <= 0 && reasoningTokens <= 0 && cached <= 0 &&
-		cacheWrite <= 0 && cacheWrite5m <= 0 && cacheWrite1h <= 0 && webSearch <= 0 {
+	next := &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	if !hasMeasuredUsage(next) && next.WebSearch <= 0 {
 		return nil
 	}
-	return &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	return next
 }
 
-func cacheWriteTokenTotalChecked(details *schemas.ChatPromptTokensDetails) (int, bool) {
+func cacheWriteTokenTotal(details *schemas.ChatPromptTokensDetails) int {
 	if details == nil {
-		return 0, true
+		return 0
 	}
 	splitTotal := 0
 	if details.CachedWriteTokenDetails != nil {
-		var ok bool
-		splitTotal, ok = addTokenCounts(
+		splitTotal = saturatingTokenTotal(
 			details.CachedWriteTokenDetails.CachedWriteTokens5m,
 			details.CachedWriteTokenDetails.CachedWriteTokens1h,
 		)
-		if !ok {
-			return 0, false
-		}
 	}
-	if details.CachedWriteTokens > splitTotal {
-		return details.CachedWriteTokens, true
+	reported := nonnegativeTokenCount(details.CachedWriteTokens)
+	if reported > splitTotal {
+		return reported
 	}
-	return splitTotal, true
+	return splitTotal
 }
 
-func promptTokenFallbackChecked(details *schemas.ChatPromptTokensDetails) (int, bool) {
+func promptTokenFallback(details *schemas.ChatPromptTokensDetails) int {
 	if details == nil {
-		return 0, true
+		return 0
 	}
-	cacheWriteTokens, ok := cacheWriteTokenTotalChecked(details)
-	if !ok {
-		return 0, false
-	}
-	return addTokenCounts(
+	return saturatingTokenTotal(
 		details.TextTokens,
 		details.AudioTokens,
 		details.ImageTokens,
 		details.CachedReadTokens,
-		cacheWriteTokens,
+		cacheWriteTokenTotal(details),
 	)
 }
 
-func completionTokenFallbackChecked(details *schemas.ChatCompletionTokensDetails) (int, bool) {
+func completionTokenFallback(details *schemas.ChatCompletionTokensDetails) int {
 	if details == nil {
-		return 0, true
+		return 0
 	}
 	values := []int{
 		details.TextTokens,
@@ -585,7 +457,94 @@ func completionTokenFallbackChecked(details *schemas.ChatCompletionTokensDetails
 	if details.CitationTokens != nil {
 		values = append(values, *details.CitationTokens)
 	}
-	return addTokenCounts(values...)
+	return saturatingTokenTotal(values...)
+}
+
+func nonnegativeTokenCount(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+
+func saturatingTokenTotal(values ...int) int {
+	maximumInt := int(^uint(0) >> 1)
+	total := 0
+	for _, raw := range values {
+		value := nonnegativeTokenCount(raw)
+		if value > maximumInt-total {
+			return maximumInt
+		}
+		total += value
+	}
+	return total
+}
+
+func clampSignalsToAuthorizedUsage(state *State, signals *StandardSignals) {
+	if signals == nil {
+		return
+	}
+	if inputLimit, ok := tokenHoldCapacity(state, true); ok && signals.Prompt > inputLimit {
+		signals.Prompt = inputLimit
+	}
+	if outputLimit, ok := tokenHoldCapacity(state, false); ok && signals.Completion > outputLimit {
+		signals.Completion = outputLimit
+	}
+	cachePartition, cachePartitionOK := addTokenCounts(
+		signals.Cached,
+		signals.CacheWrite,
+		signals.CacheWrite5m,
+		signals.CacheWrite1h,
+	)
+	if !cachePartitionOK || cachePartition > signals.Prompt {
+		// The aggregate input count remains usable, but an inconsistent cache
+		// breakdown cannot safely select discounted or premium cache rates.
+		signals.Cached = 0
+		signals.CacheWrite = 0
+		signals.CacheWrite5m = 0
+		signals.CacheWrite1h = 0
+	}
+	if signals.Reasoning > signals.Completion {
+		// Keep the usable completion aggregate and ignore an impossible detail
+		// partition instead of converting provider drift into a request failure.
+		signals.Reasoning = 0
+	}
+}
+
+func cachePartitionTotal(signals *StandardSignals) int {
+	if signals == nil {
+		return 0
+	}
+	return saturatingTokenTotal(
+		signals.Cached,
+		signals.CacheWrite,
+		signals.CacheWrite5m,
+		signals.CacheWrite1h,
+	)
+}
+
+func cachePartitionSpecificity(signals *StandardSignals) int {
+	if signals == nil {
+		return 0
+	}
+	return saturatingTokenTotal(signals.CacheWrite5m, signals.CacheWrite1h)
+}
+
+func mergeCachePartition(current, next *StandardSignals) {
+	if current == nil || next == nil {
+		return
+	}
+	currentTotal := cachePartitionTotal(current)
+	nextTotal := cachePartitionTotal(next)
+	if nextTotal < currentTotal ||
+		(nextTotal == currentTotal &&
+			cachePartitionSpecificity(next) < cachePartitionSpecificity(current)) {
+		return
+	}
+	current.Cached = next.Cached
+	current.CacheWrite = next.CacheWrite
+	current.CacheWrite5m = next.CacheWrite5m
+	current.CacheWrite1h = next.CacheWrite1h
 }
 
 func addTokenCounts(values ...int) (int, bool) {
@@ -608,9 +567,9 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next == nil {
 		return
 	}
-	observeUsageExecution(state, usage)
+	clampSignalsToAuthorizedUsage(state, next)
 	if state.Resolution != nil &&
-		state.Resolution.Provider == schemas.Anthropic &&
+		(state.Resolution.Provider == schemas.Anthropic || azureDeploymentUsesAnthropicWire(state)) &&
 		next.CacheWrite > 0 {
 		combined, ok := addTokenCounts(next.CacheWrite5m, next.CacheWrite)
 		if !ok {
@@ -624,13 +583,10 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 		state.Signals = next
 		return
 	}
-	current.Prompt = next.Prompt
-	current.Completion = next.Completion
-	current.Reasoning = next.Reasoning
-	current.Cached = next.Cached
-	current.CacheWrite = next.CacheWrite
-	current.CacheWrite5m = next.CacheWrite5m
-	current.CacheWrite1h = next.CacheWrite1h
+	current.Prompt = max(current.Prompt, next.Prompt)
+	current.Completion = max(current.Completion, next.Completion)
+	current.Reasoning = max(current.Reasoning, next.Reasoning)
+	mergeCachePartition(current, next)
 	if next.WebSearch > current.WebSearch {
 		current.WebSearch = next.WebSearch
 	}
@@ -641,6 +597,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next.ActualSpeed != "" {
 		current.ActualSpeed = next.ActualSpeed
 	}
+	clampSignalsToAuthorizedUsage(state, current)
 }
 
 func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo ...*string) {

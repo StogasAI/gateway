@@ -11,6 +11,7 @@ import (
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
@@ -22,18 +23,17 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable         = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON                = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous             = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable           = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrProviderUnavailable        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrRouteUnavailable           = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod          = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrParameterTooLarge          = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrUnsupportedTool            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
-	ErrUnsupportedServiceTier     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
-	ErrCredentialProviderConflict = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Pass-through credential provider conflicts with request routing"}
+	ErrCatalogUnavailable     = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable       = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod      = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrUnsupportedTool        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
+	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
 )
 
 type APIError struct {
@@ -58,10 +58,9 @@ func PublicError(err error) APIError {
 }
 
 type RequestInput struct {
-	Body               []byte
-	Method             string
-	Path               string
-	ProviderConstraint string
+	Body   []byte
+	Method string
+	Path   string
 }
 
 type ResolvedRequest struct {
@@ -76,6 +75,7 @@ type ResolvedRequest struct {
 	inputTokenLimit  int
 	outputTokenLimit int
 	pricing          requestPricingContext
+	redactionSummary redaction.Summary
 	responses        *openaiprovider.OpenAIResponsesRequest
 }
 
@@ -90,13 +90,12 @@ type requestPricingContext struct {
 }
 
 type ProviderRoutingPreference struct {
-	Constraint string
-	Only       []string
-	Order      []string
+	Only  []string
+	Order []string
 }
 
 func (p ProviderRoutingPreference) Empty() bool {
-	return strings.TrimSpace(p.Constraint) == "" && len(p.Only) == 0 && len(p.Order) == 0
+	return len(p.Only) == 0 && len(p.Order) == 0
 }
 
 type requestWithSettableExtraParams interface {
@@ -117,9 +116,9 @@ func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
 
 	switch route {
 	case RouteChat:
-		return resolveChatRequest(input.Body, route, input.ProviderConstraint)
+		return resolveChatRequest(input.Body, route)
 	case RouteResponses:
-		return resolveResponsesRequest(input.Body, route, input.ProviderConstraint)
+		return resolveResponsesRequest(input.Body, route)
 	default:
 		return nil, ErrUnsupportedRequest
 	}
@@ -241,6 +240,13 @@ func (r *ResolvedRequest) OutputTokenLimit() int {
 		return 0
 	}
 	return r.outputTokenLimit
+}
+
+func (r *ResolvedRequest) StructuredPIIRedactionSummary() redaction.Summary {
+	if r == nil {
+		return redaction.Summary{}
+	}
+	return r.redactionSummary
 }
 
 // SetWireModel binds the already authorized catalog deployment to the exact
@@ -489,7 +495,7 @@ func rawStringListValue(raw json.RawMessage) ([]string, bool) {
 	return values, true
 }
 
-func resolveChatRequest(body []byte, route Route, providerConstraint string) (*ResolvedRequest, error) {
+func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
@@ -500,6 +506,10 @@ func resolveChatRequest(body []byte, route Route, providerConstraint string) (*R
 	dropNoOpCompatibilityFields(rawData, route)
 	if _, err := normalizeChatStopString(rawData); err != nil {
 		return nil, err
+	}
+	redactor := redaction.New()
+	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceChat); err != nil {
+		return nil, piiRedactionError(err)
 	}
 	body, err = sonic.Marshal(rawData)
 	if err != nil {
@@ -530,7 +540,6 @@ func resolveChatRequest(body []byte, route Route, providerConstraint string) (*R
 		func() { applyChatAliases(&request) },
 		func() *int { return request.ChatParameters.MaxCompletionTokens },
 		&request,
-		providerConstraint,
 	)
 	if err != nil {
 		return nil, err
@@ -545,6 +554,7 @@ func resolveChatRequest(body []byte, route Route, providerConstraint string) (*R
 		}
 	}
 	resolution.chat = &request
+	resolution.redactionSummary = redactor.Summary()
 	return resolution, nil
 }
 
@@ -569,7 +579,7 @@ func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
 	return true, nil
 }
 
-func resolveResponsesRequest(body []byte, route Route, providerConstraint string) (*ResolvedRequest, error) {
+func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
@@ -578,6 +588,10 @@ func resolveResponsesRequest(body []byte, route Route, providerConstraint string
 		return nil, err
 	}
 	dropNoOpCompatibilityFields(rawData, route)
+	redactor := redaction.New()
+	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceResponses); err != nil {
+		return nil, piiRedactionError(err)
+	}
 	body, err = sonic.Marshal(rawData)
 	if err != nil {
 		return nil, ErrInvalidJSON
@@ -604,7 +618,6 @@ func resolveResponsesRequest(body []byte, route Route, providerConstraint string
 		func() { applyResponsesAliases(rawData, &request) },
 		func() *int { return request.ResponsesParameters.MaxOutputTokens },
 		&request,
-		providerConstraint,
 	)
 	if err != nil {
 		return nil, err
@@ -640,7 +653,19 @@ func resolveResponsesRequest(body []byte, route Route, providerConstraint string
 		request.ResponsesParameters.Reasoning.Mode = &mode
 	}
 	resolution.responses = &request
+	resolution.redactionSummary = redactor.Summary()
 	return resolution, nil
+}
+
+func piiRedactionError(err error) error {
+	if errors.Is(err, redaction.ErrMatchLimit) || errors.Is(err, redaction.ErrNestingLimit) {
+		return APIError{
+			StatusCode: http.StatusRequestEntityTooLarge,
+			Type:       ErrorTypeInvalidRequest,
+			Message:    "Request exceeds PII redaction limits",
+		}
+	}
+	return err
 }
 
 func resolveOpenAIRequest(
@@ -654,13 +679,11 @@ func resolveOpenAIRequest(
 	applyRequestAliases func(),
 	requestedOutputLimit func() *int,
 	extraParams requestWithSettableExtraParams,
-	providerConstraint string,
 ) (*ResolvedRequest, error) {
 	providerPreference, err := requestProviderPreference(rawData)
 	if err != nil {
 		return nil, err
 	}
-	providerPreference.Constraint = strings.TrimSpace(providerConstraint)
 	provider, ok, err := ProviderForRouteModelRouting(route, requestedModel, providerPreference)
 	if err != nil {
 		return nil, err

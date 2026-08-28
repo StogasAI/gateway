@@ -569,11 +569,11 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 					Prompt:     input,
 					Reasoning:  output,
 				}
-				if err := state.Adapter.FinalPrice(state); err != nil {
-					t.Fatalf("FinalPrice returned error: %v", err)
+				if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+					t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 				}
-				if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-					t.Fatalf("hold under-reserved Chutes usage: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+				if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+					t.Fatalf("hold under-reserved Chutes usage: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 				}
 			})
 		}

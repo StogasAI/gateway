@@ -1,0 +1,83 @@
+name: Continuous fuzzing
+
+on:
+  schedule:
+    - cron: '43 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: gateway-fuzz-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: transports
+            package: ./stogas/catalog
+            target: FuzzValidateRequestJSONNeverPanics
+          - module: transports
+            package: ./stogas/confidential/e2ee
+            target: FuzzOpenRequestNeverPanics
+          - module: transports
+            package: ./stogas/confidential/e2ee
+            target: FuzzDecodeResponseNeverPanics
+          - module: transports
+            package: ./stogas/billing
+            target: FuzzNormalizeUpstreamStatus
+          - module: transports
+            package: ./stogas
+            target: FuzzCacheEconomicsMatchIndependentRequestCounterfactual
+          - module: transports
+            package: ./stogas
+            target: FuzzProviderUsageNormalization
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzRedactBytes
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzRedactJSON
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzConfiguredRedaction
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzCustomPatternRedaction
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzIPAddressRedaction
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
+      - name: Restore generated fuzz corpus
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-${{ hashFiles('core/go.sum', 'transports/go.sum') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-${{ hashFiles('core/go.sum', 'transports/go.sum') }}-
+            gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: ${{ matrix.module }}
+        run: GOWORK=off go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}-${{ github.sha }}
+          path: ${{ matrix.module }}/**/testdata/fuzz/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30

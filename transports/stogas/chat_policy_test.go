@@ -2831,11 +2831,11 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			if tc.wantSearchCap {
 				state.Signals = &StandardSignals{Prompt: 100, Completion: 16, WebSearch: 2}
 			}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover actual provider usage after encrypted reasoning replay: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover actual provider usage after encrypted reasoning replay: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -3558,14 +3558,14 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 		CacheWrite1h: resolution.InputTokenLimit() + 1000*defaultResponsesHostedToolCalls,
 		WebSearch:    defaultResponsesHostedToolCalls,
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	if findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("web_fetch final price must not include Anthropic web-search call meters, got %#v", state.FinalMeters)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -3644,9 +3644,9 @@ func TestResponsesHostedToolsDoNotInjectCapWhenToolChoicePrecludesHostedCalls(t 
 			if meter := findMeterEstimate(state.Hold.Meters, tc.meterKey); meter != nil {
 				t.Fatalf("expected no hosted-tool hold meter for tool_choice none, got %#v in %#v", meter, state.Hold.Meters)
 			}
-			state.Signals = &StandardSignals{WebSearch: 1}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			state.Signals = &StandardSignals{Prompt: 1, WebSearch: 1}
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
 			if meter := findMeterEstimate(state.FinalMeters, tc.meterKey); meter != nil {
 				t.Fatalf("expected no hosted-tool final meter when tool_choice precludes hosted calls, got %#v in %#v", meter, state.FinalMeters)
@@ -3783,16 +3783,16 @@ func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
 				t.Fatalf("expected omitted cap to reserve 50 hosted calls, got %#v in %#v", holdMeter, state.Hold.Meters)
 			}
 
-			state.Signals = &StandardSignals{WebSearch: defaultResponsesHostedToolCalls}
-			if err := state.Adapter.FinalPrice(state); err != nil {
-				t.Fatalf("FinalPrice returned error: %v", err)
+			state.Signals = &StandardSignals{Prompt: 1, WebSearch: defaultResponsesHostedToolCalls}
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
 			finalMeter := findMeterEstimate(state.FinalMeters, tc.meterKey)
 			if finalMeter == nil || finalMeter.Quantity != "50" || finalMeter.HoldRequired {
 				t.Fatalf("expected final hosted calls at the authorized maximum, got %#v in %#v", finalMeter, state.FinalMeters)
 			}
-			if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover omitted-cap final hosted-tool charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+				t.Fatalf("hold must cover omitted-cap final hosted-tool charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -3892,7 +3892,7 @@ func TestResponsesPolicyMaxToolCallsScalesWebSearchHold(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T) {
+func TestOpenAIResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -3908,9 +3908,9 @@ func TestOpenAIResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T) {
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	state.Signals = &StandardSignals{WebSearch: 3}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	state.Signals = &StandardSignals{Prompt: 1, WebSearch: 3}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	if calls := actualWebSearchCalls(state); calls != 3 {
 		t.Fatalf("expected telemetry to retain three observed calls, got %d", calls)
@@ -3919,16 +3919,15 @@ func TestOpenAIResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T) {
 	if searchMeter == nil {
 		t.Fatalf("expected final web search preview meter in %#v", state.FinalMeters)
 	}
-	if searchMeter.Quantity != "3" || searchMeter.HoldRequired {
-		t.Fatalf("expected final pricing to retain all observed web search calls, got %#v", searchMeter)
+	if searchMeter.Quantity != "1" || searchMeter.HoldRequired {
+		t.Fatalf("expected final pricing to cap web search calls to the authorized quantity, got %#v", searchMeter)
 	}
-	rejectFinalCostOutsideHold(state)
-	if state.BifrostError == nil || state.FinalCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 0 {
-		t.Fatalf("hosted tool use above max_tool_calls did not fail closed: %#v", state)
+	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
+		t.Fatalf("bounded hosted-tool usage did not settle normally: %#v", state)
 	}
 }
 
-func TestOpenAIResponsesRejectsExcessNonPreviewSearchContent(t *testing.T) {
+func TestOpenAIResponsesCapsExcessNonPreviewSearchContent(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -3950,25 +3949,24 @@ func TestOpenAIResponsesRejectsExcessNonPreviewSearchContent(t *testing.T) {
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	state.Signals = &StandardSignals{WebSearch: 3}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	state.Signals = &StandardSignals{Prompt: 1, WebSearch: 3}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 
 	inputMeter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if inputMeter == nil || inputMeter.Quantity != "24000" || inputMeter.HoldRequired {
-		t.Fatalf("expected final fixed search content to retain all observed calls, got %#v in %#v", inputMeter, state.FinalMeters)
+	if inputMeter == nil || inputMeter.Quantity != "8124" || inputMeter.HoldRequired {
+		t.Fatalf("expected final fixed search content to stay within the authorized input quantity, got %#v in %#v", inputMeter, state.FinalMeters)
 	}
 	searchMeter := findMeterEstimate(state.FinalMeters, MeterOpenAIResponsesWebSearchCalls)
-	if searchMeter == nil || searchMeter.Quantity != "3" || searchMeter.HoldRequired {
-		t.Fatalf("expected final non-preview search meter to retain all observed calls, got %#v in %#v", searchMeter, state.FinalMeters)
+	if searchMeter == nil || searchMeter.Quantity != "1" || searchMeter.HoldRequired {
+		t.Fatalf("expected final non-preview search meter to stay within the authorized call quantity, got %#v in %#v", searchMeter, state.FinalMeters)
 	}
 	pricing := pricingForState(state)
-	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "24000", inputMeter.AmountUSDAtoms)
-	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "3", searchMeter.AmountUSDAtoms)
-	rejectFinalCostOutsideHold(state)
-	if state.BifrostError == nil || state.FinalCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 0 {
-		t.Fatalf("excess fixed-content web search use did not fail closed: %#v", state)
+	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "8124", inputMeter.AmountUSDAtoms)
+	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "1", searchMeter.AmountUSDAtoms)
+	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
+		t.Fatalf("bounded fixed-content web search usage did not settle normally: %#v", state)
 	}
 }
 
@@ -4269,16 +4267,19 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 	numSearchQueries := 2
 	providerResponse := validUnaryResponsesProviderResponse("resp_search")
 	providerResponse.Usage = &schemas.ResponsesResponseUsage{
+		InputTokens:         1,
+		TotalTokens:         1,
 		OutputTokensDetails: &schemas.ResponsesResponseOutputTokens{NumSearchQueries: &numSearchQueries},
 	}
 	if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: providerResponse}, nil); err != nil {
 		t.Fatalf("IngestResponse returned error: %v", err)
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "20000000000000000" {
-		t.Fatalf("expected Anthropic web search settlement for 2 calls, got %s", state.FinalCostUSDAtoms)
+	searchMeter := findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls)
+	if searchMeter == nil || searchMeter.Quantity != "2" || searchMeter.AmountUSDAtoms != "20000000000000000" {
+		t.Fatalf("expected Anthropic web search settlement for 2 calls, got %#v", state.FinalMeters)
 	}
 }
 
@@ -4353,14 +4354,14 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 	}
 
 	state.Signals = &StandardSignals{Prompt: 1200, Completion: 64, WebSearch: 99}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	if findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("web_fetch final price must not include Anthropic web-search call meters, got %#v", state.FinalMeters)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -4424,7 +4425,7 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 	}
 }
 
-func TestAnthropicResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T) {
+func TestAnthropicResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -4440,9 +4441,9 @@ func TestAnthropicResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T)
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	state.Signals = &StandardSignals{WebSearch: 3}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	state.Signals = &StandardSignals{Prompt: 1, WebSearch: 3}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	if calls := actualWebSearchCalls(state); calls != 3 {
 		t.Fatalf("expected telemetry to retain three observed calls, got %d", calls)
@@ -4451,16 +4452,15 @@ func TestAnthropicResponsesRejectsHostedToolUsageAboveMaxToolCalls(t *testing.T)
 	if searchMeter == nil {
 		t.Fatalf("expected final Anthropic web search meter in %#v", state.FinalMeters)
 	}
-	if searchMeter.Quantity != "3" || searchMeter.HoldRequired {
-		t.Fatalf("expected final pricing to retain all observed Anthropic web search calls, got %#v", searchMeter)
+	if searchMeter.Quantity != "1" || searchMeter.HoldRequired {
+		t.Fatalf("expected final pricing to cap Anthropic web search calls to the authorized quantity, got %#v", searchMeter)
 	}
-	rejectFinalCostOutsideHold(state)
-	if state.BifrostError == nil || state.FinalCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 0 {
-		t.Fatalf("Anthropic hosted tool use above max_tool_calls did not fail closed: %#v", state)
+	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
+		t.Fatalf("bounded Anthropic hosted-tool usage did not settle normally: %#v", state)
 	}
 }
 
-func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
+func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -4505,11 +4505,11 @@ func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 		WebSearch:    2,
 		ActualSpeed:  "fast",
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover stacked Anthropic final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("hold must cover stacked Anthropic final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
 	}
 	finalCache := findMeterEstimate(state.FinalMeters, billing.MeterCacheWrite1hInputTokens)
 	if finalCache == nil {
@@ -4527,7 +4527,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversFinalPrice(t *testing.T) {
 	}
 }
 
-func TestAnthropicFinalPriceUsesCacheWriteMeters(t *testing.T) {
+func TestAnthropicCalculateUpstreamCostUsesCacheWriteMeters(t *testing.T) {
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
@@ -4546,11 +4546,11 @@ func TestAnthropicFinalPriceUsesCacheWriteMeters(t *testing.T) {
 			CacheWrite1h: 300,
 		},
 	}
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2760" {
-		t.Fatalf("expected cache-aware final price 2760, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "2760" {
+		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSDAtoms)
 	}
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterInputTokens, "400")
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterCachedInputTokens, "100")
@@ -4589,11 +4589,11 @@ func TestResponsesIngestionPreservesCacheWriteMeters(t *testing.T) {
 	if err := (DefaultAdapter{}).IngestResponse(state, resp, nil); err != nil {
 		t.Fatalf("IngestResponse returned error: %v", err)
 	}
-	if err := (DefaultAdapter{}).FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.FinalCostUSDAtoms != "2760" {
-		t.Fatalf("expected cache-aware final price 2760, got %s", state.FinalCostUSDAtoms)
+	if state.UpstreamCostUSDAtoms != "2760" {
+		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSDAtoms)
 	}
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterInputTokens, "400")
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterCachedInputTokens, "100")

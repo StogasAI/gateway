@@ -19,12 +19,12 @@ jobs:
     timeout-minutes: 120
     permissions:
       attestations: write
+      artifact-metadata: write
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 0
           ref: ${{ github.ref_name }}
           persist-credentials: false
 
@@ -59,9 +59,7 @@ jobs:
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
         with:
-          subject-path: |
-            dist/gateway/${{ github.ref_name }}/gateway.igvm
-            dist/gateway/${{ github.ref_name }}/gateway-launch-policy.json
+          subject-path: dist/gateway/${{ github.ref_name }}/release-manifest.json
 
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
@@ -75,14 +73,6 @@ jobs:
             gateway.kernel \
             gateway.initramfs.cpio.zst \
             kernel-config.txt
-          sha256sum \
-            LICENSE \
-            NOTICE \
-            gateway.igvm \
-            gateway-launch-policy.json \
-            release-manifest.json \
-            github-attestation.jsonl \
-            > SHA256SUMS
 
       - name: Verify release payload file set
         run: |
@@ -92,18 +82,23 @@ jobs:
             LICENSE
             NOTICE
             gateway.igvm
-            gateway-launch-policy.json
             release-manifest.json
-            SHA256SUMS
+            snp-launch-policies.json
             github-attestation.jsonl
           )
-          actual_files="$(find . -maxdepth 1 -type f -printf '%P\n' | LC_ALL=C sort)"
+          actual_files="$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)"
           expected_file_list="$(printf '%s\n' "${expected_files[@]}" | LC_ALL=C sort)"
           if [ "$actual_files" != "$expected_file_list" ]; then
             echo "release payload contains unexpected files" >&2
             printf 'expected files:\n%s\nactual files:\n%s\n' "$expected_file_list" "$actual_files" >&2
             exit 70
           fi
+          for file in "${expected_files[@]}"; do
+            test -f "$file" && test ! -L "$file" || {
+              echo "release payload entry is not a regular file: $file" >&2
+              exit 70
+            }
+          done
 
       - name: Upload release payload for publish job
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -120,11 +115,11 @@ jobs:
     timeout-minutes: 20
     permissions:
       actions: read
+      attestations: read
       contents: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          fetch-depth: 0
           ref: ${{ github.ref_name }}
           persist-credentials: false
 
@@ -140,11 +135,59 @@ jobs:
           name: gateway-release-${{ github.ref_name }}
           path: dist/gateway/${{ github.ref_name }}
 
-      - name: Verify downloaded release checksums
+      - name: Verify downloaded release payload
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          cd "dist/gateway/$GITHUB_REF_NAME"
-          sha256sum -c SHA256SUMS
+          tag="$GITHUB_REF_NAME"
+          release_dir="dist/gateway/$tag"
+          commit="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          gh attestation verify "$release_dir/release-manifest.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$release_dir/github-attestation.jsonl" \
+            --cert-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/gateway-igvm-release.yml@refs/tags/$tag" \
+            --cert-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --source-ref "refs/tags/$tag" \
+            --source-digest "$commit" \
+            --deny-self-hosted-runners
+          node --input-type=module - \
+            "$release_dir/release-manifest.json" \
+            "$release_dir/gateway.igvm" \
+            "$tag" \
+            "$commit" \
+            "$tree" <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, statSync } from 'node:fs';
+
+          const [manifestPath, igvmPath, tag, commit, tree] = process.argv.slice(2);
+          const manifestBytes = readFileSync(manifestPath);
+          const manifest = JSON.parse(manifestBytes);
+          const canonical = (value) => {
+            if (value === null || typeof value !== 'object') return JSON.stringify(value);
+            if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+            return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+          };
+          const igvm = {
+            sha256: createHash('sha256').update(readFileSync(igvmPath)).digest('hex'),
+            sizeBytes: statSync(igvmPath).size
+          };
+          if (
+            manifestBytes.toString('utf8') !== `${canonical(manifest)}\n` ||
+            manifest.schema !== 'stogas.gateway.release.v1' ||
+            manifest.git?.repository !== `https://github.com/${process.env.GITHUB_REPOSITORY}` ||
+            manifest.git?.tag !== tag ||
+            manifest.git?.ref !== `refs/tags/${tag}` ||
+            manifest.git?.commit !== commit ||
+            manifest.git?.tree !== tree ||
+            manifest.artifacts?.['gateway.igvm']?.sha256 !== igvm.sha256 ||
+            manifest.artifacts?.['gateway.igvm']?.sizeBytes !== igvm.sizeBytes
+          ) {
+            throw new Error('Downloaded release payload does not match its attested manifest.');
+          }
+          NODE
 
       - name: Create or update draft release
         env:
@@ -158,9 +201,8 @@ jobs:
             "dist/gateway/$tag/LICENSE"
             "dist/gateway/$tag/NOTICE"
             "dist/gateway/$tag/gateway.igvm"
-            "dist/gateway/$tag/gateway-launch-policy.json"
             "dist/gateway/$tag/release-manifest.json"
-            "dist/gateway/$tag/SHA256SUMS"
+            "dist/gateway/$tag/snp-launch-policies.json"
             "dist/gateway/$tag/github-attestation.jsonl"
           )
           if gh release view "$tag" >/dev/null 2>&1; then

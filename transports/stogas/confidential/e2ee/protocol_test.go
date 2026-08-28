@@ -126,7 +126,7 @@ func TestRustClientInteropVector(t *testing.T) {
 	}
 	if inner.APIKey != fixture.ExpectedInner.APIKey ||
 		inner.Accept != fixture.ExpectedInner.Accept ||
-		inner.ExtraFields != fixture.ExpectedInner.ExtraFields ||
+		inner.Receipt != fixture.ExpectedInner.Receipt ||
 		!jsonEqual(inner.Body, fixture.ExpectedInner.Body) {
 		t.Fatalf("opened Rust request = %#v, want %#v", inner, fixture.ExpectedInner)
 	}
@@ -208,10 +208,6 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 	key := generateXWingKey(t)
 	now := time.Unix(1_800_000_000, 0).UTC()
 	valid := testInnerRequest()
-	tooManyRecipients := make([]PublicRecipient, MaxRecipients+1)
-	for i := range tooManyRecipients {
-		tooManyRecipients[i] = PublicRecipient{PublicKey: generateXWingKey(t).PublicKey().Bytes()}
-	}
 	tests := []struct {
 		name       string
 		method     string
@@ -227,7 +223,6 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 		{name: "noncanonical request id", method: "POST", path: "/v1/responses", requestID: strings.ToUpper(testRequestID), bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: valid},
 		{name: "bundle hash", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: strings.ToUpper(testBundleHash), recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: valid},
 		{name: "no recipients", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, inner: valid},
-		{name: "too many recipients", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: tooManyRecipients, inner: valid},
 		{name: "duplicate recipient", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}, {PublicKey: key.PublicKey().Bytes()}}, inner: valid},
 		{name: "invalid recipient", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: []byte("invalid")}}, inner: valid},
 		{name: "missing api key", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{Body: valid.Body}},
@@ -237,6 +232,9 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 		{name: "accept injection", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: "application/json\r\nX-Evil: yes", Body: valid.Body}},
 		{name: "accept control", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: "application/json\x01", Body: valid.Body}},
 		{name: "accept surrounding whitespace", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Accept: " application/json", Body: valid.Body}},
+		{name: "receipt", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Receipt: "v2", Body: valid.Body}},
+		{name: "empty upstream credential pool", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, UpstreamCredentials: &UpstreamCredentials{}, Body: valid.Body}},
+		{name: "invalid upstream credential", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, UpstreamCredentials: &UpstreamCredentials{OpenAI: "provider key"}, Body: valid.Body}},
 		{name: "invalid body", method: "POST", path: "/v1/responses", requestID: testRequestID, bundleHash: testBundleHash, recipients: []PublicRecipient{{PublicKey: key.PublicKey().Bytes()}}, inner: InnerRequest{APIKey: valid.APIKey, Body: json.RawMessage(`{`)}},
 	}
 	for _, test := range tests {
@@ -253,6 +251,63 @@ func TestSealRequestRejectsInvalidClientInputs(t *testing.T) {
 				t.Fatalf("SealRequestWithID error = %v, want ErrInvalidEnvelope", err)
 			}
 		})
+	}
+}
+
+func TestSealRequestAcceptsSixtyFiveRecipients(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	keys := make([]hpke.PrivateKey, 65)
+	recipients := make([]PublicRecipient, len(keys))
+	for i := range keys {
+		keys[i] = generateXWingKey(t)
+		recipients[i] = PublicRecipient{PublicKey: keys[i].PublicKey().Bytes()}
+	}
+	body, _, err := SealRequestWithID(
+		"POST",
+		"/v1/responses",
+		testRequestID,
+		now.Add(time.Minute),
+		testBundleHash,
+		recipients,
+		testInnerRequest(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Recipients) != len(recipients) {
+		t.Fatalf("recipient count = %d, want %d", len(envelope.Recipients), len(recipients))
+	}
+	if len(body) > MaxEnvelopeSize {
+		t.Fatalf("envelope size = %d, limit %d", len(body), MaxEnvelopeSize)
+	}
+	if _, _, err := OpenRequest(body, "POST", "/v1/responses", keys[0], now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildTranscriptRejectsRecipientCountOutsideV1WireFormat(t *testing.T) {
+	bundleHash, err := decodeBundleHash(testBundleHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{0, maxV1Recipients + 1} {
+		keyIDs := make([][KeyIDSize]byte, count)
+		if _, err := buildTranscript("POST", "/v1/responses", testRequestID, bundleHash, 1_800_000_060_000, keyIDs); !errors.Is(err, ErrInvalidEnvelope) {
+			t.Fatalf("buildTranscript with %d recipients error = %v, want ErrInvalidEnvelope", count, err)
+		}
+	}
+}
+
+func TestEnvelopeSizeAcceptsTheBoundaryAndRejectsLargerBodies(t *testing.T) {
+	if err := validateEnvelopeSize(MaxEnvelopeSize); err != nil {
+		t.Fatalf("validateEnvelopeSize at boundary: %v", err)
+	}
+	if err := validateEnvelopeSize(MaxEnvelopeSize + 1); !errors.Is(err, ErrInvalidEnvelope) {
+		t.Fatalf("validateEnvelopeSize above boundary error = %v, want ErrInvalidEnvelope", err)
 	}
 }
 
@@ -276,51 +331,51 @@ func TestOpenRequestAuthenticatesEveryEnvelopeBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var original outerEnvelope
+	var original Envelope
 	if err := json.Unmarshal(body, &original); err != nil {
 		t.Fatal(err)
 	}
-	mutations := map[string]func(*outerEnvelope){
-		"request id": func(value *outerEnvelope) {
-			value.E2EE.RequestID = "018f4f70-7c88-7b9a-baf8-31a93d2cf614"
+	mutations := map[string]func(*Envelope){
+		"request id": func(value *Envelope) {
+			value.RequestID = "018f4f70-7c88-7b9a-baf8-31a93d2cf614"
 		},
-		"equivalent noncanonical request id": func(value *outerEnvelope) {
-			value.E2EE.RequestID = strings.ToUpper(testRequestID)
+		"equivalent noncanonical request id": func(value *Envelope) {
+			value.RequestID = strings.ToUpper(testRequestID)
 		},
-		"bundle hash": func(value *outerEnvelope) {
-			value.E2EE.BundleSHA256 = strings.Repeat("0", 64)
+		"bundle hash": func(value *Envelope) {
+			value.BundleSHA256 = strings.Repeat("0", 64)
 		},
-		"expiry": func(value *outerEnvelope) {
-			value.E2EE.ExpiresAtMS++
+		"expiry": func(value *Envelope) {
+			value.ExpiresAtMS++
 		},
-		"ciphertext": func(value *outerEnvelope) {
-			value.E2EE.Ciphertext = flipBase64Byte(t, value.E2EE.Ciphertext)
+		"ciphertext": func(value *Envelope) {
+			value.Ciphertext = flipBase64Byte(t, value.Ciphertext)
 		},
-		"wrapped key": func(value *outerEnvelope) {
+		"wrapped key": func(value *Envelope) {
 			localKeyID := KeyID(key.PublicKey().Bytes())
-			for i := range value.E2EE.Recipients {
-				if value.E2EE.Recipients[i].KeyID == localKeyID {
-					value.E2EE.Recipients[i].WrappedKey = flipBase64Byte(t, value.E2EE.Recipients[i].WrappedKey)
+			for i := range value.Recipients {
+				if value.Recipients[i].KeyID == localKeyID {
+					value.Recipients[i].WrappedKey = flipBase64Byte(t, value.Recipients[i].WrappedKey)
 					return
 				}
 			}
 			t.Fatal("local recipient fixture is missing")
 		},
-		"encapsulated key": func(value *outerEnvelope) {
+		"encapsulated key": func(value *Envelope) {
 			localKeyID := KeyID(key.PublicKey().Bytes())
-			for i := range value.E2EE.Recipients {
-				if value.E2EE.Recipients[i].KeyID == localKeyID {
-					value.E2EE.Recipients[i].EncapsulatedKey = flipBase64Byte(t, value.E2EE.Recipients[i].EncapsulatedKey)
+			for i := range value.Recipients {
+				if value.Recipients[i].KeyID == localKeyID {
+					value.Recipients[i].EncapsulatedKey = flipBase64Byte(t, value.Recipients[i].EncapsulatedKey)
 					return
 				}
 			}
 			t.Fatal("local recipient fixture is missing")
 		},
-		"recipient order": func(value *outerEnvelope) {
-			value.E2EE.Recipients[0], value.E2EE.Recipients[1] = value.E2EE.Recipients[1], value.E2EE.Recipients[0]
+		"recipient order": func(value *Envelope) {
+			value.Recipients[0], value.Recipients[1] = value.Recipients[1], value.Recipients[0]
 		},
-		"recipient removal": func(value *outerEnvelope) {
-			value.E2EE.Recipients = value.E2EE.Recipients[:1]
+		"recipient removal": func(value *Envelope) {
+			value.Recipients = value.Recipients[:1]
 		},
 	}
 	for name, mutate := range mutations {
@@ -338,24 +393,6 @@ func TestOpenRequestAuthenticatesEveryEnvelopeBinding(t *testing.T) {
 	}
 	if _, _, err := OpenRequest(body, "POST", "/v1/responses", key, now); err == nil {
 		t.Fatal("envelope was accepted on a different path")
-	}
-}
-
-func TestInspectReservesEnvelopeFieldAndLeavesPlainJSONAlone(t *testing.T) {
-	for _, test := range []struct {
-		body      string
-		encrypted bool
-		wantError bool
-	}{
-		{body: `{"model":"gpt-5"}`},
-		{body: `not json`},
-		{body: `{"stogas_e2ee":{}}`, encrypted: true},
-		{body: `{"stogas_e2ee":{},"stogas_e2ee":{}}`, encrypted: true, wantError: true},
-	} {
-		encrypted, err := Inspect([]byte(test.body))
-		if encrypted != test.encrypted || (err != nil) != test.wantError {
-			t.Fatalf("Inspect(%q) = (%v, %v)", test.body, encrypted, err)
-		}
 	}
 }
 
@@ -475,7 +512,7 @@ func TestResponseReaderEnforcesAggregateBodyLimit(t *testing.T) {
 func TestResponseMetadataRejectsHeaderInjectionAndInvalidStatus(t *testing.T) {
 	_, session := testSession(t)
 	for _, metadata := range []ResponseMetadata{
-		{StatusCode: 99, ContentType: "application/json"},
+		{StatusCode: 199, ContentType: "application/json"},
 		{StatusCode: 200, ContentType: ""},
 		{StatusCode: 200, ContentType: "applicationjson"},
 		{StatusCode: 200, ContentType: "application/json\x01"},
@@ -539,7 +576,7 @@ func FuzzOpenRequestNeverPanics(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	f.Add([]byte(`{"stogas_e2ee":{}}`))
+	f.Add([]byte(`{"version":1}`))
 	f.Add([]byte(`{"model":"gpt-5"}`))
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_, _, _ = OpenRequest(body, "POST", "/v1/chat/completions", key, time.Unix(1_800_000_000, 0))
@@ -615,20 +652,20 @@ func generateXWingKey(t *testing.T) hpke.PrivateKey {
 
 func testInnerRequest() InnerRequest {
 	return InnerRequest{
-		APIKey:      "sk-stogas-test",
-		Accept:      "application/json",
-		ExtraFields: true,
-		Body:        json.RawMessage(`{"model":"gpt-5","input":"hello"}`),
+		APIKey:  "sk-stogas-test",
+		Accept:  "application/json",
+		Receipt: "v1",
+		Body:    json.RawMessage(`{"model":"gpt-5","input":"hello"}`),
 	}
 }
 
-func cloneEnvelope(t *testing.T, value outerEnvelope) outerEnvelope {
+func cloneEnvelope(t *testing.T, value Envelope) Envelope {
 	t.Helper()
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var clone outerEnvelope
+	var clone Envelope
 	if err := json.Unmarshal(encoded, &clone); err != nil {
 		t.Fatal(err)
 	}

@@ -22,12 +22,36 @@ import (
 )
 
 const (
-	serverConcurrency        = 2048
-	serverReadBufferSize     = 16 * 1024
-	serverReadTimeout        = 5 * time.Minute
-	readinessReadTimeout     = 30 * time.Second
-	serverIdleTimeout        = 60 * time.Second
+	// These explicit connection caps are starting values for the current guest,
+	// not CPU-derived capacity claims. Calibrate them from production load.
+	serverConcurrency       = 2048
+	readinessConcurrency    = 64
+	serverReadBufferSize    = 16 * 1024
+	serverWriteBufferSize   = 4 * 1024
+	readinessReadBufferSize = 4 * 1024
+	serverReadTimeout       = 5 * time.Minute
+	readinessReadTimeout    = 30 * time.Second
+	serverIdleTimeout       = 60 * time.Second
+	// A quiet model does not write to the client and does not use this timeout.
+	// It applies only while a socket write cannot make progress.
+	downstreamWriteIdleTimeout = time.Minute
+	// Cleanup starts after admitted requests get their full lifetime. Keep this
+	// separate from the client write timeout so billing retries can finish.
+	serverShutdownTimeout    = 5 * time.Minute
+	guestShutdownHardCap     = billing.GatewayRequestLifetime + serverShutdownTimeout
 	serverTCPKeepalivePeriod = 30 * time.Second
+)
+
+var (
+	ErrCatalogInitialization                 = errors.New("catalog initialization failed")
+	ErrConfidentialCertificateProvisioning   = errors.New("confidential certificate provisioning failed")
+	ErrConfidentialHeartbeat                 = errors.New("confidential heartbeat failed")
+	ErrConfidentialHeartbeatConfirmation     = errors.New("confidential heartbeat confirmation failed")
+	ErrConfidentialRuntimeInitialization     = errors.New("confidential runtime initialization failed")
+	ErrConfidentialRuntimeSecretApplication  = errors.New("confidential runtime secret application failed")
+	ErrConfidentialSecretReleaseInstallation = errors.New("confidential secret release installation failed")
+	ErrGatewayRuntimeInitialization          = errors.New("gateway runtime initialization failed")
+	ErrRouteInitialization                   = errors.New("route initialization failed")
 )
 
 type Server struct {
@@ -42,7 +66,6 @@ type Server struct {
 	catalogUpdater  *catalog.Updater
 	requests        *requestDrain
 	memory          *requestMemoryAdmission
-	chatIdleTimeout time.Duration
 	startedAt       time.Time
 }
 
@@ -57,15 +80,16 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 
 	catalogUpdater, err := catalog.StartUpdater(ctx, catalog.UpdaterConfig{
 		ReleaseURL:     config.CatalogURL,
-		RequireInitial: config.Confidential.Enabled,
+		RequireInitial: config.Confidential.Enabled && config.Confidential.Environment != "local",
+		GatewayVersion: stogas.GatewayVersion,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrCatalogInitialization, err)
 	}
 	secure, err := confidentialruntime.Start(ctx, config.Confidential)
 	if err != nil {
 		catalogUpdater.Close()
-		return nil, err
+		return nil, classifyConfidentialRuntimeInitializationError(err)
 	}
 	var releasedSecrets stogas.ConfidentialSecretLookup
 	if secure != nil {
@@ -76,7 +100,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		if secure != nil {
 			secure.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrConfidentialRuntimeSecretApplication, err)
 	}
 	runtime, err := stogas.NewRuntime(ctx, config, logger)
 	if err != nil {
@@ -84,7 +108,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		if secure != nil {
 			secure.Close()
 		}
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrGatewayRuntimeInitialization, err)
 	}
 	if secure != nil {
 		secure.SetRuntimeDependencyProbe(func(ctx context.Context) error {
@@ -99,7 +123,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		config:         config,
 		logger:         logger,
 		requests:       newRequestDrain(),
-		memory:         &requestMemoryAdmission{},
+		memory:         newRequestMemoryAdmission(),
 		startedAt:      time.Now().UTC(),
 		runtime:        runtime,
 		secure:         secure,
@@ -113,9 +137,24 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 			secure.Close()
 		}
 		runtime.Close()
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrRouteInitialization, err)
 	}
 	return s, nil
+}
+
+func classifyConfidentialRuntimeInitializationError(err error) error {
+	stage := ErrConfidentialRuntimeInitialization
+	switch {
+	case errors.Is(err, confidentialruntime.ErrSecretReleaseInstallation):
+		stage = ErrConfidentialSecretReleaseInstallation
+	case errors.Is(err, confidentialruntime.ErrCertificateInstruction):
+		stage = ErrConfidentialCertificateProvisioning
+	case errors.Is(err, confidentialruntime.ErrHeartbeatConfirmation):
+		stage = ErrConfidentialHeartbeatConfirmation
+	case errors.Is(err, confidentialruntime.ErrHeartbeatExchange):
+		stage = ErrConfidentialHeartbeat
+	}
+	return fmt.Errorf("%w: %w", stage, err)
 }
 
 func (s *Server) routes() error {
@@ -131,11 +170,12 @@ func (s *Server) routes() error {
 	s.router = r
 	connectionLogger := newSecureFastHTTPLogger(os.Stderr)
 	s.server = &fasthttp.Server{
-		Handler:                      chain(r.Handler, securityHeaders, cors, s.requestBodyAdmission, s.requestDecompression),
+		Handler:                      chain(r.Handler, resetDownstreamWriteLimit, securityHeaders, cors, s.requestBodyAdmission, s.requestDecompression),
 		Concurrency:                  serverConcurrency,
 		MaxRequestBodySize:           s.config.MaxRequestBodyMiB * 1024 * 1024,
 		NoDefaultServerHeader:        true,
 		ReadBufferSize:               serverReadBufferSize,
+		WriteBufferSize:              serverWriteBufferSize,
 		ReadTimeout:                  serverReadTimeout,
 		WriteTimeout:                 0,
 		IdleTimeout:                  serverIdleTimeout,
@@ -146,20 +186,25 @@ func (s *Server) routes() error {
 		ReduceMemoryUsage:            true,
 		SecureErrorLogMessage:        true,
 		DisablePreParseMultipartForm: true,
+		CloseOnShutdown:              true,
 	}
 	readinessRouter := router.New()
 	readinessRouter.GET("/ready", s.readiness)
 	readinessRouter.GET("/diagnostics/v1", s.diagnostics)
 	s.readinessServer = &fasthttp.Server{
 		Handler:               readinessRouter.Handler,
+		Concurrency:           readinessConcurrency,
 		GetOnly:               true,
 		NoDefaultServerHeader: true,
+		ReadBufferSize:        readinessReadBufferSize,
+		WriteBufferSize:       serverWriteBufferSize,
 		ReadTimeout:           readinessReadTimeout,
 		IdleTimeout:           serverIdleTimeout,
 		Logger:                connectionLogger,
 		SecureErrorLogMessage: true,
 		TCPKeepalive:          true,
 		TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
+		CloseOnShutdown:       true,
 	}
 	return nil
 }
@@ -179,7 +224,9 @@ func (s *Server) Start() error {
 		s.shutdown()
 		return fmt.Errorf("listen for private readiness on %s: %w", readinessAddr, err)
 	}
+	listener = withWriteIdleTimeout(listener, downstreamWriteIdleTimeout)
 	listener = s.wrapListener(listener)
+	readinessListener = withWriteIdleTimeout(readinessListener, downstreamWriteIdleTimeout)
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -199,27 +246,33 @@ func (s *Server) Start() error {
 	select {
 	case sig := <-sigCh:
 		s.logger.Info("received signal %s", sig.String())
+		s.logger.Info("request drain requested")
+		s.drainRequests()
 		s.shutdown()
 		return nil
 	case err := <-errCh:
+		s.logger.Info("server stopped accepting connections; draining admitted requests")
+		s.drainRequests()
 		s.shutdown()
 		return err
 	case <-s.secureShutdownRequested():
 		s.logger.Info("confidential guest drain requested")
-		idle := s.requests.start()
-		timer := time.NewTimer(guestDrainTimeout())
-		select {
-		case <-idle:
-		case <-timer.C:
-		}
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
+		s.drainRequests()
 		s.shutdown()
 		return s.powerOffGuest()
+	}
+}
+
+func (s *Server) drainRequests() {
+	if s == nil || s.requests == nil {
+		return
+	}
+	idle := s.requests.start()
+	timer := time.NewTimer(guestDrainTimeout())
+	defer timer.Stop()
+	select {
+	case <-idle:
+	case <-timer.C:
 	}
 }
 
@@ -231,11 +284,7 @@ func (s *Server) secureShutdownRequested() <-chan struct{} {
 }
 
 func guestDrainTimeout() time.Duration {
-	const hardCap = 65 * time.Minute
-	if billing.GatewayRequestLifetime < hardCap {
-		return billing.GatewayRequestLifetime
-	}
-	return hardCap
+	return billing.GatewayRequestLifetime
 }
 
 func (s *Server) powerOffGuest() error {

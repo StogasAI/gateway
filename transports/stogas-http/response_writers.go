@@ -7,15 +7,10 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	stogasbilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/valyala/fasthttp"
 )
-
-func (s *Server) forwardProviderHeadersFromContext(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext) {
-	if headers, ok := bifrostCtx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string); ok {
-		s.forwardProviderHeaders(ctx, bifrostCtx, schemas.BifrostResponseExtraFields{ProviderResponseHeaders: headers})
-	}
-}
 
 func (s *Server) writeBifrostError(ctx *fasthttp.RequestCtx, bifrostErr *schemas.BifrostError) {
 	statusCode, payload := publicBifrostError(bifrostErr)
@@ -28,7 +23,7 @@ func bifrostErrorPayload(bifrostErr *schemas.BifrostError) any {
 }
 
 func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
-	if statusCode, errorType, code, message, ok := publicProviderDependencyError(bifrostErr); ok {
+	if statusCode, errorType, code, message, ok := publicStableGatewayError(bifrostErr); ok {
 		return statusCode, map[string]any{
 			"error": map[string]any{
 				"code":    code,
@@ -54,11 +49,10 @@ func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
 	}
 }
 
-func publicProviderDependencyError(bifrostErr *schemas.BifrostError) (int, string, string, string, bool) {
-	if bifrostErr == nil || bifrostErr.StatusCode == nil {
+func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, string, string, bool) {
+	if bifrostErr == nil {
 		return 0, "", "", "", false
 	}
-	statusCode := *bifrostErr.StatusCode
 	code := bifrostErrorCode(bifrostErr)
 	switch code {
 	case "upstream_verification_failed":
@@ -73,22 +67,28 @@ func publicProviderDependencyError(bifrostErr *schemas.BifrostError) (int, strin
 	case "upstream_protocol_error":
 		return fasthttp.StatusBadGateway, "gateway_error", code,
 			"The provider returned an invalid private response", true
+	case "gateway_capacity_exceeded":
+		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+			"Gateway capacity is temporarily exhausted", true
 	case "upstream_rate_limit_error":
 		return fasthttp.StatusTooManyRequests, "rate_limit_error", code,
 			"The upstream provider rate limit was exceeded", true
 	}
 
-	switch statusCode {
-	case fasthttp.StatusUnauthorized:
+	// Use the same bounded structured classification as request telemetry. A
+	// provider code such as insufficient_quota must not become a rate limit only
+	// because the provider paired it with HTTP 429.
+	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
+	case "authentication_error":
 		return fasthttp.StatusBadGateway, "gateway_error", "upstream_authentication_failed",
 			"The configured provider credential was rejected", true
-	case fasthttp.StatusPaymentRequired:
+	case "over_budget":
 		return fasthttp.StatusBadGateway, "gateway_error", "upstream_quota_exceeded",
 			"The configured provider account has insufficient quota", true
-	case fasthttp.StatusForbidden:
+	case "permission_error":
 		return fasthttp.StatusBadGateway, "gateway_error", "upstream_access_denied",
 			"The configured provider credential cannot access the requested model", true
-	case fasthttp.StatusTooManyRequests:
+	case "rate_limited":
 		return fasthttp.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
 			"The upstream provider rate limit was exceeded", true
 	default:
@@ -439,14 +439,4 @@ func (s *Server) writeBillingError(ctx *fasthttp.RequestCtx, err error) {
 	s.writeError(ctx, apiErr.StatusCode, map[string]any{
 		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type},
 	})
-}
-
-func (s *Server) forwardProviderHeaders(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, extra schemas.BifrostResponseExtraFields) {
-	headers := extra.ProviderResponseHeaders
-	if state, ok := stogas.StateFrom(bifrostCtx); ok && state.ProviderResponseHeaders != nil {
-		headers = state.ProviderResponseHeaders
-	}
-	for key, value := range safeProviderResponseHeaders(headers) {
-		ctx.Response.Header.Set(key, value)
-	}
 }

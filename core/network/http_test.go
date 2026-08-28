@@ -1,6 +1,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -139,7 +140,10 @@ func TestStaleConnectionRetryIfErr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetTimeout, retry := StaleConnectionRetryIfErr(nil, tt.attempts, tt.err)
+			request := fasthttp.AcquireRequest()
+			defer fasthttp.ReleaseRequest(request)
+			request.Header.SetMethod(http.MethodGet)
+			resetTimeout, retry := StaleConnectionRetryIfErr(request, tt.attempts, tt.err)
 			if resetTimeout != tt.wantReset {
 				t.Errorf("resetTimeout = %v, want %v", resetTimeout, tt.wantReset)
 			}
@@ -150,155 +154,66 @@ func TestStaleConnectionRetryIfErr(t *testing.T) {
 	}
 }
 
-// TestStaleConnectionRetryWithTTLMismatch simulates the scenario from issue #1613:
-//
-//   - Server idle timeout: 10 seconds (server closes keep-alive connections after 10s idle)
-//   - Client MaxIdleConnDuration: 15 seconds (client holds connections for 15s)
-//
-// Between 10-15 seconds of idle time, the client still considers the connection
-// valid, but the server has already closed it. The next request on the stale
-// connection should be retried automatically via StaleConnectionRetryIfErr.
-//
-// Without the retry, POST requests fail because fasthttp's default isIdempotent
-// only retries GET/HEAD/PUT.
-func TestStaleConnectionRetryWithTTLMismatch(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping TTL mismatch test in short mode (requires 11s wait)")
+func TestStaleConnectionRetryIfErrDoesNotReplayPost(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "EOF", err: io.EOF},
+		{name: "wrapped EOF", err: fmt.Errorf("read response: %w", io.EOF)},
+		{name: "unexpected EOF", err: io.ErrUnexpectedEOF},
+		{name: "connection reset", err: fmt.Errorf("read: connection reset by peer")},
+		{name: "broken pipe", err: fmt.Errorf("write: broken pipe")},
+		{name: "closed connection", err: fmt.Errorf("use of closed network connection")},
+		{name: "no response byte", err: fmt.Errorf("server closed connection before returning the first response byte")},
+		{name: "stale response bytes", err: fmt.Errorf("cannot find whitespace in the first line of response")},
+		{name: "fasthttp closed sentinel", err: fasthttp.ErrConnectionClosed},
+		{name: "timeout", err: fasthttp.ErrTimeout},
 	}
 
-	const (
-		serverIdleTimeout = 10 * time.Second
-		clientIdleTimeout = 15 * time.Second
-		waitBetween       = 11 * time.Second // > server TTL, < client TTL
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := fasthttp.AcquireRequest()
+			defer fasthttp.ReleaseRequest(request)
+			request.Header.SetMethod(http.MethodPost)
 
-	var requestCount atomic.Int32
+			resetTimeout, retry := StaleConnectionRetryIfErr(request, 1, tt.err)
+			if resetTimeout || retry {
+				t.Fatalf("POST must not be retried after %v", tt.err)
+			}
+		})
+	}
+}
 
-	// Start a test server with a 10-second idle timeout.
-	// After 10s of idle time on a keep-alive connection, the server closes it.
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount.Add(1)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "data: {\"message\": \"ok\", \"request\": %d}\n\n", requestCount.Load())
+func TestFasthttpClientDoesNotReplayPostAfterProviderReceivesBody(t *testing.T) {
+	var received atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		if _, err := io.Copy(io.Discard, request.Body); err != nil {
+			t.Errorf("read request body: %v", err)
+			return
+		}
+		received.Add(1)
+		// Close the connection after the full request arrived but before any
+		// response. The client cannot know whether inference already started.
+		panic(http.ErrAbortHandler)
 	}))
-	server.Config.IdleTimeout = serverIdleTimeout
-	server.Start()
 	defer server.Close()
 
-	t.Run("with_retry_policy_POST_succeeds", func(t *testing.T) {
-		client := &fasthttp.Client{
-			MaxIdleConnDuration: clientIdleTimeout,
-			MaxConnsPerHost:     10,
-			RetryIfErr:          StaleConnectionRetryIfErr,
-		}
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.Header.SetMethod(http.MethodPost)
+	request.SetRequestURI(server.URL)
+	request.SetBodyString(`{"model":"test","input":"hello"}`)
 
-		// --- First request: fresh connection, must succeed ---
-		req := fasthttp.AcquireRequest()
-		resp := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseRequest(req)
-		defer fasthttp.ReleaseResponse(resp)
-
-		req.SetRequestURI(server.URL)
-		req.Header.SetMethod(http.MethodPost)
-		req.Header.SetContentType("application/json")
-		req.SetBodyString(`{"prompt": "hello"}`)
-
-		if err := client.Do(req, resp); err != nil {
-			t.Fatalf("First POST request failed: %v", err)
-		}
-		if resp.StatusCode() != 200 {
-			t.Fatalf("First POST request: expected 200, got %d", resp.StatusCode())
-		}
-
-		// Read body to ensure connection is returned to pool
-		_ = resp.Body()
-		t.Logf("First POST request succeeded (status=%d)", resp.StatusCode())
-
-		// --- Wait for server's idle timeout to expire ---
-		// The server will close the connection after 10s, but the client
-		// still holds it in its pool (MaxIdleConnDuration=15s).
-		t.Logf("Waiting %v for server idle timeout (%v) to expire...", waitBetween, serverIdleTimeout)
-		time.Sleep(waitBetween)
-
-		// --- Second request: stale connection, should retry and succeed ---
-		req2 := fasthttp.AcquireRequest()
-		resp2 := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseRequest(req2)
-		defer fasthttp.ReleaseResponse(resp2)
-
-		req2.SetRequestURI(server.URL)
-		req2.Header.SetMethod(http.MethodPost)
-		req2.Header.SetContentType("application/json")
-		req2.SetBodyString(`{"prompt": "world"}`)
-
-		if err := client.Do(req2, resp2); err != nil {
-			t.Fatalf("Second POST request failed (StaleConnectionRetryIfErr should have retried): %v", err)
-		}
-		if resp2.StatusCode() != 200 {
-			t.Fatalf("Second POST request: expected 200, got %d", resp2.StatusCode())
-		}
-		t.Logf("Second POST request succeeded after TTL mismatch (status=%d)", resp2.StatusCode())
-	})
-
-	t.Run("without_retry_policy_POST_fails", func(t *testing.T) {
-		// Reset request count
-		requestCount.Store(0)
-
-		client := &fasthttp.Client{
-			MaxIdleConnDuration: clientIdleTimeout,
-			MaxConnsPerHost:     10,
-			// No RetryIfErr — uses default isIdempotent (POST not retried)
-		}
-
-		// --- First request: fresh connection, must succeed ---
-		req := fasthttp.AcquireRequest()
-		resp := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseRequest(req)
-		defer fasthttp.ReleaseResponse(resp)
-
-		req.SetRequestURI(server.URL)
-		req.Header.SetMethod(http.MethodPost)
-		req.Header.SetContentType("application/json")
-		req.SetBodyString(`{"prompt": "hello"}`)
-
-		if err := client.Do(req, resp); err != nil {
-			t.Fatalf("First POST request failed: %v", err)
-		}
-		if resp.StatusCode() != 200 {
-			t.Fatalf("First POST request: expected 200, got %d", resp.StatusCode())
-		}
-		_ = resp.Body()
-		t.Logf("First POST request succeeded (status=%d)", resp.StatusCode())
-
-		// --- Wait for server's idle timeout to expire ---
-		t.Logf("Waiting %v for server idle timeout (%v) to expire...", waitBetween, serverIdleTimeout)
-		time.Sleep(waitBetween)
-
-		// --- Second request: stale connection, POST NOT retried by default ---
-		req2 := fasthttp.AcquireRequest()
-		resp2 := fasthttp.AcquireResponse()
-		defer fasthttp.ReleaseRequest(req2)
-		defer fasthttp.ReleaseResponse(resp2)
-
-		req2.SetRequestURI(server.URL)
-		req2.Header.SetMethod(http.MethodPost)
-		req2.Header.SetContentType("application/json")
-		req2.SetBodyString(`{"prompt": "world"}`)
-
-		err := client.Do(req2, resp2)
-		if err != nil {
-			// Expected: POST request fails on stale connection without retry
-			t.Logf("Second POST request failed as expected without retry policy: %v", err)
-		} else {
-			// The OS may have already delivered the FIN and fasthttp detected it,
-			// creating a new connection transparently. This is acceptable — the
-			// retry policy provides defense-in-depth for cases where FIN delivery
-			// is delayed (common with TLS, proxies, and load balancers in K8s).
-			t.Logf("Second POST request succeeded (OS delivered FIN before reuse) — retry policy still provides defense-in-depth")
-		}
-	})
+	client := &fasthttp.Client{RetryIfErr: StaleConnectionRetryIfErr}
+	if err := client.DoTimeout(request, response, 2*time.Second); err == nil {
+		t.Fatal("expected an ambiguous response-read failure")
+	}
+	if got := received.Load(); got != 1 {
+		t.Fatalf("provider received %d POST requests, want exactly 1", got)
+	}
 }
 
 // TestMaxConnDurationForcesReconnection verifies that MaxConnDuration causes
@@ -309,11 +224,7 @@ func TestStaleConnectionRetryWithTTLMismatch(t *testing.T) {
 // Uses the server's ConnState callback to reliably count new TCP connections
 // (r.RemoteAddr is unreliable because the OS can reuse ephemeral ports).
 func TestMaxConnDurationForcesReconnection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping MaxConnDuration test in short mode (requires ~4s wait)")
-	}
-
-	const maxConnDuration = 2 * time.Second
+	const maxConnDuration = 150 * time.Millisecond
 
 	// Track new connections via ConnState (fires once per new TCP accept)
 	var newConnCount atomic.Int32
@@ -337,6 +248,7 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 			MaxConnsPerHost: 1,
 			MaxConnDuration: maxConnDuration,
 		}
+		defer client.CloseIdleConnections()
 
 		// First request: establishes connection A
 		req := fasthttp.AcquireRequest()
@@ -356,9 +268,9 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 		connsAfterFirst := newConnCount.Load()
 		t.Logf("After first request: %d new connections", connsAfterFirst)
 
-		// Wait for MaxConnDuration to expire
-		t.Logf("Waiting %v for MaxConnDuration to expire...", maxConnDuration+500*time.Millisecond)
-		time.Sleep(maxConnDuration + 500*time.Millisecond)
+		// Wait for MaxConnDuration to expire.
+		t.Logf("Waiting %v for MaxConnDuration to expire...", maxConnDuration+50*time.Millisecond)
+		time.Sleep(maxConnDuration + 50*time.Millisecond)
 
 		// Second request: reuses connection A but sends Connection: close
 		// (fasthttp's MaxConnDuration sets Connection: close on expired conns,
@@ -406,6 +318,7 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 			MaxConnsPerHost: 1,
 			// No MaxConnDuration — connections live forever
 		}
+		defer client.CloseIdleConnections()
 
 		req := fasthttp.AcquireRequest()
 		resp := fasthttp.AcquireResponse()
@@ -422,7 +335,7 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 		_ = resp.Body()
 
 		// Wait same duration as above
-		time.Sleep(maxConnDuration + 500*time.Millisecond)
+		time.Sleep(maxConnDuration + 50*time.Millisecond)
 
 		req2 := fasthttp.AcquireRequest()
 		resp2 := fasthttp.AcquireResponse()
@@ -439,11 +352,8 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 
 		totalConns := newConnCount.Load()
 		// Without MaxConnDuration, the same connection should be reused
-		if totalConns == 1 {
-			t.Logf("Connection reused as expected: only 1 new connection total")
-		} else {
-			// OS/server may have closed it — that's acceptable
-			t.Logf("Saw %d new connections (OS/server may have recycled)", totalConns)
+		if totalConns != 1 {
+			t.Errorf("expected one reused connection without MaxConnDuration, got %d", totalConns)
 		}
 	})
 }
@@ -452,26 +362,27 @@ func TestMaxConnDurationForcesReconnection(t *testing.T) {
 // pool is exhausted, requests wait for MaxConnWaitTimeout (aligned with ReadTimeout)
 // before failing, not the old hardcoded 10s.
 func TestMaxConnWaitTimeoutAlignedWithReadTimeout(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping pool exhaustion test in short mode (requires ~4s wait)")
-	}
-
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var startedOnce sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Hold the connection for 3 seconds to simulate a slow provider
-		time.Sleep(3 * time.Second)
+		startedOnce.Do(func() { close(firstStarted) })
+		<-releaseFirst
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
 	}))
 	defer server.Close()
 
+	const maxConnWait = 200 * time.Millisecond
 	client := &fasthttp.Client{
-		MaxConnsPerHost:    1,               // Only 1 connection allowed — second request must wait
-		MaxConnWaitTimeout: 2 * time.Second, // Wait up to 2s for a free connection slot
-		ReadTimeout:        5 * time.Second,
-		WriteTimeout:       5 * time.Second,
+		MaxConnsPerHost:    1,
+		MaxConnWaitTimeout: maxConnWait,
+		ReadTimeout:        2 * time.Second,
+		WriteTimeout:       2 * time.Second,
 	}
+	defer client.CloseIdleConnections()
 
-	// Fire first request (occupies the only connection slot for 3s)
+	// Hold the first request until the second request exhausts its bounded wait.
 	var wg sync.WaitGroup
 	firstReqErr := make(chan error, 1)
 	wg.Add(1)
@@ -489,10 +400,15 @@ func TestMaxConnWaitTimeoutAlignedWithReadTimeout(t *testing.T) {
 		firstReqErr <- client.Do(req, resp)
 	}()
 
-	// Brief pause to ensure first request is in-flight
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-firstStarted:
+	case <-time.After(2 * time.Second):
+		close(releaseFirst)
+		wg.Wait()
+		t.Fatal("first request did not occupy the connection pool")
+	}
 
-	// Second request: pool is full, should timeout after ~2s (MaxConnWaitTimeout)
+	// The second request must wait for MaxConnWaitTimeout and then fail.
 	start := time.Now()
 	req2 := fasthttp.AcquireRequest()
 	resp2 := fasthttp.AcquireResponse()
@@ -506,24 +422,19 @@ func TestMaxConnWaitTimeoutAlignedWithReadTimeout(t *testing.T) {
 	err := client.Do(req2, resp2)
 	elapsed := time.Since(start)
 
+	close(releaseFirst)
 	wg.Wait()
 
 	if firstErr := <-firstReqErr; firstErr != nil {
 		t.Fatalf("first request failed; pool-exhaustion scenario was not exercised: %v", firstErr)
 	}
 
-	if err == nil {
-		// The first request may have finished before MaxConnWaitTimeout expired,
-		// allowing the second request to succeed. This is acceptable.
-		t.Logf("Second request succeeded (first request completed in time, elapsed=%v)", elapsed)
-		return
+	if !errors.Is(err, fasthttp.ErrNoFreeConns) {
+		t.Fatalf("second request error = %v, want %v", err, fasthttp.ErrNoFreeConns)
 	}
 
-	// Verify the wait time is close to MaxConnWaitTimeout (2s), not 0s or 5s
-	if elapsed < 1500*time.Millisecond || elapsed > 3500*time.Millisecond {
-		t.Errorf("expected pool wait ~2s, but elapsed=%v (err=%v)", elapsed, err)
-	} else {
-		t.Logf("Pool exhaustion timeout at %v as expected (err=%v)", elapsed, err)
+	if elapsed < maxConnWait/2 || elapsed > 2*time.Second {
+		t.Errorf("expected pool wait near %v, got %v", maxConnWait, elapsed)
 	}
 }
 

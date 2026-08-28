@@ -412,7 +412,11 @@ func makeRequestWithDoFunc(ctx context.Context, do func() error) (time.Duration,
 // path it blocks until the background client.Do goroutine finishes, preventing a data race
 // between the still-running goroutine and the caller's release of req/resp.
 func MakeRequestWithContext(ctx context.Context, client *fasthttp.Client, req *fasthttp.Request, resp *fasthttp.Response) (time.Duration, *schemas.BifrostError, func()) {
-	latency, bifrostErr, wait := makeRequestWithDoFunc(ctx, func() error { return client.Do(req, resp) })
+	do := func() error { return client.Do(req, resp) }
+	if transport, ok := client.Transport.(contextRoundTripper); ok {
+		do = func() error { return transport.DoRequestWithContext(ctx, req, resp) }
+	}
+	latency, bifrostErr, wait := makeRequestWithDoFunc(ctx, do)
 	return latency, bifrostErr, wait
 }
 
@@ -429,14 +433,28 @@ func MakeRequestWithContextFollowRedirects(ctx context.Context, client *fasthttp
 // Streaming cannot use MakeRequestWithContext: for a streamed response fasthttp
 // returns as soon as the headers arrive, and the body is consumed lazily
 // afterwards. So this measures time-to-first-byte only — the generation window
-// is measured separately, inside idleTimeoutReader.Read. Both are needed;
-// counting only one attributes the other to Bifrost.
+// is measured separately, inside idleTimeoutReader.Read. A context deadline is
+// also installed as the fasthttp request deadline. This bounds the wait for
+// response headers and remains the socket deadline while the body is streamed.
+// Both timing paths are needed; counting only one attributes the other to
+// Bifrost.
 //
 // Returns client.Do's error untouched so callers keep their own error
 // classification and latency bookkeeping.
+type contextRoundTripper interface {
+	DoRequestWithContext(context.Context, *fasthttp.Request, *fasthttp.Response) error
+}
+
 func DoStreamingRequest(ctx context.Context, client *fasthttp.Client, req *fasthttp.Request, resp *fasthttp.Response) error {
 	startTime := time.Now()
-	err := client.Do(req, resp)
+	var err error
+	if transport, ok := client.Transport.(contextRoundTripper); ok {
+		err = transport.DoRequestWithContext(ctx, req, resp)
+	} else if deadline, ok := ctx.Deadline(); ok {
+		err = client.DoDeadline(req, resp, deadline)
+	} else {
+		err = client.Do(req, resp)
+	}
 	schemas.AddUpstreamLatency(ctx, time.Since(startTime))
 	return err
 }
@@ -489,7 +507,7 @@ func ConfigureRetry(client *fasthttp.Client) *fasthttp.Client {
 }
 
 // ConfigureDialer configures the client's connection behavior:
-//  1. Sets up the stale-connection retry policy (see network.StaleConnectionRetryIfErr).
+//  1. Sets up the idempotent stale-connection retry policy (see network.StaleConnectionRetryIfErr).
 //  2. Wraps the Dial function to enable TCP keepalive on all connections,
 //     proactively detecting dead connections before fasthttp tries to reuse them.
 //
@@ -2218,6 +2236,7 @@ func NewBifrostTimeoutError(message string, err error) *schemas.BifrostError {
 	return &schemas.BifrostError{
 		IsBifrostError: true,
 		StatusCode:     &statusCode,
+		AllowFallbacks: new(false),
 		Error: &schemas.ErrorField{
 			Message: message,
 			Type:    &errorType,
@@ -2249,9 +2268,10 @@ func NewBifrostBadRequestError(message string) *schemas.BifrostError {
 // but the provider failed to return a response body (DNS lookup failure,
 // connection refused, connection reset before the first response byte, etc.).
 // Sets StatusCode to 502 (Bad Gateway) and Error.Type to ProviderConnectionFailed,
-// distinguishing these retriable upstream failures from genuine HTTP 400
-// client-side bad-request errors. Mirrors NewBifrostTimeoutError; IsBifrostError
-// is false because the upstream provider is the cause.
+// distinguishing upstream transport failures from genuine HTTP 400 client-side
+// bad-request errors. This category is diagnostic only; it does not prove whether
+// the provider began execution. IsBifrostError is false because the upstream path
+// is the cause.
 func NewBifrostUpstreamConnectionError(message string, err error) *schemas.BifrostError {
 	statusCode := 502
 	errorType := schemas.ProviderConnectionFailed
@@ -2740,6 +2760,19 @@ type streamCloserWithError interface {
 	CloseWithError(err error) error
 }
 
+// streamCloseErrorContextKey carries a transport error from the stream parser
+// to ReleaseStreamingResponse. It is private because it is connection state,
+// not request metadata or a provider-facing capability.
+type streamCloseErrorContextKey struct{}
+
+var brokenStreamCloseErrorKey streamCloseErrorContextKey
+
+func markStreamConnectionBroken(ctx *schemas.BifrostContext, err error) {
+	if ctx != nil && err != nil {
+		ctx.SetValue(brokenStreamCloseErrorKey, err)
+	}
+}
+
 // closeBodyStream closes bodyStream using whatever interface it supports:
 // io.Closer for net/http responses, streamCloserWithError for fasthttp.
 func closeBodyStream(bodyStream io.Reader, err error) {
@@ -2924,7 +2957,9 @@ func HandleStreamCancellation(
 	}
 	// Create cancellation error
 	cancelErr := &schemas.BifrostError{
-		StatusCode: new(499), // Client Closed Request
+		IsBifrostError: true,
+		StatusCode:     new(499), // Client Closed Request
+		AllowFallbacks: new(false),
 		Error: &schemas.ErrorField{
 			Message: "Request cancelled: client disconnected",
 			Type:    schemas.Ptr(schemas.RequestCancelled),
@@ -2937,19 +2972,19 @@ func HandleStreamCancellation(
 
 	// Bill for tokens the provider already processed before the client
 	// disconnected.
-	attachBilledUsageFromContext(ctx, cancelErr)
+	AttachBilledUsageFromContext(ctx, cancelErr)
 
 	// Send through PostHook chain - this updates the log to "error" status
 	ProcessAndSendBifrostError(ctx, postHookRunner, cancelErr, responseChan, logger, postHookSpanFinalizer)
 }
 
-// attachBilledUsageFromContext copies a streaming provider's in-place
+// AttachBilledUsageFromContext copies a streaming provider's in-place
 // accumulated usage handle (BifrostContextKeyStreamAccumulatedUsage), if any,
 // onto the error's BilledUsage so downstream post-hooks (governance billing,
 // logging cost) can charge for tokens the provider already processed before the
 // stream was cancelled or timed out. No-op when nothing measurable was
 // accumulated, so failures that consumed no tokens bill nothing.
-func attachBilledUsageFromContext(ctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
+func AttachBilledUsageFromContext(ctx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
 	if ctx == nil || bifrostErr == nil {
 		return
 	}
@@ -3012,7 +3047,9 @@ func HandleStreamTimeout(
 	}
 	// Create timeout error
 	timeoutErr := &schemas.BifrostError{
-		StatusCode: schemas.Ptr(504), // Gateway Timeout
+		IsBifrostError: true,
+		StatusCode:     schemas.Ptr(504), // Gateway Timeout
+		AllowFallbacks: new(false),
 		Error: &schemas.ErrorField{
 			Message: "Request timed out: deadline exceeded",
 			Type:    schemas.Ptr(schemas.RequestTimedOut),
@@ -3024,7 +3061,7 @@ func HandleStreamTimeout(
 	}
 
 	// Bill for tokens the provider already processed before the deadline.
-	attachBilledUsageFromContext(ctx, timeoutErr)
+	AttachBilledUsageFromContext(ctx, timeoutErr)
 
 	// Send through PostHook chain - this updates the log to "error" status
 	ProcessAndSendBifrostError(ctx, postHookRunner, timeoutErr, responseChan, logger, postHookSpanFinalizer)
@@ -3042,14 +3079,24 @@ func ProcessAndSendError(
 	logger schemas.Logger,
 	postHookSpanFinalizer func(context.Context),
 ) {
-	// Send scanner error through channel
+	markStreamConnectionBroken(ctx, err)
+	// A stream read failure is upstream, but it is not safe to retry: the
+	// provider can already be generating or billing even when no response byte
+	// reached the caller. IsBifrostError remains true so core stops its retry
+	// loop. The stable type still lets telemetry classify the failure as network.
+	statusCode := 502
+	errorType := schemas.ProviderConnectionFailed
 	bifrostError := &schemas.BifrostError{
 		IsBifrostError: true,
+		StatusCode:     &statusCode,
+		AllowFallbacks: new(false),
 		Error: &schemas.ErrorField{
 			Message: fmt.Sprintf("Error reading stream: %v", err),
+			Type:    &errorType,
 			Error:   err,
 		},
 	}
+	AttachBilledUsageFromContext(ctx, bifrostError)
 	processedResponse, processedError := postHookRunner(ctx, nil, bifrostError)
 
 	if HandleStreamControlSkip(processedError) {
@@ -3079,11 +3126,10 @@ func ProcessAndSendError(
 // layer from a properly terminated body — so truncation can only be detected
 // semantically, by the absence of a terminal marker.
 //
-// The error is deliberately built as a retryable upstream connection failure
-// (502, IsBifrostError=false): when nothing has been forwarded yet this becomes
-// the stream's first chunk, so CheckFirstStreamChunkForError converts it into a
-// synchronous error and executeRequestWithRetries can retry or fall back. An
-// IsBifrostError=true error would break that retry loop instead (see #4496).
+// A truncated stream is an ambiguous dispatch failure: the provider can already
+// be generating or billing even when no usable output reached the caller. Keep
+// the stable 502 provider-connection shape for telemetry, but explicitly block
+// both core retries and provider fallbacks.
 func SendStreamTruncatedError(
 	ctx *schemas.BifrostContext,
 	postHookRunner schemas.PostHookRunner,
@@ -3097,13 +3143,16 @@ func SendStreamTruncatedError(
 	}
 
 	truncatedErr := NewBifrostUpstreamConnectionError(schemas.ErrProviderStreamTruncated, io.ErrUnexpectedEOF)
+	truncatedErr.IsBifrostError = true
+	truncatedErr.AllowFallbacks = new(false)
+	markStreamConnectionBroken(ctx, io.ErrUnexpectedEOF)
 
 	if ShouldSendBackRawRequest(ctx, false) && len(jsonBody) > 0 {
 		truncatedErr.ExtraFields.RawRequest = compactRawJSON(jsonBody)
 	}
 
 	// Bill for tokens the provider already produced before the stream died.
-	attachBilledUsageFromContext(ctx, truncatedErr)
+	AttachBilledUsageFromContext(ctx, truncatedErr)
 
 	ctx.SetValue(schemas.BifrostContextKeyStreamEndIndicator, true)
 	ProcessAndSendBifrostError(ctx, postHookRunner, truncatedErr, responseChan, logger, postHookSpanFinalizer)
@@ -3217,7 +3266,9 @@ func ProviderIsResponsesAPINative(providerName schemas.ModelProvider) bool {
 	}
 }
 
-// ReleaseStreamingResponse releases a streaming response by draining the body stream and releasing the response.
+// ReleaseStreamingResponse drains and releases a healthy streaming response.
+// A broken stream is closed with its error so fasthttp cannot return the dead
+// connection to the idle pool.
 func ReleaseStreamingResponse(ctx *schemas.BifrostContext, resp *fasthttp.Response) {
 	if resp == nil {
 		return
@@ -3242,11 +3293,29 @@ func ReleaseStreamingResponse(ctx *schemas.BifrostContext, resp *fasthttp.Respon
 			getLogger().Debug("stream already closed before drain in ReleaseStreamingResponse: %v\n", r)
 		}
 	}()
+	var closeErr error
+	if value := ctx.Value(brokenStreamCloseErrorKey); value != nil {
+		closeErr, _ = value.(error)
+	}
 	// Drain any remaining data from the body stream before releasing.
 	// This prevents "whitespace in header" errors when the connection is reused
 	// (see: https://github.com/valyala/fasthttp/issues/1743).
 	if _, err := io.Copy(io.Discard, bodyStream); err != nil {
 		getLogger().Warn("failed to drain streaming response body before release (may cause stale connection reuse): %v", err)
+		if closeErr == nil {
+			closeErr = err
+		}
+	}
+	if closeErr != nil {
+		if closer, ok := bodyStream.(streamCloserWithError); ok {
+			if err := closer.CloseWithError(closeErr); err != nil {
+				getLogger().Debug("failed to close broken streaming response: %v", err)
+			}
+			// CloseWithError has already released fasthttp's reader and
+			// connection. ReleaseResponse would invoke the same callback again.
+			// Leave this small response wrapper to the garbage collector.
+			return
+		}
 	}
 	// Close the body-stream wrapper exactly once HERE and detach it from resp
 	// (CloseBodyStream sets resp.bodyStream = nil). fasthttp's streaming close

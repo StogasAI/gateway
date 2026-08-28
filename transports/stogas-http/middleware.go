@@ -7,71 +7,11 @@ import (
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/e2ee"
 	"github.com/valyala/fasthttp"
 )
 
 const requestMemoryLeaseContextKey = "stogas.request-memory-lease"
-
-var allowedProviderResponseHeaders = map[string]bool{
-	"openai-processing-ms": true,
-	"openai-version":       true,
-	"request-id":           true,
-	"x-request-id":         true,
-}
-
-func isSafeProviderResponseHeader(header string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(header))
-	if normalized == "" {
-		return false
-	}
-	return allowedProviderResponseHeaders[normalized]
-}
-
-func safeProviderResponseHeaders(headers map[string]string) map[string]string {
-	if len(headers) == 0 {
-		return nil
-	}
-
-	type headerValue struct {
-		name  string
-		value string
-	}
-	byName := make(map[string]headerValue)
-	ambiguous := make(map[string]bool)
-	for name, value := range headers {
-		trimmed := strings.TrimSpace(name)
-		normalized := strings.ToLower(trimmed)
-		if !isSafeProviderResponseHeader(trimmed) || !safeProviderResponseHeaderValue(value) || ambiguous[normalized] {
-			continue
-		}
-		if _, duplicate := byName[normalized]; duplicate {
-			delete(byName, normalized)
-			ambiguous[normalized] = true
-			continue
-		}
-		byName[normalized] = headerValue{name: trimmed, value: value}
-	}
-	filtered := make(map[string]string, len(byName))
-	for _, entry := range byName {
-		filtered[entry.name] = entry.value
-	}
-	if len(filtered) == 0 {
-		return nil
-	}
-	return filtered
-}
-
-func safeProviderResponseHeaderValue(value string) bool {
-	if value == "" || len(value) > 16*1024 || strings.TrimSpace(value) != value {
-		return false
-	}
-	for index := range len(value) {
-		if value[index] != '\t' && (value[index] < 0x20 || value[index] > 0x7e) {
-			return false
-		}
-	}
-	return true
-}
 
 func securityHeaders(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
@@ -161,11 +101,13 @@ func (s *Server) requestBodyAdmission(next fasthttp.RequestHandler) fasthttp.Req
 			next(ctx)
 			return
 		}
-		if _, ok := s.requireInferenceHeaders(ctx); !ok {
-			if ctx.Request.IsBodyStream() {
-				ctx.SetConnectionClose()
+		if !isEncryptedInferenceRequest(ctx) {
+			if _, ok := s.requireInferenceHeaders(ctx); !ok {
+				if ctx.Request.IsBodyStream() {
+					ctx.SetConnectionClose()
+				}
+				return
 			}
-			return
 		}
 
 		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
@@ -180,7 +122,7 @@ func (s *Server) requestBodyAdmission(next fasthttp.RequestHandler) fasthttp.Req
 			reservationBytes = maxRequestBodyBytes
 		}
 		if s.memory == nil {
-			s.memory = &requestMemoryAdmission{}
+			s.memory = newRequestMemoryAdmission()
 		}
 		lease, admitted := s.memory.acquire(reservationBytes)
 		if !admitted {
@@ -274,7 +216,7 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 			next(ctx)
 			return
 		}
-		if isInferencePath(ctx.Path()) {
+		if isInferencePath(ctx.Path()) && !isEncryptedInferenceRequest(ctx) {
 			if _, ok := s.requireInferenceHeaders(ctx); !ok {
 				return
 			}
@@ -307,6 +249,14 @@ func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.Req
 		ctx.Request.Header.Del(fasthttp.HeaderContentLength)
 		next(ctx)
 	}
+}
+
+// isEncryptedInferenceRequest selects E2EE handling before body
+// admission. Credentials and application content negotiation are authenticated
+// inside the envelope, so normal header validation waits until decryption.
+func isEncryptedInferenceRequest(ctx *fasthttp.RequestCtx) bool {
+	values := ctx.Request.Header.PeekAll(fasthttp.HeaderContentType)
+	return len(values) == 1 && isContentType(values[0], e2ee.ContentType)
 }
 
 func isInferencePath(path []byte) bool {

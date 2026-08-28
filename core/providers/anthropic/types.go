@@ -1891,9 +1891,9 @@ type AnthropicUsage struct {
 // Server-side fallback and advisor iterations have separate billing rules and
 // can use different model rates, so their top-level counters remain authoritative.
 //
-// Saturation is deliberate. Usage is untrusted provider data and these
-// conversion methods cannot return an error. A negative value stays negative
-// and an overflow becomes MaxInt so the Stogas usage validator rejects it.
+// Usage is untrusted provider data and these conversion methods cannot return an
+// error. Negative iteration fields are ignored without discarding other usable
+// iterations. Overflow saturates so downstream settlement can apply its own bound.
 func (u *AnthropicUsage) BillingTotals() *AnthropicUsage {
 	if u == nil || len(u.Iterations) == 0 {
 		return u
@@ -1948,8 +1948,11 @@ func (u *AnthropicUsage) BillingTotals() *AnthropicUsage {
 }
 
 func addAnthropicUsageCount(left int, right int) int {
-	if left < 0 || right < 0 {
-		return -1
+	if left < 0 {
+		left = 0
+	}
+	if right <= 0 {
+		return left
 	}
 	if right > math.MaxInt-left {
 		return math.MaxInt

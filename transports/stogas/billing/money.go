@@ -13,13 +13,11 @@ const (
 	maximumUSDAtomsDigits = len(maximumUSDAtoms)
 )
 
-func createHoldParamsHash(providerKey string, productKey string, passthroughByokID string, upstreamTargetJSON ...string) string {
+func createHoldParamsHash(providerKey string, productKey string, upstreamTargetJSON ...string) string {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(providerKey))
 	_, _ = hasher.Write([]byte{0})
 	_, _ = hasher.Write([]byte(productKey))
-	_, _ = hasher.Write([]byte{0})
-	_, _ = hasher.Write([]byte(passthroughByokID))
 	_, _ = hasher.Write([]byte{0})
 	if len(upstreamTargetJSON) > 0 {
 		_, _ = hasher.Write([]byte(upstreamTargetJSON[0]))
@@ -27,15 +25,13 @@ func createHoldParamsHash(providerKey string, productKey string, passthroughByok
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func settlementStatus(authorizedAmount *big.Int, availableAfter *big.Int, actual *big.Int) string {
-	authorized := cloneOrZero(authorizedAmount)
-	available := cloneOrZero(availableAfter)
-	refund := new(big.Int).Sub(authorized, actual)
+func calculateSettlementStatus(authorizedBilledCostUSDAtoms *big.Int, availableBalanceUSDAtoms *big.Int, billedCostUSDAtoms *big.Int) string {
+	balanceAdjustmentUSDAtoms := new(big.Int).Sub(cloneOrZero(authorizedBilledCostUSDAtoms), billedCostUSDAtoms)
 	switch {
-	case refund.Sign() >= 0:
+	case balanceAdjustmentUSDAtoms.Sign() >= 0:
 		return "complete"
 	default:
-		if new(big.Int).Add(available, refund).Sign() < 0 {
+		if new(big.Int).Add(cloneOrZero(availableBalanceUSDAtoms), balanceAdjustmentUSDAtoms).Sign() < 0 {
 			return "negative_balance"
 		}
 		return "under_reserved"

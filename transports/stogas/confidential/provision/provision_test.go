@@ -58,8 +58,12 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		if !ok || reportData["schema"] != reportdata.SchemaV1 {
 			t.Fatalf("report data not sent as structured JSON: %#v", body["report_data"])
 		}
-		if _, ok := body["catalog"]; ok {
-			t.Fatalf("heartbeat must not duplicate the quote-bound catalog: %#v", body)
+		catalog, ok := body["catalog"].(map[string]any)
+		if !ok || catalog["digest"] != "sha256:"+strings.Repeat("1", 64) || catalog["sequence"] != float64(7) {
+			t.Fatalf("heartbeat did not carry the signed operational catalog: %#v", body)
+		}
+		if body["active_cert_sha256"] != strings.Repeat("4", 64) {
+			t.Fatalf("heartbeat did not carry the active certificate hash: %#v", body)
 		}
 		health, ok := body["health"].(map[string]any)
 		if !ok || health["ready"] != false || health["last_quote_failure_class"] != "quote_refresh_failed" {
@@ -81,12 +85,14 @@ func TestSendHeartbeatPostsStrictControlContract(t *testing.T) {
 		AllowInsecureLocal: true,
 	}
 	result, err := client.SendHeartbeat(context.Background(), HeartbeatInput{
-		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		Health:        NodeHealth{Ready: false, LastQuoteFailureClass: "quote_refresh_failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
-		NodeID:        "node-1",
-		ObservedAt:    now,
-		Quote:         snapshot,
-		SigningKey:    signingKey,
+		ActiveCertSHA256: strings.Repeat("4", 64),
+		Catalog:          CatalogIdentity{Digest: "sha256:" + strings.Repeat("1", 64), Sequence: 7},
+		CertExpiresAt:    now.Add(90 * 24 * time.Hour),
+		Health:           NodeHealth{Ready: false, LastQuoteFailureClass: "quote_refresh_failed", SecretVersions: map[string]string{"OPENAI_API_KEY": "1"}},
+		NodeID:           "node-1",
+		ObservedAt:       now,
+		Quote:            snapshot,
+		SigningKey:       signingKey,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -335,12 +341,14 @@ func testHeartbeatInput(t *testing.T) HeartbeatInput {
 		t.Fatal(err)
 	}
 	return HeartbeatInput{
-		CertExpiresAt: now.Add(90 * 24 * time.Hour),
-		Health:        NodeHealth{Ready: true, SecretVersions: map[string]string{}},
-		NodeID:        "node-1",
-		ObservedAt:    now,
-		Quote:         testSnapshot(t, now),
-		SigningKey:    signingKey,
+		ActiveCertSHA256: strings.Repeat("4", 64),
+		Catalog:          CatalogIdentity{Digest: "sha256:" + strings.Repeat("1", 64), Sequence: 7},
+		CertExpiresAt:    now.Add(90 * 24 * time.Hour),
+		Health:           NodeHealth{Ready: true, SecretVersions: map[string]string{}},
+		NodeID:           "node-1",
+		ObservedAt:       now,
+		Quote:            testSnapshot(t, now),
+		SigningKey:       signingKey,
 	}
 }
 
@@ -376,9 +384,7 @@ func TestAuthoritativeRejectionClassification(t *testing.T) {
 func testSnapshot(t *testing.T, generatedAt time.Time) *quote.Snapshot {
 	t.Helper()
 	payload, err := reportdata.NewPayload(reportdata.Payload{
-		Catalog:            reportdata.CatalogIdentity{Digest: "sha256:" + strings.Repeat("1", 64), Sequence: 7},
 		TLSSPKISHA256:      strings.Repeat("3", 64),
-		ActiveCertSHA256:   strings.Repeat("4", 64),
 		AcceptedCertSHA256: []string{strings.Repeat("4", 64)},
 		HPKEPublicKey:      "aHBrZQ",
 		Ed25519PublicKey:   "ZWQyNTUxOQ",

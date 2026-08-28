@@ -20,6 +20,26 @@ func testDeploymentForRoute(provider schemas.ModelProvider, model string, route 
 	return DeploymentForRouteServiceTier(provider, model, route, nil)
 }
 
+func TestClientHeaderCatalogPublishesBoundedPassThroughPool(t *testing.T) {
+	for _, header := range []string{
+		"x-stogas-upstream-anthropic-api-key",
+		"x-stogas-upstream-chutes-api-key",
+		"x-stogas-upstream-openai-api-key",
+	} {
+		if !strings.Contains(allClientHeadersValue, header) {
+			t.Fatalf("client header catalog omitted %q", header)
+		}
+	}
+	for _, legacy := range []string{
+		"x-stogas-upstream-api-key",
+		"x-stogas-upstream-provider",
+	} {
+		if strings.Contains(allClientHeadersValue, legacy) {
+			t.Fatalf("client header catalog retained legacy header %q", legacy)
+		}
+	}
+}
+
 func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 	snap := loadTestCatalog(t)
 	if snap.identity.Sequence != 0 || !strings.HasPrefix(snap.identity.Digest, "sha256:") {
@@ -355,45 +375,6 @@ func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.
 		if err != nil || !ok || provider != schemas.Azure {
 			t.Fatalf("provider preference must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
 		}
-	}
-}
-
-func TestCredentialProviderConstraintCannotCrossProviders(t *testing.T) {
-	loadTestCatalog(t)
-	resolution, err := ResolveRequest(RequestInput{
-		Method:             "POST",
-		Path:               "/v1/responses",
-		Body:               []byte(`{"model":"gpt-5.6-sol","input":"hello"}`),
-		ProviderConstraint: "azure",
-	})
-	if err != nil {
-		t.Fatalf("resolve Azure-constrained request: %v", err)
-	}
-	if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-gpt-5.6-sol" {
-		t.Fatalf("pass-through provider constraint selected the wrong target: %#v", resolution)
-	}
-
-	for _, body := range []string{
-		`{"model":"gpt-5.6-sol","provider":"openai","input":"hello"}`,
-		`{"model":"gpt-5.6-sol","provider":{"only":["openai"]},"input":"hello"}`,
-	} {
-		_, err := ResolveRequest(RequestInput{
-			Method:             "POST",
-			Path:               "/v1/responses",
-			Body:               []byte(body),
-			ProviderConstraint: "azure",
-		})
-		if !errors.Is(err, ErrCredentialProviderConflict) {
-			t.Fatalf("conflicting request routing error = %v, want credential provider conflict", err)
-		}
-	}
-	if _, err := ResolveRequest(RequestInput{
-		Method:             "POST",
-		Path:               "/v1/responses",
-		Body:               []byte(`{"model":"openai/gpt-5.6-sol","input":"hello"}`),
-		ProviderConstraint: "azure",
-	}); !errors.Is(err, ErrModelUnavailable) {
-		t.Fatalf("provider-qualified cross-provider request error = %v, want unavailable model", err)
 	}
 }
 

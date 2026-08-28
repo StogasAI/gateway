@@ -34,11 +34,9 @@
   (or (getenv "STOGAS_RELEASE_TREE")
       "0000000000000000000000000000000000000000"))
 
-(define %snp-policy-product
-  (or (getenv "STOGAS_SNP_POLICY_PRODUCT") "Milan"))
-
-(define %snp-policy
-  (or (getenv "STOGAS_SNP_POLICY") "0x000000000213013a"))
+(define %snp-launch-policies
+  (local-file (string-append %release-root "/snp-launch-policies.json")
+              "snp-launch-policies.json"))
 
 (define (canonical-version-part text)
   (let ((value (string->number text 10)))
@@ -199,42 +197,21 @@
 	                   (scandir source-dir))
 	                  string<?)))))
 
-	          (define (write-json-hash-map port inputs)
-	            (let loop ((remaining inputs))
-	              (match remaining
-	                (() #t)
-	                (((path . store-path) . rest)
-	                 (format port "      ~a: ~a~a\n"
-	                         (json-string path)
-	                         (json-string (sha256 store-path))
-	                         (if (null? rest) "" ","))
-	                 (loop rest)))))
+          (define (write-json-hash-map port inputs)
+            (let loop ((remaining
+                        (sort inputs
+                              (lambda (left right)
+                                (string<? (car left) (car right))))))
+              (match remaining
+                (() #t)
+                (((path . store-path) . rest)
+                 (format port "~a:~a~a"
+                         (json-string path)
+                         (json-string (sha256 store-path))
+                         (if (null? rest) "" ","))
+                 (loop rest)))))
 
-		          (define (write-gateway-launch-policy out igvm measurement)
-		            (let ((policy (string-append out "/gateway-launch-policy.json")))
-		              (call-with-output-file policy
-		                (lambda (port)
-		                  (format port "{\"igvm_sha256\":~a," (json-string (sha256 igvm)))
-		                  (display "\"launch\":{" port)
-		                  (display "\"author_key_digest\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"," port)
-		                  (display "\"family_id\":\"00000000000000000000000000000000\"," port)
-		                  (display "\"host_data\":\"0000000000000000000000000000000000000000000000000000000000000000\"," port)
-		                  (display "\"id_key_digest\":\"000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"," port)
-		                  (display "\"image_id\":\"00000000000000000000000000000000\"," port)
-		                  (format port "\"policy\":~a,\"vmpl\":0}," (json-string #$%snp-policy))
-		                  (format port "\"measurement\":~a," (json-string (string-trim-both measurement)))
-		                  (display "\"name\":\"relay-4c\"," port)
-		                  (format port "\"release_tag\":~a," (json-string #$%release-tag))
-		                  (display "\"schema\":\"stogas.gateway.launch-policy.v1\"," port)
-		                  (format port "\"sequence\":~a," #$(release-sequence %release-tag))
-		                  (display "\"source\":{" port)
-		                  (format port "\"commit\":~a," (json-string #$%release-commit))
-		                  (display "\"repository\":\"https://github.com/StogasAI/gateway\"," port)
-		                  (format port "\"tree\":~a}," (json-string #$%release-tree))
-		                  (display "\"vcpu_count\":4}\n" port)))))
-
-		          (define (write-artifact-manifest out igvm efi launch-policy ca-bundle measurement
-		                                           build-inputs)
+          (define (write-artifact-manifest out igvm efi ca-bundle measurement build-inputs)
             (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
                    (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
                    (core-go-mod (string-append #$source "/core/go.mod"))
@@ -243,87 +220,72 @@
                    (go-sum (string-append #$source "/transports/go.sum"))
                    (os-release #$(source-file "guix/os-release" "os-release"))
                    (kernel (string-append #$stogas-linux-6-18 "/bzImage"))
-                   (igvmmeasure (string-append #$stogas-igvmmeasure
-                                               "/bin/igvmmeasure"))
+                   (igvmmeasure (string-append #$stogas-igvmmeasure "/bin/igvmmeasure"))
                    (stub (string-append #$stogas-systemd-uki-tools
                                         "/lib/systemd/boot/efi/linuxx64.efi.stub"))
                    (ovmf (string-append #$stogas-edk2-amdsev-ovmf
                                         "/share/firmware/ovmf-amdsev-x64.fd"))
+                   (launch-policies (string-append out "/snp-launch-policies.json"))
                    (manifest (string-append out "/release-manifest.json")))
               (call-with-output-file manifest
                 (lambda (port)
-                  (display "{\n" port)
-                  (display "  \"schema\": \"stogas.gateway.release.v1\",\n" port)
-                  (format port "  \"sequence\": ~a,\n" #$(release-sequence %release-tag))
-                  (display "  \"git\": {\n" port)
-                  (format port "    \"commit\": ~a,\n" (json-string #$%release-commit))
-                  (format port "    \"ref\": ~a,\n"
+                  (display "{\"artifacts\":{\"gateway.igvm\":{" port)
+                  (format port "\"sha256\":~a,\"sizeBytes\":~a},\"snp-launch-policies.json\":{\"sha256\":~a,\"sizeBytes\":~a}},"
+                          (json-string (sha256 igvm))
+                          (stat:size (stat igvm))
+                          (json-string (sha256 launch-policies))
+                          (stat:size (stat launch-policies)))
+                  (display "\"build\":{" port)
+                  (format port "\"cmdlineSha256\":~a," (json-string (sha256 cmdline)))
+                  (format port "\"coreGoModSha256\":~a," (json-string (sha256 core-go-mod)))
+                  (format port "\"coreGoSumSha256\":~a," (json-string (sha256 core-go-sum)))
+                  (display "\"environment\":{\"lcAll\":\"C\",\"sourceDateEpoch\":\"1\",\"tz\":\"UTC\",\"umask\":\"022\"}," port)
+                  (format port "\"goModSha256\":~a," (json-string (sha256 go-mod)))
+                  (format port "\"goSumSha256\":~a," (json-string (sha256 go-sum)))
+                  (format port "\"goVendorTreeSha256\":~a,"
+                          (json-string expected-go-vendor-tree-sha256))
+                  (format port "\"goVersion\":~a,"
+                          (json-string (string-trim-right (command-output "go" "version"))))
+                  (display "\"guestCaBundlePath\":\"/etc/ssl/certs/ca-certificates.crt\"," port)
+                  (format port "\"guestCaBundleSha256\":~a,"
+                          (json-string (sha256 ca-bundle)))
+                  (display "\"guixChannelCommit\":\"058701d7ad329cfa7292998699baa3dfb8955752\"," port)
+                  (display "\"inputSha256\":{" port)
+                  (write-json-hash-map port build-inputs)
+                  (display "}," port)
+                  (format port "\"kernelConfigSha256\":~a,"
+                          (json-string
+                           (sha256 (string-append #$stogas-linux-6-18 "/.config"))))
+                  (display "\"kernelVersion\":\"6.18.38\"," port)
+                  (format port "\"linuxBzImageSha256\":~a," (json-string (sha256 kernel)))
+                  (format port "\"osReleaseSha256\":~a," (json-string (sha256 os-release)))
+                  (format port "\"ovmfSha256\":~a," (json-string (sha256 ovmf)))
+                  (format port "\"pinsLockSha256\":~a," (json-string (sha256 pins)))
+                  (format port "\"systemdStubSha256\":~a," (json-string (sha256 stub)))
+                  (format port "\"ukiSha256\":~a}," (json-string (sha256 efi)))
+                  (display "\"git\":{" port)
+                  (format port "\"commit\":~a," (json-string #$%release-commit))
+                  (format port "\"ref\":~a,"
                           (json-string (string-append "refs/tags/" #$%release-tag)))
-                  (display "    \"repository\": \"https://github.com/StogasAI/gateway\",\n" port)
-                  (format port "    \"tag\": ~a,\n" (json-string #$%release-tag))
-	                  (format port "    \"tree\": ~a\n" (json-string #$%release-tree))
-	                  (display "  },\n" port)
-	                  (display "  \"build\": {\n" port)
-	                  (display "    \"environment\": {\n" port)
-	                  (display "      \"lcAll\": \"C\",\n" port)
-	                  (display "      \"sourceDateEpoch\": \"1\",\n" port)
-	                  (display "      \"tz\": \"UTC\",\n" port)
-	                  (display "      \"umask\": \"022\"\n" port)
-	                  (display "    },\n" port)
-	                  (format port "    \"cmdlineSha256\": ~a,\n" (json-string (sha256 cmdline)))
-	                  (format port "    \"coreGoModSha256\": ~a,\n" (json-string (sha256 core-go-mod)))
-	                  (format port "    \"coreGoSumSha256\": ~a,\n" (json-string (sha256 core-go-sum)))
-	                  (format port "    \"goModSha256\": ~a,\n" (json-string (sha256 go-mod)))
-	                  (format port "    \"goSumSha256\": ~a,\n" (json-string (sha256 go-sum)))
-	                  (format port "    \"goVendorTreeSha256\": ~a,\n"
-	                          (json-string expected-go-vendor-tree-sha256))
-	                  (format port "    \"goVersion\": ~a,\n"
-	                          (json-string (string-trim-right (command-output "go" "version"))))
-	                  (format port "    \"guestCaBundlePath\": ~a,\n"
-	                          (json-string "/etc/ssl/certs/ca-certificates.crt"))
-	                  (format port "    \"guestCaBundleSha256\": ~a,\n"
-	                          (json-string (sha256 ca-bundle)))
-                  (display "    \"guixChannelCommit\": \"058701d7ad329cfa7292998699baa3dfb8955752\",\n" port)
-                  (format port "    \"kernelConfigSha256\": ~a,\n"
-                          (json-string (sha256 (string-append #$stogas-linux-6-18 "/.config"))))
-                  (display "    \"kernelVersion\": \"6.18.38\",\n" port)
-                  (format port "    \"linuxBzImageSha256\": ~a,\n" (json-string (sha256 kernel)))
-                  (format port "    \"osReleaseSha256\": ~a,\n" (json-string (sha256 os-release)))
-	                  (format port "    \"ovmfSha256\": ~a,\n" (json-string (sha256 ovmf)))
-	                  (format port "    \"pinsLockSha256\": ~a,\n" (json-string (sha256 pins)))
-	                  (format port "    \"systemdStubSha256\": ~a,\n" (json-string (sha256 stub)))
-	                  (format port "    \"ukiSha256\": ~a,\n" (json-string (sha256 efi)))
-	                  (display "    \"inputSha256\": {\n" port)
-	                  (write-json-hash-map port build-inputs)
-	                  (display "    }\n" port)
-	                  (display "  },\n" port)
-	                  (display "  \"artifacts\": {\n" port)
-		                  (display "    \"gateway.igvm\": {\n" port)
-	                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 igvm)))
-	                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat igvm)))
-	                  (display "    },\n" port)
-		                  (display "    \"gateway-launch-policy.json\": {\n" port)
-		                  (format port "      \"sha256\": ~a,\n" (json-string (sha256 launch-policy)))
-		                  (format port "      \"sizeBytes\": ~a\n" (stat:size (stat launch-policy)))
-	                  (display "    }\n" port)
-	                  (display "  },\n" port)
-	                  (display "  \"sevSnp\": {\n" port)
-	                  (display "    \"platform\": \"SEV_SNP\",\n" port)
-	                  (format port "    \"product\": ~a,\n"
-	                          (json-string #$%snp-policy-product))
-                  (display "    \"vmm\": \"qemu-kvm\",\n" port)
-                  (display "    \"measurementTool\": \"igvmmeasure\",\n" port)
-                  (format port "    \"measurementToolVersion\": ~a,\n"
-                          (json-string #$(package-version stogas-igvmmeasure)))
-                  (format port "    \"measurementToolSha256\": ~a,\n"
+                  (display "\"repository\":\"https://github.com/StogasAI/gateway\"," port)
+                  (format port "\"tag\":~a," (json-string #$%release-tag))
+                  (format port "\"tree\":~a}," (json-string #$%release-tree))
+                  (display "\"schema\":\"stogas.gateway.release.v1\"," port)
+                  (format port "\"sequence\":~a," #$(release-sequence %release-tag))
+                  (display "\"sevSnp\":{\"checkKvm\":true," port)
+                  (format port "\"launchMeasurement\":~a,"
+                          (json-string (string-trim-both measurement)))
+                  (format port "\"launchPolicies\":~a,"
+                          (string-trim-right
+                           (call-with-input-file launch-policies get-string-all)))
+                  (display "\"measurementCommand\":\"igvmmeasure --check-kvm gateway.igvm measure\"," port)
+                  (display "\"measurementTool\":\"igvmmeasure\"," port)
+                  (format port "\"measurementToolSha256\":~a,"
                           (json-string (sha256 igvmmeasure)))
-	                  (display "    \"measurementCommand\": \"igvmmeasure --check-kvm gateway.igvm measure\",\n" port)
-	                  (display "    \"checkKvm\": true,\n" port)
-	                  (format port "    \"launchMeasurement\": ~a,\n"
-	                          (json-string (string-trim-both measurement)))
-	                  (display "    \"vcpuCount\": 4\n" port)
-                  (display "  }\n" port)
-                  (display "}\n" port)))))
+                  (format port "\"measurementToolVersion\":~a,"
+                          (json-string #$(package-version stogas-igvmmeasure)))
+                  (display "\"platform\":\"SEV_SNP\",\"vcpuCount\":4,\"vmm\":\"qemu-kvm\"}}\n"
+                           port)))))
 
           (define out #$output)
           (define source #$source)
@@ -337,8 +299,8 @@
 	          (define release-kernel (string-append out "/gateway.kernel"))
 		          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
 		          (define measurement-path (string-append work "/measurement.txt"))
-		          (define launch-policy (string-append out "/gateway-launch-policy.json"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
+	          (define launch-policies (string-append out "/snp-launch-policies.json"))
 	          (define license #$(gateway-file "LICENSE" "LICENSE"))
 	          (define notice #$(gateway-file "NOTICE" "NOTICE"))
 	          (define pins #$(source-file "pins.lock.json" "pins.lock.json"))
@@ -373,9 +335,6 @@
 	                                  "packages.scm"))
 	             (cons "stogas/release/scripts/tree-sha256.sh"
 	                   #$%tree-sha256)
-	             (cons "stogas/release/snp-launch-policy.json"
-	                   #$(source-file "snp-launch-policy.json"
-	                                  "snp-launch-policy.json"))
 	             (cons "core/go.mod"
 	                   (string-append #$source "/core/go.mod"))
 	             (cons "core/go.sum"
@@ -389,7 +348,9 @@
 	             (cons "stogas/release/vendor/go-vendor.sha256"
 	                   #$%go-vendor-sha256)
 	             (cons "stogas/release/pins.lock.json"
-	                   pins)))
+	                   pins)
+	             (cons "stogas/release/snp-launch-policies.json"
+	                   #$%snp-launch-policies)))
 
 	          (setenv "SOURCE_DATE_EPOCH" "1")
 	          (setenv "LC_ALL" "C")
@@ -494,35 +455,17 @@
 	              (lambda (port)
 	                (display (launch-digest measurement-output) port)
 	                (newline port))))
-		          (write-gateway-launch-policy
-		           out
-		           igvm
-		           (call-with-input-file measurement-path get-string-all))
 	          (copy-file (string-append #$stogas-linux-6-18 "/.config") kernel-config)
 	          (copy-file license (string-append out "/LICENSE"))
 	          (copy-file notice (string-append out "/NOTICE"))
+	          (copy-file #$%snp-launch-policies launch-policies)
 	          (write-artifact-manifest
 	           out
 	           igvm
 	           efi
-		           launch-policy
-		           ca-bundle
-		           (call-with-input-file measurement-path get-string-all)
-	           build-inputs)
-          (call-with-output-file (string-append out "/SHA256SUMS")
-            (lambda (port)
-              (for-each
-               (lambda (file)
-                 (format port "~a  ~a~%" (sha256 (string-append out "/" file)) file))
-		               '("gateway.igvm"
-		                 "LICENSE"
-		                 "NOTICE"
-		                 "gateway-launch-policy.json"
-	                 "gateway.init"
-	                 "gateway.kernel"
-	                 "gateway.initramfs.cpio.zst"
-	                 "release-manifest.json"
-	                 "kernel-config.txt"))))))))
+	           ca-bundle
+	           (call-with-input-file measurement-path get-string-all)
+	           build-inputs)))))
   (native-inputs
    (list (pkg "bash-minimal")
          (pkg "coreutils")
@@ -538,6 +481,6 @@
          stogas-virt-firmware-rs-tools))
   (synopsis "Deterministic Stogas gateway IGVM release")
   (description "Builds the gateway Go payload, initramfs, UKI, AmdSev IGVM,
-SEV-SNP launch measurement, manifest, and checksums as one Guix derivation.")
+SEV-SNP launch measurement, and manifest as one Guix derivation.")
   (home-page "https://stogas.ai")
   (license license:asl2.0))

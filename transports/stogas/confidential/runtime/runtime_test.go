@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -187,16 +188,15 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Payload.ActiveCertSHA256 != config.ActiveCertSHA256 ||
-		snapshot.Payload.TLSSPKISHA256 != runtime.Identity.TLSSPKISHA256 ||
+	if snapshot.Payload.TLSSPKISHA256 != runtime.Identity.TLSSPKISHA256 ||
 		snapshot.Payload.HPKEPublicKey != runtime.Identity.HPKEPublicKey ||
-		snapshot.Payload.Ed25519PublicKey != runtime.Identity.Ed25519PublicKey {
+		snapshot.Payload.Ed25519PublicKey != runtime.Identity.Ed25519PublicKey ||
+		!containsString(snapshot.Payload.AcceptedCertSHA256, config.ActiveCertSHA256) {
 		t.Fatalf("quote payload did not bind runtime identity/config: %#v", snapshot.Payload)
 	}
 	activeCatalog, ok := catalog.ActiveIdentity()
-	if !ok || snapshot.Payload.Catalog.Digest != activeCatalog.Digest ||
-		snapshot.Payload.Catalog.Sequence != activeCatalog.Sequence {
-		t.Fatalf("quote payload did not bind the active catalog: %#v", snapshot.Payload.Catalog)
+	if !ok {
+		t.Fatal("active catalog identity is unavailable")
 	}
 	if len(snapshot.Quote) == 0 {
 		t.Fatal("expected initial mock quote")
@@ -206,11 +206,12 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 		ResponseBody: []byte(`{"response":true}`),
 		Metadata: proof.Metadata{
 			RequestID: "req_1",
+			CreatedAt: "2026-08-24T12:34:56.789Z",
 			NodeID:    deriveCandidateNodeID(runtime.Identity),
 			Catalog: proof.Catalog{
-				Digest:   activeCatalog.Digest,
-				Sequence: activeCatalog.Sequence,
-				NodeIDs:  []string{"author:test", "model:test", "deployment:test", "route:test", "provider:test"},
+				Digest:       activeCatalog.Digest,
+				Sequence:     activeCatalog.Sequence,
+				SelectionIDs: []string{"author:test", "model:test", "deployment:test", "route:test", "provider:test"},
 			},
 			Pricing: proof.Pricing{
 				Meters:            map[string]proof.Meter{},
@@ -222,7 +223,7 @@ func TestStartLocalMockBuildsQuoteManagerAndProofService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Headers[proofhttp.HeaderProof] == "" {
+	if len(output.JSON) == 0 {
 		t.Fatalf("proof did not use the current attested signing identity: %#v", output)
 	}
 	if !proof.Verify(runtime.Identity.Ed25519PublicKeyRaw, proof.PayloadFromObject(output.Object), output.Object.Proof.Signature) {
@@ -243,7 +244,7 @@ func TestStartWithoutConfiguredCertificateQuotesProvisionalCertificate(t *testin
 	defer runtime.Close()
 
 	certState := runtime.Certs.State()
-	if len(certState.ActiveCertSHA256) != 64 || len(certState.AcceptedCertSHA256) != 1 || certState.AcceptedCertSHA256[0] != certState.ActiveCertSHA256 {
+	if len(certState.ActiveCertSHA256) != 64 || len(certState.AcceptedCertSHA256) != 0 {
 		t.Fatalf("runtime did not create a provisional certificate state: %#v", certState)
 	}
 	tlsCert, ok := runtime.Certs.ActiveTLSCertificate()
@@ -254,10 +255,11 @@ func TestStartWithoutConfiguredCertificateQuotesProvisionalCertificate(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Payload.ActiveCertSHA256 != certState.ActiveCertSHA256 ||
-		len(snapshot.Payload.AcceptedCertSHA256) != 1 ||
-		snapshot.Payload.AcceptedCertSHA256[0] != certState.ActiveCertSHA256 {
-		t.Fatalf("quote did not bind provisional certificate state: %#v", snapshot.Payload)
+	if len(snapshot.Payload.AcceptedCertSHA256) != 0 {
+		t.Fatalf("quote must not publish the provisional certificate hash: %#v", snapshot.Payload)
+	}
+	if snapshot.Payload.AcceptedCertSHA256 == nil {
+		t.Fatal("quote must encode the empty accepted certificate set as an array")
 	}
 }
 
@@ -505,6 +507,7 @@ func TestControlLoopSubmitsCertificateCSRInstruction(t *testing.T) {
 }
 
 func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t *testing.T) {
+	rootCertificate, rootKey, certificateRoots := runtimeTestCertificateAuthority(t)
 	nodeID := strings.Repeat("9", 64)
 	var mu sync.Mutex
 	var instruction string
@@ -532,19 +535,25 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	config.ControlURL = server.URL
 	config.HeartbeatInterval = time.Hour
 
-	runtime, err := Start(context.Background(), config)
+	runtime, err := start(
+		context.Background(),
+		config,
+		waitForSystemEntropy,
+		startOptions{certificateRoots: certificateRoots},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer runtime.Close()
 
 	newExpiry := time.Now().UTC().Truncate(time.Second).Add(90 * 24 * time.Hour)
-	chainPEM, leafDER := selfSignedRuntimeLeaf(t, runtime.Identity, 20, newExpiry)
+	chainPEM, leafDER := signedRuntimeLeaf(t, runtime.Identity, rootCertificate, rootKey, 20, newExpiry)
 	newHash := identity.CertSHA256Hex(leafDER)
-	instructionJSON, err := json.Marshal(map[string]string{
+	instructionJSON, err := json.Marshal(map[string]any{
 		"action":          "install_renewed_chain",
 		"order_id":        "order-2",
 		"cert_chain_pem":  string(chainPEM),
+		"dns_names":       []string{"gateway.stogas.ai"},
 		"new_cert_sha256": newHash,
 	})
 	if err != nil {
@@ -570,13 +579,14 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	if !ok {
 		t.Fatalf("follow-up heartbeat missing report_data: %#v", last)
 	}
-	if reportData["active_cert_sha256"] != config.ActiveCertSHA256 {
-		t.Fatalf("install instruction should not activate the new certificate: %#v", reportData)
+	if last["active_cert_sha256"] != config.ActiveCertSHA256 {
+		t.Fatalf("install instruction should not activate the new certificate: %#v", last)
 	}
 	accepted, ok := reportData["accepted_cert_sha256"].([]any)
 	if !ok || !jsonArrayContains(accepted, newHash) {
 		t.Fatalf("follow-up heartbeat did not bind the staged certificate hash: %#v", reportData)
 	}
+	stagedQuote := last["quote"]
 	if err := lastCertificateError(runtime.Control); err != nil {
 		t.Fatalf("unexpected certificate instruction error: %v", err)
 	}
@@ -603,18 +613,21 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	last = heartbeatBodies[len(heartbeatBodies)-1]
 	mu.Unlock()
 	if after-before != 2 {
-		t.Fatalf("expected activate heartbeat plus refreshed follow-up heartbeat, got %d", after-before)
+		t.Fatalf("expected activate heartbeat plus immediate follow-up heartbeat, got %d", after-before)
 	}
 	reportData, ok = last["report_data"].(map[string]any)
 	if !ok {
 		t.Fatalf("follow-up heartbeat missing report_data after activation: %#v", last)
 	}
-	if reportData["active_cert_sha256"] != newHash {
-		t.Fatalf("activate instruction did not switch active certificate: %#v", reportData)
+	if last["active_cert_sha256"] != newHash {
+		t.Fatalf("activate instruction did not switch active certificate: %#v", last)
 	}
 	accepted, ok = reportData["accepted_cert_sha256"].([]any)
 	if !ok || !jsonArrayContains(accepted, config.ActiveCertSHA256) || !jsonArrayContains(accepted, newHash) {
 		t.Fatalf("activation should preserve old and new accepted hashes: %#v", reportData)
+	}
+	if last["quote"] != stagedQuote {
+		t.Fatalf("activation changed the quote even though report_data was unchanged")
 	}
 
 	pruneJSON, err := json.Marshal(map[string]string{
@@ -653,12 +666,13 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 		t.Fatalf("unexpected certificate instruction error after prune: %v", err)
 	}
 
-	directChainPEM, directLeafDER := selfSignedRuntimeLeaf(t, runtime.Identity, 21, newExpiry.Add(24*time.Hour))
+	directChainPEM, directLeafDER := signedRuntimeLeaf(t, runtime.Identity, rootCertificate, rootKey, 21, newExpiry.Add(24*time.Hour))
 	directHash := identity.CertSHA256Hex(directLeafDER)
-	directJSON, err := json.Marshal(map[string]string{
+	directJSON, err := json.Marshal(map[string]any{
 		"action":          "install_active_chain",
 		"order_id":        "order-3",
 		"cert_chain_pem":  string(directChainPEM),
+		"dns_names":       []string{"gateway.stogas.ai"},
 		"new_cert_sha256": directHash,
 	})
 	if err != nil {
@@ -685,7 +699,7 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 		t.Fatalf("follow-up heartbeat missing report_data after direct install: %#v", last)
 	}
 	accepted, ok = reportData["accepted_cert_sha256"].([]any)
-	if reportData["active_cert_sha256"] != directHash || !ok || len(accepted) != 1 || accepted[0] != directHash {
+	if last["active_cert_sha256"] != directHash || !ok || len(accepted) != 1 || accepted[0] != directHash {
 		t.Fatalf("direct install should activate and prune to only the public certificate hash: %#v", reportData)
 	}
 	if err := lastCertificateError(runtime.Control); err != nil {
@@ -720,6 +734,9 @@ func TestDeriveCandidateNodeIDUsesOnlyBootIdentity(t *testing.T) {
 		Ed25519PublicKey: "ZWRrZXk",
 	}
 	first := deriveCandidateNodeID(material)
+	if first != "80278d7321aa5ea1320e9a566a0f8b5225f0143c4e3de27f6bb0b12ac14faf81" {
+		t.Fatalf("candidate node id differs from the verifier vector: %s", first)
+	}
 	config.ActiveCertSHA256 = strings.Repeat("4", 64)
 	config.AcceptedCertSHA256 = []string{strings.Repeat("4", 64)}
 	if renewed := deriveCandidateNodeID(material); renewed != first {
@@ -754,7 +771,36 @@ func hasReason(reasons []string, want string) bool {
 	return false
 }
 
-func selfSignedRuntimeLeaf(t *testing.T, material *identity.Material, serial int64, notAfter time.Time) ([]byte, []byte) {
+func runtimeTestCertificateAuthority(t *testing.T) (*x509.Certificate, ed25519.PrivateKey, *x509.CertPool) {
+	t.Helper()
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Stogas runtime test root"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(certificate)
+	return certificate, privateKey, roots
+}
+
+func signedRuntimeLeaf(t *testing.T, material *identity.Material, root *x509.Certificate, rootKey ed25519.PrivateKey, serial int64, notAfter time.Time) ([]byte, []byte) {
 	t.Helper()
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(serial),
@@ -766,7 +812,7 @@ func selfSignedRuntimeLeaf(t *testing.T, material *identity.Material, serial int
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &material.TLSPrivateKey.PublicKey, material.TLSPrivateKey)
+	der, err := x509.CreateCertificate(rand.Reader, template, root, &material.TLSPrivateKey.PublicKey, rootKey)
 	if err != nil {
 		t.Fatal(err)
 	}

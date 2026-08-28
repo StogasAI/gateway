@@ -12,7 +12,6 @@ The build authority is:
 - `core/go.mod`, `core/go.sum`, `transports/go.mod`, and `transports/go.sum`;
 - `locks/*.Cargo.lock`;
 - `patches/*.patch`;
-- `snp-launch-policy.json`;
 - `guix/release.scm` and `guix/modules/stogas/release/packages.scm`.
 
 `vendor/` and `transports/vendor/` are ignored caches. They are never source authority.
@@ -29,7 +28,7 @@ The final gateway source input contains only `core/` and `transports/`. Each rel
 - exact patch-directory contents and safe patch paths;
 - the authenticated Guix channel;
 - fixed GitHub Action commits;
-- the launch policy;
+- the grouped `snp-launch-policies.json` file;
 - the offline build and cache boundaries.
 
 ### 2. Hydrate inputs
@@ -66,11 +65,11 @@ Go verifies restored module downloads, regenerates the vendor tree, and records 
    --no-substitutes --substitute-urls='' --no-offload
    ```
 
-6. Copies only the allowed output files and verifies `SHA256SUMS`.
+6. Copies only the allowed output files.
 
 The final Guix derivation fixes `SOURCE_DATE_EPOCH=1`, `LC_ALL=C`, `TZ=UTC`, and umask `022`. It builds static Go binaries with a fixed empty build ID and `-trimpath`, normalizes the root file-system timestamps, writes deterministic cpio and zstd output, builds the UKI, creates four ordered SNP VMSAs, injects the UKI, and measures the result with `igvmmeasure --check-kvm`.
 
-There is no same-store `guix build --check` pass. GitHub builds the tag once. Stogas independently builds the same tag once before publication and requires the complete release manifest to match. The manifest binds the IGVM, launch policy, source identity, tools, inputs, and launch measurement. These two independent builds are the reproducibility check.
+There is no same-store `guix build --check` pass. GitHub builds the tag once. Stogas independently builds the same tag once before publication and requires the complete release manifest to match. The manifest binds the IGVM, grouped launch-policy file, source identity, tools, inputs, and launch measurement. These two independent builds are the reproducibility check.
 
 ## Custom Patches
 
@@ -88,16 +87,15 @@ Both patched Rust packages run their tests inside their Guix builds.
 The local build contains:
 
 - `gateway.igvm`;
-- `gateway-launch-policy.json`;
+- `snp-launch-policies.json`;
 - `release-manifest.json`;
-- `SHA256SUMS`;
 - `LICENSE` and `NOTICE`;
 - `gateway.init`, `gateway.kernel`, and `gateway.initramfs.cpio.zst` for local smoke tests;
 - `kernel-config.txt` for direct audit.
 
-The GitHub release contains `LICENSE`, `NOTICE`, `gateway.igvm`, `gateway-launch-policy.json`, `release-manifest.json`, `SHA256SUMS`, and its build-identity record. The smoke files and full kernel configuration remain in the local counterbuild. Pins, locks, patches, and recipes remain in the tagged source, so the public release does not duplicate them.
+The GitHub release contains `LICENSE`, `NOTICE`, `gateway.igvm`, `snp-launch-policies.json`, `release-manifest.json`, and its build-identity record. The manifest records the exact hash and size of both security files, so one authorized manifest covers them without another checksum file. The smoke files and full kernel configuration remain in the local counterbuild. Pins, locks, patches, and recipes remain in the tagged source, so the public release does not duplicate them.
 
-The release manifest records the Git identity, direct input hashes, compiler and tool identity, public artifact hashes and sizes, SNP policy, four-vCPU count, and launch measurement. The exact Guix closure is recoverable from the fixed channel and derivation; a host-specific store-path listing is not a release artifact.
+The release manifest records the Git identity, direct input hashes, compiler and tool identity, public artifact hashes and sizes, grouped SNP launch policies, four-vCPU count, and launch measurement. The exact Guix closure is recoverable from the fixed channel and derivation; a host-specific store-path listing is not a release artifact.
 
 ## Audit Procedure
 
@@ -105,5 +103,5 @@ The release manifest records the Git identity, direct input hashes, compiler and
 2. Run `node stogas/release/scripts/verify-pins.mjs`.
 3. Review both files under `patches/`.
 4. Run `stogas/release/scripts/build-release.sh <tag> <allowed-output-dir>` on x86_64 Linux.
-5. Check `SHA256SUMS`, `release-manifest.json`, and `gateway-launch-policy.json`.
+5. Check that the IGVM and launch-policy hashes and sizes match `release-manifest.json`.
 6. Compare `release-manifest.json` byte for byte with the other independent build.

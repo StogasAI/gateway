@@ -1,0 +1,35 @@
+name: Gateway Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Go Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version-file: transports/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
+      - name: Test Stogas packages with race detection
+        working-directory: transports
+        run: GOWORK=off go test -race -shuffle=on -count=1 ./...
+      - name: Test deterministic retained core packages
+        working-directory: core
+        run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./mcp/... ./network ./providers/... ./schemas

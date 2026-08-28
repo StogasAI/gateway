@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -235,6 +236,85 @@ func TestTinybirdCircuitSkipsRequestsUntilTheProbeWindow(t *testing.T) {
 	}
 	if diagnostics := client.Diagnostics(); diagnostics.CircuitOpen {
 		t.Fatalf("Tinybird circuit remained open after recovery: %#v", diagnostics)
+	}
+}
+
+func TestTinybirdCircuitAllowsOneRecoveryProbe(t *testing.T) {
+	var requests atomic.Int32
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseProbe) })
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch requests.Add(1) {
+		case 1:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case 2:
+			close(probeStarted)
+			<-releaseProbe
+			_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
+		default:
+			_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
+		}
+	}))
+	defer server.Close()
+	defer release()
+
+	client := newTestTinybirdClient(t, server.URL)
+	client.circuitOpenDuration = time.Hour
+	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
+		t.Fatal("first Tinybird failure did not open the circuit")
+	}
+	client.circuitOpenUntil.Store(time.Now().Add(-time.Second).UnixNano())
+
+	probeResult := make(chan error, 1)
+	go func() {
+		probeResult <- client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
+	}()
+	select {
+	case <-probeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Tinybird recovery probe did not start")
+	}
+	retryResult := make(chan error, 1)
+	go func() {
+		event := testGatewayRequestEvent()
+		event.RequestID = "retry-rescue"
+		retryResult <- client.appendGatewayRequestAfterRetry(context.Background(), event)
+	}()
+	deadline := time.Now().Add(time.Second)
+	for client.Diagnostics().QueueDepth != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if client.Diagnostics().QueueDepth != 1 {
+		t.Fatal("retry rescue did not join the active recovery probe")
+	}
+
+	const followers = 31
+	for range followers {
+		if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); !errors.Is(err, errTinybirdCircuitOpen) {
+			t.Fatalf("concurrent recovery request error = %v, want open circuit", err)
+		}
+	}
+	if diagnostics := client.Diagnostics(); !diagnostics.CircuitOpen || !diagnostics.CircuitProbe {
+		t.Fatalf("Tinybird probe diagnostics = %#v", diagnostics)
+	}
+
+	release()
+	if err := <-probeResult; err != nil {
+		t.Fatalf("Tinybird recovery probe returned error: %v", err)
+	}
+	if err := <-retryResult; err != nil {
+		t.Fatalf("Tinybird retry rescue after recovery returned error: %v", err)
+	}
+	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err != nil {
+		t.Fatalf("Tinybird append after recovery returned error: %v", err)
+	}
+	if got := requests.Load(); got != 4 {
+		t.Fatalf("Tinybird requests = %d, want initial failure, one probe, one retry rescue, and one recovered append", got)
 	}
 }
 

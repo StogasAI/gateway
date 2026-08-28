@@ -429,6 +429,7 @@ func TestLoadFromEnvRejectsRemovedSecretReleaseSwitch(t *testing.T) {
 }
 
 func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testing.T) {
+	preserveConfidentialRuntimeEnv(t)
 	t.Setenv("INFISICAL_SKIP", "true")
 
 	config := Config{
@@ -462,6 +463,7 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 }
 
 func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingRuntimeSecret(t *testing.T) {
+	preserveConfidentialRuntimeEnv(t)
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
 		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
@@ -485,6 +487,7 @@ func TestValidateProviderRuntimeSecretsReadyRequiresAppliedSecrets(t *testing.T)
 }
 
 func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.T) {
+	preserveConfidentialRuntimeEnv(t)
 	t.Setenv("INFISICAL_SKIP", "true")
 
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
@@ -517,6 +520,17 @@ func setRequiredEnvWithoutProviderKeys(t *testing.T) {
 	t.Setenv("INFERENCE_TOKEN_PUBLIC_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/postgres")
 	t.Setenv("DATABASE_SCHEMA", "public")
+}
+
+func preserveConfidentialRuntimeEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range append(
+		append([]string{}, confidentialRuntimeSecretNames...),
+		"TB_GATEWAY_REQUESTS_TOKEN",
+		"TB_HOST_URL",
+	) {
+		t.Setenv(name, os.Getenv(name))
+	}
 }
 
 type fakeSecretLookup map[string]string

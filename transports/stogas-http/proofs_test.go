@@ -6,10 +6,11 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-func TestProofUsesFinalAttemptBYOKAndSequentialProviderTiming(t *testing.T) {
-	firstOutputMS := uint32(40)
+func TestProofUsesFinalAttemptBYOKAndRequestTiming(t *testing.T) {
+	ttftMS := uint32(150)
 	event := &billing.RequestEvent{
 		TotalTimeMS:          180,
+		TTFTMS:               &ttftMS,
 		UpstreamCostUSDAtoms: "100",
 		BilledCostUSDAtoms:   "2",
 		ProviderAttempts: []billing.ProviderAttempt{
@@ -20,11 +21,10 @@ func TestProofUsesFinalAttemptBYOKAndSequentialProviderTiming(t *testing.T) {
 				UpstreamByok: "stogas",
 			},
 			{
-				Provider:              "anthropic",
-				Status:                "success",
-				LatencyMS:             90,
-				ProviderFirstOutputMS: &firstOutputMS,
-				UpstreamByok:          "0198f4cc-6c25-7000-8000-000000000001",
+				Provider:     "anthropic",
+				Status:       "success",
+				LatencyMS:    90,
+				UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001",
 			},
 		},
 	}
@@ -33,8 +33,8 @@ func TestProofUsesFinalAttemptBYOKAndSequentialProviderTiming(t *testing.T) {
 	if timing.TotalMS != 180 || timing.ProviderMS != 120 {
 		t.Fatalf("proof timing = %#v, want total=180 provider=120", timing)
 	}
-	if timing.TimeToFirstOutputMS == nil || *timing.TimeToFirstOutputMS != 70 {
-		t.Fatalf("proof first output = %#v, want 70", timing.TimeToFirstOutputMS)
+	if timing.TTFTMS == nil || *timing.TTFTMS != 150 {
+		t.Fatalf("proof TTFT = %#v, want 150", timing.TTFTMS)
 	}
 	pricing := proofPricing(event)
 	if pricing.TotalCostUSDAtoms != "2" || pricing.BYOKCostUSDAtoms != "100" {

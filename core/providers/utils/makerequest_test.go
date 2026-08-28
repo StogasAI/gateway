@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -45,6 +47,22 @@ func newTestServer(t *testing.T, delay time.Duration, statusCode int) (*fasthttp
 	return client, cleanup
 }
 
+type recordingContextTransport struct {
+	called   bool
+	deadline time.Time
+}
+
+func (t *recordingContextTransport) RoundTrip(*fasthttp.HostClient, *fasthttp.Request, *fasthttp.Response) (bool, error) {
+	return false, errors.New("context-aware request path was not used")
+}
+
+func (t *recordingContextTransport) DoRequestWithContext(ctx context.Context, _ *fasthttp.Request, response *fasthttp.Response) error {
+	t.called = true
+	t.deadline, _ = ctx.Deadline()
+	response.SetStatusCode(fasthttp.StatusOK)
+	return nil
+}
+
 func TestMakeRequestWithContext_SuccessReturnsNoopWait(t *testing.T) {
 	client, cleanup := newTestServer(t, 0, 200)
 	defer cleanup()
@@ -67,6 +85,27 @@ func TestMakeRequestWithContext_SuccessReturnsNoopWait(t *testing.T) {
 	}
 	if resp.StatusCode() != 200 {
 		t.Fatalf("expected status 200, got %d", resp.StatusCode())
+	}
+}
+
+func TestMakeRequestWithContextPassesContextToCustomTransport(t *testing.T) {
+	transport := &recordingContextTransport{}
+	client := &fasthttp.Client{Transport: transport}
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	wantDeadline, _ := ctx.Deadline()
+	_, bifrostErr, wait := MakeRequestWithContext(ctx, client, req, resp)
+	wait()
+	if bifrostErr != nil {
+		t.Fatalf("MakeRequestWithContext returned error: %v", bifrostErr)
+	}
+	if !transport.called || !transport.deadline.Equal(wantDeadline) {
+		t.Fatalf("custom transport context = called:%t deadline:%s, want %s", transport.called, transport.deadline, wantDeadline)
 	}
 }
 
@@ -109,6 +148,92 @@ func TestMakeRequestWithContext_DeadlineExceededReturnsTimeoutError(t *testing.T
 	// Now safe to release
 	fasthttp.ReleaseRequest(req)
 	fasthttp.ReleaseResponse(resp)
+}
+
+func TestDoStreamingRequestHonorsDeadlineBeforeResponseHeaders(t *testing.T) {
+	client, cleanup := newTestServer(t, 500*time.Millisecond, 200)
+	defer cleanup()
+
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+	req.SetRequestURI("http://test/")
+	resp.StreamBody = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	err := DoStreamingRequest(ctx, client, req, resp)
+	if !errors.Is(err, fasthttp.ErrTimeout) {
+		t.Fatalf("DoStreamingRequest error = %v, want fasthttp timeout", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("streaming header deadline took %s, want a bounded wait", elapsed)
+	}
+}
+
+func TestDoStreamingRequestPassesContextToCustomTransport(t *testing.T) {
+	transport := &recordingContextTransport{}
+	client := &fasthttp.Client{Transport: transport}
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	wantDeadline, _ := ctx.Deadline()
+	if err := DoStreamingRequest(ctx, client, req, resp); err != nil {
+		t.Fatalf("DoStreamingRequest returned error: %v", err)
+	}
+	if !transport.called || !transport.deadline.Equal(wantDeadline) {
+		t.Fatalf("custom transport context = called:%t deadline:%s, want %s", transport.called, transport.deadline, wantDeadline)
+	}
+}
+
+func TestDoStreamingRequestKeepsDeadlineOnStreamedBody(t *testing.T) {
+	ln := fasthttputil.NewInmemoryListener()
+	server := &fasthttp.Server{Handler: func(ctx *fasthttp.RequestCtx) {
+		ctx.SetBodyStreamWriter(func(writer *bufio.Writer) {
+			_, _ = writer.WriteString("first\n")
+			_ = writer.Flush()
+			time.Sleep(500 * time.Millisecond)
+			_, _ = writer.WriteString("late\n")
+		})
+	}}
+	go server.Serve(ln) //nolint:errcheck
+	defer ln.Close()
+
+	client := &fasthttp.Client{
+		Dial: func(string) (net.Conn, error) { return ln.Dial() },
+	}
+	req := fasthttp.AcquireRequest()
+	resp := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(req)
+	defer fasthttp.ReleaseResponse(resp)
+	req.SetRequestURI("http://test/")
+	resp.StreamBody = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if err := DoStreamingRequest(ctx, client, req, resp); err != nil {
+		t.Fatalf("DoStreamingRequest returned error before streamed body: %v", err)
+	}
+	reader := bufio.NewReader(resp.BodyStream())
+	if first, err := reader.ReadString('\n'); err != nil || first != "first\n" {
+		t.Fatalf("first streamed body read = %q, %v", first, err)
+	}
+	startedAt := time.Now()
+	_, err := reader.ReadString('\n')
+	var networkError net.Error
+	if !errors.Is(err, fasthttp.ErrTimeout) && !errors.Is(err, fasthttputil.ErrTimeout) &&
+		(!errors.As(err, &networkError) || !networkError.Timeout()) {
+		t.Fatalf("stalled streamed body error = %v, want network timeout", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("streamed body deadline took %s, want a bounded wait", elapsed)
+	}
 }
 
 func TestMakeRequestWithContext_ContextCancelReturnsCancelledError(t *testing.T) {
@@ -261,6 +386,9 @@ func TestNewBifrostTimeoutError(t *testing.T) {
 
 	if !err.IsBifrostError {
 		t.Fatal("expected IsBifrostError to be true")
+	}
+	if err.AllowFallbacks == nil || *err.AllowFallbacks {
+		t.Fatal("ambiguous provider timeouts must block fallbacks")
 	}
 	if err.StatusCode == nil || *err.StatusCode != 504 {
 		t.Fatalf("expected StatusCode 504, got %v", err.StatusCode)

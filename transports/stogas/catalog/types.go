@@ -185,12 +185,13 @@ type compiledRoute struct {
 }
 
 type releaseManifest struct {
-	Schema        string               `json:"schema"`
-	Sequence      uint64               `json:"sequence"`
-	CatalogSchema int                  `json:"catalogSchema"`
-	Runtime       string               `json:"runtime"`
-	Public        string               `json:"public"`
-	Source        catalogReleaseSource `json:"source"`
+	Schema                 string               `json:"schema"`
+	Sequence               uint64               `json:"sequence"`
+	CatalogSchema          int                  `json:"catalogSchema"`
+	MinimumGatewaySequence uint64               `json:"minimumGatewaySequence"`
+	Runtime                string               `json:"runtime"`
+	Public                 string               `json:"public"`
+	Source                 catalogReleaseSource `json:"source"`
 }
 
 type catalogReleaseSource struct {

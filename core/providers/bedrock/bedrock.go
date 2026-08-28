@@ -765,6 +765,26 @@ func signAWSRequest(
 	return nil
 }
 
+const bedrockAWSSignedCredentialsRequired = "bedrock access_key and secret_key are required for AWS-signed operations when value is set"
+
+// prepareBedrockAWSSignedKey prevents a Bedrock bearer API key from silently
+// selecting the host AWS credential chain for operations that require SigV4.
+// An empty value selects IAM authentication and may intentionally use the
+// default credential chain. A key that combines bearer and AWS authentication
+// must provide a complete, resolved static credential pair.
+func prepareBedrockAWSSignedKey(key *schemas.Key) *schemas.BifrostError {
+	if key.BedrockKeyConfig == nil {
+		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{}
+	}
+
+	apiKeyConfigured := key.Value.GetValue() != "" || key.Value.GetRawRef() != ""
+	if apiKeyConfigured && (key.BedrockKeyConfig.AccessKey.GetValue() == "" || key.BedrockKeyConfig.SecretKey.GetValue() == "") {
+		return providerUtils.NewConfigurationError(bedrockAWSSignedCredentialsRequired)
+	}
+
+	return nil
+}
+
 // listModelsByKey performs a list models request to Bedrock's API for a single key.
 // It retrieves all foundation models available in Amazon Bedrock for a specific key.
 // listMantleModels lists models from the Bedrock Mantle (OpenAI-compatible) /v1/models
@@ -2515,6 +2535,10 @@ func (provider *BedrockProvider) FileUpload(ctx *schemas.BifrostContext, key sch
 		s3Prefix = bucketPrefix + s3Prefix
 	}
 
+	if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+		return nil, authErr
+	}
+
 	region := DefaultBedrockRegion
 	if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 		region = key.BedrockKeyConfig.Region.GetValue()
@@ -2649,6 +2673,9 @@ func (provider *BedrockProvider) FileList(ctx *schemas.BifrostContext, keys []sc
 			HasMore: false,
 		}, nil
 	}
+	if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+		return nil, authErr
+	}
 
 	region := DefaultBedrockRegion
 	if key.BedrockKeyConfig != nil {
@@ -2772,6 +2799,11 @@ func (provider *BedrockProvider) FileRetrieve(ctx *schemas.BifrostContext, keys 
 
 	var lastErr *schemas.BifrostError
 	for _, key := range keys {
+		if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+			lastErr = authErr
+			continue
+		}
+
 		region := DefaultBedrockRegion
 		if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 			region = key.BedrockKeyConfig.Region.GetValue()
@@ -2870,6 +2902,11 @@ func (provider *BedrockProvider) FileDelete(ctx *schemas.BifrostContext, keys []
 
 	var lastErr *schemas.BifrostError
 	for _, key := range keys {
+		if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+			lastErr = authErr
+			continue
+		}
+
 		region := DefaultBedrockRegion
 		if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 			region = key.BedrockKeyConfig.Region.GetValue()
@@ -2951,6 +2988,11 @@ func (provider *BedrockProvider) FileContent(ctx *schemas.BifrostContext, keys [
 
 	var lastErr *schemas.BifrostError
 	for _, key := range keys {
+		if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+			lastErr = authErr
+			continue
+		}
+
 		region := DefaultBedrockRegion
 		if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 			region = key.BedrockKeyConfig.Region.GetValue()
@@ -3028,6 +3070,9 @@ func (provider *BedrockProvider) BatchCreate(ctx *schemas.BifrostContext, key sc
 	if err := providerUtils.CheckOperationAllowed(schemas.Bedrock, provider.customProviderConfig, schemas.BatchCreateRequest); err != nil {
 		provider.logger.Error("batch create is not allowed for Bedrock provider", "error", err)
 		return nil, err
+	}
+	if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+		return nil, authErr
 	}
 
 	// Resolve the batch service role
@@ -3275,6 +3320,9 @@ func (provider *BedrockProvider) BatchList(ctx *schemas.BifrostContext, keys []s
 			HasMore: false,
 		}, nil
 	}
+	if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+		return nil, authErr
+	}
 
 	region := DefaultBedrockRegion
 	if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
@@ -3465,6 +3513,11 @@ func (provider *BedrockProvider) BatchRetrieve(ctx *schemas.BifrostContext, keys
 
 	var lastErr *schemas.BifrostError
 	for _, key := range keys {
+		if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+			lastErr = authErr
+			continue
+		}
+
 		region := DefaultBedrockRegion
 		if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 			region = key.BedrockKeyConfig.Region.GetValue()
@@ -3609,6 +3662,11 @@ func (provider *BedrockProvider) BatchCancel(ctx *schemas.BifrostContext, keys [
 
 	var lastErr *schemas.BifrostError
 	for _, key := range keys {
+		if authErr := prepareBedrockAWSSignedKey(&key); authErr != nil {
+			lastErr = authErr
+			continue
+		}
+
 		region := DefaultBedrockRegion
 		if key.BedrockKeyConfig.Region != nil && key.BedrockKeyConfig.Region.GetValue() != "" {
 			region = key.BedrockKeyConfig.Region.GetValue()

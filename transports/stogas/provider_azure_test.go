@@ -309,11 +309,11 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 		Completion:   state.Resolution.OutputTokenLimit(),
 		CacheWrite1h: state.Resolution.InputTokenLimit(),
 	}
-	if err := state.Adapter.FinalPrice(state); err != nil {
-		t.Fatalf("FinalPrice returned error: %v", err)
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms) < 0 {
-		t.Fatalf("Azure Claude hold does not cover cache-write execution: hold=%s final=%s", state.Hold.MaxUSDAtoms, state.FinalCostUSDAtoms)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+		t.Fatalf("Azure Claude hold does not cover cache-write execution: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms)
 	}
 }
 

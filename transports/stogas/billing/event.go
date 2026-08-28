@@ -7,35 +7,40 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
 type EventInput struct {
-	ActualCostUSDAtoms    string
-	Authorization         *Authorization
-	Cancelled             bool
-	ClientStoppedAt       time.Time
-	CatalogDigest         string
-	Error                 *schemas.BifrostError
-	Pricing               EventPricing
-	ProviderAttempts      []ProviderAttemptInput
-	ProviderCompletedAt   time.Time
-	ProviderStartedAt     time.Time
-	ProviderFirstOutputMS *uint32
-	NodeID                string
-	GatewayVersion        string
-	RequestType           string
-	CatalogNodeIDs        []string
-	Response              *schemas.BifrostResponse
-	StartedAt             time.Time
+	UpstreamCostUSDAtoms       string
+	Authorization              *Authorization
+	Cancelled                  bool
+	ClientStoppedAt            time.Time
+	CatalogDigest              string
+	Error                      *schemas.BifrostError
+	Pricing                    EventPricing
+	Plugins                    plugins.Metrics
+	ProviderAttempts           []ProviderAttemptInput
+	ProviderCompletedAt        time.Time
+	ProviderStartedAt          time.Time
+	TTFTMS                     *uint32
+	ProviderOutputObserved     bool
+	CacheReadSavingsUSDAtoms   *string
+	CacheWriteOverheadUSDAtoms *string
+	NodeID                     string
+	GatewayVersion             string
+	RequestType                string
+	CatalogNodeIDs             []string
+	Response                   *schemas.BifrostResponse
+	StartedAt                  time.Time
 }
 
 type ProviderAttemptInput struct {
-	Provider              string
-	StartedAt             time.Time
-	CompletedAt           time.Time
-	ProviderFirstOutputMS *uint32
-	Response              *schemas.BifrostResponse
-	Error                 *schemas.BifrostError
+	Provider       string
+	StartedAt      time.Time
+	CompletedAt    time.Time
+	OutputObserved bool
+	Response       *schemas.BifrostResponse
+	Error          *schemas.BifrostError
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -73,62 +78,82 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		}
 		clientStopMS = &value
 	}
-	actualCost := input.ActualCostUSDAtoms
-	if actualCost == "" {
-		actualCost = ZeroChargeUSDAtoms
+	upstreamCostRaw := input.UpstreamCostUSDAtoms
+	if upstreamCostRaw == "" {
+		upstreamCostRaw = ZeroChargeUSDAtoms
 	}
-	actualCostUSDAtoms, err := ParseUSDAtoms(actualCost)
+	upstreamCostUSDAtoms, err := ParseUSDAtoms(upstreamCostRaw)
 	if err != nil {
 		return RequestEvent{}, fmt.Errorf("invalid upstream cost: %w", err)
 	}
-	firstOutputMS := input.ProviderFirstOutputMS
+	ttftMS := cloneUint32Pointer(input.TTFTMS)
 	if !isStreamingRequest(input.RequestType) {
-		firstOutputMS = nil
+		ttftMS = nil
+	} else if ttftMS != nil && *ttftMS > totalTimeMS {
+		*ttftMS = totalTimeMS
 	}
 	pricing, analyticsQuantities, err := validateEventPricing(input.Pricing)
 	if err != nil {
 		return RequestEvent{}, err
 	}
-	billedCostUSDAtoms := billedRequestCost(authorization, actualCostUSDAtoms)
-	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS, firstOutputMS)
+	billedCostUSDAtoms := calculateBilledCostUSDAtoms(authorization, upstreamCostUSDAtoms)
+	cacheReadSavingsUSDAtoms, err := requestOptionalUSDAtoms(
+		input.CacheReadSavingsUSDAtoms,
+		"cache read savings",
+	)
+	if err != nil {
+		return RequestEvent{}, err
+	}
+	cacheWriteOverheadUSDAtoms, err := requestOptionalUSDAtoms(
+		input.CacheWriteOverheadUSDAtoms,
+		"cache write overhead",
+	)
+	if err != nil {
+		return RequestEvent{}, err
+	}
+	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
 
 	return RequestEvent{
-		RequestID:               authorization.RequestID,
-		CreatedAt:               createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		StogasAPIKeyID:          authorization.KeyID,
-		StogasProvisioningKeyID: authorization.ProvisioningKeyID,
-		StogasUserID:            authorization.UserID,
-		StogasOrganizationID:    authorization.OrganizationID,
-		StogasWorkspaceID:       authorization.WorkspaceID,
-		RequestType:             normalizeRequestType(input.RequestType),
-		Cancelled:               input.Cancelled,
-		ClientStopMS:            clientStopMS,
-		CatalogDigest:           strings.TrimSpace(input.CatalogDigest),
-		ProviderAttempts:        providerAttempts,
-		StogasProcessingSuccess: true,
-		StogasBillingStatus:     settlementStatus(authorization.AuthorizedAmount, authorization.AvailableAfter, billedCostUSDAtoms),
-		NodeID:                  strings.ToLower(strings.TrimSpace(input.NodeID)),
-		TotalTimeMS:             totalTimeMS,
-		UpstreamCostUSDAtoms:    actualCostUSDAtoms.String(),
-		BilledCostUSDAtoms:      billedCostUSDAtoms.String(),
-		Pricing:                 pricing,
-		GatewayVersion:          strings.TrimSpace(input.GatewayVersion),
-		CatalogNodeIDs:          append([]string(nil), input.CatalogNodeIDs...),
-		analyticsQuantities:     analyticsQuantities,
+		RequestID:                  authorization.RequestID,
+		CreatedAt:                  createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		StogasAPIKeyID:             authorization.KeyID,
+		StogasGrantID:              authorization.GrantID,
+		StogasUserID:               authorization.UserID,
+		StogasOrganizationID:       authorization.OrganizationID,
+		StogasWorkspaceID:          authorization.WorkspaceID,
+		RequestType:                normalizeRequestType(input.RequestType),
+		Cancelled:                  input.Cancelled,
+		ClientStopMS:               clientStopMS,
+		CatalogDigest:              strings.TrimSpace(input.CatalogDigest),
+		ProviderAttempts:           providerAttempts,
+		StogasProcessingSuccess:    true,
+		StogasBillingStatus:        calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms),
+		NodeID:                     strings.ToLower(strings.TrimSpace(input.NodeID)),
+		TotalTimeMS:                totalTimeMS,
+		TTFTMS:                     ttftMS,
+		UpstreamCostUSDAtoms:       upstreamCostUSDAtoms.String(),
+		BilledCostUSDAtoms:         billedCostUSDAtoms.String(),
+		CacheReadSavingsUSDAtoms:   cacheReadSavingsUSDAtoms,
+		CacheWriteOverheadUSDAtoms: cacheWriteOverheadUSDAtoms,
+		Pricing:                    pricing,
+		Plugins:                    input.Plugins,
+		GatewayVersion:             strings.TrimSpace(input.GatewayVersion),
+		CatalogNodeIDs:             append([]string(nil), input.CatalogNodeIDs...),
+		analyticsQuantities:        analyticsQuantities,
 	}, nil
 }
 
-func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32, fallbackFirstOutputMS *uint32) []ProviderAttempt {
+func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32) []ProviderAttempt {
 	if len(input.ProviderAttempts) == 0 {
 		return []ProviderAttempt{{
-			Provider:              authorization.ProviderKey,
-			Status:                NormalizeUpstreamStatus(input.Error),
-			StatusCode:            providerStatusCode(input.Error),
-			LatencyMS:             fallbackLatencyMS,
-			ProviderFirstOutputMS: cloneUint32Pointer(fallbackFirstOutputMS),
-			ProviderRequestID:     upstreamRequestID(input.Response),
-			FinishReason:          finishReason(input.Response),
-			UpstreamByok:          normalizedUpstreamByok(authorization),
+			Provider:          authorization.ProviderKey,
+			Status:            providerAttemptStatus(input.Error, input.Response),
+			StatusCode:        providerStatusCode(input.Error),
+			LatencyMS:         fallbackLatencyMS,
+			OutputObserved:    input.ProviderOutputObserved,
+			ProviderRequestID: upstreamRequestID(input.Response),
+			FinishReason:      finishReason(input.Response),
+			UpstreamByok:      normalizedUpstreamByok(authorization),
 		}}
 	}
 
@@ -138,22 +163,57 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 		if provider == "" {
 			provider = authorization.ProviderKey
 		}
-		firstOutputMS := cloneUint32Pointer(observed.ProviderFirstOutputMS)
-		if !isStreamingRequest(input.RequestType) {
-			firstOutputMS = nil
-		}
 		attempts[index] = ProviderAttempt{
-			Provider:              provider,
-			Status:                NormalizeUpstreamStatus(observed.Error),
-			StatusCode:            providerStatusCode(observed.Error),
-			LatencyMS:             uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
-			ProviderFirstOutputMS: firstOutputMS,
-			ProviderRequestID:     upstreamRequestID(observed.Response),
-			FinishReason:          finishReason(observed.Response),
-			UpstreamByok:          normalizedUpstreamByok(authorization),
+			Provider:          provider,
+			Status:            providerAttemptStatus(observed.Error, observed.Response),
+			StatusCode:        providerStatusCode(observed.Error),
+			LatencyMS:         uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
+			OutputObserved:    observed.OutputObserved,
+			ProviderRequestID: upstreamRequestID(observed.Response),
+			FinishReason:      finishReason(observed.Response),
+			UpstreamByok:      normalizedUpstreamByok(authorization),
 		}
 	}
 	return attempts
+}
+
+func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse) string {
+	if bifrostErr != nil {
+		return NormalizeUpstreamStatus(bifrostErr)
+	}
+	if providerResponseContentFiltered(response) {
+		return "content_filter"
+	}
+	return "success"
+}
+
+func providerResponseContentFiltered(response *schemas.BifrostResponse) bool {
+	switch finishReason(response) {
+	case "content_filter", "refusal":
+		return true
+	}
+	var incomplete *schemas.ResponsesResponseIncompleteDetails
+	switch {
+	case response == nil:
+		return false
+	case response.ResponsesResponse != nil:
+		incomplete = response.ResponsesResponse.IncompleteDetails
+	case response.ResponsesStreamResponse != nil && response.ResponsesStreamResponse.Response != nil:
+		incomplete = response.ResponsesStreamResponse.Response.IncompleteDetails
+	}
+	return incomplete != nil && incomplete.Reason == schemas.ResponsesResponseIncompleteReasonContentFilter
+}
+
+func requestOptionalUSDAtoms(raw *string, name string) (*string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	value, err := ParseUSDAtoms(*raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", name, err)
+	}
+	normalized := value.String()
+	return &normalized, nil
 }
 
 func (event RequestEvent) FinalProviderAttempt() (ProviderAttempt, bool) {
@@ -163,21 +223,12 @@ func (event RequestEvent) FinalProviderAttempt() (ProviderAttempt, bool) {
 	return event.ProviderAttempts[len(event.ProviderAttempts)-1], true
 }
 
-func (event RequestEvent) ProviderTiming() (uint32, *uint32) {
-	finalAttempt, ok := event.FinalProviderAttempt()
-	if !ok {
-		return 0, nil
+func (event RequestEvent) ProviderDurationMS() uint32 {
+	var providerDurationMS uint64
+	for _, attempt := range event.ProviderAttempts {
+		providerDurationMS += uint64(attempt.LatencyMS)
 	}
-	var priorLatency uint64
-	for _, attempt := range event.ProviderAttempts[:len(event.ProviderAttempts)-1] {
-		priorLatency += uint64(attempt.LatencyMS)
-	}
-	providerLatencyMS := saturatingUint32(priorLatency + uint64(finalAttempt.LatencyMS))
-	if finalAttempt.ProviderFirstOutputMS == nil {
-		return providerLatencyMS, nil
-	}
-	firstOutputMS := saturatingUint32(priorLatency + uint64(*finalAttempt.ProviderFirstOutputMS))
-	return providerLatencyMS, &firstOutputMS
+	return saturatingUint32(providerDurationMS)
 }
 
 func cloneUint32Pointer(value *uint32) *uint32 {
@@ -195,11 +246,11 @@ func normalizedUpstreamByok(authorization *Authorization) string {
 	return strings.TrimSpace(authorization.UpstreamByok)
 }
 
-func billedRequestCost(authorization *Authorization, upstreamCost *big.Int) *big.Int {
+func calculateBilledCostUSDAtoms(authorization *Authorization, upstreamCostUSDAtoms *big.Int) *big.Int {
 	if normalizedUpstreamByok(authorization) == "stogas" {
-		return new(big.Int).Set(upstreamCost)
+		return new(big.Int).Set(upstreamCostUSDAtoms)
 	}
-	numerator := new(big.Int).Mul(upstreamCost, big.NewInt(2))
+	numerator := new(big.Int).Mul(upstreamCostUSDAtoms, big.NewInt(2))
 	numerator.Add(numerator, big.NewInt(99))
 	return numerator.Quo(numerator, big.NewInt(100))
 }
@@ -208,17 +259,6 @@ func isStreamingRequest(requestType string) bool {
 	switch requestType {
 	case string(schemas.ChatCompletionStreamRequest), string(schemas.ResponsesStreamRequest):
 		return true
-	default:
-		return false
-	}
-}
-
-func ProviderErrorIsInsured(bifrostErr *schemas.BifrostError, managed bool) bool {
-	switch NormalizeUpstreamStatus(bifrostErr) {
-	case "network_error", "provider_error":
-		return true
-	case "authentication_error", "permission_error", "rate_limited", "over_budget":
-		return managed
 	default:
 		return false
 	}
@@ -252,9 +292,25 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr.StatusCode != nil {
 		statusCode = *bifrostErr.StatusCode
 	}
-	text := strings.ToLower(errorText(bifrostErr))
+	identifiers := upstreamErrorIdentifiers(bifrostErr)
 
 	switch {
+	case identifiers.has(schemas.RequestCancelled) || statusCode == 499:
+		return "cancelled"
+	case identifiers.has(schemas.RequestTimedOut, schemas.ProviderConnectionFailed):
+		// Bifrost uses 502 for a provider connection failure. Match its stable
+		// type before HTTP status so transport failures keep their meaning.
+		return "network_error"
+	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed"):
+		return "authentication_error"
+	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied"):
+		return "permission_error"
+	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded"):
+		return "over_budget"
+	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error"):
+		return "rate_limited"
+	case identifiers.has("content_filter", "content_filter_error", "safety_error"):
+		return "content_filter"
 	case statusCode == 401:
 		return "authentication_error"
 	case statusCode == 403:
@@ -271,92 +327,44 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		// The catalog already resolved a known upstream model. A provider 404
 		// therefore means that the selected deployment is unavailable or drifted.
 		return "provider_error"
-	case looksLikeContentFilterError(text):
-		return "content_filter"
 	case statusCode == 400 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
-	case looksLikeRequestConversionError(text):
+	case identifiers.has("invalid_request", "invalid_request_error", "bad_request_error", "request_too_large"):
+		// A generic invalid-request type is useful when status is absent. It must
+		// not hide a more reliable 404, 429, or 5xx status.
 		return "invalid_request"
-	case strings.Contains(text, "rate limit") ||
-		strings.Contains(text, "rate_limit") ||
-		strings.Contains(text, "slow down"):
-		return "rate_limited"
-	case strings.Contains(text, "budget") ||
-		strings.Contains(text, "quota") ||
-		strings.Contains(text, "insufficient_quota"):
-		return "over_budget"
-	case strings.Contains(text, "timeout") ||
-		strings.Contains(text, "timed out") ||
-		strings.Contains(text, "connection") ||
-		strings.Contains(text, "network") ||
-		strings.Contains(text, "eof"):
-		return "network_error"
 	default:
 		return "provider_error"
 	}
 }
 
-func errorText(bifrostErr *schemas.BifrostError) string {
+type errorIdentifierSet map[string]struct{}
+
+func upstreamErrorIdentifiers(bifrostErr *schemas.BifrostError) errorIdentifierSet {
+	identifiers := errorIdentifierSet{}
 	if bifrostErr == nil {
-		return ""
+		return identifiers
 	}
-	parts := []string{}
-	if bifrostErr.Type != nil {
-		parts = append(parts, *bifrostErr.Type)
+	add := func(value *string) {
+		if value == nil {
+			return
+		}
+		identifier := strings.ToLower(strings.TrimSpace(*value))
+		if identifier != "" {
+			identifiers[identifier] = struct{}{}
+		}
 	}
+	add(bifrostErr.Type)
 	if bifrostErr.Error != nil {
-		if bifrostErr.Error.Type != nil {
-			parts = append(parts, *bifrostErr.Error.Type)
-		}
-		if bifrostErr.Error.Code != nil {
-			parts = append(parts, *bifrostErr.Error.Code)
-		}
-		parts = append(parts, bifrostErr.Error.Message)
-		if bifrostErr.Error.Error != nil {
-			parts = append(parts, bifrostErr.Error.Error.Error())
-		}
+		add(bifrostErr.Error.Type)
+		add(bifrostErr.Error.Code)
 	}
-	return strings.Join(parts, " ")
+	return identifiers
 }
 
-func looksLikeRequestConversionError(text string) bool {
-	for _, needle := range []string{
-		"invalid request",
-		"invalid chat completion request",
-		"invalid responses request",
-		"failed to marshal",
-		"failed to unmarshal",
-		"marshal request",
-		"unmarshal request",
-		"request conversion",
-		"convert request",
-		"unsupported request",
-		"could not parse request",
-		"invalid json",
-		"missing required",
-		"required field",
-		"cannot be nil",
-		"request cannot be nil",
-		"bifrost request cannot be nil",
-	} {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeContentFilterError(text string) bool {
-	for _, needle := range []string{
-		"content_filter",
-		"content filter",
-		"safety policy",
-		"safety filter",
-		"safety system refusal",
-		"blocked by safety",
-		"blocked for safety",
-	} {
-		if strings.Contains(text, needle) {
+func (identifiers errorIdentifierSet) has(values ...string) bool {
+	for _, value := range values {
+		if _, ok := identifiers[strings.ToLower(value)]; ok {
 			return true
 		}
 	}

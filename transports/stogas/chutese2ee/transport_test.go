@@ -1,13 +1,16 @@
 package chutese2ee
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"crypto/mlkem"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,6 +253,65 @@ func TestTransportNeverRetriesInvokeAndAppliesCooldown(t *testing.T) {
 	}
 }
 
+func TestTransportNeverRetriesAmbiguousInvokeFailure(t *testing.T) {
+	instanceKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != invocationPath {
+					response.WriteHeader(http.StatusNotFound)
+					return
+				}
+				calls.Add(1)
+				_, _ = io.Copy(io.Discard, request.Body)
+				connection, _, hijackErr := response.(http.Hijacker).Hijack()
+				if hijackErr != nil {
+					t.Errorf("hijack invoke connection: %v", hijackErr)
+					return
+				}
+				_ = connection.Close()
+			}))
+			defer server.Close()
+
+			transport := transportWithPoolForTest(
+				t,
+				server.URL,
+				instanceKey,
+				strings.Repeat("A", 32),
+				strings.Repeat("B", 32),
+				strings.Repeat("C", 32),
+				strings.Repeat("D", 32),
+				strings.Repeat("E", 32),
+			)
+			defer transport.Close()
+			transport.pools.mu.Lock()
+			transport.pools.warming[testChuteID] = true
+			transport.pools.mu.Unlock()
+
+			request := fasthttp.AcquireRequest()
+			response := fasthttp.AcquireResponse()
+			defer fasthttp.ReleaseRequest(request)
+			defer fasthttp.ReleaseResponse(response)
+			request.Header.SetMethod(http.MethodPost)
+			request.Header.Set("Authorization", "Bearer managed-key")
+			request.SetRequestURI("http://provider.invalid/v1/chat/completions")
+			request.SetBodyString(fmt.Sprintf(`{"model":"upstream-model","messages":[],"stream":%t}`, stream))
+
+			retry, roundTripErr := transport.RoundTrip(nil, request, response)
+			if roundTripErr == nil || retry {
+				t.Fatalf("RoundTrip retry=%t error=%v", retry, roundTripErr)
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("ambiguous invoke calls = %d, want 1", calls.Load())
+			}
+		})
+	}
+}
+
 func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) {
 	firstKey, err := mlkem.GenerateKey768()
 	if err != nil {
@@ -306,8 +368,9 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 	defer server.Close()
 
 	transport, err := New(Options{
-		APIKey:     "managed-key",
-		APIBaseURL: server.URL,
+		APIKey:        "managed-key",
+		APIBaseURL:    server.URL,
+		StreamTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},
@@ -374,8 +437,9 @@ func TestTransportTriesEveryDiscoveredInstanceBeforeReturningCapacity(t *testing
 	defer server.Close()
 
 	transport, err := New(Options{
-		APIKey:     "managed-key",
-		APIBaseURL: server.URL,
+		APIKey:        "managed-key",
+		APIBaseURL:    server.URL,
+		StreamTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},
@@ -583,8 +647,9 @@ func TestTransportRejectsUnsupportedWireRequestsBeforeDispatch(t *testing.T) {
 
 func TestCredentialPoolsAreReusedIsolatedAndRetired(t *testing.T) {
 	transport, err := New(Options{
-		APIKey:     "managed-key",
-		APIBaseURL: "http://provider.invalid",
+		APIKey:        "managed-key",
+		APIBaseURL:    "http://provider.invalid",
+		StreamTimeout: 10 * time.Minute,
 		ResolveModel: func(string) (ModelTarget, bool) {
 			return testModelTarget, true
 		},
@@ -695,15 +760,138 @@ func TestAuthorizationIsStrictlyParsed(t *testing.T) {
 }
 
 func TestInvokeClientKeepsRequestWriteTimeoutForStreams(t *testing.T) {
-	client := newInvokeClient(false, true)
+	client := newInvokeClient(false, true, 10*time.Minute)
 	if client.WriteTimeout != 5*time.Minute {
 		t.Fatalf("stream write timeout = %s, want 5m", client.WriteTimeout)
 	}
-	if client.ReadTimeout != 0 {
-		t.Fatalf("stream read timeout = %s, want unlimited", client.ReadTimeout)
+	if client.ReadTimeout != 10*time.Minute {
+		t.Fatalf("stream read timeout = %s, want 10m", client.ReadTimeout)
 	}
 	if client.MaxConnDuration != 0 {
 		t.Fatalf("stream maximum connection duration = %s, want unlimited", client.MaxConnDuration)
+	}
+}
+
+func TestInvokeClientBoundsAStalledStream(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte("first\n"))
+		response.(http.Flusher).Flush()
+		time.Sleep(250 * time.Millisecond)
+		_, _ = response.Write([]byte("late\n"))
+	}))
+	defer server.Close()
+
+	client := newInvokeClient(false, true, 25*time.Millisecond)
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.SetRequestURI(server.URL)
+	response.StreamBody = true
+
+	if err := client.Do(request, response); err != nil {
+		t.Fatalf("stream request returned before response headers: %v", err)
+	}
+	reader := bufio.NewReader(response.BodyStream())
+	if first, err := reader.ReadString('\n'); err != nil || first != "first\n" {
+		t.Fatalf("first stream read = %q, %v", first, err)
+	}
+	_, err := reader.ReadString('\n')
+	var networkError net.Error
+	if !errors.As(err, &networkError) || !networkError.Timeout() {
+		t.Fatalf("stalled stream error = %v, want network timeout", err)
+	}
+}
+
+func TestContextAwareStreamStopsBeforeChutesResponseHeaders(t *testing.T) {
+	instanceKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != invocationPath {
+			response.WriteHeader(http.StatusNotFound)
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	transport := transportWithPoolForTest(t, server.URL, instanceKey, strings.Repeat("D", 32))
+	defer transport.Close()
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
+	request.Header.SetMethod(http.MethodPost)
+	request.Header.Set("Authorization", "Bearer managed-key")
+	request.SetBodyString(`{"model":"upstream-model","stream":true}`)
+	response.StreamBody = true
+
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	err = transport.DoRequestWithContext(ctx, request, response)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stream request error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
+		t.Fatalf("stream response-header deadline took %s, want a bounded wait", elapsed)
+	}
+}
+
+func TestContextAwareUnaryStopsSafeInstanceRetriesAtRouteDeadline(t *testing.T) {
+	instanceKey, err := mlkem.GenerateKey768()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != invocationPath {
+			response.WriteHeader(http.StatusNotFound)
+			return
+		}
+		calls.Add(1)
+		time.Sleep(15 * time.Millisecond)
+		response.WriteHeader(http.StatusTooManyRequests)
+		_, _ = response.Write([]byte(`{"detail":"Instance is at maximum capacity, try again later"}`))
+	}))
+	defer server.Close()
+
+	transport := transportWithPoolForTest(
+		t,
+		server.URL,
+		instanceKey,
+		strings.Repeat("A", 32),
+		strings.Repeat("B", 32),
+		strings.Repeat("C", 32),
+		strings.Repeat("D", 32),
+		strings.Repeat("E", 32),
+	)
+	defer transport.Close()
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
+	request.Header.SetMethod(http.MethodPost)
+	request.Header.Set("Authorization", "Bearer managed-key")
+	request.SetBodyString(`{"model":"upstream-model","stream":false}`)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	startedAt := time.Now()
+	err = transport.DoRequestWithContext(ctx, request, response)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unary request error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
+		t.Fatalf("unary request deadline took %s, want a bounded wait", elapsed)
+	}
+	if got := calls.Load(); got >= maximumInvokeAttempts {
+		t.Fatalf("unary invocations = %d, want route deadline to stop safe retries before %d", got, maximumInvokeAttempts)
 	}
 }
 
@@ -724,8 +912,9 @@ func TestProductionOriginPolicyDoesNotDependOnPostQuantumTLS(t *testing.T) {
 func transportWithPoolForTest(t *testing.T, baseURL string, instanceKey *mlkem.DecapsulationKey768, tickets ...string) *Transport {
 	t.Helper()
 	transport, err := New(Options{
-		APIKey:     "managed-key",
-		APIBaseURL: baseURL,
+		APIKey:        "managed-key",
+		APIBaseURL:    baseURL,
+		StreamTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},

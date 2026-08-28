@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -3888,6 +3889,113 @@ func TestStripEmptyThinkingBlocks(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStripEmptyThinkingBlocksAdversarialLayouts(t *testing.T) {
+	const blockCount = 8192
+
+	tests := []struct {
+		name             string
+		input            string
+		wantMessageCount int
+	}{
+		{
+			name:             "many empty blocks in one message",
+			input:            buildEmptyThinkingBlocksRequest(blockCount, false),
+			wantMessageCount: 1,
+		},
+		{
+			name:             "one empty block in each of many messages",
+			input:            buildEmptyThinkingBlocksRequest(blockCount, true),
+			wantMessageCount: blockCount,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started := time.Now()
+			out, err := StripEmptyThinkingBlocks([]byte(tt.input))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if elapsed := time.Since(started); elapsed > 3*time.Second {
+				t.Fatalf("sanitizer took %s for a %d-byte request", elapsed, len(tt.input))
+			}
+			if !gjson.ValidBytes(out) {
+				t.Fatal("output is not valid JSON")
+			}
+			if !gjson.GetBytes(out, "before.keep").Bool() || gjson.GetBytes(out, "after").String() != "unchanged" {
+				t.Fatal("sanitizer changed fields outside messages[*].content")
+			}
+
+			messages := gjson.GetBytes(out, "messages")
+			gotMessageCount := 0
+			var validationErr string
+			messages.ForEach(func(_, message gjson.Result) bool {
+				gotMessageCount++
+				content := message.Get("content")
+				gotBlockCount := 0
+				content.ForEach(func(_, block gjson.Result) bool {
+					gotBlockCount++
+					if block.Get("type").String() != "text" || block.Get("text").String() != "kept" {
+						validationErr = fmt.Sprintf("message %d retained an unexpected content block: %s", gotMessageCount-1, block.Raw)
+						return false
+					}
+					return true
+				})
+				if validationErr != "" {
+					return false
+				}
+				if gotBlockCount != 1 {
+					validationErr = fmt.Sprintf("message %d content block count: got %d, want 1", gotMessageCount-1, gotBlockCount)
+					return false
+				}
+				return true
+			})
+			if validationErr != "" {
+				t.Fatal(validationErr)
+			}
+			if gotMessageCount != tt.wantMessageCount {
+				t.Fatalf("message count: got %d, want %d", gotMessageCount, tt.wantMessageCount)
+			}
+		})
+	}
+}
+
+func buildEmptyThinkingBlocksRequest(count int, onePerMessage bool) string {
+	const (
+		emptyThinking = `{"type":"thinking","thinking":"","signature":""}`
+		keptText      = `{"type":"text","text":"kept"}`
+	)
+
+	var body strings.Builder
+	body.Grow(count*len(emptyThinking) + 128)
+	body.WriteString(`{"before":{"keep":true},"messages":[`)
+	if onePerMessage {
+		for i := 0; i < count; i++ {
+			if i > 0 {
+				body.WriteByte(',')
+			}
+			body.WriteString(`{"role":"assistant","content":[`)
+			body.WriteString(emptyThinking)
+			body.WriteByte(',')
+			body.WriteString(keptText)
+			body.WriteString(`]}`)
+		}
+	} else {
+		body.WriteString(`{"role":"assistant","content":[`)
+		for i := 0; i < count; i++ {
+			if i > 0 {
+				body.WriteByte(',')
+			}
+			body.WriteString(emptyThinking)
+		}
+		body.WriteByte(',')
+		body.WriteString(keptText)
+		body.WriteString(`]}`)
+	}
+	body.WriteString(`],"after":"unchanged"}`)
+	return body.String()
 }
 
 // TestFastMode_StreamingForwardsSpeed verifies the per-event message_delta

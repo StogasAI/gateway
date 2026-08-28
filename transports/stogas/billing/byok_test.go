@@ -26,22 +26,68 @@ func TestByokDecryptorMatchesControlWebCryptoFormat(t *testing.T) {
 	}
 }
 
-func TestByokCredentialIDMatchesControlWebCryptoFormat(t *testing.T) {
+func TestPassthroughCredentialHashIsStableAndScoped(t *testing.T) {
 	decryptor, err := newByokDecryptor("test-master-secret-0123456789-abcdef")
 	if err != nil {
 		t.Fatalf("newByokDecryptor returned error: %v", err)
 	}
-	id, err := decryptor.credentialID(
+	credentialHash, err := decryptor.credentialHash(
 		"sk-upstream-test-secret",
 		"org-test",
 		"workspace-test",
 		"openai",
 	)
 	if err != nil {
-		t.Fatalf("credentialID returned error: %v", err)
+		t.Fatalf("credentialHash returned error: %v", err)
 	}
-	if id != "8d5010b5-e602-8cd7-8610-10df01f11875" {
-		t.Fatalf("credential ID = %q", id)
+	if len(credentialHash) != 64 {
+		t.Fatalf("credential hash length = %d, want 64", len(credentialHash))
+	}
+	repeated, err := decryptor.credentialHash(
+		"sk-upstream-test-secret",
+		"org-test",
+		"workspace-test",
+		"openai",
+	)
+	if err != nil {
+		t.Fatalf("repeated credentialHash returned error: %v", err)
+	}
+	if repeated != credentialHash {
+		t.Fatal("pass-through hash was not stable across requests")
+	}
+	for _, scope := range []struct {
+		name           string
+		secret         string
+		organizationID string
+		workspaceID    string
+		provider       string
+	}{
+		{name: "secret", secret: "sk-other", organizationID: "org-test", workspaceID: "workspace-test", provider: "openai"},
+		{name: "organization", secret: "sk-upstream-test-secret", organizationID: "org-other", workspaceID: "workspace-test", provider: "openai"},
+		{name: "workspace", secret: "sk-upstream-test-secret", organizationID: "org-test", workspaceID: "workspace-other", provider: "openai"},
+		{name: "provider", secret: "sk-upstream-test-secret", organizationID: "org-test", workspaceID: "workspace-test", provider: "anthropic"},
+	} {
+		other, hashErr := decryptor.credentialHash(
+			scope.secret,
+			scope.organizationID,
+			scope.workspaceID,
+			scope.provider,
+		)
+		if hashErr != nil {
+			t.Fatalf("%s scope credentialHash returned error: %v", scope.name, hashErr)
+		}
+		if other == credentialHash {
+			t.Fatalf("credential hash did not bind %s", scope.name)
+		}
+	}
+	_, err = decryptor.credentialHash(
+		"sk-upstream-test-secret",
+		"",
+		"workspace-test",
+		"openai",
+	)
+	if err == nil {
+		t.Fatal("empty credential hash scope was accepted")
 	}
 }
 

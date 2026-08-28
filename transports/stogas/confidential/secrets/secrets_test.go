@@ -95,6 +95,31 @@ func testBundle() *provision.SecretBundle {
 	}
 }
 
+func TestSecretReleaseAADMatchesCanonicalProtocolBytes(t *testing.T) {
+	bundle := &provision.SecretBundle{
+		NodeID:           "886be0b5fac4ee4d04ae33c441632ce67645706809e958fd31836d5f82e67871",
+		ReportDataSHA512: strings.Repeat("1", 128),
+		Schema:           provision.SecretReleaseSchemaV1,
+	}
+	secret := provision.SecretCiphertext{
+		KeyID:   "a-key",
+		Name:    "A_SECRET",
+		Version: "2026-07-01",
+	}
+	aad, err := secretReleaseAAD(bundle, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"node_id":"886be0b5fac4ee4d04ae33c441632ce67645706809e958fd31836d5f82e67871","report_data_sha512":"` + strings.Repeat("1", 128) + `","schema":"stogas.confidential-secret-release.v1","secret_key_id":"a-key","secret_name":"A_SECRET","secret_version":"2026-07-01"}`
+	if string(aad) != want {
+		t.Fatalf("secret release AAD mismatch:\n got: %q\nwant: %q", aad, want)
+	}
+	sum := sha256.Sum256(aad)
+	if got := hex.EncodeToString(sum[:]); got != "ccb442c4b9d1eba4eb49f600c60fa5af1602c8b61b948a4564f3f55cf51d19d8" {
+		t.Fatalf("secret release AAD SHA-256 = %s", got)
+	}
+}
+
 func encryptForTest(material *identity.Material, bundle *provision.SecretBundle, name string, plaintext string) (provision.SecretCiphertext, error) {
 	secret := provision.SecretCiphertext{
 		KeyID:   "gateway-" + strings.ToLower(name),

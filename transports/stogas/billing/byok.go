@@ -6,12 +6,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 
-	"github.com/google/uuid"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -20,15 +20,15 @@ const (
 	byokHKDFSalt          = "stogas:byok:encryption:salt:v1"
 	byokHKDFInfo          = "stogas:byok:encryption:key:v1"
 	byokAADPrefix         = "stogas:byok:key:v1"
-	byokIdentityHKDFSalt  = "stogas:byok:identity:salt:v1"
-	byokIdentityHKDFInfo  = "stogas:byok:identity:key:v1"
-	byokIdentityPrefix    = "stogas:byok:credential:v1"
+	byokHashHKDFSalt      = "stogas:byok:credential-hash:salt:v1"
+	byokHashHKDFInfo      = "stogas:byok:credential-hash:key:v1"
+	byokHashPrefix        = "stogas:byok:credential-hash:v1"
 	byokMinimumSecretSize = 32
 )
 
 type byokDecryptor struct {
-	aead        cipher.AEAD
-	identityKey [32]byte
+	aead    cipher.AEAD
+	hashKey [32]byte
 }
 
 func newByokDecryptor(masterSecret string) (*byokDecryptor, error) {
@@ -48,13 +48,13 @@ func newByokDecryptor(masterSecret string) (*byokDecryptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize BYOK authenticated encryption: %w", err)
 	}
-	identityKey, err := deriveByokKey(masterSecret, byokIdentityHKDFSalt, byokIdentityHKDFInfo)
+	hashKey, err := deriveByokKey(masterSecret, byokHashHKDFSalt, byokHashHKDFInfo)
 	if err != nil {
-		return nil, fmt.Errorf("derive BYOK identity key: %w", err)
+		return nil, fmt.Errorf("derive BYOK credential hash key: %w", err)
 	}
 	decryptor := &byokDecryptor{aead: aead}
-	copy(decryptor.identityKey[:], identityKey)
-	clear(identityKey)
+	copy(decryptor.hashKey[:], hashKey)
+	clear(hashKey)
 	return decryptor, nil
 }
 
@@ -68,31 +68,30 @@ func deriveByokKey(masterSecret string, salt string, info string) ([]byte, error
 	return key, nil
 }
 
-func (d *byokDecryptor) credentialID(
+// credentialHash returns the stable organization, workspace, and provider-scoped
+// identifier used by holds, policies, and analytics. The plaintext never leaves
+// the gateway process.
+func (d *byokDecryptor) credentialHash(
 	plaintext string,
 	organizationID string,
 	workspaceID string,
 	provider string,
 ) (string, error) {
-	if d == nil || d.identityKey == [32]byte{} || plaintext == "" {
-		return "", errors.New("BYOK identity derivation is unavailable")
+	if d == nil || d.hashKey == [32]byte{} || plaintext == "" || organizationID == "" || workspaceID == "" || provider == "" {
+		return "", errors.New("BYOK credential hash is unavailable")
 	}
 	message := strings.Join([]string{
-		byokIdentityPrefix,
+		byokHashPrefix,
 		organizationID,
 		workspaceID,
 		provider,
 		plaintext,
 	}, "\x00")
-	mac := hmac.New(sha256.New, d.identityKey[:])
+	mac := hmac.New(sha256.New, d.hashKey[:])
 	_, _ = mac.Write([]byte(message))
 	digest := mac.Sum(nil)
 	defer clear(digest)
-	var raw [16]byte
-	copy(raw[:], digest[:16])
-	raw[6] = (raw[6] & 0x0f) | 0x80
-	raw[8] = (raw[8] & 0x3f) | 0x80
-	return uuid.UUID(raw).String(), nil
+	return hex.EncodeToString(digest), nil
 }
 
 func (d *byokDecryptor) decrypt(

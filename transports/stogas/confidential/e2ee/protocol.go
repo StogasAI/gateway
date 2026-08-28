@@ -25,11 +25,10 @@ import (
 
 const (
 	Version                  = 1
-	EnvelopeField            = "stogas_e2ee"
-	ResponseContentType      = "application/vnd.stogas.e2ee"
+	ContentType              = "application/vnd.stogas.e2ee"
 	ContentEncryptionKeySize = 32
 	KeyIDSize                = sha256.Size
-	MaxRecipients            = 64
+	MaxEnvelopeSize          = 128 * 1024 * 1024
 	MaxAcceptanceWindow      = 2 * time.Minute
 	ClockSkewAllowance       = 30 * time.Second
 	MaxAPIKeySize            = 4 * 1024
@@ -42,10 +41,10 @@ const (
 	maxResponseRecordSize = 64 * 1024
 	maxResponseMetadata   = 64 * 1024
 	responseNonceSize     = 12
+	maxV1Recipients       = 1<<16 - 1
 )
 
 var (
-	ErrNotEnvelope       = errors.New("not a Stogas E2EE envelope")
 	ErrInvalidEnvelope   = errors.New("invalid Stogas E2EE envelope")
 	ErrRecipientNotFound = errors.New("E2EE request does not include this node")
 
@@ -67,21 +66,18 @@ type Envelope struct {
 	Ciphertext   string      `json:"ciphertext"`
 }
 
-type outerEnvelope struct {
-	E2EE Envelope `json:"stogas_e2ee"`
-}
-
 type InnerRequest struct {
-	APIKey             string              `json:"api_key"`
-	Accept             string              `json:"accept,omitempty"`
-	ExtraFields        bool                `json:"extra_fields,omitempty"`
-	UpstreamCredential *UpstreamCredential `json:"upstream_credential,omitempty"`
-	Body               json.RawMessage     `json:"body"`
+	APIKey              string               `json:"api_key"`
+	Accept              string               `json:"accept,omitempty"`
+	Receipt             string               `json:"receipt,omitempty"`
+	UpstreamCredentials *UpstreamCredentials `json:"upstream_credentials,omitempty"`
+	Body                json.RawMessage      `json:"body"`
 }
 
-type UpstreamCredential struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"api_key"`
+type UpstreamCredentials struct {
+	Anthropic string `json:"anthropic,omitempty"`
+	Chutes    string `json:"chutes,omitempty"`
+	OpenAI    string `json:"openai,omitempty"`
 }
 
 type PublicRecipient struct {
@@ -97,7 +93,7 @@ type Session struct {
 
 // TranscriptSHA256 is the channel binding for the exact E2EE request. It
 // commits to the protocol version, method, path, request ID, bundle hash,
-// acceptance deadline, and complete ordered recipient set.
+// acceptance deadline, and complete ordered recipient key-ID set.
 func (s *Session) TranscriptSHA256() string {
 	if s == nil {
 		return ""
@@ -121,24 +117,9 @@ func KeyID(publicKey []byte) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func Inspect(body []byte) (bool, error) {
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(body, &object); err != nil {
-		return false, nil
-	}
-	_, ok := object[EnvelopeField]
-	if !ok {
-		return false, nil
-	}
-	if err := rejectDuplicateJSONKeys(body); err != nil {
-		return true, fmt.Errorf("%w: %v", ErrInvalidEnvelope, err)
-	}
-	return ok, nil
-}
-
 func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bundleSHA256 string, recipients []PublicRecipient, inner InnerRequest) ([]byte, *Session, error) {
-	if len(recipients) == 0 || len(recipients) > MaxRecipients {
-		return nil, nil, fmt.Errorf("%w: recipient count must be between 1 and %d", ErrInvalidEnvelope, MaxRecipients)
+	if err := validateRecipientCount(len(recipients)); err != nil {
+		return nil, nil, err
 	}
 	if err := validateInnerRequest(inner); err != nil {
 		return nil, nil, err
@@ -225,35 +206,36 @@ func SealRequestWithID(method, path, requestID string, expiresAt time.Time, bund
 			WrappedKey:      base64.RawURLEncoding.EncodeToString(wrapped),
 		})
 	}
-	encoded, err := json.Marshal(outerEnvelope{E2EE: envelope})
+	encoded, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, nil, fmt.Errorf("encode E2EE envelope: %w", err)
+	}
+	if err := validateEnvelopeSize(len(encoded)); err != nil {
+		return nil, nil, err
 	}
 	return encoded, newSession(requestID, transcriptHash, responseAEAD), nil
 }
 
 func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, now time.Time) (*InnerRequest, *Session, error) {
-	encrypted, err := Inspect(body)
-	if err != nil {
+	if err := validateEnvelopeSize(len(body)); err != nil {
 		return nil, nil, err
 	}
-	if !encrypted {
-		return nil, nil, ErrNotEnvelope
+	if err := rejectDuplicateJSONKeys(body); err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidEnvelope, err)
 	}
 	if privateKey == nil || privateKey.KEM().ID() != hpke.MLKEM768X25519().ID() {
 		return nil, nil, fmt.Errorf("%w: X-Wing node key is unavailable", ErrInvalidEnvelope)
 	}
 
-	var outer outerEnvelope
+	var envelope Envelope
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&outer); err != nil {
+	if err := decoder.Decode(&envelope); err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidEnvelope, err)
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", ErrInvalidEnvelope, err)
 	}
-	envelope := outer.E2EE
 	if envelope.Version != Version {
 		return nil, nil, fmt.Errorf("%w: unsupported version", ErrInvalidEnvelope)
 	}
@@ -272,8 +254,8 @@ func OpenRequest(body []byte, method, path string, privateKey hpke.PrivateKey, n
 	if expiresAt.After(now.Add(MaxAcceptanceWindow + ClockSkewAllowance)) {
 		return nil, nil, fmt.Errorf("%w: request acceptance deadline is too far in the future", ErrInvalidEnvelope)
 	}
-	if len(envelope.Recipients) == 0 || len(envelope.Recipients) > MaxRecipients {
-		return nil, nil, fmt.Errorf("%w: recipient count must be between 1 and %d", ErrInvalidEnvelope, MaxRecipients)
+	if err := validateRecipientCount(len(envelope.Recipients)); err != nil {
+		return nil, nil, err
 	}
 
 	keyIDs := make([][KeyIDSize]byte, len(envelope.Recipients))
@@ -363,16 +345,18 @@ func validateInnerRequest(inner InnerRequest) error {
 	if inner.Accept != "" && !validHTTPFieldValue(inner.Accept, false) {
 		return fmt.Errorf("%w: inner request metadata contains invalid characters", ErrInvalidEnvelope)
 	}
-	if inner.UpstreamCredential != nil {
-		credential := inner.UpstreamCredential
-		credential.Provider = strings.ToLower(strings.TrimSpace(credential.Provider))
-		switch credential.Provider {
-		case "anthropic", "chutes", "openai":
-		default:
-			return fmt.Errorf("%w: upstream credential provider is invalid", ErrInvalidEnvelope)
+	if inner.Receipt != "" && inner.Receipt != "v1" {
+		return fmt.Errorf("%w: inner receipt must be v1", ErrInvalidEnvelope)
+	}
+	if inner.UpstreamCredentials != nil {
+		credentials := inner.UpstreamCredentials
+		if credentials.Anthropic == "" && credentials.Chutes == "" && credentials.OpenAI == "" {
+			return fmt.Errorf("%w: upstream_credentials must not be empty", ErrInvalidEnvelope)
 		}
-		if !validCredential(credential.APIKey) {
-			return fmt.Errorf("%w: upstream credential api_key is invalid", ErrInvalidEnvelope)
+		for _, credential := range []string{credentials.Anthropic, credentials.Chutes, credentials.OpenAI} {
+			if credential != "" && !validCredential(credential) {
+				return fmt.Errorf("%w: upstream credential is invalid", ErrInvalidEnvelope)
+			}
 		}
 	}
 	if len(inner.Body) == 0 || !json.Valid(inner.Body) {
@@ -452,6 +436,9 @@ func decodeFixedBase64(value string, size int) ([]byte, error) {
 }
 
 func buildTranscript(method, path, requestID string, bundleHash [sha256.Size]byte, expiresAtMS int64, keyIDs [][KeyIDSize]byte) ([]byte, error) {
+	if err := validateRecipientCount(len(keyIDs)); err != nil {
+		return nil, err
+	}
 	id, err := parseCanonicalUUID(requestID)
 	if err != nil {
 		return nil, err
@@ -478,6 +465,23 @@ func buildTranscript(method, path, requestID string, bundleHash [sha256.Size]byt
 	return out.Bytes(), nil
 }
 
+func validateRecipientCount(count int) error {
+	if count == 0 {
+		return fmt.Errorf("%w: at least one recipient is required", ErrInvalidEnvelope)
+	}
+	if count > maxV1Recipients {
+		return fmt.Errorf("%w: recipient count exceeds the E2EE v1 wire limit of %d", ErrInvalidEnvelope, maxV1Recipients)
+	}
+	return nil
+}
+
+func validateEnvelopeSize(size int) error {
+	if size > MaxEnvelopeSize {
+		return fmt.Errorf("%w: encoded envelope exceeds the protocol limit", ErrInvalidEnvelope)
+	}
+	return nil
+}
+
 func parseCanonicalUUID(value string) (uuid.UUID, error) {
 	id, err := uuid.Parse(value)
 	if err != nil || id.String() != value {
@@ -501,18 +505,22 @@ func deriveAEADs(contentKey []byte, transcriptHash [sha256.Size]byte) (cipher.AE
 		return nil, requestNonce, nil, fmt.Errorf("%w: invalid content key length", ErrInvalidEnvelope)
 	}
 	prk := hkdf.Extract(sha256.New, contentKey, transcriptHash[:])
+	defer clear(prk)
 	requestKey, err := expand(prk, "stogas.e2ee.request.key.v1", 32)
 	if err != nil {
 		return nil, requestNonce, nil, err
 	}
+	defer clear(requestKey)
 	requestNonceBytes, err := expand(prk, "stogas.e2ee.request.nonce.v1", len(requestNonce))
 	if err != nil {
 		return nil, requestNonce, nil, err
 	}
+	defer clear(requestNonceBytes)
 	responseKey, err := expand(prk, "stogas.e2ee.response.key.v1", 32)
 	if err != nil {
 		return nil, requestNonce, nil, err
 	}
+	defer clear(responseKey)
 	copy(requestNonce[:], requestNonceBytes)
 	requestAEAD, err := newAESGCM(requestKey)
 	if err != nil {

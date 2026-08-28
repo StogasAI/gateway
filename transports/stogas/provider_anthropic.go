@@ -713,7 +713,7 @@ func estimateAnthropicWireHold(state *State) error {
 		return err
 	}
 	state.Hold.Meters = meters
-	state.Hold.MaxUSDAtoms = total
+	state.Hold.EstimatedUpstreamCostUSDAtoms = total
 	return nil
 }
 
@@ -733,16 +733,45 @@ func (a AnthropicAdapter) IngestResponse(state *State, resp *schemas.BifrostResp
 	return nil
 }
 
-func (AnthropicAdapter) FinalPrice(state *State) error {
+func (AnthropicAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	price, err := baseFinalPrice(state, anthropicFinalMeters(anthropicAdapterContextForFinalPrice(state)))
+	// Anthropic documents usage on a streaming-classifier refusal as
+	// informational when the provider emitted no output. Keep this provider
+	// billing rule separate from public delivery telemetry: a disconnected
+	// caller can miss output that Anthropic still generated and billed.
+	if anthropicResponseRefused(state.Response) && !state.providerOutputEmitted {
+		state.FinalMeters = nil
+		state.UpstreamCostUSDAtoms = billing.ZeroChargeUSDAtoms
+		return nil
+	}
+	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, anthropicFinalMeters(anthropicAdapterContextForUpstreamCost(state)))
 	if err != nil {
 		return err
 	}
-	state.FinalCostUSDAtoms = price
+	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
 	return nil
+}
+
+func anthropicResponseRefused(response *schemas.BifrostResponse) bool {
+	if response == nil {
+		return false
+	}
+	if response.ChatResponse != nil {
+		for _, choice := range response.ChatResponse.Choices {
+			if choice.FinishReason != nil && *choice.FinishReason == "refusal" {
+				return true
+			}
+		}
+		return false
+	}
+	if response.ResponsesResponse != nil {
+		return response.ResponsesResponse.StopReason != nil && *response.ResponsesResponse.StopReason == "refusal"
+	}
+	return response.ResponsesStreamResponse != nil && response.ResponsesStreamResponse.Response != nil &&
+		response.ResponsesStreamResponse.Response.StopReason != nil &&
+		*response.ResponsesStreamResponse.Response.StopReason == "refusal"
 }
 
 func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
@@ -800,7 +829,7 @@ func anthropicAdapterContextForState(state *State) anthropicAdapterContext {
 	return anthropicAdapterContextForDeployment(state, pricingDeploymentForState(state))
 }
 
-func anthropicAdapterContextForFinalPrice(state *State) anthropicAdapterContext {
+func anthropicAdapterContextForUpstreamCost(state *State) anthropicAdapterContext {
 	req := anthropicAdapterContextForDeployment(state, pricingDeploymentForState(state))
 	req.ActualWebSearchCalls = actualWebSearchCalls(state)
 	return req

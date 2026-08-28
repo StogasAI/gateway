@@ -17,11 +17,6 @@ const (
 	QuicknetChainHash    = "52db9ba70e0cc0f6eaf7803dd07447a1f5477735fd3f661792ba94600c84e971"
 )
 
-type CatalogIdentity struct {
-	Digest   string `json:"digest"`
-	Sequence uint64 `json:"sequence"`
-}
-
 type Drand struct {
 	Network    string `json:"network"`
 	ChainHash  string `json:"chain_hash"`
@@ -31,14 +26,12 @@ type Drand struct {
 }
 
 type Payload struct {
-	Schema             string          `json:"schema"`
-	Catalog            CatalogIdentity `json:"catalog"`
-	TLSSPKISHA256      string          `json:"tls_spki_sha256"`
-	ActiveCertSHA256   string          `json:"active_cert_sha256"`
-	AcceptedCertSHA256 []string        `json:"accepted_cert_sha256"`
-	HPKEPublicKey      string          `json:"hpke_public_key"`
-	Ed25519PublicKey   string          `json:"ed25519_public_key"`
-	Drand              Drand           `json:"drand"`
+	Schema             string   `json:"schema"`
+	TLSSPKISHA256      string   `json:"tls_spki_sha256"`
+	AcceptedCertSHA256 []string `json:"accepted_cert_sha256"`
+	HPKEPublicKey      string   `json:"hpke_public_key"`
+	Ed25519PublicKey   string   `json:"ed25519_public_key"`
+	Drand              Drand    `json:"drand"`
 }
 
 func NewPayload(input Payload) (Payload, error) {
@@ -52,7 +45,7 @@ func NewPayload(input Payload) (Payload, error) {
 	if payload.Drand.ChainHash == "" {
 		payload.Drand.ChainHash = QuicknetChainHash
 	}
-	payload.AcceptedCertSHA256 = append([]string(nil), payload.AcceptedCertSHA256...)
+	payload.AcceptedCertSHA256 = append([]string{}, payload.AcceptedCertSHA256...)
 	sort.Strings(payload.AcceptedCertSHA256)
 	if err := payload.Validate(); err != nil {
 		return Payload{}, err
@@ -64,17 +57,8 @@ func (p Payload) Validate() error {
 	if p.Schema != SchemaV1 {
 		return fmt.Errorf("unsupported report data schema %q", p.Schema)
 	}
-	if !strings.HasPrefix(p.Catalog.Digest, "sha256:") ||
-		len(p.Catalog.Digest) != len("sha256:")+64 ||
-		strings.ToLower(p.Catalog.Digest) != p.Catalog.Digest {
-		return errors.New("catalog digest must be sha256-prefixed lowercase hex")
-	}
-	if digest, err := hex.DecodeString(strings.TrimPrefix(p.Catalog.Digest, "sha256:")); err != nil || len(digest) != 32 {
-		return errors.New("catalog digest must be sha256-prefixed lowercase hex")
-	}
 	for name, value := range map[string]string{
 		"tls_spki_sha256":    p.TLSSPKISHA256,
-		"active_cert_sha256": p.ActiveCertSHA256,
 		"hpke_public_key":    p.HPKEPublicKey,
 		"ed25519_public_key": p.Ed25519PublicKey,
 	} {
@@ -82,18 +66,15 @@ func (p Payload) Validate() error {
 			return fmt.Errorf("%s is required", name)
 		}
 	}
-	if len(p.AcceptedCertSHA256) == 0 {
-		return errors.New("accepted_cert_sha256 is required")
+	if len(p.AcceptedCertSHA256) > 2 {
+		return errors.New("accepted_cert_sha256 cannot contain more than two hashes")
 	}
-	if !contains(p.AcceptedCertSHA256, p.ActiveCertSHA256) {
-		return errors.New("active_cert_sha256 must be included in accepted_cert_sha256")
-	}
+	seenCertificateHashes := make(map[string]struct{}, len(p.AcceptedCertSHA256))
 	for _, value := range []struct {
 		name string
 		hex  string
 	}{
 		{"tls_spki_sha256", p.TLSSPKISHA256},
-		{"active_cert_sha256", p.ActiveCertSHA256},
 		{"drand.chain_hash", p.Drand.ChainHash},
 		{"drand.randomness", p.Drand.Randomness},
 		{"drand.signature", p.Drand.Signature},
@@ -106,6 +87,10 @@ func (p Payload) Validate() error {
 		if err := validateHex("accepted_cert_sha256", certHash); err != nil {
 			return err
 		}
+		if _, exists := seenCertificateHashes[certHash]; exists {
+			return errors.New("accepted_cert_sha256 cannot contain duplicates")
+		}
+		seenCertificateHashes[certHash] = struct{}{}
 	}
 	if _, err := base64.RawURLEncoding.DecodeString(p.HPKEPublicKey); err != nil {
 		return fmt.Errorf("hpke_public_key must be base64url: %w", err)
@@ -147,15 +132,6 @@ func HashHex(p Payload) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(sum[:]), nil
-}
-
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func validateHex(name string, value string) error {

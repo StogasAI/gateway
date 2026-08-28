@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"encoding/json"
-	"errors"
 	"strconv"
 	"strings"
 
@@ -17,7 +16,7 @@ type Adapter interface {
 	ValidateRawResponsesToolType(*State, map[string]json.RawMessage) error
 	IngestChunk(*State, *schemas.BifrostStreamChunk) error
 	IngestResponse(*State, *schemas.BifrostResponse, *schemas.BifrostError) error
-	FinalPrice(*State) error
+	CalculateUpstreamCost(*State) error
 	SanitizeResponse(*State)
 }
 
@@ -136,6 +135,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		}
 		observeActualExecution(state, response.ServiceTier, response.Speed, response.InferenceGeo)
 		observeActualResponseModel(state, response.Model)
+		state.observeChatProviderOutputEmitted(response)
 		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
@@ -164,6 +164,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed, streamResp.Response.InferenceGeo)
 			observeActualResponseModel(state, streamResp.Response.Model)
 		}
+		state.observeResponsesProviderOutputEmitted(streamResp)
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
 	}
 	return nil
@@ -189,6 +190,9 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 		return err
 	}
 	observeBifrostActualExecution(state, resp)
+	if bifrostErr == nil {
+		state.observeProviderResponseOutputEmitted(resp)
+	}
 	if bifrostErr != nil {
 		if billedUsage := bifrostErr.ExtraFields.BilledUsage; billedUsage != nil {
 			if err := ingestReportedUsage(state, billedUsage); err != nil {
@@ -201,14 +205,12 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 }
 
 func ingestReportedUsage(state *State, usage *schemas.BifrostLLMUsage) error {
-	if err := validateReportedUsage(state, usage); err != nil {
-		if state != nil && (errors.Is(err, ErrProviderUsageMalformed) || errors.Is(err, ErrProviderUsageExceedsHold)) {
-			state.Signals = nil
-		}
-		return err
-	}
+	metadataErr := validateReportedUsageMetadata(state, usage)
 	setSignalsFromUsage(state, usage)
-	return nil
+	if metadataErr == nil {
+		observeUsageExecution(state, usage)
+	}
+	return metadataErr
 }
 
 func unambiguousResponseUsage(resp *schemas.BifrostResponse) *schemas.BifrostLLMUsage {
@@ -304,15 +306,15 @@ func validateBifrostActualExecution(state *State, resp *schemas.BifrostResponse)
 	}
 }
 
-func (DefaultAdapter) FinalPrice(state *State) error {
+func (DefaultAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	price, err := baseFinalPrice(state, nil)
+	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, nil)
 	if err != nil {
 		return err
 	}
-	state.FinalCostUSDAtoms = price
+	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
 	return nil
 }
 

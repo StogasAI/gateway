@@ -17,6 +17,9 @@ func TestProofSignsTheCompleteResolvedExchange(t *testing.T) {
 		Metadata:     testMetadata(),
 	}
 	payload := PayloadFor(input)
+	if !ValidMetadata(input.Metadata) {
+		t.Fatal("expected canonical proof metadata")
+	}
 	signature, err := Sign(privateKey, payload)
 	if err != nil {
 		t.Fatal(err)
@@ -28,9 +31,10 @@ func TestProofSignsTheCompleteResolvedExchange(t *testing.T) {
 	for name, mutate := range map[string]func(*Input){
 		"request":    func(value *Input) { value.RequestBody = []byte(`{"model":"other"}`) },
 		"response":   func(value *Input) { value.ResponseBody = []byte(`{"id":"resp_2"}`) },
+		"created at": func(value *Input) { value.Metadata.CreatedAt = "2026-08-24T12:34:56.790Z" },
 		"node":       func(value *Input) { value.Metadata.NodeID = strings.Repeat("4", 64) },
 		"catalog":    func(value *Input) { value.Metadata.Catalog.Digest = "sha256:" + strings.Repeat("c", 64) },
-		"catalog ID": func(value *Input) { value.Metadata.Catalog.NodeIDs[2] = "deployment:other" },
+		"catalog ID": func(value *Input) { value.Metadata.Catalog.SelectionIDs[2] = "deployment:other" },
 		"pricing":    func(value *Input) { value.Metadata.Pricing.TotalCostUSDAtoms = "2" },
 		"timing":     func(value *Input) { value.Metadata.Timing.TotalMS++ },
 		"transcript": func(value *Input) { value.Metadata.E2EETranscriptSHA256 = strings.Repeat("d", 64) },
@@ -41,6 +45,30 @@ func TestProofSignsTheCompleteResolvedExchange(t *testing.T) {
 		if VerifyInput(publicKey, tampered, signature) {
 			t.Fatalf("tampered %s should not verify", name)
 		}
+	}
+
+	for name, mutate := range map[string]func(*Metadata){
+		"noncanonical timestamp": func(value *Metadata) { value.CreatedAt = "2026-08-24T12:34:56Z" },
+		"noncanonical atoms": func(value *Metadata) {
+			value.Pricing.TotalCostUSDAtoms = "020"
+		},
+		"TTFT after request end": func(value *Metadata) {
+			ttft := value.Timing.TotalMS + 1
+			value.Timing.TTFTMS = &ttft
+		},
+	} {
+		invalid := cloneMetadata(input.Metadata)
+		mutate(&invalid)
+		if ValidMetadata(invalid) {
+			t.Fatalf("%s metadata was accepted", name)
+		}
+	}
+
+	requestScopedTTFT := cloneMetadata(input.Metadata)
+	ttft := requestScopedTTFT.Timing.ProviderMS + 1
+	requestScopedTTFT.Timing.TTFTMS = &ttft
+	if !ValidMetadata(requestScopedTTFT) {
+		t.Fatal("TTFT may exceed provider duration when gateway work or retries occur first")
 	}
 }
 
@@ -83,14 +111,15 @@ func TestStreamingProofUsesExactSentChunksAndFinalMetadata(t *testing.T) {
 }
 
 func testMetadata() Metadata {
-	firstOutput := uint32(4)
+	ttft := uint32(4)
 	return Metadata{
 		RequestID: "req_1",
+		CreatedAt: "2026-08-24T12:34:56.789Z",
 		NodeID:    strings.Repeat("3", 64),
 		Catalog: Catalog{
-			Digest:   "sha256:" + strings.Repeat("a", 64),
-			Sequence: 7,
-			NodeIDs:  testCatalogNodeIDs(),
+			Digest:       "sha256:" + strings.Repeat("a", 64),
+			Sequence:     7,
+			SelectionIDs: testCatalogSelectionIDs(),
 		},
 		Pricing: Pricing{
 			Meters: map[string]Meter{
@@ -104,15 +133,15 @@ func testMetadata() Metadata {
 			TotalCostUSDAtoms: "20",
 		},
 		Timing: Timing{
-			TotalMS:             20,
-			ProviderMS:          15,
-			TimeToFirstOutputMS: &firstOutput,
+			TotalMS:    20,
+			ProviderMS: 15,
+			TTFTMS:     &ttft,
 		},
 		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	}
 }
 
-func testCatalogNodeIDs() []string {
+func testCatalogSelectionIDs() []string {
 	return []string{
 		"author:openai",
 		"model:gpt-5.5",

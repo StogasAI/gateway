@@ -1589,28 +1589,81 @@ func StripEmptyThinkingBlocks(jsonBody []byte) ([]byte, error) {
 	if !messagesResult.Exists() || !messagesResult.IsArray() {
 		return jsonBody, nil
 	}
-	var err error
-	for mi, msg := range messagesResult.Array() {
+
+	// Copy each source range at most once. Deleting each matching block through
+	// sjson would rescan and reallocate the attacker-controlled body per block.
+	var (
+		rebuilt      bytes.Buffer
+		sourceOffset int
+		stripErr     error
+		changed      bool
+		messageIndex int
+	)
+	messagesResult.ForEach(func(_, msg gjson.Result) bool {
+		mi := messageIndex
+		messageIndex++
+
 		contentResult := msg.Get("content")
 		if !contentResult.Exists() || !contentResult.IsArray() {
-			continue
+			return true
 		}
-		var toStrip []int
-		for ci, block := range contentResult.Array() {
-			if block.Get("type").String() == "thinking" &&
-				(block.Get("thinking").String() == "" || block.Get("signature").String() == "") {
-				toStrip = append(toStrip, ci)
+
+		shouldStrip := false
+		contentResult.ForEach(func(_, block gjson.Result) bool {
+			if isEmptyThinkingBlock(block) {
+				shouldStrip = true
+				return false
 			}
+			return true
+		})
+		if !shouldStrip {
+			return true
 		}
-		for i := len(toStrip) - 1; i >= 0; i-- {
-			path := fmt.Sprintf("messages.%d.content.%d", mi, toStrip[i])
-			jsonBody, err = providerUtils.DeleteJSONField(jsonBody, path)
-			if err != nil {
-				return nil, fmt.Errorf("failed to strip empty thinking block at %s: %w", path, err)
+
+		start := contentResult.Index
+		if start < sourceOffset || start > len(jsonBody) || len(contentResult.Raw) > len(jsonBody)-start ||
+			!bytes.Equal(jsonBody[start:start+len(contentResult.Raw)], []byte(contentResult.Raw)) {
+			stripErr = fmt.Errorf("failed to locate messages.%d.content in raw request body", mi)
+			return false
+		}
+		end := start + len(contentResult.Raw)
+
+		if !changed {
+			rebuilt.Grow(len(jsonBody))
+			changed = true
+		}
+		rebuilt.Write(jsonBody[sourceOffset:start])
+		rebuilt.WriteByte('[')
+		wroteBlock := false
+		contentResult.ForEach(func(_, block gjson.Result) bool {
+			if isEmptyThinkingBlock(block) {
+				return true
 			}
-		}
+			if wroteBlock {
+				rebuilt.WriteByte(',')
+			}
+			rebuilt.WriteString(block.Raw)
+			wroteBlock = true
+			return true
+		})
+		rebuilt.WriteByte(']')
+		sourceOffset = end
+		return true
+	})
+	if stripErr != nil {
+		return nil, stripErr
 	}
-	return jsonBody, nil
+	if !changed {
+		return jsonBody, nil
+	}
+
+	rebuilt.Write(jsonBody[sourceOffset:])
+	return rebuilt.Bytes(), nil
+}
+
+func isEmptyThinkingBlock(block gjson.Result) bool {
+	return block.Get("type").String() == "thinking" &&
+		(block.Get("thinking").String() == "" || block.Get("signature").String() == "")
 }
 
 // StripAutoInjectableTools removes code_execution tools from the raw JSON body's tools array

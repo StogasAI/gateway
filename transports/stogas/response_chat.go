@@ -344,7 +344,8 @@ func validProviderFinishReason(state *State, value string) bool {
 	case string(schemas.BifrostFinishReasonStop),
 		string(schemas.BifrostFinishReasonLength),
 		string(schemas.BifrostFinishReasonToolCalls),
-		"content_filter":
+		"content_filter",
+		"refusal":
 		return true
 	case "compaction":
 		return state != nil && state.Resolution != nil &&
