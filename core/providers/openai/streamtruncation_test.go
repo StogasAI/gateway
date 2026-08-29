@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -279,6 +280,83 @@ func TestChatStreamCleanDoneUnaffected(t *testing.T) {
 		final.BifrostChatResponse.Choices[0].FinishReason == nil ||
 		*final.BifrostChatResponse.Choices[0].FinishReason != stop {
 		t.Errorf("expected the final chunk to carry finish_reason %q, got %+v", stop, final.BifrostChatResponse.Choices)
+	}
+}
+
+// Chutes reports reasoning_tokens at the usage top level. The shared
+// OpenAI-compatible parser must preserve that extension through both unary and
+// cumulative streaming responses so the Stogas billing hook sees the same usage
+// the provider returned.
+func TestChatCompletionPreservesTopLevelReasoningUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-usage","object":"chat.completion","created":1,"model":"repro-model","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":15,"total_tokens":35,"reasoning_tokens":9,"prompt_tokens_details":{"cached_tokens":8}}}`))
+	}))
+	defer server.Close()
+
+	response, bifrostErr := newStreamTestProvider(server.URL).ChatCompletion(
+		newStreamTestContext(),
+		testKey(),
+		basicChatRequest(),
+	)
+	if bifrostErr != nil {
+		t.Fatalf("chat completion failed: %v", bifrostErr)
+	}
+	assertTopLevelReasoningUsage(t, response.Usage)
+}
+
+func TestChatStreamPreservesTopLevelReasoningUsageAcrossCumulativeChunks(t *testing.T) {
+	stop := "stop"
+	usage := func(prompt, completion, total, reasoning, cached int) string {
+		return fmt.Sprintf(
+			`data: {"id":"chatcmpl-usage","object":"chat.completion.chunk","created":1,"model":"repro-model","choices":[],"usage":{"prompt_tokens":%d,"completion_tokens":%d,"total_tokens":%d,"reasoning_tokens":%d,"prompt_tokens_details":{"cached_tokens":%d}}}`+"\n\n",
+			prompt,
+			completion,
+			total,
+			reasoning,
+			cached,
+		)
+	}
+	server := completeSSEServer(
+		t,
+		chatChunk("hello", nil)+
+			usage(10, 6, 16, 4, 3)+
+			usage(20, 15, 35, 9, 8)+
+			chatChunk("", &stop)+
+			"data: [DONE]\n\n",
+	)
+	defer server.Close()
+
+	stream, bifrostErr := newStreamTestProvider(server.URL).ChatCompletionStream(
+		newStreamTestContext(),
+		passthroughPostHook,
+		nil,
+		testKey(),
+		basicChatRequest(),
+	)
+	if bifrostErr != nil {
+		t.Fatalf("stream setup failed: %v", bifrostErr)
+	}
+	chunks := collectChunks(t, stream)
+	if len(chunks) == 0 || chunks[len(chunks)-1].BifrostChatResponse == nil {
+		t.Fatalf("stream returned no final chat response: %+v", chunks)
+	}
+	assertTopLevelReasoningUsage(t, chunks[len(chunks)-1].BifrostChatResponse.Usage)
+}
+
+func assertTopLevelReasoningUsage(t *testing.T, usage *schemas.BifrostLLMUsage) {
+	t.Helper()
+	if usage == nil {
+		t.Fatal("response omitted usage")
+	}
+	if usage.PromptTokens != 20 || usage.CompletionTokens != 15 || usage.TotalTokens != 35 {
+		t.Fatalf("token usage = %+v, want prompt=20 completion=15 total=35", usage)
+	}
+	if usage.ReasoningTokens != 9 {
+		t.Fatalf("top-level reasoning tokens = %d, want 9", usage.ReasoningTokens)
+	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedReadTokens != 8 {
+		t.Fatalf("cached input usage = %+v, want 8", usage.PromptTokensDetails)
 	}
 }
 
