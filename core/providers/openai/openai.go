@@ -683,6 +683,9 @@ func HandleOpenAITextCompletionStreaming(
 				if response.Usage.TotalTokens > usage.TotalTokens {
 					usage.TotalTokens = response.Usage.TotalTokens
 				}
+				if response.Usage.ReasoningTokens > usage.ReasoningTokens {
+					usage.ReasoningTokens = response.Usage.ReasoningTokens
+				}
 				calculatedTotal := usage.PromptTokens + usage.CompletionTokens
 				if calculatedTotal > usage.TotalTokens {
 					usage.TotalTokens = calculatedTotal
@@ -1268,6 +1271,9 @@ func HandleOpenAIChatCompletionStreaming(
 					if response.Usage.TotalTokens > usage.TotalTokens {
 						usage.TotalTokens = response.Usage.TotalTokens
 					}
+					if response.Usage.ReasoningTokens > usage.ReasoningTokens {
+						usage.ReasoningTokens = response.Usage.ReasoningTokens
+					}
 					if calculatedTotal := usage.PromptTokens + usage.CompletionTokens; calculatedTotal > usage.TotalTokens {
 						usage.TotalTokens = calculatedTotal
 					}
@@ -1350,6 +1356,9 @@ func HandleOpenAIChatCompletionStreaming(
 					}
 					if response.Usage.TotalTokens > usage.TotalTokens {
 						usage.TotalTokens = response.Usage.TotalTokens
+					}
+					if response.Usage.ReasoningTokens > usage.ReasoningTokens {
+						usage.ReasoningTokens = response.Usage.ReasoningTokens
 					}
 					calculatedTotal := usage.PromptTokens + usage.CompletionTokens
 					if calculatedTotal > usage.TotalTokens {

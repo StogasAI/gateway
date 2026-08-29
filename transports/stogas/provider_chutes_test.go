@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -528,21 +531,7 @@ func TestChutesModelCapabilitiesGateStructuredOutput(t *testing.T) {
 }
 
 func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
-	models := []string{
-		"qwen3-32b",
-		"qwen3.5-397b-a17b",
-		"gemma-4-31b",
-		"glm-5.1",
-		"deepseek-v3.2",
-		"glm-5.2",
-		"qwen3.6-27b",
-		"kimi-k2.6",
-		"mistral-nemo-instruct-2407",
-		"kimi-k3",
-		"nemotron-3-nano-omni-30b",
-		"deepseek-v4-flash-0731",
-	}
-	for _, model := range models {
+	for _, deployment := range currentChutesDeployments(t) {
 		for _, limit := range []struct {
 			name  string
 			field string
@@ -550,8 +539,11 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 			{name: "provider default"},
 			{name: "explicit limit", field: `,"max_tokens":32`},
 		} {
-			t.Run(model+"/"+limit.name, func(t *testing.T) {
-				state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hold coverage"}]%s}`, model, limit.field))
+			t.Run(deployment.ID+"/"+limit.name, func(t *testing.T) {
+				state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hold coverage"}]%s}`, deployment.ModelID, limit.field))
+				if state.Resolution.Deployment.ID != deployment.ID {
+					t.Fatalf("resolved deployment = %q, want %q", state.Resolution.Deployment.ID, deployment.ID)
+				}
 				if err := state.Adapter.ValidateRequest(state); err != nil {
 					t.Fatalf("ValidateRequest returned error: %v", err)
 				}
@@ -580,6 +572,72 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 	}
 }
 
+func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
+	for _, deployment := range currentChutesDeployments(t) {
+		t.Run(deployment.ID, func(t *testing.T) {
+			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"pricing"}]}`, deployment.ModelID))
+			if state.Resolution.Deployment.ID != deployment.ID {
+				t.Fatalf("resolved deployment = %q, want %q", state.Resolution.Deployment.ID, deployment.ID)
+			}
+			state.Signals = &StandardSignals{
+				Cached:     billing.MillionTokens,
+				Completion: 2 * billing.MillionTokens,
+				Prompt:     2 * billing.MillionTokens,
+				Reasoning:  billing.MillionTokens,
+			}
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+
+			pricing := billing.WithReasoningTokenFallback(deployment.Pricing)
+			wantTotal := new(big.Int)
+			for _, meterKey := range []string{
+				billing.MeterInputTokens,
+				billing.MeterCachedInputTokens,
+				billing.MeterOutputTokens,
+				billing.MeterReasoningTokens,
+			} {
+				rateKey, rate, ok := billing.PricingRate(pricing, meterKey, billing.TokenRateLongContext)
+				if !ok || rate.Sign() <= 0 {
+					t.Fatalf("catalog omitted positive %s pricing: %#v", meterKey, deployment.Pricing)
+				}
+				meter := findMeterEstimate(state.FinalMeters, meterKey)
+				if meter == nil {
+					t.Fatalf("final pricing omitted %s meter: %#v", meterKey, state.FinalMeters)
+				}
+				if meter.Quantity != fmt.Sprint(billing.MillionTokens) || meter.RateKey != rateKey ||
+					meter.RateUSDAtoms != rate.String() || meter.AmountUSDAtoms != rate.String() {
+					t.Fatalf("%s meter = %#v, want one million tokens at %s/%s", meterKey, meter, rateKey, rate)
+				}
+				wantTotal.Add(wantTotal, rate)
+			}
+			if state.UpstreamCostUSDAtoms != wantTotal.String() {
+				t.Fatalf("upstream cost = %s, want exact meter sum %s", state.UpstreamCostUSDAtoms, wantTotal)
+			}
+
+			_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateLongContext)
+			_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateLongContext)
+			if new(big.Int).Mul(new(big.Int).Set(cachedRate), big.NewInt(10)).Cmp(inputRate) != 0 {
+				t.Fatalf("cached input rate %s is not 10%% of input rate %s", cachedRate, inputRate)
+			}
+		})
+	}
+}
+
+func TestChutesMissingUsageProducesNoCharge(t *testing.T) {
+	for _, deployment := range currentChutesDeployments(t) {
+		t.Run(deployment.ID, func(t *testing.T) {
+			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"missing usage"}]}`, deployment.ModelID))
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 0 {
+				t.Fatalf("missing usage was charged: cost=%s meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+			}
+		})
+	}
+}
+
 func TestChutesTopLevelReasoningUsageIsAccounted(t *testing.T) {
 	var usage schemas.BifrostLLMUsage
 	if err := sonic.UnmarshalString(`{"prompt_tokens":5,"completion_tokens":10,"total_tokens":15,"reasoning_tokens":7}`, &usage); err != nil {
@@ -600,6 +658,42 @@ func TestChutesTopLevelReasoningUsageIsAccounted(t *testing.T) {
 	if signals == nil || signals.Reasoning != 3 {
 		t.Fatalf("standard nested reasoning usage must take precedence: %#v", signals)
 	}
+}
+
+type chutesCatalogDeployment struct {
+	ID       string
+	ModelID  string          `json:"modelId"`
+	Pricing  billing.Pricing `json:"pricing"`
+	RouteIDs []string        `json:"routeIds"`
+}
+
+func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
+	t.Helper()
+	publicCatalog, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("active public catalog is unavailable")
+	}
+	var deployments map[string]json.RawMessage
+	if err := sonic.Unmarshal(publicCatalog.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode public deployments: %v", err)
+	}
+	result := make([]chutesCatalogDeployment, 0)
+	for id, raw := range deployments {
+		var deployment chutesCatalogDeployment
+		if err := sonic.Unmarshal(raw, &deployment); err != nil {
+			t.Fatalf("decode deployment %s: %v", id, err)
+		}
+		if !slices.Contains(deployment.RouteIDs, "chutes-chat-completions") {
+			continue
+		}
+		deployment.ID = id
+		result = append(result, deployment)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	if len(result) == 0 {
+		t.Fatal("catalog contains no Chutes deployments")
+	}
+	return result
 }
 
 func resolveChutesState(t *testing.T, body string) *State {
