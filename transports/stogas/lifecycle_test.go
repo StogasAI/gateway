@@ -53,11 +53,11 @@ func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorizat
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ int, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ int, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
@@ -123,7 +123,7 @@ func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, authorizer.errors[0])
+	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, authorizer.errors[0])
 	if err != nil {
 		t.Fatalf("authorizeWithFreshRequestID returned error: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
 
-	authorization, err := authorizeWithFreshRequestID(ctx, &fakeBillingAuthorizer{}, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, "", nil, billing.GatewayRequestLifetime, expectedErr)
+	authorization, err := authorizeWithFreshRequestID(ctx, &fakeBillingAuthorizer{}, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, expectedErr)
 	if authorization != nil {
 		t.Fatalf("expected no authorization for non-conflict error")
 	}
@@ -161,6 +161,26 @@ func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.
 	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
 	if currentRequestID != initialRequestID {
 		t.Fatalf("expected request ID to remain unchanged, got %q", currentRequestID)
+	}
+}
+
+func TestAuthorizeWithFreshRequestIDDoesNotTurnAStalePolicyIntoARequestRetry(t *testing.T) {
+	initialRequestID := "11111111-1111-1111-1111-111111111111"
+	expectedErr := &statusError{err: billing.ErrAPIKeyConfigStale, statusCode: 503}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
+	authorizer := &fakeBillingAuthorizer{}
+
+	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, expectedErr)
+	if authorization != nil || !errors.Is(err, billing.ErrAPIKeyConfigStale) {
+		t.Fatalf("authorization=%#v error=%v, want the stale configuration error", authorization, err)
+	}
+	if len(authorizer.attempts) != 0 {
+		t.Fatalf("stale policy caused request-ID retries: %#v", authorizer.attempts)
+	}
+	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
+	if currentRequestID != initialRequestID {
+		t.Fatalf("stale policy changed request ID to %q", currentRequestID)
 	}
 }
 
@@ -1486,6 +1506,147 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 	}
 }
 
+func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) {
+	type matrixDeployment struct {
+		Pricing catalog.Pricing `json:"pricing"`
+	}
+	public, ok := catalog.PublicCatalogPayload()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	deployments := map[string]matrixDeployment{}
+	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+		t.Fatalf("decode catalog deployments: %v", err)
+	}
+
+	tokenMeters := []string{
+		billing.MeterInputTokens,
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWriteInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens,
+		billing.MeterOutputTokens,
+		billing.MeterReasoningTokens,
+	}
+	deploymentIDs := make([]string, 0, len(deployments))
+	for deploymentID := range deployments {
+		deploymentIDs = append(deploymentIDs, deploymentID)
+	}
+	slices.Sort(deploymentIDs)
+
+	for _, deploymentID := range deploymentIDs {
+		pricing := effectivePricingForDeployment(catalog.Deployment{Pricing: deployments[deploymentID].Pricing})
+		for _, meterKey := range tokenMeters {
+			standardRateKey, _, standardPriced := billing.PricingRate(
+				pricing,
+				meterKey,
+				billing.TokenRateStandard,
+			)
+			if !standardPriced {
+				continue
+			}
+			modes := []struct {
+				name          string
+				promptContext int
+				rateMode      billing.TokenRateMode
+			}{
+				{name: "standard", promptContext: 1, rateMode: billing.TokenRateStandard},
+			}
+			longRateKey, _, longPriced := billing.PricingRate(
+				pricing,
+				meterKey,
+				billing.TokenRateLongContext,
+			)
+			if longPriced && longRateKey != standardRateKey {
+				modes = append(modes, struct {
+					name          string
+					promptContext int
+					rateMode      billing.TokenRateMode
+				}{
+					name:          "long-context",
+					promptContext: billing.LongContextThresholdTokens + 1,
+					rateMode:      billing.TokenRateLongContext,
+				})
+			}
+
+			for _, mode := range modes {
+				t.Run(deploymentID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
+					quantity := 1
+					signals := &StandardSignals{}
+					switch meterKey {
+					case billing.MeterInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+					case billing.MeterCachedInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.Cached = quantity
+					case billing.MeterCacheWriteInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite = quantity
+					case billing.MeterCacheWrite5mInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite5m = quantity
+					case billing.MeterCacheWrite1hInputTokens:
+						quantity = mode.promptContext
+						signals.Prompt = quantity
+						signals.CacheWrite1h = quantity
+					case billing.MeterOutputTokens:
+						if mode.rateMode == billing.TokenRateLongContext {
+							signals.Prompt = mode.promptContext
+						}
+						signals.Completion = quantity
+					case billing.MeterReasoningTokens:
+						if mode.rateMode == billing.TokenRateLongContext {
+							signals.Prompt = mode.promptContext
+						}
+						signals.Completion = quantity
+						signals.Reasoning = quantity
+					default:
+						t.Fatalf("unhandled token meter %s", meterKey)
+					}
+
+					state := &State{
+						Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployments[deploymentID].Pricing}},
+						Signals:    signals,
+					}
+					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+					}
+					meter := findMeterEstimate(state.FinalMeters, meterKey)
+					if meter == nil {
+						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
+					}
+					rateKey, rate, priced := billing.PricingRate(pricing, meterKey, mode.rateMode)
+					if !priced {
+						t.Fatalf("effective pricing omitted %s/%s", meterKey, mode.name)
+					}
+					wantAmount, err := calculatedMeterAmount(rateKey, big.NewInt(int64(quantity)), rate)
+					if err != nil {
+						t.Fatalf("calculate expected meter amount: %v", err)
+					}
+					if meter.Quantity != strconv.Itoa(quantity) ||
+						meter.RateKey != rateKey ||
+						meter.RateUSDAtoms != rate.String() ||
+						meter.AmountUSDAtoms != wantAmount.String() {
+						t.Fatalf(
+							"%s meter = %#v, want quantity=%d rate=%s/%s amount=%s",
+							meterKey,
+							meter,
+							quantity,
+							rateKey,
+							rate,
+							wantAmount,
+						)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
@@ -1826,6 +1987,7 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 }
 
 func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
+	now := time.Now().UTC()
 	state := &State{
 		Authorization: &billing.Authorization{
 			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
@@ -1837,7 +1999,9 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 81},
 		}},
-		StartedAt: time.Now().UTC().Add(-100 * time.Millisecond),
+		ProviderCompletedAt: now.Add(-9 * time.Millisecond),
+		ProviderStartedAt:   now.Add(-90 * time.Millisecond),
+		StartedAt:           now.Add(-100 * time.Millisecond),
 	}
 	authorizer := &fakeBillingAuthorizer{}
 	FinalizeState(context.Background(), authorizer, state)

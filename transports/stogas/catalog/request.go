@@ -12,6 +12,7 @@ import (
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
@@ -58,9 +59,11 @@ func PublicError(err error) APIError {
 }
 
 type RequestInput struct {
-	Body   []byte
-	Method string
-	Path   string
+	Body            []byte
+	Method          string
+	Path            string
+	Policy          *policy.Config
+	RedactionPolicy *redaction.Policy
 }
 
 type ResolvedRequest struct {
@@ -103,6 +106,19 @@ type requestWithSettableExtraParams interface {
 }
 
 func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
+	resolved, err := ResolveRequests(input)
+	if err != nil {
+		return nil, err
+	}
+	if len(resolved) == 0 {
+		return nil, ErrModelUnavailable
+	}
+	return resolved[0], nil
+}
+
+// ResolveRequests returns the bounded, ordered pre-dispatch candidates for one
+// client request. It never calls a provider and never performs a retry.
+func ResolveRequests(input RequestInput) ([]*ResolvedRequest, error) {
 	activationMu.RLock()
 	defer activationMu.RUnlock()
 
@@ -116,9 +132,9 @@ func ResolveRequest(input RequestInput) (*ResolvedRequest, error) {
 
 	switch route {
 	case RouteChat:
-		return resolveChatRequest(input.Body, route)
+		return resolveChatRequests(input.Body, route, input.Policy, input.RedactionPolicy)
 	case RouteResponses:
-		return resolveResponsesRequest(input.Body, route)
+		return resolveResponsesRequests(input.Body, route, input.Policy, input.RedactionPolicy)
 	default:
 		return nil, ErrUnsupportedRequest
 	}
@@ -495,7 +511,18 @@ func rawStringListValue(raw json.RawMessage) ([]string, bool) {
 	return values, true
 }
 
-func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
+func copyRawRequestData(source map[string]json.RawMessage) map[string]json.RawMessage {
+	if source == nil {
+		return nil
+	}
+	copy := make(map[string]json.RawMessage, len(source))
+	for name, value := range source {
+		copy[name] = value
+	}
+	return copy
+}
+
+func resolveChatRequests(body []byte, route Route, config *policy.Config, redactionPolicy *redaction.Policy) ([]*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
@@ -507,7 +534,7 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	if _, err := normalizeChatStopString(rawData); err != nil {
 		return nil, err
 	}
-	redactor := redaction.New()
+	redactor := redaction.NewWithPolicy(redactionPolicy)
 	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceChat); err != nil {
 		return nil, piiRedactionError(err)
 	}
@@ -521,41 +548,85 @@ func resolveChatRequest(body []byte, route Route) (*ResolvedRequest, error) {
 	if err := validateRawReasoningParameters(rawData, chatRawReasoningFields, true, false); err != nil {
 		return nil, err
 	}
-	var request openaiprovider.OpenAIChatRequest
-	if err := sonic.Unmarshal(body, &request); err != nil {
+	var base openaiprovider.OpenAIChatRequest
+	if err := sonic.Unmarshal(body, &base); err != nil {
 		return nil, ErrInvalidJSON
 	}
-	requestType := schemas.ChatCompletionRequest
-	if request.IsStreamingRequested() {
-		requestType = schemas.ChatCompletionStreamRequest
+	providerPreference, err := requestProviderPreference(rawData)
+	if err != nil {
+		return nil, err
 	}
-	resolution, err := resolveOpenAIRequest(
-		body,
-		rawData,
+	selections, err := routingSelectionsForRequest(
 		route,
-		requestType,
-		request.Model,
-		&request.Model,
-		&request.ChatParameters.ServiceTier,
-		func() { applyChatAliases(&request) },
-		func() *int { return request.ChatParameters.MaxCompletionTokens },
-		&request,
+		base.Model,
+		base.ChatParameters.ServiceTier,
+		policyRoutingEnabled(config),
 	)
 	if err != nil {
 		return nil, err
 	}
-	if request.ChatParameters.Reasoning != nil {
-		if err := normalizeChatReasoning(
-			request.ChatParameters.Reasoning,
-			resolution.Deployment,
-			resolution.outputTokenLimit,
-		); err != nil {
-			return nil, err
+	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
+	if len(selections) == 0 {
+		return nil, ErrModelUnavailable
+	}
+	selections, preferredProvider, hasPreferredProvider, err := applyProviderRoutingPreference(
+		selections,
+		providerPreference,
+		base.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	shortCircuit := !policyRoutingEnabled(config) && hasPreferredProvider
+	resolved := make([]*ResolvedRequest, 0, len(selections))
+	var firstErr error
+	for index := range selections {
+		candidateRaw := copyRawRequestData(rawData)
+		var request openaiprovider.OpenAIChatRequest
+		if err := sonic.Unmarshal(body, &request); err != nil {
+			return nil, ErrInvalidJSON
+		}
+		requestType := schemas.ChatCompletionRequest
+		if request.IsStreamingRequested() {
+			requestType = schemas.ChatCompletionStreamRequest
+		}
+		resolution, resolveErr := resolveOpenAIRequest(
+			body,
+			candidateRaw,
+			route,
+			requestType,
+			request.Model,
+			&request.Model,
+			&request.ChatParameters.ServiceTier,
+			func() { applyChatAliases(&request) },
+			func() *int { return request.ChatParameters.MaxCompletionTokens },
+			&request,
+			selections[index],
+		)
+		if resolveErr == nil && request.ChatParameters.Reasoning != nil {
+			resolveErr = normalizeChatReasoning(
+				request.ChatParameters.Reasoning,
+				resolution.Deployment,
+				resolution.outputTokenLimit,
+			)
+		}
+		if resolveErr != nil {
+			if firstErr == nil {
+				firstErr = resolveErr
+			}
+			continue
+		}
+		resolution.chat = &request
+		resolution.redactionSummary = redactor.Summary()
+		resolved = append(resolved, resolution)
+		if shortCircuit && resolution.Provider == preferredProvider {
+			return resolved, nil
 		}
 	}
-	resolution.chat = &request
-	resolution.redactionSummary = redactor.Summary()
-	return resolution, nil
+	if len(resolved) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return finalizeRoutingCandidates(resolved, config, providerPreference, base.Model)
 }
 
 func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
@@ -579,7 +650,7 @@ func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
 	return true, nil
 }
 
-func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error) {
+func resolveResponsesRequests(body []byte, route Route, config *policy.Config, redactionPolicy *redaction.Policy) ([]*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
 	if err != nil {
 		return nil, err
@@ -588,7 +659,7 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 		return nil, err
 	}
 	dropNoOpCompatibilityFields(rawData, route)
-	redactor := redaction.New()
+	redactor := redaction.NewWithPolicy(redactionPolicy)
 	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceResponses); err != nil {
 		return nil, piiRedactionError(err)
 	}
@@ -599,62 +670,106 @@ func resolveResponsesRequest(body []byte, route Route) (*ResolvedRequest, error)
 	if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
 		return nil, err
 	}
-	var request openaiprovider.OpenAIResponsesRequest
-	if err := sonic.Unmarshal(body, &request); err != nil {
+	var base openaiprovider.OpenAIResponsesRequest
+	if err := sonic.Unmarshal(body, &base); err != nil {
 		return nil, ErrInvalidJSON
 	}
-	requestType := schemas.ResponsesRequest
-	if request.IsStreamingRequested() {
-		requestType = schemas.ResponsesStreamRequest
+	providerPreference, err := requestProviderPreference(rawData)
+	if err != nil {
+		return nil, err
 	}
-	resolution, err := resolveOpenAIRequest(
-		body,
-		rawData,
+	selections, err := routingSelectionsForRequest(
 		route,
-		requestType,
-		request.Model,
-		&request.Model,
-		&request.ResponsesParameters.ServiceTier,
-		func() { applyResponsesAliases(rawData, &request) },
-		func() *int { return request.ResponsesParameters.MaxOutputTokens },
-		&request,
+		base.Model,
+		base.ResponsesParameters.ServiceTier,
+		policyRoutingEnabled(config),
 	)
 	if err != nil {
 		return nil, err
 	}
-	if request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
-		selection, err := normalizeReasoningEffort(
-			*request.ResponsesParameters.Reasoning.Effort,
-			resolution.Deployment,
+	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
+	if len(selections) == 0 {
+		return nil, ErrModelUnavailable
+	}
+	selections, preferredProvider, hasPreferredProvider, err := applyProviderRoutingPreference(
+		selections,
+		providerPreference,
+		base.Model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	shortCircuit := !policyRoutingEnabled(config) && hasPreferredProvider
+	resolved := make([]*ResolvedRequest, 0, len(selections))
+	var firstErr error
+	for index := range selections {
+		candidateRaw := copyRawRequestData(rawData)
+		var request openaiprovider.OpenAIResponsesRequest
+		if err := sonic.Unmarshal(body, &request); err != nil {
+			return nil, ErrInvalidJSON
+		}
+		requestType := schemas.ResponsesRequest
+		if request.IsStreamingRequested() {
+			requestType = schemas.ResponsesStreamRequest
+		}
+		resolution, resolveErr := resolveOpenAIRequest(
+			body,
+			candidateRaw,
+			route,
+			requestType,
+			request.Model,
+			&request.Model,
+			&request.ResponsesParameters.ServiceTier,
+			func() { applyResponsesAliases(candidateRaw, &request) },
+			func() *int { return request.ResponsesParameters.MaxOutputTokens },
+			&request,
+			selections[index],
 		)
-		if err != nil {
-			return nil, err
+		if resolveErr == nil && request.ResponsesParameters.Reasoning != nil && request.ResponsesParameters.Reasoning.Effort != nil {
+			normalized, reasoningErr := normalizeReasoningEffort(
+				*request.ResponsesParameters.Reasoning.Effort,
+				resolution.Deployment,
+			)
+			if reasoningErr != nil {
+				resolveErr = reasoningErr
+			} else if normalized.Enabled != nil {
+				resolveErr = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "the selected Responses deployment exposes only a reasoning on/off control"}
+			} else {
+				request.ResponsesParameters.Reasoning.Effort = normalized.Effort
+			}
 		}
-		if selection.Enabled != nil {
-			return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "the selected Responses deployment exposes only a reasoning on/off control"}
+		if resolveErr == nil && request.ResponsesParameters.Reasoning != nil {
+			resolveErr = validateReasoningMaxTokens(
+				request.ResponsesParameters.Reasoning.Effort,
+				nil,
+				request.ResponsesParameters.Reasoning.MaxTokens,
+				resolution.Deployment,
+				resolution.outputTokenLimit,
+			)
 		}
-		request.ResponsesParameters.Reasoning.Effort = selection.Effort
+		if resolveErr != nil {
+			if firstErr == nil {
+				firstErr = resolveErr
+			}
+			continue
+		}
+		if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
+			if request.ResponsesParameters.Reasoning == nil {
+				request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+			}
+			request.ResponsesParameters.Reasoning.Mode = &mode
+		}
+		resolution.responses = &request
+		resolution.redactionSummary = redactor.Summary()
+		resolved = append(resolved, resolution)
+		if shortCircuit && resolution.Provider == preferredProvider {
+			return resolved, nil
+		}
 	}
-	if request.ResponsesParameters.Reasoning != nil {
-		if err := validateReasoningMaxTokens(
-			request.ResponsesParameters.Reasoning.Effort,
-			nil,
-			request.ResponsesParameters.Reasoning.MaxTokens,
-			resolution.Deployment,
-			resolution.outputTokenLimit,
-		); err != nil {
-			return nil, err
-		}
+	if len(resolved) == 0 && firstErr != nil {
+		return nil, firstErr
 	}
-	if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
-		if request.ResponsesParameters.Reasoning == nil {
-			request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
-		}
-		request.ResponsesParameters.Reasoning.Mode = &mode
-	}
-	resolution.responses = &request
-	resolution.redactionSummary = redactor.Summary()
-	return resolution, nil
+	return finalizeRoutingCandidates(resolved, config, providerPreference, base.Model)
 }
 
 func piiRedactionError(err error) error {
@@ -679,19 +794,11 @@ func resolveOpenAIRequest(
 	applyRequestAliases func(),
 	requestedOutputLimit func() *int,
 	extraParams requestWithSettableExtraParams,
+	selection routingSelection,
 ) (*ResolvedRequest, error) {
-	providerPreference, err := requestProviderPreference(rawData)
-	if err != nil {
-		return nil, err
-	}
-	provider, ok, err := ProviderForRouteModelRouting(route, requestedModel, providerPreference)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, ErrModelUnavailable
-	}
-	if _, ok = catalogRouteForRequest(provider, route); !ok {
+	provider := selection.provider
+	deployment := selection.deployment
+	if _, ok := catalogRouteForRequest(provider, route); !ok {
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel
@@ -701,10 +808,6 @@ func resolveOpenAIRequest(
 	}
 	if err := validateRequestedServiceTier(provider, requestedServiceTier); err != nil {
 		return nil, err
-	}
-	deployment, ok := DeploymentForRouteServiceTier(provider, model, route, requestedServiceTier)
-	if !ok {
-		return nil, ErrModelUnavailable
 	}
 	if !applyResolvedDeployment(provider, modelField, serviceTier, deployment) {
 		return nil, ErrModelUnavailable

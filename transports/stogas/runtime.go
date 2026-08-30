@@ -253,8 +253,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 		NetworkConfig:            schemas.DefaultNetworkConfig,
 	}
 	// A transport failure does not prove that the provider did not start work.
-	// Keep retries at the Stogas lifecycle boundary, where every new dispatch
-	// can be authorized, billed, and recorded as its own attempt.
+	// Stogas never replays an inference request after provider dispatch.
 	config.NetworkConfig.DefaultRequestTimeoutInSeconds = int(billing.GatewayRequestLifetime.Seconds())
 	config.NetworkConfig.MaxRetries = 0
 	if baseURL != "" {

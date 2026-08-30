@@ -437,52 +437,6 @@ func DeploymentForActualExecution(provider schemas.ModelProvider, route Route, c
 	return Deployment{}, false
 }
 
-func ProviderForRouteModelRouting(route Route, requestedModel string, preference ProviderRoutingPreference) (schemas.ModelProvider, bool, error) {
-	snap := active.Load()
-	if snap == nil {
-		return "", false, nil
-	}
-	requested := strings.TrimSpace(requestedModel)
-	if requested == "" {
-		return "", false, nil
-	}
-
-	if preference.Empty() {
-		return snap.providerForRouteModel(route, requested, nil)
-	}
-
-	only, err := snap.resolveProviderPreferences(preference.Only)
-	if err != nil {
-		return "", false, err
-	}
-	order, err := snap.resolveProviderPreferences(preference.Order)
-	if err != nil {
-		return "", false, err
-	}
-	allowed := map[schemas.ModelProvider]bool(nil)
-	if len(only) > 0 {
-		allowed = make(map[schemas.ModelProvider]bool, len(only))
-		for _, provider := range only {
-			allowed[provider] = true
-		}
-	}
-	candidates := snap.routeModelProviders(route, requested, allowed)
-	if len(candidates) == 0 {
-		return "", false, ErrModelUnavailable
-	}
-	for _, preferred := range order {
-		for _, candidate := range candidates {
-			if candidate == preferred {
-				return candidate, true, nil
-			}
-		}
-	}
-	if len(candidates) == 1 {
-		return candidates[0], true, nil
-	}
-	return "", false, ErrModelAmbiguous
-}
-
 func providerInList(provider schemas.ModelProvider, providers []schemas.ModelProvider) bool {
 	for _, candidate := range providers {
 		if candidate == provider {
@@ -490,20 +444,6 @@ func providerInList(provider schemas.ModelProvider, providers []schemas.ModelPro
 		}
 	}
 	return false
-}
-
-func (s *snapshot) providerForRouteModel(route Route, requested string, allowed map[schemas.ModelProvider]bool) (schemas.ModelProvider, bool, error) {
-	candidates := s.routeModelProviders(route, requested, allowed)
-	if len(candidates) == 0 {
-		return "", false, nil
-	}
-	if len(candidates) > 1 {
-		if native, ok := s.nativeProviderForModelSelector(requested, candidates); ok {
-			return native, true, nil
-		}
-		return "", false, ErrModelAmbiguous
-	}
-	return candidates[0], true, nil
 }
 
 func (s *snapshot) nativeProviderForModelSelector(requested string, candidates []schemas.ModelProvider) (schemas.ModelProvider, bool) {
@@ -801,10 +741,6 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 	if !exists {
 		return Deployment{}, false
 	}
-	if dataHandling.TEE != nil {
-		value := *dataHandling.TEE
-		dataHandling.TEE = &value
-	}
 	var reasoningMaxTokens *ReasoningMaxTokens
 	if deployment.ReasoningMaxTokens != nil {
 		value := *deployment.ReasoningMaxTokens
@@ -830,18 +766,19 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 			Hosting:        deployment.Upstream.Hosting,
 			DeploymentType: deployment.Upstream.DeploymentType,
 		},
-		Capabilities:          capabilities,
-		ContextWindowTokens:   deployment.ContextWindowTokens,
-		ImpliedServiceTier:    impliedServiceTierForDeployment(schemas.ModelProvider(route.ProviderID), deployment),
-		MaxOutputTokens:       deployment.MaxOutputTokens,
-		Pricing:               deployment.Pricing,
-		RouteIDs:              []string{route.ID},
-		ReasoningAvailability: deployment.ReasoningAvailability,
-		ReasoningEfforts:      append([]string(nil), reasoningEfforts...),
-		ReasoningMaxTokens:    reasoningMaxTokens,
-		ReasoningSupported:    deployment.ReasoningAvailability != "unsupported",
-		DataHandling:          dataHandling,
-		snapshot:              s,
+		Capabilities:        capabilities,
+		ContextWindowTokens: deployment.ContextWindowTokens,
+		ImpliedServiceTier:  impliedServiceTierForDeployment(schemas.ModelProvider(route.ProviderID), deployment),
+		MaxOutputTokens:     deployment.MaxOutputTokens,
+		Pricing:             deployment.Pricing,
+		RouteIDs:            []string{route.ID},
+		Reasoning:           deployment.Reasoning,
+		ReasoningEfforts:    append([]string(nil), reasoningEfforts...),
+		ReasoningMaxTokens:  reasoningMaxTokens,
+		ReasoningSupported:  deployment.Reasoning != "unsupported",
+		DataHandling:        dataHandling,
+		WeightPrecision:     deployment.WeightPrecision,
+		snapshot:            s,
 	}, true
 }
 

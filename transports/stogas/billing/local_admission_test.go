@@ -221,11 +221,18 @@ func TestAuthorizationRejectionCacheBacksOffAndClears(t *testing.T) {
 func TestAuthorizationRejectionCacheIgnoresRequestAndInfrastructureErrors(t *testing.T) {
 	var cache authorizationRejectionCache
 	now := time.Unix(1_700_000_000, 0)
-	for _, result := range []string{"params_mismatch", "invalid_amount", "usage_exists"} {
+	for _, result := range []string{"params_mismatch", "invalid_amount", "usage_exists", "config_stale"} {
 		cache.record("key", result, now)
 		if _, _, ok := cache.get("key", now); ok {
 			t.Fatalf("%s was cached", result)
 		}
+	}
+}
+
+func TestStaleConfigurationIsServiceUnavailable(t *testing.T) {
+	err := authorizationResultError("config_stale")
+	if !strings.Contains(err.Error(), ErrAPIKeyConfigStale.Error()) || ErrorStatus(err) != 503 {
+		t.Fatalf("stale configuration error = %v, status = %d", err, ErrorStatus(err))
 	}
 }
 

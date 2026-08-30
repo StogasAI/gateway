@@ -22,27 +22,22 @@ type Identity struct {
 }
 
 type Deployment struct {
-	ID                    string
-	ModelID               string
-	Upstream              Upstream
-	Capabilities          Capabilities
-	ContextWindowTokens   int
-	ImpliedServiceTier    *schemas.BifrostServiceTier
-	MaxOutputTokens       int
-	Pricing               Pricing
-	RouteIDs              []string
-	ReasoningAvailability string
-	ReasoningEfforts      []string
-	ReasoningMaxTokens    *ReasoningMaxTokens
-	ReasoningSupported    bool
-	DataHandling          DataHandling
-	snapshot              *snapshot
-}
-
-type TEE struct {
-	Attestation           string `json:"attestation"`
-	ExternalNetworkEgress string `json:"externalNetworkEgress"`
-	Technology            string `json:"technology"`
+	ID                  string
+	ModelID             string
+	Upstream            Upstream
+	Capabilities        Capabilities
+	ContextWindowTokens int
+	ImpliedServiceTier  *schemas.BifrostServiceTier
+	MaxOutputTokens     int
+	Pricing             Pricing
+	RouteIDs            []string
+	Reasoning           string
+	ReasoningEfforts    []string
+	ReasoningMaxTokens  *ReasoningMaxTokens
+	ReasoningSupported  bool
+	DataHandling        DataHandling
+	WeightPrecision     string
+	snapshot            *snapshot
 }
 
 type DataHandling struct {
@@ -52,7 +47,8 @@ type DataHandling struct {
 	RetentionDays      *int   `json:"retentionDays"`
 	TrainingUse        bool   `json:"trainingUse"`
 	ZeroDataRetention  bool   `json:"zeroDataRetention"`
-	TEE                *TEE   `json:"tee"`
+	TEE                bool   `json:"tee"`
+	TEEVerified        bool   `json:"teeVerified"`
 }
 
 type Upstream struct {
@@ -108,22 +104,23 @@ type compiledAuthor struct {
 }
 
 type compiledDeployment struct {
-	Aliases               []string                                   `json:"aliases"`
-	Capabilities          Capabilities                               `json:"capabilities"`
-	ContextWindowTokens   int                                        `json:"contextWindowTokens"`
-	InputModalities       []string                                   `json:"inputModalities"`
-	MaxOutputTokens       int                                        `json:"maxOutputTokens"`
-	ModelID               string                                     `json:"modelId"`
-	OutputModalities      []string                                   `json:"outputModalities"`
-	Pricing               Pricing                                    `json:"pricing"`
-	ReasoningAvailability string                                     `json:"reasoningAvailability"`
-	ReasoningEfforts      []string                                   `json:"reasoningEfforts"`
-	ReasoningMaxTokens    *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
-	RouteOverrides        map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
-	DeprecationDate       *string                                    `json:"deprecationDate"`
-	RouteIDs              []string                                   `json:"routeIds"`
-	DataHandlingByRoute   map[string]DataHandling                    `json:"dataHandlingByRoute"`
-	Upstream              compiledUpstream                           `json:"upstream"`
+	Aliases             []string                                   `json:"aliases"`
+	Capabilities        Capabilities                               `json:"capabilities"`
+	ContextWindowTokens int                                        `json:"contextWindowTokens"`
+	InputModalities     []string                                   `json:"inputModalities"`
+	MaxOutputTokens     int                                        `json:"maxOutputTokens"`
+	ModelID             string                                     `json:"modelId"`
+	OutputModalities    []string                                   `json:"outputModalities"`
+	Pricing             Pricing                                    `json:"pricing"`
+	Reasoning           string                                     `json:"reasoning"`
+	ReasoningEfforts    []string                                   `json:"reasoningEfforts"`
+	ReasoningMaxTokens  *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
+	RouteOverrides      map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
+	DeprecationDate     *string                                    `json:"deprecationDate"`
+	RouteIDs            []string                                   `json:"routeIds"`
+	DataHandlingByRoute map[string]DataHandling                    `json:"dataHandlingByRoute"`
+	Upstream            compiledUpstream                           `json:"upstream"`
+	WeightPrecision     string                                     `json:"weightPrecision,omitempty"`
 }
 
 type compiledDeploymentRouteOverride struct {
@@ -161,14 +158,14 @@ type compiledUpstream struct {
 }
 
 type compiledModel struct {
-	Aliases               []string            `json:"aliases"`
-	AuthorID              string              `json:"authorId"`
-	MaxOutputTokens       int                 `json:"maxOutputTokens"`
-	Name                  string              `json:"name"`
-	ReasoningAvailability string              `json:"reasoningAvailability"`
-	ReasoningEfforts      []string            `json:"reasoningEfforts"`
-	ReasoningMaxTokens    *ReasoningMaxTokens `json:"reasoningMaxTokens"`
-	ReleaseDate           string              `json:"releaseDate"`
+	Aliases            []string            `json:"aliases"`
+	AuthorID           string              `json:"authorId"`
+	MaxOutputTokens    int                 `json:"maxOutputTokens"`
+	Name               string              `json:"name"`
+	Reasoning          string              `json:"reasoning"`
+	ReasoningEfforts   []string            `json:"reasoningEfforts"`
+	ReasoningMaxTokens *ReasoningMaxTokens `json:"reasoningMaxTokens"`
+	ReleaseDate        string              `json:"releaseDate"`
 }
 
 type compiledProvider struct {

@@ -90,6 +90,14 @@ type ProviderAttempt struct {
 	UpstreamByok      string `json:"upstream_byok"`
 }
 
+// RequestTimings partitions the request wall clock into non-overlapping stages.
+// Provider attempts retain their independent durations for retry diagnostics.
+type RequestTimings struct {
+	AdmissionMS uint32 `json:"admission_ms"`
+	ProviderMS  uint32 `json:"provider_ms"`
+	ResponseMS  uint32 `json:"response_ms"`
+}
+
 type RequestEvent struct {
 	RequestID                  string            `json:"request_id"`
 	CreatedAt                  string            `json:"created_at"`
@@ -107,6 +115,7 @@ type RequestEvent struct {
 	StogasBillingStatus        string            `json:"stogas_billing_status"`
 	NodeID                     string            `json:"node_id"`
 	TotalTimeMS                uint32            `json:"total_time_ms"`
+	Timings                    RequestTimings    `json:"timings"`
 	TTFTMS                     *uint32           `json:"ttft_ms"`
 	UpstreamCostUSDAtoms       string            `json:"upstream_cost_usd_atoms"`
 	BilledCostUSDAtoms         string            `json:"billed_cost_usd_atoms"`
@@ -576,6 +585,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	StogasBillingStatus             string   `json:"stogas_billing_status"`
 	NodeID                          string   `json:"node_id"`
 	TotalTimeMS                     uint32   `json:"total_time_ms"`
+	Timings                         string   `json:"timings"`
 	TTFTMS                          *uint32  `json:"ttft_ms"`
 	UpstreamCostUSDAtoms            string   `json:"upstream_cost_usd_atoms"`
 	BilledCostUSDAtoms              string   `json:"billed_cost_usd_atoms"`
@@ -598,6 +608,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
 	pricingJSON := mustJSONString(event.Pricing, "{}")
 	pluginsJSON := mustJSONString(event.Plugins, `{}`)
+	timingsJSON := mustJSONString(event.Timings, `{}`)
 	catalogNodeIDsJSON := mustJSONString(event.CatalogNodeIDs, "[]")
 	processed := uint8(0)
 	if event.StogasProcessingSuccess {
@@ -656,6 +667,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		CreatedAt:                       event.CreatedAt,
 		Pricing:                         pricingJSON,
 		Plugins:                         pluginsJSON,
+		Timings:                         timingsJSON,
 		ProviderAttempts:                attemptsJSON,
 		NodeID:                          strings.ToLower(strings.TrimSpace(event.NodeID)),
 		GatewayVersion:                  strings.TrimSpace(event.GatewayVersion),

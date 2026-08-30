@@ -52,16 +52,17 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	if startedAt.IsZero() {
 		startedAt = time.Now().UTC()
 	}
+	finishedAt := time.Now().UTC()
 	createdAt := startedAt
 	if !authorization.CreatedAt.IsZero() {
 		createdAt = authorization.CreatedAt
 	}
-	totalTimeMS := uint32Duration(time.Since(startedAt))
+	totalTimeMS := uint32Duration(finishedAt.Sub(startedAt))
 	upstreamTimeMS := totalTimeMS
-	if !input.ProviderStartedAt.IsZero() && input.ProviderStartedAt.After(startedAt) {
+	if !input.ProviderStartedAt.IsZero() && !input.ProviderStartedAt.Before(startedAt) {
 		providerCompletedAt := input.ProviderCompletedAt
 		if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
-			providerCompletedAt = time.Now().UTC()
+			providerCompletedAt = finishedAt
 		}
 		upstreamTimeMS = uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt))
 	} else if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
@@ -130,6 +131,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		StogasBillingStatus:        calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms),
 		NodeID:                     strings.ToLower(strings.TrimSpace(input.NodeID)),
 		TotalTimeMS:                totalTimeMS,
+		Timings:                    requestTimings(input, startedAt, finishedAt, totalTimeMS),
 		TTFTMS:                     ttftMS,
 		UpstreamCostUSDAtoms:       upstreamCostUSDAtoms.String(),
 		BilledCostUSDAtoms:         billedCostUSDAtoms.String(),
@@ -143,8 +145,32 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	}, nil
 }
 
+func requestTimings(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) RequestTimings {
+	if input.ProviderStartedAt.IsZero() || input.ProviderStartedAt.Before(startedAt) {
+		return RequestTimings{AdmissionMS: totalTimeMS}
+	}
+
+	admissionMS := min(uint32Duration(input.ProviderStartedAt.Sub(startedAt)), totalTimeMS)
+	providerCompletedAt := input.ProviderCompletedAt
+	if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
+		providerCompletedAt = finishedAt
+	}
+	providerMS := min(
+		uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt)),
+		totalTimeMS-admissionMS,
+	)
+	return RequestTimings{
+		AdmissionMS: admissionMS,
+		ProviderMS:  providerMS,
+		ResponseMS:  totalTimeMS - admissionMS - providerMS,
+	}
+}
+
 func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32) []ProviderAttempt {
 	if len(input.ProviderAttempts) == 0 {
+		if input.ProviderStartedAt.IsZero() {
+			return []ProviderAttempt{}
+		}
 		return []ProviderAttempt{{
 			Provider:          authorization.ProviderKey,
 			Status:            providerAttemptStatus(input.Error, input.Response),

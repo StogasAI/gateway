@@ -23,8 +23,8 @@ type PublicBillingError struct {
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
-	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
+	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
@@ -113,18 +113,19 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 			hold.ProviderKey,
 			hold.ProductKey,
 			hold.EstimatedUpstreamCostUSDAtoms,
+			state.ConfigGeneration,
 			upstreamTarget,
 			state.RequestLifetime,
 		)
 	} else {
-		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
+		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
 	}
 	if err != nil && authorization != nil {
 		state.Authorization = authorization
 		return err
 	}
 	if err != nil && !state.SingleUseRequestID {
-		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, hold, passthroughSecret, upstreamTarget, state.RequestLifetime, err)
+		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, hold, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, err)
 	}
 	if err != nil {
 		return err
@@ -465,8 +466,8 @@ func pricingForState(state *State) gatewaybilling.EventPricing {
 	return out
 }
 
-func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, hold HoldEstimate, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {
-	if gatewaybilling.ErrorStatus(authorizeErr) != 409 {
+func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, hold HoldEstimate, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {
+	if gatewaybilling.ErrorStatus(authorizeErr) != 409 || errors.Is(authorizeErr, gatewaybilling.ErrAPIKeyConfigStale) {
 		return nil, authorizeErr
 	}
 
@@ -478,7 +479,7 @@ func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAut
 		requestID := nextRequestID.String()
 		ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 
-		authorization, err := billing.AuthorizeRequestWithPassthrough(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, passthroughSecret, upstreamTarget, requestLifetime, false)
+		authorization, err := billing.AuthorizeRequestWithPassthrough(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, false)
 		if err == nil {
 			return authorization, nil
 		}

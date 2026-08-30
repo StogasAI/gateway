@@ -156,112 +156,110 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	if !ok {
 		return
 	}
-
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Body:   ctx.Request.Body(),
-		Method: string(ctx.Method()),
-		Path:   string(ctx.Path()),
-	})
-	if err != nil {
-		s.writeCatalogError(ctx, err)
-		return
-	}
 	ctx.RemoveUserValue(inferenceCredentialContextKey)
-	credential.Upstream = credential.Upstream.only(string(resolution.Provider))
-	catalogIdentity := resolution.CatalogIdentity()
-	if s.proofs != nil {
-		if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
-			s.writeProofError(ctx)
-			return
-		}
-	}
-
-	adapter := stogas.AdapterFor(resolution.Provider)
 	nodeID := ""
 	if s.secure != nil {
 		if s.secure.Control != nil {
 			nodeID = s.secure.Control.NodeID()
 		}
 	}
-	bifrostCtx, state, cancel, err := newRequestContext(
-		ctx,
-		resolution,
-		credential,
-		adapter,
-		nodeID,
-	)
-	if err != nil {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
-			"error": map[string]any{"message": err.Error(), "type": "invalid_request_error"},
+	var prepared *preparedCandidate
+	for configAttempt := 0; configAttempt < 2 && prepared == nil; configAttempt++ {
+		keyConfig, err := s.keyConfigForCredential(credential)
+		if err != nil {
+			s.writeBillingError(ctx, err)
+			return
+		}
+		if keyConfig.Config.DeniedAt(time.Now().UTC()) {
+			s.writeError(ctx, fasthttp.StatusForbidden, map[string]any{
+				"error": map[string]any{
+					"message": "Request is not allowed at this time",
+					"type":    "permission_denied",
+				},
+			})
+			return
+		}
+		resolutions, err := catalog.ResolveRequests(catalog.RequestInput{
+			Body:            ctx.Request.Body(),
+			Method:          string(ctx.Method()),
+			Path:            string(ctx.Path()),
+			Policy:          keyConfig.Config,
+			RedactionPolicy: keyConfig.RedactionPolicy,
+		})
+		if err != nil {
+			s.writeCatalogError(ctx, err)
+			return
+		}
+		catalogIdentity := resolutions[0].CatalogIdentity()
+		if s.proofs != nil {
+			if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
+				s.writeProofError(ctx)
+				return
+			}
+		}
+
+		var firstFailure *candidateFailure
+		refreshConfig := false
+		for _, resolution := range resolutions {
+			candidate, failure := s.prepareCandidate(
+				ctx,
+				resolution,
+				credential,
+				nodeID,
+				requestStartedAt,
+				keyConfig.Generation,
+			)
+			if candidate != nil {
+				prepared = candidate
+				break
+			}
+			if firstFailure == nil {
+				firstFailure = failure
+			}
+			if failure.refreshConfig && configAttempt == 0 {
+				s.invalidateKeyConfig(credential)
+				refreshConfig = true
+				break
+			}
+			if !failure.tryNext {
+				firstFailure = failure
+				break
+			}
+		}
+		if prepared != nil {
+			break
+		}
+		if refreshConfig {
+			continue
+		}
+		if firstFailure == nil {
+			s.writeCatalogError(ctx, catalog.ErrModelUnavailable)
+			return
+		}
+		switch firstFailure.kind {
+		case candidateFailureBilling:
+			s.writeBillingError(ctx, firstFailure.err)
+		case candidateFailureRequest:
+			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+				"error": map[string]any{"message": firstFailure.err.Error(), "type": "invalid_request_error"},
+			})
+		default:
+			s.writeCatalogError(ctx, firstFailure.err)
+		}
+		return
+	}
+	if prepared == nil {
+		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
+			"error": map[string]any{"message": "Gateway configuration is unavailable", "type": "gateway_error"},
 		})
 		return
 	}
-	state.StartedAt = requestStartedAt
-	configureProviderStreamIdleTimeout(bifrostCtx, state)
-	if err := adapter.ValidateRequest(state); err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
-	if err := adapter.SanitizeRequest(state); err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
-	if err := adapter.EstimateHold(state); err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
-	bifrostReq, err := resolution.ToBifrost(bifrostCtx)
-	if err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
-	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
-		cancel()
-		s.writeCatalogError(ctx, err)
-		return
-	}
-
-	if err := stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state); err != nil {
-		if state.Authorization != nil {
-			status := fasthttp.StatusServiceUnavailable
-			state.BifrostError = &schemas.BifrostError{
-				IsBifrostError: true,
-				StatusCode:     &status,
-				Error:          &schemas.ErrorField{Message: "BYOK key is unavailable"},
-			}
-			stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
-		}
-		cancel()
-		s.writeBillingError(ctx, err)
-		return
-	}
-	if err := stogas.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
-		status := fasthttp.StatusServiceUnavailable
-		state.BifrostError = &schemas.BifrostError{
-			IsBifrostError: true,
-			StatusCode:     &status,
-			Error:          &schemas.ErrorField{Message: "BYOK key is unavailable"},
-		}
-		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
-		cancel()
-		s.writeBillingError(ctx, err)
-		return
-	}
-	if resolution.Provider == schemas.Azure {
-		bifrostReq, err = resolution.ToBifrost(bifrostCtx)
-		if err != nil {
-			s.failPreparedProviderRequest(ctx, bifrostCtx, state, cancel, err)
-			return
-		}
-		if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
-			s.failPreparedProviderRequest(ctx, bifrostCtx, state, cancel, err)
-			return
-		}
-	}
+	resolution := prepared.resolution
+	adapter := prepared.adapter
+	bifrostCtx := prepared.bifrostCtx
+	bifrostReq := prepared.bifrostReq
+	cancel := prepared.cancel
+	state := prepared.state
 	state.MarkProviderStarted()
 
 	switch resolution.RequestType {
@@ -314,18 +312,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		cancel()
 		s.writeCatalogError(ctx, catalog.ErrUnsupportedRequest)
 	}
-}
-
-func (s *Server) failPreparedProviderRequest(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, cancel context.CancelFunc, err error) {
-	status := fasthttp.StatusBadRequest
-	state.BifrostError = &schemas.BifrostError{
-		IsBifrostError: true,
-		StatusCode:     &status,
-		Error:          &schemas.ErrorField{Message: "Invalid provider request"},
-	}
-	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
-	cancel()
-	s.writeCatalogError(ctx, err)
 }
 
 func (s *Server) failStreamStart(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, adapter stogas.Adapter, bifrostErr *schemas.BifrostError, cancel context.CancelFunc) {
