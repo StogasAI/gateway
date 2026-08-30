@@ -21,7 +21,7 @@ func normalizeReasoningEffort(
 	deployment Deployment,
 ) (normalizedReasoning, error) {
 	if requested == "none" {
-		switch deployment.ReasoningAvailability {
+		switch deployment.Reasoning {
 		case "unsupported":
 			return normalizedReasoning{}, nil
 		case "optional":
@@ -46,7 +46,7 @@ func normalizeReasoningEffort(
 			Message:    "reasoning effort must be one of: none, minimal, low, medium, high, xhigh, max",
 		}
 	}
-	if deployment.ReasoningAvailability == "unsupported" {
+	if deployment.Reasoning == "unsupported" {
 		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
@@ -54,7 +54,7 @@ func normalizeReasoningEffort(
 		}
 	}
 	if len(deployment.ReasoningEfforts) == 0 {
-		if deployment.ReasoningAvailability == "optional" {
+		if deployment.Reasoning == "optional" {
 			enabled := true
 			return normalizedReasoning{Enabled: &enabled}, nil
 		}
@@ -72,7 +72,7 @@ func normalizeReasoningEnabled(enabled bool, deployment Deployment) (normalizedR
 	if !enabled {
 		return normalizeReasoningEffort("none", deployment)
 	}
-	if deployment.ReasoningAvailability == "unsupported" {
+	if deployment.Reasoning == "unsupported" {
 		return normalizedReasoning{}, APIError{
 			StatusCode: http.StatusBadRequest,
 			Type:       ErrorTypeInvalidRequest,
@@ -80,7 +80,7 @@ func normalizeReasoningEnabled(enabled bool, deployment Deployment) (normalizedR
 		}
 	}
 	if len(deployment.ReasoningEfforts) == 0 {
-		if deployment.ReasoningAvailability == "optional" {
+		if deployment.Reasoning == "optional" {
 			value := true
 			return normalizedReasoning{Enabled: &value}, nil
 		}

@@ -305,6 +305,10 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 
 func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *testing.T) {
 	loadTestCatalog(t)
+	snap := active.Load()
+	if snap == nil {
+		t.Fatal("catalog is not loaded")
+	}
 	for _, requested := range []string{
 		"gpt-5.5",
 		"openai/gpt-5.5",
@@ -312,9 +316,9 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"open-ai/gpt-5.5",
 		"open-ai/open-ai/gpt-5.5",
 	} {
-		provider, ok, err := ProviderForRouteModelRouting(RouteResponses, requested, ProviderRoutingPreference{})
-		if err != nil || !ok || provider != schemas.OpenAI {
-			t.Fatalf("%s: provider=%q ok=%v err=%v", requested, provider, ok, err)
+		providers := snap.routeModelProviders(RouteResponses, requested, nil)
+		if len(providers) != 1 || providers[0] != schemas.OpenAI {
+			t.Fatalf("%s: providers=%v", requested, providers)
 		}
 	}
 	for _, requested := range []string{
@@ -324,8 +328,8 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"openai/openai/openai/gpt-5.5",
 		"gpt-5.5-latest",
 	} {
-		if _, ok, err := ProviderForRouteModelRouting(RouteResponses, requested, ProviderRoutingPreference{}); err != nil || ok {
-			t.Fatalf("%s: expected a closed miss, ok=%v err=%v", requested, ok, err)
+		if providers := snap.routeModelProviders(RouteResponses, requested, nil); len(providers) != 0 {
+			t.Fatalf("%s: expected a closed miss, providers=%v", requested, providers)
 		}
 	}
 	for _, requested := range []string{
@@ -363,18 +367,135 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.T) {
 	loadTestCatalog(t)
 	for _, route := range []Route{RouteChat, RouteResponses} {
-		provider, ok, err := ProviderForRouteModelRouting(route, "gpt-5.6-sol", ProviderRoutingPreference{})
-		if err != nil || !ok || provider != schemas.OpenAI {
-			t.Fatalf("unqualified GPT-5.6 must default to OpenAI: provider=%q ok=%v err=%v", provider, ok, err)
+		path := "/v1/responses"
+		body := `{"model":"gpt-5.6-sol","input":"hello","provider":{"only":["azure"]}}`
+		if route == RouteChat {
+			path = "/v1/chat/completions"
+			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"only":["azure"]}}`
 		}
-		provider, ok, err = ProviderForRouteModelRouting(route, "azure/gpt-5.6-sol", ProviderRoutingPreference{})
-		if err != nil || !ok || provider != schemas.Azure {
-			t.Fatalf("qualified GPT-5.6 must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
+		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+		if err != nil || resolution.Provider != schemas.Azure {
+			t.Fatalf("provider preference must select Azure: resolution=%#v err=%v", resolution, err)
 		}
-		provider, ok, err = ProviderForRouteModelRouting(route, "gpt-5.6-sol", ProviderRoutingPreference{Only: []string{"azure"}})
-		if err != nil || !ok || provider != schemas.Azure {
-			t.Fatalf("provider preference must select Azure: provider=%q ok=%v err=%v", provider, ok, err)
+	}
+}
+
+func TestResolveRequestSupportsModelProviderAndDeploymentSelectors(t *testing.T) {
+	loadTestCatalog(t)
+	tests := []struct {
+		deployment string
+		provider   schemas.ModelProvider
+		selector   string
+	}{
+		{selector: "gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
+		{selector: "azure/gpt-5.6-sol", provider: schemas.Azure, deployment: "azure-gpt-5.6-sol"},
+		{selector: "openai-gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
+	}
+	for _, route := range []struct {
+		body string
+		path string
+	}{
+		{path: "/v1/chat/completions", body: `{"model":"%s","messages":[{"role":"user","content":"hello"}]}`},
+		{path: "/v1/responses", body: `{"model":"%s","input":"hello"}`},
+	} {
+		for _, test := range tests {
+			t.Run(route.path+"/"+test.selector, func(t *testing.T) {
+				resolution, err := ResolveRequest(RequestInput{
+					Method: "POST",
+					Path:   route.path,
+					Body:   []byte(fmt.Sprintf(route.body, test.selector)),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if resolution.Provider != test.provider || resolution.Deployment.ID != test.deployment {
+					t.Fatalf("resolution = %s/%s, want %s/%s", resolution.Provider, resolution.Deployment.ID, test.provider, test.deployment)
+				}
+			})
 		}
+	}
+}
+
+func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
+	loadTestCatalog(t)
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		body := `{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex"}`
+		if path == "/v1/chat/completions" {
+			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"flex"}`
+		}
+		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+		if err != nil {
+			t.Fatalf("%s Flex request: %v", path, err)
+		}
+		if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != "openai-gpt-5.6-sol-flex" {
+			t.Fatalf("%s Flex resolution = %s/%s", path, resolution.Provider, resolution.Deployment.ID)
+		}
+	}
+
+	ordered, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex","provider":{"order":["azure","openai"]}}`),
+	})
+	if err != nil || ordered.Provider != schemas.OpenAI {
+		t.Fatalf("incompatible preferred provider was selected: resolution=%#v err=%v", ordered, err)
+	}
+
+	if _, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex","provider":{"only":["azure"]}}`),
+	}); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("strict provider rule error = %v, want unavailable model", err)
+	}
+}
+
+func TestFailedPreferredProviderDoesNotHideRemainingAmbiguity(t *testing.T) {
+	snap := loadTestCatalog(t)
+
+	openAI := snap.graph.Deployments["openai-gpt-5.6-sol"]
+	openAI.MaxOutputTokens = 1
+	snap.graph.Deployments["openai-gpt-5.6-sol"] = openAI
+
+	chutes := snap.graph.Deployments["chutes-deepseek-v3.2"]
+	chutes.ModelID = "gpt-5.6-sol"
+	chutes.Upstream.Model = "gpt-5.6-sol"
+	snap.graph.Deployments["chutes-gpt-5.6-sol"] = chutes
+	chutesRoute := snap.graph.Routes["chutes-chat-completions"]
+	chutesRoute.DeploymentIDs = append(chutesRoute.DeploymentIDs, "chutes-gpt-5.6-sol")
+	snap.graph.Routes["chutes-chat-completions"] = chutesRoute
+
+	for _, providerRule := range []string{"", `,"provider":{"order":["openai"]}`} {
+		_, err := ResolveRequest(RequestInput{
+			Method: "POST",
+			Path:   "/v1/chat/completions",
+			Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2` + providerRule + `}`),
+		})
+		if err == nil || !strings.Contains(err.Error(), "azure/gpt-5.6-sol") ||
+			!strings.Contains(err.Error(), "chutes/gpt-5.6-sol") {
+			t.Fatalf("failed preferred provider error = %v, want both remaining selectors", err)
+		}
+	}
+
+	resolution, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2,"provider":{"order":["openai","azure"]}}`),
+	})
+	if err != nil || resolution.Provider != schemas.Azure {
+		t.Fatalf("next compatible ordered provider = %#v, err = %v", resolution, err)
+	}
+}
+
+func TestUltrafastRequiresACatalogedPrice(t *testing.T) {
+	loadTestCatalog(t)
+	_, err := ResolveRequest(RequestInput{
+		Method: "POST",
+		Path:   "/v1/responses",
+		Body:   []byte(`{"model":"gpt-5.6-sol","input":"hello","service_tier":"ultrafast"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "service_tier") {
+		t.Fatalf("uncataloged Ultrafast error = %v", err)
 	}
 }
 
@@ -449,8 +570,8 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 			Method: "POST",
 			Path:   "/v1/responses",
 			Body:   []byte(`{"model":"` + model + `","input":"hello","service_tier":"priority"}`),
-		}); !errors.Is(err, ErrModelUnavailable) {
-			t.Fatalf("%s Priority error = %v, want unavailable model", model, err)
+		}); err == nil || !strings.Contains(err.Error(), "service_tier") {
+			t.Fatalf("%s Priority error = %v, want a service_tier error", model, err)
 		}
 	}
 }
@@ -679,7 +800,7 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 
 func TestReasoningAdmissionMapsCanonicalControlsWithoutInventingBinaryEfforts(t *testing.T) {
 	loadTestCatalog(t)
-	optional := Deployment{ReasoningAvailability: "optional", ReasoningEfforts: []string{"minimal", "low", "medium", "high"}}
+	optional := Deployment{Reasoning: "optional", ReasoningEfforts: []string{"minimal", "low", "medium", "high"}}
 	if got, err := normalizeReasoningEffort("high", optional); err != nil || got.Effort == nil || *got.Effort != "high" {
 		t.Fatalf("accepted effort = %#v, err=%v", got, err)
 	}
@@ -689,22 +810,22 @@ func TestReasoningAdmissionMapsCanonicalControlsWithoutInventingBinaryEfforts(t 
 	if got, err := normalizeReasoningEffort("none", optional); err != nil || got.Effort == nil || *got.Effort != "none" {
 		t.Fatalf("optional reasoning was not disabled: %#v err=%v", got, err)
 	}
-	binary := Deployment{ReasoningAvailability: "optional"}
+	binary := Deployment{Reasoning: "optional"}
 	if got, err := normalizeReasoningEffort("minimal", binary); err != nil || got.Enabled == nil || !*got.Enabled || got.Effort != nil {
 		t.Fatalf("positive binary reasoning did not map to enabled: %#v err=%v", got, err)
 	}
 	if got, err := normalizeReasoningEffort("none", binary); err != nil || got.Enabled == nil || *got.Enabled || got.Effort != nil {
 		t.Fatalf("binary reasoning did not map none to disabled: %#v err=%v", got, err)
 	}
-	twoLevels := Deployment{ReasoningAvailability: "optional", ReasoningEfforts: []string{"high", "max"}}
+	twoLevels := Deployment{Reasoning: "optional", ReasoningEfforts: []string{"high", "max"}}
 	if got, err := normalizeReasoningEffort("xhigh", twoLevels); err != nil || got.Effort == nil || *got.Effort != "max" {
 		t.Fatalf("upward tie did not map to max: %#v err=%v", got, err)
 	}
-	requiredWithoutLevels := Deployment{ReasoningAvailability: "required"}
+	requiredWithoutLevels := Deployment{Reasoning: "required"}
 	if _, err := normalizeReasoningEffort("high", requiredWithoutLevels); err == nil {
 		t.Fatal("effort was accepted for always-on reasoning without level control")
 	}
-	if _, err := normalizeReasoningEffort("none", Deployment{ReasoningAvailability: "required", ReasoningEfforts: []string{"low", "high"}}); err == nil {
+	if _, err := normalizeReasoningEffort("none", Deployment{Reasoning: "required", ReasoningEfforts: []string{"low", "high"}}); err == nil {
 		t.Fatal("required reasoning was disabled")
 	}
 	if _, err := normalizeReasoningEffort("ultra", optional); err == nil {
@@ -761,9 +882,10 @@ func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 	}
 	for id, provider := range providers {
 		_, hasTEE := provider.DataHandling["tee"]
+		_, hasTEEVerification := provider.DataHandling["teeVerified"]
 		if provider.DataHandling["processingLocation"] == nil ||
 			provider.DataHandling["storageLocation"] == nil ||
-			provider.DataHandling["endToEndEncrypted"] != nil || !hasTEE {
+			provider.DataHandling["endToEndEncrypted"] != nil || !hasTEE || !hasTEEVerification {
 			t.Fatalf("%s provider data handling is incomplete: %#v", id, provider.DataHandling)
 		}
 	}
@@ -805,23 +927,23 @@ func TestPricingIsMaterializedOnDeployments(t *testing.T) {
 	}
 }
 
-func TestChutesTEEPolicyIsMaterializedPerDeployment(t *testing.T) {
+func TestChutesTEEStatusIsMaterializedPerDeployment(t *testing.T) {
 	loadTestCatalog(t)
-	blocked, ok := testDeploymentForRoute(
+	standard, ok := testDeploymentForRoute(
 		ProviderChutes,
 		"chutes-qwen3-32b",
 		RouteChat,
 	)
-	if !ok || blocked.DataHandling.TEE == nil || blocked.DataHandling.TEE.ExternalNetworkEgress != "blocked" {
-		t.Fatalf("unexpected blocked Chutes TEE policy: %#v", blocked.DataHandling.TEE)
+	if !ok || !standard.DataHandling.TEE || standard.DataHandling.TEEVerified {
+		t.Fatalf("unexpected Chutes TEE status: %#v", standard.DataHandling)
 	}
-	allowed, ok := testDeploymentForRoute(
+	nemotron, ok := testDeploymentForRoute(
 		ProviderChutes,
 		"chutes-nemotron-3-nano-omni-30b",
 		RouteChat,
 	)
-	if !ok || allowed.DataHandling.TEE == nil || allowed.DataHandling.TEE.ExternalNetworkEgress != "allowed" {
-		t.Fatalf("unexpected Nemotron Chutes TEE policy: %#v", allowed.DataHandling.TEE)
+	if !ok || !nemotron.DataHandling.TEE || nemotron.DataHandling.TEEVerified {
+		t.Fatalf("unexpected Nemotron Chutes TEE status: %#v", nemotron.DataHandling)
 	}
 }
 
@@ -1029,7 +1151,7 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	}
 }
 
-func TestSnapshotValidationRejectsInvalidChutesTEEPolicy(t *testing.T) {
+func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) {
 	var runtime map[string]any
 	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
 		t.Fatal(err)
@@ -1038,15 +1160,15 @@ func TestSnapshotValidationRejectsInvalidChutesTEEPolicy(t *testing.T) {
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["chutes-qwen3-32b"].(map[string]any)
 	dataHandling := deployment["dataHandlingByRoute"].(map[string]any)["chutes-chat-completions"].(map[string]any)
-	tee := dataHandling["tee"].(map[string]any)
-	tee["externalNetworkEgress"] = "sometimes"
+	dataHandling["tee"] = false
+	dataHandling["teeVerified"] = true
 	broken, err := json.Marshal(runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
-		!strings.Contains(err.Error(), "external network egress") {
-		t.Fatalf("catalog with unknown Chutes egress policy was accepted: %v", err)
+		!strings.Contains(err.Error(), "verifies a TEE that is not enabled") {
+		t.Fatalf("catalog with impossible TEE verification was accepted: %v", err)
 	}
 }
 
@@ -1058,7 +1180,7 @@ func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
 	graph := runtime["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["chutes-kimi-k3"].(map[string]any)
-	deployment["reasoningAvailability"] = "unsupported"
+	deployment["reasoning"] = "unsupported"
 	deployment["reasoningEfforts"] = []any{}
 	broken, err := json.Marshal(runtime)
 	if err != nil {

@@ -39,6 +39,9 @@ jobs:
             package: ./stogas
             target: FuzzProviderUsageNormalization
           - module: transports
+            package: ./stogas/policy
+            target: FuzzParseCompiledConfigNeverPanics
+          - module: transports
             package: ./stogas/plugins/redaction
             target: FuzzRedactBytes
           - module: transports

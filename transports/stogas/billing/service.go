@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -45,6 +46,7 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	ErrAPIKeySpendLimit    = errors.New("API key spend limit exceeded")
 	ErrAPIKeyRateLimit     = errors.New("API key rate limit exceeded")
+	ErrAPIKeyConfigStale   = errors.New("API key configuration changed")
 	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
 	ErrByok                = errors.New("BYOK key is unavailable")
 	ErrByokRequired        = errors.New("a BYOK key is required for this provider")
@@ -69,7 +71,8 @@ const authorizeHoldArguments = `
   $11::text,
   $12::jsonb,
   $13::text,
-  $14::boolean
+  $14::integer,
+  $15::boolean
 `
 
 const settleHoldArguments = `
@@ -189,6 +192,9 @@ type passthroughCredential struct {
 type Service struct {
 	db                        *GatewayDB
 	authorizeHoldQuery        string
+	keyConfigQuery            string
+	keyConfigs                keyConfigCache
+	keyConfigFlights          singleflight.Group
 	localAuthorizations       *localAuthorizationLimiter
 	localRequests             localRequestLimiter
 	apiKeys                   verifiedAPIKeyCache
@@ -292,6 +298,7 @@ func NewService(
 	return &Service{
 		db:                        db,
 		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
+		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigArguments),
 		inferenceTokenPublicKey:   publicKey,
 		localAuthorizations:       newLocalAuthorizationLimiter(databasePool.MaxConns),
 		tinybird:                  tinybird,
@@ -417,15 +424,16 @@ func (s *Service) AuthorizeRequestWithPassthrough(
 	providerKey string,
 	productKey string,
 	estimatedUpstreamCostUSDAtoms string,
+	configGeneration int,
 	passthroughSecret string,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
 	claims, apiKeyHash, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
@@ -457,6 +465,7 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 		providerKey,
 		productKey,
 		estimatedUpstreamCostUSDAtoms,
+		configGeneration,
 		passthrough,
 		upstreamTarget,
 		requestLifetime,
@@ -471,6 +480,7 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	providerKey string,
 	productKey string,
 	estimatedUpstreamCostUSDAtoms string,
+	configGeneration int,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 ) (*Authorization, error) {
@@ -487,6 +497,7 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 		providerKey,
 		productKey,
 		estimatedUpstreamCostUSDAtoms,
+		configGeneration,
 		nil,
 		upstreamTarget,
 		requestLifetime,
@@ -504,6 +515,7 @@ func (s *Service) authorizeResolvedRequest(
 	providerKey string,
 	productKey string,
 	estimatedUpstreamCostUSDAtoms string,
+	configGeneration int,
 	passthrough *passthroughCredential,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
@@ -562,6 +574,7 @@ func (s *Service) authorizeResolvedRequest(
 		holdParamsHash,
 		nullableString(upstreamTargetJSON),
 		nullableString(passthroughHash),
+		configGeneration,
 		singleUse,
 	).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedBilledCostUSDAtoms, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSDAtoms, &row.UpstreamByok, &row.UpstreamByokCiphertext,
@@ -683,6 +696,8 @@ func authorizationResultError(result string) error {
 		return &billingError{err: ErrAPIKeySpendLimit, statusCode: 402}
 	case "key_rate_limited":
 		return &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
+	case "config_stale":
+		return &billingError{err: ErrAPIKeyConfigStale, statusCode: 503}
 	case "api_key_limit":
 		return &billingError{err: ErrAPIKeyLimit, statusCode: 402}
 	case "invalid_amount":

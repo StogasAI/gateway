@@ -16,8 +16,8 @@ import (
 
 const (
 	catalogSchema     = 1
-	runtimeSchema     = "stogas.catalog.runtime.v2"
-	publicSchema      = "stogas.catalog.public.v2"
+	runtimeSchema     = "stogas.catalog.runtime.v3"
+	publicSchema      = "stogas.catalog.public.v3"
 	runtimeSizeLimit  = 16 * 1024 * 1024
 	publicSizeLimit   = 64 * 1024 * 1024
 	maxAliasesPerNode = 8
@@ -586,30 +586,13 @@ func validateCanonicalRouteDeployments(graph compiledGraph) error {
 	return nil
 }
 
-func validateDeploymentDataHandling(deploymentID, routeID, providerID string, handling DataHandling) error {
+func validateDeploymentDataHandling(deploymentID, routeID, _ string, handling DataHandling) error {
 	if !IsCanonicalDataLocation(handling.ProcessingLocation, false) ||
 		!IsCanonicalDataLocation(handling.StorageLocation, true) {
 		return fmt.Errorf("deployment %s route %s has an invalid data handling location", deploymentID, routeID)
 	}
-	tee := handling.TEE
-	if providerID != "chutes" {
-		if tee != nil {
-			return fmt.Errorf("deployment %s route %s has an unexpected TEE policy", deploymentID, routeID)
-		}
-		return nil
-	}
-	if !handling.EndToEndEncrypted || tee == nil || tee.Technology != "intel-tdx" {
-		return fmt.Errorf("deployment %s route %s has an invalid Chutes TEE policy", deploymentID, routeID)
-	}
-	switch tee.Attestation {
-	case "verified", "provider-claimed", "unverified", "unknown":
-	default:
-		return fmt.Errorf("deployment %s route %s has an invalid Chutes TEE attestation", deploymentID, routeID)
-	}
-	switch tee.ExternalNetworkEgress {
-	case "blocked", "allowed", "unknown":
-	default:
-		return fmt.Errorf("deployment %s route %s has an invalid Chutes external network egress policy", deploymentID, routeID)
+	if handling.TEEVerified && !handling.TEE {
+		return fmt.Errorf("deployment %s route %s verifies a TEE that is not enabled", deploymentID, routeID)
 	}
 	return nil
 }
@@ -788,7 +771,7 @@ func validateReasoningEfforts(owner string, efforts []string) error {
 }
 
 func validateModelReasoning(modelID string, model compiledModel) error {
-	switch model.ReasoningAvailability {
+	switch model.Reasoning {
 	case "optional", "required", "unsupported":
 	default:
 		return fmt.Errorf("model %s has invalid reasoning availability", modelID)
@@ -796,7 +779,7 @@ func validateModelReasoning(modelID string, model compiledModel) error {
 	if err := validateReasoningEfforts("model "+modelID, model.ReasoningEfforts); err != nil {
 		return err
 	}
-	if model.ReasoningAvailability == "unsupported" &&
+	if model.Reasoning == "unsupported" &&
 		(len(model.ReasoningEfforts) > 0 || model.ReasoningMaxTokens != nil) {
 		return fmt.Errorf("model %s exposes controls for unsupported reasoning", modelID)
 	}
@@ -808,10 +791,10 @@ func validateModelReasoning(modelID string, model compiledModel) error {
 }
 
 func validateDeploymentReasoningInheritance(deploymentID string, model compiledModel, deployment compiledDeployment) error {
-	if model.ReasoningAvailability == "unsupported" && deployment.ReasoningAvailability != "unsupported" {
+	if model.Reasoning == "unsupported" && deployment.Reasoning != "unsupported" {
 		return fmt.Errorf("deployment %s enables model-unsupported reasoning", deploymentID)
 	}
-	if model.ReasoningAvailability == "required" && deployment.ReasoningAvailability != "required" {
+	if model.Reasoning == "required" && deployment.Reasoning != "required" {
 		return fmt.Errorf("deployment %s weakens required model reasoning", deploymentID)
 	}
 	modelEfforts := make(map[string]struct{}, len(model.ReasoningEfforts))
@@ -859,12 +842,12 @@ func validateDeploymentRouteOverrides(deploymentID string, deployment compiledDe
 }
 
 func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment, graph compiledGraph) error {
-	switch deployment.ReasoningAvailability {
+	switch deployment.Reasoning {
 	case "optional", "required", "unsupported":
 	default:
 		return fmt.Errorf("deployment %s has invalid reasoning availability", deploymentID)
 	}
-	if deployment.ReasoningAvailability == "unsupported" &&
+	if deployment.Reasoning == "unsupported" &&
 		(len(deployment.ReasoningEfforts) > 0 || deployment.ReasoningMaxTokens != nil) {
 		return fmt.Errorf("deployment %s exposes controls for unsupported reasoning", deploymentID)
 	}

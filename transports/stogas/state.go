@@ -24,6 +24,7 @@ type State struct {
 	Adapter                 Adapter
 	Signals                 Signals
 	Hold                    HoldEstimate
+	ConfigGeneration        int
 	RawAPIKey               string
 	APIKeyClaims            *billing.APIKeyClaims
 	DashboardCredential     *billing.DashboardCredential

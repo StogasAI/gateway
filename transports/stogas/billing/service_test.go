@@ -288,6 +288,11 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	ttftMS := uint32(150)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
 		CacheWriteOverheadUSDAtoms: stringPtr("23"),
+		Timings: RequestTimings{
+			AdmissionMS: 12,
+			ProviderMS:  120,
+			ResponseMS:  18,
+		},
 		Pricing: EventPricing{
 			"input_tokens":                {Quantity: "12", RateKey: "per_mill_tokens", RateUSDAtoms: "1", USDAtoms: "1"},
 			"cache_write_input_tokens":    {Quantity: "1"},
@@ -366,6 +371,11 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		pluginMetrics.StogasStructuredPIIRedaction.ItemsRedacted != 3 ||
 		pluginMetrics.StogasStructuredPIIRedaction.DurationUS != 41 {
 		t.Fatalf("plugins = %q, err=%v", event.Plugins, err)
+	}
+	var timings RequestTimings
+	if err := json.Unmarshal([]byte(event.Timings), &timings); err != nil ||
+		timings.AdmissionMS != 12 || timings.ProviderMS != 120 || timings.ResponseMS != 18 {
+		t.Fatalf("timings = %q, err=%v", event.Timings, err)
 	}
 }
 
@@ -498,6 +508,11 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.ClientStopMS == nil || *event.ClientStopMS < 40 || *event.ClientStopMS > 50 {
 		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
 	}
+	if event.Timings.AdmissionMS < 35 || event.Timings.AdmissionMS > 45 ||
+		event.Timings.ProviderMS < 35 || event.Timings.ProviderMS > 45 ||
+		event.Timings.AdmissionMS+event.Timings.ProviderMS+event.Timings.ResponseMS != event.TotalTimeMS {
+		t.Fatalf("request stage timings do not partition the wall clock: %#v", event)
+	}
 
 	event = mustNewRequestEvent(t, EventInput{
 		Authorization:       &Authorization{RequestID: "request-provider-clock"},
@@ -522,12 +537,14 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		}},
 		StartedAt: startedAt,
 	})
-	if event.ProviderAttempts[0].LatencyMS != event.TotalTimeMS {
-		t.Fatalf(
-			"provider time must not exceed total time: provider=%d total=%d",
-			event.ProviderAttempts[0].LatencyMS,
-			event.TotalTimeMS,
-		)
+	if len(event.ProviderAttempts) != 0 {
+		t.Fatalf("a request that never started a provider has attempts: %#v", event.ProviderAttempts)
+	}
+	if event.Timings.AdmissionMS != event.TotalTimeMS || event.Timings.ProviderMS != 0 || event.Timings.ResponseMS != 0 {
+		t.Fatalf("pre-provider timing must remain entirely in admission: %#v", event.Timings)
+	}
+	if payload := tinybirdGatewayRequestEvent(event); payload.ProviderAttempts != "[]" || len(payload.AnalyticsProviders) != 0 || payload.AnalyticsProviderStatus != "" {
+		t.Fatalf("pre-provider analytics projection is not empty: %#v", payload)
 	}
 
 	event = mustNewRequestEvent(t, EventInput{
@@ -537,6 +554,63 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	})
 	if event.ClientStopMS == nil || *event.ClientStopMS != event.TotalTimeMS {
 		t.Fatalf("client stop time must not exceed total time: stop=%#v total=%d", event.ClientStopMS, event.TotalTimeMS)
+	}
+}
+
+func TestNewRequestEventCanonicalizesStageTimingBounds(t *testing.T) {
+	now := time.Now().UTC()
+	for _, test := range []struct {
+		name              string
+		startedAt         time.Time
+		providerStartedAt time.Time
+		providerEndedAt   time.Time
+		wantProvider      bool
+	}{
+		{
+			name:              "provider clock before request",
+			startedAt:         now.Add(-100 * time.Millisecond),
+			providerStartedAt: now.Add(-110 * time.Millisecond),
+			providerEndedAt:   now.Add(-20 * time.Millisecond),
+		},
+		{
+			name:              "provider completion before start",
+			startedAt:         now.Add(-100 * time.Millisecond),
+			providerStartedAt: now.Add(-75 * time.Millisecond),
+			providerEndedAt:   now.Add(-80 * time.Millisecond),
+			wantProvider:      true,
+		},
+		{
+			name:              "provider completion after snapshot",
+			startedAt:         now.Add(-100 * time.Millisecond),
+			providerStartedAt: now.Add(-75 * time.Millisecond),
+			providerEndedAt:   now.Add(time.Hour),
+			wantProvider:      true,
+		},
+		{
+			name:              "provider starts after snapshot",
+			startedAt:         now.Add(-100 * time.Millisecond),
+			providerStartedAt: now.Add(time.Hour),
+			providerEndedAt:   now.Add(2 * time.Hour),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := mustNewRequestEvent(t, EventInput{
+				Authorization:       &Authorization{ProviderKey: "openai", RequestID: "request-timing"},
+				ProviderCompletedAt: test.providerEndedAt,
+				ProviderStartedAt:   test.providerStartedAt,
+				StartedAt:           test.startedAt,
+			})
+			timings := event.Timings
+			if timings.AdmissionMS+timings.ProviderMS+timings.ResponseMS != event.TotalTimeMS {
+				t.Fatalf("stage timing sum = %#v, total = %d", timings, event.TotalTimeMS)
+			}
+			if test.wantProvider && timings.ProviderMS == 0 {
+				t.Fatalf("valid provider start lost provider wall time: %#v", timings)
+			}
+			if !test.wantProvider && timings.ProviderMS != 0 {
+				t.Fatalf("invalid provider clock created provider wall time: %#v", timings)
+			}
+		})
 	}
 }
 
