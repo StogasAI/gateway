@@ -200,6 +200,25 @@ func TestAzureDirectKeyAcceptsNarrowerDiscoveredLocations(t *testing.T) {
 	}
 }
 
+func TestAzureDirectKeyAcceptsResolvedNoStorageGuarantee(t *testing.T) {
+	binding := azureTestBinding()
+	binding.StorageLocation = "none"
+	resolution := azureTestResolution()
+	resolution.Deployment.DataHandling.StorageLocation = "none"
+	if !validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
+		t.Fatal("resolved catalog no-storage guarantee was rejected")
+	}
+	binding.StorageLocation = "unknown"
+	if validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
+		t.Fatal("unresolved unknown storage must not establish a no-storage guarantee")
+	}
+	binding.StorageLocation = "none"
+	binding.ProcessingLocation = "none"
+	if validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
+		t.Fatal("no-storage must not be accepted as a processing location")
+	}
+}
+
 func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 	binding := azureTestBinding()
 	binding.DeploymentName = "gpt-5.6-sol-2026-07-09"

@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -9,6 +10,55 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
+
+func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
+	loadTestCatalog(t)
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		t.Run(path, func(t *testing.T) {
+			config := policyConfig(2)
+			config.Routing.RequestPolicy = "filter"
+			content := `"messages":[{"role":"user","content":"hello"}]`
+			if path == "/v1/responses" {
+				content = `"input":"hello"`
+			}
+			body := []byte(`{"model":"gpt-5.6-sol",` + content + `,"policy":{"version":1,"routing":{"query":"where provider.id == 'azure'"}}}`)
+			resolved, err := ResolveRequests(RequestInput{Body: body, Method: "POST", Path: path, Policy: config})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, candidate := range resolved {
+				if candidate.Provider != schemas.Azure {
+					t.Fatal("request filter was not applied")
+				}
+				if _, found := candidate.RawBody()["policy"]; found {
+					t.Fatal("request policy reached the provider body")
+				}
+				upstream, err := candidate.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw, err := json.Marshal(upstream)
+				if err != nil || bytes.Contains(raw, []byte("where provider.id")) {
+					t.Fatalf("request policy reached upstream: %v", err)
+				}
+			}
+			config.Routing.RequestPolicy = "deny"
+			if _, err := ResolveRequests(RequestInput{Body: body, Method: "POST", Path: path, Policy: config}); err == nil {
+				t.Fatal("denied request policy was accepted")
+			}
+			config.Routing.RequestPolicy = "filter"
+			for _, invalid := range []string{
+				`{"version":1,"version":1,"routing":{"query":"where exists(provider.id)"}}`,
+				`{"version":1,"routing":{"query":"where request.model == '\ud800'"}}`,
+			} {
+				body := []byte(`{"model":"gpt-5.6-sol",` + content + `,"policy":` + invalid + `}`)
+				if _, err := ResolveRequests(RequestInput{Body: body, Method: "POST", Path: path, Policy: config}); err == nil {
+					t.Fatal("malformed raw policy was accepted")
+				}
+			}
+		})
+	}
+}
 
 func policyChatBody(extra string) []byte {
 	return []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]` + extra + `}`)
@@ -137,8 +187,35 @@ func TestRoutingPolicyIntersectsClientAndEveryCatalogNodeRestriction(t *testing.
 
 	config := policyConfig(2)
 	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"openai"}}
-	if _, err := resolvePolicyChat(t, config, `,"provider":"azure"`); !errors.Is(err, ErrModelUnavailable) {
-		t.Fatalf("client/policy intersection error = %v, want ErrModelUnavailable", err)
+	if _, err := resolvePolicyChat(t, config, `,"provider":"azure"`); !errors.Is(err, ErrProviderSelection) {
+		t.Fatalf("client/policy intersection error = %v, want ErrProviderSelection", err)
+	}
+}
+
+func TestAllowedCatalogNodesPrecedeServiceTierCompatibility(t *testing.T) {
+	loadTestCatalog(t)
+	config := policyConfig(2)
+	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"azure"}}
+	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrServiceTierUnavailable) {
+		t.Fatalf("Azure-only Flex error = %v, want ErrServiceTierUnavailable", err)
+	}
+	if _, err := resolvePolicyChat(t, config, `,"service_tier":"unknown"`); !errors.Is(err, ErrUnsupportedServiceTier) {
+		t.Fatalf("unknown tier error = %v, want ErrUnsupportedServiceTier", err)
+	}
+
+	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol"}}
+	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrServiceTierUnavailable) {
+		t.Fatalf("default-only deployment Flex error = %v, want ErrServiceTierUnavailable", err)
+	}
+	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol-flex"}}
+	resolved, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`)
+	if err != nil || len(resolved) == 0 || resolved[0].Deployment.ID != "openai-gpt-5.6-sol-flex" {
+		t.Fatalf("Flex-only deployment resolution = %#v, err = %v", providerIDs(resolved), err)
+	}
+
+	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"not-a-real-provider"}}
+	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("fully denied policy error = %v, want ErrModelUnavailable", err)
 	}
 }
 

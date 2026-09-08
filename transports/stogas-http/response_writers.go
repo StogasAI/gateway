@@ -70,6 +70,9 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	case "gateway_capacity_exceeded":
 		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
 			"Gateway capacity is temporarily exhausted", true
+	case responseProofErrorCode:
+		return fasthttp.StatusInternalServerError, "internal_error", code,
+			"Failed to build confidential response proof", true
 	case "upstream_rate_limit_error":
 		return fasthttp.StatusTooManyRequests, "rate_limit_error", code,
 			"The upstream provider rate limit was exceeded", true

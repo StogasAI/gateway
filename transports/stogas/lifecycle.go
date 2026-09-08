@@ -8,13 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
 	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
-
-const maxAuthorizeRequestIDAttempts = 3
 
 type PublicBillingError struct {
 	StatusCode int
@@ -123,9 +120,6 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	if err != nil && authorization != nil {
 		state.Authorization = authorization
 		return err
-	}
-	if err != nil && !state.SingleUseRequestID {
-		authorization, err = authorizeWithFreshRequestID(ctx, billing, state.RawAPIKey, hold, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, err)
 	}
 	if err != nil {
 		return err
@@ -464,30 +458,4 @@ func pricingForState(state *State) gatewaybilling.EventPricing {
 		}
 	}
 	return out
-}
-
-func authorizeWithFreshRequestID(ctx *schemas.BifrostContext, billing billingAuthorizer, rawAPIKey string, hold HoldEstimate, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, authorizeErr error) (*gatewaybilling.Authorization, error) {
-	if gatewaybilling.ErrorStatus(authorizeErr) != 409 || errors.Is(authorizeErr, gatewaybilling.ErrAPIKeyConfigStale) {
-		return nil, authorizeErr
-	}
-
-	for attempt := 1; attempt < maxAuthorizeRequestIDAttempts; attempt++ {
-		nextRequestID, idErr := uuid.NewV7()
-		if idErr != nil {
-			return nil, fmt.Errorf("generate retry request id: %w", idErr)
-		}
-		requestID := nextRequestID.String()
-		ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
-
-		authorization, err := billing.AuthorizeRequestWithPassthrough(ctx, rawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, false)
-		if err == nil {
-			return authorization, nil
-		}
-		if gatewaybilling.ErrorStatus(err) != 409 {
-			return nil, err
-		}
-		authorizeErr = err
-	}
-
-	return nil, authorizeErr
 }

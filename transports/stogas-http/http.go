@@ -163,75 +163,67 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			nodeID = s.secure.Control.NodeID()
 		}
 	}
-	var prepared *preparedCandidate
-	for configAttempt := 0; configAttempt < 2 && prepared == nil; configAttempt++ {
-		keyConfig, err := s.keyConfigForCredential(credential)
-		if err != nil {
-			s.writeBillingError(ctx, err)
-			return
-		}
-		if keyConfig.Config.DeniedAt(time.Now().UTC()) {
-			s.writeError(ctx, fasthttp.StatusForbidden, map[string]any{
-				"error": map[string]any{
-					"message": "Request is not allowed at this time",
-					"type":    "permission_denied",
-				},
-			})
-			return
-		}
-		resolutions, err := catalog.ResolveRequests(catalog.RequestInput{
-			Body:            ctx.Request.Body(),
-			Method:          string(ctx.Method()),
-			Path:            string(ctx.Path()),
-			Policy:          keyConfig.Config,
-			RedactionPolicy: keyConfig.RedactionPolicy,
+	keyConfig, err := s.keyConfigForCredential(credential)
+	if err != nil {
+		s.writeBillingError(ctx, err)
+		return
+	}
+	if keyConfig.Config.DeniedAt(requestStartedAt.UTC()) {
+		s.writeError(ctx, fasthttp.StatusForbidden, map[string]any{
+			"error": map[string]any{
+				"message": "Request is not allowed at this time",
+				"type":    "permission_denied",
+			},
 		})
-		if err != nil {
-			s.writeCatalogError(ctx, err)
+		return
+	}
+	resolutions, err := catalog.ResolveRequests(catalog.RequestInput{
+		Body:            ctx.Request.Body(),
+		Method:          string(ctx.Method()),
+		Path:            string(ctx.Path()),
+		Policy:          keyConfig.Config,
+		RedactionPolicy: keyConfig.RedactionPolicy,
+	})
+	if err != nil {
+		s.writeCatalogError(ctx, err)
+		return
+	}
+	if len(resolutions) == 0 {
+		s.writeCatalogError(ctx, catalog.ErrModelUnavailable)
+		return
+	}
+	catalogIdentity := resolutions[0].CatalogIdentity()
+	if s.proofs != nil {
+		if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
+			s.writeProofError(ctx)
 			return
 		}
-		catalogIdentity := resolutions[0].CatalogIdentity()
-		if s.proofs != nil {
-			if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
-				s.writeProofError(ctx)
-				return
-			}
-		}
+	}
 
-		var firstFailure *candidateFailure
-		refreshConfig := false
-		for _, resolution := range resolutions {
-			candidate, failure := s.prepareCandidate(
-				ctx,
-				resolution,
-				credential,
-				nodeID,
-				requestStartedAt,
-				keyConfig.Generation,
-			)
-			if candidate != nil {
-				prepared = candidate
-				break
-			}
-			if firstFailure == nil {
-				firstFailure = failure
-			}
-			if failure.refreshConfig && configAttempt == 0 {
-				s.invalidateKeyConfig(credential)
-				refreshConfig = true
-				break
-			}
-			if !failure.tryNext {
-				firstFailure = failure
-				break
-			}
-		}
-		if prepared != nil {
+	var prepared *preparedCandidate
+	var firstFailure *candidateFailure
+	for _, resolution := range resolutions {
+		candidate, failure := s.prepareCandidate(
+			ctx,
+			resolution,
+			credential,
+			nodeID,
+			requestStartedAt,
+			keyConfig.Generation,
+		)
+		if candidate != nil {
+			prepared = candidate
 			break
 		}
-		if refreshConfig {
-			continue
+		if firstFailure == nil {
+			firstFailure = failure
 		}
+		if !failure.tryNext {
+			firstFailure = failure
+			break
+		}
+	}
+	if prepared == nil {
 		if firstFailure == nil {
 			s.writeCatalogError(ctx, catalog.ErrModelUnavailable)
 			return
@@ -246,12 +238,6 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		default:
 			s.writeCatalogError(ctx, firstFailure.err)
 		}
-		return
-	}
-	if prepared == nil {
-		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
-			"error": map[string]any{"message": "Gateway configuration is unavailable", "type": "gateway_error"},
-		})
 		return
 	}
 	resolution := prepared.resolution
@@ -294,6 +280,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		if !s.completeUnaryResponse(ctx, bifrostCtx, state, adapter, stateResponse, bifrostErr) {
 			return
 		}
+		defer stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 
 		s.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	case schemas.ResponsesRequest:
@@ -303,6 +290,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		if !s.completeUnaryResponse(ctx, bifrostCtx, state, adapter, stateResponse, bifrostErr) {
 			return
 		}
+		defer stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 
 		response = response.WithDefaults()
 		response.Store = schemas.Ptr(false)
@@ -337,13 +325,14 @@ func (s *Server) completeUnaryResponse(ctx *fasthttp.RequestCtx, bifrostCtx *sch
 		}
 	}
 	adapter.SanitizeResponse(state)
-	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
+	stogas.PrepareFinalState(state)
 	if bifrostErr == nil {
 		bifrostErr = state.BifrostError
 	}
 	if bifrostErr == nil {
 		return true
 	}
+	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 	s.writeBifrostError(ctx, bifrostErr)
 	return false
 }
@@ -358,8 +347,10 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 	streamProof, proofErr := s.newStreamProof(ctx, bifrostCtx, state)
 	if proofErr != nil {
 		state.MarkProviderCompleted()
-		s.writeProofError(ctx)
+		retainResponseFailure(state, responseProofFailure())
 		cancel()
+		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
+		s.writeProofError(ctx)
 		return
 	}
 	proofTranscriptSHA256 := ""
@@ -427,20 +418,10 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				}
 				streamProof.SetMetadata(proofMetadata(state, proofTranscriptSHA256))
 				output, err := s.proofs.FinishStream(bifrostCtx, streamProof)
-				if err != nil {
-					encoded, encodeErr := marshalPayload(map[string]any{
-						"error": map[string]any{
-							"code":    responseProofErrorCode,
-							"message": "Failed to build confidential response proof",
-							"type":    "internal_error",
-						},
-					})
-					if encodeErr == nil {
-						_ = reader.sendErrorEvent(bifrostCtx, "", encoded)
-					}
-					return
-				}
-				if len(output.JSON) == 0 {
+				if err != nil || output == nil || len(output.JSON) == 0 {
+					proofFailure := responseProofFailure()
+					retainResponseFailure(state, proofFailure)
+					sendStreamError(proofFailure)
 					return
 				}
 				sent, _ := reader.send(bifrostCtx, frameSSEComment(proofhttp.SSECommentPrefix+string(output.JSON)))
@@ -554,6 +535,10 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 
 			encoded, err := marshalPayload(payload)
 			if err != nil {
+				failure := responseEncodingFailure()
+				state.MarkProviderCompleted()
+				retainResponseFailure(state, failure)
+				sendStreamError(failure)
 				return
 			}
 			frame := frameSSEEvent(streamEventName(includeEventName, eventName), encoded)
@@ -730,6 +715,10 @@ func (s *Server) shutdownWithContext(ctx context.Context) {
 	if s.readinessServer != nil {
 		shutdowns.Add(1)
 		go shutdownServer("private readiness server", s.readinessServer)
+	}
+	if s.diagnosticsServer != nil {
+		shutdowns.Add(1)
+		go shutdownServer("private diagnostics server", s.diagnosticsServer)
 	}
 	if s.server != nil {
 		shutdowns.Add(1)

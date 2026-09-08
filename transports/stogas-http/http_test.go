@@ -238,7 +238,7 @@ func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
 	ctx.Request.SetRequestURI("/diagnostics/v1")
 
-	server.readinessServer.Handler(ctx)
+	server.diagnosticsServer.Handler(ctx)
 
 	if ctx.Response.StatusCode() != fasthttp.StatusOK {
 		t.Fatalf("expected 200 diagnostics, got %d", ctx.Response.StatusCode())
@@ -296,6 +296,7 @@ func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 		method string
 		path   string
 	}{
+		{method: fasthttp.MethodGet, path: "/diagnostics/v1"},
 		{method: fasthttp.MethodGet, path: "/v1/models"},
 		{method: fasthttp.MethodPost, path: "/ready"},
 	} {
@@ -619,7 +620,10 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	ctx := &fasthttp.RequestCtx{}
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasReceiptKey, true)
-	state := &stogas.State{Resolution: testResolution()}
+	state := &stogas.State{
+		Resolution: testResolution(),
+		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
+	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
 
@@ -631,6 +635,9 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	}
 	if !strings.Contains(string(ctx.Response.Body()), responseProofErrorCode) {
 		t.Fatalf("proof failure did not include its stable code: %s", ctx.Response.Body())
+	}
+	if state.FinalEvent != nil {
+		t.Fatalf("proof failure retained a prepared success event: %#v", state.FinalEvent)
 	}
 }
 
@@ -658,10 +665,49 @@ func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T
 	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
 		t.Fatalf("expected proof failure to return 500, got %d", ctx.Response.StatusCode())
 	}
+	if state.BifrostError == nil || state.BifrostError.Error == nil ||
+		state.BifrostError.Error.Code == nil || *state.BifrostError.Error.Code != responseProofErrorCode {
+		t.Fatalf("proof failure was not retained for settlement: %#v", state.BifrostError)
+	}
 	select {
 	case <-completed:
 	case <-time.After(time.Second):
 		t.Fatal("proof failure left request drain tracking active")
+	}
+}
+
+func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("q", 128)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quotes := &failSecondProofQuotes{snapshot: testProofSnapshot(t, publicKey)}
+	server := &Server{proofs: &proofhttp.Service{Quotes: quotes, Signer: privateKey}}
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.SetBodyString(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+	bifrostCtx.SetValue(stogasReceiptKey, true)
+	stream := make(chan *schemas.BifrostStreamChunk)
+	state := &stogas.State{
+		Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.Request.Body())),
+		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
+		NodeID:     strings.Repeat("3", 64),
+		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSDAtoms: "0"},
+	}
+
+	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	close(stream)
+	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	payload := requireSSEErrorPayload(t, body)
+	if payload["code"] != responseProofErrorCode {
+		t.Fatalf("proof failure code = %#v, want %q", payload["code"], responseProofErrorCode)
+	}
+	if state.BifrostError == nil || state.BifrostError.Error == nil ||
+		state.BifrostError.Error.Code == nil || *state.BifrostError.Error.Code != responseProofErrorCode {
+		t.Fatalf("completed proof failure was not retained for settlement: %#v", state.BifrostError)
+	}
+	if state.FinalEvent != nil {
+		t.Fatalf("completed proof failure retained a prepared success event: %#v", state.FinalEvent)
 	}
 }
 
@@ -670,6 +716,22 @@ type staticProofQuotes struct {
 }
 
 func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
+	return s.snapshot, nil
+}
+
+type failSecondProofQuotes struct {
+	mu       sync.Mutex
+	snapshot *quote.Snapshot
+	calls    int
+}
+
+func (s *failSecondProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.calls > 1 {
+		return nil, errors.New("quote refresh failed")
+	}
 	return s.snapshot, nil
 }
 

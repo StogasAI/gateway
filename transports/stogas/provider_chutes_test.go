@@ -14,6 +14,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
@@ -490,7 +491,8 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"web_search_options":         `{}`,
 	}
 	for field := range catalog.KnownFields(catalog.RouteChat) {
-		if chutesAllowedChatFields[field] {
+		// Catalog resolution consumes request policy before provider validation.
+		if chutesAllowedChatFields[field] || field == "policy" {
 			continue
 		}
 		value, covered := unsupportedValues[field]
@@ -511,6 +513,32 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 				t.Fatalf("shared field %q bypassed the closed Chutes policy", field)
 			}
 		})
+	}
+}
+
+func TestChutesRequestPolicyIsConsumedBeforeProviderValidation(t *testing.T) {
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"policy":{"version":1,"routing":{"query":"where provider.id == 'chutes'"}}}`),
+		Policy: &policy.Config{
+			CompilerVersion: policy.CompilerVersion,
+			Schema:          "stogas.key-config.compiled.v1",
+			Routing: policy.Routing{
+				MaxPreDispatchCandidates: 1,
+				RequestPolicy:            "filter",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	if _, exists := state.Resolution.RawBody()["policy"]; exists {
+		t.Fatal("request policy reached the provider body")
+	}
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatalf("valid request policy blocked Chutes: %v", err)
 	}
 }
 

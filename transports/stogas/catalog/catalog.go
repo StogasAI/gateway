@@ -277,8 +277,8 @@ func applyDeploymentServiceTier(provider schemas.ModelProvider, serviceTier **sc
 			}
 			return true
 		}
-		switch **serviceTier {
-		case schemas.BifrostServiceTierAuto, schemas.BifrostServiceTierDefault, "":
+		switch strings.ToLower(strings.TrimSpace(string(**serviceTier))) {
+		case "", "auto", "default":
 			if provider == schemas.OpenAI {
 				value := schemas.BifrostServiceTierDefault
 				*serviceTier = &value

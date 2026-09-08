@@ -10,6 +10,12 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
+const (
+	maxProviderNameBytes      = 64
+	maxProviderRequestIDBytes = 512
+	maxProviderReasonBytes    = 128
+)
+
 type EventInput struct {
 	UpstreamCostUSDAtoms       string
 	Authorization              *Authorization
@@ -185,7 +191,7 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 
 	attempts := make([]ProviderAttempt, len(input.ProviderAttempts))
 	for index, observed := range input.ProviderAttempts {
-		provider := strings.TrimSpace(observed.Provider)
+		provider := boundedTelemetryValue(observed.Provider, maxProviderNameBytes)
 		if provider == "" {
 			provider = authorization.ProviderKey
 		}
@@ -375,6 +381,9 @@ func upstreamErrorIdentifiers(bifrostErr *schemas.BifrostError) errorIdentifierS
 		if value == nil {
 			return
 		}
+		if len(*value) > maxProviderReasonBytes {
+			return
+		}
 		identifier := strings.ToLower(strings.TrimSpace(*value))
 		if identifier != "" {
 			identifiers[identifier] = struct{}{}
@@ -420,14 +429,14 @@ func finishReason(resp *schemas.BifrostResponse) string {
 	}
 	for _, choice := range choices {
 		if choice.FinishReason != nil {
-			return *choice.FinishReason
+			return boundedTelemetryValue(*choice.FinishReason, maxProviderReasonBytes)
 		}
 	}
 	if resp.ResponsesResponse != nil && resp.ResponsesResponse.StopReason != nil {
-		return *resp.ResponsesResponse.StopReason
+		return boundedTelemetryValue(*resp.ResponsesResponse.StopReason, maxProviderReasonBytes)
 	}
 	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.StopReason != nil {
-		return *resp.ResponsesStreamResponse.Response.StopReason
+		return boundedTelemetryValue(*resp.ResponsesStreamResponse.Response.StopReason, maxProviderReasonBytes)
 	}
 	return ""
 }
@@ -437,18 +446,26 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 		return ""
 	}
 	if resp.ChatResponse != nil {
-		return resp.ChatResponse.ID
+		return boundedTelemetryValue(resp.ChatResponse.ID, maxProviderRequestIDBytes)
 	}
 	if resp.TextCompletionResponse != nil {
-		return resp.TextCompletionResponse.ID
+		return boundedTelemetryValue(resp.TextCompletionResponse.ID, maxProviderRequestIDBytes)
 	}
 	if resp.ResponsesResponse != nil && resp.ResponsesResponse.ID != nil {
-		return *resp.ResponsesResponse.ID
+		return boundedTelemetryValue(*resp.ResponsesResponse.ID, maxProviderRequestIDBytes)
 	}
 	if resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil && resp.ResponsesStreamResponse.Response.ID != nil {
-		return *resp.ResponsesStreamResponse.Response.ID
+		return boundedTelemetryValue(*resp.ResponsesStreamResponse.Response.ID, maxProviderRequestIDBytes)
 	}
 	return ""
+}
+
+func boundedTelemetryValue(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	if len(value) > maximum {
+		return ""
+	}
+	return value
 }
 
 func validateEventPricing(pricing EventPricing) (EventPricing, map[string]uint64, error) {

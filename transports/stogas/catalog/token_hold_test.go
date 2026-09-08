@@ -47,6 +47,28 @@ func TestInputHoldSupportsTwoMillionTokenCatalogLimit(t *testing.T) {
 	}
 }
 
+func TestInputHoldDoesNotDependOnJSONObjectKeyOrder(t *testing.T) {
+	bodies := [][]byte{
+		[]byte(`{"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function","function":{"name":"lookup","description":"find it","parameters":{"type":"object","properties":{"value":{"type":"string"}}}}}]}`),
+		[]byte(`{"tools":[{"function":{"parameters":{"properties":{"value":{"type":"string"}},"type":"object"},"description":"find it","name":"lookup"},"type":"function"}],"messages":[{"content":"hello","role":"user"}]}`),
+	}
+	want := -1
+	for _, body := range bodies {
+		raw, err := rawRequestBody(body)
+		if err != nil {
+			t.Fatalf("parse request body: %v", err)
+		}
+		got := inputTokenHoldEstimate(body, raw, schemas.OpenAI, "gpt-5.6-sol", RouteChat, 1_000_000)
+		if want < 0 {
+			want = got
+			continue
+		}
+		if got != want {
+			t.Fatalf("equivalent object order changed hold from %d to %d", want, got)
+		}
+	}
+}
+
 func TestAnthropicAdversarialInputHoldUsesByteFloor(t *testing.T) {
 	payload := strings.Repeat("A1+/", 4096)
 	body := []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, payload))

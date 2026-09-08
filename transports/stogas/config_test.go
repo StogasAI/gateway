@@ -439,14 +439,15 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 		},
 	}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
-		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
-		"CHUTES_API_KEY":             "released-chutes",
-		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		"DATABASE_SCHEMA":            "public_0001_initial_schema",
-		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
-		"TB_GATEWAY_REQUESTS_TOKEN":  "tinybird-token",
-		"TB_HOST_URL":                "https://tinybird.example",
+		"API_KEY_PEPPER":                 "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":         "released-byok-encryption-secret-at-least-32-characters",
+		"CHUTES_API_KEY":                 "released-chutes",
+		"DIAGNOSTICS_CLIENT_SPKI_SHA256": strings.Repeat("d", 64),
+		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"DATABASE_SCHEMA":                "public_0001_initial_schema",
+		"DATABASE_URL":                   "postgres://released:pass@localhost:5432/postgres",
+		"TB_GATEWAY_REQUESTS_TOKEN":      "tinybird-token",
+		"TB_HOST_URL":                    "https://tinybird.example",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -457,6 +458,9 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 	if config.ChutesAPIKey != "released-chutes" {
 		t.Fatalf("the managed Chutes key did not refresh from released secrets: %#v", config)
 	}
+	if config.DiagnosticsClientSPKISHA256 != strings.Repeat("d", 64) {
+		t.Fatal("diagnostics client pin was not installed from the confidential release")
+	}
 	if config.TinybirdHost != "https://tinybird.example" || config.TinybirdToken != "tinybird-token" {
 		t.Fatalf("runtime service secrets did not refresh from released secrets: %#v", config)
 	}
@@ -466,13 +470,23 @@ func TestApplyConfidentialRuntimeSecretsFailsClosedForMissingRuntimeSecret(t *te
 	preserveConfidentialRuntimeEnv(t)
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
 	err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
-		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
-		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		"DATABASE_SCHEMA":            "public_0001_initial_schema",
+		"DIAGNOSTICS_CLIENT_SPKI_SHA256": strings.Repeat("d", 64),
+		"API_KEY_PEPPER":                 "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":         "released-byok-encryption-secret-at-least-32-characters",
+		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"DATABASE_SCHEMA":                "public_0001_initial_schema",
 	})
 	if err == nil || !strings.Contains(err.Error(), "DATABASE_URL") {
 		t.Fatalf("expected missing runtime secret error, got %v", err)
+	}
+}
+
+func TestApplyConfidentialRuntimeSecretsRequiresReleasedDiagnosticsPin(t *testing.T) {
+	for _, pin := range []string{"", "host-selected-pin", strings.Repeat("d", 63)} {
+		config := Config{DiagnosticsClientSPKISHA256: strings.Repeat("a", 64), Confidential: ConfidentialConfig{Environment: "staging", ControlURL: "https://control.example/api/fleet"}}
+		if err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{"DIAGNOSTICS_CLIENT_SPKI_SHA256": pin}); err == nil || !strings.Contains(err.Error(), "diagnostics client SPKI pin") {
+			t.Fatal("missing or invalid released pin accepted a host-configured identity")
+		}
 	}
 }
 
@@ -492,12 +506,13 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 
 	config := Config{Confidential: ConfidentialConfig{ControlURL: "https://control.stogas.localhost/api/fleet"}}
 	if err := ApplyConfidentialRuntimeSecrets(&config, fakeSecretLookup{
-		"API_KEY_PEPPER":             "released-api-key-pepper-0123456789",
-		"BYOK_ENCRYPTION_SECRET":     "released-byok-encryption-secret-at-least-32-characters",
-		"CHUTES_API_KEY":             "released-chutes",
-		"INFERENCE_TOKEN_PUBLIC_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		"DATABASE_SCHEMA":            "public_0001_initial_schema",
-		"DATABASE_URL":               "postgres://released:pass@localhost:5432/postgres",
+		"DIAGNOSTICS_CLIENT_SPKI_SHA256": strings.Repeat("d", 64),
+		"API_KEY_PEPPER":                 "released-api-key-pepper-0123456789",
+		"BYOK_ENCRYPTION_SECRET":         "released-byok-encryption-secret-at-least-32-characters",
+		"CHUTES_API_KEY":                 "released-chutes",
+		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"DATABASE_SCHEMA":                "public_0001_initial_schema",
+		"DATABASE_URL":                   "postgres://released:pass@localhost:5432/postgres",
 	}); err != nil {
 		t.Fatal(err)
 	}

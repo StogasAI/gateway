@@ -16,13 +16,13 @@ import (
 
 const (
 	CompilerVersion               = 1
-	MaxCompiledBytes              = 32 << 10
-	MaxExpressions                = 64
-	MaxDepth                      = 12
+	MaxCompiledBytes              = 64 << 10
+	MaxExpressions                = 4*64 + 1
+	MaxDepth                      = 14
 	MaxListItems                  = 32
-	MaxSorts                      = 5 // Four configured sorts plus deployment.id.
-	MaxAllowedCatalogNodes        = 64
-	MaxDenyWindows                = 16
+	MaxSorts                      = 4 * 4
+	MaxAllowedCatalogNodes        = 4 * 64
+	MaxDenyWindows                = 3 * 16
 	MaxPreDispatchCandidates      = 3
 	MaxCustomPatterns             = 16
 	MaxCustomPatternBytes         = 512
@@ -46,14 +46,15 @@ type Routing struct {
 	AllowedCatalogNodes      *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 	MaxPreDispatchCandidates int                  `json:"maxPreDispatchCandidates"`
 	Query                    *Query               `json:"query"`
+	RequestPolicy            string               `json:"requestPolicy"`
 }
 
 type AllowedCatalogNodes struct {
-	Authors     []string `json:"authors,omitempty"`
-	Deployments []string `json:"deployments,omitempty"`
-	Models      []string `json:"models,omitempty"`
-	Providers   []string `json:"providers,omitempty"`
-	Routes      []string `json:"routes,omitempty"`
+	Authors     []string `json:"authors,omitzero"`
+	Deployments []string `json:"deployments,omitzero"`
+	Models      []string `json:"models,omitzero"`
+	Providers   []string `json:"providers,omitzero"`
+	Routes      []string `json:"routes,omitzero"`
 }
 
 type Query struct {
@@ -138,6 +139,11 @@ func (c *Config) validate() error {
 	if c.Routing.MaxPreDispatchCandidates < 1 || c.Routing.MaxPreDispatchCandidates > MaxPreDispatchCandidates {
 		return configError("pre-dispatch candidate count is invalid")
 	}
+	switch c.Routing.RequestPolicy {
+	case "", "deny", "filter", "filter_and_sort":
+	default:
+		return configError("request policy permission is invalid")
+	}
 	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
 		return err
 	}
@@ -175,7 +181,7 @@ func (a *AllowedCatalogNodes) validate() error {
 		}
 		total += len(values)
 	}
-	if total == 0 || total > MaxAllowedCatalogNodes {
+	if (a.Authors == nil && a.Models == nil && a.Deployments == nil && a.Routes == nil && a.Providers == nil) || total > MaxAllowedCatalogNodes {
 		return configError("allowed catalog node count is invalid")
 	}
 	return nil
@@ -205,10 +211,9 @@ func (q *Query) validate() error {
 		}
 		seenSort[item.Path] = true
 	}
-	if len(q.OrderBy) > 0 {
-		stableSort := q.OrderBy[len(q.OrderBy)-1]
-		if stableSort.Path != "deployment.id" || stableSort.Direction != "asc" {
-			return configError("routing query has a noncanonical stable sort")
+	for index, order := range q.OrderBy {
+		if order.Path == "deployment.id" && (index != len(q.OrderBy)-1 || order.Direction != "asc") {
+			return configError("deployment.id must be the final ascending sort")
 		}
 	}
 	count := 0
@@ -286,7 +291,7 @@ func validateComparison(expression *Expression, fieldType string) error {
 	if fieldType == "string_list" && operator != "contains" {
 		return configError("list comparison operator is invalid")
 	}
-	if fieldType == "boolean" && operator != "==" && operator != "!=" {
+	if fieldType == "boolean" && operator != "==" && operator != "!=" && operator != "in" {
 		return configError("boolean comparison operator is invalid")
 	}
 	if operator == "contains" && fieldType != "string" && fieldType != "string_list" {
@@ -467,7 +472,7 @@ func (a *AllowedCatalogNodes) Allows(authorID, modelID, deploymentID, routeID, p
 }
 
 func allowedNode(allowed []string, value string) bool {
-	if len(allowed) == 0 {
+	if allowed == nil {
 		return true
 	}
 	for _, candidate := range allowed {
@@ -655,6 +660,15 @@ func (q *Query) Less(left, right Values) bool {
 			return comparison > 0
 		}
 		return comparison < 0
+	}
+	// Add the stable tie-break only after every parent and child sort. Inserting
+	// it into each scope would prevent child sorts from ever taking effect.
+	if len(q.OrderBy) > 0 {
+		leftID, leftOK := left.PolicyValue("deployment.id")
+		rightID, rightOK := right.PolicyValue("deployment.id")
+		if leftOK && rightOK {
+			return compareValues(leftID, rightID) < 0
+		}
 	}
 	return false
 }

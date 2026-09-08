@@ -33,6 +33,8 @@ var (
 	ErrUnsupportedMethod      = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
 	ErrUnsupportedRequest     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
 	ErrParameterTooLarge      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrProviderSelection      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
+	ErrServiceTierUnavailable = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
 	ErrUnsupportedTool        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
 	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
 )
@@ -522,8 +524,29 @@ func copyRawRequestData(source map[string]json.RawMessage) map[string]json.RawMe
 	return copy
 }
 
+func applyRequestPolicy(rawData map[string]json.RawMessage, config *policy.Config) (*policy.Config, error) {
+	raw, present := rawData["policy"]
+	if !present {
+		return config, nil
+	}
+	delete(rawData, "policy")
+	combined, err := policy.ApplyRequest(config, raw)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, policy.ErrRequestPolicyDenied) {
+			status = http.StatusForbidden
+		}
+		return nil, APIError{StatusCode: status, Type: ErrorTypeInvalidRequest, Message: err.Error()}
+	}
+	return combined, nil
+}
+
 func resolveChatRequests(body []byte, route Route, config *policy.Config, redactionPolicy *redaction.Policy) ([]*ResolvedRequest, error) {
 	rawData, err := rawRequestBody(body)
+	if err != nil {
+		return nil, err
+	}
+	config, err = applyRequestPolicy(rawData, config)
 	if err != nil {
 		return nil, err
 	}
@@ -560,6 +583,7 @@ func resolveChatRequests(body []byte, route Route, config *policy.Config, redact
 		route,
 		base.Model,
 		base.ChatParameters.ServiceTier,
+		config,
 		policyRoutingEnabled(config),
 	)
 	if err != nil {
@@ -567,6 +591,9 @@ func resolveChatRequests(body []byte, route Route, config *policy.Config, redact
 	}
 	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
 	if len(selections) == 0 {
+		if base.ChatParameters.ServiceTier != nil {
+			return nil, ErrServiceTierUnavailable
+		}
 		return nil, ErrModelUnavailable
 	}
 	selections, preferredProvider, hasPreferredProvider, err := applyProviderRoutingPreference(
@@ -655,6 +682,10 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 	if err != nil {
 		return nil, err
 	}
+	config, err = applyRequestPolicy(rawData, config)
+	if err != nil {
+		return nil, err
+	}
 	if err := dropUnknownTopLevelFields(rawData, route); err != nil {
 		return nil, err
 	}
@@ -682,6 +713,7 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 		route,
 		base.Model,
 		base.ResponsesParameters.ServiceTier,
+		config,
 		policyRoutingEnabled(config),
 	)
 	if err != nil {
@@ -689,6 +721,9 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 	}
 	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
 	if len(selections) == 0 {
+		if base.ResponsesParameters.ServiceTier != nil {
+			return nil, ErrServiceTierUnavailable
+		}
 		return nil, ErrModelUnavailable
 	}
 	selections, preferredProvider, hasPreferredProvider, err := applyProviderRoutingPreference(
@@ -873,6 +908,18 @@ func validateRequestedServiceTier(provider schemas.ModelProvider, requested *sch
 		}
 	default:
 		return ErrUnsupportedServiceTier
+	}
+}
+
+func isKnownServiceTierValue(requested *schemas.BifrostServiceTier) bool {
+	if requested == nil {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(string(*requested))) {
+	case "", "auto", "default", "fast", "flex", "priority", "standard", "standard_only":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -55,6 +55,7 @@ func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
 	requestedTier *schemas.BifrostServiceTier,
+	config *policy.Config,
 	includeVariants bool,
 ) ([]routingSelection, error) {
 	snap := active.Load()
@@ -62,6 +63,7 @@ func routingSelectionsForRequest(
 		return nil, ErrCatalogUnavailable
 	}
 	providers := snap.routeModelProviders(route, requestedModel, nil)
+	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, providers, config)
 	if len(providers) == 0 {
 		return nil, ErrModelUnavailable
 	}
@@ -101,21 +103,20 @@ func routingSelectionsForRequest(
 				if nativeTierErr != nil {
 					return nil, nativeTierErr
 				}
+				if isKnownServiceTierValue(requestedTier) {
+					return nil, ErrServiceTierUnavailable
+				}
 				if firstTierErr != nil {
 					return nil, firstTierErr
 				}
 			}
-			return nil, APIError{
-				StatusCode: 400,
-				Type:       ErrorTypeInvalidRequest,
-				Message:    "Model is not available: the selected deployment does not support the requested service_tier",
-			}
+			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
 	}
 
 	// Put each provider's default deployment before compatible variants. This
-	// keeps a two-candidate fallback useful across two providers unless a policy
+	// spreads bounded local pre-dispatch checks across providers unless a policy
 	// filter or sort explicitly selects a deployment variant.
 	selections := make([]routingSelection, 0)
 	for index := 0; ; index++ {
@@ -132,6 +133,57 @@ func routingSelectionsForRequest(
 		}
 	}
 	return selections, nil
+}
+
+// Filter exact key restrictions before request compatibility. A deployment
+// that the key cannot use must not influence provider selection or error text.
+func filterRoutingProvidersByAllowedNodes(
+	snap *snapshot,
+	route Route,
+	requestedModel string,
+	providers []schemas.ModelProvider,
+	config *policy.Config,
+) []schemas.ModelProvider {
+	if snap == nil || config == nil || config.Routing.AllowedCatalogNodes == nil {
+		return providers
+	}
+	allowed := config.Routing.AllowedCatalogNodes
+	filtered := make([]schemas.ModelProvider, 0, len(providers))
+	for _, provider := range providers {
+		matched := false
+		for _, routeNode := range snap.routes(provider, route) {
+			selectedID, pinned := snap.deploymentIDFor(routeNode, requestedModel)
+			selected, ok := snap.graph.Deployments[selectedID]
+			if !ok {
+				continue
+			}
+			for _, deploymentID := range routeNode.DeploymentIDs {
+				if pinned && deploymentID != selectedID {
+					continue
+				}
+				candidate, ok := snap.graph.Deployments[deploymentID]
+				if !ok || candidate.ModelID != selected.ModelID {
+					continue
+				}
+				deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
+				if !ok {
+					continue
+				}
+				ids := candidatePolicyIDs(&ResolvedRequest{Provider: provider, Deployment: deployment})
+				if allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if matched {
+			filtered = append(filtered, provider)
+		}
+	}
+	return filtered
 }
 
 // applyProviderRoutingPreference filters strict provider choices and orders
@@ -163,7 +215,7 @@ func applyProviderRoutingPreference(
 		}
 		selections = kept
 		if len(selections) == 0 {
-			return nil, "", false, ErrModelUnavailable
+			return nil, "", false, ErrProviderSelection
 		}
 	}
 
@@ -364,7 +416,7 @@ func finalizeRoutingCandidates(
 		}
 		filtered = kept
 		if len(filtered) == 0 {
-			return nil, ErrModelUnavailable
+			return nil, ErrProviderSelection
 		}
 	}
 

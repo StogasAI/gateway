@@ -694,8 +694,16 @@ func authorizationResultError(result string) error {
 		return &billingError{err: ErrDashboardKeyDenied, statusCode: 403}
 	case "key_spend_limit":
 		return &billingError{err: ErrAPIKeySpendLimit, statusCode: 402}
+	case "organization_spend_limit":
+		return &billingError{err: errors.New("Organization spend limit exceeded"), statusCode: 402}
+	case "grant_spend_limit":
+		return &billingError{err: errors.New("Grant spend limit exceeded"), statusCode: 402}
 	case "key_rate_limited":
 		return &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
+	case "organization_rate_limited":
+		return &billingError{err: errors.New("Organization request rate limit exceeded"), statusCode: 429}
+	case "grant_rate_limited":
+		return &billingError{err: errors.New("Grant request rate limit exceeded"), statusCode: 429}
 	case "config_stale":
 		return &billingError{err: ErrAPIKeyConfigStale, statusCode: 503}
 	case "api_key_limit":

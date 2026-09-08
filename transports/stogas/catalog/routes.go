@@ -30,6 +30,7 @@ var routeSpecs = map[Route]routeSpec{
 		Parameters: []string{
 			"model",
 			"messages",
+			"policy",
 			"audio",
 			"cache_control",
 			"container",
@@ -99,6 +100,7 @@ var routeSpecs = map[Route]routeSpec{
 		Parameters: []string{
 			"model",
 			"input",
+			"policy",
 			"stream",
 			"background",
 			"cache_control",

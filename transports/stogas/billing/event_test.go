@@ -3,6 +3,7 @@ package billing
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/providers/openai"
@@ -440,6 +441,29 @@ func TestProviderAttemptStatusUsesCanonicalResponseTerminal(t *testing.T) {
 	err := &schemas.BifrostError{StatusCode: &status}
 	if got := providerAttemptStatus(err, tests[1].response); got != "provider_error" {
 		t.Fatalf("terminal error must take precedence over response metadata, got %s", got)
+	}
+}
+
+func TestProviderTelemetryCannotExpandTheRequestLog(t *testing.T) {
+	requestID := strings.Repeat("r", maxProviderRequestIDBytes+1)
+	finishReason := strings.Repeat("f", maxProviderReasonBytes+1)
+	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
+		ID: requestID,
+		Choices: []schemas.BifrostResponseChoice{{
+			FinishReason: &finishReason,
+		}},
+	}}
+	attempts := requestProviderAttempts(EventInput{
+		ProviderStartedAt: time.Unix(1, 0),
+		Response:          response,
+	}, &Authorization{ProviderKey: "openai"}, 1)
+	if len(attempts) != 1 || attempts[0].ProviderRequestID != "" || attempts[0].FinishReason != "" {
+		t.Fatalf("oversized provider telemetry was retained: %#v", attempts)
+	}
+
+	oversizedType := strings.Repeat("x", maxProviderReasonBytes+1)
+	if status := NormalizeUpstreamStatus(&schemas.BifrostError{Type: &oversizedType}); status != "provider_error" {
+		t.Fatalf("oversized provider error type changed status to %q", status)
 	}
 }
 

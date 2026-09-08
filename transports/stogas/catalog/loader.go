@@ -498,13 +498,12 @@ func validateAzureUpstreamSelector(deploymentID string, model compiledModel, dep
 		return fmt.Errorf("deployment %s has an invalid Data Zone host", deploymentID)
 	}
 	if selector.ServiceTier == "priority" &&
-		(!stringIn([]string{"gpt-5.6-sol", "gpt-5.6-terra"}, selector.Model) || selector.DeploymentType != "global_standard") {
-		return fmt.Errorf("deployment %s enables Azure Priority for an unsupported model", deploymentID)
+		(selector.Hosting != "azure" || modelFormat != "openai" || selector.DeploymentType != "global_standard") {
+		return fmt.Errorf("deployment %s enables Azure Priority for an unsupported target", deploymentID)
 	}
 	if selector.DeploymentType == "instant" &&
 		(selector.Hosting != "azure" ||
 			modelFormat != "openai" ||
-			!stringIn([]string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}, selector.Model) ||
 			selector.ServiceTier != "default") {
 		return fmt.Errorf("deployment %s has an unsupported Azure Instant target", deploymentID)
 	}
@@ -551,8 +550,9 @@ func validateAzureDataHandling(deploymentID, routeID string, selector compiledUp
 		}
 	}
 	if selector.Hosting != "" && selector.Hosting != "azure" &&
-		(handling.ProcessingLocation != "unknown" || handling.StorageLocation != "unknown") {
-		return fmt.Errorf("deployment %s route %s has disclosed locations for externally hosted Azure inference", deploymentID, routeID)
+		(handling.ProcessingLocation != "unknown" ||
+			(handling.StorageLocation != "unknown" && handling.StorageLocation != "none")) {
+		return fmt.Errorf("deployment %s route %s has invalid locations for externally hosted Azure inference", deploymentID, routeID)
 	}
 	return nil
 }
@@ -593,6 +593,10 @@ func validateDeploymentDataHandling(deploymentID, routeID, _ string, handling Da
 	}
 	if handling.TEEVerified && !handling.TEE {
 		return fmt.Errorf("deployment %s route %s verifies a TEE that is not enabled", deploymentID, routeID)
+	}
+	if handling.ZeroDataRetention &&
+		(handling.StorageLocation != "none" || handling.RetentionDays == nil || *handling.RetentionDays != 0 || handling.TrainingUse) {
+		return fmt.Errorf("deployment %s route %s has contradictory zero data retention", deploymentID, routeID)
 	}
 	return nil
 }
@@ -774,7 +778,7 @@ func validateModelReasoning(modelID string, model compiledModel) error {
 	switch model.Reasoning {
 	case "optional", "required", "unsupported":
 	default:
-		return fmt.Errorf("model %s has invalid reasoning availability", modelID)
+		return fmt.Errorf("model %s has an invalid reasoning value", modelID)
 	}
 	if err := validateReasoningEfforts("model "+modelID, model.ReasoningEfforts); err != nil {
 		return err
@@ -845,7 +849,7 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 	switch deployment.Reasoning {
 	case "optional", "required", "unsupported":
 	default:
-		return fmt.Errorf("deployment %s has invalid reasoning availability", deploymentID)
+		return fmt.Errorf("deployment %s has an invalid reasoning value", deploymentID)
 	}
 	if deployment.Reasoning == "unsupported" &&
 		(len(deployment.ReasoningEfforts) > 0 || deployment.ReasoningMaxTokens != nil) {
@@ -861,7 +865,7 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 		return nil
 	}
 	if (providerID != "openai" && providerID != "azure") || deployment.Upstream.ReasoningMode != "pro" ||
-		!strings.HasPrefix(deployment.Upstream.Model, "gpt-5.6-") {
+		modelAuthorID != "openai" {
 		return fmt.Errorf("deployment %s has an invalid fixed reasoning mode", deploymentID)
 	}
 	for _, routeID := range deployment.RouteIDs {

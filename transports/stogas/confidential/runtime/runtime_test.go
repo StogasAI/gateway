@@ -32,6 +32,26 @@ func lastCertificateError(loop *ControlLoop) error {
 	return loop.lastCertificateError
 }
 
+type deadlineRecordingTransport struct {
+	base      http.RoundTripper
+	deadlines []time.Time
+	mu        sync.Mutex
+}
+
+func (transport *deadlineRecordingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	deadline, _ := request.Context().Deadline()
+	transport.mu.Lock()
+	transport.deadlines = append(transport.deadlines, deadline)
+	transport.mu.Unlock()
+	return transport.base.RoundTrip(request)
+}
+
+func (transport *deadlineRecordingTransport) snapshot() []time.Time {
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	return append([]time.Time(nil), transport.deadlines...)
+}
+
 func TestStartDisabledIsNoop(t *testing.T) {
 	runtime, err := Start(context.Background(), stogas.ConfidentialConfig{})
 	if err != nil {
@@ -545,6 +565,8 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 		t.Fatal(err)
 	}
 	defer runtime.Close()
+	deadlineTransport := &deadlineRecordingTransport{base: http.DefaultTransport}
+	runtime.Control.client.HTTPClient = &http.Client{Transport: deadlineTransport}
 
 	newExpiry := time.Now().UTC().Truncate(time.Second).Add(90 * 24 * time.Hour)
 	chainPEM, leafDER := signedRuntimeLeaf(t, runtime.Identity, rootCertificate, rootKey, 20, newExpiry)
@@ -574,6 +596,10 @@ func TestControlLoopInstallCertificateInstructionRefreshesQuoteAndReheartbeats(t
 	mu.Unlock()
 	if after-before != 2 {
 		t.Fatalf("expected instruction heartbeat plus refreshed follow-up heartbeat, got %d", after-before)
+	}
+	deadlines := deadlineTransport.snapshot()
+	if len(deadlines) != 2 || deadlines[0].IsZero() || !deadlines[1].After(deadlines[0]) {
+		t.Fatalf("heartbeat exchanges did not receive independent deadlines: %#v", deadlines)
 	}
 	reportData, ok := last["report_data"].(map[string]any)
 	if !ok {

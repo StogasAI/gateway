@@ -34,7 +34,6 @@ func (e *statusError) StatusCode() int {
 
 type fakeBillingAuthorizer struct {
 	attempts    []string
-	results     []*billing.Authorization
 	errors      []error
 	finalEvents []billing.RequestEvent
 	callCount   int
@@ -44,9 +43,6 @@ func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorizat
 	f.attempts = append(f.attempts, requestID)
 	idx := f.callCount
 	f.callCount++
-	if idx < len(f.results) && f.results[idx] != nil {
-		return f.results[idx], nil
-	}
 	if idx < len(f.errors) {
 		return nil, f.errors[idx]
 	}
@@ -110,77 +106,29 @@ func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
 	}
 }
 
-func TestAuthorizeWithFreshRequestIDRetriesConflict(t *testing.T) {
-	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expected := &billing.Authorization{RequestID: "22222222-2222-2222-2222-222222222222"}
-	authorizer := &fakeBillingAuthorizer{
-		results: []*billing.Authorization{nil, expected},
-		errors: []error{
-			&statusError{err: billing.ErrRequestAlreadyUsed, statusCode: 409},
-			nil,
-		},
-	}
+func TestAuthorizeStateNeverRetriesAuthorizationConflict(t *testing.T) {
+	requestID := "11111111-1111-1111-1111-111111111111"
+	conflictErr := &statusError{err: billing.ErrRequestAlreadyUsed, statusCode: 409}
+	authorizer := &fakeBillingAuthorizer{errors: []error{conflictErr}}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
+	ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
+	state := NewState(&catalog.ResolvedRequest{
+		Route:       catalog.RouteChat,
+		RequestType: schemas.ChatCompletionRequest,
+		Provider:    schemas.OpenAI,
+		Model:       "gpt-5",
+	}, "sk-user", nil, DefaultAdapter{})
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
 
-	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, authorizer.errors[0])
-	if err != nil {
-		t.Fatalf("authorizeWithFreshRequestID returned error: %v", err)
+	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrRequestAlreadyUsed) {
+		t.Fatalf("AuthorizeState error = %v, want request conflict", err)
 	}
-	if authorization != expected {
-		t.Fatalf("expected authorization pointer to be reused")
-	}
-	if len(authorizer.attempts) != 2 {
-		t.Fatalf("expected 2 authorization attempts, got %d", len(authorizer.attempts))
-	}
-	if authorizer.attempts[0] == initialRequestID {
-		t.Fatalf("expected helper retries to use fresh request IDs")
-	}
-	if authorizer.attempts[1] == initialRequestID || authorizer.attempts[1] == authorizer.attempts[0] {
-		t.Fatalf("expected each retry to use a distinct fresh request ID")
+	if len(authorizer.attempts) != 1 || authorizer.attempts[0] != requestID {
+		t.Fatalf("authorization attempts = %#v, want the original request ID exactly once", authorizer.attempts)
 	}
 	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
-	if currentRequestID != authorizer.attempts[1] {
-		t.Fatalf("expected context request ID to match retried request ID, got %q want %q", currentRequestID, authorizer.attempts[1])
-	}
-}
-
-func TestAuthorizeWithFreshRequestIDLeavesNonConflictErrorsUntouched(t *testing.T) {
-	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expectedErr := &statusError{err: billing.ErrInvalidAPIKey, statusCode: 401}
-	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
-
-	authorization, err := authorizeWithFreshRequestID(ctx, &fakeBillingAuthorizer{}, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, expectedErr)
-	if authorization != nil {
-		t.Fatalf("expected no authorization for non-conflict error")
-	}
-	if !errors.Is(err, billing.ErrInvalidAPIKey) {
-		t.Fatalf("expected invalid API key error, got %v", err)
-	}
-	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
-	if currentRequestID != initialRequestID {
-		t.Fatalf("expected request ID to remain unchanged, got %q", currentRequestID)
-	}
-}
-
-func TestAuthorizeWithFreshRequestIDDoesNotTurnAStalePolicyIntoARequestRetry(t *testing.T) {
-	initialRequestID := "11111111-1111-1111-1111-111111111111"
-	expectedErr := &statusError{err: billing.ErrAPIKeyConfigStale, statusCode: 503}
-	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	ctx.SetValue(schemas.BifrostContextKeyRequestID, initialRequestID)
-	authorizer := &fakeBillingAuthorizer{}
-
-	authorization, err := authorizeWithFreshRequestID(ctx, authorizer, "sk-user", HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}, 1, "", nil, billing.GatewayRequestLifetime, expectedErr)
-	if authorization != nil || !errors.Is(err, billing.ErrAPIKeyConfigStale) {
-		t.Fatalf("authorization=%#v error=%v, want the stale configuration error", authorization, err)
-	}
-	if len(authorizer.attempts) != 0 {
-		t.Fatalf("stale policy caused request-ID retries: %#v", authorizer.attempts)
-	}
-	currentRequestID, _ := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
-	if currentRequestID != initialRequestID {
-		t.Fatalf("stale policy changed request ID to %q", currentRequestID)
+	if currentRequestID != requestID {
+		t.Fatalf("request ID changed to %q", currentRequestID)
 	}
 }
 
