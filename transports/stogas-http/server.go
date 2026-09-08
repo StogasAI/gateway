@@ -55,18 +55,19 @@ var (
 )
 
 type Server struct {
-	config          stogas.Config
-	logger          schemas.Logger
-	router          *router.Router
-	runtime         *stogas.Runtime
-	server          *fasthttp.Server
-	readinessServer *fasthttp.Server
-	proofs          *proofhttp.Service
-	secure          *confidentialruntime.Runtime
-	catalogUpdater  *catalog.Updater
-	requests        *requestDrain
-	memory          *requestMemoryAdmission
-	startedAt       time.Time
+	config            stogas.Config
+	logger            schemas.Logger
+	router            *router.Router
+	runtime           *stogas.Runtime
+	server            *fasthttp.Server
+	readinessServer   *fasthttp.Server
+	diagnosticsServer *fasthttp.Server
+	proofs            *proofhttp.Service
+	secure            *confidentialruntime.Runtime
+	catalogUpdater    *catalog.Updater
+	requests          *requestDrain
+	memory            *requestMemoryAdmission
+	startedAt         time.Time
 }
 
 func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Server, error) {
@@ -82,6 +83,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		ReleaseURL:     config.CatalogURL,
 		RequireInitial: config.Confidential.Enabled && config.Confidential.Environment != "local",
 		GatewayVersion: stogas.GatewayVersion,
+		Staging:        config.Confidential.Environment == "staging",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCatalogInitialization, err)
@@ -190,22 +192,27 @@ func (s *Server) routes() error {
 	}
 	readinessRouter := router.New()
 	readinessRouter.GET("/ready", s.readiness)
-	readinessRouter.GET("/diagnostics/v1", s.diagnostics)
-	s.readinessServer = &fasthttp.Server{
-		Handler:               readinessRouter.Handler,
-		Concurrency:           readinessConcurrency,
-		GetOnly:               true,
-		NoDefaultServerHeader: true,
-		ReadBufferSize:        readinessReadBufferSize,
-		WriteBufferSize:       serverWriteBufferSize,
-		ReadTimeout:           readinessReadTimeout,
-		IdleTimeout:           serverIdleTimeout,
-		Logger:                connectionLogger,
-		SecureErrorLogMessage: true,
-		TCPKeepalive:          true,
-		TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
-		CloseOnShutdown:       true,
+	diagnosticsRouter := router.New()
+	diagnosticsRouter.GET("/diagnostics/v1", s.diagnostics)
+	privateServer := func(handler fasthttp.RequestHandler) *fasthttp.Server {
+		return &fasthttp.Server{
+			Handler:               handler,
+			Concurrency:           readinessConcurrency,
+			GetOnly:               true,
+			NoDefaultServerHeader: true,
+			ReadBufferSize:        readinessReadBufferSize,
+			WriteBufferSize:       serverWriteBufferSize,
+			ReadTimeout:           readinessReadTimeout,
+			IdleTimeout:           serverIdleTimeout,
+			Logger:                connectionLogger,
+			SecureErrorLogMessage: true,
+			TCPKeepalive:          true,
+			TCPKeepalivePeriod:    serverTCPKeepalivePeriod,
+			CloseOnShutdown:       true,
+		}
 	}
+	s.readinessServer = privateServer(readinessRouter.Handler)
+	s.diagnosticsServer = privateServer(diagnosticsRouter.Handler)
 	return nil
 }
 
@@ -227,14 +234,31 @@ func (s *Server) Start() error {
 	listener = withWriteIdleTimeout(listener, downstreamWriteIdleTimeout)
 	listener = s.wrapListener(listener)
 	readinessListener = withWriteIdleTimeout(readinessListener, downstreamWriteIdleTimeout)
+	var diagnosticsListener net.Listener
+	if s.serveConfidentialTLS() {
+		config, tlsErr := s.diagnosticsTLSConfig()
+		if tlsErr == nil {
+			diagnosticsListener, tlsErr = listenConfig.Listen(context.Background(), "tcp", net.JoinHostPort(s.config.Host, privateDiagnosticsPort))
+		}
+		if tlsErr != nil {
+			_ = listener.Close()
+			_ = readinessListener.Close()
+			s.shutdown()
+			return fmt.Errorf("listen for private diagnostics: %w", tlsErr)
+		}
+		diagnosticsListener = tls.NewListener(withWriteIdleTimeout(diagnosticsListener, downstreamWriteIdleTimeout), config)
+	}
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 	go func() {
 		errCh <- s.server.Serve(listener)
 	}()
 	go func() {
 		errCh <- s.readinessServer.Serve(readinessListener)
 	}()
+	if diagnosticsListener != nil {
+		go func() { errCh <- s.diagnosticsServer.Serve(diagnosticsListener) }()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

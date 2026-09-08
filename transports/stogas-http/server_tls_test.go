@@ -239,6 +239,20 @@ func TestStartFailsWhenPrivateReadinessListenerCannotBind(t *testing.T) {
 	}
 }
 
+func TestStartFailsClosedWithoutDiagnosticsClientPin(t *testing.T) {
+	server := &Server{
+		config: stogas.Config{Host: "127.0.0.1", Port: "0", PrivateReadinessPort: "0", MaxRequestBodyMiB: 1,
+			Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+		secure: &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+	}
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Start(); err == nil || !strings.Contains(err.Error(), "diagnostics client SPKI pin is invalid") {
+		t.Fatalf("expected diagnostics authorization failure before serving, got %v", err)
+	}
+}
+
 func testListener(t *testing.T) net.Listener {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

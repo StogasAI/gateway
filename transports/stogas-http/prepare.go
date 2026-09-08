@@ -21,10 +21,9 @@ const (
 )
 
 type candidateFailure struct {
-	err           error
-	kind          candidateFailureKind
-	refreshConfig bool
-	tryNext       bool
+	err     error
+	kind    candidateFailureKind
+	tryNext bool
 }
 
 type preparedCandidate struct {
@@ -104,18 +103,15 @@ func (s *Server) prepareCandidate(
 	}
 
 	if err := stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state); err != nil {
+		if errors.Is(err, billing.ErrAPIKeyConfigStale) {
+			s.invalidateKeyConfig(credential)
+		}
 		if state.Authorization != nil {
 			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "BYOK key is unavailable")
 		}
 		state.PassthroughByokSecret = ""
 		cancel()
-		return nil, &candidateFailure{
-			err:           err,
-			kind:          candidateFailureBilling,
-			refreshConfig: errors.Is(err, billing.ErrAPIKeyConfigStale),
-			tryNext: state.Authorization == nil &&
-				(errors.Is(err, billing.ErrByokRequired) || errors.Is(err, billing.ErrByokTarget)),
-		}
+		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
 	if err := stogas.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
 		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "BYOK key is unavailable")

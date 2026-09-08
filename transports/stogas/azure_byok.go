@@ -110,7 +110,7 @@ func validAzureBinding(
 	if binding.TokenScope != azureDataScope ||
 		!validAzureDeploymentName(binding.DeploymentName) ||
 		!catalog.IsCanonicalDataLocation(binding.ProcessingLocation, false) ||
-		!catalog.IsCanonicalDataLocation(binding.StorageLocation, false) ||
+		!catalog.IsCanonicalDataLocation(binding.StorageLocation, true) ||
 		!catalog.DataLocationWithin(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
 		!catalog.DataLocationWithin(binding.StorageLocation, dataHandling.StorageLocation) ||
 		binding.DeploymentType != upstream.DeploymentType ||

@@ -236,6 +236,34 @@ func TestStaleConfigurationIsServiceUnavailable(t *testing.T) {
 	}
 }
 
+func TestSharedPolicyDeclinesPreserveScopeStatusAndBackoff(t *testing.T) {
+	for _, item := range []struct {
+		result  string
+		status  int
+		message string
+		delay   time.Duration
+	}{
+		{"organization_rate_limited", 429, "Organization request rate limit exceeded", 25 * time.Millisecond},
+		{"grant_rate_limited", 429, "Grant request rate limit exceeded", 25 * time.Millisecond},
+		{"organization_spend_limit", 402, "Organization spend limit exceeded", 250 * time.Millisecond},
+		{"grant_spend_limit", 402, "Grant spend limit exceeded", 250 * time.Millisecond},
+	} {
+		t.Run(item.result, func(t *testing.T) {
+			err := authorizationResultError(item.result)
+			if ErrorStatus(err) != item.status || err.Error() != item.message {
+				t.Fatalf("decline = %v, status = %d", err, ErrorStatus(err))
+			}
+			var cache authorizationRejectionCache
+			now := time.Unix(1_700_000_000, 0)
+			cache.record("key", item.result, now)
+			result, delay, ok := cache.get("key", now)
+			if !ok || result != item.result || delay != item.delay {
+				t.Fatalf("cached decline = %q, %s, %t", result, delay, ok)
+			}
+		})
+	}
+}
+
 func TestParseAPIKeyReturnsCachedAuthoritativeDecline(t *testing.T) {
 	secret := "test-api-key-pepper"
 	rawKey := testSignedAPIKey(

@@ -191,9 +191,7 @@ func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy
 	var controlLoop *ControlLoop
 	if config.ControlConfigured() {
 		controlLoop = newControlLoop(config, material, certs, manager, secrets, true)
-		heartbeatCtx, heartbeatCancel := controlLoop.controlAttemptContext(runtimeCtx)
-		err := controlLoop.sendHeartbeat(heartbeatCtx)
-		heartbeatCancel()
+		err := controlLoop.sendHeartbeat(runtimeCtx)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("initial confidential heartbeat failed: %w", err)
@@ -361,9 +359,7 @@ func (l *ControlLoop) runHeartbeats(ctx context.Context) {
 func (l *ControlLoop) sendScheduledHeartbeat(ctx context.Context) error {
 	var lastErr error
 	for range 2 {
-		heartbeatCtx, cancel := l.controlAttemptContext(ctx)
-		lastErr = l.sendHeartbeat(heartbeatCtx)
-		cancel()
+		lastErr = l.sendHeartbeat(ctx)
 		if lastErr == nil || ctx.Err() != nil {
 			return lastErr
 		}
@@ -378,6 +374,12 @@ func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Contex
 	return context.WithTimeout(ctx, controlRequestTimeout)
 }
 
+func (l *ControlLoop) sendHeartbeatExchange(ctx context.Context) (*provision.HeartbeatResponse, error) {
+	exchangeCtx, cancel := l.controlAttemptContext(ctx)
+	defer cancel()
+	return l.sendHeartbeatOnce(exchangeCtx)
+}
+
 func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	l.heartbeatMu.Lock()
 	defer l.heartbeatMu.Unlock()
@@ -387,7 +389,7 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 		l.recordHeartbeatAttempt(startedAt, attemptErr)
 	}()
 
-	response, err := l.sendHeartbeatOnce(ctx)
+	response, err := l.sendHeartbeatExchange(ctx)
 	if err != nil {
 		if provision.IsAuthoritativeRejection(err) {
 			l.revokeAdmission()
@@ -413,7 +415,12 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 		l.recordSecretError(nil)
 		changed = true
 	}
-	certificateChanged, err := l.handleCertificateInstruction(ctx, response.CertificateInstruction)
+	instructionCtx, instructionCancel := l.controlAttemptContext(ctx)
+	certificateChanged, err := l.handleCertificateInstruction(
+		instructionCtx,
+		response.CertificateInstruction,
+	)
+	instructionCancel()
 	if err != nil {
 		l.recordCertificateError(err)
 		wrapped := fmt.Errorf("%w: %w", ErrCertificateInstruction, err)
@@ -422,7 +429,7 @@ func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
 	}
 	changed = changed || certificateChanged
 	if changed {
-		if _, err := l.sendHeartbeatOnce(ctx); err != nil {
+		if _, err := l.sendHeartbeatExchange(ctx); err != nil {
 			wrapped := fmt.Errorf("%w: %w", ErrHeartbeatConfirmation, err)
 			attemptErr = wrapped
 			return wrapped

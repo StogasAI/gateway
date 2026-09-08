@@ -17,9 +17,51 @@ import (
 
 const responseProofErrorCode = "stogas_response_proof_failed"
 
+func responseProofFailure() *schemas.BifrostError {
+	statusCode := fasthttp.StatusInternalServerError
+	errorType := "internal_error"
+	allowFallbacks := false
+	return &schemas.BifrostError{
+		IsBifrostError: true,
+		StatusCode:     &statusCode,
+		Type:           &errorType,
+		AllowFallbacks: &allowFallbacks,
+		Error: &schemas.ErrorField{
+			Type:    &errorType,
+			Code:    schemas.Ptr(responseProofErrorCode),
+			Message: "Failed to build confidential response proof",
+		},
+	}
+}
+
+func responseEncodingFailure() *schemas.BifrostError {
+	statusCode := fasthttp.StatusInternalServerError
+	errorType := "internal_error"
+	allowFallbacks := false
+	return &schemas.BifrostError{
+		IsBifrostError: true,
+		StatusCode:     &statusCode,
+		Type:           &errorType,
+		AllowFallbacks: &allowFallbacks,
+		Error:          &schemas.ErrorField{Type: &errorType, Message: "Failed to encode response"},
+	}
+}
+
+// PrepareFinalState must run before a response proof so the proof can bind
+// final pricing and timing. If encoding or proof generation then fails,
+// discard that event so settlement rebuilds it with the response error.
+func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
+	if state == nil {
+		return
+	}
+	state.BifrostError = failure
+	state.FinalEvent = nil
+}
+
 func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, statusCode int, payload any) {
 	data, err := marshalPayload(payload)
 	if err != nil {
+		retainResponseFailure(state, responseEncodingFailure())
 		s.writeError(ctx, fasthttp.StatusInternalServerError, map[string]any{
 			"error": map[string]any{"message": "Failed to encode response", "type": "internal_error"},
 		})
@@ -27,21 +69,25 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 	}
 	if wantsReceipt(bifrostCtx) {
 		if s.proofs == nil {
+			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
 			return
 		}
 		input, err := s.proofInput(ctx, state, data)
 		if err != nil {
+			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
 			return
 		}
 		output, err := s.proofs.Build(bifrostCtx, input)
 		if err != nil {
+			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
 			return
 		}
 		data, err = appendStogasReceipt(data, output.JSON)
 		if err != nil {
+			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
 			return
 		}
@@ -160,11 +206,5 @@ func appendStogasReceipt(responseJSON, receiptJSON []byte) ([]byte, error) {
 }
 
 func (s *Server) writeProofError(ctx *fasthttp.RequestCtx) {
-	s.writeError(ctx, fasthttp.StatusInternalServerError, map[string]any{
-		"error": map[string]any{
-			"code":    responseProofErrorCode,
-			"message": "Failed to build confidential response proof",
-			"type":    "internal_error",
-		},
-	})
+	s.writeBifrostError(ctx, responseProofFailure())
 }

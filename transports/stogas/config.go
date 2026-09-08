@@ -58,6 +58,7 @@ type Config struct {
 	DatabasePool                billing.DatabasePoolConfig
 	DatabaseSchema              string
 	DatabaseURL                 string
+	DiagnosticsClientSPKISHA256 string
 	Host                        string
 	InferenceTokenPublicKey     string
 	LogLevel                    string
@@ -472,6 +473,13 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 	}
 	if secrets == nil {
 		return fmt.Errorf("confidential secret store is required")
+	}
+	if config.Confidential.Environment != "local" {
+		secret, ok := secrets.Get("DIAGNOSTICS_CLIENT_SPKI_SHA256")
+		if !ok || validateHashHex("DIAGNOSTICS_CLIENT_SPKI_SHA256", string(secret.Value)) != nil {
+			return fmt.Errorf("confidential diagnostics client SPKI pin is required")
+		}
+		config.DiagnosticsClientSPKISHA256 = string(secret.Value)
 	}
 
 	for _, name := range confidentialRuntimeSecretNames {

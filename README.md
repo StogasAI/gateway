@@ -8,7 +8,10 @@ The repository contains:
 - `transports/`: the Stogas API transport, signed catalog loader, routing, and gateway entrypoint;
 - `stogas/`: the reproducible IGVM release pipeline.
 
-The public inference listener uses port `5185`. A separate private `GET /ready` listener uses port `5186`; it is not part of the public API.
+The signed catalog loader accepts the separate staging key only in staging mode. Production
+signatures remain valid in both environments; production mode rejects staging signatures.
+
+The public inference listener uses port `5185`. Private `GET /ready` on port `5186` returns only readiness. Confidential deployments serve versioned `GET /diagnostics/v1` on port `5187` with TLS 1.3 and a pinned client-certificate key. Neither private route is part of the public API; diagnostics are never served over plaintext.
 
 The normal `/v1/responses` and `/v1/chat/completions` routes also accept Stogas E2EE envelopes addressed to every node in a verified fleet bundle. The E2EE media type selects encrypted request handling; any outer credential is ignored and the authenticated inner credential is authoritative. Decryption, provider dispatch, signed response proof generation, and authenticated response streaming all remain inside the confidential guest; no plaintext-aware router or separate E2EE endpoint is required.
 

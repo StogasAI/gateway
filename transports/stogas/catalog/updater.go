@@ -34,12 +34,16 @@ var catalogSignatureDomain = []byte("stogas catalog release v1\n")
 //go:embed trust/catalog-signing-keys.json
 var trustedKeyJSON []byte
 
+//go:embed trust/catalog-staging-signing-keys.json
+var stagingTrustedKeyJSON []byte
+
 type UpdaterConfig struct {
 	ReleaseURL     string
 	PollInterval   time.Duration
 	HTTPClient     *http.Client
 	RequireInitial bool
 	GatewayVersion string
+	Staging        bool
 }
 
 type UpdateStatus struct {
@@ -88,7 +92,7 @@ func StartUpdater(parent context.Context, config UpdaterConfig) (*Updater, error
 	if err != nil {
 		return nil, err
 	}
-	keys, err := trustedKeys()
+	keys, err := trustedKeys(config.Staging)
 	if err != nil {
 		return nil, err
 	}
@@ -565,10 +569,15 @@ func isLowerHex(value string, length int) bool {
 	return true
 }
 
-func trustedKeys() (map[string]ed25519.PublicKey, error) {
+func trustedKeys(staging bool) (map[string]ed25519.PublicKey, error) {
 	encoded := map[string]string{}
 	if err := decodeStrict(trustedKeyJSON, &encoded); err != nil {
 		return nil, fmt.Errorf("decode trusted catalog keys: %w", err)
+	}
+	if staging {
+		if err := decodeStrict(stagingTrustedKeyJSON, &encoded); err != nil {
+			return nil, fmt.Errorf("decode staging catalog keys: %w", err)
+		}
 	}
 	keys := make(map[string]ed25519.PublicKey, len(encoded))
 	for id, value := range encoded {

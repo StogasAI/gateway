@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -16,6 +17,28 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCatalogSigningKeysStayWithinTheirEnvironment(t *testing.T) {
+	production, err := trustedKeys(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging, err := trustedKeys(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const productionID = "stogas-ed25519-stamp-v1"
+	const stagingID = "stogas-ed25519-staging-v1"
+	if len(production) != 1 || len(production[productionID]) != ed25519.PublicKeySize || production[stagingID] != nil {
+		t.Fatal("production must trust only its production signing key")
+	}
+	if len(staging) != 2 || len(staging[stagingID]) != ed25519.PublicKeySize || !bytes.Equal(staging[productionID], production[productionID]) {
+		t.Fatal("staging must trust its own key and existing production releases")
+	}
+	if bytes.Equal(staging[stagingID], production[productionID]) {
+		t.Fatal("staging and production must use different signing keys")
+	}
+}
 
 func TestVerifyEnvelopeAuthenticatesTheMinimalReleaseIdentity(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)

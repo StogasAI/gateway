@@ -313,7 +313,9 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 	if err := sonic.Unmarshal(raw, &value); err != nil {
 		return
 	}
-	encoded, err := sonic.Marshal(value)
+	// encoding/json sorts object keys. The reservation must not change when a
+	// client writes the same tool schema in a different key order.
+	encoded, err := json.Marshal(value)
 	if err != nil {
 		return
 	}

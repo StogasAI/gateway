@@ -371,13 +371,13 @@ func (c *authorizationRejectionCache) clear(key string) {
 
 func authorizationRejectionPolicy(result string) (rejectionPolicy, bool) {
 	switch result {
-	case "key_rate_limited":
+	case "key_rate_limited", "organization_rate_limited", "grant_rate_limited":
 		return rejectionPolicy{
 			decay:   10 * time.Second,
 			initial: 25 * time.Millisecond,
 			maximum: time.Second,
 		}, true
-	case "insufficient_balance", "key_spend_limit":
+	case "insufficient_balance", "key_spend_limit", "organization_spend_limit", "grant_spend_limit":
 		return rejectionPolicy{
 			decay:   30 * time.Second,
 			initial: 250 * time.Millisecond,

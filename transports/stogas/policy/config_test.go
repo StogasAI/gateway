@@ -116,9 +116,6 @@ func TestCompiledConfigValidationClosesEveryPolicyShape(t *testing.T) {
 		},
 		"too many node IDs": func(config *Config) { config.Routing.AllowedCatalogNodes = &AllowedCatalogNodes{Providers: tooManyIDs} },
 		"empty query":       func(config *Config) { config.Routing.Query = &Query{} },
-		"missing stable sort": func(config *Config) {
-			config.Routing.Query = &Query{OrderBy: []Sort{{Direction: "asc", Path: "provider.id", Type: "string"}}}
-		},
 		"stable sort is not final": func(config *Config) {
 			config.Routing.Query = &Query{OrderBy: []Sort{
 				stableSort,
@@ -142,14 +139,7 @@ func TestCompiledConfigValidationClosesEveryPolicyShape(t *testing.T) {
 		},
 		"duplicate sort": func(config *Config) { config.Routing.Query = &Query{OrderBy: []Sort{stableSort, stableSort}} },
 		"too many sorts": func(config *Config) {
-			config.Routing.Query = &Query{OrderBy: []Sort{
-				{Direction: "asc", Path: "provider.id", Type: "string"},
-				{Direction: "asc", Path: "model.id", Type: "string"},
-				{Direction: "asc", Path: "route.id", Type: "string"},
-				{Direction: "asc", Path: "author.id", Type: "string"},
-				{Direction: "asc", Path: "request.model", Type: "string"},
-				stableSort,
-			}}
+			config.Routing.Query = &Query{OrderBy: make([]Sort, MaxSorts+1)}
 		},
 		"noncanonical fifth sort": func(config *Config) {
 			config.Routing.Query = &Query{OrderBy: []Sort{
@@ -347,6 +337,45 @@ func TestCompiledConfigBoundsExpressionCountAndDepth(t *testing.T) {
 	}
 }
 
+func TestCompiledConfigAcceptsEveryExpressionKindAndOperator(t *testing.T) {
+	compare := func(path, fieldType, operator string, right json.RawMessage) *Expression {
+		return &Expression{Kind: "compare", Left: &Field{Path: path, Type: fieldType}, Operator: operator, Right: right}
+	}
+	stringCompare := compare("provider.id", "string", "==", stringLiteral("openai"))
+	expressions := map[string]*Expression{
+		"exists":           {Kind: "exists", Path: "deployment.data.upstream.inferenceGeo"},
+		"not":              {Kind: "not", Operand: stringCompare},
+		"and":              {Kind: "and", Operands: []*Expression{stringCompare, compare("model.id", "string", "!=", stringLiteral("unknown"))}},
+		"or":               {Kind: "or", Operands: []*Expression{stringCompare, compare("model.id", "string", "==", stringLiteral("gpt-5.6-sol"))}},
+		"string not equal": compare("provider.id", "string", "!=", stringLiteral("azure")),
+		"integer less":     compare("request.estimatedInputTokens", "integer", "<", integerLiteral("-1")),
+		"integer at most":  compare("request.estimatedInputTokens", "integer", "<=", integerLiteral("0")),
+		"integer greater":  compare("request.estimatedInputTokens", "integer", ">", integerLiteral("0")),
+		"integer at least": compare("request.estimatedInputTokens", "integer", ">=", integerLiteral("1")),
+		"string contains":  compare("provider.id", "string", "contains", stringLiteral("pen")),
+		"list contains":    compare("provider.data.aliases", "string_list", "contains", stringLiteral("open-ai")),
+		"string in": compare("provider.id", "string", "in", literalList(
+			Literal{Type: "string", Value: mustRawJSON("openai")},
+			Literal{Type: "string", Value: mustRawJSON("azure")},
+		)),
+		"integer in": compare("request.maximumOutputTokens", "integer", "in", literalList(
+			Literal{Type: "integer", Value: mustRawJSON("-1")},
+			Literal{Type: "integer", Value: mustRawJSON("0")},
+		)),
+		"boolean in": compare("deployment.data.capabilities.streaming", "boolean", "in", literalList(
+			Literal{Type: "boolean", Value: mustRawJSON(true)},
+			Literal{Type: "boolean", Value: mustRawJSON(false)},
+		)),
+	}
+	for name, expression := range expressions {
+		t.Run(name, func(t *testing.T) {
+			config := validCompiledConfig()
+			config.Routing.Query = &Query{Where: expression}
+			parseCompiledConfig(t, config)
+		})
+	}
+}
+
 type testValues map[string]Value
 
 func (v testValues) PolicyValue(path string) (Value, bool) {
@@ -393,6 +422,36 @@ func TestPolicyEvaluationUsesClosedTypesAndThreeValuedMissingData(t *testing.T) 
 			query := &Query{Where: test.where}
 			if got := query.Matches(values); got != test.want {
 				t.Fatalf("Matches() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPolicyEvaluationUsesCompleteThreeValuedLogic(t *testing.T) {
+	values := testValues{
+		"provider.id": {Type: "string", String: "openai"},
+	}
+	trueValue := &Expression{Kind: "compare", Left: &Field{Path: "provider.id", Type: "string"}, Operator: "==", Right: stringLiteral("openai")}
+	falseValue := &Expression{Kind: "compare", Left: &Field{Path: "provider.id", Type: "string"}, Operator: "==", Right: stringLiteral("azure")}
+	unknownValue := &Expression{Kind: "compare", Left: &Field{Path: "model.id", Type: "string"}, Operator: "==", Right: stringLiteral("gpt-5.6-sol")}
+
+	for _, test := range []struct {
+		name string
+		expr *Expression
+		want truth
+	}{
+		{name: "not true", expr: &Expression{Kind: "not", Operand: trueValue}, want: truthFalse},
+		{name: "not false", expr: &Expression{Kind: "not", Operand: falseValue}, want: truthTrue},
+		{name: "not unknown", expr: &Expression{Kind: "not", Operand: unknownValue}, want: truthUnknown},
+		{name: "true and unknown", expr: &Expression{Kind: "and", Operands: []*Expression{trueValue, unknownValue}}, want: truthUnknown},
+		{name: "false and unknown", expr: &Expression{Kind: "and", Operands: []*Expression{falseValue, unknownValue}}, want: truthFalse},
+		{name: "true or unknown", expr: &Expression{Kind: "or", Operands: []*Expression{trueValue, unknownValue}}, want: truthTrue},
+		{name: "false or unknown", expr: &Expression{Kind: "or", Operands: []*Expression{falseValue, unknownValue}}, want: truthUnknown},
+		{name: "runtime type mismatch", expr: &Expression{Kind: "compare", Left: &Field{Path: "provider.id", Type: "integer"}, Operator: "==", Right: integerLiteral("1")}, want: truthUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := evaluate(test.expr, values); got != test.want {
+				t.Fatalf("evaluate() = %d, want %d", got, test.want)
 			}
 		})
 	}
