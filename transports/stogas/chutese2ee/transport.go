@@ -26,19 +26,21 @@ type Options struct {
 }
 
 type Transport struct {
-	api                *apiClient
-	resolveModel       ModelResolver
-	unaryClient        *fasthttp.Client
-	streamClient       *fasthttp.Client
-	diagnostics        *diagnostics
-	attestor           *attestor
-	pools              *poolState
-	managedCredential  *credentialState
-	managedFingerprint credentialFingerprint
-	credentialsMu      sync.Mutex
-	credentials        map[credentialFingerprint]*credentialState
-	credentialWG       sync.WaitGroup
-	closed             atomic.Bool
+	api                   *apiClient
+	resolveModel          ModelResolver
+	unaryClient           *fasthttp.Client
+	streamClient          *fasthttp.Client
+	diagnostics           *diagnostics
+	attestor              *attestor
+	pools                 *poolState
+	managedCredential     *credentialState
+	managedFingerprint    credentialFingerprint
+	credentialsMu         sync.Mutex
+	credentials           map[credentialFingerprint]*credentialState
+	credentialWG          sync.WaitGroup
+	credentialCleanupStop chan struct{}
+	credentialCleanupDone chan struct{}
+	closed                atomic.Bool
 }
 
 func New(options Options) (*Transport, error) {
@@ -80,6 +82,9 @@ func New(options Options) (*Transport, error) {
 	transport.credentials = make(map[credentialFingerprint]*credentialState)
 	transport.unaryClient = newInvokeClient(options.RequirePostQuantumTLS, false, 0)
 	transport.streamClient = newInvokeClient(options.RequirePostQuantumTLS, true, options.StreamTimeout)
+	transport.credentialCleanupStop = make(chan struct{})
+	transport.credentialCleanupDone = make(chan struct{})
+	go transport.cleanupCredentials()
 	return transport, nil
 }
 
@@ -115,6 +120,10 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool, streamTimeout time.D
 func (t *Transport) Close() {
 	if t == nil || !t.closed.CompareAndSwap(false, true) {
 		return
+	}
+	if t.credentialCleanupStop != nil {
+		close(t.credentialCleanupStop)
+		<-t.credentialCleanupDone
 	}
 	t.credentialsMu.Lock()
 	dynamicCredentials := make([]*credentialState, 0, len(t.credentials))
@@ -167,6 +176,18 @@ func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 	snapshot.CredentialPools = credentialPools
 	snapshot.ActiveCredentialPools = activeCredentialPools
 	snapshot.BYOKCredentialPools = byokCredentialPools
+	snapshot.CredentialCapacity = maximumCredentialPools
+	snapshot.CredentialHits = t.diagnostics.credentialHits.Load()
+	snapshot.CredentialMisses = t.diagnostics.credentialMisses.Load()
+	snapshot.CredentialExpired = t.diagnostics.credentialExpired.Load()
+	snapshot.CredentialEvicted = t.diagnostics.credentialEvicted.Load()
+	snapshot.CredentialRejected = t.diagnostics.credentialRejected.Load()
+	snapshot.PoolTargets = t.diagnostics.poolTargets.Load()
+	snapshot.PoolTargetCapacity = maximumPoolTargets
+	snapshot.TargetRejections = t.diagnostics.targetRejections.Load()
+	snapshot.EvidenceInFlight = t.diagnostics.evidenceInFlight.Load()
+	snapshot.EvidenceCapacity = maximumConcurrentEvidenceRefreshes
+	snapshot.EvidenceRejected = t.diagnostics.evidenceRejected.Load()
 	return snapshot
 }
 

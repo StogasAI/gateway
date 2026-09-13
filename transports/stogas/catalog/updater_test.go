@@ -64,6 +64,34 @@ func TestVerifyEnvelopeAuthenticatesTheMinimalReleaseIdentity(t *testing.T) {
 	}
 }
 
+func TestVerifyEnvelopeRejectsUnsupportedEvidenceSchemas(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(signTestManifest(t, testReleaseManifest(7), "test", privateKey), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]ed25519.PublicKey{"test": publicKey}
+	for _, schema := range []string{"", "null", "1", `""`, `"stogas.release-evidence.v2"`, `"stogas.catalog.release.v1"`} {
+		t.Run(schema, func(t *testing.T) {
+			if schema == "" {
+				delete(envelope, "schema")
+			} else {
+				envelope["schema"] = json.RawMessage(schema)
+			}
+			encoded, err := json.Marshal(envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := verifyEnvelope(encoded, keys); err == nil || !strings.Contains(err.Error(), "schema") {
+				t.Fatalf("unsupported evidence schema was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestStartUpdaterRequiresConfiguredInitialRelease(t *testing.T) {
 	updater, err := StartUpdater(context.Background(), UpdaterConfig{RequireInitial: true})
 	if err == nil || !strings.Contains(err.Error(), "initial signed catalog URL is required") {
@@ -365,18 +393,16 @@ func signTestManifest(t *testing.T, manifest releaseManifest, keyID string, priv
 	if err != nil {
 		t.Fatal(err)
 	}
-	envelope := struct {
-		Schema    string          `json:"schema"`
-		KeyID     string          `json:"keyId"`
-		Manifest  json.RawMessage `json:"manifest"`
-		Signature string          `json:"signature"`
-	}{
-		Schema:   "stogas.catalog.signed.v1",
-		KeyID:    keyID,
-		Manifest: manifestJSON,
-		Signature: base64.RawURLEncoding.EncodeToString(
-			ed25519.Sign(privateKey, append(append([]byte{}, catalogSignatureDomain...), manifestJSON...)),
-		),
+	envelope := map[string]any{
+		"schema":          "stogas.release-evidence.v1",
+		"attested_builds": []any{map[string]any{}},
+		"manifest":        json.RawMessage(manifestJSON),
+		"signature": map[string]string{
+			"key_id": keyID,
+			"signature": base64.RawURLEncoding.EncodeToString(
+				ed25519.Sign(privateKey, append(append([]byte{}, catalogSignatureDomain...), manifestJSON...)),
+			),
+		},
 	}
 	encoded, err := json.Marshal(envelope)
 	if err != nil {

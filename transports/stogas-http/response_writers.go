@@ -420,6 +420,7 @@ func marshalPayload(payload any) ([]byte, error) {
 }
 
 func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload any) {
+	s.recordAdmissionRejection(ctx, statusCode)
 	ctx.SetStatusCode(statusCode)
 	ctx.SetContentType("application/json")
 	data, err := sonic.Marshal(payload)

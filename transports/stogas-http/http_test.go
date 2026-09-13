@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/big"
 	"strings"
 	"sync"
 	"testing"
@@ -621,8 +622,13 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasReceiptKey, true)
 	state := &stogas.State{
-		Resolution: testResolution(),
-		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
+		Resolution:           testResolution(),
+		FinalEvent:           &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
+		Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0)},
+		StartedAt:            time.Now().Add(-time.Second),
+		ProviderStartedAt:    time.Now().Add(-time.Millisecond),
+		UpstreamCostUSDAtoms: "0",
+		Response:             &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 	}
 
 	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
@@ -638,6 +644,11 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	}
 	if state.FinalEvent != nil {
 		t.Fatalf("proof failure retained a prepared success event: %#v", state.FinalEvent)
+	}
+	event := stogas.PrepareFinalState(state)
+	if event == nil || event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
+		event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 200 {
+		t.Fatalf("proof failure overwrote the successful provider result: %#v", event)
 	}
 }
 
@@ -665,9 +676,9 @@ func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T
 	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
 		t.Fatalf("expected proof failure to return 500, got %d", ctx.Response.StatusCode())
 	}
-	if state.BifrostError == nil || state.BifrostError.Error == nil ||
-		state.BifrostError.Error.Code == nil || *state.BifrostError.Error.Code != responseProofErrorCode {
-		t.Fatalf("proof failure was not retained for settlement: %#v", state.BifrostError)
+	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil ||
+		state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != responseProofErrorCode {
+		t.Fatalf("proof failure was not retained separately from provider errors: %#v", state.ProcessingError)
 	}
 	select {
 	case <-completed:
@@ -702,9 +713,9 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 	if payload["code"] != responseProofErrorCode {
 		t.Fatalf("proof failure code = %#v, want %q", payload["code"], responseProofErrorCode)
 	}
-	if state.BifrostError == nil || state.BifrostError.Error == nil ||
-		state.BifrostError.Error.Code == nil || *state.BifrostError.Error.Code != responseProofErrorCode {
-		t.Fatalf("completed proof failure was not retained for settlement: %#v", state.BifrostError)
+	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil ||
+		state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != responseProofErrorCode {
+		t.Fatalf("completed proof failure was not retained separately from provider errors: %#v", state.ProcessingError)
 	}
 	if state.FinalEvent != nil {
 		t.Fatalf("completed proof failure retained a prepared success event: %#v", state.FinalEvent)
@@ -1998,8 +2009,8 @@ func TestWriteSSEStreamRejectsAggregateMemoryGrowthWithoutLeakingReservation(t *
 	if payload["code"] != "gateway_capacity_exceeded" || payload["message"] != "Gateway capacity is temporarily exhausted" {
 		t.Fatalf("unexpected capacity error: %#v", payload)
 	}
-	if state.BifrostError == nil || state.BifrostError.Error == nil || state.BifrostError.Error.Code == nil || *state.BifrostError.Error.Code != "gateway_capacity_exceeded" {
-		t.Fatalf("capacity failure did not mark final state: %#v", state.BifrostError)
+	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil || state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != "gateway_capacity_exceeded" {
+		t.Fatalf("capacity failure was not retained separately from provider errors: %#v", state.ProcessingError)
 	}
 	if got := admission.reserved.Load(); got != seeded {
 		t.Fatalf("stream memory reservation leaked: used = %d, want %d", got, seeded)

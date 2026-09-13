@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -144,11 +146,16 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 	}
 }
 
-// ApplyUpstreamCredentials installs the request-scoped provider credential and
+type azureTokenSource interface {
+	Token(context.Context, azureauth.Credential) (string, error)
+}
+
+// applyUpstreamCredentials installs the request-scoped provider credential and
 // binds provider-owned target names before the provider body is serialized.
-func ApplyUpstreamCredentials(
+func applyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
+	azureTokens azureTokenSource,
 ) error {
 	if ctx == nil || state == nil || state.Authorization == nil || state.Resolution == nil {
 		return gatewaybilling.ErrByok
@@ -187,6 +194,26 @@ func ApplyUpstreamCredentials(
 			if err := state.Resolution.SetWireModel(deploymentName); err != nil {
 				return gatewaybilling.ErrByok
 			}
+			if azureTokens == nil {
+				return gatewaybilling.ErrGatewayUnavailable
+			}
+			azure := directKey.AzureKeyConfig
+			token, err := azureTokens.Token(ctx, azureauth.Credential{
+				TenantID: azure.TenantID.GetValue(),
+				ClientID: azure.ClientID.GetValue(),
+				Secret:   azure.ClientSecret.GetValue(),
+				Scope:    azure.Scopes[0],
+			})
+			if err != nil {
+				if errors.Is(err, azureauth.ErrCredential) {
+					return gatewaybilling.ErrByok
+				}
+				return gatewaybilling.ErrGatewayUnavailable
+			}
+			// Bifrost's supported context-token path avoids its process-lifetime
+			// SDK credential cache. The provider never receives the client secret.
+			azure.ClientID, azure.ClientSecret, azure.TenantID = nil, nil, nil
+			ctx.SetValue(azureprovider.AzureAuthorizationTokenKey, token)
 		}
 		ctx.SetValue(schemas.BifrostContextKeyDirectKey, directKey)
 	}
@@ -257,7 +284,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 				Event:      "cache_read_savings_projection_failed",
 				ReasonCode: "cache_read_savings_unavailable",
 				RequestID:  state.Authorization.RequestID,
-				Severity:   "warning",
+				Severity:   "warn",
 			})
 		}
 		var cacheWriteOverheadErr error
@@ -268,7 +295,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 				Event:      "cache_write_overhead_projection_failed",
 				ReasonCode: "cache_write_overhead_unavailable",
 				RequestID:  state.Authorization.RequestID,
-				Severity:   "warning",
+				Severity:   "warn",
 			})
 		}
 	}
@@ -324,8 +351,18 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			return nil
 		}
 	}
-	if pricingFailed {
+	if state.ProcessingError != nil {
 		event.StogasProcessingSuccess = false
+	}
+	// A local failure can interrupt a provider stream before its outcome is
+	// known. Keep completed provider results; do not invent success or HTTP 500.
+	if state.ProcessingError != nil && len(event.ProviderAttempts) > 0 {
+		streaming := state.RequestType == string(schemas.ChatCompletionStreamRequest) || state.RequestType == string(schemas.ResponsesStreamRequest)
+		completed := state.Response != nil && (!streaming || state.chatStreamFinished || state.responsesStreamEnded)
+		last := &event.ProviderAttempts[len(event.ProviderAttempts)-1]
+		if !completed && last.Status == "success" {
+			last.Status, last.StatusCode = "unknown", nil
+		}
 	}
 	state.FinalEvent = &event
 	return state.FinalEvent
@@ -343,7 +380,7 @@ func markFinalPricingFailure(state *State, err error) {
 	errorType := "internal_error"
 	code := "billing_price_invalid"
 	allowFallbacks := false
-	state.BifrostError = &schemas.BifrostError{
+	state.ProcessingError = &schemas.BifrostError{
 		IsBifrostError: true,
 		StatusCode:     &statusCode,
 		Type:           &errorType,

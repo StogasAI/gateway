@@ -314,8 +314,9 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 	defer byokAPI.close()
 	attestor := &attestor{
-		api:         managedAPI,
-		diagnostics: &diagnostics{},
+		api:          managedAPI,
+		refreshSlots: make(chan struct{}, maximumConcurrentEvidenceRefreshes),
+		diagnostics:  &diagnostics{},
 		policies: &policyCache{api: managedAPI, value: &policySnapshot{
 			Measurements: measurements,
 			Digest:       digest,
@@ -349,6 +350,25 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	if evidenceAuthorization != "" {
 		t.Fatal("fresh cache caused an evidence request")
 	}
+	for range maximumConcurrentEvidenceRefreshes {
+		attestor.refreshSlots <- struct{}{}
+	}
+	if _, err := attestor.verify(context.Background(), testModelTarget, discovered, true); err == nil || evidenceAuthorization != "" {
+		t.Fatal("full evidence capacity allowed a forced refresh")
+	}
+	attestor.cacheMu.Lock()
+	clear(attestor.cache)
+	attestor.cacheMu.Unlock()
+	if _, err := attestor.verify(context.Background(), testModelTarget, discovered, false); err == nil || evidenceAuthorization != "" {
+		t.Fatal("cold attestation bypassed full evidence capacity")
+	}
+	if attestor.diagnostics.evidenceRejected.Load() != 2 {
+		t.Fatal("missing evidence rejections")
+	}
+	for range maximumConcurrentEvidenceRefreshes {
+		<-attestor.refreshSlots
+	}
+	attestor.storeCachedInstances(testModelTarget, map[string]verifiedInstance{testInstanceID: verification})
 	refreshed, err := attestor.verify(context.Background(), testModelTarget, discovered, true)
 	if err == nil || refreshed == nil || refreshed.Complete {
 		t.Fatalf("failed forced refresh was accepted: result=%#v err=%v", refreshed, err)
@@ -358,6 +378,9 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 	if evidenceAuthorization != "Bearer managed-key" {
 		t.Fatalf("evidence authorization = %q", evidenceAuthorization)
+	}
+	if len(attestor.refreshSlots) != 0 || attestor.diagnostics.evidenceInFlight.Load() != 0 {
+		t.Fatal("evidence slot leaked")
 	}
 	retained, ok := attestor.cachedInstance(testModelTarget, discovered[0], time.Now())
 	if !ok || !retained.ValidUntil.Equal(verification.ValidUntil) {

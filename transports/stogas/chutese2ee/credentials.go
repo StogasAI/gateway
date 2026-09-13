@@ -11,6 +11,7 @@ const (
 	maximumChutesAPIKeyLength = 4096
 	maximumCredentialPools    = 2048
 	credentialIdleLifetime    = 5 * time.Minute
+	credentialCleanupInterval = 15 * time.Second
 )
 
 var errCredentialUnavailable = errors.New("unavailable Chutes credential")
@@ -70,17 +71,17 @@ func (t *Transport) acquireCredential(apiKey string) (*credentialState, func(), 
 		t.credentialsMu.Unlock()
 		return nil, nil, errCredentialUnavailable
 	}
-	for existingFingerprint, existing := range t.credentials {
-		if existing.active == 0 && now.Sub(existing.lastUsed) >= credentialIdleLifetime {
-			delete(t.credentials, existingFingerprint)
-			retired = append(retired, existing)
-		}
-	}
-
 	credential := t.managedCredential
 	if fingerprint != t.managedFingerprint {
 		credential = t.credentials[fingerprint]
+		if credential != nil && credential.active == 0 && now.Sub(credential.lastUsed) >= credentialIdleLifetime {
+			t.diagnostics.credentialExpired.Add(1)
+			delete(t.credentials, fingerprint)
+			retired = append(retired, credential)
+			credential = nil
+		}
 		if credential == nil {
+			t.diagnostics.credentialMisses.Add(1)
 			if len(t.credentials) >= maximumCredentialPools {
 				var oldestFingerprint credentialFingerprint
 				var oldest *credentialState
@@ -91,11 +92,13 @@ func (t *Transport) acquireCredential(apiKey string) (*credentialState, func(), 
 					}
 				}
 				if oldest == nil {
+					t.diagnostics.credentialRejected.Add(1)
 					t.credentialsMu.Unlock()
 					closeCredentialStates(retired)
 					return nil, nil, errCredentialUnavailable
 				}
 				delete(t.credentials, oldestFingerprint)
+				t.diagnostics.credentialEvicted.Add(1)
 				retired = append(retired, oldest)
 			}
 			api, err := t.api.withAPIKey(apiKey)
@@ -111,6 +114,8 @@ func (t *Transport) acquireCredential(apiKey string) (*credentialState, func(), 
 				lastUsed:    now,
 			}
 			t.credentials[fingerprint] = credential
+		} else {
+			t.diagnostics.credentialHits.Add(1)
 		}
 	}
 	credential.active++
@@ -131,6 +136,51 @@ func (t *Transport) acquireCredential(apiKey string) (*credentialState, func(), 
 		t.credentialsMu.Unlock()
 	}
 	return credential, release, nil
+}
+
+func (t *Transport) cleanupCredentials() {
+	defer close(t.credentialCleanupDone)
+	ticker := time.NewTicker(ticketWarmCheckInterval)
+	defer ticker.Stop()
+	nextCleanup := time.Now().Add(credentialCleanupInterval)
+	for {
+		select {
+		case <-t.credentialCleanupStop:
+			return
+		case now := <-ticker.C:
+			if !now.Before(nextCleanup) {
+				t.expireCredentials()
+				nextCleanup = now.Add(credentialCleanupInterval)
+			}
+			t.credentialsMu.Lock()
+			pools := make([]*poolState, 0, len(t.credentials)+1)
+			pools = append(pools, t.pools)
+			for _, credential := range t.credentials {
+				pools = append(pools, credential.pools)
+			}
+			t.credentialsMu.Unlock()
+			for _, pool := range pools {
+				if pool != nil {
+					pool.maintain(now)
+				}
+			}
+		}
+	}
+}
+
+func (t *Transport) expireCredentials() {
+	now := time.Now()
+	var retired []*credentialState
+	t.credentialsMu.Lock()
+	for fingerprint, credential := range t.credentials {
+		if credential.active == 0 && now.Sub(credential.lastUsed) >= credentialIdleLifetime {
+			t.diagnostics.credentialExpired.Add(1)
+			delete(t.credentials, fingerprint)
+			retired = append(retired, credential)
+		}
+	}
+	t.credentialsMu.Unlock()
+	closeCredentialStates(retired)
 }
 
 func closeCredentialStates(credentials []*credentialState) {

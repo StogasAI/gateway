@@ -47,6 +47,13 @@ stored, ARM-discovered credential assigned to the Stogas API key and does not ac
 credentials. The gateway removes pass-through fields from the request, derives a stable keyed ID for
 the hold and analytics, and never persists the plaintext secret.
 
+Request analytics begin when a billing hold is authorized. Every admitted request retains one
+logical final record, including provider errors, cancellations, and zero-cost failures. Records
+contain bounded accounting and outcome metadata, never prompts, responses, or raw error messages.
+Pre-admission inference failures increment fixed diagnostic counters without creating request
+records. Operational failures use code-owned categories and source locations, cumulative counts,
+and at most one emitted line per minute per group. Client logging preferences cannot disable accounting.
+
 ## Build and test
 
 Install Bun and Go, then run:
@@ -61,7 +68,9 @@ bun run build
 
 ## Confidential release
 
-Tagged releases build `gateway.igvm` and a canonical manifest that binds its hash, build inputs, SNP launch policy, and measurement. GitHub attests that manifest. Stogas independently rebuilds the same pinned Guix derivation and signs the identical manifest only when the complete result matches.
+Tagged releases build `gateway.igvm` and a canonical manifest that binds its hash, build inputs, embedded SNP launch policies, and the measurement computed from the completed IGVM. GitHub attests both the manifest and IGVM bytes. Stogas independently rebuilds the same pinned Guix derivation and signs the identical manifest only when the complete result matches.
+
+Release evidence contains `schema: "stogas.release-evidence.v1"`, `manifest`, `signature`, and `attested_builds`. The Stogas signature proves approval of that manifest, not that the independent rebuild happened. The current evidence does not attest the Stogas builder or establish that it did not copy GitHub's output.
 
 See [the reproducible-build audit](stogas/release/BUILD_AUDIT.md) for build inputs and verification details.
 

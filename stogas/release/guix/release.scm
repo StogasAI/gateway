@@ -211,44 +211,28 @@
                          (if (null? rest) "" ","))
                  (loop rest)))))
 
-          (define (write-artifact-manifest out igvm efi ca-bundle measurement build-inputs)
-            (let* ((pins #$(source-file "pins.lock.json" "pins.lock.json"))
-                   (cmdline #$(source-file "guix/cmdline.txt" "cmdline.txt"))
-                   (core-go-mod (string-append #$source "/core/go.mod"))
-                   (core-go-sum (string-append #$source "/core/go.sum"))
-                   (go-mod (string-append #$source "/transports/go.mod"))
-                   (go-sum (string-append #$source "/transports/go.sum"))
-                   (os-release #$(source-file "guix/os-release" "os-release"))
-                   (kernel (string-append #$stogas-linux-6-18 "/bzImage"))
+          (define (write-artifact-manifest out igvm efi measurement build-inputs)
+            (let* ((kernel (string-append #$stogas-linux-6-18 "/bzImage"))
                    (igvmmeasure (string-append #$stogas-igvmmeasure "/bin/igvmmeasure"))
                    (stub (string-append #$stogas-systemd-uki-tools
                                         "/lib/systemd/boot/efi/linuxx64.efi.stub"))
                    (ovmf (string-append #$stogas-edk2-amdsev-ovmf
                                         "/share/firmware/ovmf-amdsev-x64.fd"))
-                   (launch-policies (string-append out "/snp-launch-policies.json"))
+                   (launch-policies #$%snp-launch-policies)
                    (manifest (string-append out "/release-manifest.json")))
               (call-with-output-file manifest
                 (lambda (port)
                   (display "{\"artifacts\":{\"gateway.igvm\":{" port)
-                  (format port "\"sha256\":~a,\"sizeBytes\":~a},\"snp-launch-policies.json\":{\"sha256\":~a,\"sizeBytes\":~a}},"
+                  (format port "\"sha256\":~a,\"sizeBytes\":~a}},"
                           (json-string (sha256 igvm))
-                          (stat:size (stat igvm))
-                          (json-string (sha256 launch-policies))
-                          (stat:size (stat launch-policies)))
+                          (stat:size (stat igvm)))
                   (display "\"build\":{" port)
-                  (format port "\"cmdlineSha256\":~a," (json-string (sha256 cmdline)))
-                  (format port "\"coreGoModSha256\":~a," (json-string (sha256 core-go-mod)))
-                  (format port "\"coreGoSumSha256\":~a," (json-string (sha256 core-go-sum)))
                   (display "\"environment\":{\"lcAll\":\"C\",\"sourceDateEpoch\":\"1\",\"tz\":\"UTC\",\"umask\":\"022\"}," port)
-                  (format port "\"goModSha256\":~a," (json-string (sha256 go-mod)))
-                  (format port "\"goSumSha256\":~a," (json-string (sha256 go-sum)))
                   (format port "\"goVendorTreeSha256\":~a,"
                           (json-string expected-go-vendor-tree-sha256))
                   (format port "\"goVersion\":~a,"
                           (json-string (string-trim-right (command-output "go" "version"))))
                   (display "\"guestCaBundlePath\":\"/etc/ssl/certs/ca-certificates.crt\"," port)
-                  (format port "\"guestCaBundleSha256\":~a,"
-                          (json-string (sha256 ca-bundle)))
                   (display "\"guixChannelCommit\":\"058701d7ad329cfa7292998699baa3dfb8955752\"," port)
                   (display "\"inputSha256\":{" port)
                   (write-json-hash-map port build-inputs)
@@ -258,9 +242,7 @@
                            (sha256 (string-append #$stogas-linux-6-18 "/.config"))))
                   (display "\"kernelVersion\":\"6.18.38\"," port)
                   (format port "\"linuxBzImageSha256\":~a," (json-string (sha256 kernel)))
-                  (format port "\"osReleaseSha256\":~a," (json-string (sha256 os-release)))
                   (format port "\"ovmfSha256\":~a," (json-string (sha256 ovmf)))
-                  (format port "\"pinsLockSha256\":~a," (json-string (sha256 pins)))
                   (format port "\"systemdStubSha256\":~a," (json-string (sha256 stub)))
                   (format port "\"ukiSha256\":~a}," (json-string (sha256 efi)))
                   (display "\"git\":{" port)
@@ -300,7 +282,6 @@
 		          (define release-initramfs (string-append out "/gateway.initramfs.cpio.zst"))
 		          (define measurement-path (string-append work "/measurement.txt"))
 	          (define kernel-config (string-append out "/kernel-config.txt"))
-	          (define launch-policies (string-append out "/snp-launch-policies.json"))
 	          (define license #$(gateway-file "LICENSE" "LICENSE"))
 	          (define notice #$(gateway-file "NOTICE" "NOTICE"))
 	          (define pins #$(source-file "pins.lock.json" "pins.lock.json"))
@@ -458,12 +439,10 @@
 	          (copy-file (string-append #$stogas-linux-6-18 "/.config") kernel-config)
 	          (copy-file license (string-append out "/LICENSE"))
 	          (copy-file notice (string-append out "/NOTICE"))
-	          (copy-file #$%snp-launch-policies launch-policies)
 	          (write-artifact-manifest
 	           out
 	           igvm
 	           efi
-	           ca-bundle
 	           (call-with-input-file measurement-path get-string-all)
 	           build-inputs)))))
   (native-inputs

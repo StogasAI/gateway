@@ -259,6 +259,16 @@ func (a *attestor) verifyOnce(
 		return result, nil
 	}
 	result.Attempted = true
+	select {
+	case a.refreshSlots <- struct{}{}:
+		a.diagnostics.evidenceInFlight.Add(1)
+		defer func() { a.diagnostics.evidenceInFlight.Add(-1); <-a.refreshSlots }()
+	case <-ctx.Done():
+		return result, ctx.Err()
+	default:
+		a.diagnostics.evidenceRejected.Add(1)
+		return result, ErrAttestationFailed
+	}
 	nonceBytes := make([]byte, 32)
 	if _, err := rand.Read(nonceBytes); err != nil {
 		return nil, fmt.Errorf("generate attestation nonce: %w", err)
@@ -428,6 +438,9 @@ func (a *attestor) observe(target ModelTarget, discovered []discoveredInstance) 
 	}
 	instances := a.observed[chuteID]
 	if instances == nil {
+		if len(a.observed) >= maximumDiagnosticChutes {
+			return
+		}
 		instances = make(map[string]observedAttestationInstance)
 		a.observed[chuteID] = instances
 	}
@@ -497,6 +510,11 @@ func (a *attestor) dueRefreshes(now time.Time) map[string]attestationRefreshBatc
 	result := make(map[string]attestationRefreshBatch)
 	a.refreshMu.Lock()
 	defer a.refreshMu.Unlock()
+	for chuteID := range a.refresh {
+		if len(a.observed[chuteID]) == 0 {
+			delete(a.refresh, chuteID)
+		}
+	}
 	for chuteID, instances := range a.observed {
 		for instanceID, instance := range instances {
 			if now.Sub(instance.LastSeen) >= attestationObservationTTL {
@@ -537,12 +555,6 @@ func (a *attestor) refreshObserved(target ModelTarget, discovered []discoveredIn
 		}
 		a.refreshMu.Unlock()
 	}()
-	select {
-	case a.refreshSlots <- struct{}{}:
-		defer func() { <-a.refreshSlots }()
-	case <-a.ctx.Done():
-		return
-	}
 	ctx, cancel := context.WithTimeout(a.ctx, attestationTimeout)
 	_, _ = a.verify(ctx, target, discovered, true)
 	cancel()
@@ -568,6 +580,9 @@ func (a *attestor) recordRefreshResult(
 	}
 	state := a.refresh[chuteID]
 	if state == nil {
+		if len(a.refresh) >= maximumDiagnosticChutes {
+			return
+		}
 		state = &attestationRefreshState{Target: target}
 		a.refresh[chuteID] = state
 	}

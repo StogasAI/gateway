@@ -66,6 +66,7 @@ type Server struct {
 	secure            *confidentialruntime.Runtime
 	catalogUpdater    *catalog.Updater
 	requests          *requestDrain
+	admission         requestAdmissionCounters
 	memory            *requestMemoryAdmission
 	startedAt         time.Time
 }
@@ -104,7 +105,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, fmt.Errorf("%w: %w", ErrConfidentialRuntimeSecretApplication, err)
 	}
-	runtime, err := stogas.NewRuntime(ctx, config, logger)
+	runtime, err := stogas.NewRuntime(ctx, config)
 	if err != nil {
 		catalogUpdater.Close()
 		if secure != nil {

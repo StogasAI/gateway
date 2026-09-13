@@ -227,7 +227,6 @@ function verifyWorkflows() {
 		'actions/attest@',
 		'gateway.igvm',
 		'release-manifest.json',
-		'snp-launch-policies.json',
 		'github-attestation.jsonl',
 		'Verify release payload file set',
 		'find . -mindepth 1 -maxdepth 1',
@@ -246,8 +245,8 @@ function verifyWorkflows() {
 	);
 	assertContains(
 		release,
-		'subject-path: dist/gateway/${{ github.ref_name }}/release-manifest.json',
-		'GitHub must attest the manifest that links the full release.'
+		'subject-path: |\n            dist/gateway/${{ github.ref_name }}/release-manifest.json\n            dist/gateway/${{ github.ref_name }}/gateway.igvm',
+		'GitHub must attest the manifest and the IGVM it identifies.'
 	);
 	assert(
 		!release.includes('gateway-evidence.tar'),
