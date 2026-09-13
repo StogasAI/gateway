@@ -327,7 +327,7 @@ func (s *Server) completeUnaryResponse(ctx *fasthttp.RequestCtx, bifrostCtx *sch
 	adapter.SanitizeResponse(state)
 	stogas.PrepareFinalState(state)
 	if bifrostErr == nil {
-		bifrostErr = state.BifrostError
+		bifrostErr = state.ResponseError()
 	}
 	if bifrostErr == nil {
 		return true
@@ -405,8 +405,8 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				return
 			}
 			stogas.PrepareFinalState(state)
-			if state != nil && state.BifrostError != nil {
-				sendStreamError(state.BifrostError)
+			if failure := state.ResponseError(); failure != nil {
+				sendStreamError(failure)
 				return
 			}
 			if streamProof != nil {
@@ -555,7 +555,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 				bifrostErr := streamMemoryCapacityError()
 				if state != nil {
 					state.MarkProviderCompleted()
-					state.BifrostError = bifrostErr
+					retainResponseFailure(state, bifrostErr)
 				}
 				sendStreamError(bifrostErr)
 				return
@@ -578,7 +578,7 @@ func (s *Server) writeSSEStream(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.Bi
 					bifrostErr := streamMemoryCapacityError()
 					if state != nil {
 						state.MarkProviderCompleted()
-						state.BifrostError = bifrostErr
+						retainResponseFailure(state, bifrostErr)
 					}
 					sendStreamError(bifrostErr)
 					return

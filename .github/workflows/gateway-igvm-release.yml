@@ -59,7 +59,9 @@ jobs:
         id: attest
         uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
         with:
-          subject-path: dist/gateway/${{ github.ref_name }}/release-manifest.json
+          subject-path: |
+            dist/gateway/${{ github.ref_name }}/release-manifest.json
+            dist/gateway/${{ github.ref_name }}/gateway.igvm
 
       - name: Collect official GitHub attestation evidence
         run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
@@ -83,7 +85,6 @@ jobs:
             NOTICE
             gateway.igvm
             release-manifest.json
-            snp-launch-policies.json
             github-attestation.jsonl
           )
           actual_files="$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)"
@@ -202,7 +203,6 @@ jobs:
             "dist/gateway/$tag/NOTICE"
             "dist/gateway/$tag/gateway.igvm"
             "dist/gateway/$tag/release-manifest.json"
-            "dist/gateway/$tag/snp-launch-policies.json"
             "dist/gateway/$tag/github-attestation.jsonl"
           )
           if gh release view "$tag" >/dev/null 2>&1; then

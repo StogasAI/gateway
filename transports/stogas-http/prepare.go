@@ -102,7 +102,11 @@ func (s *Server) prepareCandidate(
 		return failBeforeHold(err, candidateFailureCatalog, true)
 	}
 
-	if err := stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state); err != nil {
+	err = stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state)
+	if state.Authorization != nil {
+		s.recordAdmission(ctx)
+	}
+	if err != nil {
 		if errors.Is(err, billing.ErrAPIKeyConfigStale) {
 			s.invalidateKeyConfig(credential)
 		}
@@ -113,7 +117,7 @@ func (s *Server) prepareCandidate(
 		cancel()
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
-	if err := stogas.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
+	if err := s.runtime.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
 		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "BYOK key is unavailable")
 		cancel()
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
@@ -146,7 +150,7 @@ func finalizePreparedFailure(
 	message string,
 ) {
 	status := fasthttp.StatusServiceUnavailable
-	state.BifrostError = &schemas.BifrostError{
+	state.ProcessingError = &schemas.BifrostError{
 		IsBifrostError: true,
 		StatusCode:     &status,
 		Error:          &schemas.ErrorField{Message: message},

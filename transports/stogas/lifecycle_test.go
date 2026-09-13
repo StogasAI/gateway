@@ -226,7 +226,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 				Authorization: &billing.Authorization{UpstreamByok: "stogas"},
 				Resolution:    &catalog.ResolvedRequest{Provider: provider},
 			}
-			if err := ApplyUpstreamCredentials(ctx, state); !errors.Is(err, billing.ErrByokRequired) {
+			if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})
@@ -237,7 +237,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 		Authorization: &billing.Authorization{UpstreamByok: "stogas", UserID: "user-123"},
 		Resolution:    &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 	}
-	if err := ApplyUpstreamCredentials(ctx, state); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 		},
 		Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 	}
-	if err := ApplyUpstreamCredentials(ctx, byokState); err != nil {
+	if err := applyUpstreamCredentials(ctx, byokState, nil); err != nil {
 		t.Fatalf("Chutes BYOK returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -273,7 +273,7 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 				Resolution: &catalog.ResolvedRequest{Provider: provider},
 			}
 
-			if err := ApplyUpstreamCredentials(ctx, state); err != nil {
+			if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
 				t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 			}
 			directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -305,7 +305,7 @@ func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *tes
 		Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 	}
 
-	if err := ApplyUpstreamCredentials(ctx, state); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -329,7 +329,7 @@ func TestApplyUpstreamCredentialsRejectsIncompleteBYOKAuthorization(t *testing.T
 		Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 	}
 
-	if err := ApplyUpstreamCredentials(ctx, state); !errors.Is(err, billing.ErrByok) {
+	if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
 		t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK failure", err)
 	}
 	if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
@@ -348,7 +348,7 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 			Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 		}
 
-		if err := ApplyUpstreamCredentials(ctx, state); !errors.Is(err, billing.ErrByok) {
+		if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
 			t.Fatalf("credential %q: ApplyUpstreamCredentials error = %v, want BYOK failure", secret, err)
 		}
 		if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
@@ -1934,6 +1934,93 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	}
 }
 
+func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *testing.T) {
+	for _, dispatched := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dispatched=%t", dispatched), func(t *testing.T) {
+			now := time.Now().UTC()
+			status := 503
+			state := &State{
+				Authorization: &billing.Authorization{
+					AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0), RequestID: "request",
+				},
+				UpstreamCostUSDAtoms: billing.ZeroChargeUSDAtoms,
+				RequestType:          string(schemas.ChatCompletionRequest),
+				BifrostError:         &schemas.BifrostError{StatusCode: &status, Error: &schemas.ErrorField{Message: "unavailable"}},
+				StartedAt:            now.Add(-time.Second),
+			}
+			if dispatched {
+				state.ProviderStartedAt = now.Add(-time.Millisecond)
+			} else {
+				state.ProcessingError, state.BifrostError = state.BifrostError, nil
+			}
+			authorizer := &fakeBillingAuthorizer{}
+			FinalizeState(context.Background(), authorizer, state)
+			FinalizeState(context.Background(), authorizer, state)
+			if len(authorizer.finalEvents) != 1 {
+				t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
+			}
+			event := authorizer.finalEvents[0]
+			if event.StogasProcessingSuccess != dispatched || event.UpstreamCostUSDAtoms != "0" || event.BilledCostUSDAtoms != "0" {
+				t.Fatalf("failure classification/cost = %#v", event)
+			}
+			if dispatched {
+				if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 503 {
+					t.Fatalf("missing provider failure: %#v", event.ProviderAttempts)
+				}
+			} else if len(event.ProviderAttempts) != 0 {
+				t.Fatalf("fabricated provider attempt: %#v", event.ProviderAttempts)
+			}
+		})
+	}
+}
+
+func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testing.T) {
+	for _, item := range []struct {
+		name          string
+		requestType   schemas.RequestType
+		completed     bool
+		providerError bool
+		want          string
+	}{
+		{name: "buffered success", requestType: schemas.ChatCompletionRequest, want: "success"},
+		{name: "incomplete chat stream", requestType: schemas.ChatCompletionStreamRequest, want: "unknown"},
+		{name: "completed chat without usage", requestType: schemas.ChatCompletionStreamRequest, completed: true, want: "success"},
+		{name: "incomplete Responses stream", requestType: schemas.ResponsesStreamRequest, want: "unknown"},
+		{name: "completed Responses without usage", requestType: schemas.ResponsesStreamRequest, completed: true, want: "success"},
+		{name: "provider also failed", requestType: schemas.ChatCompletionRequest, providerError: true, want: "rate_limited"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			state := &State{
+				Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0)},
+				UpstreamCostUSDAtoms: "0",
+				RequestType:          string(item.requestType),
+				StartedAt:            time.Now().Add(-time.Second), ProviderStartedAt: time.Now().Add(-time.Millisecond),
+				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500)},
+				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+			}
+			state.chatStreamFinished = item.completed && item.requestType == schemas.ChatCompletionStreamRequest
+			state.responsesStreamEnded = item.completed && item.requestType == schemas.ResponsesStreamRequest
+			wantCode := 200
+			if item.providerError {
+				wantCode = 429
+				state.BifrostError = &schemas.BifrostError{StatusCode: schemas.Ptr(wantCode)}
+			}
+			event := PrepareFinalState(state)
+			if event == nil || event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
+				t.Fatalf("wrong independent outcomes: %#v", event)
+			}
+			code := event.ProviderAttempts[0].StatusCode
+			if item.want == "unknown" {
+				if code != nil {
+					t.Fatalf("invented provider HTTP code: %d", *code)
+				}
+			} else if code == nil || *code != wantCode {
+				t.Fatalf("wrong provider HTTP code: %v", code)
+			}
+		})
+	}
+}
+
 func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 	now := time.Now().UTC()
 	state := &State{
@@ -3266,6 +3353,7 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 		{name: "malformed hold", hold: "invalid", final: "1", wantDiscard: true},
 		{name: "malformed final", hold: "100", final: "invalid", pricingError: true, wantDiscard: true},
 		{name: "negative final", hold: "100", final: "-1", pricingError: true, wantDiscard: true},
+		{name: "provider and pricing failure", hold: "100", final: "invalid", providerError: true, pricingError: true, wantDiscard: true},
 	}
 
 	for _, tc := range tests {
@@ -3312,12 +3400,22 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 						billing.MeterInputTokens: {billing.RatePerMillionTokens: rateUSDAtoms},
 					}},
 				},
-				Signals:   &StandardSignals{Prompt: 1},
-				StartedAt: time.Now().UTC(),
+				Signals:           &StandardSignals{Prompt: 1},
+				StartedAt:         time.Now().UTC().Add(-time.Second),
+				ProviderStartedAt: time.Now().UTC().Add(-time.Millisecond),
+				Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
 			event := PrepareFinalState(state)
 			if event == nil {
 				t.Fatal("PrepareFinalState returned nil")
+			}
+			wantStatus, wantCode := "success", 200
+			if tc.providerError {
+				wantStatus, wantCode = "provider_error", 500
+			}
+			if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != wantStatus ||
+				event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != wantCode {
+				t.Fatalf("Stogas pricing changed the provider result: %#v", event.ProviderAttempts)
 			}
 			if !tc.wantDiscard {
 				if state.BifrostError != nil || event.UpstreamCostUSDAtoms != tc.final {
@@ -3328,17 +3426,28 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || event.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
 				t.Fatalf("unsafe final cost was not discarded: state=%#v event=%#v", state, event)
 			}
-			if event.StogasProcessingSuccess {
-				t.Fatal("discarded settlement was recorded as successful Stogas processing")
+			if event.StogasProcessingSuccess == tc.pricingError {
+				t.Fatal("handled zero-charge settlement must keep successful processing; fatal pricing errors must fail it")
 			}
-			if tc.pricingError && state.BifrostError == nil {
+			if tc.pricingError && state.ProcessingError == nil {
 				t.Fatal("internal pricing failure did not retain its Stogas error")
 			}
-			if !tc.pricingError && providerErr == nil && state.BifrostError != nil {
+			if providerErr == nil && state.BifrostError != nil {
 				t.Fatalf("settlement guard changed the provider outcome: %#v", state.BifrostError)
 			}
 			if providerErr != nil && state.BifrostError != providerErr {
 				t.Fatal("final-cost guard replaced the original provider error")
+			}
+			if tc.pricingError {
+				wantResponseError := state.ProcessingError
+				if providerErr != nil {
+					wantResponseError = providerErr
+				}
+				if state.ResponseError() != wantResponseError {
+					t.Fatal("wrong client-visible error")
+				}
+			} else if state.ResponseError() != providerErr {
+				t.Fatal("discarding an unsafe charge must not introduce a client-visible error")
 			}
 			if state.Signals != nil || len(state.FinalMeters) != 0 {
 				t.Fatalf("unsafe usage remained billable: signals=%#v meters=%#v", state.Signals, state.FinalMeters)

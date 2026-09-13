@@ -39,6 +39,7 @@ type State struct {
 	Model                   string
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
+	ProcessingError         *schemas.BifrostError
 	FinalEvent              *billing.RequestEvent
 	UpstreamCostUSDAtoms    string
 	FinalMeters             []catalog.MeterEstimate
@@ -80,6 +81,18 @@ type State struct {
 
 	providerAttemptsMu sync.Mutex
 	providerAttempts   []providerAttemptObservation
+}
+
+// ResponseError preserves an upstream failure when final Stogas processing also
+// fails. Processing errors never become evidence about the provider's outcome.
+func (s *State) ResponseError() *schemas.BifrostError {
+	if s == nil {
+		return nil
+	}
+	if s.BifrostError != nil {
+		return s.BifrostError
+	}
+	return s.ProcessingError
 }
 
 type providerChatToolCall struct {

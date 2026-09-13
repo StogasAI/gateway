@@ -695,6 +695,7 @@ func TestCredentialPoolsAreReusedIsolatedAndRetired(t *testing.T) {
 	transport.credentialsMu.Lock()
 	first.lastUsed = time.Now().Add(-credentialIdleLifetime)
 	transport.credentialsMu.Unlock()
+	transport.expireCredentials()
 	third, releaseThird, err := transport.acquireCredential("customer-c")
 	if err != nil {
 		t.Fatal(err)

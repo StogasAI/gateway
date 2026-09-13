@@ -154,7 +154,7 @@ chmod -R u+w "$out_dir"
     gateway.kernel
     gateway.initramfs.cpio.zst
     release-manifest.json
-    snp-launch-policies.json
+
     kernel-config.txt
   )
   actual_files="$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | LC_ALL=C sort)"

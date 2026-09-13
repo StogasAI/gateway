@@ -26,10 +26,10 @@ import (
 
 const (
 	defaultPollInterval = 5 * time.Minute
-	manifestSizeLimit   = 64 * 1024
+	releaseSizeLimit    = 2 * 1024 * 1024
 )
 
-var catalogSignatureDomain = []byte("stogas catalog release v1\n")
+var catalogSignatureDomain = []byte("stogas signed document v1\n")
 
 //go:embed trust/catalog-signing-keys.json
 var trustedKeyJSON []byte
@@ -333,7 +333,7 @@ func (u *Updater) pollSource(ctx context.Context, releaseURL *url.URL) catalogPo
 		result.err = fmt.Errorf("%s: unexpected HTTP %d", releaseURL.Host, response.StatusCode)
 		return result
 	}
-	envelopeBytes, err := readLimited(response.Body, manifestSizeLimit)
+	envelopeBytes, err := readLimited(response.Body, releaseSizeLimit)
 	if err != nil {
 		result.err = fmt.Errorf("%s: read catalog release: %w", releaseURL.Host, err)
 		return result
@@ -509,22 +509,28 @@ func catalogReleaseURLs(primary string) ([]*url.URL, error) {
 
 func verifyEnvelope(data []byte, keys map[string]ed25519.PublicKey) (releaseManifest, error) {
 	var envelope struct {
-		Schema    string          `json:"schema"`
-		KeyID     string          `json:"keyId"`
-		Manifest  json.RawMessage `json:"manifest"`
-		Signature string          `json:"signature"`
+		AttestedBuilds []map[string]json.RawMessage `json:"attested_builds"`
+		Manifest       json.RawMessage              `json:"manifest"`
+		Schema         string                       `json:"schema"`
+		Signature      struct {
+			KeyID     string `json:"key_id"`
+			Signature string `json:"signature"`
+		} `json:"signature"`
 	}
 	if err := decodeStrict(data, &envelope); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode signed catalog manifest: %w", err)
 	}
-	if envelope.Schema != "stogas.catalog.signed.v1" {
-		return releaseManifest{}, fmt.Errorf("catalog signature envelope is unsupported")
+	if envelope.Schema != "stogas.release-evidence.v1" {
+		return releaseManifest{}, fmt.Errorf("catalog release evidence schema is unsupported")
 	}
-	key, ok := keys[envelope.KeyID]
+	if len(envelope.AttestedBuilds) != 1 || envelope.AttestedBuilds[0] == nil {
+		return releaseManifest{}, fmt.Errorf("catalog release requires one attested build")
+	}
+	key, ok := keys[envelope.Signature.KeyID]
 	if !ok {
-		return releaseManifest{}, fmt.Errorf("catalog signing key %q is not trusted", envelope.KeyID)
+		return releaseManifest{}, fmt.Errorf("catalog signing key %q is not trusted", envelope.Signature.KeyID)
 	}
-	signature, err := base64.RawURLEncoding.DecodeString(envelope.Signature)
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(envelope.Signature.Signature)
 	payload := make([]byte, 0, len(catalogSignatureDomain)+len(envelope.Manifest))
 	payload = append(payload, catalogSignatureDomain...)
 	payload = append(payload, envelope.Manifest...)

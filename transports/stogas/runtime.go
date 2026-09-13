@@ -8,6 +8,7 @@ import (
 
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
@@ -19,13 +20,14 @@ const (
 )
 
 type Runtime struct {
-	client     *bifrost.Bifrost
-	billing    *billing.Service
-	chutesE2EE *chutese2ee.Transport
-	cancel     context.CancelFunc
+	client      *bifrost.Bifrost
+	billing     *billing.Service
+	chutesE2EE  *chutese2ee.Transport
+	azureTokens *azureauth.Cache
+	cancel      context.CancelFunc
 }
 
-func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Runtime, error) {
+func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -69,7 +71,7 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		Account: newAccount(config, chutesTransport),
 		// sync.Pool allocates on demand and Go may clear it during any GC.
 		// Do not prewarm a speculative number of request objects.
-		Logger: logger,
+		Logger: providerLibraryLogger{emit: writeOperationalLog},
 		Tracer: newProviderAttemptTracer(schemas.DefaultTracer()),
 	})
 	if err != nil {
@@ -79,7 +81,21 @@ func NewRuntime(ctx context.Context, config Config, logger schemas.Logger) (*Run
 		return nil, err
 	}
 
-	return &Runtime{client: client, billing: billingService, chutesE2EE: chutesTransport, cancel: cancel}, nil
+	return &Runtime{client: client, billing: billingService, chutesE2EE: chutesTransport, azureTokens: azureauth.New(runtimeCtx), cancel: cancel}, nil
+}
+
+func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *State) error {
+	if r == nil {
+		return billing.ErrGatewayUnavailable
+	}
+	return applyUpstreamCredentials(ctx, state, r.azureTokens)
+}
+
+func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {
+	if r == nil {
+		return azureauth.Diagnostics{}
+	}
+	return r.azureTokens.Diagnostics()
 }
 
 func (r *Runtime) Client() *bifrost.Bifrost {
@@ -143,6 +159,9 @@ func (r *Runtime) Close() {
 	}
 	if r.chutesE2EE != nil {
 		r.chutesE2EE.Close()
+	}
+	if r.azureTokens != nil {
+		r.azureTokens.Close()
 	}
 	if r.cancel != nil {
 		r.cancel()

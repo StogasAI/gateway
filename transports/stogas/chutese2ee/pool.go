@@ -20,43 +20,45 @@ var ticketPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32}$`)
 
 const maximumSynchronousRefills = 2
 const maximumTrackedTicketTakes = 512
+const maximumPoolTargets = 4096
+const maximumPooledTicketsPerTarget = 512
 const maximumSynchronousRefillBackoffWait = 2 * time.Second
 
 type poolState struct {
-	mu          sync.Mutex
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	pools       map[string]*ticketPool
-	verified    map[string]map[string]verifiedInstance
-	cooldowns   map[string]map[string]time.Time
-	activity    map[string]*ticketActivity
-	warming     map[string]bool
-	refillState map[string]*ticketRefillState
-	closing     bool
-	refills     singleflight.Group
-	api         *apiClient
-	attestor    *attestor
-	diagnostics *diagnostics
+	mu             sync.Mutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	pools          map[string]*ticketPool
+	verified       map[string]map[string]verifiedInstance
+	cooldowns      map[string]map[string]time.Time
+	activity       map[string]*ticketActivity
+	warming        map[string]bool
+	refillState    map[string]*ticketRefillState
+	trackedTargets map[string]struct{}
+	closing        bool
+	refills        singleflight.Group
+	api            *apiClient
+	attestor       *attestor
+	diagnostics    *diagnostics
 }
 
 func newPoolState(api *apiClient, attestor *attestor, diagnostics *diagnostics) *poolState {
 	ctx, cancel := context.WithCancel(context.Background())
 	state := &poolState{
-		ctx:         ctx,
-		cancel:      cancel,
-		pools:       make(map[string]*ticketPool),
-		verified:    make(map[string]map[string]verifiedInstance),
-		cooldowns:   make(map[string]map[string]time.Time),
-		activity:    make(map[string]*ticketActivity),
-		warming:     make(map[string]bool),
-		refillState: make(map[string]*ticketRefillState),
-		api:         api,
-		attestor:    attestor,
-		diagnostics: diagnostics,
+		ctx:            ctx,
+		cancel:         cancel,
+		pools:          make(map[string]*ticketPool),
+		verified:       make(map[string]map[string]verifiedInstance),
+		cooldowns:      make(map[string]map[string]time.Time),
+		activity:       make(map[string]*ticketActivity),
+		warming:        make(map[string]bool),
+		refillState:    make(map[string]*ticketRefillState),
+		trackedTargets: make(map[string]struct{}),
+		api:            api,
+		attestor:       attestor,
+		diagnostics:    diagnostics,
 	}
-	state.wg.Add(1)
-	go state.warmLoop()
 	return state
 }
 
@@ -122,6 +124,17 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 func (s *poolState) rememberTarget(target ModelTarget) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closing {
+		return errCredentialUnavailable
+	}
+	if _, tracked := s.trackedTargets[target.ChuteID]; !tracked {
+		if s.diagnostics.poolTargets.Add(1) > maximumPoolTargets {
+			s.diagnostics.poolTargets.Add(-1)
+			s.diagnostics.targetRejections.Add(1)
+			return errCredentialUnavailable
+		}
+		s.trackedTargets[target.ChuteID] = struct{}{}
+	}
 	activity := s.activity[target.ChuteID]
 	if activity == nil {
 		activity = &ticketActivity{}
@@ -131,6 +144,7 @@ func (s *poolState) rememberTarget(target ModelTarget) error {
 		return fmt.Errorf("%w: conflicting Chutes deployment target", ErrMeasurementPolicy)
 	}
 	activity.Target = target
+	activity.LastDemandAt = time.Now()
 	return nil
 }
 
@@ -158,6 +172,15 @@ func (s *poolState) close() {
 	s.mu.Unlock()
 	s.cancel()
 	s.wg.Wait()
+	s.mu.Lock()
+	s.diagnostics.poolTargets.Add(-int64(len(s.trackedTargets)))
+	clear(s.trackedTargets)
+	clear(s.pools)
+	clear(s.verified)
+	clear(s.cooldowns)
+	clear(s.activity)
+	clear(s.refillState)
+	s.mu.Unlock()
 }
 
 func (s *poolState) maybeWarm(target ModelTarget) {
@@ -192,30 +215,31 @@ func (s *poolState) maybeWarm(target ModelTarget) {
 	}()
 }
 
-func (s *poolState) warmLoop() {
-	defer s.wg.Done()
-	ticker := time.NewTicker(ticketWarmCheckInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case now := <-ticker.C:
-			s.mu.Lock()
-			targets := make([]ModelTarget, 0, len(s.activity))
-			for chuteID, activity := range s.activity {
-				if activity == nil || !validModelTarget(activity.Target) || now.Sub(activity.LastDemandAt) >= credentialIdleLifetime {
-					delete(s.activity, chuteID)
-					delete(s.refillState, chuteID)
-					continue
-				}
-				targets = append(targets, activity.Target)
+func (s *poolState) maintain(now time.Time) {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return
+	}
+	targets := make([]ModelTarget, 0, len(s.activity))
+	for chuteID, activity := range s.activity {
+		if activity == nil || !validModelTarget(activity.Target) || now.Sub(activity.LastDemandAt) >= credentialIdleLifetime {
+			delete(s.activity, chuteID)
+			delete(s.refillState, chuteID)
+			delete(s.pools, chuteID)
+			delete(s.verified, chuteID)
+			delete(s.cooldowns, chuteID)
+			if _, tracked := s.trackedTargets[chuteID]; tracked {
+				delete(s.trackedTargets, chuteID)
+				s.diagnostics.poolTargets.Add(-1)
 			}
-			s.mu.Unlock()
-			for _, target := range targets {
-				s.maybeWarm(target)
-			}
+			continue
 		}
+		targets = append(targets, activity.Target)
+	}
+	s.mu.Unlock()
+	for _, target := range targets {
+		s.maybeWarm(target)
 	}
 }
 
@@ -363,6 +387,14 @@ func (s *poolState) recordDemandLocked(target ModelTarget, now time.Time) {
 }
 
 func (s *poolState) refill(target ModelTarget) (resultErr error) {
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return errCredentialUnavailable
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
 	if !validModelTarget(target) {
 		return ErrMeasurementPolicy
 	}
@@ -473,7 +505,7 @@ func (s *poolState) attest(target ModelTarget, discovered []discoveredInstance, 
 		if s.verified[chuteID] == nil {
 			s.verified[chuteID] = make(map[string]verifiedInstance)
 		}
-		s.verified[chuteID][verification.InstanceID] = verification
+		s.storeVerifiedLocked(chuteID, verification.InstanceID, verification)
 		s.mu.Unlock()
 		return nil
 	}
@@ -569,7 +601,7 @@ func (s *poolState) cachedVerified(target ModelTarget, discovered []discoveredIn
 					s.verified[chuteID] = verified
 				}
 				verification = shared
-				verified[instance.ID] = shared
+				s.storeVerifiedLocked(chuteID, instance.ID, shared)
 				ok = true
 			}
 		}
@@ -605,11 +637,29 @@ func (s *poolState) syncVerifiedLocked(target ModelTarget, now time.Time) {
 			verified = make(map[string]verifiedInstance)
 			s.verified[chuteID] = verified
 		}
-		verified[instanceID] = verification
+		s.storeVerifiedLocked(chuteID, instanceID, verification)
 	}
 }
 
+func (s *poolState) storeVerifiedLocked(chuteID, instanceID string, verification verifiedInstance) {
+	verified := s.verified[chuteID]
+	if _, exists := verified[instanceID]; !exists && len(verified) >= maximumDiscoveredInstances {
+		var oldestID string
+		var oldest time.Time
+		for id, entry := range verified {
+			if oldestID == "" || entry.ValidUntil.Before(oldest) {
+				oldestID, oldest = id, entry.ValidUntil
+			}
+		}
+		delete(verified, oldestID)
+	}
+	verified[instanceID] = verification
+}
+
 func (s *poolState) install(target ModelTarget, discovered []discoveredInstance, expiresAt time.Time) {
+	if err := s.rememberTarget(target); err != nil {
+		return
+	}
 	chuteID := target.ChuteID
 	now := time.Now()
 	s.mu.Lock()
@@ -628,11 +678,17 @@ func (s *poolState) install(target ModelTarget, discovered []discoveredInstance,
 	}
 	for _, instance := range discovered {
 		tickets := pool.Instances[instance.ID]
+		if tickets == nil && len(pool.Instances) >= maximumDiscoveredInstances {
+			continue
+		}
 		if tickets == nil || tickets.PublicKey != instance.PublicKey {
 			tickets = &instanceTickets{PublicKey: instance.PublicKey}
 			pool.Instances[instance.ID] = tickets
 		}
 		for _, value := range instance.Tickets {
+			if len(existingValues) >= maximumPooledTicketsPerTarget {
+				break
+			}
 			if _, exists := existingValues[value]; exists {
 				continue
 			}
@@ -655,8 +711,22 @@ func (s *poolState) observeInvoke(ticket reservedTicket, status int, retryAfter 
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closing || s.activity[ticket.ChuteID] == nil {
+		return
+	}
+	s.pruneLocked(ticket.ChuteID, now)
 	if s.cooldowns[ticket.ChuteID] == nil {
 		s.cooldowns[ticket.ChuteID] = make(map[string]time.Time)
+	}
+	if cooldowns := s.cooldowns[ticket.ChuteID]; len(cooldowns) >= maximumDiscoveredInstances {
+		var oldestID string
+		var oldest time.Time
+		for id, until := range cooldowns {
+			if oldestID == "" || until.Before(oldest) {
+				oldestID, oldest = id, until
+			}
+		}
+		delete(cooldowns, oldestID)
 	}
 	switch {
 	case err != nil:

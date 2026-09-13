@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -247,6 +249,12 @@ func TestAzureDirectKeySupportsInstantProjectBinding(t *testing.T) {
 	}
 }
 
+type azureTokenFunc func(context.Context, azureauth.Credential) (string, error)
+
+func (f azureTokenFunc) Token(ctx context.Context, credential azureauth.Credential) (string, error) {
+	return f(ctx, credential)
+}
+
 func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 	binding := azureTestBinding()
 	state := &State{
@@ -258,12 +266,20 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 		Resolution: azureTestResolution(),
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	if err := ApplyUpstreamCredentials(ctx, state); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, azureTokenFunc(func(_ context.Context, credential azureauth.Credential) (string, error) {
+		if credential.Scope != azureDataScope || credential.Secret != "azure-client-secret" {
+			t.Fatal("incorrect Azure token credential")
+		}
+		return "test-access-token", nil
+	})); err != nil {
 		t.Fatal(err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
 	if !ok || directKey.AzureKeyConfig == nil || state.Resolution.Model != "customer-sol" ||
 		!directKey.Models.IsAllowed("customer-sol") {
 		t.Fatalf("Azure bound key was not installed: key=%#v resolution=%#v", directKey, state.Resolution)
+	}
+	if directKey.AzureKeyConfig.ClientID != nil || directKey.AzureKeyConfig.ClientSecret != nil || directKey.AzureKeyConfig.TenantID != nil || ctx.Value(azureprovider.AzureAuthorizationTokenKey) != "test-access-token" {
+		t.Fatal("Azure SDK credentials retained or access token missing")
 	}
 }

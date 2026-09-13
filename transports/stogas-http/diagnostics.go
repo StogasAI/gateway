@@ -8,18 +8,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 	"github.com/valyala/fasthttp"
 )
 
 type privateNodeDiagnostics struct {
-	Billing     billing.DiagnosticsSnapshot    `json:"billing"`
-	ChutesE2EE  chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
-	GeneratedAt time.Time                      `json:"generatedAt"`
-	Listeners   listenerDiagnostics            `json:"listeners"`
-	Process     processDiagnostics             `json:"process"`
-	Requests    requestDiagnostics             `json:"requests"`
+	OperationalLogs []stogas.OperationalLogSeries  `json:"operationalLogs"`
+	AzureAuth       azureauth.Diagnostics          `json:"azureAuth"`
+	Billing         billing.DiagnosticsSnapshot    `json:"billing"`
+	ChutesE2EE      chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
+	GeneratedAt     time.Time                      `json:"generatedAt"`
+	Listeners       listenerDiagnostics            `json:"listeners"`
+	Process         processDiagnostics             `json:"process"`
+	Requests        requestDiagnostics             `json:"requests"`
 }
 
 type listenerDiagnostics struct {
@@ -60,12 +64,13 @@ type processDiagnostics struct {
 }
 
 type requestDiagnostics struct {
-	Drain  requestDrainDiagnostics  `json:"drain"`
-	Memory requestMemoryDiagnostics `json:"memory"`
+	Admission requestAdmissionDiagnostics `json:"admission"`
+	Drain     requestDrainDiagnostics     `json:"drain"`
+	Memory    requestMemoryDiagnostics    `json:"memory"`
 }
 
 func (s *Server) privateDiagnostics() privateNodeDiagnostics {
-	result := privateNodeDiagnostics{GeneratedAt: time.Now().UTC()}
+	result := privateNodeDiagnostics{GeneratedAt: time.Now().UTC(), OperationalLogs: stogas.OperationalLogDiagnostics()}
 	if s == nil {
 		result.Process = currentProcessDiagnostics(time.Time{})
 		return result
@@ -76,10 +81,12 @@ func (s *Server) privateDiagnostics() privateNodeDiagnostics {
 		Public:  currentListenerDiagnostics(s.server, serverConcurrency),
 	}
 	result.Requests = requestDiagnostics{
-		Drain:  s.requests.diagnostics(),
-		Memory: s.memory.diagnostics(),
+		Admission: s.admission.diagnostics(),
+		Drain:     s.requests.diagnostics(),
+		Memory:    s.memory.diagnostics(),
 	}
 	if s.runtime != nil {
+		result.AzureAuth = s.runtime.AzureAuthDiagnostics()
 		result.Billing = s.runtime.BillingDiagnostics()
 		result.ChutesE2EE = s.runtime.ChutesE2EEDiagnostics()
 	}

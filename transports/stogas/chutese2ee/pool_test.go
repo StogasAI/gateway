@@ -292,6 +292,9 @@ func TestInvokeOutcomeInvalidatesOnlyUnsafeState(t *testing.T) {
 			now := time.Now()
 			state := newPoolState(nil, nil, &diagnostics{})
 			defer state.close()
+			if err := state.rememberTarget(testModelTarget); err != nil {
+				t.Fatal(err)
+			}
 			state.verified[testChuteID] = map[string]verifiedInstance{
 				testInstanceID: {GPUCount: testGPUCount, PublicKey: "key", ValidUntil: now.Add(time.Minute)},
 			}
@@ -335,6 +338,9 @@ func TestForbiddenInvokeInvalidatesTheWholeIssuedBatch(t *testing.T) {
 	now := time.Now()
 	state := newPoolState(nil, nil, &diagnostics{})
 	defer state.close()
+	if err := state.rememberTarget(testModelTarget); err != nil {
+		t.Fatal(err)
+	}
 	secondInstance := "33333333-3333-4333-8333-333333333333"
 	state.verified[testChuteID] = map[string]verifiedInstance{
 		testInstanceID: {GPUCount: testGPUCount, PublicKey: "key-a", ValidUntil: now.Add(time.Minute)},

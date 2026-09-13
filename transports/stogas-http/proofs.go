@@ -49,12 +49,13 @@ func responseEncodingFailure() *schemas.BifrostError {
 
 // PrepareFinalState must run before a response proof so the proof can bind
 // final pricing and timing. If encoding or proof generation then fails,
-// discard that event so settlement rebuilds it with the response error.
+// discard that event so settlement records failed Stogas processing while
+// retaining the provider's independently observed outcome.
 func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
 	if state == nil {
 		return
 	}
-	state.BifrostError = failure
+	state.ProcessingError = failure
 	state.FinalEvent = nil
 }
 

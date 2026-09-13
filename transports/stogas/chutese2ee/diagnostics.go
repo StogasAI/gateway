@@ -47,6 +47,18 @@ type ChuteDiagnostic struct {
 }
 
 type DiagnosticsSnapshot struct {
+	CredentialCapacity    int               `json:"credentialCapacity"`
+	CredentialHits        uint64            `json:"credentialHits"`
+	CredentialMisses      uint64            `json:"credentialMisses"`
+	CredentialExpired     uint64            `json:"credentialExpired"`
+	CredentialEvicted     uint64            `json:"credentialEvicted"`
+	CredentialRejected    uint64            `json:"credentialRejected"`
+	PoolTargets           int64             `json:"poolTargets"`
+	PoolTargetCapacity    int               `json:"poolTargetCapacity"`
+	TargetRejections      uint64            `json:"targetRejections"`
+	EvidenceInFlight      int64             `json:"evidenceInFlight"`
+	EvidenceCapacity      int               `json:"evidenceCapacity"`
+	EvidenceRejected      uint64            `json:"evidenceRejected"`
 	GeneratedAt           time.Time         `json:"generatedAt"`
 	CredentialPools       int               `json:"credentialPools"`
 	ActiveCredentialPools int               `json:"activeCredentialPools"`
@@ -76,6 +88,7 @@ func (s *operationState) get() OperationDiagnostic {
 }
 
 type chuteMetrics struct {
+	lastUsed              atomic.Int64
 	modelsMu              sync.RWMutex
 	models                map[string]struct{}
 	discovery             operationState
@@ -95,7 +108,18 @@ type chuteMetrics struct {
 }
 
 type diagnostics struct {
-	chutes sync.Map
+	credentialHits     atomic.Uint64
+	credentialMisses   atomic.Uint64
+	credentialExpired  atomic.Uint64
+	credentialEvicted  atomic.Uint64
+	credentialRejected atomic.Uint64
+	registryMu         sync.Mutex
+	registrySize       int
+	chutes             sync.Map
+	poolTargets        atomic.Int64
+	targetRejections   atomic.Uint64
+	evidenceInFlight   atomic.Int64
+	evidenceRejected   atomic.Uint64
 }
 
 type poolHealth struct {
@@ -116,20 +140,45 @@ type poolHealth struct {
 }
 
 func (d *diagnostics) chute(chuteID string) *chuteMetrics {
+	d.registryMu.Lock()
+	defer d.registryMu.Unlock()
 	if value, ok := d.chutes.Load(chuteID); ok {
+		value.(*chuteMetrics).lastUsed.Store(time.Now().UnixNano())
 		return value.(*chuteMetrics)
 	}
+	if d.registrySize >= maximumDiagnosticChutes {
+		var oldestKey any
+		var oldest int64
+		d.chutes.Range(func(key, value any) bool {
+			lastUsed := value.(*chuteMetrics).lastUsed.Load()
+			if oldestKey == nil || lastUsed < oldest {
+				oldestKey, oldest = key, lastUsed
+			}
+			return true
+		})
+		if oldestKey != nil {
+			d.chutes.Delete(oldestKey)
+			d.registrySize--
+		}
+	}
 	created := &chuteMetrics{models: make(map[string]struct{})}
+	created.lastUsed.Store(time.Now().UnixNano())
 	value, _ := d.chutes.LoadOrStore(chuteID, created)
+	d.registrySize++
 	return value.(*chuteMetrics)
 }
 
 func (d *diagnostics) registerModel(chuteID, model string) {
 	metrics := d.chute(chuteID)
 	metrics.modelsMu.Lock()
-	metrics.models[model] = struct{}{}
+	if len(metrics.models) < maximumDiagnosticModels {
+		metrics.models[model] = struct{}{}
+	}
 	metrics.modelsMu.Unlock()
 }
+
+const maximumDiagnosticChutes = 512
+const maximumDiagnosticModels = 64
 
 func (d *diagnostics) recordDiscovery(chuteID string, status int, latency time.Duration, err error) {
 	d.chute(chuteID).discovery.set(status, latency, err)
