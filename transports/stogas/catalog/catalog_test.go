@@ -1302,6 +1302,37 @@ func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T)
 	}
 }
 
+func TestSnapshotValidationPreservesFreeAndAtomPreciseRates(t *testing.T) {
+	for _, rate := range []string{"0", "1", "1000000000000000", "42000000000000000", "1000000000000000000000000000000", "-1", "01", "0.001", "1e15", "1000000000000000000000000000001"} {
+		t.Run(rate, func(t *testing.T) {
+			var runtime map[string]any
+			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
+			deployment["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: rate}
+			data, err := json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := snapshotFromCatalogBytes(data)
+			switch rate {
+			case "-1", "01", "0.001", "1e15", "1000000000000000000000000000001":
+				if err == nil {
+					t.Fatal("invalid monetary rate was accepted")
+				}
+			default:
+				if err != nil {
+					t.Fatalf("valid monetary rate rejected: %v", err)
+				}
+				if got := loaded.graph.Deployments["openai-gpt-5.5-2026-04-23"].Pricing[billing.MeterOutputTokens][billing.RatePerMillionTokens]; got != rate {
+					t.Fatalf("rate changed: got %s, want %s", got, rate)
+				}
+			}
+		})
+	}
+}
+
 func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	var runtime map[string]any
 	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {

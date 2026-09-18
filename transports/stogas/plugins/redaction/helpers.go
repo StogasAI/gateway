@@ -60,22 +60,21 @@ func hasNearbyContext(text []byte, start, end int, terms ...string) bool {
 	if windowEnd > len(text) {
 		windowEnd = len(text)
 	}
-	window := text[windowStart:windowEnd]
 	for _, term := range terms {
-		if containsContextTerm(window, term) {
+		if containsContextTerm(text, windowStart, windowEnd, term) {
 			return true
 		}
 	}
 	return false
 }
 
-func containsContextTerm(text []byte, term string) bool {
+func containsContextTerm(text []byte, windowStart, windowEnd int, term string) bool {
 	if term == "" {
 		return false
 	}
-	for start := 0; start < len(text); start++ {
-		end, ok := contextTermEnd(text, start, term)
-		if !ok {
+	for start := windowStart; start < windowEnd; start++ {
+		end, ok := contextTermEnd(text[:windowEnd], start, term)
+		if !ok || end > windowEnd {
 			continue
 		}
 		if isASCIIAlphanumeric(term[0]) && start > 0 && isASCIIAlphanumeric(text[start-1]) {
@@ -84,7 +83,32 @@ func containsContextTerm(text []byte, term string) bool {
 		if isASCIIAlphanumeric(term[len(term)-1]) && end < len(text) && isASCIIAlphanumeric(text[end]) {
 			continue
 		}
+		if contextInsidePlaceholder(text, start) {
+			continue
+		}
 		return true
+	}
+	return false
+}
+
+// Typed replacements describe a previous match, not a label supplied by the
+// source. This affects context only; it never exempts surrounding redaction.
+func contextInsidePlaceholder(text []byte, position int) bool {
+	for start := position; start >= max(0, position-64); start-- {
+		if text[start] == '>' {
+			return false
+		}
+		if text[start] != '<' {
+			continue
+		}
+		for entity := EntityEmail; entity <= entityCustom; entity++ {
+			value := placeholder(entity)
+			end := start + len(value)
+			if end <= len(text) && string(text[start:end]) == value {
+				return true
+			}
+		}
+		return false
 	}
 	return false
 }

@@ -22,7 +22,7 @@ type Options struct {
 	ResolveModel            ModelResolver
 	RequireProductionOrigin bool
 	RequirePostQuantumTLS   bool
-	StreamTimeout           time.Duration
+	RequestTimeout          time.Duration
 }
 
 type Transport struct {
@@ -47,8 +47,8 @@ func New(options Options) (*Transport, error) {
 	if options.ResolveModel == nil {
 		return nil, errors.New("missing Chutes catalog model resolver")
 	}
-	if options.StreamTimeout <= 0 {
-		return nil, errors.New("missing Chutes stream timeout")
+	if options.RequestTimeout <= 0 {
+		return nil, errors.New("missing Chutes request timeout")
 	}
 	api, err := newAPIClient(
 		options.APIKey,
@@ -80,15 +80,15 @@ func New(options Options) (*Transport, error) {
 	}
 	transport.managedFingerprint = fingerprintCredential(api.apiKey)
 	transport.credentials = make(map[credentialFingerprint]*credentialState)
-	transport.unaryClient = newInvokeClient(options.RequirePostQuantumTLS, false, 0)
-	transport.streamClient = newInvokeClient(options.RequirePostQuantumTLS, true, options.StreamTimeout)
+	transport.unaryClient = newInvokeClient(options.RequirePostQuantumTLS, false, options.RequestTimeout)
+	transport.streamClient = newInvokeClient(options.RequirePostQuantumTLS, true, options.RequestTimeout)
 	transport.credentialCleanupStop = make(chan struct{})
 	transport.credentialCleanupDone = make(chan struct{})
 	go transport.cleanupCredentials()
 	return transport, nil
 }
 
-func newInvokeClient(requirePostQuantumTLS, streaming bool, streamTimeout time.Duration) *fasthttp.Client {
+func newInvokeClient(requirePostQuantumTLS, streaming bool, requestTimeout time.Duration) *fasthttp.Client {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	if requirePostQuantumTLS {
 		tlsConfig.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
@@ -99,7 +99,7 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool, streamTimeout time.D
 		MaxIdleConnDuration:       30 * time.Second,
 		MaxConnDuration:           5 * time.Minute,
 		MaxConnWaitTimeout:        30 * time.Second,
-		ReadTimeout:               5 * time.Minute,
+		ReadTimeout:               requestTimeout,
 		WriteTimeout:              5 * time.Minute,
 		MaxResponseBodySize:       maxDecryptedResponse + (2 << 20),
 		MaxIdemponentCallAttempts: 1,
@@ -111,7 +111,6 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool, streamTimeout time.D
 		},
 	}
 	if streaming {
-		client.ReadTimeout = streamTimeout
 		client.MaxConnDuration = 0
 	}
 	return client

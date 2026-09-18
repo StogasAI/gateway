@@ -111,14 +111,14 @@ func (s *Server) prepareCandidate(
 			s.invalidateKeyConfig(credential)
 		}
 		if state.Authorization != nil {
-			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "BYOK key is unavailable")
+			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
 		}
 		state.PassthroughByokSecret = ""
 		cancel()
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
 	if err := s.runtime.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
-		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "BYOK key is unavailable")
+		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
 		cancel()
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
@@ -128,7 +128,7 @@ func (s *Server) prepareCandidate(
 			err = stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq)
 		}
 		if err != nil {
-			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, "Invalid provider request")
+			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
 			cancel()
 			return nil, &candidateFailure{err: err, kind: candidateFailureCatalog}
 		}
@@ -147,13 +147,14 @@ func finalizePreparedFailure(
 	ctx *schemas.BifrostContext,
 	billingService *billing.Service,
 	state *stogas.State,
-	message string,
+	err error,
 ) {
-	status := fasthttp.StatusServiceUnavailable
+	apiErr := stogas.PublicBillingErrorFor(err)
+	status := apiErr.StatusCode
 	state.ProcessingError = &schemas.BifrostError{
 		IsBifrostError: true,
 		StatusCode:     &status,
-		Error:          &schemas.ErrorField{Message: message},
+		Error:          &schemas.ErrorField{Message: apiErr.Message, Code: schemas.Ptr(apiErr.Code)},
 	}
 	stogas.FinalizeState(context.WithoutCancel(ctx), billingService, state)
 }

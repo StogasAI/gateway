@@ -63,6 +63,7 @@ var secretSpecsByInitial = func() [256][]secretSpec {
 		{prefix: "xoxc-", minimumBody: 10, maximumBody: 72, characters: secretToken, strict: true},
 		{prefix: "xoxe-", minimumBody: 10, maximumBody: 72, characters: secretToken, strict: true},
 		{prefix: "sk-ant-", minimumBody: 24, maximumBody: 255, characters: secretToken},
+		{prefix: "sk_stogas_v1_", minimumBody: 166, maximumBody: 166, characters: secretToken},
 		{prefix: "sk-proj-", minimumBody: 40, maximumBody: 255, characters: secretToken},
 		{prefix: "sk-svcacct-", minimumBody: 40, maximumBody: 255, characters: secretToken, strict: true},
 		{prefix: "sk-admin-", minimumBody: 40, maximumBody: 255, characters: secretToken, strict: true},
@@ -108,10 +109,10 @@ var secretSpecsByInitial = func() [256][]secretSpec {
 	return grouped
 }()
 
-func scanSecrets(text []byte, matches []match, enabled entityMask) ([]match, error) {
+func (r *Redactor) scanSecrets(text []byte, matches []match, enabled entityMask) ([]match, error) {
 	var err error
 	if enabled.has(EntityPrivateKey) {
-		matches, err = scanPrivateKeys(text, matches)
+		matches, err = r.scanPrivateKeys(text, matches)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +140,7 @@ func scanSecrets(text []byte, matches []match, enabled entityMask) ([]match, err
 		}
 	}
 	if enabled.has(EntityCredential) {
-		matches, err = scanCredentialAssignments(text, matches, enabled)
+		matches, err = r.scanCredentialAssignments(text, matches, enabled)
 		if err != nil {
 			return nil, err
 		}
@@ -506,7 +507,7 @@ func allASCIILowerAlphanumeric(value []byte) bool {
 	return true
 }
 
-func scanPrivateKeys(text []byte, matches []match) ([]match, error) {
+func (r *Redactor) scanPrivateKeys(text []byte, matches []match) ([]match, error) {
 	const maxPrivateKeyBytes = 1 << 20
 	position := 0
 	for position < len(text) {
@@ -516,9 +517,12 @@ func scanPrivateKeys(text []byte, matches []match) ([]match, error) {
 		}
 		start := position + relative
 		kindStart := start + len("-----BEGIN ")
-		lineEndRelative := bytes.Index(text[kindStart:], []byte("-----"))
+		// All recognized labels fit here. Do not search the entire remaining
+		// prompt for the end of an invalid header.
+		lineEndRelative := bytes.Index(text[kindStart:min(len(text), kindStart+32)], []byte("-----"))
 		if lineEndRelative < 0 {
-			break
+			position = kindStart
+			continue
 		}
 		kindEnd := kindStart + lineEndRelative
 		kind := text[kindStart:kindEnd]
@@ -532,11 +536,17 @@ func scanPrivateKeys(text []byte, matches []match) ([]match, error) {
 		if searchEnd > len(text) {
 			searchEnd = len(text)
 		}
-		endRelative := bytes.Index(text[searchStart:searchEnd], []byte(endMarker))
+		budgetEnd := min(searchEnd, searchStart+int(maxScanWork-r.scanWork))
+		endRelative := bytes.Index(text[searchStart:budgetEnd], []byte(endMarker))
 		if endRelative < 0 {
+			r.chargeScanWork(uint64(budgetEnd - searchStart))
+			if budgetEnd < searchEnd {
+				return nil, ErrWorkLimit
+			}
 			position = searchStart
 			continue
 		}
+		r.chargeScanWork(uint64(endRelative + len(endMarker)))
 		end := searchStart + endRelative + len(endMarker)
 		var err error
 		matches, err = appendMatch(matches, start, end, EntityPrivateKey, 100)
@@ -823,7 +833,7 @@ func databasePasswordValid(value []byte) bool {
 	return len(value) > 0 && !placeholderValue(value) && !maskedPasswordValue(value)
 }
 
-func scanCredentialAssignments(text []byte, matches []match, enabled entityMask) ([]match, error) {
+func (r *Redactor) scanCredentialAssignments(text []byte, matches []match, enabled entityMask) ([]match, error) {
 	for start := 0; start < len(text); start++ {
 		if !isASCIILetter(text[start]) || !wordBoundaryBefore(text, start) {
 			continue
@@ -843,12 +853,19 @@ func scanCredentialAssignments(text []byte, matches []match, enabled entityMask)
 			start = wordEnd - 1
 			continue
 		}
-		valueEnd := credentialValueEnd(text, valueStart, quoted)
+		valueEnd, scanErr := r.credentialValueEnd(text, valueStart, quoted)
+		if scanErr != nil {
+			return nil, scanErr
+		}
 		if valueEnd <= valueStart {
 			start = wordEnd - 1
 			continue
 		}
 		value := text[valueStart:valueEnd]
+		// Validators make a bounded number of passes over a candidate.
+		if !r.chargeScanWork(uint64(len(value)) * 16) {
+			return nil, ErrWorkLimit
+		}
 		if knownPublicSecret(value) {
 			start = wordEnd - 1
 			continue
@@ -989,9 +1006,12 @@ func assignmentValueStart(text []byte, position int) (int, byte, bool, bool) {
 	return index, 0, false, false
 }
 
-func credentialValueEnd(text []byte, start int, quote byte) int {
+func (r *Redactor) credentialValueEnd(text []byte, start int, quote byte) (int, error) {
 	end := start
 	for end < len(text) {
+		if !r.chargeScanWork(2) {
+			return 0, ErrWorkLimit
+		}
 		character := text[end]
 		if quote != 0 {
 			if character == quote && !escapedByteAt(text, start, end) {
@@ -1000,12 +1020,12 @@ func credentialValueEnd(text []byte, start int, quote byte) int {
 		} else {
 			switch character {
 			case ' ', '\t', '\r', '\n', ',', ';', '&', '}', ']', '"', '\'', '`':
-				return end
+				return end, nil
 			}
 		}
 		end++
 	}
-	return end
+	return end, nil
 }
 
 func escapedByteAt(text []byte, start, position int) bool {

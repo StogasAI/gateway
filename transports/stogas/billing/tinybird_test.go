@@ -13,7 +13,55 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
+
+func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
+	for _, metrics := range []*plugins.StogasStructuredPIIRedactionMetrics{nil, {}, {ItemsRedacted: ^uint32(0), DurationUS: 125}} {
+		event := testGatewayRequestEvent()
+		event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: metrics}
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored RequestEvent
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		payload := tinybirdGatewayRequestEvent(restored)
+		if metrics == nil {
+			if payload.AnalyticsRedactedItems != nil {
+				t.Fatal("unrecorded redaction became a zero count")
+			}
+		} else if payload.AnalyticsRedactedItems == nil || *payload.AnalyticsRedactedItems != metrics.ItemsRedacted {
+			t.Fatalf("redaction count changed: got %v, want %d", payload.AnalyticsRedactedItems, metrics.ItemsRedacted)
+		}
+	}
+}
+
+func TestTokenUsageSurvivesOutboxAndAnalyticsProjection(t *testing.T) {
+	for _, quantity := range []*int64{nil, new(int64), func() *int64 { n := int64(123456); return &n }()} {
+		event := testGatewayRequestEvent()
+		event.PolicyTokens = quantity
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored RequestEvent
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		payload := tinybirdGatewayRequestEvent(restored)
+		if quantity == nil {
+			if payload.PolicyTokens != nil {
+				t.Fatal("unknown usage became a known value")
+			}
+		} else if payload.PolicyTokens == nil || *payload.PolicyTokens != *quantity {
+			t.Fatalf("token usage changed: got %v, want %d", payload.PolicyTokens, *quantity)
+		}
+	}
+}
 
 func TestNormalizeTinybirdHost(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

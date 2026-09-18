@@ -98,9 +98,16 @@ type RequestTimings struct {
 	ResponseMS  uint32 `json:"response_ms"`
 }
 
+const RequestLogSchemaVersion uint8 = 1
+
 type RequestEvent struct {
+	SchemaVersion              uint8             `json:"schema_version"`
 	RequestID                  string            `json:"request_id"`
 	CreatedAt                  string            `json:"created_at"`
+	LastRequestAt              string            `json:"last_request_at"`
+	RequestCount               uint32            `json:"request_count"`
+	StogasErrorCode            string            `json:"stogas_error_code"`
+	StogasErrorStatusCode      *int              `json:"stogas_error_status_code"`
 	StogasAPIKeyID             string            `json:"stogas_api_key_id"`
 	StogasGrantID              *string           `json:"stogas_grant_id"`
 	StogasUserID               string            `json:"stogas_user_id"`
@@ -122,6 +129,7 @@ type RequestEvent struct {
 	CacheReadSavingsUSDAtoms   *string           `json:"cache_read_savings_usd_atoms"`
 	CacheWriteOverheadUSDAtoms *string           `json:"cache_write_overhead_usd_atoms"`
 	Pricing                    EventPricing      `json:"pricing"`
+	PolicyTokens               *int64            `json:"policy_tokens"`
 	Plugins                    plugins.Metrics   `json:"plugins"`
 	GatewayVersion             string            `json:"gateway_version"`
 	CatalogNodeIDs             []string          `json:"catalog_node_ids"`
@@ -209,35 +217,74 @@ func (c *TinybirdClient) appendGatewayRequest(ctx context.Context, event Request
 		return nil
 	}
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("append tinybird event: %w", err)
+		return err
 	}
-	probe, err := c.admitCircuitRequest(time.Now(), joinProbe)
+	result, err := c.enqueueGatewayRequest(event, joinProbe)
 	if err != nil {
 		return err
 	}
+	waitCtx, cancel := context.WithTimeout(ctx, tinybirdAppendWaitTimeout)
+	defer cancel()
+	select {
+	case err := <-result:
+		return err
+	case <-waitCtx.Done():
+		return fmt.Errorf("append tinybird event: %w", waitCtx.Err())
+	}
+}
 
+// Replaying the entire immutable batch after any ambiguous result is safe.
+func (c *TinybirdClient) appendGatewayRequests(ctx context.Context, events []RequestEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	results := make([]<-chan error, 0, len(events))
+	for _, event := range events {
+		result, err := c.enqueueGatewayRequest(event, false)
+		if err != nil {
+			return err
+		}
+		results = append(results, result)
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, tinybirdAppendWaitTimeout)
+	defer cancel()
+	for _, result := range results {
+		select {
+		case err := <-result:
+			if err != nil {
+				return err
+			}
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		}
+	}
+	return nil
+}
+
+func (c *TinybirdClient) enqueueGatewayRequest(event RequestEvent, joinProbe bool) (<-chan error, error) {
+	if event.SchemaVersion != RequestLogSchemaVersion {
+		return nil, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
+	}
+	probe, err := c.admitCircuitRequest(time.Now(), joinProbe)
+	if err != nil {
+		return nil, err
+	}
 	line, err := json.Marshal(tinybirdGatewayRequestEvent(event))
 	if err != nil {
 		c.releaseCircuitProbe(probe)
-		return fmt.Errorf("marshal tinybird event: %w", err)
+		return nil, fmt.Errorf("marshal tinybird event: %w", err)
 	}
 	line = append(line, '\n')
 	if len(line) > tinybirdMaxEventBytes {
 		c.releaseCircuitProbe(probe)
-		return fmt.Errorf("append tinybird event: encoded event is %d bytes, limit is %d", len(line), tinybirdMaxEventBytes)
+		return nil, fmt.Errorf("append tinybird event: encoded event is %d bytes, limit is %d", len(line), tinybirdMaxEventBytes)
 	}
-
-	appendRequest := tinybirdAppendRequest{
-		line:   line,
-		probe:  probe,
-		result: make(chan error, 1),
-	}
-
+	appendRequest := tinybirdAppendRequest{line: line, probe: probe, result: make(chan error, 1)}
 	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.closed {
-		c.mu.RUnlock()
 		c.releaseCircuitProbe(probe)
-		return fmt.Errorf("append tinybird event: client is closed")
+		return nil, errors.New("append tinybird event: client is closed")
 	}
 	c.startOnce.Do(func() {
 		c.workerWG.Add(1)
@@ -245,22 +292,10 @@ func (c *TinybirdClient) appendGatewayRequest(ctx context.Context, event Request
 	})
 	select {
 	case c.queue <- appendRequest:
-		c.mu.RUnlock()
+		return appendRequest.result, nil
 	default:
-		c.mu.RUnlock()
 		c.releaseCircuitProbe(probe)
-		return fmt.Errorf("append tinybird event: microbatch queue is full")
-	}
-
-	waitTimer := time.NewTimer(tinybirdAppendWaitTimeout)
-	defer waitTimer.Stop()
-	select {
-	case err := <-appendRequest.result:
-		return err
-	case <-ctx.Done():
-		return fmt.Errorf("append tinybird event: %w", ctx.Err())
-	case <-waitTimer.C:
-		return fmt.Errorf("append tinybird event: timed out waiting for microbatch acknowledgement")
+		return nil, errors.New("append tinybird event: microbatch queue is full")
 	}
 }
 
@@ -564,8 +599,13 @@ func (c *TinybirdClient) appendBatch(batch []tinybirdAppendRequest) error {
 }
 
 type tinybirdGatewayRequestEventPayload struct {
+	SchemaVersion                   uint8    `json:"schema_version"`
 	RequestID                       string   `json:"request_id"`
 	CreatedAt                       string   `json:"created_at"`
+	LastRequestAt                   string   `json:"last_request_at"`
+	RequestCount                    uint32   `json:"request_count"`
+	StogasErrorCode                 string   `json:"stogas_error_code"`
+	StogasErrorStatusCode           *int     `json:"stogas_error_status_code"`
 	StogasAPIKeyID                  string   `json:"stogas_api_key_id"`
 	StogasGrantID                   *string  `json:"stogas_grant_id"`
 	StogasUserID                    string   `json:"stogas_user_id"`
@@ -593,7 +633,9 @@ type tinybirdGatewayRequestEventPayload struct {
 	CacheWriteOverheadUSDAtoms      *string  `json:"cache_write_overhead_usd_atoms"`
 	AnalyticsUpstreamByok           []string `json:"analytics_upstream_byok"`
 	Pricing                         string   `json:"pricing"`
+	PolicyTokens                    *int64   `json:"policy_tokens"`
 	Plugins                         string   `json:"plugins"`
+	AnalyticsRedactedItems          *uint32  `json:"analytics_redacted_items"`
 	AnalyticsInputTokens            uint64   `json:"analytics_input_tokens"`
 	AnalyticsCachedInputTokens      uint64   `json:"analytics_cached_input_tokens"`
 	AnalyticsCacheWriteTokens       uint64   `json:"analytics_cache_write_input_tokens"`
@@ -608,6 +650,10 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
 	pricingJSON := mustJSONString(event.Pricing, "{}")
 	pluginsJSON := mustJSONString(event.Plugins, `{}`)
+	var redactedItems *uint32
+	if metrics := event.Plugins.StogasStructuredPIIRedaction; metrics != nil {
+		redactedItems = &metrics.ItemsRedacted
+	}
 	timingsJSON := mustJSONString(event.Timings, `{}`)
 	catalogNodeIDsJSON := mustJSONString(event.CatalogNodeIDs, "[]")
 	processed := uint8(0)
@@ -649,6 +695,8 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 			event.analyticsPricingQuantity(MeterCacheWrite5mInputTokens) +
 			event.analyticsPricingQuantity(MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
+		SchemaVersion:                   event.SchemaVersion,
+		PolicyTokens:                    event.PolicyTokens,
 		AnalyticsCachedInputTokens:      event.analyticsPricingQuantity(MeterCachedInputTokens),
 		AnalyticsCacheWriteTokens:       cacheWriteTokens,
 		AnalyticsInputTokens:            event.analyticsPricingQuantity(MeterInputTokens),
@@ -665,8 +713,13 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		ClientStopMS:                    event.ClientStopMS,
 		CatalogDigest:                   strings.TrimSpace(event.CatalogDigest),
 		CreatedAt:                       event.CreatedAt,
+		LastRequestAt:                   event.LastRequestAt,
+		RequestCount:                    event.RequestCount,
+		StogasErrorCode:                 event.StogasErrorCode,
+		StogasErrorStatusCode:           event.StogasErrorStatusCode,
 		Pricing:                         pricingJSON,
 		Plugins:                         pluginsJSON,
+		AnalyticsRedactedItems:          redactedItems,
 		Timings:                         timingsJSON,
 		ProviderAttempts:                attemptsJSON,
 		NodeID:                          strings.ToLower(strings.TrimSpace(event.NodeID)),

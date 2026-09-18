@@ -3,11 +3,97 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
+
+func TestRedactionWorkExhaustionRejectsBothRequestSurfaces(t *testing.T) {
+	loadTestCatalog(t)
+	redactionPolicy, err := redaction.CompilePolicy(redaction.Options{
+		CustomPatterns: []redaction.CustomPattern{{Expression: `a.*z|a`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		raw := map[string]any{"model": "gpt-5.5"}
+		input := strings.Repeat("a", 32768)
+		if path == "/v1/responses" {
+			raw["input"] = input
+		} else {
+			raw["messages"] = []map[string]string{{"role": "user", "content": input}}
+		}
+		body, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolutions, err := ResolveRequests(RequestInput{Method: "POST", Path: path, Body: body, RedactionPolicy: redactionPolicy})
+		var apiError APIError
+		if !errors.As(err, &apiError) || apiError.StatusCode != 413 || len(resolutions) != 0 {
+			t.Fatalf("%s: resolutions=%d error=%v", path, len(resolutions), err)
+		}
+	}
+}
+
+func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
+	loadTestCatalog(t)
+	redactionPolicy, err := redaction.CompilePolicy(redaction.Options{
+		CustomPatterns: []redaction.CustomPattern{{Expression: "EMP-[0-9]+"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied := policyConfig(1)
+	denied.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Models: []string{}}
+	filtered := policyConfig(1)
+	filtered.Routing.Query = &policy.Query{Where: &policy.Expression{
+		Kind: "compare", Left: &policy.Field{Path: "provider.id", Type: "string"},
+		Operator: "==", Right: json.RawMessage(`{"type":"string","value":"not-a-provider"}`),
+	}}
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		for _, test := range []struct {
+			name, model string
+			extra       map[string]any
+			config      *policy.Config
+			want        APIError
+		}{
+			{name: "unknown model", model: "not-a-model", want: ErrModelUnavailable},
+			{name: "unknown provider", model: "gpt-5.5", extra: map[string]any{"provider": "not-a-provider"}, want: ErrProviderUnavailable},
+			{name: "unsupported tier", model: "gpt-5.5", extra: map[string]any{"service_tier": "not-a-tier"}, want: ErrUnsupportedServiceTier},
+			{name: "scope exclusion", model: "gpt-5.5", config: denied, want: ErrModelUnavailable},
+			{name: "query exclusion", model: "gpt-5.5", config: filtered, want: ErrModelUnavailable},
+			{name: "valid route still redacts", model: "gpt-5.5", want: APIError{StatusCode: 413}},
+		} {
+			t.Run(path+"/"+test.name, func(t *testing.T) {
+				raw := map[string]any{"model": test.model}
+				text := strings.Repeat("EMP-1 ", 65_537)
+				if path == "/v1/responses" {
+					raw["input"] = text
+				} else {
+					raw["messages"] = []map[string]string{{"role": "user", "content": text}}
+				}
+				for key, value := range test.extra {
+					raw[key] = value
+				}
+				body, err := json.Marshal(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = ResolveRequests(RequestInput{Method: "POST", Path: path, Body: body, Policy: test.config, RedactionPolicy: redactionPolicy})
+				var apiErr APIError
+				if !errors.As(err, &apiErr) || apiErr.StatusCode != test.want.StatusCode || apiErr.Code != test.want.Code {
+					t.Fatalf("got %v, want status=%d code=%s", err, test.want.StatusCode, test.want.Code)
+				}
+			})
+		}
+	}
+}
 
 func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T) {
 	loadTestCatalog(t)

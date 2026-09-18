@@ -1,0 +1,117 @@
+[
+  {
+    "name": "employee ID",
+    "expression": "\\bEMP-[0-9]{6}\\b",
+    "valid": true
+  },
+  {
+    "name": "Unicode identifier",
+    "expression": "客户-\\p{Han}{2}",
+    "valid": true
+  },
+  {
+    "name": "literal boundary text",
+    "expression": "\\\\b",
+    "valid": true
+  },
+  {
+    "name": "quoted metacharacters",
+    "expression": "\\Q\\b$\\E",
+    "valid": true
+  },
+  {
+    "name": "consuming assertion branch",
+    "expression": "(?:\\b|\\B)EMP",
+    "valid": true
+  },
+  {
+    "name": "impossible consuming branch",
+    "expression": "\\b\\BEMP",
+    "valid": true
+  },
+  {
+    "name": "consuming optional suffix",
+    "expression": "EMP(?:-\\d+)?",
+    "valid": true
+  },
+  {
+    "name": "empty boundary at end",
+    "expression": "\\b$",
+    "valid": false
+  },
+  {
+    "name": "contradictory boundaries",
+    "expression": "\\b\\B",
+    "valid": false
+  },
+  {
+    "name": "boundary alternative",
+    "expression": "\\b|EMP",
+    "valid": false
+  },
+  {
+    "name": "optional capture with assertion",
+    "expression": "(?:(EMP)?\\b)",
+    "valid": false
+  },
+  {
+    "name": "nested repetition",
+    "expression": "(?:\\bEMP?)*",
+    "valid": false
+  },
+  {
+    "name": "empty text",
+    "expression": "",
+    "valid": false
+  },
+  {
+    "name": "anchor only",
+    "expression": "^$",
+    "valid": false
+  },
+  {
+    "name": "empty alternate",
+    "expression": "EMP|",
+    "valid": false
+  },
+  {
+    "name": "placeholder",
+    "expression": "<EMAIL_ADDRESS>",
+    "valid": false
+  },
+  {
+    "name": "wildcard placeholder",
+    "expression": ".",
+    "valid": false
+  },
+  {
+    "name": "backreference",
+    "expression": "(EMP)\\1",
+    "valid": false
+  },
+  {
+    "name": "lookahead",
+    "expression": "EMP(?=123)",
+    "valid": false
+  },
+  {
+    "name": "malformed",
+    "expression": "EMP(",
+    "valid": false
+  },
+  {
+    "name": "placeholder adjacent custom",
+    "expression": "EMP-[^\\n]+",
+    "valid": true
+  },
+  {
+    "name": "zero repetition",
+		"expression": "XYZ{0}",
+    "valid": true
+  },
+  {
+    "name": "zero repeat group",
+    "expression": "(?:EMP){0}",
+    "valid": false
+  }
+]

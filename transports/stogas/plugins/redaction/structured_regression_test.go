@@ -6,6 +6,87 @@ import (
 	"testing"
 )
 
+func TestTypedMarkersDoNotInventIdentifierContext(t *testing.T) {
+	for _, input := range []string{"001010001 001-01-0001", "001010001 <US_SSN>", "001010001 <PAYMENT_CARD>"} {
+		out, _, err := New().redactBytes([]byte(input))
+		if err != nil || !bytes.HasPrefix(out, []byte("001010001 ")) {
+			t.Fatalf("%q => %q, %v", input, out, err)
+		}
+	}
+	// Window boundaries can cut through a placeholder; its fragment must
+	// not supply context either. Real labels outside it still apply.
+	for padding := 60; padding < 75; padding++ {
+		input := "<US_SSN>" + strings.Repeat(" ", padding) + "001010001"
+		out, changed, err := New().redactBytes([]byte(input))
+		if err != nil || changed || string(out) != input {
+			t.Fatalf("%q => %q, %v", input, out, err)
+		}
+	}
+	out, _, err := New().redactBytes([]byte("SSN: 001010001 <US_SSN>"))
+	if err != nil || string(out) != "SSN: <US_SSN> <US_SSN>" {
+		t.Fatalf("real context: %q, %v", out, err)
+	}
+}
+
+func TestInternationalEmailPresentations(t *testing.T) {
+	for _, test := range []struct{ source, want string }{
+		{"Contact élise@stogas.ai.", "Contact <EMAIL_ADDRESS>."},
+		{"Contact 用户@例子.公司.", "Contact <EMAIL_ADDRESS>."},
+		{"Contact alice@bücher.de.", "Contact <EMAIL_ADDRESS>."},
+		{"Contact e\u0301lise@stogas.ai.", "Contact <EMAIL_ADDRESS>."},
+		{"Contact élise@example.com.", "Contact élise@example.com."},
+		{"Contact élise@invalid.１２.", "Contact élise@invalid.１２."},
+		{strings.Repeat("é", 33) + "@stogas.ai", strings.Repeat("é", 33) + "@stogas.ai"},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			out, _, err := New().redactBytes([]byte(test.source))
+			if err != nil || string(out) != test.want {
+				t.Fatalf("got %q, %v; want %q", out, err, test.want)
+			}
+		})
+	}
+}
+
+func TestUnicodeNumberPresentations(t *testing.T) {
+	for _, test := range []struct{ source, want string }{
+		{"Call +44\u00a020\u00a07123\u00a04567.", "Call <PHONE_NUMBER>."},
+		{"Call +33\u202f1\u202f42\u202f68\u202f53\u202f00.", "Call <PHONE_NUMBER>."},
+		{"Call ＋４４（２０）７１２３４５６７.", "Call <PHONE_NUMBER>."},
+		{"SSN ２１９-０９-９９９９", "SSN <US_SSN>"},
+		{"SSN ٢١٩-٠٩-٩٩٩٩", "SSN <US_SSN>"},
+		{"SSN 𝟚𝟙𝟡-𝟘𝟡-𝟡𝟡𝟡𝟡", "SSN <US_SSN>"},
+		{"SSN 219\u201109\u20119999", "SSN <US_SSN>"},
+		{"SSN ２１９-０９-９９９９０", "SSN ２１９-０９-９９９９０"},
+		{"IDé２１９-０９-９９９９", "IDé２１９-０９-９９９９"},
+		{"SSN ６６６-１２-３４５６", "SSN ６６６-１２-３４５６"},
+		{"Call +９９９ １２ ３４５ ６７８９.", "Call +９９９ １２ ３４５ ６７８９."},
+	} {
+		t.Run(test.source, func(t *testing.T) {
+			out, _, err := New().redactBytes([]byte(test.source))
+			if err != nil || string(out) != test.want {
+				t.Fatalf("got %q, %v; want %q", out, err, test.want)
+			}
+		})
+	}
+}
+
+func TestPhoneExtensions(t *testing.T) {
+	for _, suffix := range []string{" ext. 123", " EXT: 123", " extension 123", " extn 123", "x123", " #123", ";ext=123", " ext. １２３"} {
+		input := "Call +44 20 7123 4567" + suffix + "."
+		out, _, err := New().redactBytes([]byte(input))
+		if err != nil || string(out) != "Call <PHONE_NUMBER>." {
+			t.Fatalf("%q => %q, %v", input, out, err)
+		}
+	}
+	for _, suffix := range []string{" next 123", " extra 123", " ext", " ext. 12345678901", " extension\n123"} {
+		input := "Call +44 20 7123 4567" + suffix
+		out, _, err := New().redactBytes([]byte(input))
+		if err != nil || string(out) != "Call <PHONE_NUMBER>"+suffix {
+			t.Fatalf("%q => %q, %v", input, out, err)
+		}
+	}
+}
+
 // These cases cover international presentations used by Presidio and common
 // E.164 output. Detection remains limited to a leading plus sign or the strict
 // North American presentations in structured.go.

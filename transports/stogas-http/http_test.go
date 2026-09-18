@@ -879,48 +879,45 @@ func TestSecurityHeaders(t *testing.T) {
 	}
 }
 
-func TestPublicBifrostErrorMapsConversionErrorWithoutStatusToBadRequest(t *testing.T) {
-	status, payload := publicBifrostError(testBifrostError(0, "failed to marshal request: missing required field messages", "", ""))
-
-	if status != fasthttp.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", status)
-	}
-	errorObject := publicErrorObject(t, payload)
-	if errorObject["type"] != "invalid_request_error" {
-		t.Fatalf("expected invalid_request_error, got %#v", errorObject)
-	}
-	if errorObject["message"] != "Invalid request" {
-		t.Fatalf("expected scrubbed invalid request message, got %#v", errorObject)
-	}
-}
-
-func TestPublicBifrostErrorHidesUnknownMissingStatusError(t *testing.T) {
-	status, payload := publicBifrostError(testBifrostError(0, "panic: database DSN leaked", "", ""))
-
-	if status != fasthttp.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", status)
-	}
-	errorObject := publicErrorObject(t, payload)
-	if errorObject["type"] != "internal_error" {
-		t.Fatalf("expected internal_error, got %#v", errorObject)
-	}
-	if errorObject["message"] != "Internal server error" {
-		t.Fatalf("expected generic internal error message, got %#v", errorObject)
+func TestPublicBifrostErrorDoesNotClassifyMessageText(t *testing.T) {
+	for _, message := range []string{
+		"failed to marshal request: missing required field messages",
+		"failed to unmarshal provider response: invalid json",
+		"provider do request failed: dial tcp: connection refused",
+		"timeout reading private database",
+		"panic: database DSN leaked",
+	} {
+		status, payload := publicBifrostError(testBifrostError(0, message, "", ""))
+		errorObject := publicErrorObject(t, payload)
+		if status != fasthttp.StatusInternalServerError || errorObject["type"] != "internal_error" ||
+			errorObject["message"] != "Internal server error" {
+			t.Fatalf("message %q affected the public classification: status=%d error=%#v", message, status, errorObject)
+		}
 	}
 }
 
-func TestPublicBifrostErrorMapsMissingStatusNetworkFailureToServiceUnavailable(t *testing.T) {
-	status, payload := publicBifrostError(testBifrostError(0, "provider do request failed: dial tcp: connection refused", "", ""))
-
-	if status != fasthttp.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", status)
-	}
-	errorObject := publicErrorObject(t, payload)
-	if errorObject["type"] != "gateway_error" {
-		t.Fatalf("expected gateway_error, got %#v", errorObject)
-	}
-	if errorObject["message"] != "Upstream provider is unavailable" {
-		t.Fatalf("expected generic upstream unavailable message, got %#v", errorObject)
+func TestPublicBifrostErrorUsesStructuredErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		err     *schemas.BifrostError
+		status  int
+		message string
+	}{
+		{"Bifrost validation", providerutils.NewBifrostBadRequestError("messages.0.content is required"), 400, "messages.0.content is required"},
+		{"Bifrost connection", providerutils.NewBifrostUpstreamConnectionError("private host", errors.New("private network details")), 502, "Upstream provider error"},
+		{"Bifrost timeout", providerutils.NewBifrostTimeoutError("private host", errors.New("private network details")), 504, "Upstream request timed out"},
+		{"validation without status", testBifrostError(0, "messages.0.content is required", "invalid_request_error", ""), 400, "messages.0.content is required"},
+		{"connection without status", testBifrostError(0, "private network details", schemas.ProviderConnectionFailed, ""), 502, "Upstream provider error"},
+		{"timeout without status", testBifrostError(0, "private network details", schemas.RequestTimedOut, ""), 504, "Upstream request timed out"},
+		{"timeout code without status", testBifrostError(0, "private network details", "", schemas.RequestTimedOut), 504, "Upstream request timed out"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			status, payload := publicBifrostError(tt.err)
+			errorObject := publicErrorObject(t, payload)
+			if status != tt.status || errorObject["message"] != tt.message {
+				t.Fatalf("status=%d error=%#v, want status=%d message=%q", status, errorObject, tt.status, tt.message)
+			}
+		})
 	}
 }
 

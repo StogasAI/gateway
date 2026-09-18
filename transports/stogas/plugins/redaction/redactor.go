@@ -9,9 +9,13 @@ import (
 const (
 	maxMatchesPerText    = 65_536
 	maxMatchesPerRequest = 100_000
+	// Meter variable lookahead, including repeat reads, across the request.
+	// Units account for matcher complexity; they are not CPU milliseconds.
+	maxScanWork = 64 * 1024 * 1024
 )
 
 var ErrMatchLimit = errors.New("PII redaction match limit exceeded")
+var ErrWorkLimit = errors.New("redaction work limit exceeded")
 
 // Entity is a high-confidence structured value that can be replaced without
 // retaining the source value. The MVP deliberately excludes inferred names,
@@ -83,6 +87,7 @@ type Redactor struct {
 	policy   *Policy
 	items    uint32
 	duration time.Duration
+	scanWork uint64
 }
 
 func New() *Redactor {
@@ -103,6 +108,15 @@ func (r *Redactor) Summary() Summary {
 		return Summary{}
 	}
 	return Summary{ItemsRedacted: r.items, DurationUS: boundedDurationMicroseconds(r.duration)}
+}
+
+func (r *Redactor) chargeScanWork(amount uint64) bool {
+	if amount > maxScanWork-r.scanWork {
+		r.scanWork = maxScanWork
+		return false
+	}
+	r.scanWork += amount
+	return true
 }
 
 func boundedDurationMicroseconds(duration time.Duration) uint32 {
@@ -131,7 +145,7 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 	var matches []match
 	var err error
 	if policy.entities&secretEntityMask != 0 {
-		matches, err = scanSecrets(text, matches, policy.entities)
+		matches, err = r.scanSecrets(text, matches, policy.entities)
 		if err != nil {
 			return nil, false, err
 		}
@@ -160,8 +174,10 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 			return nil, false, err
 		}
 	}
-	if policy.custom != nil {
-		matches, err = scanCustomPatterns(text, matches, policy.custom)
+	// Each requirement scans the original text. A combined alternation would
+	// hide overlapping matches from another scope before interval merging.
+	for _, expression := range policy.custom {
+		matches, err = r.scanCustomPatterns(text, matches, expression)
 		if err != nil {
 			return nil, false, err
 		}

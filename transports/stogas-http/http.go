@@ -142,7 +142,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 	}
 	if !s.requests.begin() {
 		s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
-			"error": map[string]any{"message": "Gateway is draining", "type": "service_unavailable"},
+			"error": map[string]any{"message": "Gateway is draining", "type": "service_unavailable", "code": "gateway_draining"},
 		})
 		return
 	}
@@ -164,6 +164,9 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		}
 	}
 	keyConfig, err := s.keyConfigForCredential(credential)
+	if credential.Dashboard != nil && keyConfig != nil && keyConfig.Claims != nil {
+		ctx.SetUserValue(requestLogClaimsKey, keyConfig.Claims)
+	}
 	if err != nil {
 		s.writeBillingError(ctx, err)
 		return
@@ -173,11 +176,12 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 			"error": map[string]any{
 				"message": "Request is not allowed at this time",
 				"type":    "permission_denied",
+				"code":    "schedule_denied",
 			},
 		})
 		return
 	}
-	resolutions, err := catalog.ResolveRequests(catalog.RequestInput{
+	resolutions, err := s.resolveRequests(keyConfig.Claims, catalog.RequestInput{
 		Body:            ctx.Request.Body(),
 		Method:          string(ctx.Method()),
 		Path:            string(ctx.Path()),
@@ -193,6 +197,7 @@ func (s *Server) inference(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	catalogIdentity := resolutions[0].CatalogIdentity()
+	ctx.SetUserValue(requestLogTypeKey, string(resolutions[0].RequestType))
 	if s.proofs != nil {
 		if err := s.proofs.ValidateCatalog(ctx, catalogIdentity.Digest, catalogIdentity.Sequence); err != nil {
 			s.writeProofError(ctx)

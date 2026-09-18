@@ -12,16 +12,24 @@ import (
 )
 
 var stableUpstreamStatuses = map[string]bool{
-	"authentication_error": true,
-	"cancelled":            true,
-	"content_filter":       true,
-	"invalid_request":      true,
-	"network_error":        true,
-	"over_budget":          true,
-	"permission_error":     true,
-	"provider_error":       true,
-	"rate_limited":         true,
-	"success":              true,
+	"authentication_error":    true,
+	"cancelled":               true,
+	"content_filter":          true,
+	"invalid_request":         true,
+	"timeout":                 true,
+	"connection_error":        true,
+	"context_length_exceeded": true,
+	"request_too_large":       true,
+	"invalid_image":           true,
+	"provider_unavailable":    true,
+	"provider_overloaded":     true,
+	"model_unavailable":       true,
+	"invalid_response":        true,
+	"over_budget":             true,
+	"permission_error":        true,
+	"provider_error":          true,
+	"rate_limited":            true,
+	"success":                 true,
 }
 
 func TestNormalizeUpstreamStatus(t *testing.T) {
@@ -42,9 +50,9 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 		{name: "provider rate limit", statusCode: intPtr(429), message: "rate_limit exceeded", wantStatus: "rate_limited"},
 		{name: "client cancellation", statusCode: intPtr(499), errorType: schemas.RequestCancelled, wantStatus: "cancelled"},
 		{name: "canonical cancellation without status", errorType: schemas.RequestCancelled, wantStatus: "cancelled"},
-		{name: "provider timeout", statusCode: intPtr(504), message: "upstream timed out", wantStatus: "network_error"},
-		{name: "canonical timeout without status", errorType: schemas.RequestTimedOut, wantStatus: "network_error"},
-		{name: "canonical connection failure keeps network meaning through 502", statusCode: intPtr(502), errorType: schemas.ProviderConnectionFailed, wantStatus: "network_error"},
+		{name: "provider timeout", statusCode: intPtr(504), message: "upstream timed out", wantStatus: "timeout"},
+		{name: "canonical timeout without status", errorType: schemas.RequestTimedOut, wantStatus: "timeout"},
+		{name: "canonical connection failure keeps network meaning through 502", statusCode: intPtr(502), errorType: schemas.ProviderConnectionFailed, wantStatus: "connection_error"},
 		{name: "ordinary bad gateway remains provider error", statusCode: intPtr(502), errorType: "upstream_error", wantStatus: "provider_error"},
 		{name: "canonical authentication type without status", errorType: "authentication_error", wantStatus: "authentication_error"},
 		{name: "canonical permission type without status", outerType: "permission_denied", wantStatus: "permission_error"},
@@ -55,7 +63,7 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 		{name: "Chutes quota code overrides HTTP 429", statusCode: intPtr(429), code: "upstream_quota_exceeded", wantStatus: "over_budget"},
 		{name: "Chutes rate code overrides HTTP 503", statusCode: intPtr(503), code: "upstream_rate_limit_error", wantStatus: "rate_limited"},
 		{name: "Anthropic rate limit type", statusCode: intPtr(429), errorType: "rate_limit_error", wantStatus: "rate_limited"},
-		{name: "Anthropic overloaded error", statusCode: intPtr(529), errorType: "overloaded_error", wantStatus: "provider_error"},
+		{name: "Anthropic overloaded error", statusCode: intPtr(529), errorType: "overloaded_error", wantStatus: "provider_overloaded"},
 		{name: "canonical invalid request type without status", errorType: "invalid_request_error", wantStatus: "invalid_request"},
 		{name: "generic invalid request type does not hide rate limit status", statusCode: intPtr(429), errorType: "invalid_request_error", wantStatus: "rate_limited"},
 		{name: "generic invalid request type does not hide provider status", statusCode: intPtr(500), errorType: "invalid_request_error", wantStatus: "provider_error"},
@@ -67,10 +75,10 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 		{name: "untyped network wording is not guessed", message: "dial tcp: connection refused", wantStatus: "provider_error"},
 		{name: "untyped quota wording is not guessed", message: "quota exhausted", wantStatus: "provider_error"},
 		{name: "bad request", statusCode: intPtr(400), message: "messages.0.content is required", wantStatus: "invalid_request"},
-		{name: "cataloged provider model not found", statusCode: intPtr(404), message: "model not found", errorType: "invalid_request_error", code: "model_not_found", wantStatus: "provider_error"},
+		{name: "cataloged provider model not found", statusCode: intPtr(404), message: "model not found", errorType: "invalid_request_error", code: "model_not_found", wantStatus: "model_unavailable"},
 		{name: "conflict", statusCode: intPtr(409), message: "conflicting request state", wantStatus: "invalid_request"},
-		{name: "request too large", statusCode: intPtr(413), message: "request exceeds maximum size", wantStatus: "invalid_request"},
-		{name: "request-too-large type without status", errorType: "request_too_large", wantStatus: "invalid_request"},
+		{name: "request too large", statusCode: intPtr(413), message: "request exceeds maximum size", wantStatus: "request_too_large"},
+		{name: "request-too-large type without status", errorType: "request_too_large", wantStatus: "request_too_large"},
 		{name: "unsupported media", statusCode: intPtr(415), message: "unsupported media type", wantStatus: "invalid_request"},
 		{name: "unprocessable", statusCode: intPtr(422), message: "invalid tool schema", wantStatus: "invalid_request"},
 		{name: "bad request budget parameter", statusCode: intPtr(400), message: "task_budget.total is below the provider minimum", wantStatus: "invalid_request"},
@@ -118,8 +126,8 @@ func TestNormalizeUpstreamStatusCoversCanonicalBifrostTransportTypes(t *testing.
 		want      string
 	}{
 		{errorType: schemas.RequestCancelled, want: "cancelled"},
-		{errorType: schemas.RequestTimedOut, want: "network_error"},
-		{errorType: schemas.ProviderConnectionFailed, want: "network_error"},
+		{errorType: schemas.RequestTimedOut, want: "timeout"},
+		{errorType: schemas.ProviderConnectionFailed, want: "connection_error"},
 		{errorType: schemas.RequestDropped, want: "provider_error"},
 	}
 	for _, test := range tests {
@@ -168,8 +176,8 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 	}
 	identifiers := []identifierCase{
 		{identifier: schemas.RequestCancelled, want: "cancelled"},
-		{identifier: schemas.RequestTimedOut, want: "network_error"},
-		{identifier: schemas.ProviderConnectionFailed, want: "network_error"},
+		{identifier: schemas.RequestTimedOut, want: "timeout"},
+		{identifier: schemas.ProviderConnectionFailed, want: "connection_error"},
 		{identifier: "authentication_error", want: "authentication_error"},
 		{identifier: "invalid_api_key", want: "authentication_error"},
 		{identifier: "unauthorized", want: "authentication_error"},
@@ -192,7 +200,11 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 		{identifier: "invalid_request", want: "invalid_request", generic: true},
 		{identifier: "invalid_request_error", want: "invalid_request", generic: true},
 		{identifier: "bad_request_error", want: "invalid_request", generic: true},
-		{identifier: "request_too_large", want: "invalid_request", generic: true},
+		{identifier: "request_too_large", want: "request_too_large"},
+		{identifier: "context_length_exceeded", want: "context_length_exceeded"},
+		{identifier: "invalid_image", want: "invalid_image"},
+		{identifier: "overloaded_error", want: "provider_overloaded"},
+		{identifier: "upstream_response_invalid", want: "invalid_response"},
 	}
 	statuses := []*int{
 		nil,
@@ -359,11 +371,11 @@ func TestNormalizeUpstreamStatusFromSupportedProviderErrorEnvelopes(t *testing.T
 			want:   "rate_limited",
 		},
 		{
-			name:   "Anthropic overload remains broad provider failure",
+			name:   "Anthropic overload remains distinct",
 			status: 529,
 			body:   `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`,
 			parse:  anthropic.ParseAnthropicError,
-			want:   "provider_error",
+			want:   "provider_overloaded",
 		},
 		{
 			name:   "Chutes synthetic access code",
@@ -495,8 +507,16 @@ func expectedStatusFallback(statusCode *int, defaultStatus string) string {
 	case *statusCode == 429:
 		return "rate_limited"
 	case *statusCode == 408 || *statusCode == 504:
-		return "network_error"
-	case *statusCode >= 500 || *statusCode == 404:
+		return "timeout"
+	case *statusCode == 404:
+		return "model_unavailable"
+	case *statusCode == 503:
+		return "provider_unavailable"
+	case *statusCode == 529:
+		return "provider_overloaded"
+	case *statusCode == 413:
+		return "request_too_large"
+	case *statusCode >= 500:
 		return "provider_error"
 	case *statusCode == 400 || *statusCode == 409 || *statusCode == 413 || *statusCode == 415 || *statusCode == 422:
 		return "invalid_request"

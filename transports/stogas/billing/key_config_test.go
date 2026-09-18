@@ -98,19 +98,128 @@ func TestConfigDigestAndDashboardCacheIdentityAreClosed(t *testing.T) {
 	}
 }
 
-func TestKeyConfigurationRedactionKeepsSecureDefaultsAndAddsOnlyConfiguredDetectors(t *testing.T) {
+func TestEveryPolicyDetectorReachesChatAndResponsesRedaction(t *testing.T) {
+	fixtures := []struct{ pattern, input, placeholder string }{
+		{"email_address", "alice@corp.io", "<EMAIL_ADDRESS>"},
+		{"phone_number", "+44 (20) 7123 4567", "<PHONE_NUMBER>"},
+		{"social_security_number", "SSN 856-45-6789", "<US_SSN>"},
+		{"credit_card_number", "card 4532015112830366", "<PAYMENT_CARD>"},
+		{"ip_address", "198.51.100.24", "<IP_ADDRESS>"},
+		{"api_keys_and_secrets", "Authorization: Bearer AbCdEf0123456789-_", "<CREDENTIAL>"},
+		{"api_keys_and_secrets", "-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----", "<PRIVATE_KEY>"},
+		{"api_keys_and_secrets", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "<JSON_WEB_TOKEN>"},
+		{"api_keys_and_secrets", "postgresql://app:Sup3rSecret!@db.internal:5432/stogas", "<DATABASE_URL>"},
+		{"api_keys_and_secrets", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", "<VENDOR_TOKEN>"},
+		{"bank_identifiers", "Send to GB82 WEST 1234 5698 7654 32", "<IBAN>"},
+		{"bank_identifiers", "ABA routing number 021000021", "<US_ROUTING_NUMBER>"},
+		{"national_identifiers", "ITIN 900-70-0001", "<US_ITIN>"},
+		{"national_identifiers", "National Insurance AB 12 34 56 C", "<UK_NATIONAL_INSURANCE_NUMBER>"},
+		{"national_identifiers", "Canadian SIN 130 692 544", "<CA_SOCIAL_INSURANCE_NUMBER>"},
+		{"national_identifiers", "TFN 123 456 782", "<AU_TAX_FILE_NUMBER>"},
+		{"national_identifiers", "ABN 51 824 753 556", "<AU_BUSINESS_NUMBER>"},
+		{"national_identifiers", "ACN 004 085 616", "<AU_COMPANY_NUMBER>"},
+		{"national_identifiers", "Aadhaar 9999 9999 0019", "<IN_AADHAAR_NUMBER>"},
+		{"national_identifiers", "CPF 529.982.247-25", "<BR_CPF>"},
+		{"national_identifiers", "CNPJ 04.252.011/0001-10", "<BR_CNPJ>"},
+		{"national_identifiers", "DNI 12345678Z", "<ES_NATIONAL_ID>"},
+		{"national_identifiers", "Codice fiscale RSSMRA85T10A562S", "<IT_FISCAL_CODE>"},
+		{"national_identifiers", "PESEL 44051401458", "<PL_PESEL>"},
+		{"national_identifiers", "RRN 900101-1234568", "<KR_RESIDENT_NUMBER>"},
+		{"national_identifiers", "HETU 131052-308T", "<FI_PERSONAL_ID>"},
+		{"national_identifiers", "Thai national ID 1-2345-67890-12-1", "<TH_NATIONAL_ID>"},
+		{"national_identifiers", "NRIC S1234567D", "<SG_NATIONAL_ID>"},
+		{"national_identifiers", "Chinese resident ID 11010519491231002X", "<CN_RESIDENT_ID>"},
+		{"national_identifiers", "Israeli ID 123456782", "<IL_NATIONAL_ID>"},
+		{"national_identifiers", "South African ID 8001015009087", "<ZA_NATIONAL_ID>"},
+		{"national_identifiers", "TCKN 10000000146", "<TR_NATIONAL_ID>"},
+		{"national_identifiers", "Steuer-ID 12345678903", "<DE_TAX_ID>"},
+		{"national_identifiers", "Personnummer 871220-2384", "<SE_PERSONAL_ID>"},
+		{"national_identifiers", "Korean BRN 104-86-56659", "<KR_BUSINESS_REGISTRATION_NUMBER>"},
+		{"national_identifiers", "Partita IVA 01333550323", "<IT_VAT_NUMBER>"},
+		{"national_identifiers", "NIMC NIN 12345678902", "<NG_NATIONAL_ID>"},
+		{"national_identifiers", "RVNR 15070649C103", "<DE_SOCIAL_SECURITY_NUMBER>"},
+		{"health_identifiers", "NHS number 943 476 5919", "<UK_NHS_NUMBER>"},
+		{"health_identifiers", "Medicare 2123 45670 1", "<AU_MEDICARE_NUMBER>"},
+		{"health_identifiers", "NPI 1234567893", "<US_NPI>"},
+		{"health_identifiers", "Medicare MBI 1EG4-TE5-MK73", "<US_MEDICARE_ID>"},
+		{"health_identifiers", "KVNR A123456780", "<DE_HEALTH_INSURANCE_ID>"},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.pattern, func(t *testing.T) {
+			for _, enabled := range []bool{true, false} {
+				patterns := []string{}
+				if enabled {
+					patterns = append(patterns, fixture.pattern)
+				}
+				configuration := policy.Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: policy.CompilerVersion,
+					Routing: policy.Routing{MaxPreDispatchCandidates: 1}, Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{Presets: patterns}}}
+				encoded, err := json.Marshal(configuration)
+				if err != nil {
+					t.Fatal(err)
+				}
+				parsed, err := policy.Parse(encoded)
+				if err != nil {
+					t.Fatal(err)
+				}
+				compiled, err := compileKeyRedactionPolicy(parsed)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, surface := range []redaction.Surface{redaction.SurfaceChat, redaction.SurfaceResponses} {
+					key := "input"
+					var value any = fixture.input
+					if surface == redaction.SurfaceChat {
+						key = "messages"
+						value = []map[string]string{{"role": "user", "content": fixture.input}}
+					}
+					original, err := json.Marshal(value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					raw := map[string]json.RawMessage{key: original}
+					if err := redaction.NewWithPolicy(compiled).RedactRequestFields(raw, surface); err != nil {
+						t.Fatal(err)
+					}
+					var content string
+					if surface == redaction.SurfaceChat {
+						var messages []struct {
+							Content string `json:"content"`
+						}
+						if err := json.Unmarshal(raw[key], &messages); err != nil {
+							t.Fatal(err)
+						}
+						content = messages[0].Content
+					} else if err := json.Unmarshal(raw[key], &content); err != nil {
+						t.Fatal(err)
+					}
+					if enabled && !strings.Contains(content, fixture.placeholder) {
+						t.Fatalf("missing selected detector: %s", raw[key])
+					}
+					if !enabled && string(raw[key]) != string(original) {
+						t.Fatalf("disabled detector changed input: %s", raw[key])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestKeyConfigurationRedactionDefaultsAndExplicitSelections(t *testing.T) {
 	tests := []struct {
 		name       string
 		config     *policy.Config
 		wantIP     bool
 		wantCustom bool
+		wantEmail  bool
 	}{
-		{name: "secure defaults"},
+		{name: "secure defaults", wantEmail: true},
+		{name: "disabled built-ins", config: &policy.Config{Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{Presets: []string{}}}}},
+		{name: "custom only", config: &policy.Config{Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{Presets: []string{}, CustomPatterns: []string{`EMP-[0-9]{6}`}}}}, wantCustom: true},
 		{
-			name: "IP and custom additions",
-			config: &policy.Config{Plugins: &policy.Plugins{StogasPIIRedaction: &policy.PIIRedaction{
+			name: "IP and custom selection",
+			config: &policy.Config{Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{
 				CustomPatterns: []string{`EMP-[0-9]{6}`},
-				Patterns:       []string{"ip_address"},
+				Presets:        []string{"ip_address"},
 			}}},
 			wantIP:     true,
 			wantCustom: true,
@@ -130,8 +239,8 @@ func TestKeyConfigurationRedactionKeepsSecureDefaultsAndAddsOnlyConfiguredDetect
 				t.Fatal(err)
 			}
 			result := string(raw["messages"])
-			if strings.Contains(result, "alice@corp.dev") || !strings.Contains(result, "<EMAIL_ADDRESS>") {
-				t.Fatalf("secure default email policy was disabled: %s", result)
+			if got := strings.Contains(result, "<EMAIL_ADDRESS>"); got != test.wantEmail || strings.Contains(result, "alice@corp.dev") == test.wantEmail {
+				t.Fatalf("email redaction = %t, want %t: %s", got, test.wantEmail, result)
 			}
 			if got := !strings.Contains(result, "192.0.2.1"); got != test.wantIP {
 				t.Fatalf("IP redaction = %t, want %t: %s", got, test.wantIP, result)
@@ -143,11 +252,11 @@ func TestKeyConfigurationRedactionKeepsSecureDefaultsAndAddsOnlyConfiguredDetect
 	}
 
 	for _, patterns := range [][]string{{"unknown"}, {"a*"}, {"<EMAIL_ADDRESS>"}} {
-		config := &policy.Config{Plugins: &policy.Plugins{StogasPIIRedaction: &policy.PIIRedaction{}}}
+		config := &policy.Config{Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{}}}
 		if patterns[0] == "unknown" {
-			config.Plugins.StogasPIIRedaction.Patterns = patterns
+			config.Plugins.StogasRedaction.Presets = patterns
 		} else {
-			config.Plugins.StogasPIIRedaction.CustomPatterns = patterns
+			config.Plugins.StogasRedaction.CustomPatterns = patterns
 		}
 		if _, err := compileKeyRedactionPolicy(config); err == nil {
 			t.Fatalf("invalid configured patterns were accepted: %q", patterns)

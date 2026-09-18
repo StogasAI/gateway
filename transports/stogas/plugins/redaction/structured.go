@@ -1,17 +1,30 @@
 package redaction
 
+import (
+	"unicode"
+	"unicode/utf8"
+)
+
 func scanEmails(text []byte, matches []match) ([]match, error) {
 	for at := 0; at < len(text); at++ {
 		if text[at] != '@' {
 			continue
 		}
 		start := at
-		for start > 0 && at-start < 64 && isEmailLocalByte(text[start-1]) {
-			start--
+		for start > 0 && at-start < 64 {
+			character, width := utf8.DecodeLastRune(text[:start])
+			if !isEmailCharacter(character, true) || at-start+width > 64 {
+				break
+			}
+			start -= width
 		}
 		end := at + 1
-		for end < len(text) && end-at <= 254 && isEmailDomainByte(text[end]) {
-			end++
+		for end < len(text) && end-at <= 254 {
+			character, width := utf8.DecodeRune(text[end:])
+			if !isEmailCharacter(character, false) {
+				break
+			}
+			end += width
 		}
 		scannedEnd := end
 		for end > at+1 && (text[end-1] == '.' || text[end-1] == '-') {
@@ -46,14 +59,32 @@ func isEmailDomainByte(value byte) bool {
 }
 
 func wordBoundaryBeforeEmail(text []byte, start int) bool {
-	return start == 0 || !isEmailLocalByte(text[start-1])
+	if start == 0 {
+		return true
+	}
+	character, _ := utf8.DecodeLastRune(text[:start])
+	return !isEmailCharacter(character, true)
 }
 
 func wordBoundaryAfterEmail(text []byte, end, scannedEnd int) bool {
 	if scannedEnd > end {
 		end = scannedEnd
 	}
-	return end == len(text) || !isEmailDomainByte(text[end]) && !isIdentifierByte(text[end])
+	if end == len(text) {
+		return true
+	}
+	character, _ := utf8.DecodeRune(text[end:])
+	return !isEmailCharacter(character, false) && character != '_'
+}
+
+func isEmailCharacter(character rune, local bool) bool {
+	if character < utf8.RuneSelf {
+		if local {
+			return isEmailLocalByte(byte(character))
+		}
+		return isEmailDomainByte(byte(character))
+	}
+	return unicode.IsLetter(character) || unicode.IsDigit(character) || unicode.IsMark(character)
 }
 
 func emailValid(value []byte, at int) bool {
@@ -90,8 +121,8 @@ func emailValid(value []byte, at int) bool {
 		return false
 	}
 	if !hasPrefixFoldASCII(tld, "xn--") {
-		for _, character := range tld {
-			if !isASCIILetter(character) {
+		for _, character := range string(tld) {
+			if !unicode.IsLetter(character) && !unicode.IsMark(character) {
 				return false
 			}
 		}
@@ -115,10 +146,20 @@ func reservedEmailDomain(domain []byte) bool {
 
 func scanStructuredNumbers(text []byte, matches []match, enabled entityMask) ([]match, error) {
 	for start := 0; start < len(text); start++ {
-		if !isASCIIDigit(text[start]) && text[start] != '+' && !(text[start] == '(' && start+1 < len(text) && isASCIIDigit(text[start+1])) {
+		if text[start] < utf8.RuneSelf && !isASCIIDigit(text[start]) && text[start] != '+' && text[start] != '(' || !utf8.RuneStart(text[start]) {
 			continue
 		}
-		if start > 0 && isIdentifierByte(text[start-1]) {
+		first, width := structuredNumberCharacter(text[start:])
+		if !isASCIIDigit(first) && first != '+' && first != '(' {
+			continue
+		}
+		if first == '(' {
+			next, _ := structuredNumberCharacter(text[start+width:])
+			if !isASCIIDigit(next) {
+				continue
+			}
+		}
+		if start > 0 && numberIdentifierBefore(text, start) {
 			continue
 		}
 
@@ -128,29 +169,135 @@ func scanStructuredNumbers(text []byte, matches []match, enabled entityMask) ([]
 		// date without backtracking over unbounded input.
 		var digitBuffer [19]byte
 		digits := digitBuffer[:0]
-		limit := start + 48
-		if limit > len(text) {
-			limit = len(text)
-		}
-		for end := start; end < limit && isStructuredNumberByte(text[end]); end++ {
-			if !isASCIIDigit(text[end]) {
+		// Normalize only this bounded candidate. Match offsets always refer to
+		// the original bytes; unrelated Unicode text is never rewritten.
+		var presentation [48]byte
+		raw := presentation[:0]
+		for end := start; end < len(text) && len(raw) < len(presentation); {
+			character, width := structuredNumberCharacter(text[end:])
+			if !isStructuredNumberByte(character) {
+				break
+			}
+			end += width
+			raw = append(raw, character)
+			if !isASCIIDigit(character) {
 				continue
 			}
 			if len(digits) == cap(digits) {
 				break
 			}
-			digits = append(digits, text[end])
-			if len(digits) < 9 || end+1 < len(text) && isIdentifierByte(text[end+1]) {
+			digits = append(digits, character)
+			if len(digits) < 9 {
 				continue
 			}
+			candidateEntities := enabled
+			if numberIdentifierAfter(text, end) {
+				if !enabled.has(EntityPhone) || phoneExtensionEnd(text, end) == end {
+					continue
+				}
+				candidateEntities = maskOf(EntityPhone)
+			}
 			var err error
-			matches, err = classifyStructuredNumber(text, start, end+1, text[start:end+1], digits, matches, enabled)
+			matches, err = classifyStructuredNumber(text, start, end, raw, digits, matches, candidateEntities)
 			if err != nil {
 				return nil, err
 			}
 		}
 	}
 	return matches, nil
+}
+
+func structuredNumberCharacter(text []byte) (byte, int) {
+	if len(text) == 0 {
+		return 0, 0
+	}
+	if text[0] < utf8.RuneSelf {
+		return text[0], 1
+	}
+	character, width := utf8.DecodeRune(text)
+	// Full-width ASCII punctuation and digits have a fixed Unicode mapping.
+	if character >= 0xff01 && character <= 0xff5e {
+		return byte(character - 0xfee0), width
+	}
+	if unicode.Is(unicode.Zs, character) {
+		return ' ', width
+	}
+	if character == '\u2010' || character == '\u2011' || character == '\u2212' {
+		return '-', width
+	}
+	if !unicode.IsDigit(character) {
+		return 0, width
+	}
+	for _, interval := range unicode.Digit.R16 {
+		if character >= rune(interval.Lo) && character <= rune(interval.Hi) && (character-rune(interval.Lo))%rune(interval.Stride) == 0 {
+			return '0' + byte((character-rune(interval.Lo))/rune(interval.Stride)%10), width
+		}
+	}
+	for _, interval := range unicode.Digit.R32 {
+		if character >= rune(interval.Lo) && character <= rune(interval.Hi) && (character-rune(interval.Lo))%rune(interval.Stride) == 0 {
+			return '0' + byte((character-rune(interval.Lo))/rune(interval.Stride)%10), width
+		}
+	}
+	return 0, width
+}
+
+func numberIdentifierBefore(text []byte, position int) bool {
+	if text[position-1] < utf8.RuneSelf {
+		return isIdentifierByte(text[position-1])
+	}
+	character, _ := utf8.DecodeLastRune(text[:position])
+	return unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.IsMark(character)
+}
+
+func numberIdentifierAfter(text []byte, position int) bool {
+	if position >= len(text) {
+		return false
+	}
+	if text[position] < utf8.RuneSelf {
+		return isIdentifierByte(text[position])
+	}
+	character, _ := utf8.DecodeRune(text[position:])
+	return unicode.IsLetter(character) || unicode.IsNumber(character) || unicode.IsMark(character)
+}
+
+// Include a short, explicitly marked extension only after a validated phone.
+// Do not infer a region or consume an unmarked adjacent number.
+func phoneExtensionEnd(text []byte, end int) int {
+	position := end
+	limit := min(len(text), end+64)
+	for position < limit && (text[position] == ' ' || text[position] == '\t') {
+		position++
+	}
+	markerEnd := position
+	for _, marker := range []string{";ext=", "extension", "extn", "ext", "x", "#"} {
+		if hasPrefixFoldASCII(text[position:limit], marker) {
+			markerEnd += len(marker)
+			break
+		}
+	}
+	if markerEnd == position {
+		return end
+	}
+	position = markerEnd
+	if position < limit && (text[position] == '.' || text[position] == ':') {
+		position++
+	}
+	for position < limit && (text[position] == ' ' || text[position] == '\t') {
+		position++
+	}
+	digits := 0
+	for position < limit && digits < 10 {
+		character, width := structuredNumberCharacter(text[position:limit])
+		if !isASCIIDigit(character) {
+			break
+		}
+		position += width
+		digits++
+	}
+	if digits == 0 || numberIdentifierAfter(text, position) {
+		return end
+	}
+	return position
 }
 
 func isStructuredNumberByte(value byte) bool {
@@ -181,8 +328,10 @@ func classifyStructuredNumber(text []byte, start, end int, raw, digits []byte, m
 			return nil, err
 		}
 	}
-	if internationalPhoneValid(raw, digits) || northAmericanPhoneValid(raw, digits) {
-		if err := add(EntityPhone, 72); err != nil {
+	if enabled.has(EntityPhone) && (internationalPhoneValid(raw, digits) || northAmericanPhoneValid(raw, digits)) {
+		var err error
+		matches, err = appendMatch(matches, start, phoneExtensionEnd(text, end), EntityPhone, 72)
+		if err != nil {
 			return nil, err
 		}
 	}

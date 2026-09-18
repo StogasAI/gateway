@@ -162,6 +162,9 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 	}
 	if encryptedSession(ctx) != nil && billing.IsDashboardCredential(token) {
 		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)
+		if dashboard != nil && dashboard.Claims != nil {
+			ctx.SetUserValue(requestLogClaimsKey, dashboard.Claims)
+		}
 		if dashboardErr != nil {
 			s.writeBillingError(ctx, dashboardErr)
 			return apiCredential{}, false
@@ -170,6 +173,9 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 		return apiCredential{Dashboard: dashboard}, true
 	}
 	claims, err := s.runtime.ParseAPIKey(token)
+	if claims != nil {
+		ctx.SetUserValue(requestLogClaimsKey, claims)
+	}
 	if err != nil {
 		s.writeBillingError(ctx, err)
 		return apiCredential{}, false

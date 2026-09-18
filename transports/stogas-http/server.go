@@ -67,6 +67,7 @@ type Server struct {
 	catalogUpdater    *catalog.Updater
 	requests          *requestDrain
 	admission         requestAdmissionCounters
+	preprocessing     preprocessingAdmission
 	memory            *requestMemoryAdmission
 	startedAt         time.Time
 }

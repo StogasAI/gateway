@@ -44,6 +44,7 @@ func baseHoldEstimate(state *State) (HoldEstimate, error) {
 	}
 	return HoldEstimate{
 		EstimatedUpstreamCostUSDAtoms: estimatedUpstreamCostUSDAtoms,
+		ReservedTokens:                int64(inputTokenLimit) + int64(outputTokenLimit),
 		ProductKey:                    resolution.Deployment.ID,
 		ProviderKey:                   string(resolution.Provider),
 		Meters:                        meters,

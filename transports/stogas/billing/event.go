@@ -121,8 +121,11 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
 
 	return RequestEvent{
+		SchemaVersion:              RequestLogSchemaVersion,
 		RequestID:                  authorization.RequestID,
 		CreatedAt:                  createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		LastRequestAt:              createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		RequestCount:               1,
 		StogasAPIKeyID:             authorization.KeyID,
 		StogasGrantID:              authorization.GrantID,
 		StogasUserID:               authorization.UserID,
@@ -329,19 +332,29 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	switch {
 	case identifiers.has(schemas.RequestCancelled) || statusCode == 499:
 		return "cancelled"
-	case identifiers.has(schemas.RequestTimedOut, schemas.ProviderConnectionFailed):
-		// Bifrost uses 502 for a provider connection failure. Match its stable
-		// type before HTTP status so transport failures keep their meaning.
-		return "network_error"
+	case identifiers.has(schemas.RequestTimedOut, "timeout", "timeout_error"):
+		return "timeout"
+	case identifiers.has(schemas.ProviderConnectionFailed):
+		return "connection_error"
+	case identifiers.has("context_length_exceeded", "max_tokens_exceeded", "token_limit_exceeded"):
+		return "context_length_exceeded"
+	case identifiers.has("request_too_large", "payload_too_large"):
+		return "request_too_large"
+	case identifiers.has("invalid_image", "image_too_large", "image_too_small", "unsupported_image_format", "image_not_found", "image_download_failed"):
+		return "invalid_image"
+	case identifiers.has("overloaded_error", "provider_overloaded"):
+		return "provider_overloaded"
+	case identifiers.has("upstream_response_invalid", "upstream_execution_invalid", "upstream_protocol_error", "upstream_response_too_large"):
+		return "invalid_response"
 	case identifiers.has("authentication_error", "invalid_api_key", "unauthorized", "upstream_authentication_failed"):
 		return "authentication_error"
 	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied"):
 		return "permission_error"
-	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded"):
+	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required"):
 		return "over_budget"
-	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error"):
+	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
-	case identifiers.has("content_filter", "content_filter_error", "safety_error"):
+	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal"):
 		return "content_filter"
 	case statusCode == 401:
 		return "authentication_error"
@@ -352,16 +365,22 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 	case statusCode == 429:
 		return "rate_limited"
 	case statusCode == 408 || statusCode == 504:
-		return "network_error"
+		return "timeout"
+	case statusCode == 503 || identifiers.has("provider_unavailable"):
+		return "provider_unavailable"
+	case statusCode == 529:
+		return "provider_overloaded"
+	case statusCode == 413:
+		return "request_too_large"
 	case statusCode >= 500:
 		return "provider_error"
 	case statusCode == 404:
 		// The catalog already resolved a known upstream model. A provider 404
 		// therefore means that the selected deployment is unavailable or drifted.
-		return "provider_error"
-	case statusCode == 400 || statusCode == 409 || statusCode == 413 || statusCode == 415 || statusCode == 422:
+		return "model_unavailable"
+	case statusCode == 400 || statusCode == 409 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
-	case identifiers.has("invalid_request", "invalid_request_error", "bad_request_error", "request_too_large"):
+	case identifiers.has("invalid_request", "invalid_request_error", "bad_request_error"):
 		// A generic invalid-request type is useful when status is absent. It must
 		// not hide a more reliable 404, 429, or 5xx status.
 		return "invalid_request"

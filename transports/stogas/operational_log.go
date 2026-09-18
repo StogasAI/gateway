@@ -13,14 +13,15 @@ import (
 )
 
 type operationalLogEvent struct {
-	Environment string `json:"environment,omitempty"`
-	ErrorType   string `json:"errorType,omitempty"`
-	Event       string `json:"event"`
-	ReasonCode  string `json:"reasonCode,omitempty"`
-	RequestID   string `json:"requestId,omitempty"`
-	Severity    string `json:"severity"`
-	Source      string `json:"source,omitempty"`
-	Suppressed  uint64 `json:"suppressed,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+	Environment string    `json:"environment,omitempty"`
+	ErrorType   string    `json:"errorType,omitempty"`
+	Event       string    `json:"event"`
+	ReasonCode  string    `json:"reasonCode,omitempty"`
+	RequestID   string    `json:"requestId,omitempty"`
+	Severity    string    `json:"severity"`
+	Source      string    `json:"source,omitempty"`
+	Suppressed  uint64    `json:"suppressed,omitempty"`
 }
 
 // Covers the library's current warning/error call sites plus owned events.
@@ -126,10 +127,12 @@ func OperationalLogDiagnostics() []OperationalLogSeries {
 }
 
 func writeOperationalLog(event operationalLogEvent) {
-	event, emit := operationalLogs.record(event, time.Now())
+	now := time.Now()
+	event, emit := operationalLogs.record(event, now)
 	if !emit {
 		return
 	}
+	event.Timestamp = now.UTC()
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return

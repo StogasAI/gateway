@@ -243,23 +243,31 @@ func applyProviderRoutingPreference(
 	return selections, "", false, nil
 }
 
-func filterRoutingSelectionsByAllowedNodes(
+func filterRoutingSelectionsByPolicy(
 	selections []routingSelection,
 	config *policy.Config,
 ) []routingSelection {
-	if len(selections) == 0 || config == nil || config.Routing.AllowedCatalogNodes == nil {
+	if len(selections) == 0 || config == nil {
 		return selections
 	}
 	allowed := config.Routing.AllowedCatalogNodes
 	filtered := selections[:0]
 	for _, selection := range selections {
-		ids := candidatePolicyIDs(&ResolvedRequest{
+		candidate := &ResolvedRequest{
 			Provider:   selection.provider,
 			Deployment: selection.deployment,
-		})
-		if allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) {
-			filtered = append(filtered, selection)
 		}
+		ids := candidatePolicyIDs(candidate)
+		if !allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) {
+			continue
+		}
+		if query := config.Routing.Query; query != nil {
+			values, ok := newResolvedPolicyValues(candidate)
+			if !ok || !query.Matches(values) {
+				continue
+			}
+		}
+		filtered = append(filtered, selection)
 	}
 	return filtered
 }
@@ -390,7 +398,9 @@ func finalizeRoutingCandidates(
 	preference ProviderRoutingPreference,
 	requestedModel string,
 ) ([]*ResolvedRequest, error) {
-	filtered := filterRoutingPolicy(resolved, config)
+	// Scope and query filters already ran on catalog facts before redaction.
+	// Rank only candidates whose request parameters passed compatibility checks.
+	filtered := resolved
 	if len(filtered) == 0 {
 		return nil, ErrModelUnavailable
 	}
@@ -470,28 +480,6 @@ func finalizeRoutingCandidates(
 		filtered = filtered[:limit]
 	}
 	return filtered, nil
-}
-
-func filterRoutingPolicy(resolved []*ResolvedRequest, config *policy.Config) []*ResolvedRequest {
-	if len(resolved) == 0 || config == nil {
-		return resolved
-	}
-	allowed := config.Routing.AllowedCatalogNodes
-	query := config.Routing.Query
-	filtered := make([]*ResolvedRequest, 0, len(resolved))
-	for _, candidate := range resolved {
-		candidateValues, idsOK := newResolvedPolicyValues(candidate)
-		if !idsOK {
-			continue
-		}
-		ids := candidatePolicyIDs(candidate)
-		if !allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) ||
-			!query.Matches(candidateValues) {
-			continue
-		}
-		filtered = append(filtered, candidate)
-	}
-	return filtered
 }
 
 func resolvedProviders(resolved []*ResolvedRequest) []schemas.ModelProvider {

@@ -146,6 +146,7 @@ type providerAttemptObservation struct {
 
 type HoldEstimate struct {
 	EstimatedUpstreamCostUSDAtoms string
+	ReservedTokens                int64
 	ProductKey                    string
 	ProviderKey                   string
 	Meters                        []catalog.MeterEstimate

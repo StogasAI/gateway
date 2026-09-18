@@ -17,13 +17,14 @@ import (
 
 type PublicBillingError struct {
 	StatusCode int
+	Code       string
 	Type       string
 	Message    string
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
-	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
+	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
@@ -40,28 +41,39 @@ func (passthroughDashboardError) StatusCode() int {
 func PublicBillingErrorFor(err error) PublicBillingError {
 	statusCode := gatewaybilling.ErrorStatus(err)
 	errorType := "internal_error"
+	message := "Internal server error"
 	switch statusCode {
 	case 400:
 		errorType = "invalid_request_error"
+		message = "Invalid request"
 	case 401:
 		errorType = "authentication_error"
+		message = "Invalid API key"
 	case 402:
 		errorType = "billing_error"
+		message = "Billing rejected the request"
 	case 403:
 		errorType = "permission_denied"
+		message = "Permission denied"
 	case 409:
 		errorType = "invalid_request_error"
+		message = "Request conflicts with an existing authorization"
 	case 429:
 		errorType = "rate_limit_error"
+		message = "Rate limit exceeded"
 	case 503:
 		errorType = "gateway_error"
+		message = "Stogas is temporarily unavailable. Retry the request later."
 	}
 
-	message := err.Error()
-	if errors.Is(err, gatewaybilling.ErrInvalidAPIKey) {
-		message = "Invalid API key"
+	code := errorType
+	var requestError *gatewaybilling.RequestError
+	if errors.As(err, &requestError) {
+		code, message = requestError.Code, requestError.Message
+	} else if errors.Is(err, passthroughDashboardError{}) {
+		code, message = "byok_api_key_required", "Pass-through BYOK requires a standard Stogas API key"
 	}
-	return PublicBillingError{StatusCode: statusCode, Type: errorType, Message: message}
+	return PublicBillingError{StatusCode: statusCode, Code: code, Type: errorType, Message: message}
 }
 
 func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, state *State) error {
@@ -112,12 +124,13 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 			hold.ProviderKey,
 			hold.ProductKey,
 			hold.EstimatedUpstreamCostUSDAtoms,
+			hold.ReservedTokens,
 			state.ConfigGeneration,
 			upstreamTarget,
 			state.RequestLifetime,
 		)
 	} else {
-		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
+		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, hold.ReservedTokens, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
 	}
 	if err != nil && authorization != nil {
 		state.Authorization = authorization
@@ -353,6 +366,16 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 	}
 	if state.ProcessingError != nil {
 		event.StogasProcessingSuccess = false
+		status := 500
+		if state.ProcessingError.StatusCode != nil && *state.ProcessingError.StatusCode >= 400 && *state.ProcessingError.StatusCode <= 599 {
+			status = *state.ProcessingError.StatusCode
+		}
+		code := ""
+		if state.ProcessingError.Error != nil && state.ProcessingError.Error.Code != nil {
+			code = *state.ProcessingError.Error.Code
+		}
+		event.StogasErrorCode = gatewaybilling.NormalizeStogasErrorCode(code, status)
+		event.StogasErrorStatusCode = &status
 	}
 	// A local failure can interrupt a provider stream before its outcome is
 	// known. Keep completed provider results; do not invent success or HTTP 500.
@@ -362,6 +385,17 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		last := &event.ProviderAttempts[len(event.ProviderAttempts)-1]
 		if !completed && last.Status == "success" {
 			last.Status, last.StatusCode = "unknown", nil
+		}
+	}
+	if len(event.ProviderAttempts) == 0 {
+		zero := int64(0)
+		event.PolicyTokens = &zero
+	} else if hasMeasuredUsage(state.Signals) {
+		// Prompt includes cached input; completion includes reasoning. Adding
+		// those detail partitions again would charge the same tokens twice.
+		tokens := int64(state.Signals.PromptTokens()) + int64(state.Signals.CompletionTokens())
+		if tokens >= 0 && tokens <= 1_000_000_000_000 {
+			event.PolicyTokens = &tokens
 		}
 	}
 	state.FinalEvent = &event

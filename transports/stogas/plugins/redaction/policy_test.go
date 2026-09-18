@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestExplicitPatternSelectionAndFixedDefault(t *testing.T) {
@@ -72,7 +75,7 @@ func TestCompiledPoliciesDoNotRetainOptionSlices(t *testing.T) {
 	}
 }
 
-func TestPatternGroupsCoverEveryBuiltInEntityOnce(t *testing.T) {
+func TestPatternsCoverEveryBuiltInEntityOnce(t *testing.T) {
 	t.Parallel()
 	var covered entityMask
 	for _, pattern := range supportedPatterns {
@@ -149,67 +152,57 @@ func TestCommonUserSelectionsAreIndependent(t *testing.T) {
 	}
 }
 
-func TestSecretPatternsAreIndependentAndComplete(t *testing.T) {
+func TestGroupedPresetsCoverRelatedIdentifiers(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		pattern     Pattern
-		source      string
-		placeholder string
-		want        string
+		pattern      Pattern
+		source       string
+		placeholders []string
+		preserved    string
 	}{
-		{pattern: PatternCredentials, source: "Authorization: Bearer AbCdEf0123456789-_", placeholder: "<CREDENTIAL>", want: "Authorization: Bearer <CREDENTIAL>"},
-		{pattern: PatternPrivateKeys, source: "-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----", placeholder: "<PRIVATE_KEY>", want: "<PRIVATE_KEY>"},
-		{pattern: PatternJSONWebTokens, source: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", placeholder: "<JSON_WEB_TOKEN>", want: "<JSON_WEB_TOKEN>"},
-		{pattern: PatternDatabaseURLs, source: "postgresql://app:Sup3rSecret!@db.internal:5432/stogas", placeholder: "<DATABASE_URL>", want: "<DATABASE_URL>"},
-		{pattern: PatternVendorTokens, source: "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890", placeholder: "<VENDOR_TOKEN>", want: "<VENDOR_TOKEN>"},
-	}
-	values := make([]string, 0, len(tests))
-	patterns := make([]Pattern, 0, len(tests))
-	for _, test := range tests {
-		values = append(values, test.source)
-		patterns = append(patterns, test.pattern)
-		redactor := NewWithPolicy(mustCompilePolicy(t, Options{Patterns: []Pattern{test.pattern}}))
-		out, changed, err := redactor.redactBytes([]byte(test.source))
-		if err != nil || !changed || string(out) != test.want || redactor.Summary().ItemsRedacted != 1 {
-			t.Errorf("pattern %q output=%q changed=%t summary=%#v err=%v", test.pattern, out, changed, redactor.Summary(), err)
-		}
-	}
-	source := []byte(strings.Join(values, " "))
-	redactor := NewWithPolicy(mustCompilePolicy(t, Options{Patterns: patterns}))
-	out, changed, err := redactor.redactBytes(source)
-	if err != nil || !changed || redactor.Summary().ItemsRedacted != uint32(len(tests)) {
-		t.Fatalf("combined secret output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
-	}
-	for _, test := range tests {
-		if !bytes.Contains(out, []byte(test.placeholder)) {
-			t.Errorf("combined secret output %q lacks %s", out, test.placeholder)
-		}
-	}
-	preserved, changed, err := NewWithPolicy(mustCompilePolicy(t, Options{})).redactBytes(source)
-	if err != nil || changed || !bytes.Equal(preserved, source) {
-		t.Fatalf("disabled secret pattern output=%q changed=%t err=%v", preserved, changed, err)
-	}
-}
-
-func TestIdentifierPatternGroupsAreIndependent(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		pattern     Pattern
-		source      string
-		placeholder string
-		preserved   string
-	}{
-		{pattern: PatternBankIdentifiers, source: "IBAN GB82 WEST 1234 5698 7654 32 and ITIN 900-70-0001", placeholder: "<IBAN>", preserved: "900-70-0001"},
-		{pattern: PatternNationalIdentifiers, source: "ITIN 900-70-0001 and NHS number 943 476 5919", placeholder: "<US_ITIN>", preserved: "943 476 5919"},
-		{pattern: PatternHealthIdentifiers, source: "NHS number 943 476 5919 and IBAN GB82 WEST 1234 5698 7654 32", placeholder: "<UK_NHS_NUMBER>", preserved: "GB82 WEST 1234 5698 7654 32"},
+		{
+			pattern:      PatternAPIKeysAndSecrets,
+			source:       "Authorization: Bearer AbCdEf0123456789-_\n-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c postgresql://app:Sup3rSecret!@db.internal:5432/stogas ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890 alice@corp.io",
+			placeholders: []string{"<CREDENTIAL>", "<PRIVATE_KEY>", "<JSON_WEB_TOKEN>", "<DATABASE_URL>", "<VENDOR_TOKEN>"},
+			preserved:    "alice@corp.io",
+		},
+		{
+			pattern:      PatternBankIdentifiers,
+			source:       "IBAN GB82 WEST 1234 5698 7654 32 and ABA routing number 021000021 and card 4532015112830366",
+			placeholders: []string{"<IBAN>", "<US_ROUTING_NUMBER>"},
+			preserved:    "4532015112830366",
+		},
+		{
+			pattern:      PatternNationalIdentifiers,
+			source:       "ITIN 900-70-0001 and National Insurance AB 12 34 56 C and SSN 856-45-6789",
+			placeholders: []string{"<US_ITIN>", "<UK_NATIONAL_INSURANCE_NUMBER>"},
+			preserved:    "856-45-6789",
+		},
+		{
+			pattern:      PatternHealthIdentifiers,
+			source:       "NHS number 943 476 5919 and NPI 1234567893 and ITIN 900-70-0001",
+			placeholders: []string{"<UK_NHS_NUMBER>", "<US_NPI>"},
+			preserved:    "900-70-0001",
+		},
 	}
 	for _, test := range tests {
-		redactor := NewWithPolicy(mustCompilePolicy(t, Options{Patterns: []Pattern{test.pattern}}))
-		out, changed, err := redactor.redactBytes([]byte(test.source))
-		if err != nil || !changed || redactor.Summary().ItemsRedacted != 1 ||
-			!bytes.Contains(out, []byte(test.placeholder)) || !bytes.Contains(out, []byte(test.preserved)) {
-			t.Errorf("pattern %q output=%q changed=%t summary=%#v err=%v", test.pattern, out, changed, redactor.Summary(), err)
-		}
+		t.Run(string(test.pattern), func(t *testing.T) {
+			redactor := NewWithPolicy(mustCompilePolicy(t, Options{Patterns: []Pattern{test.pattern}}))
+			out, changed, err := redactor.redactBytes([]byte(test.source))
+			if err != nil || !changed || redactor.Summary().ItemsRedacted != uint32(len(test.placeholders)) ||
+				!bytes.Contains(out, []byte(test.preserved)) {
+				t.Fatalf("output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
+			}
+			for _, placeholder := range test.placeholders {
+				if !bytes.Contains(out, []byte(placeholder)) {
+					t.Errorf("output %q lacks %s", out, placeholder)
+				}
+			}
+			preserved, changed, err := NewWithPolicy(mustCompilePolicy(t, Options{})).redactBytes([]byte(test.source))
+			if err != nil || changed || string(preserved) != test.source {
+				t.Fatalf("disabled preset output=%q changed=%t err=%v", preserved, changed, err)
+			}
+		})
 	}
 }
 
@@ -219,7 +212,9 @@ func TestInvalidPoliciesFailWithoutEchoingExpressions(t *testing.T) {
 		{Patterns: []Pattern{""}},
 		{Patterns: []Pattern{"person_name"}},
 		{Patterns: []Pattern{"address"}},
-		{Patterns: []Pattern{"api_keys_and_secrets"}},
+		{Patterns: []Pattern{"iban"}},
+		{Patterns: []Pattern{"uk_nhs"}},
+		{Patterns: []Pattern{"credentials"}},
 		{Patterns: []Pattern{"TOPSECRET"}},
 		{CustomPatterns: []CustomPattern{{Expression: ""}}},
 		{CustomPatterns: []CustomPattern{{Expression: "TOPSECRET("}}},
@@ -351,6 +346,30 @@ func TestCustomPatternMatchLimitFailsClosed(t *testing.T) {
 	}
 }
 
+func TestCustomMatchBudgetAllowsAnUnmatchedLaterRequirement(t *testing.T) {
+	t.Parallel()
+	policy := mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{
+		{Expression: "z"}, {Expression: "EMP-[0-9]+"},
+	}})
+	for _, count := range []int{maxMatchesPerText - 1, maxMatchesPerText, maxMatchesPerText + 1} {
+		for _, suffix := range []string{"", " EMP-1"} {
+			redactor := NewWithPolicy(policy)
+			_, _, err := redactor.redactBytes([]byte(strings.Repeat("z", count) + suffix))
+			matches := count
+			if suffix != "" {
+				matches++
+			}
+			if matches > maxMatchesPerText {
+				if !errors.Is(err, ErrMatchLimit) || redactor.Summary().ItemsRedacted != 0 {
+					t.Fatalf("over budget: matches=%d err=%v summary=%#v", matches, err, redactor.Summary())
+				}
+			} else if err != nil || redactor.Summary().ItemsRedacted != uint32(matches) {
+				t.Fatalf("within budget: matches=%d err=%v summary=%#v", matches, err, redactor.Summary())
+			}
+		}
+	}
+}
+
 func TestCompiledPolicyCanBeSharedConcurrently(t *testing.T) {
 	t.Parallel()
 	policy := mustCompilePolicy(t, Options{
@@ -394,24 +413,97 @@ func FuzzConfiguredRedaction(f *testing.F) {
 		}
 		redactor := NewWithPolicy(policy)
 		out, changed, err := redactor.redactBytes(source)
-		if errors.Is(err, ErrMatchLimit) {
+		if errors.Is(err, ErrMatchLimit) || errors.Is(err, ErrWorkLimit) {
 			return
 		}
 		if err != nil || changed != !bytes.Equal(source, out) || changed != (redactor.Summary().ItemsRedacted > 0) {
 			t.Fatalf("configured result output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
 		}
-		stable, changed, err := NewWithPolicy(policy).redactBytes(out)
-		if err != nil || changed || !bytes.Equal(stable, out) {
-			t.Fatalf("configured output was not stable: output=%q changed=%t err=%v", stable, changed, err)
+		if utf8.Valid(source) && !utf8.Valid(out) {
+			t.Fatal("replacement split a UTF-8 character")
 		}
 	})
+}
+
+func TestCustomPatternValidationCorpus(t *testing.T) {
+	data, err := os.ReadFile("testdata/custom-patterns.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Expression string
+		Valid            bool
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range cases {
+		t.Run(test.Name, func(t *testing.T) {
+			_, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: test.Expression}}})
+			if (err == nil) != test.Valid {
+				t.Fatalf("valid=%t err=%v", test.Valid, err)
+			}
+		})
+	}
+}
+
+func TestCustomRequirementsCannotWeakenOtherMatches(t *testing.T) {
+	t.Parallel()
+	for _, patterns := range [][]CustomPattern{
+		{{Expression: "12345"}, {Expression: "ABC123"}},
+		{{Expression: "ABC123"}, {Expression: "12345"}},
+		{{Expression: "12345"}, {Expression: "ABC123"}, {Expression: "12345"}},
+	} {
+		redactor := NewWithPolicy(mustCompilePolicy(t, Options{CustomPatterns: patterns}))
+		out, _, err := redactor.redactBytes([]byte("ABC12345"))
+		if err != nil || string(out) != "<CUSTOM_PII>" {
+			t.Fatalf("out=%q err=%v", out, err)
+		}
+	}
+	redactor := NewWithPolicy(mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: `EMP-[^\n]+`}}}))
+	for _, marker := range []string{"<EMAIL_ADDRESS>", "<CUSTOM_PII>", "<REDACTED>"} {
+		out, _, err := redactor.redactBytes([]byte("EMP-123456 " + marker))
+		if err != nil || string(out) != "<CUSTOM_PII>" {
+			t.Fatalf("marker=%s out=%q err=%v", marker, out, err)
+		}
+	}
+}
+
+func TestStogasTokenDetectionIsBounded(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("Ab3_", 41) + "AA"
+	for _, test := range []struct {
+		input           string
+		enabled, hidden bool
+	}{
+		{"sk_stogas_v1_" + body, true, true},
+		{"(sk_stogas_v1_" + body + ")", true, true},
+		{"sk_stogas_v1_" + body, false, false},
+		{"sk_stogas_v1_" + body[:165], true, false},
+		{"sk_stogas_v1_" + body + "A", true, false},
+		{"sk_stogas_v1_...1234", true, false},
+		{"xsk_stogas_v1_" + body, true, false},
+	} {
+		options := Options{}
+		if test.enabled {
+			options.Patterns = []Pattern{PatternAPIKeysAndSecrets}
+		}
+		out, changed, err := NewWithPolicy(mustCompilePolicy(t, options)).redactBytes([]byte(test.input))
+		if err != nil || changed != test.hidden || (changed && !bytes.Contains(out, []byte("<VENDOR_TOKEN>"))) {
+			t.Fatalf("changed=%t want=%t out=%q err=%v", changed, test.hidden, out, err)
+		}
+	}
 }
 
 func FuzzCustomPatternRedaction(f *testing.F) {
 	f.Add(`EMP-[0-9]{6}\b`, []byte("EMP-123456"))
 	f.Add(`客户-\p{Han}{2}`, []byte("客户-张三"))
 	f.Add(`a*`, []byte("aaaa"))
+	f.Add(`EMP-[^\n]+`, []byte("EMP-123456 <EMAIL_ADDRESS>"))
 	f.Fuzz(func(t *testing.T, expression string, source []byte) {
+		// Keep the unmetered standard-library oracle small. Separate tests use
+		// large adversarial and million-token-sized inputs against the budget.
+		source = source[:min(len(source), 4096)]
 		policy, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: expression}}})
 		if errors.Is(err, ErrInvalidPolicy) {
 			return
@@ -421,15 +513,20 @@ func FuzzCustomPatternRedaction(f *testing.F) {
 		}
 		redactor := NewWithPolicy(policy)
 		out, changed, err := redactor.redactBytes(source)
-		if errors.Is(err, ErrMatchLimit) {
+		if errors.Is(err, ErrMatchLimit) || errors.Is(err, ErrWorkLimit) {
 			return
 		}
 		if err != nil || changed != !bytes.Equal(source, out) || changed != (redactor.Summary().ItemsRedacted > 0) {
 			t.Fatalf("custom result output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
 		}
-		stable, changed, err := NewWithPolicy(policy).redactBytes(out)
-		if err != nil || changed || !bytes.Equal(stable, out) {
-			t.Fatalf("custom output was not stable: output=%q changed=%t err=%v", stable, changed, err)
+		// Arbitrary expressions match the original input, including user-supplied
+		// markers. Replacements can create new contexts, so universal idempotence
+		// is not a valid property for custom patterns.
+		expected := regexp.MustCompile(expression)
+		expected.Longest()
+		want := expected.ReplaceAllLiteral(source, []byte("<CUSTOM_PII>"))
+		if !bytes.Equal(out, want) {
+			t.Fatalf("custom output=%q want=%q", out, want)
 		}
 	})
 }

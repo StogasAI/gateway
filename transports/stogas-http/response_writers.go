@@ -73,6 +73,9 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	case responseProofErrorCode:
 		return fasthttp.StatusInternalServerError, "internal_error", code,
 			"Failed to build confidential response proof", true
+	case "billing_price_invalid", "response_encoding_failed":
+		return fasthttp.StatusInternalServerError, "internal_error", code,
+			"Stogas could not complete the response. Retry the request later.", true
 	case "upstream_rate_limit_error":
 		return fasthttp.StatusTooManyRequests, "rate_limit_error", code,
 			"The upstream provider rate limit was exceeded", true
@@ -115,15 +118,18 @@ func publicBifrostStatus(bifrostErr *schemas.BifrostError) int {
 		return fasthttp.StatusInternalServerError
 	}
 
-	errorText := bifrostErrorText(bifrostErr)
-	switch {
-	case bifrostHasType(bifrostErr, schemas.RequestCancelled):
+	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
+	case "cancelled":
 		return 499
-	case bifrostHasType(bifrostErr, schemas.RequestTimedOut), looksLikeTimeoutError(errorText):
+	case "timeout":
 		return fasthttp.StatusGatewayTimeout
-	case looksLikeNetworkError(errorText):
+	case "connection_error", "invalid_response":
+		return fasthttp.StatusBadGateway
+	case "provider_unavailable", "provider_overloaded", "model_unavailable":
 		return fasthttp.StatusServiceUnavailable
-	case looksLikeClientConversionError(errorText):
+	case "request_too_large":
+		return fasthttp.StatusRequestEntityTooLarge
+	case "invalid_request", "context_length_exceeded", "invalid_image":
 		return fasthttp.StatusBadRequest
 	default:
 		return fasthttp.StatusInternalServerError
@@ -176,8 +182,6 @@ func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.
 	switch {
 	case bifrostErr == nil:
 		return "Internal server error"
-	case statusCode == fasthttp.StatusBadRequest && looksLikeClientConversionError(bifrostErrorText(bifrostErr)):
-		return "Invalid request"
 	case statusCode >= 400 && statusCode < 500:
 		message := bifrostErrorMessage(bifrostErr)
 		if safeProviderClientMessage(message) {
@@ -248,10 +252,6 @@ func publicBifrostParam(statusCode int, bifrostErr *schemas.BifrostError) any {
 	return param
 }
 
-func bifrostHasType(bifrostErr *schemas.BifrostError, errorType string) bool {
-	return bifrostErrorType(bifrostErr) == errorType
-}
-
 func bifrostErrorType(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr == nil {
 		return ""
@@ -279,22 +279,6 @@ func bifrostErrorMessage(bifrostErr *schemas.BifrostError) string {
 	return strings.TrimSpace(bifrostErr.Error.Message)
 }
 
-func bifrostErrorText(bifrostErr *schemas.BifrostError) string {
-	if bifrostErr == nil {
-		return ""
-	}
-	parts := []string{bifrostErrorType(bifrostErr), bifrostErrorMessage(bifrostErr)}
-	if bifrostErr.Error != nil {
-		if bifrostErr.Error.Code != nil {
-			parts = append(parts, *bifrostErr.Error.Code)
-		}
-		if bifrostErr.Error.Error != nil {
-			parts = append(parts, bifrostErr.Error.Error.Error())
-		}
-	}
-	return strings.ToLower(strings.Join(parts, " "))
-}
-
 func isSafeClientErrorType(errorType string) bool {
 	switch errorType {
 	case "invalid_request_error", "authentication_error", "billing_error", "permission_denied", "permission_error", "not_found_error", "request_too_large", "rate_limit_error", schemas.RequestCancelled, schemas.RequestTimedOut:
@@ -302,54 +286,6 @@ func isSafeClientErrorType(errorType string) bool {
 	default:
 		return false
 	}
-}
-
-func looksLikeClientConversionError(text string) bool {
-	for _, needle := range []string{
-		"invalid request",
-		"invalid chat completion request",
-		"invalid responses request",
-		"failed to marshal",
-		"failed to unmarshal",
-		"marshal request",
-		"unmarshal request",
-		"request conversion",
-		"convert request",
-		"unsupported request",
-		"invalid json",
-		"missing required",
-		"required field",
-		"cannot be nil",
-	} {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func looksLikeTimeoutError(text string) bool {
-	return strings.Contains(text, "timeout") || strings.Contains(text, "timed out") || strings.Contains(text, "deadline exceeded")
-}
-
-func looksLikeNetworkError(text string) bool {
-	for _, needle := range []string{
-		"api connection",
-		"connection refused",
-		"connection reset",
-		"connection closed",
-		"no such host",
-		"network is unreachable",
-		"temporary failure in name resolution",
-		"tls handshake",
-		"unexpected eof",
-		"provider do request failed",
-	} {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func messageLooksSensitive(message string) bool {
@@ -420,12 +356,29 @@ func marshalPayload(payload any) ([]byte, error) {
 }
 
 func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload any) {
-	s.recordAdmissionRejection(ctx, statusCode)
+	code := ""
+	if body, ok := payload.(map[string]any); ok {
+		if detail, ok := body["error"].(map[string]any); ok {
+			rawCode, hasCode := detail["code"]
+			code, _ = rawCode.(string)
+			if !hasCode || rawCode == "" {
+				code = stogasbilling.NormalizeStogasErrorCode("", statusCode)
+				detail["code"] = code
+			}
+			if _, ok := detail["param"]; !ok {
+				detail["param"] = nil
+			}
+		}
+	}
+	if len(ctx.Response.Header.Peek("X-Request-ID")) == 0 {
+		_, _ = inferenceRequestID(ctx)
+	}
+	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode))
 	ctx.SetStatusCode(statusCode)
 	ctx.SetContentType("application/json")
 	data, err := sonic.Marshal(payload)
 	if err != nil {
-		ctx.Response.SetBodyString(`{"error":{"message":"Failed to encode error","type":"internal_error"}}`)
+		ctx.Response.SetBodyString(`{"error":{"message":"Stogas could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
 		return
 	}
 	_, _ = ctx.Write(data)
@@ -434,13 +387,13 @@ func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload an
 func (s *Server) writeCatalogError(ctx *fasthttp.RequestCtx, err error) {
 	apiErr := catalog.PublicError(err)
 	s.writeError(ctx, apiErr.StatusCode, map[string]any{
-		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type},
+		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode)},
 	})
 }
 
 func (s *Server) writeBillingError(ctx *fasthttp.RequestCtx, err error) {
 	apiErr := stogas.PublicBillingErrorFor(err)
 	s.writeError(ctx, apiErr.StatusCode, map[string]any{
-		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type},
+		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": apiErr.Code, "param": nil},
 	})
 }

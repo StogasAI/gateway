@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"regexp"
 	"regexp/syntax"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -25,8 +24,7 @@ type CustomPattern struct {
 	Expression string
 }
 
-// Pattern is a stable built-in detector option. Related identifiers share one
-// option so callers do not need to know the recognizer implementation.
+// Pattern selects a preset of related built-in detectors.
 type Pattern string
 
 const (
@@ -35,17 +33,13 @@ const (
 	PatternSocialSecurityNumber Pattern = "social_security_number"
 	PatternCreditCardNumber     Pattern = "credit_card_number"
 	PatternIPAddress            Pattern = "ip_address"
-	PatternCredentials          Pattern = "credentials"
-	PatternPrivateKeys          Pattern = "private_keys"
-	PatternJSONWebTokens        Pattern = "json_web_tokens"
-	PatternDatabaseURLs         Pattern = "database_urls"
-	PatternVendorTokens         Pattern = "vendor_tokens"
+	PatternAPIKeysAndSecrets    Pattern = "api_keys_and_secrets"
 	PatternBankIdentifiers      Pattern = "bank_identifiers"
 	PatternNationalIdentifiers  Pattern = "national_identifiers"
 	PatternHealthIdentifiers    Pattern = "health_identifiers"
 )
 
-// Options explicitly selects built-in detector groups and custom expressions.
+// Options explicitly selects built-in detectors and custom expressions.
 // An empty pattern list disables all built-in detection.
 type Options struct {
 	Patterns       []Pattern
@@ -56,7 +50,7 @@ type Options struct {
 // request-local Redactors.
 type Policy struct {
 	entities     entityMask
-	custom       *regexp.Regexp
+	custom       []*customMatcher
 	minimumBytes int
 }
 
@@ -121,19 +115,26 @@ var supportedPatterns = [...]Pattern{
 	PatternSocialSecurityNumber,
 	PatternCreditCardNumber,
 	PatternIPAddress,
-	PatternCredentials,
-	PatternPrivateKeys,
-	PatternJSONWebTokens,
-	PatternDatabaseURLs,
-	PatternVendorTokens,
+	PatternAPIKeysAndSecrets,
 	PatternBankIdentifiers,
 	PatternNationalIdentifiers,
 	PatternHealthIdentifiers,
 }
 
+// DefaultPatterns returns the default selection without sharing mutable state.
+func DefaultPatterns() []Pattern {
+	patterns := make([]Pattern, 0, len(supportedPatterns)-1)
+	for _, pattern := range supportedPatterns {
+		if pattern != PatternIPAddress {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns
+}
+
 // CompilePolicy validates and compiles configuration once. It does not retain
 // the caller's slices; the resulting policy retains only the entity mask and
-// compiled matcher.
+// compiled matchers.
 func CompilePolicy(options Options) (*Policy, error) {
 	var enabled entityMask
 	for index, pattern := range options.Patterns {
@@ -155,7 +156,7 @@ func CompilePolicy(options Options) (*Policy, error) {
 	if enabled.has(EntityIPAddress) && minimumBytes > 2 {
 		minimumBytes = 2
 	}
-	if custom != nil {
+	if len(custom) > 0 {
 		minimumBytes = 1
 	}
 	return &Policy{entities: enabled, custom: custom, minimumBytes: minimumBytes}, nil
@@ -173,66 +174,36 @@ func entitiesForPattern(pattern Pattern) (entityMask, bool) {
 		return maskOf(EntityPaymentCard), true
 	case PatternIPAddress:
 		return maskOf(EntityIPAddress), true
-	case PatternCredentials:
-		return maskOf(EntityCredential), true
-	case PatternPrivateKeys:
-		return maskOf(EntityPrivateKey), true
-	case PatternJSONWebTokens:
-		return maskOf(EntityJSONWebToken), true
-	case PatternDatabaseURLs:
-		return maskOf(EntityDatabaseCredential), true
-	case PatternVendorTokens:
-		return maskOf(EntityVendorToken), true
+	case PatternAPIKeysAndSecrets:
+		return secretEntityMask, true
 	case PatternBankIdentifiers:
 		return maskOf(EntityIBAN, EntityUSRoutingNumber), true
 	case PatternNationalIdentifiers:
 		return maskOf(
-			EntityUSITIN,
-			EntityUKNINO,
-			EntityCanadaSIN,
-			EntityAustraliaTFN,
-			EntityAustraliaABN,
-			EntityAustraliaACN,
-			EntityIndiaAadhaar,
-			EntityBrazilCPF,
-			EntityBrazilCNPJ,
-			EntitySpainDNI,
-			EntityItalyFiscalCode,
-			EntityPolandPESEL,
-			EntityKoreaRRN,
-			EntityFinlandPersonalID,
-			EntityThailandNationalID,
-			EntitySingaporeNationalID,
-			EntityChinaResidentID,
-			EntityIsraelNationalID,
-			EntitySouthAfricaID,
-			EntityTurkeyNationalID,
-			EntityGermanyTaxID,
-			EntitySwedenPersonalID,
-			EntityKoreaBusinessNumber,
-			EntityItalyVAT,
-			EntityNigeriaNIN,
-			EntityGermanySocialSecurity,
+			EntityUSITIN, EntityUKNINO, EntityCanadaSIN,
+			EntityAustraliaTFN, EntityAustraliaABN, EntityAustraliaACN,
+			EntityIndiaAadhaar, EntityBrazilCPF, EntityBrazilCNPJ,
+			EntitySpainDNI, EntityItalyFiscalCode, EntityPolandPESEL,
+			EntityKoreaRRN, EntityFinlandPersonalID, EntityThailandNationalID,
+			EntitySingaporeNationalID, EntityChinaResidentID, EntityIsraelNationalID,
+			EntitySouthAfricaID, EntityTurkeyNationalID, EntityGermanyTaxID,
+			EntitySwedenPersonalID, EntityKoreaBusinessNumber, EntityItalyVAT,
+			EntityNigeriaNIN, EntityGermanySocialSecurity,
 		), true
 	case PatternHealthIdentifiers:
-		return maskOf(
-			EntityUKNHS,
-			EntityAustraliaMedicare,
-			EntityUSNPI,
-			EntityUSMedicareID,
-			EntityGermanyHealthInsurance,
-		), true
+		return maskOf(EntityUKNHS, EntityAustraliaMedicare, EntityUSNPI,
+			EntityUSMedicareID, EntityGermanyHealthInsurance), true
 	default:
 		return 0, false
 	}
 }
 
-func compileCustomPatterns(patterns []CustomPattern) (*regexp.Regexp, error) {
+func compileCustomPatterns(patterns []CustomPattern) ([]*customMatcher, error) {
 	if len(patterns) > maxCustomPatterns {
 		return nil, policyError("custom pattern count exceeds %d", maxCustomPatterns)
 	}
 	seen := make(map[string]struct{}, len(patterns))
-	parts := make([]string, 0, len(patterns))
+	compiled := make([]*customMatcher, 0, len(patterns))
 	totalBytes := 0
 	totalInstructions := 0
 	for index, pattern := range patterns {
@@ -271,29 +242,17 @@ func compileCustomPatterns(patterns []CustomPattern) (*regexp.Regexp, error) {
 		if totalInstructions > maxCustomInstructions {
 			return nil, policyError("custom patterns exceed the complexity limit")
 		}
-		parts = append(parts, "(?:"+expression+")")
+		matcher, err := regexp.Compile(expression)
+		if err != nil {
+			return nil, policyError("custom pattern %d cannot be compiled", index)
+		}
+		matcher.Longest()
+		if customPatternTouchesPlaceholder(matcher) {
+			return nil, policyError("custom patterns can match redaction placeholders")
+		}
+		compiled = append(compiled, newCustomMatcher(expression, program))
 	}
-	if len(parts) == 0 {
-		return nil, nil
-	}
-	combinedExpression := strings.Join(parts, "|")
-	parsedCombined, err := syntax.Parse(combinedExpression, syntax.Perl)
-	if err != nil {
-		return nil, policyError("combined custom patterns cannot be parsed")
-	}
-	combinedProgram, err := syntax.Compile(parsedCombined.Simplify())
-	if err != nil || len(combinedProgram.Inst) > maxCustomInstructions {
-		return nil, policyError("combined custom patterns exceed the complexity limit")
-	}
-	combined, err := regexp.Compile(combinedExpression)
-	if err != nil {
-		return nil, policyError("combined custom patterns cannot be compiled")
-	}
-	combined.Longest()
-	if customPatternTouchesPlaceholder(combined) {
-		return nil, policyError("custom patterns can match redaction placeholders")
-	}
-	return combined, nil
+	return compiled, nil
 }
 
 func minimumRegexpRunes(expression *syntax.Regexp) int {
