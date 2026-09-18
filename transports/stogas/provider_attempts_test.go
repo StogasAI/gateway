@@ -109,7 +109,7 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 	if event.ProviderAttempts[0].Provider != "openai" || event.ProviderAttempts[1].Provider != "openai" {
 		t.Fatalf("provider re-entry path = %#v", event.ProviderAttempts)
 	}
-	if event.ProviderAttempts[0].Status != "provider_error" || event.ProviderAttempts[1].Status != "success" {
+	if event.ProviderAttempts[0].Status != "provider_unavailable" || event.ProviderAttempts[1].Status != "success" {
 		t.Fatalf("provider statuses = %#v", event.ProviderAttempts)
 	}
 	if event.ProviderAttempts[0].LatencyMS == 0 || event.ProviderAttempts[1].LatencyMS == 0 {

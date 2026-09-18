@@ -368,9 +368,9 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 	defer server.Close()
 
 	transport, err := New(Options{
-		APIKey:        "managed-key",
-		APIBaseURL:    server.URL,
-		StreamTimeout: 10 * time.Minute,
+		APIKey:         "managed-key",
+		APIBaseURL:     server.URL,
+		RequestTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},
@@ -437,9 +437,9 @@ func TestTransportTriesEveryDiscoveredInstanceBeforeReturningCapacity(t *testing
 	defer server.Close()
 
 	transport, err := New(Options{
-		APIKey:        "managed-key",
-		APIBaseURL:    server.URL,
-		StreamTimeout: 10 * time.Minute,
+		APIKey:         "managed-key",
+		APIBaseURL:     server.URL,
+		RequestTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},
@@ -647,9 +647,9 @@ func TestTransportRejectsUnsupportedWireRequestsBeforeDispatch(t *testing.T) {
 
 func TestCredentialPoolsAreReusedIsolatedAndRetired(t *testing.T) {
 	transport, err := New(Options{
-		APIKey:        "managed-key",
-		APIBaseURL:    "http://provider.invalid",
-		StreamTimeout: 10 * time.Minute,
+		APIKey:         "managed-key",
+		APIBaseURL:     "http://provider.invalid",
+		RequestTimeout: 10 * time.Minute,
 		ResolveModel: func(string) (ModelTarget, bool) {
 			return testModelTarget, true
 		},
@@ -770,6 +770,28 @@ func TestInvokeClientKeepsRequestWriteTimeoutForStreams(t *testing.T) {
 	}
 	if client.MaxConnDuration != 0 {
 		t.Fatalf("stream maximum connection duration = %s, want unlimited", client.MaxConnDuration)
+	}
+}
+
+func TestInvokeClientBoundsAStalledUnaryResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		time.Sleep(250 * time.Millisecond)
+		_, _ = response.Write([]byte("late\n"))
+	}))
+	defer server.Close()
+
+	client := newInvokeClient(false, false, 25*time.Millisecond)
+	defer client.CloseIdleConnections()
+	request := fasthttp.AcquireRequest()
+	response := fasthttp.AcquireResponse()
+	defer fasthttp.ReleaseRequest(request)
+	defer fasthttp.ReleaseResponse(response)
+	request.SetRequestURI(server.URL)
+
+	// A longer route deadline must not replace the configured read bound.
+	err := client.DoDeadline(request, response, time.Now().Add(time.Second))
+	if !errors.Is(err, fasthttp.ErrTimeout) {
+		t.Fatalf("stalled unary response error = %v, want timeout", err)
 	}
 }
 
@@ -913,9 +935,9 @@ func TestProductionOriginPolicyDoesNotDependOnPostQuantumTLS(t *testing.T) {
 func transportWithPoolForTest(t *testing.T, baseURL string, instanceKey *mlkem.DecapsulationKey768, tickets ...string) *Transport {
 	t.Helper()
 	transport, err := New(Options{
-		APIKey:        "managed-key",
-		APIBaseURL:    baseURL,
-		StreamTimeout: 10 * time.Minute,
+		APIKey:         "managed-key",
+		APIBaseURL:     baseURL,
+		RequestTimeout: 10 * time.Minute,
 		ResolveModel: func(model string) (ModelTarget, bool) {
 			return testModelTarget, model == "upstream-model"
 		},

@@ -26,6 +26,7 @@ type DashboardCredential struct {
 	ActorUserID string
 	KeyID       string
 	SessionID   string
+	Claims      *APIKeyClaims
 }
 
 func IsDashboardCredential(raw string) bool {

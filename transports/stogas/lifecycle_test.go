@@ -49,11 +49,11 @@ func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorizat
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ int, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, _ int, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, _ int, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, _ int, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
@@ -68,17 +68,42 @@ func TestPublicBillingErrorTypes(t *testing.T) {
 		err        error
 		statusCode int
 		wantType   string
+		wantCode   string
 	}{
-		{name: "insufficient balance", err: billing.ErrInsufficientBalance, statusCode: 402, wantType: "billing_error"},
-		{name: "spend limit", err: billing.ErrAPIKeySpendLimit, statusCode: 402, wantType: "billing_error"},
-		{name: "key disabled", err: billing.ErrAPIKeyDisabled, statusCode: 403, wantType: "permission_denied"},
-		{name: "rate limit", err: billing.ErrAPIKeyRateLimit, statusCode: 429, wantType: "rate_limit_error"},
-		{name: "gateway unavailable", err: billing.ErrGatewayUnavailable, statusCode: 503, wantType: "gateway_error"},
+		{"insufficient balance", billing.ErrInsufficientBalance, 402, "billing_error", "insufficient_balance"},
+		{"spend limit", billing.ErrAPIKeySpendLimit, 402, "billing_error", "key_spend_limit"},
+		{"key disabled", billing.ErrAPIKeyDisabled, 403, "permission_denied", "key_disabled"},
+		{"rate limit", billing.ErrAPIKeyRateLimit, 429, "rate_limit_error", "key_rate_limited"},
+		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "gateway_error", "gateway_unavailable"},
+		{"dashboard BYOK", passthroughDashboardError{}, 400, "invalid_request_error", "byok_api_key_required"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got := PublicBillingErrorFor(&statusError{err: tt.err, statusCode: tt.statusCode})
-			if got.StatusCode != tt.statusCode || got.Type != tt.wantType {
-				t.Fatalf("PublicBillingErrorFor() = %#v, want status=%d type=%s", got, tt.statusCode, tt.wantType)
+			got := PublicBillingErrorFor(tt.err)
+			if got.StatusCode != tt.statusCode || got.Type != tt.wantType || got.Code != tt.wantCode {
+				t.Fatalf("PublicBillingErrorFor() = %#v, want status=%d type=%s code=%s", got, tt.statusCode, tt.wantType, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestPublicBillingErrorNeverReturnsPrivateDetails(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+		want PublicBillingError
+	}{
+		{"database failure", fmt.Errorf("%w: postgres://private-user:private-password@private-host/database", billing.ErrGatewayUnavailable),
+			PublicBillingError{503, "gateway_unavailable", "gateway_error", "Stogas is temporarily unavailable. Retry the request later."}},
+		{"wrapped rejection", fmt.Errorf("%w: balance=123 customer=private", billing.ErrInsufficientBalance),
+			PublicBillingError{402, "insufficient_balance", "billing_error", "Insufficient credit. Add funds to your organization to retry this request."}},
+		{"unknown error", errors.New("private database query and parameters"),
+			PublicBillingError{500, "internal_error", "internal_error", "Internal server error"}},
+		{"nil error", nil,
+			PublicBillingError{500, "internal_error", "internal_error", "Internal server error"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PublicBillingErrorFor(tt.err); got != tt.want {
+				t.Fatalf("public error = %#v, want %#v", got, tt.want)
 			}
 		})
 	}
@@ -842,7 +867,7 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 		{name: "quota through rate HTTP status", statusCode: 429, code: "insufficient_quota", wantStatus: "over_budget"},
 		{name: "rate limit", statusCode: 429, errorType: "rate_limit_error", wantStatus: "rate_limited"},
 		{name: "cancellation", statusCode: 499, errorType: schemas.RequestCancelled, wantStatus: "cancelled"},
-		{name: "timeout", statusCode: 504, errorType: schemas.RequestTimedOut, wantStatus: "network_error"},
+		{name: "timeout", statusCode: 504, errorType: schemas.RequestTimedOut, wantStatus: "timeout"},
 		{name: "content filter", statusCode: 400, code: "content_filter", wantStatus: "content_filter"},
 		{name: "invalid request", statusCode: 400, errorType: "invalid_request_error", wantStatus: "invalid_request"},
 		{name: "server failure", statusCode: 500, errorType: "api_error", wantStatus: "provider_error"},
@@ -1350,6 +1375,9 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 
 				inputTokens := resolution.InputTokenLimit()
 				outputTokens := resolution.OutputTokenLimit()
+				if state.Hold.ReservedTokens != int64(inputTokens)+int64(outputTokens) {
+					t.Fatalf("%s/%s: reserved tokens = %d, want %d input + %d output", deploymentID, interfaceName, state.Hold.ReservedTokens, inputTokens, outputTokens)
+				}
 				scenarios := []struct {
 					name    string
 					meter   string
@@ -1934,6 +1962,46 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	}
 }
 
+func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(t *testing.T) {
+	for _, item := range []struct {
+		name       string
+		dispatched bool
+		signals    *StandardSignals
+		want       *int64
+	}{
+		{name: "all partitions", dispatched: true, signals: &StandardSignals{Prompt: 600, Completion: 90, Reasoning: 30, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300}, want: func() *int64 { n := int64(690); return &n }()},
+		{name: "unknown provider usage", dispatched: true},
+		{name: "before dispatch", want: new(int64)},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			state := &State{
+				Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(1), AvailableBalanceUSDAtoms: big.NewInt(0), RequestID: "request"},
+				UpstreamCostUSDAtoms: "0", StartedAt: now, Signals: item.signals,
+				RequestType: string(schemas.ChatCompletionRequest),
+			}
+			if item.dispatched {
+				state.ProviderStartedAt = now
+			}
+			event := PrepareFinalState(state)
+			if event == nil {
+				t.Fatal("missing final event")
+			}
+			if item.want == nil {
+				if event.PolicyTokens != nil {
+					t.Fatal("unknown usage must retain the reservation")
+				}
+			} else if event.PolicyTokens == nil || *event.PolicyTokens != *item.want {
+				t.Fatalf("policy tokens = %v, want %d", event.PolicyTokens, *item.want)
+			}
+			state.Signals = &StandardSignals{Prompt: 1}
+			if PrepareFinalState(state) != event {
+				t.Fatal("final token settlement changed on retry")
+			}
+		})
+	}
+}
+
 func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *testing.T) {
 	for _, dispatched := range []bool{false, true} {
 		t.Run(fmt.Sprintf("dispatched=%t", dispatched), func(t *testing.T) {
@@ -1964,10 +2032,13 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 				t.Fatalf("failure classification/cost = %#v", event)
 			}
 			if dispatched {
+				if event.StogasErrorCode != "" || event.StogasErrorStatusCode != nil {
+					t.Fatal("provider failure became a Stogas error")
+				}
 				if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 503 {
 					t.Fatalf("missing provider failure: %#v", event.ProviderAttempts)
 				}
-			} else if len(event.ProviderAttempts) != 0 {
+			} else if event.StogasErrorCode != "gateway_unavailable" || event.StogasErrorStatusCode == nil || *event.StogasErrorStatusCode != 503 || len(event.ProviderAttempts) != 0 {
 				t.Fatalf("fabricated provider attempt: %#v", event.ProviderAttempts)
 			}
 		})
@@ -1995,7 +2066,7 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 				UpstreamCostUSDAtoms: "0",
 				RequestType:          string(item.requestType),
 				StartedAt:            time.Now().Add(-time.Second), ProviderStartedAt: time.Now().Add(-time.Millisecond),
-				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500)},
+				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
 				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
 			state.chatStreamFinished = item.completed && item.requestType == schemas.ChatCompletionStreamRequest
@@ -2008,6 +2079,9 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 			event := PrepareFinalState(state)
 			if event == nil || event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
 				t.Fatalf("wrong independent outcomes: %#v", event)
+			}
+			if event.StogasErrorCode != "response_encoding_failed" || event.StogasErrorStatusCode == nil || *event.StogasErrorStatusCode != 500 {
+				t.Fatalf("lost Stogas error: %#v", event)
 			}
 			code := event.ProviderAttempts[0].StatusCode
 			if item.want == "unknown" {
@@ -3896,6 +3970,10 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 	inputMeter := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
 	if inputMeter == nil || inputMeter.Quantity != expectedInput {
 		t.Fatalf("expected one compacted Anthropic input hold of %s, got %#v", expectedInput, state.Hold.Meters)
+	}
+	inputCount, _ := strconv.ParseInt(expectedInput, 10, 64)
+	if state.Hold.ReservedTokens != inputCount+int64(resolution.OutputTokenLimit()) {
+		t.Fatalf("token hold omitted tool overhead: got %d", state.Hold.ReservedTokens)
 	}
 	if findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens) != nil || findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite5mInputTokens) != nil {
 		t.Fatalf("did not expect cache write hold meter without cache_control, got %#v", state.Hold.Meters)

@@ -219,7 +219,7 @@ func TestParseDatabaseMoneyRejectsMissingOrMalformedValues(t *testing.T) {
 }
 
 func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
-	payload, err := encodeGatewayRequestEvent(RequestEvent{RequestID: "request"})
+	payload, err := encodeGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, RequestID: "request"})
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
 	}
@@ -240,6 +240,25 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	pricing, ok := decoded["pricing"].(map[string]any)
 	if !ok || len(pricing) != 0 {
 		t.Fatalf("pricing = %#v, want empty object", decoded["pricing"])
+	}
+}
+
+func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
+	for _, version := range []uint8{0, 2} {
+		event := testGatewayRequestEvent()
+		event.SchemaVersion = version
+		if _, err := encodeGatewayRequestEvent(event); err == nil {
+			t.Fatalf("encoded unsupported version %d", version)
+		}
+		client := &TinybirdClient{}
+		if _, err := client.enqueueGatewayRequest(event, false); err == nil {
+			t.Fatalf("enqueued unsupported version %d", version)
+		}
+	}
+	for _, payload := range []string{`{}`, `{"schema_version":0}`, `{"schema_version":2}`, `{"schema_version":"1"}`} {
+		if _, err := decodeGatewayRequestEvent(payload); err == nil {
+			t.Fatalf("decoded unsupported payload %s", payload)
+		}
 	}
 }
 
@@ -264,20 +283,20 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 		t.Fatalf("decodeGatewayRequestEvent returned error: %v", err)
 	}
 	projected := tinybirdGatewayRequestEvent(decoded)
-	if projected.RequestID != event.RequestID ||
+	if projected.SchemaVersion != RequestLogSchemaVersion || projected.RequestID != event.RequestID ||
 		projected.AnalyticsInputTokens != 17 ||
 		projected.CacheWriteOverheadUSDAtoms == nil ||
 		*projected.CacheWriteOverheadUSDAtoms != overhead {
 		t.Fatalf("decoded Tinybird projection = %#v", projected)
 	}
 
-	if _, err := decodeGatewayRequestEvent(`{"pricing":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsdAtoms":"1","usdAtoms":"1"}}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"pricing":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsdAtoms":"1","usdAtoms":"1"}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid canonical pricing")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"cache_read_savings_usd_atoms":"-1","pricing":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_read_savings_usd_atoms":"-1","pricing":{}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache read savings")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"cache_write_overhead_usd_atoms":"-1","pricing":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_write_overhead_usd_atoms":"-1","pricing":{}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache write overhead")
 	}
 }
@@ -287,6 +306,7 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	successStatus := 200
 	ttftMS := uint32(150)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
+		SchemaVersion:              RequestLogSchemaVersion,
 		CacheWriteOverheadUSDAtoms: stringPtr("23"),
 		Timings: RequestTimings{
 			AdmissionMS: 12,
@@ -310,7 +330,7 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		ProviderAttempts: []ProviderAttempt{{
 			LatencyMS:    30,
 			Provider:     "openai",
-			Status:       "network_error",
+			Status:       "connection_error",
 			StatusCode:   &failedStatus,
 			UpstreamByok: "stogas",
 		}, {
@@ -343,7 +363,7 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		t.Fatalf("cache-write overhead = %#v, want 23", event.CacheWriteOverheadUSDAtoms)
 	}
 	if strings.Join(event.AnalyticsProviders, ",") != "openai,anthropic" ||
-		strings.Join(event.AnalyticsProviderStatuses, ",") != "network_error,502,success,200" {
+		strings.Join(event.AnalyticsProviderStatuses, ",") != "connection_error,502,success,200" {
 		t.Fatalf("analytics provider projections do not include every attempt: %#v", event)
 	}
 	if event.TTFTMS == nil || *event.TTFTMS != 150 {
@@ -382,8 +402,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 func TestTinybirdGatewayRequestEventSaturatesProviderDurationAndPreservesTTFT(t *testing.T) {
 	maximum := ^uint32(0)
 	ttftMS := uint32(1)
-	event := tinybirdGatewayRequestEvent(RequestEvent{TTFTMS: &ttftMS, ProviderAttempts: []ProviderAttempt{
-		{LatencyMS: maximum, Provider: "openai", Status: "network_error"},
+	event := tinybirdGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, TTFTMS: &ttftMS, ProviderAttempts: []ProviderAttempt{
+		{LatencyMS: maximum, Provider: "openai", Status: "connection_error"},
 		{
 			LatencyMS: 1,
 			Provider:  "anthropic",
@@ -752,6 +772,7 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 	service.publishUncommittedFallback(
 		&Authorization{RequestID: "request-1"},
 		RequestEvent{
+			SchemaVersion:           RequestLogSchemaVersion,
 			RequestID:               "request-1",
 			StogasBillingStatus:     "complete",
 			StogasProcessingSuccess: true,
@@ -793,6 +814,7 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 	event := RequestEvent{
+		SchemaVersion:           RequestLogSchemaVersion,
 		RequestID:               "request-1",
 		StogasBillingStatus:     "complete",
 		StogasProcessingSuccess: true,
@@ -1588,6 +1610,7 @@ func testAuthorization() *Authorization {
 
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
+		SchemaVersion:           RequestLogSchemaVersion,
 		CreatedAt:               time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
 		RequestID:               "request-1",
 		StogasAPIKeyID:          "key-1",

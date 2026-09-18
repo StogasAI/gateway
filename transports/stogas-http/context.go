@@ -19,7 +19,22 @@ const (
 	stogasReceiptKey stogasContextKey = "stogas.receipt"
 
 	stogasHeaderReceipt = "Stogas-Receipt"
+	requestIDContextKey = "stogas.request-id"
 )
+
+func inferenceRequestID(ctx *fasthttp.RequestCtx) (string, error) {
+	if id, ok := ctx.UserValue(requestIDContextKey).(string); ok {
+		return id, nil
+	}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", err
+	}
+	value := id.String()
+	ctx.SetUserValue(requestIDContextKey, value)
+	ctx.Response.Header.Set("X-Request-ID", value)
+	return value, nil
+}
 
 func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := billing.GatewayRequestLifetime
@@ -33,13 +48,14 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 	requestID := ""
 	if session := encryptedSession(ctx); session != nil {
 		requestID = session.RequestID
+		ctx.Response.Header.Set("X-Request-ID", requestID)
 	} else {
-		generated, err := uuid.NewV7()
+		generated, err := inferenceRequestID(ctx)
 		if err != nil {
 			cancel()
 			return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
 		}
-		requestID = generated.String()
+		requestID = generated
 	}
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")

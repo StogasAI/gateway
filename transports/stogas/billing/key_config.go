@@ -25,6 +25,7 @@ const keyConfigArguments = `
 `
 
 type KeyConfigSnapshot struct {
+	Claims          *APIKeyClaims
 	Config          *policy.Config
 	Digest          string
 	Generation      int
@@ -32,6 +33,7 @@ type KeyConfigSnapshot struct {
 }
 
 type keyConfigRow struct {
+	Claims          *APIKeyClaims
 	Result          string
 	KeyID           *string
 	Generation      *int
@@ -71,7 +73,7 @@ func (c *keyConfigCache) get(key string, now time.Time) (*KeyConfigSnapshot, boo
 }
 
 func (c *keyConfigCache) put(key string, snapshot *KeyConfigSnapshot, now time.Time) {
-	if c == nil || key == "" || snapshot == nil || snapshot.Config == nil {
+	if c == nil || key == "" || snapshot == nil {
 		return
 	}
 	c.mu.Lock()
@@ -113,7 +115,7 @@ func (s *Service) ConfigForAPIKey(
 	claims *APIKeyClaims,
 ) (*KeyConfigSnapshot, error) {
 	if s == nil || claims == nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	apiKeyHash := hashAPIKey(rawAPIKey, s.apiKeyPepper)
 	cacheKey := "api:" + apiKeyHash
@@ -125,7 +127,7 @@ func (s *Service) ConfigForDashboard(
 	credential *DashboardCredential,
 ) (*KeyConfigSnapshot, error) {
 	if s == nil || credential == nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	cacheKey := dashboardConfigCacheKey(credential)
 	return s.cachedOrFetchKeyConfig(
@@ -146,11 +148,11 @@ func (s *Service) cachedOrFetchKeyConfig(
 	dashboard *DashboardCredential,
 	expectedKeyID string,
 ) (*KeyConfigSnapshot, error) {
-	if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok {
+	if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok && snapshot.Config != nil {
 		return snapshot, nil
 	}
 	value, err, _ := s.keyConfigFlights.Do(cacheKey, func() (any, error) {
-		if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok {
+		if snapshot, ok := s.keyConfigs.get(cacheKey, time.Now()); ok && snapshot.Config != nil {
 			return snapshot, nil
 		}
 		return s.fetchKeyConfig(
@@ -163,11 +165,12 @@ func (s *Service) cachedOrFetchKeyConfig(
 		)
 	})
 	if err != nil {
-		return nil, err
+		snapshot, _ := value.(*KeyConfigSnapshot)
+		return snapshot, err
 	}
 	snapshot, ok := value.(*KeyConfigSnapshot)
 	if !ok || snapshot == nil {
-		return nil, &billingError{err: ErrGatewayUnavailable, statusCode: 503}
+		return nil, ErrGatewayUnavailable
 	}
 	return snapshot, nil
 }
@@ -199,7 +202,7 @@ func (s *Service) fetchKeyConfig(
 	expectedKeyID string,
 ) (*KeyConfigSnapshot, error) {
 	if s.db == nil || s.keyConfigQuery == "" {
-		return nil, &billingError{err: ErrGatewayUnavailable, statusCode: 503}
+		return nil, ErrGatewayUnavailable
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, keyConfigFetchTimeout)
 	defer cancel()
@@ -224,26 +227,33 @@ func (s *Service) fetchKeyConfig(
 		&row.Digest,
 		&row.CompilerVersion,
 		&row.CompiledConfig,
+		&row.Claims,
 	)
 	if err != nil {
-		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	if resultErr := authorizationResultError(row.Result); resultErr != nil {
 		s.rejections.record(rejectionCacheKey, row.Result, time.Now())
+		if row.Claims != nil && row.Claims.KeyID == expectedKeyID {
+			snapshot := &KeyConfigSnapshot{Claims: row.Claims}
+			s.keyConfigs.put(cacheKey, snapshot, time.Now())
+			return snapshot, resultErr
+		}
 		return nil, resultErr
 	}
 	if row.Result != "ok" || row.KeyID == nil || *row.KeyID != expectedKeyID || row.Generation == nil || *row.Generation < 1 || row.Digest == nil || !validConfigDigest(*row.Digest) || row.CompilerVersion == nil || *row.CompilerVersion != policy.CompilerVersion {
-		return nil, &billingError{err: ErrGatewayUnavailable, statusCode: 503}
+		return nil, ErrGatewayUnavailable
 	}
 	compiled, err := policy.Parse(row.CompiledConfig)
 	if err != nil {
-		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	redactionPolicy, err := compileKeyRedactionPolicy(compiled)
 	if err != nil {
-		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	snapshot := &KeyConfigSnapshot{
+		Claims:          row.Claims,
 		Config:          compiled,
 		Digest:          *row.Digest,
 		Generation:      *row.Generation,
@@ -266,31 +276,16 @@ func validConfigDigest(value string) bool {
 }
 
 func compileKeyRedactionPolicy(config *policy.Config) (*redaction.Policy, error) {
-	patterns := []redaction.Pattern{
-		redaction.PatternEmailAddress,
-		redaction.PatternPhoneNumber,
-		redaction.PatternSocialSecurityNumber,
-		redaction.PatternCreditCardNumber,
-		redaction.PatternCredentials,
-		redaction.PatternPrivateKeys,
-		redaction.PatternJSONWebTokens,
-		redaction.PatternDatabaseURLs,
-		redaction.PatternVendorTokens,
-		redaction.PatternBankIdentifiers,
-		redaction.PatternNationalIdentifiers,
-		redaction.PatternHealthIdentifiers,
-	}
+	patterns := redaction.DefaultPatterns()
 	var custom []redaction.CustomPattern
-	if config != nil && config.Plugins != nil && config.Plugins.StogasPIIRedaction != nil {
-		for _, configured := range config.Plugins.StogasPIIRedaction.Patterns {
-			switch configured {
-			case "ip_address":
-				patterns = append(patterns, redaction.PatternIPAddress)
-			default:
-				return nil, policy.ErrInvalidConfig
+	if config != nil && config.Plugins != nil && config.Plugins.StogasRedaction != nil {
+		if selected := config.Plugins.StogasRedaction.Presets; selected != nil {
+			patterns = nil
+			for _, preset := range selected {
+				patterns = append(patterns, redaction.Pattern(preset))
 			}
 		}
-		for _, expression := range config.Plugins.StogasPIIRedaction.CustomPatterns {
+		for _, expression := range config.Plugins.StogasRedaction.CustomPatterns {
 			custom = append(custom, redaction.CustomPattern{Expression: expression})
 		}
 	}

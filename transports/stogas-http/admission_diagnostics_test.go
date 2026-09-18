@@ -22,7 +22,7 @@ func TestAdmissionDiagnosticsBoundRejectedTrafficAndExcludeAdmittedErrors(t *tes
 			s.writeError(ctx, 401, map[string]string{"error": fmt.Sprintf("secret-%d", i)})
 			// An encrypted reply has an outer 200; the inner rejection still counts once.
 			ctx.SetStatusCode(200)
-			s.recordAdmissionRejection(ctx, 500)
+			s.recordAdmissionRejection(ctx, 500, "internal_error")
 		})
 	}
 	workers.Wait()

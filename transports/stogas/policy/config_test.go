@@ -221,39 +221,29 @@ func TestCompiledConfigValidationClosesEveryPolicyShape(t *testing.T) {
 			config.Plugins = &Plugins{}
 		},
 		"empty PII plugin": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{}}
 		},
 		"unknown PII pattern": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{Patterns: []string{"unknown"}}}
-		},
-		"mandatory PII pattern cannot be configured again": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{Patterns: []string{"email_address"}}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{"unknown"}}}
 		},
 		"duplicate PII pattern": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{Patterns: []string{"ip_address", "ip_address"}}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{"ip_address", "ip_address"}}}
 		},
 		"empty custom PII pattern": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{CustomPatterns: []string{""}}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{}, CustomPatterns: []string{""}}}
 		},
 		"duplicate custom PII pattern": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{CustomPatterns: []string{"x", "x"}}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{}, CustomPatterns: []string{"x", "x"}}}
 		},
 		"oversized custom PII pattern": func(config *Config) {
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{CustomPatterns: []string{strings.Repeat("x", MaxCustomPatternBytes+1)}}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{}, CustomPatterns: []string{strings.Repeat("x", MaxCustomPatternBytes+1)}}}
 		},
 		"too many custom PII patterns": func(config *Config) {
 			patterns := make([]string, MaxCustomPatterns+1)
 			for index := range patterns {
 				patterns[index] = "pattern-" + big.NewInt(int64(index)).String()
 			}
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{CustomPatterns: patterns}}
-		},
-		"combined custom PII pattern bytes": func(config *Config) {
-			patterns := make([]string, 9)
-			for index := range patterns {
-				patterns[index] = strings.Repeat("x", MaxCustomPatternBytes-1) + big.NewInt(int64(index)).String()
-			}
-			config.Plugins = &Plugins{StogasPIIRedaction: &PIIRedaction{CustomPatterns: patterns}}
+			config.Plugins = &Plugins{StogasRedaction: &Redaction{Presets: []string{}, CustomPatterns: patterns}}
 		},
 	}
 

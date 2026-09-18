@@ -3,9 +3,34 @@ package redaction
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 )
+
+func TestRepeatedSecretCandidatesHaveRequestWorkBound(t *testing.T) {
+	for _, input := range []string{
+		strings.Repeat("-----BEGIN PRIVATE KEY-----\n", 5000),
+		strings.Repeat("password=$password=", 5000),
+	} {
+		out, changed, err := New().redactBytes([]byte(input))
+		if !errors.Is(err, ErrWorkLimit) || changed || out != nil {
+			t.Fatalf("got output bytes=%d changed=%t err=%v", len(out), changed, err)
+		}
+	}
+}
+
+func TestPrivateKeyLookaheadChargesOnlySearchedPrefix(t *testing.T) {
+	input := strings.Repeat("-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----\n", 1000)
+	redactor := New()
+	out, changed, err := redactor.redactBytes([]byte(input))
+	if err != nil || !changed || strings.Count(string(out), "<PRIVATE_KEY>") != 1000 {
+		t.Fatalf("items=%d changed=%t err=%v", redactor.items, changed, err)
+	}
+	if redactor.scanWork >= uint64(len(input)) {
+		t.Fatal("charged unsearched suffixes")
+	}
+}
 
 func TestTelegramTokenCurrentShapeAndBounds(t *testing.T) {
 	t.Parallel()

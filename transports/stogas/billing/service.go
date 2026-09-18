@@ -35,27 +35,7 @@ const (
 	ManagedUpstreamByok    = "stogas"
 )
 
-var (
-	ErrAPIKeyDisabled      = errors.New("API key is disabled")
-	ErrAPIKeyExpired       = errors.New("API key is expired")
-	ErrGrantDisabled       = errors.New("grant is disabled")
-	ErrInvalidAPIKey       = errors.New("invalid API key")
-	ErrRequestAlreadyUsed  = errors.New("request already finalized; generate a new requestId")
-	ErrAuthorizationClosed = errors.New("authorization already completed; generate a new requestId")
-	ErrParamsMismatch      = errors.New("authorization already exists with different parameters")
-	ErrInsufficientBalance = errors.New("insufficient balance")
-	ErrAPIKeySpendLimit    = errors.New("API key spend limit exceeded")
-	ErrAPIKeyRateLimit     = errors.New("API key rate limit exceeded")
-	ErrAPIKeyConfigStale   = errors.New("API key configuration changed")
-	ErrAPIKeyLimit         = errors.New("API key limit reached or disabled/expired")
-	ErrByok                = errors.New("BYOK key is unavailable")
-	ErrByokRequired        = errors.New("a BYOK key is required for this provider")
-	ErrByokTarget          = errors.New("the assigned BYOK credential does not provide this deployment")
-	ErrDashboardKeyDenied  = errors.New("API key is not available to this dashboard session")
-	ErrGatewayUnavailable  = errors.New("gateway billing database unavailable")
-	ErrAuthorizationAbsent = errors.New("Authorization not found")
-	ErrLocalAdmissionLimit = errors.New("too many concurrent requests for this API key")
-)
+var ErrAuthorizationAbsent = errors.New("Authorization not found")
 
 const authorizeHoldArguments = `
   $1::text,
@@ -72,7 +52,9 @@ const authorizeHoldArguments = `
   $12::jsonb,
   $13::text,
   $14::integer,
-  $15::boolean
+  $15::boolean,
+  $16::numeric,
+  $17::timestamptz
 `
 
 const settleHoldArguments = `
@@ -199,6 +181,8 @@ type Service struct {
 	localRequests             localRequestLimiter
 	apiKeys                   verifiedAPIKeyCache
 	rejections                authorizationRejectionCache
+	rejectionLogs             rejectionLogBuffer
+	rejectionOutboxQuery      string
 	retryInitialDelay         time.Duration
 	retryMaxDelay             time.Duration
 	retryWindow               time.Duration
@@ -239,6 +223,7 @@ type settleHoldFunc func(
 ) error
 
 type DiagnosticsSnapshot struct {
+	RejectionLogs                 RejectionLogDiagnostics   `json:"rejectionLogs"`
 	Database                      *DatabaseDiagnostics      `json:"database,omitempty"`
 	LocalAdmission                LocalAdmissionDiagnostics `json:"localAdmission"`
 	SettlementRetries             int64                     `json:"settlementRetries"`
@@ -247,17 +232,6 @@ type DiagnosticsSnapshot struct {
 	SettlementRetryQueueCapacity  int                       `json:"settlementRetryQueueCapacity"`
 	SettlementRetryQueueDepth     int                       `json:"settlementRetryQueueDepth"`
 	Tinybird                      *TinybirdDiagnostics      `json:"tinybird,omitempty"`
-}
-
-type billingError struct {
-	err        error
-	statusCode int
-}
-
-func (e *billingError) Error() string { return e.err.Error() }
-func (e *billingError) Unwrap() error { return e.err }
-func (e *billingError) StatusCode() int {
-	return e.statusCode
 }
 
 type settleResultError struct {
@@ -299,6 +273,7 @@ func NewService(
 		db:                        db,
 		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
 		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigArguments),
+		rejectionOutboxQuery:      db.functionQuery("enqueue_gateway_rejections", "$1::json"),
 		inferenceTokenPublicKey:   publicKey,
 		localAuthorizations:       newLocalAuthorizationLimiter(databasePool.MaxConns),
 		tinybird:                  tinybird,
@@ -310,6 +285,7 @@ func NewService(
 }
 
 func (s *Service) Close() {
+	s.closeRejectionLogs()
 	s.retryMu.Lock()
 	if !s.retryClosed {
 		s.retryClosed = true
@@ -345,6 +321,7 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		retryLastDeferredAt = &value
 	}
 	return DiagnosticsSnapshot{
+		RejectionLogs:                 s.rejectionLogs.snapshot(),
 		Database:                      s.db.Diagnostics(),
 		LocalAdmission:                localAdmissionDiagnostics(&s.localRequests, s.localAuthorizations, &s.rejections, &s.apiKeys),
 		SettlementRetries:             s.retryActive.Load(),
@@ -384,35 +361,38 @@ func (s *Service) parseVerifiedAPIKey(rawAPIKey string) (*APIKeyClaims, string, 
 
 func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if s == nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	claims, _, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return nil, &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
+		return claims, ErrAPIKeyRateLimit
 	}
 	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
-		return nil, authorizationResultError(result)
+		return claims, authorizationResultError(result)
 	}
 	return claims, nil
 }
 
 func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, error) {
 	if s == nil || len(s.inferenceTokenPublicKey) != ed25519.PublicKeySize {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	credential, err := parseDashboardCredential(raw, s.inferenceTokenPublicKey, time.Now())
 	if err != nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	cacheKey := dashboardAdmissionKey(credential)
+	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), time.Now()); ok {
+		credential.Claims = snapshot.Claims
+	}
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return nil, &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
+		return credential, ErrAPIKeyRateLimit
 	}
 	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
-		return nil, authorizationResultError(result)
+		return credential, authorizationResultError(result)
 	}
 	return credential, nil
 }
@@ -423,20 +403,20 @@ func (s *Service) AuthorizeRequestWithPassthrough(
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
 	configGeneration int,
 	passthroughSecret string,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, reservedTokens, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, configGeneration int, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
 	claims, apiKeyHash, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
 		return nil, authorizationResultError(result)
@@ -450,7 +430,7 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 			providerKey,
 		)
 		if hashErr != nil {
-			return nil, &billingError{err: ErrByok, statusCode: 503}
+			return nil, ErrByok
 		}
 		passthrough = &passthroughCredential{Hash: credentialHash, Secret: passthroughSecret}
 	}
@@ -465,6 +445,7 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 		providerKey,
 		productKey,
 		estimatedUpstreamCostUSDAtoms,
+		reservedTokens,
 		configGeneration,
 		passthrough,
 		upstreamTarget,
@@ -479,13 +460,13 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
 	configGeneration int,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 ) (*Authorization, error) {
 	if credential == nil {
-		return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return nil, ErrInvalidAPIKey
 	}
 	return s.authorizeResolvedRequest(
 		ctx,
@@ -497,6 +478,7 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 		providerKey,
 		productKey,
 		estimatedUpstreamCostUSDAtoms,
+		reservedTokens,
 		configGeneration,
 		nil,
 		upstreamTarget,
@@ -514,7 +496,7 @@ func (s *Service) authorizeResolvedRequest(
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string,
+	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
 	configGeneration int,
 	passthrough *passthroughCredential,
 	upstreamTarget *UpstreamTarget,
@@ -534,14 +516,14 @@ func (s *Service) authorizeResolvedRequest(
 	if upstreamTarget != nil {
 		encoded, marshalErr := json.Marshal(upstreamTarget)
 		if marshalErr != nil {
-			return nil, &billingError{err: ErrByokTarget, statusCode: 400}
+			return nil, ErrByokTarget
 		}
 		upstreamTargetJSON = string(encoded)
 	}
 	holdParamsHash := createHoldParamsHash(providerKey, productKey, upstreamTargetJSON)
 	releaseAuthorization, acquired := s.localAuthorizations.acquire(rejectionCacheKey)
 	if !acquired {
-		return nil, &billingError{err: ErrLocalAdmissionLimit, statusCode: 429}
+		return nil, ErrLocalAdmissionLimit
 	}
 	defer releaseAuthorization()
 
@@ -576,11 +558,13 @@ func (s *Service) authorizeResolvedRequest(
 		nullableString(passthroughHash),
 		configGeneration,
 		singleUse,
+		reservedTokens,
+		expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
 	).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedBilledCostUSDAtoms, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSDAtoms, &row.UpstreamByok, &row.UpstreamByokCiphertext,
 	)
 	if err != nil {
-		return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, err), statusCode: 503}
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 
 	if resultErr := authorizationResultError(row.Result); resultErr != nil {
@@ -598,7 +582,7 @@ func (s *Service) authorizeResolvedRequest(
 		if dashboard != nil {
 			if keyID != dashboard.KeyID || userID != dashboard.ActorUserID {
 				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
-				return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+				return nil, ErrInvalidAPIKey
 			}
 		} else {
 			if claims == nil ||
@@ -608,31 +592,31 @@ func (s *Service) authorizeResolvedRequest(
 				workspaceID != claims.WorkspaceID ||
 				!equalOptionalString(grantID, claims.GrantID) {
 				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
-				return nil, &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+				return nil, ErrInvalidAPIKey
 			}
 		}
 		upstreamByok := derefString(row.UpstreamByok)
 		authorizedBilledCostUSDAtoms, amountErr := parseDatabaseMoney(row.AuthorizedBilledCostUSDAtoms, "authorized billed cost")
 		if amountErr != nil {
-			return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr), statusCode: 503}
+			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
 		availableBalanceUSDAtoms, amountErr := parseDatabaseMoney(row.AvailableBalanceUSDAtoms, "available balance")
 		if amountErr != nil {
-			return nil, &billingError{err: fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr), statusCode: 503}
+			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
 		authorization := &Authorization{AuthorizedBilledCostUSDAtoms: authorizedBilledCostUSDAtoms, AvailableBalanceUSDAtoms: availableBalanceUSDAtoms, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID, WorkspaceID: workspaceID}
 		if upstreamByok == "" {
-			return authorization, &billingError{err: ErrByok, statusCode: 503}
+			return authorization, ErrByok
 		}
 		ciphertext := derefString(row.UpstreamByokCiphertext)
 		if ciphertext != "" {
 			if upstreamByok == ManagedUpstreamByok || validCredentialHash(upstreamByok) {
-				return authorization, &billingError{err: ErrByok, statusCode: 503}
+				return authorization, ErrByok
 			}
 			if providerKey == "azure" {
 				bound, parseErr := parseAzureBoundCiphertext(ciphertext)
 				if parseErr != nil {
-					return authorization, &billingError{err: ErrByok, statusCode: 503}
+					return authorization, ErrByok
 				}
 				ciphertext = bound.CredentialCiphertext
 				authorization.AzureBinding = &bound.Binding
@@ -645,15 +629,15 @@ func (s *Service) authorizeResolvedRequest(
 				providerKey,
 			)
 			if err != nil {
-				return authorization, &billingError{err: ErrByok, statusCode: 503}
+				return authorization, ErrByok
 			}
 		} else if validCredentialHash(upstreamByok) {
 			if passthrough == nil || !hmac.Equal([]byte(upstreamByok), []byte(passthrough.Hash)) {
-				return authorization, &billingError{err: ErrByok, statusCode: 503}
+				return authorization, ErrByok
 			}
 			authorization.UpstreamByokSecret = passthrough.Secret
 		} else if upstreamByok != ManagedUpstreamByok {
-			return authorization, &billingError{err: ErrByok, statusCode: 503}
+			return authorization, ErrByok
 		}
 		s.rejections.clear(rejectionCacheKey)
 		return authorization, nil
@@ -665,51 +649,63 @@ func (s *Service) authorizeResolvedRequest(
 func authorizationResultError(result string) error {
 	switch result {
 	case "invalid_key", "hold_missing":
-		return &billingError{err: ErrInvalidAPIKey, statusCode: 401}
+		return ErrInvalidAPIKey
 	case "usage_exists":
-		return &billingError{err: ErrRequestAlreadyUsed, statusCode: 409}
+		return ErrRequestAlreadyUsed
 	case "params_mismatch":
-		return &billingError{err: ErrParamsMismatch, statusCode: 409}
+		return ErrParamsMismatch
 	case "authorization_closed":
-		return &billingError{err: ErrAuthorizationClosed, statusCode: 409}
+		return ErrAuthorizationClosed
 	case "expired":
-		return &billingError{err: ErrRequestAlreadyUsed, statusCode: 409}
+		return ErrRequestAlreadyUsed
 	case "insufficient_balance":
-		return &billingError{err: ErrInsufficientBalance, statusCode: 402}
+		return ErrInsufficientBalance
 	case "key_disabled":
-		return &billingError{err: ErrAPIKeyDisabled, statusCode: 403}
+		return ErrAPIKeyDisabled
 	case "grant_disabled":
-		return &billingError{err: ErrGrantDisabled, statusCode: 403}
+		return ErrGrantDisabled
 	case "byok_disabled":
-		return &billingError{err: ErrByok, statusCode: 503}
+		return ErrByok
 	case "byok_required":
-		return &billingError{err: ErrByokRequired, statusCode: 400}
+		return ErrByokRequired
 	case "byok_target_unavailable":
-		return &billingError{err: ErrByokTarget, statusCode: 400}
+		return ErrByokTarget
 	case "byok_not_allowed":
-		return &billingError{err: errors.New("pass-through BYOK is not allowed by this API key"), statusCode: 400}
+		return errByokNotAllowed
 	case "key_expired":
-		return &billingError{err: ErrAPIKeyExpired, statusCode: 403}
+		return ErrAPIKeyExpired
 	case "dashboard_forbidden":
-		return &billingError{err: ErrDashboardKeyDenied, statusCode: 403}
+		return ErrDashboardKeyDenied
 	case "key_spend_limit":
-		return &billingError{err: ErrAPIKeySpendLimit, statusCode: 402}
+		return ErrAPIKeySpendLimit
 	case "organization_spend_limit":
-		return &billingError{err: errors.New("Organization spend limit exceeded"), statusCode: 402}
+		return errOrganizationSpendLimit
 	case "grant_spend_limit":
-		return &billingError{err: errors.New("Grant spend limit exceeded"), statusCode: 402}
+		return errGrantSpendLimit
 	case "key_rate_limited":
-		return &billingError{err: ErrAPIKeyRateLimit, statusCode: 429}
+		return ErrAPIKeyRateLimit
 	case "organization_rate_limited":
-		return &billingError{err: errors.New("Organization request rate limit exceeded"), statusCode: 429}
+		return errOrganizationRateLimit
 	case "grant_rate_limited":
-		return &billingError{err: errors.New("Grant request rate limit exceeded"), statusCode: 429}
+		return errGrantRateLimit
+	case "key_token_limit":
+		return errKeyTokenLimit
+	case "organization_token_limit":
+		return errOrganizationTokenLimit
+	case "grant_token_limit":
+		return errGrantTokenLimit
+	case "key_concurrency_limit":
+		return errKeyConcurrencyLimit
+	case "organization_concurrency_limit":
+		return errOrganizationConcurrencyLimit
+	case "grant_concurrency_limit":
+		return errGrantConcurrencyLimit
 	case "config_stale":
-		return &billingError{err: ErrAPIKeyConfigStale, statusCode: 503}
+		return ErrAPIKeyConfigStale
 	case "api_key_limit":
-		return &billingError{err: ErrAPIKeyLimit, statusCode: 402}
+		return ErrAPIKeyLimit
 	case "invalid_amount":
-		return &billingError{err: errors.New("invalid estimated upstream cost"), statusCode: 400}
+		return errors.New("invalid estimated upstream cost")
 	default:
 		return nil
 	}
@@ -968,6 +964,9 @@ func requestHoldExpiresAt(now time.Time, requestLifetime time.Duration) time.Tim
 }
 
 func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
+	if event.SchemaVersion != RequestLogSchemaVersion {
+		return "", fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
+	}
 	if event.Pricing == nil {
 		event.Pricing = EventPricing{}
 	}
@@ -985,6 +984,9 @@ func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
 	event := RequestEvent{}
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
 		return RequestEvent{}, fmt.Errorf("unmarshal gateway request log payload: %w", err)
+	}
+	if event.SchemaVersion != RequestLogSchemaVersion {
+		return RequestEvent{}, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
 	pricing, analyticsQuantities, err := validateEventPricing(event.Pricing)
 	if err != nil {
@@ -1038,14 +1040,6 @@ func ErrorStatus(err error) int {
 	var statusError interface{ StatusCode() int }
 	if errors.As(err, &statusError) {
 		return statusError.StatusCode()
-	}
-	var typed *billingError
-	if errors.As(err, &typed) {
-		return typed.statusCode
-	}
-	var settleErr *settleResultError
-	if errors.As(err, &settleErr) {
-		return settleErr.statusCode
 	}
 	return 500
 }

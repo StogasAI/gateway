@@ -15,23 +15,33 @@ import (
 )
 
 const (
-	CompilerVersion               = 1
-	MaxCompiledBytes              = 64 << 10
-	MaxExpressions                = 4*64 + 1
-	MaxDepth                      = 14
-	MaxListItems                  = 32
-	MaxSorts                      = 4 * 4
-	MaxAllowedCatalogNodes        = 4 * 64
-	MaxDenyWindows                = 3 * 16
-	MaxPreDispatchCandidates      = 3
-	MaxCustomPatterns             = 16
-	MaxCustomPatternBytes         = 512
-	MaxCombinedCustomPatternBytes = 4096
+	CompilerVersion          = 1
+	MaxCompiledBytes         = 64 << 10
+	MaxExpressions           = 4*64 + 1
+	MaxDepth                 = 14
+	MaxListItems             = 32
+	MaxSorts                 = 4 * 4
+	MaxAllowedCatalogNodes   = 4 * 64
+	MaxDenyWindows           = 3 * 16
+	MaxPreDispatchCandidates = 3
+	MaxCustomPatterns        = 3
+	MaxCustomPatternBytes    = 512
 )
 
 var (
 	ErrInvalidConfig = errors.New("invalid compiled API key configuration")
-	nodeIDPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,127}$`)
+	redactionPresets = stringSet(
+		"email_address",
+		"phone_number",
+		"social_security_number",
+		"credit_card_number",
+		"ip_address",
+		"api_keys_and_secrets",
+		"bank_identifiers",
+		"national_identifiers",
+		"health_identifiers",
+	)
+	nodeIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._:-]{0,127}$`)
 )
 
 type Config struct {
@@ -105,12 +115,12 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
-	StogasPIIRedaction *PIIRedaction `json:"stogasPiiRedaction,omitempty"`
+	StogasRedaction *Redaction `json:"stogasRedaction,omitempty"`
 }
 
-type PIIRedaction struct {
+type Redaction struct {
 	CustomPatterns []string `json:"customPatterns,omitempty"`
-	Patterns       []string `json:"patterns,omitempty"`
+	Presets        []string `json:"presets"`
 }
 
 func Parse(raw []byte) (*Config, error) {
@@ -410,37 +420,32 @@ func (w *DenyWindow) validate() error {
 }
 
 func (p *Plugins) validate() error {
-	if p == nil || p.StogasPIIRedaction == nil {
+	if p == nil || p.StogasRedaction == nil {
 		if p == nil {
 			return nil
 		}
-		return configError("PII redaction plugin is missing")
+		return configError("redaction plugin is missing")
 	}
-	pii := p.StogasPIIRedaction
-	if len(pii.Patterns)+len(pii.CustomPatterns) == 0 {
-		return configError("PII redaction plugin is empty")
+	redaction := p.StogasRedaction
+	if redaction.Presets == nil {
+		return configError("redaction presets are missing")
 	}
-	if len(pii.Patterns) > 1 || len(pii.CustomPatterns) > MaxCustomPatterns {
-		return configError("PII redaction option count is invalid")
+	if len(redaction.CustomPatterns) > MaxCustomPatterns {
+		return configError("redaction custom pattern count is invalid")
 	}
 	seen := map[string]bool{}
-	for _, pattern := range pii.Patterns {
-		if pattern != "ip_address" || seen[pattern] {
-			return configError("PII redaction pattern is invalid")
+	for _, pattern := range redaction.Presets {
+		if !redactionPresets[pattern] || seen[pattern] {
+			return configError("redaction preset is invalid")
 		}
 		seen[pattern] = true
 	}
-	totalBytes := 0
 	seen = map[string]bool{}
-	for _, pattern := range pii.CustomPatterns {
+	for _, pattern := range redaction.CustomPatterns {
 		if pattern == "" || len(pattern) > MaxCustomPatternBytes || seen[pattern] {
-			return configError("custom PII pattern is invalid")
+			return configError("custom redaction pattern is invalid")
 		}
-		totalBytes += len(pattern)
 		seen[pattern] = true
-	}
-	if totalBytes > MaxCombinedCustomPatternBytes {
-		return configError("custom PII patterns exceed the byte limit")
 	}
 	return nil
 }

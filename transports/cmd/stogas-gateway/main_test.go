@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
@@ -21,9 +24,35 @@ import (
 func TestStartupEventContainsOnlyFixedFields(t *testing.T) {
 	var output bytes.Buffer
 	writeStartupEvent(&output, "gateway_startup_failed", "error", startupConfigurationLoadFailed)
-	const expected = "{\"errorType\":\"Error\",\"event\":\"gateway_startup_failed\",\"reasonCode\":\"configuration_load_failed\",\"severity\":\"error\"}\n"
-	if output.String() != expected {
-		t.Fatalf("startup event = %q, want %q", output.String(), expected)
+	var event map[string]string
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, event["timestamp"]); err != nil || len(event) != 5 ||
+		event["errorType"] != "Error" || event["event"] != "gateway_startup_failed" ||
+		event["reasonCode"] != "configuration_load_failed" || event["severity"] != "error" {
+		t.Fatalf("startup event has unexpected fields: %s", output.Bytes())
+	}
+}
+
+func TestServerFailureReasonUsesErrorIdentity(t *testing.T) {
+	listenError := func(err error) error {
+		return fmt.Errorf("private address: %w", &net.OpError{Op: "listen", Err: err})
+	}
+	for _, tt := range []struct {
+		err  error
+		want startupReasonCode
+	}{
+		{listenError(syscall.EADDRINUSE), startupListenAddressInUse},
+		{listenError(syscall.EADDRNOTAVAIL), startupListenAddressUnavailable},
+		{listenError(syscall.EACCES), startupListenPermissionDenied},
+		{listenError(syscall.EPERM), startupListenPermissionDenied},
+		{syscall.EPERM, startupServerFailed},
+		{errors.New("address already in use: private text"), startupServerFailed},
+	} {
+		if got := serverFailureReason(tt.err); got != tt.want {
+			t.Fatalf("server reason = %q, want %q", got, tt.want)
+		}
 	}
 }
 

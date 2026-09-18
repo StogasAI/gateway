@@ -7,9 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"go.uber.org/automaxprocs/maxprocs"
 
@@ -47,6 +49,9 @@ const (
 	startupRouteInitFailed                               startupReasonCode = "route_initialization_failed"
 	startupRuntimeInitFailed                             startupReasonCode = "runtime_initialization_failed"
 	startupServerFailed                                  startupReasonCode = "server_failed"
+	startupListenAddressInUse                            startupReasonCode = "listen_address_in_use"
+	startupListenAddressUnavailable                      startupReasonCode = "listen_address_unavailable"
+	startupListenPermissionDenied                        startupReasonCode = "listen_permission_denied"
 )
 
 func main() {
@@ -83,7 +88,24 @@ func main() {
 	}
 
 	if err := server.Start(); err != nil {
-		fatal(startupServerFailed)
+		fatal(serverFailureReason(err))
+	}
+}
+
+func serverFailureReason(err error) startupReasonCode {
+	var networkError *net.OpError
+	if !errors.As(err, &networkError) || networkError.Op != "listen" {
+		return startupServerFailed
+	}
+	switch {
+	case errors.Is(err, syscall.EADDRINUSE):
+		return startupListenAddressInUse
+	case errors.Is(err, syscall.EADDRNOTAVAIL):
+		return startupListenAddressUnavailable
+	case errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
+		return startupListenPermissionDenied
+	default:
+		return startupServerFailed
 	}
 }
 
@@ -161,11 +183,13 @@ func setDefaultGuestCertFileAt(path string) {
 
 func writeStartupEvent(output io.Writer, event string, severity string, reasonCode startupReasonCode) {
 	payload, err := json.Marshal(struct {
-		ErrorType  string `json:"errorType"`
-		Event      string `json:"event"`
-		ReasonCode string `json:"reasonCode"`
-		Severity   string `json:"severity"`
+		Timestamp  time.Time `json:"timestamp"`
+		ErrorType  string    `json:"errorType"`
+		Event      string    `json:"event"`
+		ReasonCode string    `json:"reasonCode"`
+		Severity   string    `json:"severity"`
 	}{
+		Timestamp:  time.Now().UTC(),
 		ErrorType:  "Error",
 		Event:      event,
 		ReasonCode: string(reasonCode),

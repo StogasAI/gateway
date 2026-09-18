@@ -714,6 +714,17 @@ func estimateAnthropicWireHold(state *State) error {
 	}
 	state.Hold.Meters = meters
 	state.Hold.EstimatedUpstreamCostUSDAtoms = total
+	inputTokens, inputKnown := tokenHoldCapacity(state, true)
+	if !inputKnown {
+		for _, quantity := range []int{req.InputTokenLimit, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes), anthropicHostedContentHoldTokens(req)} {
+			scaled, valid := multiplyAnthropicTokenLimit(quantity, req.SamplingIterations)
+			if !valid || inputTokens > math.MaxInt-scaled {
+				return catalog.ErrParameterTooLarge
+			}
+			inputTokens += scaled
+		}
+	}
+	state.Hold.ReservedTokens = int64(inputTokens) + int64(scaledOutputTokens)
 	return nil
 }
 

@@ -43,7 +43,7 @@ func responseEncodingFailure() *schemas.BifrostError {
 		StatusCode:     &statusCode,
 		Type:           &errorType,
 		AllowFallbacks: &allowFallbacks,
-		Error:          &schemas.ErrorField{Type: &errorType, Message: "Failed to encode response"},
+		Error:          &schemas.ErrorField{Type: &errorType, Code: schemas.Ptr("response_encoding_failed"), Message: "Failed to encode response"},
 	}
 }
 

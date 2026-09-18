@@ -245,6 +245,12 @@ func TestSharedPolicyDeclinesPreserveScopeStatusAndBackoff(t *testing.T) {
 	}{
 		{"organization_rate_limited", 429, "Organization request rate limit exceeded", 25 * time.Millisecond},
 		{"grant_rate_limited", 429, "Grant request rate limit exceeded", 25 * time.Millisecond},
+		{"key_token_limit", 429, "API key token limit exceeded", 25 * time.Millisecond},
+		{"organization_token_limit", 429, "Organization token limit exceeded", 25 * time.Millisecond},
+		{"grant_token_limit", 429, "Grant token limit exceeded", 25 * time.Millisecond},
+		{"key_concurrency_limit", 429, "API key concurrent-request limit exceeded", 25 * time.Millisecond},
+		{"organization_concurrency_limit", 429, "Organization concurrent-request limit exceeded", 25 * time.Millisecond},
+		{"grant_concurrency_limit", 429, "Grant concurrent-request limit exceeded", 25 * time.Millisecond},
 		{"organization_spend_limit", 402, "Organization spend limit exceeded", 250 * time.Millisecond},
 		{"grant_spend_limit", 402, "Grant spend limit exceeded", 250 * time.Millisecond},
 	} {

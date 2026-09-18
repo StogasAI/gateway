@@ -24,23 +24,24 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable     = APIError{StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON            = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous         = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
-	ErrModelUnavailable       = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
-	ErrProviderUnavailable    = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrRouteUnavailable       = APIError{StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod      = APIError{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest     = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrParameterTooLarge      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrProviderSelection      = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
-	ErrServiceTierUnavailable = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
-	ErrUnsupportedTool        = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
-	ErrUnsupportedServiceTier = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrCatalogUnavailable     = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON            = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous         = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is ambiguous; use a provider-qualified model slug"}
+	ErrModelUnavailable       = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrProviderUnavailable    = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrRouteUnavailable       = APIError{Code: "route_not_found", StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod      = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest     = APIError{Code: "unsupported_request", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge      = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrProviderSelection      = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
+	ErrServiceTierUnavailable = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
+	ErrUnsupportedTool        = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
+	ErrUnsupportedServiceTier = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
 )
 
 type APIError struct {
 	StatusCode int
+	Code       string
 	Type       string
 	Message    string
 }
@@ -557,21 +558,16 @@ func resolveChatRequests(body []byte, route Route, config *policy.Config, redact
 	if _, err := normalizeChatStopString(rawData); err != nil {
 		return nil, err
 	}
-	redactor := redaction.NewWithPolicy(redactionPolicy)
-	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceChat); err != nil {
-		return nil, piiRedactionError(err)
-	}
-	body, err = sonic.Marshal(rawData)
-	if err != nil {
-		return nil, ErrInvalidJSON
-	}
 	if err := validateChatRawAliases(rawData); err != nil {
 		return nil, err
 	}
 	if err := validateRawReasoningParameters(rawData, chatRawReasoningFields, true, false); err != nil {
 		return nil, err
 	}
-	var base openaiprovider.OpenAIChatRequest
+	var base struct {
+		Model       string                      `json:"model"`
+		ServiceTier *schemas.BifrostServiceTier `json:"service_tier"`
+	}
 	if err := sonic.Unmarshal(body, &base); err != nil {
 		return nil, ErrInvalidJSON
 	}
@@ -582,16 +578,16 @@ func resolveChatRequests(body []byte, route Route, config *policy.Config, redact
 	selections, err := routingSelectionsForRequest(
 		route,
 		base.Model,
-		base.ChatParameters.ServiceTier,
+		base.ServiceTier,
 		config,
 		policyRoutingEnabled(config),
 	)
 	if err != nil {
 		return nil, err
 	}
-	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
+	selections = filterRoutingSelectionsByPolicy(selections, config)
 	if len(selections) == 0 {
-		if base.ChatParameters.ServiceTier != nil {
+		if base.ServiceTier != nil {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
@@ -603,6 +599,14 @@ func resolveChatRequests(body []byte, route Route, config *policy.Config, redact
 	)
 	if err != nil {
 		return nil, err
+	}
+	redactor := redaction.NewWithPolicy(redactionPolicy)
+	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceChat); err != nil {
+		return nil, piiRedactionError(err)
+	}
+	body, err = sonic.Marshal(rawData)
+	if err != nil {
+		return nil, ErrInvalidJSON
 	}
 	shortCircuit := !policyRoutingEnabled(config) && hasPreferredProvider
 	resolved := make([]*ResolvedRequest, 0, len(selections))
@@ -690,18 +694,13 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 		return nil, err
 	}
 	dropNoOpCompatibilityFields(rawData, route)
-	redactor := redaction.NewWithPolicy(redactionPolicy)
-	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceResponses); err != nil {
-		return nil, piiRedactionError(err)
-	}
-	body, err = sonic.Marshal(rawData)
-	if err != nil {
-		return nil, ErrInvalidJSON
-	}
 	if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
 		return nil, err
 	}
-	var base openaiprovider.OpenAIResponsesRequest
+	var base struct {
+		Model       string                      `json:"model"`
+		ServiceTier *schemas.BifrostServiceTier `json:"service_tier"`
+	}
 	if err := sonic.Unmarshal(body, &base); err != nil {
 		return nil, ErrInvalidJSON
 	}
@@ -712,16 +711,16 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 	selections, err := routingSelectionsForRequest(
 		route,
 		base.Model,
-		base.ResponsesParameters.ServiceTier,
+		base.ServiceTier,
 		config,
 		policyRoutingEnabled(config),
 	)
 	if err != nil {
 		return nil, err
 	}
-	selections = filterRoutingSelectionsByAllowedNodes(selections, config)
+	selections = filterRoutingSelectionsByPolicy(selections, config)
 	if len(selections) == 0 {
-		if base.ResponsesParameters.ServiceTier != nil {
+		if base.ServiceTier != nil {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
@@ -733,6 +732,14 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 	)
 	if err != nil {
 		return nil, err
+	}
+	redactor := redaction.NewWithPolicy(redactionPolicy)
+	if err := redactor.RedactRequestFields(rawData, redaction.SurfaceResponses); err != nil {
+		return nil, piiRedactionError(err)
+	}
+	body, err = sonic.Marshal(rawData)
+	if err != nil {
+		return nil, ErrInvalidJSON
 	}
 	shortCircuit := !policyRoutingEnabled(config) && hasPreferredProvider
 	resolved := make([]*ResolvedRequest, 0, len(selections))
@@ -808,11 +815,11 @@ func resolveResponsesRequests(body []byte, route Route, config *policy.Config, r
 }
 
 func piiRedactionError(err error) error {
-	if errors.Is(err, redaction.ErrMatchLimit) || errors.Is(err, redaction.ErrNestingLimit) {
+	if errors.Is(err, redaction.ErrMatchLimit) || errors.Is(err, redaction.ErrNestingLimit) || errors.Is(err, redaction.ErrWorkLimit) {
 		return APIError{
 			StatusCode: http.StatusRequestEntityTooLarge,
 			Type:       ErrorTypeInvalidRequest,
-			Message:    "Request exceeds PII redaction limits",
+			Message:    "Request exceeds redaction limits",
 		}
 	}
 	return err

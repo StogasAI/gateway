@@ -240,7 +240,7 @@ func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
 		APIKey:                  config.ChutesAPIKey,
 		APIBaseURL:              apiBaseURL,
 		RequireProductionOrigin: confidentialProduction,
-		StreamTimeout:           billing.GatewayRequestLifetime,
+		RequestTimeout:          billing.GatewayRequestLifetime,
 		ResolveModel: func(upstreamModel string) (chutese2ee.ModelTarget, bool) {
 			deployment, ok := catalog.DeploymentForUpstreamModel(catalog.ProviderChutes, upstreamModel, catalog.RouteChat)
 			if !ok || deployment.Upstream.ChuteID == "" || deployment.Upstream.GPUCount < 1 {

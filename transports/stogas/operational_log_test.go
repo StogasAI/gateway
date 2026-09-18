@@ -152,7 +152,7 @@ func TestProviderLibraryFatalPreservesExitWithoutContent(t *testing.T) {
 	}
 	var event operationalLogEvent
 	if err := json.Unmarshal(output, &event); err != nil || event.Event != "provider_runtime_fatal" || event.Severity != "error" ||
-		!strings.HasPrefix(event.Source, "stogas/operational_log_test.go:") || strings.Contains(string(output), "SECRET") {
+		event.Timestamp.IsZero() || !strings.HasPrefix(event.Source, "stogas/operational_log_test.go:") || strings.Contains(string(output), "SECRET") {
 		t.Fatalf("fatal output must be one content-free event: %s", output)
 	}
 }

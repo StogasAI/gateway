@@ -751,8 +751,7 @@ func validExactRates(rates map[string]string, keys ...string) bool {
 		return false
 	}
 	for _, key := range keys {
-		rate, ok := billing.ParseRate(rates[key])
-		if !ok || rate.Sign() <= 0 {
+		if _, ok := billing.ParseRate(rates[key]); !ok {
 			return false
 		}
 	}

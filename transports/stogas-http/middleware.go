@@ -206,7 +206,7 @@ func (s *Server) writeRequestBodyTooLarge(ctx *fasthttp.RequestCtx, maxRequestBo
 func (s *Server) writeRequestMemoryCapacity(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Retry-After", "1")
 	s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
-		"error": map[string]any{"message": "Gateway is at request memory capacity", "type": "service_unavailable"},
+		"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"},
 	})
 }
 
