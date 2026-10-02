@@ -102,6 +102,8 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             transports/go.sum
+      - uses: ./.github/actions/setup-verifier
+        if: matrix.package == './stogas/confidential/channel'
       - name: Restore generated fuzz corpus
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -112,7 +114,7 @@ jobs:
             gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
         working-directory: ${{ matrix.module }}
-        run: GOWORK=off go test -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
+        run: GOWORK=off go test -tags=stogas_offline -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: failure()
         with:
