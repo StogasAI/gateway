@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -20,6 +21,7 @@ const (
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
 // A sealed batch stays immutable so an ambiguous write can safely be replayed.
 type RejectionInput struct {
+	PolicyVersions *PolicyVersions
 	Claims         *APIKeyClaims
 	RequestID      string
 	RequestType    string
@@ -34,6 +36,7 @@ type rejectionLogKey struct {
 	keyID, requestType, code string
 	status                   int
 	window                   int64
+	versions                 [32]byte
 }
 
 type RejectionLogDiagnostics struct {
@@ -98,7 +101,12 @@ func (s *Service) RecordRejection(input RejectionInput) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.StatusCode, at.Truncate(rejectionLogWindow).Unix()}
+	var versions [32]byte
+	if input.PolicyVersions != nil {
+		raw, _ := json.Marshal(input.PolicyVersions)
+		versions = sha256.Sum256(raw)
+	}
+	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {
@@ -107,19 +115,19 @@ func (s *Service) RecordRejection(input RejectionInput) {
 			return
 		}
 		status := input.StatusCode
-		zero := ZeroChargeUSDAtoms
+		zero := ZeroChargeUSD
 		group = &rejectionLogGroup{
 			queuedAt: time.Now().UTC(),
 			RequestEvent: RequestEvent{
 				SchemaVersion:  RequestLogSchemaVersion,
+				PolicyVersions: input.PolicyVersions,
 				StogasAPIKeyID: input.Claims.KeyID, StogasOrganizationID: input.Claims.OrganizationID,
-				StogasWorkspaceID: input.Claims.WorkspaceID, StogasUserID: input.Claims.ResponsibleID,
+				StogasUserID:  input.Claims.ResponsibleID,
 				StogasGrantID: input.Claims.GrantID, RequestType: input.RequestType,
-				StogasErrorCode: input.Code, StogasErrorStatusCode: &status,
-				StogasProcessingSuccess: status < 500, StogasBillingStatus: "rejected",
-				ProviderAttempts: []ProviderAttempt{}, CatalogNodeIDs: []string{}, Pricing: EventPricing{},
-				UpstreamCostUSDAtoms: ZeroChargeUSDAtoms, BilledCostUSDAtoms: ZeroChargeUSDAtoms,
-				CacheReadSavingsUSDAtoms: &zero, CacheWriteOverheadUSDAtoms: &zero,
+				Error:            &EventError{Code: input.Code, Status: status},
+				ProviderAttempts: []ProviderAttempt{}, Meters: EventMeters{},
+				UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
+				CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero,
 				NodeID: input.NodeID, GatewayVersion: input.GatewayVersion,
 			},
 		}

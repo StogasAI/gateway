@@ -394,6 +394,22 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 }
 
+func TestEvidenceRefreshHonorsProviderDelayAndClearsAfterSuccess(t *testing.T) {
+	now := time.Now()
+	attestor := &attestor{refresh: make(map[string]*attestationRefreshState)}
+	err := &httpStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 2 * time.Minute}
+	attestor.recordRefreshResult(testModelTarget, nil, err, true, now, now)
+	state := attestor.refresh[testChuteID]
+	if state == nil || !state.NextAttempt.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("provider cooldown was shortened: %#v", state)
+	}
+	attestor.recordRefreshResult(testModelTarget, &attestationResult{Complete: true}, nil, true, now, now)
+	if state.Failures != 0 || state.NextAttempt.Before(now.Add(attestationRefreshInterval)) ||
+		state.NextAttempt.After(now.Add(attestationRefreshInterval+attestationRefreshJitter)) {
+		t.Fatalf("successful refresh did not restore ordinary maintenance: %#v", state)
+	}
+}
+
 func TestGPUHardwarePolicyMappings(t *testing.T) {
 	tests := []struct {
 		model        string

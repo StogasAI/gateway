@@ -8,31 +8,26 @@ import (
 )
 
 const (
-	localAdmissionShards               = 64
-	localAdmissionEntriesPerShard      = 512
-	localRequestRatePerSecond          = 120
-	localRequestBurst                  = 120
-	localAuthorizationPoolShareDivisor = int32(4)
+	localAdmissionShards          = 64
+	localAdmissionEntriesPerShard = 512
+	localRequestRatePerSecond     = 120
+	localRequestBurst             = 120
 )
 
 type LocalAdmissionDiagnostics struct {
-	APIKeyCacheEntries                       int        `json:"apiKeyCacheEntries"`
-	APIKeyCacheHits                          uint64     `json:"apiKeyCacheHits"`
-	APIKeyCacheLookups                       uint64     `json:"apiKeyCacheLookups"`
-	AuthorizationActiveIdentities            int64      `json:"authorizationActiveIdentities"`
-	AuthorizationAttempts                    uint64     `json:"authorizationAttempts"`
-	AuthorizationConcurrencyLimitPerIdentity int32      `json:"authorizationConcurrencyLimitPerIdentity"`
-	AuthorizationInFlight                    int64      `json:"authorizationInFlight"`
-	AuthorizationLastRejectedAt              *time.Time `json:"authorizationLastRejectedAt,omitempty"`
-	AuthorizationPeakInFlight                int64      `json:"authorizationPeakInFlight"`
-	AuthorizationRejected                    uint64     `json:"authorizationRejected"`
-	RejectionCacheHits                       uint64     `json:"rejectionCacheHits"`
-	RejectionCacheLookups                    uint64     `json:"rejectionCacheLookups"`
-	RequestAttempts                          uint64     `json:"requestAttempts"`
-	RequestBurst                             int        `json:"requestBurst"`
-	RequestLastRejectedAt                    *time.Time `json:"requestLastRejectedAt,omitempty"`
-	RequestRatePerSecond                     int        `json:"requestRatePerSecond"`
-	RequestRejected                          uint64     `json:"requestRejected"`
+	APIKeyCacheEntries        int        `json:"apiKeyCacheEntries"`
+	APIKeyCacheHits           uint64     `json:"apiKeyCacheHits"`
+	APIKeyCacheLookups        uint64     `json:"apiKeyCacheLookups"`
+	AuthorizationAttempts     uint64     `json:"authorizationAttempts"`
+	AuthorizationInFlight     int64      `json:"authorizationInFlight"`
+	AuthorizationPeakInFlight int64      `json:"authorizationPeakInFlight"`
+	RejectionCacheHits        uint64     `json:"rejectionCacheHits"`
+	RejectionCacheLookups     uint64     `json:"rejectionCacheLookups"`
+	RequestAttempts           uint64     `json:"requestAttempts"`
+	RequestBurst              int        `json:"requestBurst"`
+	RequestLastRejectedAt     *time.Time `json:"requestLastRejectedAt,omitempty"`
+	RequestRatePerSecond      int        `json:"requestRatePerSecond"`
+	RequestRejected           uint64     `json:"requestRejected"`
 }
 
 type verifiedAPIKeyShard struct {
@@ -148,7 +143,9 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 	if elapsed > 0 {
 		entry.tokens = math.Min(localRequestBurst, entry.tokens+elapsed*localRequestRatePerSecond)
 	}
-	entry.updatedAt = now
+	if now.After(entry.updatedAt) {
+		entry.updatedAt = now
+	}
 	if entry.tokens >= 1 {
 		entry.tokens--
 		shard.entries[identity] = entry
@@ -160,76 +157,21 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 	return time.Duration(math.Ceil((1 - entry.tokens) / localRequestRatePerSecond * float64(time.Second)))
 }
 
-type localAuthorizationShard struct {
-	mu       sync.Mutex
-	inFlight map[string]int32
+// Authorization work waits in pgxpool under its existing query deadline. The
+// request memory and organization rate gates bound admission before this point.
+type authorizationActivity struct {
+	attempts     atomic.Uint64
+	inFlight     atomic.Int64
+	peakInFlight atomic.Int64
 }
 
-// localAuthorizationLimiter prevents one signed API credential or dashboard
-// actor/session from occupying the process's entire database pool.
-type localAuthorizationLimiter struct {
-	limit            int32
-	activeIdentities atomic.Int64
-	attempts         atomic.Uint64
-	inFlight         atomic.Int64
-	peakInFlight     atomic.Int64
-	lastRejectedAt   atomic.Int64
-	rejected         atomic.Uint64
-	shards           [localAdmissionShards]localAuthorizationShard
-}
-
-func newLocalAuthorizationLimiter(poolMaxConns int32) *localAuthorizationLimiter {
-	return &localAuthorizationLimiter{limit: localAuthorizationLimit(poolMaxConns)}
-}
-
-func localAuthorizationLimit(poolMaxConns int32) int32 {
-	if poolMaxConns <= 0 {
-		return 0
-	}
-	return 1 + (poolMaxConns-1)/localAuthorizationPoolShareDivisor
-}
-
-func (l *localAuthorizationLimiter) acquire(identity string) (func(), bool) {
-	if l == nil || identity == "" || l.limit <= 0 {
-		return nil, false
-	}
+func (l *authorizationActivity) start() func() {
 	l.attempts.Add(1)
-	shard := &l.shards[localAdmissionShard(identity)]
-	shard.mu.Lock()
-	if shard.inFlight == nil {
-		shard.inFlight = make(map[string]int32)
-	}
-	if shard.inFlight[identity] >= l.limit {
-		shard.mu.Unlock()
-		l.rejected.Add(1)
-		l.lastRejectedAt.Store(time.Now().UTC().UnixMilli())
-		return nil, false
-	}
-	first := shard.inFlight[identity] == 0
-	shard.inFlight[identity]++
-	shard.mu.Unlock()
-	if first {
-		l.activeIdentities.Add(1)
-	}
 	l.recordInFlight(l.inFlight.Add(1))
-
-	return func() {
-		shard.mu.Lock()
-		last := shard.inFlight[identity] <= 1
-		if last {
-			delete(shard.inFlight, identity)
-		} else {
-			shard.inFlight[identity]--
-		}
-		shard.mu.Unlock()
-		if last {
-			l.activeIdentities.Add(-1)
-		}
-		l.inFlight.Add(-1)
-	}, true
+	return sync.OnceFunc(func() { l.inFlight.Add(-1) })
 }
 
-func (l *localAuthorizationLimiter) recordInFlight(value int64) {
+func (l *authorizationActivity) recordInFlight(value int64) {
 	for {
 		peak := l.peakInFlight.Load()
 		if value <= peak || l.peakInFlight.CompareAndSwap(peak, value) {
@@ -242,7 +184,6 @@ type authorizationRejectionEntry struct {
 	blockedUntil time.Time
 	failures     uint8
 	lastFailedAt time.Time
-	result       string
 }
 
 type authorizationRejectionShard struct {
@@ -256,18 +197,12 @@ type authorizationRejectionCache struct {
 	shards  [localAdmissionShards]authorizationRejectionShard
 }
 
-type rejectionPolicy struct {
-	decay   time.Duration
-	initial time.Duration
-	maximum time.Duration
-}
-
 func (c *authorizationRejectionCache) get(
 	key string,
 	now time.Time,
-) (string, time.Duration, bool) {
+) time.Duration {
 	if c == nil || key == "" {
-		return "", 0, false
+		return 0
 	}
 	c.lookups.Add(1)
 	shard := &c.shards[localAdmissionShard(key)]
@@ -275,15 +210,15 @@ func (c *authorizationRejectionCache) get(
 	defer shard.mu.Unlock()
 	entry, ok := shard.entries[key]
 	if !ok || !now.Before(entry.blockedUntil) {
-		return "", 0, false
+		return 0
 	}
 	c.hits.Add(1)
-	return entry.result, entry.blockedUntil.Sub(now), true
+	return entry.blockedUntil.Sub(now)
 }
 
 func localAdmissionDiagnostics(
 	requests *localRequestLimiter,
-	authorizations *localAuthorizationLimiter,
+	authorizations *authorizationActivity,
 	rejections *authorizationRejectionCache,
 	apiKeys *verifiedAPIKeyCache,
 ) LocalAdmissionDiagnostics {
@@ -297,13 +232,9 @@ func localAdmissionDiagnostics(
 		result.RequestRejected = requests.rejected.Load()
 	}
 	if authorizations != nil {
-		result.AuthorizationActiveIdentities = authorizations.activeIdentities.Load()
 		result.AuthorizationAttempts = authorizations.attempts.Load()
-		result.AuthorizationConcurrencyLimitPerIdentity = authorizations.limit
 		result.AuthorizationInFlight = authorizations.inFlight.Load()
-		result.AuthorizationLastRejectedAt = localAdmissionTime(authorizations.lastRejectedAt.Load())
 		result.AuthorizationPeakInFlight = authorizations.peakInFlight.Load()
-		result.AuthorizationRejected = authorizations.rejected.Load()
 	}
 	if rejections != nil {
 		result.RejectionCacheHits = rejections.hits.Load()
@@ -325,9 +256,8 @@ func localAdmissionTime(unixMilliseconds int64) *time.Time {
 	return &value
 }
 
-func (c *authorizationRejectionCache) record(key string, result string, now time.Time) {
-	policy, ok := authorizationRejectionPolicy(result)
-	if c == nil || key == "" || !ok {
+func (c *authorizationRejectionCache) record(key string, now time.Time) {
+	if c == nil || key == "" {
 		return
 	}
 	shard := &c.shards[localAdmissionShard(key)]
@@ -338,61 +268,45 @@ func (c *authorizationRejectionCache) record(key string, result string, now time
 	}
 
 	entry := shard.entries[key]
-	if entry.result != result || now.Sub(entry.lastFailedAt) > policy.decay {
+	// Concurrent completions can acquire the shard lock out of timestamp
+	// order. An older completion must not shorten the latest cooldown.
+	if now.Before(entry.lastFailedAt) {
+		now = entry.lastFailedAt
+	}
+	// Only overlapping failure bursts escalate. Once the advertised cooldown
+	// ends, a new failure starts fresh without requiring a successful request.
+	// Rejected retries only read this state and cannot prolong the penalty.
+	if !now.Before(entry.blockedUntil) {
 		entry.failures = 1
 	} else if entry.failures < 16 {
 		entry.failures++
 	}
-	delay := policy.initial
-	for attempt := uint8(1); attempt < entry.failures && delay < policy.maximum; attempt++ {
+	delay := 25 * time.Millisecond
+	for attempt := uint8(1); attempt < entry.failures && delay < 2*time.Second; attempt++ {
 		delay *= 2
 	}
-	if delay > policy.maximum {
-		delay = policy.maximum
+	if delay > 2*time.Second {
+		delay = 2 * time.Second
 	}
 	entry.blockedUntil = now.Add(delay)
 	entry.lastFailedAt = now
-	entry.result = result
 	if _, exists := shard.entries[key]; !exists {
 		evictAuthorizationRejectionEntry(shard.entries)
 	}
 	shard.entries[key] = entry
 }
 
-func (c *authorizationRejectionCache) clear(key string) {
+// A successful request ends an earlier failure streak. An older request
+// completing late must not erase failures recorded since that request started.
+func (c *authorizationRejectionCache) succeeded(key string, started time.Time) {
 	if c == nil || key == "" {
 		return
 	}
 	shard := &c.shards[localAdmissionShard(key)]
 	shard.mu.Lock()
-	delete(shard.entries, key)
-	shard.mu.Unlock()
-}
-
-func authorizationRejectionPolicy(result string) (rejectionPolicy, bool) {
-	switch result {
-	case "key_rate_limited", "organization_rate_limited", "grant_rate_limited",
-		"key_token_limit", "organization_token_limit", "grant_token_limit",
-		"key_concurrency_limit", "organization_concurrency_limit", "grant_concurrency_limit":
-		return rejectionPolicy{
-			decay:   10 * time.Second,
-			initial: 25 * time.Millisecond,
-			maximum: time.Second,
-		}, true
-	case "insufficient_balance", "key_spend_limit", "organization_spend_limit", "grant_spend_limit":
-		return rejectionPolicy{
-			decay:   30 * time.Second,
-			initial: 250 * time.Millisecond,
-			maximum: 2 * time.Second,
-		}, true
-	case "dashboard_forbidden", "grant_disabled", "invalid_key", "key_disabled", "key_expired":
-		return rejectionPolicy{
-			decay:   time.Minute,
-			initial: time.Second,
-			maximum: 10 * time.Second,
-		}, true
-	default:
-		return rejectionPolicy{}, false
+	defer shard.mu.Unlock()
+	if entry, ok := shard.entries[key]; ok && !entry.lastFailedAt.After(started) {
+		delete(shard.entries, key)
 	}
 }
 

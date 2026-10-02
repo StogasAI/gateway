@@ -4,42 +4,40 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/e2ee"
-	"github.com/valyala/fasthttp"
 )
 
-const requestMemoryLeaseContextKey = "stogas.request-memory-lease"
+var errRequestBodyTooLarge = errors.New("request body too large")
+var errRequestMemoryCapacity = errors.New("request memory capacity exhausted")
 
-func securityHeaders(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		ctx.Response.Header.Set("X-Frame-Options", "DENY")
-		ctx.Response.Header.Set("X-Content-Type-Options", "nosniff")
-		ctx.Response.Header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		ctx.Response.Header.Set("Content-Security-Policy", "frame-ancestors 'none'")
-		ctx.Response.Header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		if string(ctx.Request.Header.Peek("X-Forwarded-Proto")) == "https" || ctx.IsTLS() {
-			ctx.Response.Header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+func securityHeaders(next requestHandler) requestHandler {
+	return func(ctx *requestContext) {
+		ctx.writer.Header().Set("X-Frame-Options", "DENY")
+		ctx.writer.Header().Set("X-Content-Type-Options", "nosniff")
+		ctx.writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		ctx.writer.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+		ctx.writer.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if string(ctx.request.Header.Get("X-Forwarded-Proto")) == "https" || (ctx.request.TLS != nil) {
+			ctx.writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		next(ctx)
 	}
 }
 
-func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
-		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		ctx.Response.Header.Set("Access-Control-Max-Age", "86400")
-		ctx.Response.Header.Set("Access-Control-Expose-Headers", "*")
-		ctx.Response.Header.Set("Access-Control-Allow-Headers", corsAllowedHeaders(ctx))
+func cors(next requestHandler) requestHandler {
+	return func(ctx *requestContext) {
+		ctx.writer.Header().Set("Access-Control-Allow-Origin", "*")
+		ctx.writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		ctx.writer.Header().Set("Access-Control-Max-Age", "86400")
+		ctx.writer.Header().Set("Access-Control-Expose-Headers", "*")
+		ctx.writer.Header().Set("Access-Control-Allow-Headers", corsAllowedHeaders(ctx))
 
-		if string(ctx.Method()) == fasthttp.MethodOptions {
-			if ctx.Request.IsBodyStream() {
-				ctx.SetConnectionClose()
-			}
-			ctx.SetStatusCode(fasthttp.StatusNoContent)
+		if ctx.request.Method == http.MethodOptions {
+			closeUnreadRequest(ctx)
+			ctx.writer.WriteHeader(http.StatusNoContent)
 			return
 		}
 
@@ -47,8 +45,8 @@ func cors(next fasthttp.RequestHandler) fasthttp.RequestHandler {
 	}
 }
 
-func corsAllowedHeaders(ctx *fasthttp.RequestCtx) string {
-	requested := strings.TrimSpace(string(ctx.Request.Header.Peek("Access-Control-Request-Headers")))
+func corsAllowedHeaders(ctx *requestContext) string {
+	requested := strings.TrimSpace(string(ctx.request.Header.Get("Access-Control-Request-Headers")))
 	if requested == "" {
 		return catalog.AllClientHeadersValue()
 	}
@@ -65,7 +63,7 @@ func corsAllowedHeaders(ctx *fasthttp.RequestCtx) string {
 	if len(names) == 0 {
 		return catalog.AllClientHeadersValue()
 	}
-	ctx.Response.Header.Add("Vary", "Access-Control-Request-Headers")
+	ctx.writer.Header().Add("Vary", "Access-Control-Request-Headers")
 	return strings.Join(names, ", ")
 }
 
@@ -85,106 +83,123 @@ func validHTTPFieldName(name string) bool {
 	return true
 }
 
-func (s *Server) requestBodyAdmission(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		if !isInferencePath(ctx.Path()) {
-			if ctx.Request.IsBodyStream() {
-				ctx.SetConnectionClose()
-			}
-			next(ctx)
-			return
-		}
-		if string(ctx.Method()) != fasthttp.MethodPost {
-			if ctx.Request.IsBodyStream() {
-				ctx.SetConnectionClose()
-			}
-			next(ctx)
-			return
-		}
-		if !isEncryptedInferenceRequest(ctx) {
-			if _, ok := s.requireInferenceHeaders(ctx); !ok {
-				if ctx.Request.IsBodyStream() {
-					ctx.SetConnectionClose()
-				}
-				return
-			}
-		}
+func closeUnreadRequest(ctx *requestContext) {
+	// Do not make HTTP/1 drain a rejected upload before returning its error.
+	// HTTP/2 closes only this request stream when the handler returns.
+	if ctx.request.ProtoMajor < 2 {
+		ctx.writer.Header().Set("Connection", "close")
+	}
+}
 
-		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
-		contentLength := ctx.Request.Header.ContentLength()
-		if contentLength > maxRequestBodyBytes {
-			ctx.SetConnectionClose()
-			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
+func (s *Server) requestBodyAdmission(next requestHandler) requestHandler {
+	if s.memory == nil {
+		s.memory = newRequestMemoryAdmission()
+	}
+	return func(ctx *requestContext) {
+		if !isGatewayRequestPath(ctx.request.URL.Path) || ctx.request.Method != http.MethodPost {
+			closeUnreadRequest(ctx)
+			next(ctx)
 			return
 		}
-		reservationBytes := contentLength
-		if reservationBytes < 0 || len(ctx.Request.Header.ContentEncoding()) > 0 {
-			reservationBytes = maxRequestBodyBytes
+		if _, ok := s.requireInferenceHeaders(ctx); !ok {
+			closeUnreadRequest(ctx)
+			return
 		}
-		if s.memory == nil {
-			s.memory = newRequestMemoryAdmission()
+		maxBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
+		if ctx.request.ContentLength > int64(maxBytes) {
+			closeUnreadRequest(ctx)
+			s.writeRequestBodyTooLarge(ctx, maxBytes)
+			return
 		}
-		lease, admitted := s.memory.acquire(reservationBytes)
+		lease, admitted := ctx.memory, true
+		if lease == nil {
+			lease, admitted = s.memory.acquire(0)
+		}
 		if !admitted {
-			ctx.SetConnectionClose()
+			closeUnreadRequest(ctx)
 			s.writeRequestMemoryCapacity(ctx)
 			return
 		}
+		ctx.memory = lease
 		defer func() {
 			if !lease.transferred {
+				clear(ctx.body)
+				ctx.body = nil
 				lease.release()
 			}
 		}()
-
-		body, err := readRequestBodyWithLimit(ctx, maxRequestBodyBytes)
-		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
-			ctx.SetConnectionClose()
-			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
-			return
-		}
+		body, err := readAdmittedBody(ctx.request.Body, maxBytes, lease, 0)
+		_ = ctx.request.Body.Close()
 		if err != nil {
-			ctx.SetConnectionClose()
-			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
-				"error": map[string]any{"message": "Invalid request body", "type": "invalid_request_error"},
-			})
+			closeUnreadRequest(ctx)
+			s.writeBodyReadError(ctx, err, maxBytes)
 			return
 		}
-		if len(ctx.Request.Header.ContentEncoding()) == 0 && !lease.resize(len(body)) {
-			ctx.SetConnectionClose()
-			s.writeRequestMemoryCapacity(ctx)
-			return
-		}
-		ctx.SetUserValue(requestMemoryLeaseContextKey, lease)
+		ctx.body = body
 		next(ctx)
 	}
 }
 
-func readRequestBodyWithLimit(ctx *fasthttp.RequestCtx, maxBytes int) ([]byte, error) {
-	if !ctx.Request.IsBodyStream() {
-		body := ctx.Request.Body()
-		if len(body) > maxBytes {
-			return nil, fasthttp.ErrBodyTooLarge
+func (s *Server) publicAdmission(next requestHandler) requestHandler {
+	return func(ctx *requestContext) {
+		if isGatewayRequestPath(ctx.request.URL.Path) && ctx.request.Method == http.MethodPost && !s.requireAdmission(ctx) {
+			return
 		}
-		return body, nil
+		next(ctx)
 	}
-	reader := ctx.RequestBodyStream()
-	body, err := io.ReadAll(io.LimitReader(reader, int64(maxBytes)+1))
-	closeErr := ctx.Request.CloseBodyStream()
-	if err != nil {
-		return nil, err
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if len(body) > maxBytes {
-		return nil, fasthttp.ErrBodyTooLarge
-	}
-	ctx.Request.SetBodyRaw(body)
-	return body, nil
 }
 
-func requestMemoryLeaseForInference(ctx *fasthttp.RequestCtx) *requestMemoryLease {
-	lease, _ := ctx.UserValue(requestMemoryLeaseContextKey).(*requestMemoryLease)
+// Reserve before allocating. Growth includes the old and new allocations until
+// copying ends. An upload never waits for memory while retaining a partial body.
+func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease, retained int) ([]byte, error) {
+	var body []byte
+	keep := false
+	defer func() {
+		if !keep {
+			clear(body)
+		}
+	}()
+	for {
+		if len(body) == maxBytes {
+			var extra [1]byte
+			n, err := io.ReadFull(reader, extra[:])
+			if n != 0 {
+				return nil, errRequestBodyTooLarge
+			}
+			if errors.Is(err, io.EOF) {
+				keep = true
+				return body, nil
+			}
+			return nil, err
+		}
+		if len(body) == cap(body) {
+			capacity := min(maxBytes, max(32<<10, cap(body)*2))
+			if !lease.resize(retained + cap(body) + capacity) {
+				return nil, errRequestMemoryCapacity
+			}
+			grown := make([]byte, len(body), capacity)
+			copy(grown, body)
+			clear(body)
+			body = grown
+			if !lease.resize(retained + cap(body)) {
+				panic("shrinking a live body lease failed")
+			}
+		}
+		n, err := reader.Read(body[len(body):cap(body)])
+		body = body[:len(body)+n]
+		if errors.Is(err, io.EOF) {
+			keep = true
+			return body, nil
+		}
+		if err != nil {
+			clear(body)
+			return nil, err
+		}
+	}
+}
+
+func requestMemoryLeaseForInference(ctx *requestContext) *requestMemoryLease {
+	lease := ctx.memory
 	if lease == nil || lease.transferred {
 		return nil
 	}
@@ -192,82 +207,70 @@ func requestMemoryLeaseForInference(ctx *fasthttp.RequestCtx) *requestMemoryLeas
 	return lease
 }
 
-func resizeRequestMemoryLease(ctx *fasthttp.RequestCtx, bodyBytes int) bool {
-	lease, _ := ctx.UserValue(requestMemoryLeaseContextKey).(*requestMemoryLease)
-	return lease == nil || lease.resize(bodyBytes)
+func (s *Server) writeBodyReadError(ctx *requestContext, err error, maxBytes int) {
+	switch {
+	case errors.Is(err, errRequestBodyTooLarge):
+		s.writeRequestBodyTooLarge(ctx, maxBytes)
+	case errors.Is(err, errRequestMemoryCapacity):
+		s.writeRequestMemoryCapacity(ctx)
+	default:
+		message := "Invalid request body"
+		if ctx.request.Header.Get("Content-Encoding") != "" {
+			message = "Invalid compressed request body"
+		}
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": message, "type": "invalid_request_error"}})
+	}
 }
 
-func (s *Server) writeRequestBodyTooLarge(ctx *fasthttp.RequestCtx, maxRequestBodyBytes int) {
-	s.writeError(ctx, fasthttp.StatusRequestEntityTooLarge, map[string]any{
-		"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxRequestBodyBytes), "type": "invalid_request_error"},
-	})
+func (s *Server) writeRequestBodyTooLarge(ctx *requestContext, maxBytes int) {
+	s.writeError(ctx, http.StatusRequestEntityTooLarge, map[string]any{"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxBytes), "type": "invalid_request_error"}})
 }
 
-func (s *Server) writeRequestMemoryCapacity(ctx *fasthttp.RequestCtx) {
-	ctx.Response.Header.Set("Retry-After", "1")
-	s.writeError(ctx, fasthttp.StatusServiceUnavailable, map[string]any{
-		"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"},
-	})
+func (s *Server) writeRequestMemoryCapacity(ctx *requestContext) {
+	ctx.writer.Header().Set("Retry-After", "1")
+	s.writeError(ctx, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"}})
 }
 
-func (s *Server) requestDecompression(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		if len(ctx.Request.Header.ContentEncoding()) == 0 {
+func (s *Server) requestDecompression(next requestHandler) requestHandler {
+	return func(ctx *requestContext) {
+		encoding := strings.ToLower(strings.TrimSpace(ctx.request.Header.Get("Content-Encoding")))
+		if encoding == "" {
 			next(ctx)
 			return
 		}
-		if isInferencePath(ctx.Path()) && !isEncryptedInferenceRequest(ctx) {
+		if isGatewayRequestPath(ctx.request.URL.Path) {
 			if _, ok := s.requireInferenceHeaders(ctx); !ok {
 				return
 			}
 		}
-
-		maxRequestBodyBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
-		body, err := ctx.Request.BodyUncompressedWithLimit(maxRequestBodyBytes)
-		if errors.Is(err, fasthttp.ErrBodyTooLarge) {
-			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
-			return
-		}
+		maxBytes := s.config.MaxRequestBodyMiB * 1024 * 1024
+		body, err := decompressRequestBody(ctx.body, encoding, maxBytes, ctx.memory)
 		if err != nil {
-			s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
-				"error": map[string]any{"message": fmt.Sprintf("Invalid compressed request body: %v", err), "type": "invalid_request_error"},
-			})
+			s.writeBodyReadError(ctx, err, maxBytes)
 			return
 		}
 
-		if len(body) > maxRequestBodyBytes {
-			s.writeRequestBodyTooLarge(ctx, maxRequestBodyBytes)
-			return
-		}
-		if !resizeRequestMemoryLease(ctx, len(body)) {
-			s.writeRequestMemoryCapacity(ctx)
-			return
-		}
-
-		ctx.Request.SetBodyRaw(body)
-		ctx.Request.Header.Del(fasthttp.HeaderContentEncoding)
-		ctx.Request.Header.Del(fasthttp.HeaderContentLength)
+		clear(ctx.body)
+		ctx.body = body
+		_ = ctx.memory.resize(cap(body))
+		ctx.request.Header.Del("Content-Encoding")
+		ctx.request.Header.Del("Content-Length")
 		next(ctx)
 	}
 }
 
-// isEncryptedInferenceRequest selects E2EE handling before body
-// admission. Credentials and application content negotiation are authenticated
-// inside the envelope, so normal header validation waits until decryption.
-func isEncryptedInferenceRequest(ctx *fasthttp.RequestCtx) bool {
-	values := ctx.Request.Header.PeekAll(fasthttp.HeaderContentType)
-	return len(values) == 1 && isContentType(values[0], e2ee.ContentType)
-}
-
-func isInferencePath(path []byte) bool {
-	_, ok := catalog.RouteForPath(string(path))
+func isInferencePath(path string) bool {
+	_, ok := catalog.RouteForPath(path)
 	return ok
 }
 
-func chain(handler fasthttp.RequestHandler, middlewares ...func(fasthttp.RequestHandler) fasthttp.RequestHandler) fasthttp.RequestHandler {
-	wrapped := handler
+func chain(handler requestHandler, middlewares ...func(requestHandler) requestHandler) requestHandler {
 	for i := len(middlewares) - 1; i >= 0; i-- {
-		wrapped = middlewares[i](wrapped)
+		handler = middlewares[i](handler)
 	}
-	return wrapped
+	return handler
+}
+
+func isGatewayRequestPath(path string) bool {
+	return path == policyValidationPath || isInferencePath(path)
 }

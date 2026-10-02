@@ -11,10 +11,12 @@
   #:use-module (guix utils)
   #:export (pkg
             stogas-edk2-amdsev-ovmf
-            stogas-go-1-26
+            stogas-go-1-27
             stogas-igvmmeasure
             stogas-linux-6-18
             stogas-systemd-uki-tools
+            stogas-verifier-offline
+	        stogas-verifier-lock
             stogas-virt-firmware-rs-tools
             stogas-release-root))
 
@@ -45,20 +47,21 @@
 (define %linux-6-18
   (specification->package "linux-libre@6.18.38"))
 
+;; Go 1.27 uses the same recipe and Go 1.24.6+ bootstrap as Go 1.26.
 (define %go-1-26
   (specification->package "go@1.26.4"))
 
-(define stogas-go-1-26
+(define stogas-go-1-27
   (package
     (inherit %go-1-26)
     (name "stogas-go")
-    (version "1.26.5")
+    (version "1.27.1")
     (source
      (origin
        (method url-fetch)
-       (uri "https://go.dev/dl/go1.26.5.src.tar.gz")
+       (uri "https://go.dev/dl/go1.27.1.src.tar.gz")
        (sha256
-        (base32 "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"))))
+        (base32 "1c9qn8m8cpxldnw97mhj2g5f7w2l5hzij9s62sv1dn96w6x8lh2f"))))
     (arguments
      (substitute-keyword-arguments (package-arguments %go-1-26)
        ((#:phases phases)
@@ -103,6 +106,7 @@
 	                                  "USER_NS"
 	                                  "VIRTIO_PCI_LEGACY"))
 	                      (built-ins '("ACPI"
+	                                   "ACPI_BUTTON"
 	                                   "AMD_MEM_ENCRYPT"
 	                                   "BINFMT_ELF"
 	                                   "BLK_DEV_INITRD"
@@ -122,6 +126,8 @@
 	                                   "FW_CFG_SYSFS"
 	                                   "HARDENED_USERCOPY"
 	                                   "INET"
+	                                   "INPUT"
+	                                   "INPUT_EVDEV"
 	                                   "INIT_ON_ALLOC_DEFAULT_ON"
 	                                   "IPV6"
 	                                   "IP_PNP"
@@ -351,9 +357,9 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                (pkg "grub-efi")
                (pkg "mtools"))))))
 
-(define (rust-tool-package name version source source-directory vendor lock
+(define* (rust-tool-package name version source source-directory vendor lock
                            vendor-sha256 config-body build-command binaries
-                           synopsis)
+                           synopsis #:key (output-directory "bin"))
   (package
     (name name)
     (version version)
@@ -398,7 +404,7 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
           (replace 'install
             (lambda _
               (with-directory-excursion #$source-directory
-                (let ((bin (string-append #$output "/bin")))
+                (let ((bin (string-append #$output "/" #$output-directory)))
                   (mkdir-p bin)
                   (for-each
                    (lambda (binary)
@@ -477,3 +483,52 @@ directory = \"vendor\"
        (invoke "cargo" "build" "--release" "--locked" "--offline"))
    '("igvmmeasure")
    "Pinned standalone SVSM igvmmeasure tool"))
+
+
+(define %verifier-build-root
+  (let ((root (getenv "STOGAS_VERIFIER_BUILD_ROOT")))
+    (and root (not (string-null? root)) root)))
+
+(define (verifier-input path name)
+  (local-file (string-append %verifier-build-root "/" path) name))
+
+(define stogas-verifier-lock
+  (if %verifier-build-root
+      (verifier-input "source/Cargo.lock" "stogas-verifier-Cargo.lock")
+      (release-file "locks/stogas-verifier.Cargo.lock" "stogas-verifier-Cargo.lock")))
+
+(define stogas-verifier-offline
+  (rust-tool-package
+   "stogas-verifier-offline"
+   "0.1.0-alpha.1"
+   (if %verifier-build-root
+     (local-file (string-append %verifier-build-root "/source")
+                 "stogas-verifier-source" #:recursive? #t)
+     (origin
+     (method url-fetch)
+     (uri "https://github.com/StogasAI/verifier/archive/09dd12d2265ade5749429ad7a0d1b60d3625b864.tar.gz")
+     (sha256 (base32 "0xwrxw3y0h06rwqc5cvpflckqpnlnmg7mxa5sziz1kqi5lmzz8i2"))))
+   "."
+   (if %verifier-build-root
+       (local-file (string-append %verifier-build-root "/vendor")
+                   "stogas-verifier-vendor" #:recursive? #t)
+       (release-file "vendor/stogas-verifier/vendor" "stogas-verifier-vendor" #:recursive? #t))
+   stogas-verifier-lock
+   (if %verifier-build-root
+       #~(call-with-input-file #$(verifier-input "vendor.sha256" "stogas-verifier-vendor.sha256") read-line)
+       "760d3480987c945475fa067a50f632dfc603105ad9101df1e639914088a14dcd")
+   "[source.crates-io]
+replace-with = \"vendored-sources\"
+[source.vendored-sources]
+directory = \"vendor\"
+"
+   #~(begin
+       (setenv "RUSTFLAGS" "--remap-path-prefix=.=source")
+       (invoke "cargo" "test" "--release" "--locked" "--offline"
+               "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
+               "--no-default-features" "--features" "staging")
+       (invoke "cargo" "build" "--release" "--locked" "--offline"
+               "-p" "stogas-verifier-ffi" "--no-default-features" "--features" "staging"))
+   '("libstogas_verifier_ffi.a")
+   "Offline confidential evidence verifier with explicit environment selection"
+   #:output-directory "lib"))

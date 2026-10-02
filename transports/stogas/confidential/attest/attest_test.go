@@ -22,14 +22,12 @@ func TestConfigFSQuoteBuildsEnvelopeAndCleansUpReportInstance(t *testing.T) {
 	}
 	privlevel := 2
 	quote, err := ConfigFS{
-		Root:             "/config/tsm/report",
-		NamePrefix:       "node-",
-		PrivilegeLevel:   &privlevel,
-		ServiceProvider:  "svsm",
-		ReadAuxBlob:      true,
-		ReadManifestBlob: true,
-		Random:           bytes.NewReader([]byte("0123456789abcdef")),
-		FileSystem:       fs,
+		Root:            "/config/tsm/report",
+		NamePrefix:      "node-",
+		PrivilegeLevel:  &privlevel,
+		ServiceProvider: "svsm",
+		Random:          bytes.NewReader([]byte("0123456789abcdef")),
+		FileSystem:      fs,
 	}.Quote(context.Background(), reportData)
 	if err != nil {
 		t.Fatal(err)
@@ -46,8 +44,6 @@ func TestConfigFSQuoteBuildsEnvelopeAndCleansUpReportInstance(t *testing.T) {
 		t.Fatalf("unexpected provider: %s", envelope.Provider)
 	}
 	assertBase64URL(t, "report", envelope.Report, []byte("sev-snp-report"))
-	assertBase64URL(t, "auxblob", envelope.AuxBlob, []byte("cert-table"))
-	assertBase64URL(t, "manifestblob", envelope.ManifestBlob, []byte("manifest"))
 
 	dir := "/config/tsm/report/node-30313233343536373839616263646566"
 	report := fs.reports[dir]
@@ -257,6 +253,9 @@ func (fs *fakeConfigFS) Mkdir(name string, perm os.FileMode) error {
 }
 
 func (fs *fakeConfigFS) ReadFile(name string) ([]byte, error) {
+	if filepath.Base(name) == "auxblob" || filepath.Base(name) == "manifestblob" {
+		panic("quotes must not fetch collateral or manifest blobs")
+	}
 	report, base, err := fs.lookup(name)
 	if err != nil {
 		return nil, err

@@ -207,7 +207,9 @@
                 (((path . store-path) . rest)
                  (format port "~a:~a~a"
                          (json-string path)
-                         (json-string (sha256 store-path))
+                         (json-string (if (file-is-directory? store-path)
+                                          (tree-sha256 store-path)
+                                          (sha256 store-path)))
                          (if (null? rest) "" ","))
                  (loop rest)))))
 
@@ -324,6 +326,12 @@
 	                   (string-append #$source "/transports/go.mod"))
 	             (cons "transports/go.sum"
 	                   (string-append #$source "/transports/go.sum"))
+	             (cons "stogas/release/locks/stogas-verifier.Cargo.lock"
+	                   #$stogas-verifier-lock)
+	             (cons "verifier/source"
+	                   #$(package-source stogas-verifier-offline))
+	             (cons "verifier/libstogas_verifier_ffi.a"
+	                   #$(file-append stogas-verifier-offline "/lib/libstogas_verifier_ffi.a"))
 	             (cons "guix/nss-certs/ca-certificates.crt"
 	                   ca-bundle)
 	             (cons "stogas/release/vendor/go-vendor.sha256"
@@ -341,7 +349,12 @@
 	          (setenv "GOENV" "off")
           (setenv "GOTOOLCHAIN" "local")
           (setenv "GOWORK" "off")
-          (setenv "CGO_ENABLED" "0")
+          (setenv "CGO_ENABLED" "1")
+          (setenv "CC" #$(file-append (pkg "gcc-toolchain") "/bin/gcc"))
+          (setenv "C_INCLUDE_PATH" #$(file-append (pkg "gcc-toolchain") "/include"))
+          (setenv "CGO_LDFLAGS"
+                  (string-append "-L" #$(file-append stogas-verifier-offline "/lib")
+                                 " -L" #$(file-append (gexp-input (pkg "gcc-toolchain") "static") "/lib")))
           (setenv "HOME" work)
           (setenv "GOCACHE" (string-append work "/go-build-cache"))
           (setenv "PATH"
@@ -349,7 +362,8 @@
                                  #$(file-append (pkg "coreutils") "/bin") ":"
                                  #$(file-append (pkg "cpio") "/bin") ":"
                                  #$(file-append (pkg "findutils") "/bin") ":"
-                                 #$(file-append stogas-go-1-26 "/bin") ":"
+                                 #$(file-append stogas-go-1-27 "/bin") ":"
+                                 #$(file-append (pkg "gcc-toolchain") "/bin") ":"
                                  #$(file-append (pkg "zstd") "/bin") ":"
                                  #$(file-append stogas-igvmmeasure "/bin") ":"
                                  #$(file-append stogas-virt-firmware-rs-tools "/bin")))
@@ -362,10 +376,9 @@
 	          (mkdir-p rootfs)
 	          (mkdir-p (string-append rootfs "/stogas"))
 	          (mkdir-p (string-append rootfs "/etc"))
-	          (call-with-output-file (string-append rootfs "/etc/resolv.conf")
-            (lambda (port)
-              (display "nameserver 10.0.2.3\noptions timeout:2 attempts:2\n" port)))
-          (chmod (string-append rootfs "/etc/resolv.conf") #o444)
+          ;; Kernel DHCP exports resolver configuration before init starts.
+          ;; Keep one measured image independent of deployment subnet addresses.
+          (symlink "/proc/net/pnp" (string-append rootfs "/etc/resolv.conf"))
           (mkdir-p (dirname rootfs-ca-bundle))
           (write-ca-bundle ca-bundle-source-dir ca-bundle)
           (copy-file ca-bundle rootfs-ca-bundle)
@@ -383,12 +396,14 @@
 	            (invoke "go" "build"
                     "-trimpath"
                     "-buildvcs=false"
+                    "-tags=stogas_offline,netgo,osusergo"
                     (string-append
-                      "-ldflags=-buildid= -s -w -X github.com/maximhq/bifrost/transports/stogas.GatewayVersion="
+                      "-ldflags=-linkmode=external -extldflags \"-static -Wl,--gc-sections,--build-id=none\" -buildid= -s -w -X github.com/maximhq/bifrost/transports/stogas.GatewayVersion="
                       #$%release-tag)
                     "-mod=vendor"
                     "-o" (string-append rootfs "/stogas/gateway.init")
                     "./cmd/stogas-gateway")
+	            (setenv "CGO_ENABLED" "0")
 	            (invoke "go" "build"
                     "-trimpath"
                     "-buildvcs=false"
@@ -450,7 +465,10 @@
          (pkg "coreutils")
          (pkg "cpio")
          (pkg "findutils")
-         stogas-go-1-26
+         stogas-go-1-27
+         (pkg "gcc-toolchain")
+         (list (pkg "gcc-toolchain") "static")
+         stogas-verifier-offline
          (pkg "nss-certs")
          (pkg "zstd")
          stogas-edk2-amdsev-ovmf

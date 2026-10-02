@@ -1,142 +1,64 @@
 package policy
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
+
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
 var ErrRequestPolicyDenied = errors.New("request policy is not permitted by this API key")
 
-// ApplyRequest returns a new immutable configuration. A cached key policy must
-// never retain request filters or ordering from one client request to the next.
-func ApplyRequest(parent *Config, raw []byte) (*Config, error) {
-	if parent == nil || (parent.Routing.RequestPolicy != "filter" && parent.Routing.RequestPolicy != "filter_and_sort") {
-		return nil, ErrRequestPolicyDenied
-	}
+// Request is compiled once, then applied to each candidate's immutable saved policy.
+type Request struct {
+	source   *Source
+	sections Permission
+}
+
+func CompileRequest(raw []byte, organizationID string, key customerkey.Keys) (*Request, error) {
 	if len(raw) == 0 || len(raw) > 16<<10 {
 		return nil, configError("request policy exceeds the size limit")
 	}
-	var request struct {
-		Version int `json:"version"`
-		Routing *struct {
-			Query   *string              `json:"query"`
-			Allowed *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-		} `json:"routing"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		return nil, configError("invalid request policy: %v", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, configError("request policy has trailing JSON")
-	}
-	if request.Version != 1 || request.Routing == nil || (request.Routing.Query == nil && request.Routing.Allowed == nil) {
-		return nil, configError("request policy requires version 1 and a routing query or allowed catalog nodes")
-	}
-	// Null is not a way to remove a parent restriction.
-	var object map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, configError("invalid request policy")
-	}
-	if len(object) != 2 || object["version"] == nil || object["routing"] == nil {
-		return nil, configError("request policy fields must be version and routing")
-	}
-	var routing map[string]json.RawMessage
-	if err := json.Unmarshal(object["routing"], &routing); err != nil {
-		return nil, configError("invalid request routing")
-	}
-	for name, value := range routing {
-		if name != "query" && name != "allowedCatalogNodes" {
-			return nil, configError("unknown request routing field")
-		}
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return nil, configError("request routing fields cannot be null")
-		}
-	}
-	var child *Query
-	if request.Routing.Query != nil {
-		var err error
-		child, err = CompileQuery(*request.Routing.Query)
-		if err != nil {
-			return nil, err
-		}
-		if parent.Routing.RequestPolicy == "filter" && len(child.OrderBy) > 0 {
-			return nil, ErrRequestPolicyDenied
-		}
-	}
-	if a := request.Routing.Allowed; a != nil {
-		if err := a.validate(); err != nil {
-			return nil, err
-		}
-		if len(a.Authors)+len(a.Models)+len(a.Deployments)+len(a.Routes)+len(a.Providers) > 64 {
-			return nil, configError("request policy exceeds the allowed catalog node limit")
-		}
-		var lists map[string]json.RawMessage
-		if err := json.Unmarshal(routing["allowedCatalogNodes"], &lists); err != nil {
-			return nil, configError("invalid catalog node lists")
-		}
-		for name, value := range lists {
-			switch name {
-			case "authors", "models", "deployments", "routes", "providers":
-			default:
-				return nil, configError("unknown catalog node list")
-			}
-			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return nil, configError("catalog node lists cannot be null")
-			}
-		}
-	}
-	out := *parent
-	out.Routing = parent.Routing
-	out.Routing.Query = intersectQueries(parent.Routing.Query, child)
-	out.Routing.AllowedCatalogNodes = intersectAllowedNodes(parent.Routing.AllowedCatalogNodes, request.Routing.Allowed)
-	if err := out.Routing.Query.validate(); err != nil {
+	document, err := ParseSourceDocument(raw)
+	if err != nil {
 		return nil, err
 	}
-	if err := out.Routing.AllowedCatalogNodes.validate(); err != nil {
+	if document.usedSections&^requestPermissions != 0 {
+		return nil, configError("request policies cannot set limits, delegation, or encryption settings")
+	}
+	source, err := document.Open(organizationID, key)
+	if err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return &Request{source: source, sections: document.usedSections}, nil
 }
 
-func intersectQueries(parent, child *Query) *Query {
-	if child == nil {
-		return parent
+// ApplyRequest returns a new immutable configuration. Request settings never
+// modify a cached saved policy or remove its restrictions.
+func ApplyRequest(parent *Config, request *Request) (*Config, error) {
+	if request == nil {
+		return parent, nil
 	}
-	if parent == nil {
-		return child
+	if parent == nil || request.sections&^Permission(parent.RequestPermission) != 0 {
+		return nil, ErrRequestPolicyDenied
 	}
-	out := &Query{Where: parent.Where, OrderBy: append([]Sort{}, parent.OrderBy...)}
-	if child.Where != nil {
-		if out.Where == nil {
-			out.Where = child.Where
-		} else {
-			operands := []*Expression{out.Where}
-			if out.Where.Kind == "and" {
-				operands = append([]*Expression{}, out.Where.Operands...)
-			}
-			out.Where = &Expression{Kind: "and", Operands: append(operands, child.Where)}
-		}
+	source := request.source
+	if source.RequiredEncryptionKeyID != "" && !customerkey.Registered(parent.EncryptionKeys, source.RequiredEncryptionKeyID) {
+		return nil, customerkey.ErrKey
 	}
-	for _, item := range child.OrderBy {
-		if len(out.OrderBy) > 0 && out.OrderBy[len(out.OrderBy)-1].Path == "deployment.id" {
-			break
-		}
-		found := false
-		for _, existing := range out.OrderBy {
-			if existing.Path == item.Path {
-				found = true
-				break
-			}
-		}
-		if !found {
-			out.OrderBy = append(out.OrderBy, item)
-		}
+	if len(parent.sources) == 0 {
+		return nil, configError("request policies require compiled saved sources")
 	}
-	return out
+	sources := append([]ScopedSource{}, parent.sources...)
+	sources = append(sources, ScopedSource{Scope: RequestScope, Value: source})
+	return ComposeSources(sources)
+}
+
+func (r *Request) CompileRedaction() (*redaction.Policy, error) {
+	if r == nil {
+		return nil, nil
+	}
+	return CompileRedaction(r.source.Config)
 }
 
 func intersectAllowedNodes(parent, child *AllowedCatalogNodes) *AllowedCatalogNodes {
@@ -159,9 +81,13 @@ func intersectIDs(parent, child []string) []string {
 	if parent == nil {
 		return child
 	}
+	allowed := make(map[string]bool, len(child))
+	for _, id := range child {
+		allowed[id] = true
+	}
 	out := make([]string, 0, len(parent))
 	for _, id := range parent {
-		if allowedNode(child, id) {
+		if allowed[id] {
 			out = append(out, id)
 		}
 	}

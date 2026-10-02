@@ -68,7 +68,7 @@ func TestEveryEntityHasAStableTypedPlaceholder(t *testing.T) {
 			t.Errorf("entities %d and %d share placeholder %q", previous, entity, want)
 		}
 		seen[want] = entity
-		out, changed, err := New().redactBytes([]byte(want))
+		out, changed, err := newTestRedactor().redactBytes([]byte(want))
 		if err != nil || changed || string(out) != want {
 			t.Errorf("placeholder %q was not idempotent: output=%q changed=%t err=%v", want, out, changed, err)
 		}
@@ -106,7 +106,7 @@ func TestScannerMasksCoverEveryBuiltInEntityOnce(t *testing.T) {
 
 func TestSummaryReportsBoundedPluginDuration(t *testing.T) {
 	t.Parallel()
-	redactor := &Redactor{items: 2, duration: 1_234*time.Microsecond + 999*time.Nanosecond}
+	redactor := &Redactor{policy: testDetectorPolicy, items: 2, duration: 1_234*time.Microsecond + 999*time.Nanosecond}
 	if summary := redactor.Summary(); summary.ItemsRedacted != 2 || summary.DurationUS != 1_234 {
 		t.Fatalf("summary = %#v", summary)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -63,6 +64,60 @@ func azureTestResolution() *catalog.ResolvedRequest {
 			},
 		},
 		Provider: schemas.Azure,
+	}
+}
+
+func TestAzureCredentialEligibilityUsesOnlyLiveCompatibleBindings(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name    string
+		change  func(*billing.AzureBinding)
+		expired bool
+		want    error
+	}{
+		{"compatible", func(*billing.AzureBinding) {}, false, nil},
+		{"expired", func(*billing.AzureBinding) {}, true, billing.ErrByokTarget},
+		{"wrong model", func(b *billing.AzureBinding) { b.ModelName = "other" }, false, billing.ErrByokTarget},
+		{"untrusted endpoint", func(b *billing.AzureBinding) { b.Endpoint = "https://example.com" }, false, billing.ErrByokTarget},
+		{"wrong scope", func(b *billing.AzureBinding) { b.TokenScope = "https://example.com/.default" }, false, billing.ErrByokTarget},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binding := azureTestBinding()
+			test.change(&binding)
+			var expires *time.Time
+			if test.expired {
+				value := now.Add(-time.Second)
+				expires = &value
+			}
+			snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"azure": {{Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: binding, ModelDeprecationAt: expires}}}}}}}
+			eligible := CredentialDeploymentFilter(snapshot, now)
+			if got := eligible(schemas.Azure, 0, azureTestResolution().Deployment); got != (test.want == nil) {
+				t.Fatalf("eligible=%v want=%v", got, test.want == nil)
+			}
+			if !eligible(schemas.OpenAI, 0, catalog.Deployment{}) {
+				t.Fatal("Azure target metadata affected another provider")
+			}
+		})
+	}
+}
+
+func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t *testing.T) {
+	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
+		"azure": {{Mode: "stored", Credential: &billing.CachedCredential{Bindings: []billing.AzureCredentialBinding{{AzureBinding: azureTestBinding()}}}}},
+	}}
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		body := `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`
+		if path == "/v1/responses" {
+			body = `{"model":"gpt-5.6-sol","input":"hello"}`
+		}
+		resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+			Body: []byte(body), Method: "POST", Path: path,
+			AvailableCredentials: map[string][]int{"azure": {0}},
+			DeploymentEligible:   CredentialDeploymentFilter(snapshot, time.Now()),
+		})
+		if err != nil || resolved == nil || resolved.Deployment.ID != "azure-gpt-5.6-sol" {
+			t.Fatalf("result=%v error=%v", resolved, err)
+		}
 	}
 }
 

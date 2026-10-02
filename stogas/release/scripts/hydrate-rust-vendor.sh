@@ -163,8 +163,47 @@ hydrate_igvmmeasure() {
   fi
 }
 
+hydrate_stogas_verifier() {
+  if [ -n "${STOGAS_VERIFIER_BUILD_ROOT:-}" ]; then
+    local source="$tmp/stogas-verifier"
+    cp -a "$STOGAS_VERIFIER_BUILD_ROOT/source" "$source"
+    cargo_vendor "$source"
+    cp -R "$source/vendor" "$STOGAS_VERIFIER_BUILD_ROOT/vendor"
+    stable_tree_hash "$STOGAS_VERIFIER_BUILD_ROOT/vendor" > "$STOGAS_VERIFIER_BUILD_ROOT/vendor.sha256"
+    return
+  fi
+  local name="stogas-verifier"
+  local archive="$tmp/$name.tar.gz"
+  local source="$tmp/$name"
+  local cache="$release_root/vendor/$name"
+  local expected
+  expected="$(json releaseSources.stogasVerifier.cargoVendorSha256)"
+  if vendor_cache_valid "$cache/vendor" "$expected"; then
+    return
+  fi
+  download_verified "$name" \
+    "$(json releaseSources.stogasVerifier.url)" \
+    "$(json releaseSources.stogasVerifier.sha256)" \
+    "$archive"
+  mkdir -p "$source"
+  tar --extract --file="$archive" --strip-components=1 --directory="$source" \
+    --no-same-owner --no-same-permissions
+  cmp "$source/Cargo.lock" "$release_root/locks/stogas-verifier.Cargo.lock"
+  cargo_vendor "$source"
+  local actual
+  actual="$(stable_tree_hash "$source/vendor")"
+  if [ "$actual" != "$expected" ]; then
+    echo "$name vendor hash mismatch: expected $expected, got $actual" >&2
+    exit 70
+  fi
+  rm -rf "$cache"
+  mkdir -p "$cache"
+  cp -R "$source/vendor" "$cache/vendor"
+}
+
 mkdir -p "$release_root/vendor"
 hydrate_virt_firmware_rs
 hydrate_igvmmeasure
+hydrate_stogas_verifier
 
 echo "Rust vendor cache hydrated at $release_root/vendor"

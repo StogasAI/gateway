@@ -145,6 +145,7 @@ func (provider *FireworksProvider) ChatCompletion(ctx *schemas.BifrostContext, k
 			request,
 			anthropic.AnthropicRequestBuildConfig{
 				Provider:                  schemas.Fireworks,
+				BetaHeaderOverrides:       provider.networkConfig.BetaHeaderOverrides,
 				ShouldSendBackRawRequest:  provider.sendBackRawRequest,
 				ShouldSendBackRawResponse: provider.sendBackRawResponse,
 			},
@@ -241,6 +242,8 @@ func (provider *FireworksProvider) Responses(ctx *schemas.BifrostContext, key sc
 			request,
 			anthropic.AnthropicRequestBuildConfig{
 				Provider:                  schemas.Fireworks,
+				ValidateTools:             true,
+				BetaHeaderOverrides:       provider.networkConfig.BetaHeaderOverrides,
 				ShouldSendBackRawRequest:  provider.sendBackRawRequest,
 				ShouldSendBackRawResponse: provider.sendBackRawResponse,
 			},
@@ -273,6 +276,7 @@ func (provider *FireworksProvider) ResponsesStream(ctx *schemas.BifrostContext, 
 	if anthropic.ResolveUseAnthropicEndpoints(ctx, key) {
 		jsonData, bifrostErr := anthropic.BuildAnthropicResponsesRequestBody(ctx, request, anthropic.AnthropicRequestBuildConfig{
 			Provider:                  schemas.Fireworks,
+			ValidateTools:             true,
 			IsStreaming:               true,
 			ShouldSendBackRawRequest:  provider.sendBackRawRequest,
 			ShouldSendBackRawResponse: provider.sendBackRawResponse,
@@ -335,6 +339,7 @@ func (provider *FireworksProvider) Embedding(ctx *schemas.BifrostContext, key sc
 		provider.GetProviderKey(),
 		providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest),
 		providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse),
+		nil,
 		nil,
 		provider.logger,
 	)
@@ -418,6 +423,11 @@ func (provider *FireworksProvider) VideoDelete(_ *schemas.BifrostContext, _ sche
 // VideoList is not supported by Fireworks AI provider.
 func (provider *FireworksProvider) VideoList(_ *schemas.BifrostContext, _ schemas.Key, _ *schemas.BifrostVideoListRequest) (*schemas.BifrostVideoListResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.VideoListRequest, provider.GetProviderKey())
+}
+
+// VideoEdit is not supported by the Fireworks provider.
+func (provider *FireworksProvider) VideoEdit(_ *schemas.BifrostContext, _ schemas.Key, _ *schemas.BifrostVideoEditRequest) (*schemas.BifrostVideoEditResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError(schemas.VideoEditRequest, provider.GetProviderKey())
 }
 
 // VideoRemix is not supported by Fireworks AI provider.

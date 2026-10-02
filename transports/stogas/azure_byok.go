@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -31,6 +32,47 @@ type azureByokCredential struct {
 	Schema          string   `json:"schema"`
 	SubscriptionIDs []string `json:"subscriptionIds"`
 	TenantID        string   `json:"tenantId"`
+}
+
+// CredentialDeploymentFilter narrows catalog candidates using cached public
+// target metadata. It never decrypts secrets or contacts the provider. The hold
+// still checks the selected credential and chooses its live binding atomically.
+func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Time) func(schemas.ModelProvider, int, catalog.Deployment) bool {
+	selections := snapshot.Credentials["azure"]
+	return func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) bool {
+		if provider != schemas.Azure {
+			return true
+		}
+		if index < 0 || index >= len(selections) || selections[index].Credential == nil {
+			return false
+		}
+		for _, item := range selections[index].Credential.Bindings {
+			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) {
+				continue
+			}
+			binding := item.AzureBinding
+			if deployment.DataHandling.StorageLocation == "none" {
+				binding.StorageLocation = "none"
+			}
+			if validAzureBinding(binding, deployment.Upstream, deployment.DataHandling) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// ValidatePreparedCredential checks the selected secret before input work.
+func ValidatePreparedCredential(credential *billing.PreparedCredential, provider schemas.ModelProvider) error {
+	if credential == nil {
+		return billing.ErrByok
+	}
+	if provider == schemas.Azure {
+		if _, err := parseAzureByokCredential(credential.Secret); err != nil {
+			return billing.ErrByok
+		}
+	}
+	return nil
 }
 
 func azureDirectKey(authorization *billing.Authorization, resolution *catalog.ResolvedRequest) (schemas.Key, string, error) {

@@ -2,7 +2,10 @@ package chutese2ee
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +26,38 @@ type Options struct {
 	RequireProductionOrigin bool
 	RequirePostQuantumTLS   bool
 	RequestTimeout          time.Duration
+}
+
+type invocationMetadataKey struct{}
+
+// InvocationMetadata returns only the selected attempt's public provider facts.
+// The transport publishes one immutable map before dispatch; tickets and keys stay private.
+func InvocationMetadata(ctx context.Context) map[string]any {
+	if ctx == nil {
+		return nil
+	}
+	metadata, _ := ctx.Value(invocationMetadataKey{}).(map[string]any)
+	return metadata
+}
+
+func setInvocationMetadata(ctx context.Context, ticket *reservedTicket) {
+	setter, ok := ctx.(interface{ SetValue(any, any) })
+	if !ok {
+		return
+	}
+	var metadata map[string]any
+	if ticket != nil {
+		key, err := base64.StdEncoding.DecodeString(ticket.PublicKey)
+		if err != nil {
+			return
+		}
+		digest := sha256.Sum256(key)
+		metadata = map[string]any{"name": "chutes", "instance_id": ticket.InstanceID, "encryption_key_sha256": hex.EncodeToString(digest[:])}
+		if ticket.MeasurementName != "" && ticket.MeasurementVersion != "" {
+			metadata["measurement"] = map[string]string{"name": ticket.MeasurementName, "version": ticket.MeasurementVersion}
+		}
+	}
+	setter.SetValue(invocationMetadataKey{}, metadata)
 }
 
 type Transport struct {
@@ -250,6 +285,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 	}()
 	credential.diagnostics.registerModel(chuteID, metadata.Model)
 	for attempt := 0; attempt < maximumInvokeAttempts; attempt++ {
+		setInvocationMetadata(ctx, nil)
 		ticket, reserveErr := credential.pools.reserve(ctx, target)
 		if reserveErr != nil {
 			if err := ctx.Err(); err != nil {
@@ -269,6 +305,7 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 			return false, err
 		}
 		configureInvokeRequest(request, credential, ticket, encrypted.Body, metadata.Stream, originalPath)
+		setInvocationMetadata(ctx, &ticket)
 		if metadata.Stream {
 			streamOwnsCredential, streamErr := t.roundTripStream(
 				ctx,

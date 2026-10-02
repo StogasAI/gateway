@@ -2,22 +2,26 @@ package stogashttp
 
 import (
 	"bytes"
+	"log"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestSecureFastHTTPLoggerDropsInputAndBoundsEvents(t *testing.T) {
+func TestSecureHTTPLoggerDropsInputAndBoundsEvents(t *testing.T) {
 	var output bytes.Buffer
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
-	logger := newSecureFastHTTPLogger(&output)
+	logger := newSecureHTTPLogWriter(&output)
 	logger.now = func() time.Time { return now }
 
-	logger.Printf("error when serving connection %q: %v", "secret-address", "SECRET malformed request body")
-	logger.Printf("%s", "SECOND_SECRET")
+	log.New(logger, "", 0).Printf("error when serving connection %q: %v", "secret-address", "SECRET malformed request body")
+	log.New(logger, "", 0).Printf("%s", "SECOND_SECRET")
 
 	first := output.String()
-	if first != string(fastHTTPLogLine) {
+	if logger.errors.Load() != 2 {
+		t.Fatal("suppressed server errors were not counted")
+	}
+	if first != string(httpLogLine) {
 		t.Fatalf("first log = %q, want one fixed event", first)
 	}
 	for _, forbidden := range []string{"secret-address", "SECRET", "malformed request body"} {
@@ -26,9 +30,9 @@ func TestSecureFastHTTPLoggerDropsInputAndBoundsEvents(t *testing.T) {
 		}
 	}
 
-	now = now.Add(fastHTTPLogInterval)
-	logger.Printf("%s", "THIRD_SECRET")
-	if output.String() != string(fastHTTPLogLine)+string(fastHTTPLogLine) {
-		t.Fatalf("log throttle did not reopen after %s: %q", fastHTTPLogInterval, output.String())
+	now = now.Add(httpLogInterval)
+	log.New(logger, "", 0).Printf("%s", "THIRD_SECRET")
+	if output.String() != string(httpLogLine)+string(httpLogLine) {
+		t.Fatalf("log throttle did not reopen after %s: %q", httpLogInterval, output.String())
 	}
 }

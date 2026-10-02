@@ -4,10 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/tidwall/gjson"
+	"github.com/valyala/fasthttp"
 )
 
 func TestExtractTypesFromValue(t *testing.T) {
@@ -716,99 +721,6 @@ func TestConvertResponsesTextConfigToAnthropicOutputFormatPreservesLegacyDefinit
 	}
 }
 
-func TestValidateToolsForProvider(t *testing.T) {
-	tests := []struct {
-		name      string
-		tools     []schemas.ResponsesTool
-		provider  schemas.ModelProvider
-		expectErr bool
-	}{
-		{
-			name:      "Anthropic allows web_search",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebSearch}},
-			provider:  schemas.Anthropic,
-			expectErr: false,
-		},
-		{
-			name:      "Anthropic allows web_fetch",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebFetch}},
-			provider:  schemas.Anthropic,
-			expectErr: false,
-		},
-		{
-			name:      "Vertex allows web_search",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebSearch}},
-			provider:  schemas.Vertex,
-			expectErr: false,
-		},
-		{
-			name:      "Vertex rejects web_fetch",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebFetch}},
-			provider:  schemas.Vertex,
-			expectErr: true,
-		},
-		{
-			name:      "Vertex rejects code_interpreter",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeCodeInterpreter}},
-			provider:  schemas.Vertex,
-			expectErr: true,
-		},
-		{
-			name:      "Vertex rejects MCP",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeMCP}},
-			provider:  schemas.Vertex,
-			expectErr: true,
-		},
-		{
-			name:     "Bedrock allows web_search (nova_grounding via Responses path)",
-			tools:    []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebSearch}},
-			provider: schemas.Bedrock,
-		},
-		{
-			name:      "Bedrock rejects web_fetch",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebFetch}},
-			provider:  schemas.Bedrock,
-			expectErr: true,
-		},
-		{
-			name:      "Bedrock allows computer_use",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeComputerUsePreview}},
-			provider:  schemas.Bedrock,
-			expectErr: false,
-		},
-		{
-			name:      "Azure allows everything",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebFetch}, {Type: schemas.ResponsesToolTypeCodeInterpreter}, {Type: schemas.ResponsesToolTypeMCP}},
-			provider:  schemas.Azure,
-			expectErr: false,
-		},
-		{
-			name:      "Unknown provider allows all",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeWebFetch}},
-			provider:  "custom_provider",
-			expectErr: false,
-		},
-		{
-			name:      "Function tools always allowed",
-			tools:     []schemas.ResponsesTool{{Type: schemas.ResponsesToolTypeFunction}},
-			provider:  schemas.Bedrock,
-			expectErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateToolsForProvider(tt.tools, tt.provider)
-			if tt.expectErr && err == nil {
-				t.Errorf("expected error but got nil")
-			}
-			if !tt.expectErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-		})
-	}
-}
-
 func TestAddMissingBetaHeadersToContext_PerProvider(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -1347,13 +1259,13 @@ func TestFilterBetaHeadersForProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("Bedrock/drops_tool_search_beta_header", func(t *testing.T) {
-		// tool-search-tool-2025-10-19 is InvokeModel/InvokeModelWithResponseStream
-		// only per AWS's docs; classic Bedrock always uses Converse here, so this
-		// must never reach AWS regardless of what the client sends.
+	t.Run("Bedrock/keeps_tool_search_beta_header", func(t *testing.T) {
+		// tool-search-tool-2025-10-19 is InvokeModel-only per AWS's docs; the
+		// Bedrock provider routes tool_search requests to InvokeModel, so the
+		// header must survive (#6825).
 		result := FilterBetaHeadersForProvider([]string{AnthropicToolSearchBetaHeader}, schemas.Bedrock)
-		if len(result) != 0 {
-			t.Errorf("expected %q to be dropped for Bedrock, got %v", AnthropicToolSearchBetaHeader, result)
+		if !slices.Contains(result, AnthropicToolSearchBetaHeader) {
+			t.Errorf("expected %q to be kept for Bedrock, got %v", AnthropicToolSearchBetaHeader, result)
 		}
 	})
 
@@ -1684,9 +1596,10 @@ func TestStripUnsupportedFieldsFromRawBody(t *testing.T) {
 	})
 
 	t.Run("bedrock_keeps_input_examples_via_standalone_flag", func(t *testing.T) {
-		// Bedrock has InputExamples=true via tool-examples-2025-10-29 but
-		// AdvancedToolUse=false. input_examples should be KEPT; defer_loading
-		// and allowed_callers (bundle-only) should be STRIPPED.
+		// Bedrock has InputExamples=true via tool-examples-2025-10-29 and
+		// ToolSearch=true via InvokeModel routing (#6825), but
+		// AdvancedToolUse=false. input_examples and defer_loading should be
+		// KEPT; allowed_callers (bundle-only) should be STRIPPED.
 		input := []byte(`{
 			"model":"claude-opus-4-6",
 			"tools":[{"name":"t1","input_examples":[{"input":{"a":1}}],"defer_loading":true,"allowed_callers":["direct"]}]
@@ -1695,13 +1608,13 @@ func TestStripUnsupportedFieldsFromRawBody(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if !providerUtils.JSONFieldExists(result, "tools.0.input_examples") {
-			t.Errorf("expected tools[0].input_examples to survive on Bedrock, got: %s", string(result))
-		}
-		for _, path := range []string{"tools.0.defer_loading", "tools.0.allowed_callers"} {
-			if providerUtils.JSONFieldExists(result, path) {
-				t.Errorf("expected %q to be stripped for Bedrock (AdvancedToolUse bundle unsupported), got: %s", path, string(result))
+		for _, path := range []string{"tools.0.input_examples", "tools.0.defer_loading"} {
+			if !providerUtils.JSONFieldExists(result, path) {
+				t.Errorf("expected %q to survive on Bedrock, got: %s", path, string(result))
 			}
+		}
+		if providerUtils.JSONFieldExists(result, "tools.0.allowed_callers") {
+			t.Errorf("expected tools[0].allowed_callers to be stripped for Bedrock (AdvancedToolUse bundle unsupported), got: %s", string(result))
 		}
 	})
 
@@ -1861,6 +1774,38 @@ func TestStripUnsupportedFieldsFromRawBody(t *testing.T) {
 	})
 }
 
+// TestStripUnsupportedAnthropicFields_DiagnosticsGating mirrors the raw-path
+// diagnostics test on the typed path. Claude Code sends
+// diagnostics.previous_message_id on every request; the /anthropic integration
+// force-disables raw-body passthrough for non-native providers, so a Bedrock or
+// Vertex request reaches the typed sanitizer and 400s with
+// "diagnostics: Extra inputs are not permitted" if the field survives.
+func TestStripUnsupportedAnthropicFields_DiagnosticsGating(t *testing.T) {
+	t.Run("anthropic_keeps_diagnostics", func(t *testing.T) {
+		req := &AnthropicMessageRequest{
+			Model:       "claude-opus-4-7",
+			Diagnostics: &AnthropicDiagnostics{PreviousMessageID: nil},
+		}
+		stripUnsupportedAnthropicFields(req, schemas.Anthropic, "claude-opus-4-7")
+		if req.Diagnostics == nil {
+			t.Error("expected diagnostics preserved for Anthropic")
+		}
+	})
+
+	t.Run("non_native_providers_strip_diagnostics", func(t *testing.T) {
+		for _, provider := range []schemas.ModelProvider{schemas.Azure, schemas.Bedrock, schemas.Vertex} {
+			req := &AnthropicMessageRequest{
+				Model:       "claude-opus-4-7",
+				Diagnostics: &AnthropicDiagnostics{PreviousMessageID: nil},
+			}
+			stripUnsupportedAnthropicFields(req, provider, "claude-opus-4-7")
+			if req.Diagnostics != nil {
+				t.Errorf("expected diagnostics stripped for %s", provider)
+			}
+		}
+	})
+}
+
 // TestStripUnsupportedAnthropicFields_ContainerSkillsGating mirrors the raw-path
 // tests above on the typed path — ensures the typed sanitizer treats explicit
 // empty skills arrays as a stripable (not drop-triggering) signal.
@@ -1939,7 +1884,9 @@ func TestStripUnsupportedAnthropicFields_ToolSearchGating(t *testing.T) {
 		}
 	})
 
-	t.Run("bedrock_tool_search_false_strips_defer_loading", func(t *testing.T) {
+	t.Run("bedrock_tool_search_true_keeps_defer_loading", func(t *testing.T) {
+		// defer_loading rides on tool search, which Bedrock serves via
+		// InvokeModel routing (#6825), so it survives stripping.
 		req := &AnthropicMessageRequest{
 			Model: "claude-sonnet-4-5",
 			Tools: []AnthropicTool{
@@ -1947,8 +1894,8 @@ func TestStripUnsupportedAnthropicFields_ToolSearchGating(t *testing.T) {
 			},
 		}
 		stripUnsupportedAnthropicFields(req, schemas.Bedrock, "claude-sonnet-4-5")
-		if req.Tools[0].DeferLoading != nil {
-			t.Errorf("expected defer_loading to be stripped for Bedrock (ToolSearch=false), got %v", *req.Tools[0].DeferLoading)
+		if req.Tools[0].DeferLoading == nil || !*req.Tools[0].DeferLoading {
+			t.Errorf("expected defer_loading to survive for Bedrock (ToolSearch=true via InvokeModel routing), got %v", req.Tools[0].DeferLoading)
 		}
 	})
 }
@@ -2656,9 +2603,9 @@ func TestSupportsAdaptiveThinking(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got := SupportsAdaptiveThinking(tt.model)
+			got := schemas.ResolveModelCaps(schemas.Anthropic, tt.model).SupportsAdaptiveThinking(DefaultSupportsAdaptiveThinking(tt.model))
 			if got != tt.expected {
-				t.Errorf("SupportsAdaptiveThinking(%q) = %v, want %v", tt.model, got, tt.expected)
+				t.Errorf("schemas.ResolveModelCaps(schemas.Anthropic, %q).SupportsAdaptiveThinking() = %v, want %v", tt.model, got, tt.expected)
 			}
 		})
 	}
@@ -2802,8 +2749,8 @@ func TestIsAdaptiveOnlyThinkingModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			if got := IsAdaptiveOnlyThinkingModel(tt.model); got != tt.expected {
-				t.Errorf("IsAdaptiveOnlyThinkingModel(%q) = %v, want %v", tt.model, got, tt.expected)
+			if got := schemas.ResolveModelCaps(schemas.Anthropic, tt.model).AdaptiveOnlyThinking(DefaultAdaptiveOnlyThinking(tt.model)); got != tt.expected {
+				t.Errorf("schemas.ResolveModelCaps(schemas.Anthropic, %q).AdaptiveOnlyThinking() = %v, want %v", tt.model, got, tt.expected)
 			}
 		})
 	}
@@ -2851,7 +2798,7 @@ func TestSupportsMidConversationSystem(t *testing.T) {
 	for _, tt := range tests {
 		name := string(tt.provider) + "/" + tt.model
 		t.Run(name, func(t *testing.T) {
-			got := SupportsMidConversationSystem(tt.provider, tt.model)
+			got := schemas.ResolveModelCaps(tt.provider, tt.model).SupportsMidConversationSystem(DefaultSupportsMidConversationSystem(tt.provider, tt.model))
 			if got != tt.expected {
 				t.Errorf("SupportsMidConversationSystem(%q, %q) = %v, want %v", tt.provider, tt.model, got, tt.expected)
 			}
@@ -2896,9 +2843,9 @@ func TestSupportsFastMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got := SupportsFastMode(tt.model)
+			got := schemas.ResolveModelCaps(schemas.Anthropic, tt.model).SupportsFastMode(DefaultSupportsFastMode(tt.model))
 			if got != tt.expected {
-				t.Errorf("SupportsFastMode(%q) = %v, want %v", tt.model, got, tt.expected)
+				t.Errorf("SupportsFastMode(schemas.Anthropic, %q) = %v, want %v", tt.model, got, tt.expected)
 			}
 		})
 	}
@@ -2963,9 +2910,9 @@ func TestSupportsEffortParameter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.model, func(t *testing.T) {
-			got := SupportsEffortParameter(tt.model)
+			got := schemas.ResolveModelCaps(schemas.Anthropic, tt.model).SupportsNativeEffort(DefaultSupportsNativeEffort(tt.model))
 			if got != tt.expected {
-				t.Errorf("SupportsEffortParameter(%q) = %v, want %v", tt.model, got, tt.expected)
+				t.Errorf("SupportsEffortParameter(schemas.Anthropic, %q) = %v, want %v", tt.model, got, tt.expected)
 			}
 		})
 	}
@@ -3451,9 +3398,9 @@ func TestComputerUseGeneration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.model, func(t *testing.T) {
-			got := ComputerUseGeneration(tc.model)
+			got := ComputerUseGeneration(schemas.ResolveModelCaps(schemas.Anthropic, tc.model))
 			if got != tc.want {
-				t.Errorf("ComputerUseGeneration(%q) = %q, want %q", tc.model, got, tc.want)
+				t.Errorf("ComputerUseGeneration(schemas.Anthropic, %q) = %q, want %q", tc.model, got, tc.want)
 			}
 		})
 	}
@@ -4314,4 +4261,131 @@ func TestMidConversationToolChangesBetaHeaderRouting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Regression tests for maximhq/bifrost#6825 (InvokeModel routing on Bedrock).
+//
+// Bedrock model paths may carry a percent-encoded inference-profile ARN, e.g.
+// /model/arn%3Aaws%3Abedrock%3A...%3Aapplication-inference-profile%2Fabc%2Fglobal.anthropic.claude-sonnet-4-6/invoke.
+// net/http (the Converse path) sends that path verbatim. fasthttp, which the
+// shared anthropic handlers use, normalises the path on parse and re-quotes it
+// on write, so the ARN's %2F and %3A reach AWS as literal "/" and ":" and the
+// request lands on a route AWS does not have (UnknownOperationException). The
+// handlers must send the caller's escaping unchanged whenever the client asks
+// for it (fasthttp.Client.DisablePathNormalizing), including through the
+// streaming and large-response client clones the handlers build per request.
+
+const encodedARNModel = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123/global.anthropic.claude-sonnet-4-6"
+
+type recordedRequestURI struct {
+	mu  sync.Mutex
+	uri string
+}
+
+func (r *recordedRequestURI) set(v string) { r.mu.Lock(); r.uri = v; r.mu.Unlock() }
+func (r *recordedRequestURI) get() string  { r.mu.Lock(); defer r.mu.Unlock(); return r.uri }
+
+func encodedPathServer(t *testing.T, rec *recordedRequestURI, streaming bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// r.RequestURI is the request-target exactly as it arrived on the wire.
+		rec.set(r.RequestURI)
+		if streaming {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(anthropicMessageStart + anthropicTextDelta + anthropicMessageStop))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+}
+
+func assertEncodedPathPreserved(t *testing.T, got string) {
+	t.Helper()
+	want := "/model/" + url.PathEscape(encodedARNModel) + "/invoke"
+	if !strings.HasPrefix(got, want) {
+		t.Errorf("wire request-target lost the caller's percent-encoding\n got:  %s\n want: %s", got, want)
+	}
+}
+
+func TestHandleAnthropicResponsesRequest_PreservesEncodedPath(t *testing.T) {
+	rec := &recordedRequestURI{}
+	server := encodedPathServer(t, rec, false)
+	defer server.Close()
+
+	ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+	request := &schemas.BifrostResponsesRequest{
+		Provider: schemas.Bedrock,
+		Model:    "global.anthropic.claude-sonnet-4-6",
+		Input:    makeSimpleInput("Hello!"),
+	}
+	requestURL := server.URL + "/model/" + url.PathEscape(encodedARNModel) + "/invoke"
+
+	_, bifrostErr := HandleAnthropicResponsesRequest(ctx, &fasthttp.Client{DisablePathNormalizing: true}, requestURL, request,
+		AnthropicRequestBuildConfig{Provider: schemas.Bedrock, Model: "global.anthropic.claude-sonnet-4-6"},
+		map[string]string{}, nil, nil, truncationTestLogger{})
+	if bifrostErr != nil {
+		t.Fatalf("unexpected error: %s", bifrostErr.Error.Message)
+	}
+	assertEncodedPathPreserved(t, rec.get())
+}
+
+func TestHandleAnthropicResponsesStream_PreservesEncodedPath(t *testing.T) {
+	rec := &recordedRequestURI{}
+	server := encodedPathServer(t, rec, true)
+	defer server.Close()
+
+	ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+	request := &schemas.BifrostResponsesRequest{
+		Provider: schemas.Bedrock,
+		Model:    "global.anthropic.claude-sonnet-4-6",
+		Input:    makeSimpleInput("Hello!"),
+	}
+	jsonData, bifrostErr := BuildAnthropicResponsesRequestBody(ctx, request, AnthropicRequestBuildConfig{
+		Provider: schemas.Bedrock, Model: "global.anthropic.claude-sonnet-4-6", IsStreaming: true,
+	})
+	if bifrostErr != nil {
+		t.Fatalf("build: %s", bifrostErr.Error.Message)
+	}
+	requestURL := server.URL + "/model/" + url.PathEscape(encodedARNModel) + "/invoke-with-response-stream"
+
+	stream, bifrostErr := HandleAnthropicResponsesStream(ctx, &fasthttp.Client{DisablePathNormalizing: true}, requestURL, jsonData,
+		map[string]string{}, nil, 30, nil, false, false, schemas.Bedrock,
+		truncationPassthroughPostHook, nil, nil, truncationTestLogger{}, nil)
+	if bifrostErr != nil {
+		t.Fatalf("unexpected error: %s", bifrostErr.Error.Message)
+	}
+	collectTruncationChunks(t, stream)
+	assertEncodedPathPreserved(t, rec.get())
+}
+
+func TestHandleAnthropicChatCompletionStreaming_PreservesEncodedPath(t *testing.T) {
+	rec := &recordedRequestURI{}
+	server := encodedPathServer(t, rec, true)
+	defer server.Close()
+
+	ctx := schemas.NewBifrostContext(context.Background(), time.Time{})
+	request := &schemas.BifrostChatRequest{
+		Provider: schemas.Bedrock,
+		Model:    "global.anthropic.claude-sonnet-4-6",
+		Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello!")}}},
+	}
+	jsonData, bifrostErr := BuildAnthropicChatRequestBody(ctx, request, AnthropicRequestBuildConfig{
+		Provider: schemas.Bedrock, Model: "global.anthropic.claude-sonnet-4-6", IsStreaming: true,
+	})
+	if bifrostErr != nil {
+		t.Fatalf("build: %s", bifrostErr.Error.Message)
+	}
+	requestURL := server.URL + "/model/" + url.PathEscape(encodedARNModel) + "/invoke-with-response-stream"
+
+	stream, bifrostErr := HandleAnthropicChatCompletionStreaming(ctx, &fasthttp.Client{DisablePathNormalizing: true}, requestURL, jsonData,
+		map[string]string{}, nil, 30, nil, false, false, schemas.Bedrock,
+		truncationPassthroughPostHook, nil, nil, truncationTestLogger{}, nil)
+	if bifrostErr != nil {
+		t.Fatalf("unexpected error: %s", bifrostErr.Error.Message)
+	}
+	collectTruncationChunks(t, stream)
+	assertEncodedPathPreserved(t, rec.get())
 }

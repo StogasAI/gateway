@@ -465,3 +465,4 @@ func TestOpenAIChatRequest_UnmarshalJSON_ValueAssertions(t *testing.T) {
 		t.Errorf("Expected Stop value ['END', 'STOP'], got %v", req.Stop)
 	}
 }
+

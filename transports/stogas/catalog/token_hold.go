@@ -2,14 +2,10 @@ package catalog
 
 import (
 	"encoding/json"
-	"strings"
-	"sync"
-	"unicode"
-	"unicode/utf8"
+	"fmt"
 
-	"github.com/bytedance/sonic"
-	"github.com/maximhq/bifrost/core/schemas"
-	tiktoken "github.com/tiktoken-go/tokenizer"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
+	"github.com/maximhq/bifrost/transports/stogas/tokenizer"
 )
 
 const (
@@ -21,56 +17,162 @@ const (
 	openAIInputHoldToolTokens      = 32
 	openAIInputHoldToolEventTokens = 16
 
-	anthropicInputHoldTextBufferBps = 13000
+	anthropicInputHoldTextBufferBps = 11500
 
-	anthropicInputHoldBaseTokens      = 128
-	anthropicInputHoldMessageTokens   = 20
-	anthropicInputHoldBlockTokens     = 12
-	anthropicInputHoldToolTokens      = 48
-	anthropicInputHoldToolEventTokens = 24
+	anthropicInputHoldBaseTokens         = 128
+	anthropicInputHoldMessageTokens      = 20
+	anthropicInputHoldBlockTokens        = 12
+	anthropicInputHoldToolTokens         = 48
+	anthropicInputHoldToolEventTokens    = 24
+	anthropicInputHoldToolPreambleTokens = 512
 )
 
-var openAITokenizerCache sync.Map
+// The catalog selects one supported local estimator explicitly. Decode its
+// family once with the model; request handling never infers it from names,
+// authors, or hosting providers.
+type tokenizationStrategy string
+
+const (
+	tokenizationOpenAI    tokenizationStrategy = "openai"
+	tokenizationAnthropic tokenizationStrategy = "anthropic"
+	tokenizationDeepSeek  tokenizationStrategy = "deepseek"
+	tokenizationQwen3     tokenizationStrategy = "qwen3"
+	tokenizationQwen35    tokenizationStrategy = "qwen35"
+	tokenizationGemma     tokenizationStrategy = "gemma"
+	tokenizationMiniMax   tokenizationStrategy = "minimax"
+	tokenizationTekken    tokenizationStrategy = "tekken"
+	tokenizationKimi      tokenizationStrategy = "kimi"
+	tokenizationGLM       tokenizationStrategy = "glm"
+)
+
+func (strategy tokenizationStrategy) valid() bool {
+	if strategy == tokenizationOpenAI || strategy == tokenizationAnthropic {
+		return true
+	}
+	encoding, _ := publishedTokenization(strategy)
+	return encoding != ""
+}
+
+func publishedTokenization(strategy tokenizationStrategy) (string, int) {
+	switch strategy {
+	case tokenizationDeepSeek:
+		return "deepseek", 10300
+	case tokenizationQwen3:
+		return "qwen3", 10300
+	case tokenizationQwen35:
+		return "qwen35", 10300
+	case tokenizationGemma:
+		return "gemma", 10300
+	case tokenizationMiniMax:
+		return "minimax", 10300
+	case tokenizationTekken:
+		return "mistral", 10300
+	case tokenizationKimi:
+		return "kimi", 10300
+	// GLM's 16-KiB artificial boundaries missed up to 2 of 35 whitespace
+	// tokens in the calibration search. Seven percent covers that observation.
+	case tokenizationGLM:
+		return "glm", 10700
+	default:
+		return "", 0
+	}
+}
 
 type inputHoldStats struct {
-	TextFields []string
-	TextBytes  int
+	TextFields           []string
+	OpaqueReasoningBytes int
 
 	Messages        int
 	ContentBlocks   int
 	ToolDefinitions int
 	ToolEvents      int
-
-	AnthropicStrict bool
 }
 
-// inputTokenHoldEstimate reserves funds; it is not a request-admission token
+// estimateInputHold reserves funds; it is not a request-admission token
 // limit. The selected provider remains authoritative for its tokenizer and
 // context window, including future one- and two-million-token deployments.
-func inputTokenHoldEstimate(body []byte, rawData map[string]json.RawMessage, provider schemas.ModelProvider, model string, route Route, maxInputTokens int) int {
-	stats := requestInputHoldStats(rawData, route)
+func estimateInputHold(stats inputHoldStats, strategy tokenizationStrategy, maxInputTokens int) (int, error) {
 	if maxInputTokens < 0 {
 		maxInputTokens = 0
 	}
-	if maxInputTokens > 0 && stats.TextBytes >= maxInputTokens {
-		return maxInputTokens
+	// Provider reasoning envelopes are opaque, not text for the model tokenizer.
+	// Reserve one token per encoded byte, in addition to visible text and framing.
+	// This is a deliberately conservative empirical estimate, not a token bound
+	// guaranteed by the provider's undocumented encrypted representation.
+	visibleLimit := maxInputTokens
+	if maxInputTokens > 0 {
+		if stats.OpaqueReasoningBytes >= maxInputTokens {
+			return maxInputTokens, nil
+		}
+		visibleLimit -= stats.OpaqueReasoningBytes
 	}
-	estimate := 0
-	switch provider {
-	case schemas.OpenAI, schemas.Azure:
-		estimate = openAIInputTokenHold(model, stats)
-	case schemas.Anthropic:
-		estimate = anthropicInputTokenHold(stats)
+	var estimate int
+	var err error
+	switch strategy {
+	case tokenizationOpenAI:
+		estimate, err = openAIInputTokenHold(stats, visibleLimit)
+	case tokenizationAnthropic:
+		estimate, err = anthropicInputTokenHold(stats, visibleLimit)
 	default:
-		estimate = ceilMulDiv(len(body), 130, 100)
+		encoding, buffer := publishedTokenization(strategy)
+		if encoding == "" {
+			return 0, fmt.Errorf("unsupported catalog tokenization strategy")
+		}
+		estimate, err = vocabularyInputTokenHold(stats, visibleLimit, encoding, buffer, true)
+		if strategy == tokenizationMiniMax {
+			// The pinned M3 template has a 176-token empty-user prompt,
+			// exceeding the shared 148-token base/message allowance by 28.
+			estimate += 28
+		}
 	}
-	if estimate <= 0 && len(body) > 0 {
-		estimate = 1
+	if err != nil {
+		return 0, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Message: "Input text cannot be tokenized: " + err.Error()}
 	}
+	estimate += stats.OpaqueReasoningBytes
 	if maxInputTokens > 0 && estimate > maxInputTokens {
-		return maxInputTokens
+		return maxInputTokens, nil
 	}
-	return estimate
+	return estimate, nil
+}
+
+// One request can have several deployments, but its input text is immutable
+// during selection. Parse it once and tokenize once per strategy. Context
+// caps are applied separately so deployment variants cannot multiply scanning.
+func requestTokenEstimator(rawData map[string]json.RawMessage, route Route, selections []routingSelection) func(Deployment) (int, error) {
+	stats := requestInputHoldStats(rawData, route)
+	maxContext := 0
+	for _, selection := range selections {
+		context := selection.deployment.ContextWindowTokens
+		if context <= 0 {
+			maxContext = 0
+			break
+		}
+		maxContext = max(maxContext, context)
+	}
+	estimates := make(map[tokenizationStrategy]int)
+	return func(deployment Deployment) (int, error) {
+		if deployment.snapshot == nil {
+			return 0, ErrModelUnavailable
+		}
+		model, ok := deployment.snapshot.graph.Models[deployment.ModelID]
+		if !ok {
+			return 0, ErrModelUnavailable
+		}
+		strategy := model.TokenizerFamily
+		estimate, ok := estimates[strategy]
+		if !ok {
+			var err error
+			estimate, err = estimateInputHold(stats, strategy, maxContext)
+			if err != nil {
+				return 0, err
+			}
+			estimates[strategy] = estimate
+		}
+		if context := deployment.ContextWindowTokens; context > 0 && estimate > context {
+			return context, nil
+		}
+		return estimate, nil
+	}
 }
 
 func requestInputHoldStats(rawData map[string]json.RawMessage, route Route) inputHoldStats {
@@ -90,89 +192,67 @@ func requestInputHoldStats(rawData map[string]json.RawMessage, route Route) inpu
 	return stats
 }
 
-func openAIInputTokenHold(model string, stats inputHoldStats) int {
-	codec, ok := openAITokenizerForModel(model)
+func openAIInputTokenHold(stats inputHoldStats, maxTokens int) (int, error) {
+	return vocabularyInputTokenHold(stats, maxTokens, tokenizer.O200kBase, openAIInputHoldTextBufferBps, false)
+}
+
+func vocabularyInputTokenHold(stats inputHoldStats, maxTokens int, encoding string, buffer int, extendedFraming bool) (int, error) {
+	codec, err := tokenizer.Get(encoding)
+	if err != nil {
+		return 0, err
+	}
 	textTokens := 0
 	for _, text := range stats.TextFields {
 		if text == "" {
 			continue
 		}
-		if ok {
-			count, err := codec.Count(text)
-			if err == nil {
-				textTokens += count
-				continue
-			}
+		count, err := codec.CountAtMost(text, maxTokens-textTokens)
+		if err != nil {
+			return 0, err
 		}
-		textTokens += len(text)
+		textTokens += count
+		if maxTokens > 0 && textTokens >= maxTokens {
+			return maxTokens, nil
+		}
 	}
-	return ceilMulDiv(textTokens, openAIInputHoldTextBufferBps, 10000) +
-		openAIInputHoldBaseTokens +
-		openAIInputHoldMessageTokens*stats.Messages +
-		openAIInputHoldBlockTokens*stats.ContentBlocks +
-		openAIInputHoldToolTokens*stats.ToolDefinitions +
-		openAIInputHoldToolEventTokens*stats.ToolEvents
+	return ceilMulDiv(textTokens, buffer, 10000) + inputHoldFraming(stats, extendedFraming), nil
 }
 
-func anthropicInputTokenHold(stats inputHoldStats) int {
+func anthropicInputTokenHold(stats inputHoldStats, maxTokens int) (int, error) {
 	textHold := 0
 	for _, text := range stats.TextFields {
 		if text == "" {
 			continue
 		}
-		estimate := anthropicWeightedTextEstimate(text, stats.AnthropicStrict || anthropicTextNeedsStrictFloor(text))
-		textHold += ceilMulDiv(estimate, anthropicInputHoldTextBufferBps, 10000) + 8
+		count, err := tokenizer.Claude().CountAtMost(text, maxTokens-textHold)
+		if err != nil {
+			return 0, err
+		}
+		textHold += ceilMulDiv(count, anthropicInputHoldTextBufferBps, 10000) + 8
+		if maxTokens > 0 && textHold >= maxTokens {
+			return maxTokens, nil
+		}
 	}
-	if stats.AnthropicStrict {
-		// A byte-level floor is conservative for adversarial text because a
-		// byte-fallback tokenizer cannot emit more than one token per UTF-8
-		// byte. Anthropic does not publish a local tokenizer.
-		textHold = maxInt(textHold, stats.TextBytes)
+	return textHold + inputHoldFraming(stats, true), nil
+}
+
+func inputHoldFraming(stats inputHoldStats, anthropic bool) int {
+	if !anthropic {
+		return openAIInputHoldBaseTokens +
+			openAIInputHoldMessageTokens*stats.Messages +
+			openAIInputHoldBlockTokens*stats.ContentBlocks +
+			openAIInputHoldToolTokens*stats.ToolDefinitions +
+			openAIInputHoldToolEventTokens*stats.ToolEvents
 	}
-	return textHold +
-		anthropicInputHoldBaseTokens +
+	tokens := anthropicInputHoldBaseTokens +
 		anthropicInputHoldMessageTokens*stats.Messages +
 		anthropicInputHoldBlockTokens*stats.ContentBlocks +
 		anthropicInputHoldToolTokens*stats.ToolDefinitions +
 		anthropicInputHoldToolEventTokens*stats.ToolEvents
-}
-
-func openAITokenizerForModel(model string) (tiktoken.Codec, bool) {
-	encoding, ok := openAIEncodingForModel(model)
-	if !ok {
-		return nil, false
+	if stats.ToolDefinitions > 0 {
+		tokens += anthropicInputHoldToolPreambleTokens
 	}
-	if cached, ok := openAITokenizerCache.Load(encoding); ok {
-		codec, ok := cached.(tiktoken.Codec)
-		return codec, ok
-	}
-	codec, err := tiktoken.Get(encoding)
-	if err != nil {
-		return nil, false
-	}
-	openAITokenizerCache.Store(encoding, codec)
-	return codec, true
-}
-
-func openAIEncodingForModel(model string) (tiktoken.Encoding, bool) {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	switch {
-	case normalized == "":
-		return "", false
-	case strings.HasPrefix(normalized, "gpt-5"),
-		strings.HasPrefix(normalized, "gpt-4.1"),
-		strings.HasPrefix(normalized, "gpt-4o"),
-		strings.HasPrefix(normalized, "o1"),
-		strings.HasPrefix(normalized, "o3"),
-		strings.HasPrefix(normalized, "o4"):
-		return tiktoken.O200kBase, true
-	case strings.HasPrefix(normalized, "gpt-4"),
-		strings.HasPrefix(normalized, "gpt-3.5"),
-		strings.HasPrefix(normalized, "gpt-35"):
-		return tiktoken.Cl100kBase, true
-	default:
-		return "", false
-	}
+	return tokens
 }
 
 func appendTopLevelTextFields(stats *inputHoldStats, rawData map[string]json.RawMessage, keys ...string) {
@@ -185,8 +265,8 @@ func collectMessageList(raw json.RawMessage, stats *inputHoldStats) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return
 	}
-	var messages []json.RawMessage
-	if err := sonic.Unmarshal(raw, &messages); err != nil {
+	messages, err := rawjson.Array(raw)
+	if err != nil {
 		collectTextLike(raw, stats)
 		return
 	}
@@ -205,8 +285,8 @@ func collectResponsesInput(raw json.RawMessage, stats *inputHoldStats) {
 		stats.ContentBlocks++
 		return
 	}
-	var items []json.RawMessage
-	if err := sonic.Unmarshal(raw, &items); err != nil {
+	items, err := rawjson.Array(raw)
+	if err != nil {
 		collectMessageObject(raw, stats)
 		return
 	}
@@ -220,9 +300,13 @@ func collectResponsesInput(raw json.RawMessage, stats *inputHoldStats) {
 }
 
 func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
-	var object map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &object); err != nil {
+	object, err := rawjson.Object(raw)
+	if err != nil {
 		collectTextLike(raw, stats)
+		return
+	}
+	if rawStringValue(object["type"]) == "reasoning" {
+		collectReasoningObject(object, "encrypted_content", stats)
 		return
 	}
 	if rawStringValue(object["role"]) == "tool" {
@@ -242,6 +326,14 @@ func collectMessageObject(raw json.RawMessage, stats *inputHoldStats) {
 		switch key {
 		case "content", "role", "type", "tool_calls", "tools", "response_format", "metadata":
 			continue
+		case "reasoning":
+			// Anthropic history repeats the visible summary beside signed details.
+			// The authenticated envelope supplies the actual thinking input.
+			if _, signed := object["reasoning_details"]; !signed {
+				collectTextLike(value, stats)
+			}
+		case "reasoning_details":
+			collectReasoningDetails(value, stats)
 		default:
 			collectTextLike(value, stats)
 		}
@@ -253,15 +345,63 @@ func collectContent(raw json.RawMessage, stats *inputHoldStats) {
 		stats.ContentBlocks++
 		return
 	}
-	var blocks []json.RawMessage
-	if err := sonic.Unmarshal(raw, &blocks); err == nil {
+	if blocks, err := rawjson.Array(raw); err == nil {
 		for _, block := range blocks {
 			stats.ContentBlocks++
+			if object, err := rawjson.Object(block); err == nil {
+				switch rawStringValue(object["type"]) {
+				case "thinking":
+					collectReasoningObject(object, "signature", stats)
+					continue
+				case "redacted_thinking":
+					collectReasoningObject(object, "data", stats)
+					continue
+				}
+				collectTextObject(object, stats)
+				continue
+			}
 			collectTextLike(block, stats)
 		}
 		return
 	}
 	collectTextLike(raw, stats)
+}
+
+func collectReasoningDetails(raw json.RawMessage, stats *inputHoldStats) {
+	details, err := rawjson.Array(raw)
+	if err != nil {
+		collectTextLike(raw, stats)
+		return
+	}
+	for _, rawDetail := range details {
+		detail, err := rawjson.Object(rawDetail)
+		if err != nil {
+			collectTextLike(rawDetail, stats)
+			continue
+		}
+		field := "signature"
+		if rawStringValue(detail["type"]) == "reasoning.encrypted" && rawStringValue(detail["data"]) != "" {
+			field = "data"
+		}
+		collectReasoningObject(detail, field, stats)
+	}
+}
+
+// Called only at declared reasoning positions. A similarly named property in
+// a tool argument or schema remains ordinary input text.
+func collectReasoningObject(object map[string]json.RawMessage, opaqueField string, stats *inputHoldStats) {
+	if opaque := rawStringValue(object[opaqueField]); opaque != "" {
+		stats.OpaqueReasoningBytes += len(opaque)
+		return
+	}
+	for field, value := range object {
+		switch field {
+		case "id", "type", "index", "format", opaqueField:
+			// Message/block framing is counted separately.
+		default:
+			collectTextLike(value, stats)
+		}
+	}
 }
 
 func collectTextLike(raw json.RawMessage, stats *inputHoldStats) {
@@ -272,18 +412,20 @@ func collectTextLike(raw json.RawMessage, stats *inputHoldStats) {
 		return
 	}
 	var object map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &object); err == nil {
-		for childKey, child := range object {
-			if childKey == "authorization_token" || childKey == "metadata" {
-				continue
-			}
-			collectTextLike(child, stats)
-		}
+	if err := json.Unmarshal(raw, &object); err == nil {
+		collectTextObject(object, stats)
 		return
 	}
-	var array []json.RawMessage
-	if err := sonic.Unmarshal(raw, &array); err == nil {
+	if array, err := rawjson.Array(raw); err == nil {
 		for _, child := range array {
+			collectTextLike(child, stats)
+		}
+	}
+}
+
+func collectTextObject(object map[string]json.RawMessage, stats *inputHoldStats) {
+	for childKey, child := range object {
+		if childKey != "authorization_token" && childKey != "metadata" {
 			collectTextLike(child, stats)
 		}
 	}
@@ -293,8 +435,7 @@ func appendToolDefinitions(raw json.RawMessage, stats *inputHoldStats) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return
 	}
-	var tools []json.RawMessage
-	if err := sonic.Unmarshal(raw, &tools); err == nil {
+	if tools, err := rawjson.Array(raw); err == nil {
 		for _, tool := range tools {
 			stats.ToolDefinitions++
 			appendCompactJSONText(tool, stats)
@@ -310,7 +451,7 @@ func appendCompactJSONText(raw json.RawMessage, stats *inputHoldStats) {
 		return
 	}
 	var value any
-	if err := sonic.Unmarshal(raw, &value); err != nil {
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return
 	}
 	// encoding/json sorts object keys. The reservation must not change when a
@@ -333,15 +474,11 @@ func appendStringValue(raw json.RawMessage, stats *inputHoldStats) bool {
 
 func appendText(text string, stats *inputHoldStats) {
 	stats.TextFields = append(stats.TextFields, text)
-	stats.TextBytes += len(text)
-	if anthropicTextNeedsStrictFloor(text) {
-		stats.AnthropicStrict = true
-	}
 }
 
 func inputItemLooksLikeContentBlock(raw json.RawMessage) bool {
 	var object map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &object); err != nil {
+	if err := json.Unmarshal(raw, &object); err != nil {
 		return false
 	}
 	switch rawStringValue(object["type"]) {
@@ -353,106 +490,11 @@ func inputItemLooksLikeContentBlock(raw json.RawMessage) bool {
 }
 
 func rawArrayLen(raw json.RawMessage) int {
-	var array []json.RawMessage
-	if err := sonic.Unmarshal(raw, &array); err != nil {
+	array, err := rawjson.Array(raw)
+	if err != nil {
 		return 0
 	}
 	return len(array)
-}
-
-func anthropicWeightedTextEstimate(text string, strict bool) int {
-	bytes := len(text)
-	asciiRunes, cjkRunes, emojiRunes, otherNonASCIIRunes := classifyRunes(text)
-	byBytes := ceilMulDiv(bytes, 100, 235)
-	byClass := ceilMulDiv(asciiRunes, 100, 255) +
-		ceilMulDiv(cjkRunes, 135, 100) +
-		emojiRunes*4 +
-		ceilMulDiv(otherNonASCIIRunes, 180, 100)
-	if strict {
-		return maxInt(maxInt(byBytes, byClass), ceilMulDiv(bytes, 75, 100))
-	}
-	return maxInt(byBytes, byClass)
-}
-
-func classifyRunes(text string) (ascii int, cjk int, emoji int, otherNonASCII int) {
-	for _, r := range text {
-		switch {
-		case r < utf8.RuneSelf:
-			ascii++
-		case isCJKLikeRune(r):
-			cjk++
-		case isEmojiLikeRune(r):
-			emoji++
-		default:
-			otherNonASCII++
-		}
-	}
-	return ascii, cjk, emoji, otherNonASCII
-}
-
-func anthropicTextNeedsStrictFloor(text string) bool {
-	if len(text) < 32 {
-		return false
-	}
-	asciiLetters := 0
-	digits := 0
-	hex := 0
-	base64 := 0
-	spaces := 0
-	symbols := 0
-	nonASCII := 0
-	for _, r := range text {
-		switch {
-		case r >= utf8.RuneSelf:
-			nonASCII++
-		case unicode.IsSpace(r):
-			spaces++
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
-			asciiLetters++
-			if (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
-				hex++
-			}
-			base64++
-		case r >= '0' && r <= '9':
-			digits++
-			hex++
-			base64++
-		case r == '+' || r == '/' || r == '=' || r == '-' || r == '_':
-			symbols++
-			base64++
-		default:
-			symbols++
-		}
-	}
-	runes := utf8.RuneCountInString(text)
-	if runes == 0 {
-		return false
-	}
-	if nonASCII*5 >= runes {
-		return true
-	}
-	if len(text) >= 64 && (hex+digits)*5 >= runes*4 && spaces == 0 {
-		return true
-	}
-	if len(text) >= 64 && base64*10 >= runes*9 && spaces == 0 {
-		return true
-	}
-	if len(text) >= 64 && spaces*20 <= runes && (symbols+digits)*10 >= runes*3 {
-		return true
-	}
-	return false
-}
-
-func isCJKLikeRune(r rune) bool {
-	return (r >= 0x3040 && r <= 0x30ff) ||
-		(r >= 0x3400 && r <= 0x4dbf) ||
-		(r >= 0x4e00 && r <= 0x9fff) ||
-		(r >= 0xac00 && r <= 0xd7af)
-}
-
-func isEmojiLikeRune(r rune) bool {
-	return (r >= 0x1f000 && r <= 0x1faff) ||
-		(r >= 0x2600 && r <= 0x27bf)
 }
 
 func ceilMulDiv(value int, multiplier int, divisor int) int {

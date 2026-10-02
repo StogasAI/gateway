@@ -34,11 +34,9 @@ type Attester interface {
 }
 
 type Envelope struct {
-	Schema       string `json:"schema"`
-	Provider     string `json:"provider"`
-	Report       string `json:"report"`
-	AuxBlob      string `json:"auxblob,omitempty"`
-	ManifestBlob string `json:"manifestblob,omitempty"`
+	Schema   string `json:"schema"`
+	Provider string `json:"provider"`
+	Report   string `json:"report"`
 }
 
 type ConfigFS struct {
@@ -46,8 +44,6 @@ type ConfigFS struct {
 	NamePrefix       string
 	PrivilegeLevel   *int
 	ServiceProvider  string
-	ReadAuxBlob      bool
-	ReadManifestBlob bool
 	AllowedProviders []string
 	Random           io.Reader
 	FileSystem       ConfigFSFileSystem
@@ -82,7 +78,7 @@ type Chain []Attester
 
 func DefaultSEVSNP() Chain {
 	return Chain{
-		ConfigFS{ReadAuxBlob: true, ReadManifestBlob: true},
+		ConfigFS{},
 		SEVGuestDevice{},
 	}
 }
@@ -182,14 +178,6 @@ func (a ConfigFS) Quote(ctx context.Context, reportData [64]byte) ([]byte, error
 		return nil, fmt.Errorf("unsupported TSM provider %q", provider)
 	}
 
-	auxblob, err := readOptionalBlob(fs, dir, "auxblob", a.ReadAuxBlob)
-	if err != nil {
-		return nil, err
-	}
-	manifestblob, err := readOptionalBlob(fs, dir, "manifestblob", a.ReadManifestBlob)
-	if err != nil {
-		return nil, err
-	}
 	generationAfter, err := readGeneration(fs, dir)
 	if err != nil {
 		return nil, err
@@ -199,11 +187,9 @@ func (a ConfigFS) Quote(ctx context.Context, reportData [64]byte) ([]byte, error
 	}
 
 	return EncodeEnvelope(Envelope{
-		Schema:       EnvelopeSchemaV1,
-		Provider:     provider,
-		Report:       base64.RawURLEncoding.EncodeToString(report),
-		AuxBlob:      optionalBase64URL(auxblob),
-		ManifestBlob: optionalBase64URL(manifestblob),
+		Schema:   EnvelopeSchemaV1,
+		Provider: provider,
+		Report:   base64.RawURLEncoding.EncodeToString(report),
 	})
 }
 
@@ -303,27 +289,6 @@ func readGeneration(fs ConfigFSFileSystem, dir string) (uint64, error) {
 		return 0, fmt.Errorf("parse TSM generation: %w", err)
 	}
 	return value, nil
-}
-
-func readOptionalBlob(fs ConfigFSFileSystem, dir string, name string, enabled bool) ([]byte, error) {
-	if !enabled {
-		return nil, nil
-	}
-	bytes, err := fs.ReadFile(filepath.Join(dir, name))
-	if err == nil {
-		return bytes, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("read TSM %s: %w", name, err)
-}
-
-func optionalBase64URL(bytes []byte) string {
-	if len(bytes) == 0 {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString(bytes)
 }
 
 func providerAllowed(provider string, allowed []string) bool {

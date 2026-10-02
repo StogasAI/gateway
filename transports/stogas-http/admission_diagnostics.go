@@ -7,12 +7,8 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 
-	"github.com/valyala/fasthttp"
+	"net/http"
 )
-
-const requestAdmissionCountedKey = "stogas.admission-counted"
-const requestLogClaimsKey = "stogas.request-log-claims"
-const requestLogTypeKey = "stogas.request-log-type"
 
 type requestAdmissionCounters struct {
 	admitted, authentication, billing, permission, rateLimit, invalidRequest, unavailable, internal atomic.Uint64
@@ -38,32 +34,32 @@ func (counters *requestAdmissionCounters) diagnostics() requestAdmissionDiagnost
 	}
 }
 
-func (s *Server) recordAdmission(ctx *fasthttp.RequestCtx) {
-	if ctx.UserValue(requestAdmissionCountedKey) != nil {
+func (s *Server) recordAdmission(ctx *requestContext) {
+	if ctx.admissionCounted {
 		return
 	}
-	ctx.SetUserValue(requestAdmissionCountedKey, true)
+	ctx.admissionCounted = true
 	s.admission.admitted.Add(1)
 }
 
 // Capture the inner status before E2EE wraps it in an HTTP 200 response.
 // Fixed counters retain neither identities nor client/provider-controlled labels.
-func (s *Server) recordAdmissionRejection(ctx *fasthttp.RequestCtx, status int, code string) {
-	if !ctx.IsPost() || !isInferencePath(ctx.Path()) || status < 400 || ctx.UserValue(requestAdmissionCountedKey) != nil {
+func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string) {
+	if !(ctx.request.Method == http.MethodPost) || !isInferencePath(ctx.request.URL.Path) || status < 400 || ctx.admissionCounted {
 		return
 	}
-	ctx.SetUserValue(requestAdmissionCountedKey, true)
+	ctx.admissionCounted = true
 	var counter *atomic.Uint64
 	switch status {
-	case fasthttp.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		counter = &s.admission.authentication
-	case fasthttp.StatusPaymentRequired:
+	case http.StatusPaymentRequired:
 		counter = &s.admission.billing
-	case fasthttp.StatusForbidden:
+	case http.StatusForbidden:
 		counter = &s.admission.permission
-	case fasthttp.StatusTooManyRequests:
+	case http.StatusTooManyRequests:
 		counter = &s.admission.rateLimit
-	case fasthttp.StatusServiceUnavailable:
+	case http.StatusServiceUnavailable:
 		counter = &s.admission.unavailable
 	default:
 		if status < 500 {
@@ -73,14 +69,19 @@ func (s *Server) recordAdmissionRejection(ctx *fasthttp.RequestCtx, status int, 
 		}
 	}
 	counter.Add(1)
-	claims, _ := ctx.UserValue(requestLogClaimsKey).(*billing.APIKeyClaims)
-	if claims == nil || s.runtime == nil || s.runtime.Billing() == nil {
+	claims := ctx.claims
+	if s.runtime == nil || s.runtime.Billing() == nil {
 		return
 	}
-	requestType, _ := ctx.UserValue(requestLogTypeKey).(string)
+	dashboard := ctx.dashboard
+	s.runtime.Billing().RecordCallerFailure(claims, dashboard, status, code)
+	if claims == nil {
+		return
+	}
+	requestType := ctx.requestType
 	if requestType == "" {
 		requestType = "responses_request"
-		if string(ctx.Path()) == "/v1/chat/completions" {
+		if ctx.request.URL.Path == "/v1/chat/completions" {
 			requestType = "chat_completion_request"
 		}
 	}
@@ -88,16 +89,16 @@ func (s *Server) recordAdmissionRejection(ctx *fasthttp.RequestCtx, status int, 
 	if err != nil {
 		return
 	}
-	startedAt := ctx.Time()
+	startedAt := ctx.startedAt
 	if startedAt.IsZero() {
 		startedAt = time.Now()
 	}
 	nodeID := ""
-	if s.secure != nil && s.secure.Control != nil {
-		nodeID = s.secure.Control.NodeID()
+	if s.secure != nil {
+		nodeID = s.secure.NodeID()
 	}
 	s.runtime.Billing().RecordRejection(billing.RejectionInput{
-		Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
+		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
 		StatusCode: status, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
 	})
 }

@@ -40,6 +40,8 @@ type StandardSignals struct {
 	WebSearch         int
 	ActualServiceTier *schemas.BifrostServiceTier
 	ActualSpeed       string
+	inputKnown        bool
+	outputKnown       bool
 
 	webSearchCallIDs map[string]struct{}
 	webSearchEvents  map[string]struct{}
@@ -403,6 +405,10 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 		}
 	}
 	next := &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
+	next.inputKnown, next.outputKnown = promptTokens > 0, completionTokens > 0
+	if total, ok := addTokenCounts(promptTokens, completionTokens); ok && usage.TotalTokens > 0 && total == usage.TotalTokens {
+		next.inputKnown, next.outputKnown = true, true
+	}
 	if !hasMeasuredUsage(next) && next.WebSearch <= 0 {
 		return nil
 	}
@@ -480,15 +486,9 @@ func saturatingTokenTotal(values ...int) int {
 	return total
 }
 
-func clampSignalsToAuthorizedUsage(state *State, signals *StandardSignals) {
+func normalizeUsagePartitions(signals *StandardSignals) {
 	if signals == nil {
 		return
-	}
-	if inputLimit, ok := tokenHoldCapacity(state, true); ok && signals.Prompt > inputLimit {
-		signals.Prompt = inputLimit
-	}
-	if outputLimit, ok := tokenHoldCapacity(state, false); ok && signals.Completion > outputLimit {
-		signals.Completion = outputLimit
 	}
 	cachePartition, cachePartitionOK := addTokenCounts(
 		signals.Cached,
@@ -567,7 +567,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next == nil {
 		return
 	}
-	clampSignalsToAuthorizedUsage(state, next)
+	normalizeUsagePartitions(next)
 	if state.Resolution != nil &&
 		(state.Resolution.Provider == schemas.Anthropic || azureDeploymentUsesAnthropicWire(state)) &&
 		next.CacheWrite > 0 {
@@ -583,6 +583,12 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 		state.Signals = next
 		return
 	}
+	mergeUsageSignals(current, next)
+}
+
+func mergeUsageSignals(current, next *StandardSignals) {
+	current.inputKnown = current.inputKnown || next.inputKnown
+	current.outputKnown = current.outputKnown || next.outputKnown
 	current.Prompt = max(current.Prompt, next.Prompt)
 	current.Completion = max(current.Completion, next.Completion)
 	current.Reasoning = max(current.Reasoning, next.Reasoning)
@@ -597,7 +603,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	if next.ActualSpeed != "" {
 		current.ActualSpeed = next.ActualSpeed
 	}
-	clampSignalsToAuthorizedUsage(state, current)
+	normalizeUsagePartitions(current)
 }
 
 func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo ...*string) {

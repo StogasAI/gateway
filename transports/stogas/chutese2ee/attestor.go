@@ -604,9 +604,6 @@ func (a *attestor) recordRefreshResult(
 	var statusErr *httpStatusError
 	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusTooManyRequests && statusErr.RetryAfter > delay {
 		delay = statusErr.RetryAfter
-		if delay > time.Minute {
-			delay = time.Minute
-		}
 	}
 	state.NextAttempt = now.Add(delay)
 }

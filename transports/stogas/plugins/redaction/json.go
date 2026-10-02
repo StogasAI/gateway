@@ -14,6 +14,13 @@ var (
 
 type Surface uint8
 
+// ValidateASCII checks original decoded text using the same field selection as
+// redaction. Protocol identifiers and opaque replay fields remain untouched.
+func ValidateASCII(raw map[string]json.RawMessage, surface Surface) error {
+	r := &Redactor{asciiOnly: true}
+	return r.RedactRequestFields(raw, surface, nil)
+}
+
 const (
 	SurfaceChat Surface = iota + 1
 	SurfaceResponses
@@ -43,14 +50,17 @@ const (
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
 // model, sampling, cache, storage, identity, and protocol controls are never
-// inspected or changed.
-func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface Surface) error {
+// inspected or changed. reserveExpansion, when provided, admits cumulative
+// added bytes before retaining larger replacements. A failure leaves raw intact.
+func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface Surface, reserveExpansion func(int) error) error {
 	if r == nil {
 		return nil
 	}
 	startedAt := time.Now()
+	r.expansion, r.reserveExpansion = 0, reserveExpansion
 	defer func() {
 		r.duration += time.Since(startedAt)
+		r.reserveExpansion = nil
 	}()
 	var fields []string
 	switch surface {
@@ -65,7 +75,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 		field string
 		value json.RawMessage
 	}
-	baseItems := r.items
+	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	var updates []update
 	for _, field := range fields {
 		value, ok := raw[field]
@@ -81,6 +91,7 @@ func (r *Redactor) RedactRequestFields(raw map[string]json.RawMessage, surface S
 		redacted, changed, err := r.redactJSONContext(value, context)
 		if err != nil {
 			r.items = baseItems
+			r.inputTextBytes = baseTextBytes
 			return err
 		}
 		if changed {
@@ -98,11 +109,12 @@ func (r *Redactor) redactJSON(source []byte) ([]byte, bool, error) {
 }
 
 func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([]byte, bool, error) {
-	baseItems := r.items
+	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	var replacements []jsonReplacement
 	position, err := r.walkJSONValue(source, skipJSONSpace(source, 0), true, &replacements, 0, context)
 	if err != nil || skipJSONSpace(source, position) != len(source) {
 		r.items = baseItems
+		r.inputTextBytes = baseTextBytes
 		if err == nil {
 			err = errInvalidJSON
 		}
@@ -110,6 +122,13 @@ func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([
 	}
 	if len(replacements) == 0 {
 		return source, false, nil
+	}
+	if r.asciiOnly {
+		// Object markers can appear after their text. Resolve protected replay
+		// before reporting a violation, just as redaction discards replacements.
+		r.items = baseItems
+		r.inputTextBytes = baseTextBytes
+		return nil, false, ErrNonASCII
 	}
 
 	size := len(source)
@@ -121,6 +140,7 @@ func (r *Redactor) redactJSONContext(source []byte, context jsonValueContext) ([
 	for _, replacement := range replacements {
 		if replacement.start < position || replacement.end < replacement.start || replacement.end > len(source) {
 			r.items = baseItems
+			r.inputTextBytes = baseTextBytes
 			return nil, false, errInvalidJSON
 		}
 		out = append(out, source[position:replacement.start]...)
@@ -163,11 +183,12 @@ func (r *Redactor) walkJSONValue(source []byte, position int, allow bool, replac
 
 func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, replacements *[]jsonReplacement, depth int, context jsonValueContext) (int, error) {
 	baseReplacements := len(*replacements)
-	baseItems := r.items
+	baseItems, baseTextBytes := r.items, r.inputTextBytes
 	hasEncryptedContent := false
 	hasReasoningDetails := false
 	reasoningStart := -1
 	reasoningEnd := -1
+	reasoningBytes := 0
 	itemType := ""
 	position = skipJSONSpace(source, position+1)
 	if position < len(source) && source[position] == '}' {
@@ -236,6 +257,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
 			reasoningStart = position
+			reasoningBytes = r.inputTextBytes
 		}
 		switch key {
 		case jsonKeySkipScalar, jsonKeyType:
@@ -252,6 +274,7 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		}
 		if context == jsonContextChatMessage && key == jsonKeyReasoning {
 			reasoningEnd = position
+			reasoningBytes = r.inputTextBytes - reasoningBytes
 		}
 		position = skipJSONSpace(source, position)
 		if position >= len(source) {
@@ -263,11 +286,13 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		case '}':
 			if context == jsonContextChatMessage && hasReasoningDetails && reasoningStart >= 0 {
 				r.discardJSONReplacements(replacements, baseReplacements, reasoningStart, reasoningEnd)
+				r.inputTextBytes -= reasoningBytes
 			}
 			protected := context == jsonContextResponsesInputItem && itemType == "reasoning" && hasEncryptedContent
 			if protected {
 				*replacements = (*replacements)[:baseReplacements]
 				r.items = baseItems
+				r.inputTextBytes = baseTextBytes
 			}
 			return position + 1, nil
 		default:
@@ -314,9 +339,13 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 	if !escaped {
 		baseItems := r.items
 		redacted, changed, err := r.redactBytes(source[start+1 : end-1])
+		if errors.Is(err, ErrNonASCII) {
+			return r.recordASCIIViolation(start, end, replacements)
+		}
 		if err != nil {
 			return err
 		}
+		r.inputTextBytes += len(redacted)
 		if changed {
 			*replacements = append(*replacements, jsonReplacement{start: start + 1, end: end - 1, value: redacted, items: r.items - baseItems})
 		}
@@ -328,17 +357,43 @@ func (r *Redactor) redactJSONString(source []byte, start, end int, escaped bool,
 	}
 	baseItems := r.items
 	redacted, changed, err := r.redactBytes([]byte(decoded))
+	if errors.Is(err, ErrNonASCII) {
+		return r.recordASCIIViolation(start, end, replacements)
+	}
 	if err != nil {
 		return err
 	}
-	if !changed {
+	r.inputTextBytes += len(redacted)
+	if r.asciiOnly {
 		return nil
 	}
-	encodedRedacted, err := json.Marshal(string(redacted))
-	if err != nil {
+	// Normalize escaped text once, including when no PII matched. Retaining an
+	// inflated wire encoding makes every later request codec decode it again.
+	// HTML escaping can expand an otherwise unchanged field sixfold merely
+	// because one matched value shared a string with an escaped character.
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(string(redacted)); err != nil {
+		return err
+	}
+	encodedRedacted := buffer.Bytes()[:buffer.Len()-1]
+	if !changed && bytes.Equal(encodedRedacted, encoded) {
+		return nil
+	}
+	if err := r.reserveGrowth(len(encodedRedacted) - len(encoded) - max(0, len(redacted)-len(decoded))); err != nil {
 		return err
 	}
 	*replacements = append(*replacements, jsonReplacement{start: start, end: end, value: encodedRedacted, items: r.items - baseItems})
+	return nil
+}
+
+func (r *Redactor) recordASCIIViolation(start, end int, replacements *[]jsonReplacement) error {
+	if r.items >= maxMatchesPerRequest {
+		return ErrMatchLimit
+	}
+	r.items++
+	*replacements = append(*replacements, jsonReplacement{start: start, end: end, items: 1})
 	return nil
 }
 

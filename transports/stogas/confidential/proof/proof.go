@@ -1,41 +1,23 @@
 package proof
 
 import (
-	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"hash"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"strings"
 	"time"
 )
 
-const (
-	DomainV1        = "stogas.response-proof.v1"
-	MaxObjectBytes  = 8 * 1024
-	createdAtLayout = "2006-01-02T15:04:05.000Z"
-)
+const MaxObjectBytes = 16 * 1024
+const createdAtLayout = "2006-01-02T15:04:05.000Z"
 
 var catalogNodeKinds = [...]string{"author", "model", "deployment", "route", "provider"}
 
-type Meter struct {
-	Quantity     string `json:"quantity"`
-	RateKey      string `json:"rate_key"`
-	RateUSDAtoms string `json:"rate_usd_atoms"`
-	USDAtoms     string `json:"usd_atoms"`
-}
+type Meter = billing.EventMeter
 
 type Catalog struct {
-	Digest       string   `json:"digest"`
-	Sequence     uint64   `json:"sequence"`
+	Version      uint64   `json:"version"`
+	ChainHash    string   `json:"chain_hash"`
 	SelectionIDs []string `json:"selection_ids"`
-}
-
-type Pricing struct {
-	Meters            map[string]Meter `json:"meters"`
-	TotalCostUSDAtoms string           `json:"total_cost_usd_atoms"`
-	BYOKCostUSDAtoms  string           `json:"byok_cost_usd_atoms,omitempty"`
 }
 
 type Timing struct {
@@ -45,13 +27,16 @@ type Timing struct {
 }
 
 type Metadata struct {
-	RequestID            string
-	CreatedAt            string
-	NodeID               string
-	Catalog              Catalog
-	Pricing              Pricing
-	Timing               Timing
-	E2EETranscriptSHA256 string
+	RequestID             string              `json:"request_id"`
+	CreatedAt             string              `json:"created_at"`
+	Catalog               Catalog             `json:"catalog"`
+	Meters                billing.EventMeters `json:"meters"`
+	UpstreamCostUSD       string              `json:"upstream_cost_usd"`
+	BilledCostUSD         string              `json:"billed_cost_usd"`
+	CacheReadSavingsUSD   *string             `json:"cache_read_savings_usd"`
+	CacheWriteOverheadUSD *string             `json:"cache_write_overhead_usd"`
+	Timing                Timing              `json:"timing"`
+	Provider              map[string]any      `json:"provider,omitempty"`
 }
 
 type Input struct {
@@ -60,79 +45,11 @@ type Input struct {
 	Metadata     Metadata
 }
 
-type StreamingInput struct {
-	RequestBody []byte
-	Metadata    Metadata
-}
-
-type Claims struct {
-	RequestSHA256        string `json:"request_sha256"`
-	ResponseSHA256       string `json:"response_sha256"`
-	E2EETranscriptSHA256 string `json:"e2ee_transcript_sha256,omitempty"`
-}
-
-type Payload struct {
-	Schema    string  `json:"schema"`
-	RequestID string  `json:"request_id"`
-	CreatedAt string  `json:"created_at"`
-	NodeID    string  `json:"node_id"`
-	Catalog   Catalog `json:"catalog"`
-	Pricing   Pricing `json:"pricing"`
-	Timing    Timing  `json:"timing"`
-	Proof     Claims  `json:"proof"`
-}
-
-type SignedClaims struct {
-	Claims
-	Signature string `json:"signature"`
-}
-
+// Object is the opt-in metadata covered by the receipt, excluding Receipt itself.
 type Object struct {
-	Schema    string       `json:"schema"`
-	RequestID string       `json:"request_id"`
-	CreatedAt string       `json:"created_at"`
-	NodeID    string       `json:"node_id"`
-	Catalog   Catalog      `json:"catalog"`
-	Pricing   Pricing      `json:"pricing"`
-	Timing    Timing       `json:"timing"`
-	Proof     SignedClaims `json:"proof"`
-}
-
-func PayloadFor(input Input) Payload {
-	return payloadForHashes(
-		input.Metadata,
-		sha256Hex(input.RequestBody),
-		sha256Hex(input.ResponseBody),
-	)
-}
-
-func ObjectFor(payload Payload, signature string) Object {
-	return Object{
-		Schema:    payload.Schema,
-		RequestID: payload.RequestID,
-		CreatedAt: payload.CreatedAt,
-		NodeID:    payload.NodeID,
-		Catalog:   payload.Catalog,
-		Pricing:   payload.Pricing,
-		Timing:    payload.Timing,
-		Proof: SignedClaims{
-			Claims:    payload.Proof,
-			Signature: signature,
-		},
-	}
-}
-
-func PayloadFromObject(object Object) Payload {
-	return Payload{
-		Schema:    object.Schema,
-		RequestID: object.RequestID,
-		CreatedAt: object.CreatedAt,
-		NodeID:    object.NodeID,
-		Catalog:   object.Catalog,
-		Pricing:   object.Pricing,
-		Timing:    object.Timing,
-		Proof:     object.Proof.Claims,
-	}
+	Metadata
+	NodeID  string  `json:"node_id"`
+	Receipt Receipt `json:"receipt"`
 }
 
 func ValidCatalogSelectionIDs(selectionIDs []string) bool {
@@ -151,135 +68,29 @@ func ValidCatalogSelectionIDs(selectionIDs []string) bool {
 func ValidMetadata(metadata Metadata) bool {
 	if metadata.RequestID == "" || len(metadata.RequestID) > 128 ||
 		!validCreatedAt(metadata.CreatedAt) ||
-		!isLowerHex(metadata.NodeID, 32) ||
-		!validCatalogDigest(metadata.Catalog.Digest) ||
-		!ValidCatalogSelectionIDs(metadata.Catalog.SelectionIDs) ||
-		!validPricing(metadata.Pricing) ||
+		!ValidCatalog(metadata.Catalog) ||
+		!validMeterCosts(metadata) ||
 		metadata.Timing.ProviderMS > metadata.Timing.TotalMS ||
-		(metadata.Timing.TTFTMS != nil && *metadata.Timing.TTFTMS > metadata.Timing.TotalMS) ||
-		(metadata.E2EETranscriptSHA256 != "" && !isLowerHex(metadata.E2EETranscriptSHA256, 32)) {
+		(metadata.Timing.TTFTMS != nil && *metadata.Timing.TTFTMS > metadata.Timing.TotalMS) {
 		return false
 	}
 	return true
 }
 
-type StreamHasher struct {
-	base StreamingInput
-	hash hash.Hash
-}
-
-func NewStreamHasher(input StreamingInput) *StreamHasher {
-	return &StreamHasher{base: input, hash: sha256.New()}
-}
-
-func (h *StreamHasher) WriteChunk(chunk []byte) {
-	if h == nil || h.hash == nil {
-		return
-	}
-	_, _ = h.hash.Write(chunk)
-}
-
-func (h *StreamHasher) SetMetadata(metadata Metadata) {
-	if h == nil {
-		return
-	}
-	h.base.Metadata = cloneMetadata(metadata)
-}
-
-func (h *StreamHasher) FinalPayload() Payload {
-	if h == nil || h.hash == nil {
-		return Payload{}
-	}
-	return payloadForHashes(
-		h.base.Metadata,
-		sha256Hex(h.base.RequestBody),
-		hex.EncodeToString(h.hash.Sum(nil)),
-	)
-}
-
-func Sign(privateKey ed25519.PrivateKey, payload Payload) (string, error) {
-	message, err := signingMessage(payload)
-	if err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, message)), nil
-}
-
-func Verify(publicKey ed25519.PublicKey, payload Payload, signatureBase64URL string) bool {
-	signature, err := base64.RawURLEncoding.DecodeString(signatureBase64URL)
-	if err != nil {
+func validMeterCosts(metadata Metadata) bool {
+	if len(metadata.Meters) > 64 || !isUSD(metadata.UpstreamCostUSD) || !isUSD(metadata.BilledCostUSD) ||
+		metadata.CacheReadSavingsUSD != nil && !isUSD(*metadata.CacheReadSavingsUSD) ||
+		metadata.CacheWriteOverheadUSD != nil && !isUSD(*metadata.CacheWriteOverheadUSD) {
 		return false
 	}
-	message, err := signingMessage(payload)
-	return err == nil && ed25519.Verify(publicKey, message, signature)
+	_, _, err := billing.ValidateMeters(metadata.Meters)
+	return err == nil
 }
 
-func VerifyInput(publicKey ed25519.PublicKey, input Input, signatureBase64URL string) bool {
-	return Verify(publicKey, PayloadFor(input), signatureBase64URL)
-}
-
-func VerifyStreamingInput(
-	publicKey ed25519.PublicKey,
-	input StreamingInput,
-	chunks [][]byte,
-	signatureBase64URL string,
-) bool {
-	hasher := NewStreamHasher(input)
-	for _, chunk := range chunks {
-		hasher.WriteChunk(chunk)
-	}
-	return Verify(publicKey, hasher.FinalPayload(), signatureBase64URL)
-}
-
-func payloadForHashes(metadata Metadata, requestSHA256 string, responseSHA256 string) Payload {
-	metadata = cloneMetadata(metadata)
-	return Payload{
-		Schema:    DomainV1,
-		RequestID: metadata.RequestID,
-		CreatedAt: metadata.CreatedAt,
-		NodeID:    metadata.NodeID,
-		Catalog:   metadata.Catalog,
-		Pricing:   metadata.Pricing,
-		Timing:    metadata.Timing,
-		Proof: Claims{
-			RequestSHA256:        requestSHA256,
-			ResponseSHA256:       responseSHA256,
-			E2EETranscriptSHA256: metadata.E2EETranscriptSHA256,
-		},
-	}
-}
-
-func cloneMetadata(metadata Metadata) Metadata {
-	metadata.Catalog.SelectionIDs = append([]string(nil), metadata.Catalog.SelectionIDs...)
-	meters := make(map[string]Meter, len(metadata.Pricing.Meters))
-	for key, meter := range metadata.Pricing.Meters {
-		meters[key] = meter
-	}
-	metadata.Pricing.Meters = meters
-	if metadata.Timing.TTFTMS != nil {
-		value := *metadata.Timing.TTFTMS
-		metadata.Timing.TTFTMS = &value
-	}
-	return metadata
-}
-
-func validPricing(pricing Pricing) bool {
-	if len(pricing.Meters) > 64 || !isDecimal(pricing.TotalCostUSDAtoms) ||
-		(pricing.BYOKCostUSDAtoms != "" && !isDecimal(pricing.BYOKCostUSDAtoms)) {
-		return false
-	}
-	for key, meter := range pricing.Meters {
-		if !validIdentifier(key, 128) || !validIdentifier(meter.RateKey, 128) ||
-			!isDecimal(meter.Quantity) || !isDecimal(meter.RateUSDAtoms) || !isDecimal(meter.USDAtoms) {
-			return false
-		}
-	}
-	return true
-}
-
-func validCatalogDigest(value string) bool {
-	digest, ok := strings.CutPrefix(value, "sha256:")
-	return ok && isLowerHex(digest, 32)
+func ValidCatalog(catalog Catalog) bool {
+	digest, ok := strings.CutPrefix(catalog.ChainHash, "sha256:")
+	return catalog.Version > 0 && catalog.Version <= 9007199254740991 &&
+		ok && isLowerHex(digest, 32) && ValidCatalogSelectionIDs(catalog.SelectionIDs)
 }
 
 func validIdentifier(value string, maxLength int) bool {
@@ -327,18 +138,7 @@ func isLowerHex(value string, bytes int) bool {
 	return true
 }
 
-func signingMessage(payload Payload) ([]byte, error) {
-	bytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	message := make([]byte, 0, len(DomainV1)+1+len(bytes))
-	message = append(message, DomainV1...)
-	message = append(message, 0)
-	return append(message, bytes...), nil
-}
-
-func sha256Hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+func isUSD(value string) bool {
+	amount, err := money.Parse(value)
+	return err == nil && amount.Sign() >= 0 && amount.String() == value
 }

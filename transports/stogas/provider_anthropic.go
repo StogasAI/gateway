@@ -47,7 +47,7 @@ type anthropicAdapterContext struct {
 
 func anthropicWireSupportsMidConversationSystem(state *State) bool {
 	return state != nil && state.Resolution != nil &&
-		anthropicprovider.SupportsMidConversationSystem(
+		anthropicprovider.DefaultSupportsMidConversationSystem(
 			state.Resolution.Provider,
 			state.Resolution.Deployment.Upstream.Model,
 		)
@@ -713,7 +713,7 @@ func estimateAnthropicWireHold(state *State) error {
 		return err
 	}
 	state.Hold.Meters = meters
-	state.Hold.EstimatedUpstreamCostUSDAtoms = total
+	state.Hold.EstimatedUpstreamCostUSD = total
 	inputTokens, inputKnown := tokenHoldCapacity(state, true)
 	if !inputKnown {
 		for _, quantity := range []int{req.InputTokenLimit, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes), anthropicHostedContentHoldTokens(req)} {
@@ -754,14 +754,14 @@ func (AnthropicAdapter) CalculateUpstreamCost(state *State) error {
 	// caller can miss output that Anthropic still generated and billed.
 	if anthropicResponseRefused(state.Response) && !state.providerOutputEmitted {
 		state.FinalMeters = nil
-		state.UpstreamCostUSDAtoms = billing.ZeroChargeUSDAtoms
+		state.UpstreamCostUSD = billing.ZeroChargeUSD
 		return nil
 	}
-	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, anthropicFinalMeters(anthropicAdapterContextForUpstreamCost(state)))
+	upstreamCostUSD, err := calculateBaseUpstreamCost(state, anthropicFinalMeters(anthropicAdapterContextForUpstreamCost(state)))
 	if err != nil {
 		return err
 	}
-	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
+	state.UpstreamCostUSD = upstreamCostUSD
 	return nil
 }
 

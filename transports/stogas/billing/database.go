@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
 	"time"
@@ -62,6 +63,21 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
+	if poolConfig.ConnConfig.TLSConfig != nil {
+		poolConfig.ConnConfig.TLSConfig.MinVersion = tls.VersionTLS13
+		poolConfig.ConnConfig.TLSConfig.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
+		// A TLS-configured connection must never retry through plaintext or classical TLS.
+		fallbacks := poolConfig.ConnConfig.Fallbacks[:0]
+		for _, fallback := range poolConfig.ConnConfig.Fallbacks {
+			if fallback.TLSConfig == nil {
+				continue
+			}
+			fallback.TLSConfig.MinVersion = tls.VersionTLS13
+			fallback.TLSConfig.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
+			fallbacks = append(fallbacks, fallback)
+		}
+		poolConfig.ConnConfig.Fallbacks = fallbacks
+	}
 	poolConfig.MaxConns = databasePool.MaxConns
 	poolConfig.MinConns = databasePool.MinConns
 	poolConfig.MinIdleConns = databasePool.MinIdleConns
@@ -98,13 +114,6 @@ func (db *GatewayDB) Close() {
 	if db != nil && db.pool != nil {
 		db.pool.Close()
 	}
-}
-
-func (db *GatewayDB) Ping(ctx context.Context) error {
-	if db == nil || db.pool == nil {
-		return fmt.Errorf("postgres pool is unavailable")
-	}
-	return db.pool.Ping(ctx)
 }
 
 func (db *GatewayDB) Diagnostics() *DatabaseDiagnostics {

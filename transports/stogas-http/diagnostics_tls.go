@@ -11,8 +11,8 @@ import (
 
 const privateDiagnosticsPort = "5187"
 
-// The bootstrap release supplies only the monitor's public key pin. The
-// monitor keeps its private key; no host-provided value can authorize a client.
+// Provisioning supplies the observer and actuator public pins. Their private
+// keys remain outside the guest; host input cannot authorize a client.
 func (s *Server) diagnosticsTLSConfig() (*tls.Config, error) {
 	pin, err := hex.DecodeString(s.config.DiagnosticsClientSPKISHA256)
 	if err != nil || len(pin) != sha256.Size {
@@ -20,10 +20,20 @@ func (s *Server) diagnosticsTLSConfig() (*tls.Config, error) {
 	}
 	var expected [sha256.Size]byte
 	copy(expected[:], pin)
-	config := s.confidentialTLSConfig()
+	drainPin, err := hex.DecodeString(s.config.DrainClientSPKISHA256)
+	if err != nil || len(drainPin) != sha256.Size || s.config.DrainClientSPKISHA256 == s.config.DiagnosticsClientSPKISHA256 {
+		return nil, errors.New("a distinct drain client SPKI pin is required")
+	}
+	var drainExpected [sha256.Size]byte
+	copy(drainExpected[:], drainPin)
+	config := s.ordinaryTLSConfig()
 	config.MinVersion = tls.VersionTLS13
+	config.CurvePreferences = []tls.CurveID{tls.X25519MLKEM768}
 	config.ClientAuth = tls.RequireAnyClientCert
 	config.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 1 && sha256.Sum256(state.PeerCertificates[0].RawSubjectPublicKeyInfo) == drainExpected {
+			return verifyDiagnosticsClient(state, drainExpected, time.Now())
+		}
 		return verifyDiagnosticsClient(state, expected, time.Now())
 	}
 	return config, nil

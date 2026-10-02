@@ -2,6 +2,7 @@ package attest
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -10,15 +11,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	defaultSEVGuestCertBuffer = 64 * 1024
-	maxSEVGuestCertBuffer     = 256 * 1024
-)
-
 type SEVGuestDevice struct {
-	Path            string
-	VMPL            uint32
-	CertBufferBytes int
+	Path string
+	VMPL uint32
 }
 
 func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) (quote []byte, err error) {
@@ -40,18 +35,16 @@ func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) (quote [
 		}
 	}()
 
-	report, certs, err := a.getExtReport(file.Fd(), reportData)
+	// Vendor certificates and CRLs come from the verified evidence bundle.
+	// A session quote needs only SNP_GET_REPORT, never an extended cert-table call.
+	report, err := a.getReport(file.Fd(), reportData)
 	if err != nil {
-		report, err = a.getReport(file.Fd(), reportData)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	return EncodeEnvelope(Envelope{
 		Schema:   EnvelopeSchemaV1,
 		Provider: ProviderSEVGuest,
-		Report:   optionalBase64URL(report),
-		AuxBlob:  optionalBase64URL(certs),
+		Report:   base64.RawURLEncoding.EncodeToString(report),
 	})
 }
 
@@ -70,45 +63,6 @@ func (a SEVGuestDevice) getReport(fd uintptr, reportData [64]byte) ([]byte, erro
 	return NormalizeReportBlob(append([]byte(nil), resp.Data[:]...)), nil
 }
 
-func (a SEVGuestDevice) getExtReport(fd uintptr, reportData [64]byte) ([]byte, []byte, error) {
-	certBufferBytes := a.CertBufferBytes
-	if certBufferBytes <= 0 {
-		certBufferBytes = defaultSEVGuestCertBuffer
-	}
-	if certBufferBytes > maxSEVGuestCertBuffer {
-		return nil, nil, fmt.Errorf("SEV guest cert buffer exceeds %d bytes", maxSEVGuestCertBuffer)
-	}
-	return a.getExtReportWithCertBuffer(fd, reportData, certBufferBytes)
-}
-
-func (a SEVGuestDevice) getExtReportWithCertBuffer(fd uintptr, reportData [64]byte, certBufferBytes int) ([]byte, []byte, error) {
-	certs := make([]byte, certBufferBytes)
-	req := &snpExtReportReq{}
-	req.Data.VMPL = a.VMPL
-	copy(req.Data.UserData[:], reportData[:])
-	if len(certs) > 0 {
-		req.CertsAddress = uint64(uintptr(unsafe.Pointer(&certs[0])))
-		req.CertsLen = uint32(len(certs))
-	}
-	resp := &snpReportResp{}
-	guestReq := &snpGuestRequestIoctl{
-		MsgVersion: 1,
-		ReqData:    uint64(uintptr(unsafe.Pointer(req))),
-		RespData:   uint64(uintptr(unsafe.Pointer(resp))),
-	}
-	if err := sevGuestIoctl(fd, snpGetExtReportIOCTL(), guestReq); err != nil {
-		if req.CertsLen > uint32(len(certs)) && req.CertsLen <= maxSEVGuestCertBuffer {
-			return a.getExtReportWithCertBuffer(fd, reportData, int(req.CertsLen))
-		}
-		return nil, nil, formatSEVGuestError("SNP_GET_EXT_REPORT", err, guestReq.ExitInfo2)
-	}
-	certsLen := int(req.CertsLen)
-	if certsLen > len(certs) {
-		return nil, nil, fmt.Errorf("SNP_GET_EXT_REPORT returned cert length %d beyond buffer %d", certsLen, len(certs))
-	}
-	return NormalizeReportBlob(append([]byte(nil), resp.Data[:]...)), append([]byte(nil), certs[:certsLen]...), nil
-}
-
 type snpReportReq struct {
 	UserData [64]byte
 	VMPL     uint32
@@ -117,13 +71,6 @@ type snpReportReq struct {
 
 type snpReportResp struct {
 	Data [4000]byte
-}
-
-type snpExtReportReq struct {
-	Data         snpReportReq
-	CertsAddress uint64
-	CertsLen     uint32
-	_            [4]byte
 }
 
 type snpGuestRequestIoctl struct {
@@ -144,10 +91,6 @@ func sevGuestIoctl(fd uintptr, request uintptr, arg *snpGuestRequestIoctl) error
 
 func snpGetReportIOCTL() uintptr {
 	return iowr('S', 0x0, unsafe.Sizeof(snpGuestRequestIoctl{}))
-}
-
-func snpGetExtReportIOCTL() uintptr {
-	return iowr('S', 0x2, unsafe.Sizeof(snpGuestRequestIoctl{}))
 }
 
 func iowr(kind uintptr, nr uintptr, size uintptr) uintptr {

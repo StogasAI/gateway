@@ -3,164 +3,146 @@ package catalog
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"io"
-	"unicode/utf8"
-
-	"github.com/bytedance/sonic"
+	"net/http"
 )
 
-const maxRequestJSONDepth = 128
+const (
+	maxRequestJSONDepth = 128
+	// The largest explicit per-request message ceiling in the provider survey.
+	maxRequestMessages = 100_000
+	// Separate structural work from text size. This admits 100,000 ordinary
+	// messages with typed content blocks while bounding dense schemas and arrays.
+	maxRequestJSONValues = 1_000_000
+)
 
-func rawRequestBody(body []byte) (map[string]json.RawMessage, error) {
-	if err := validateRequestJSON(body); err != nil {
-		return nil, ErrInvalidJSON
+var (
+	errRequestMessageLimit   = APIError{StatusCode: http.StatusRequestEntityTooLarge, Type: ErrorTypeInvalidRequest, Message: "Request exceeds the messages/input item limit"}
+	errRequestJSONValueLimit = APIError{StatusCode: http.StatusRequestEntityTooLarge, Type: ErrorTypeInvalidRequest, Message: "Request exceeds the JSON structure limit"}
+)
+
+// admit, when supplied, reserves the decoded JSON structure before duplicate-name
+// bookkeeping, request fields or typed message arrays are materialized. It
+// receives the number of JSON values, including containers; member names and
+// string contents are not values.
+// Values borrow body storage; callers may replace fields but must not mutate it.
+func DecodeRequestBody(body []byte, admit func(int) error) (map[string]json.RawMessage, error) {
+	if admit != nil {
+		values, _, err := scanRequestJSON(body, countRequestJSON)
+		if err != nil {
+			return nil, requestJSONError(err)
+		}
+		if err := admit(values); err != nil {
+			return nil, err
+		}
 	}
-	var rawData map[string]json.RawMessage
-	if err := sonic.Unmarshal(body, &rawData); err != nil {
-		return nil, ErrInvalidJSON
+	_, fields, err := scanRequestJSON(body, decodeRequestJSON)
+	if err != nil {
+		return nil, requestJSONError(err)
+	}
+	rawData := make(map[string]json.RawMessage, len(fields))
+	for _, field := range fields {
+		rawData[field.name] = field.value
 	}
 	return rawData, nil
+}
+
+func requestJSONError(err error) error {
+	if errors.Is(err, errRequestMessageLimit) || errors.Is(err, errRequestJSONValueLimit) {
+		return err
+	}
+	return ErrInvalidJSON
 }
 
 // ValidateJSONObjectText applies the request JSON ambiguity and resource limits
 // to an object encoded inside a string, such as function-call arguments.
 func ValidateJSONObjectText(value string) bool {
-	object, err := rawRequestBody([]byte(value))
-	return err == nil && object != nil
+	body := bytes.TrimSpace([]byte(value))
+	if len(body) == 0 || body[0] != '{' {
+		return false
+	}
+	_, err := validateRequestJSON(body)
+	return err == nil
 }
 
-func validateRequestJSON(body []byte) error {
-	if !utf8.Valid(body) {
-		return errors.New("JSON body is not valid UTF-8")
+func validateRequestJSON(body []byte) (int, error) {
+	values, _, err := scanRequestJSON(body, validateJSON)
+	return values, err
+}
+
+type requestJSONField struct {
+	name  string
+	value json.RawMessage
+}
+
+type requestJSONScanMode uint8
+
+const (
+	validateJSON requestJSONScanMode = iota
+	countRequestJSON
+	decodeRequestJSON
+)
+
+func scanRequestJSON(body []byte, mode requestJSONScanMode) (int, []requestJSONField, error) {
+	// The counting pass uses the same syntax/UTF-8/surrogate validation, but
+	// defers duplicate-name maps and field retention until their byte charge
+	// is admitted. The second pass always rejects duplicate names.
+	decoder := jsontext.NewDecoder(bytes.NewBuffer(body), jsontext.AllowDuplicateNames(mode == countRequestJSON))
+	request := mode != validateJSON
+	captureFields := mode == decodeRequestJSON
+	if request && decoder.PeekKind() != '{' {
+		return 0, nil, errors.New("expected JSON object")
 	}
-	if !validJSONUnicodeEscapes(body) {
-		return errors.New("JSON string contains an invalid Unicode surrogate")
+	values := 0
+	var fields []requestJSONField
+	var name string
+	start := -1
+	for {
+		// An empty container at the boundary is valid; its child values are not.
+		if decoder.StackDepth() > maxRequestJSONDepth {
+			if kind := decoder.PeekKind(); kind != '}' && kind != ']' {
+				return 0, nil, errors.New("JSON nesting exceeds limit")
+			}
+		}
+		depth := decoder.StackDepth()
+		container, index := decoder.StackIndex(depth)
+		if request && depth == 2 && container == '[' && (name == "messages" || name == "input") && index >= maxRequestMessages && decoder.PeekKind() != ']' {
+			return 0, nil, errRequestMessageLimit
+		}
+		if captureFields && depth == 1 && container == '{' && index%2 == 1 {
+			start = int(decoder.InputOffset())
+		}
+		token, err := decoder.ReadToken()
+		if err != nil {
+			return 0, nil, err
+		}
+		if request && depth == 1 && container == '{' && index%2 == 0 && token.Kind() == '"' {
+			name = token.String()
+		}
+		if start >= 0 && decoder.StackDepth() == 1 {
+			end := int(decoder.InputOffset())
+			// ReadToken has already validated the separator and the entire value.
+			value := bytes.TrimLeft(body[start:end:end], ": \r\n\t")
+			fields = append(fields, requestJSONField{name, value})
+			start = -1
+		}
+		if kind := token.Kind(); kind != '}' && kind != ']' && !(kind == '"' && container == '{' && index%2 == 0) {
+			values++
+			if values > maxRequestJSONValues {
+				return 0, nil, errRequestJSONValueLimit
+			}
+		}
+		if decoder.StackDepth() == 0 {
+			break
+		}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := scanRequestJSONValue(decoder, 0); err != nil {
-		return err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("trailing JSON value")
+			return 0, nil, errors.New("trailing JSON value")
 		}
-		return err
+		return 0, nil, err
 	}
-	return nil
-}
-
-func validJSONUnicodeEscapes(body []byte) bool {
-	inString := false
-	for index := 0; index < len(body); index++ {
-		switch body[index] {
-		case '"':
-			inString = !inString
-		case '\\':
-			if !inString {
-				continue
-			}
-			index++
-			if index >= len(body) {
-				return false
-			}
-			if body[index] != 'u' {
-				continue
-			}
-			value, ok := parseJSONHex4(body, index+1)
-			if !ok {
-				return false
-			}
-			index += 4
-			switch {
-			case value >= 0xd800 && value <= 0xdbff:
-				if index+6 >= len(body) || body[index+1] != '\\' || body[index+2] != 'u' {
-					return false
-				}
-				low, lowOK := parseJSONHex4(body, index+3)
-				if !lowOK || low < 0xdc00 || low > 0xdfff {
-					return false
-				}
-				index += 6
-			case value >= 0xdc00 && value <= 0xdfff:
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func parseJSONHex4(body []byte, start int) (uint16, bool) {
-	if start < 0 || start+4 > len(body) {
-		return 0, false
-	}
-	var value uint16
-	for _, digit := range body[start : start+4] {
-		value <<= 4
-		switch {
-		case digit >= '0' && digit <= '9':
-			value |= uint16(digit - '0')
-		case digit >= 'a' && digit <= 'f':
-			value |= uint16(digit-'a') + 10
-		case digit >= 'A' && digit <= 'F':
-			value |= uint16(digit-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return value, true
-}
-
-func scanRequestJSONValue(decoder *json.Decoder, depth int) error {
-	if depth > maxRequestJSONDepth {
-		return errors.New("JSON nesting exceeds limit")
-	}
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		seen := map[string]struct{}{}
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return errors.New("object key is not a string")
-			}
-			if _, exists := seen[key]; exists {
-				return errors.New("duplicate object key")
-			}
-			seen[key] = struct{}{}
-			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim('}') {
-			return errors.New("unterminated object")
-		}
-	case '[':
-		for decoder.More() {
-			if err := scanRequestJSONValue(decoder, depth+1); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim(']') {
-			return errors.New("unterminated array")
-		}
-	default:
-		return errors.New("unexpected JSON delimiter")
-	}
-	return nil
+	return values, fields, nil
 }

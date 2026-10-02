@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
@@ -11,6 +13,74 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
+
+func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
+	for index, encoded := range []string{
+		`"  \u0061\u00e9\ud83d\ude42\n<>&\\\/\"  "`,
+		`"e\u0301\u2028\u2029\t\r\n"`,
+		`" \u3000\u2000x` + strings.Repeat(" ", 1<<20) + `"`,
+	} {
+		var want string
+		if err := json.Unmarshal([]byte(encoded), &want); err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range []string{"chat/completions", "responses"} {
+			t.Run(fmt.Sprintf("%s/%d", route, index), func(t *testing.T) {
+				input, outputField, limitField := `"input":`+encoded, "input", "max_output_tokens"
+				if route == "chat/completions" {
+					input, outputField = `"messages":[{"role":"user","content":`+encoded+`}]`, "messages"
+					limitField = "max_completion_tokens"
+				}
+				resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+					Method: "POST", Path: "/v1/" + route,
+					Body: []byte(fmt.Sprintf(`{"model":"gpt-5.5",%q:16,%s}`, limitField, input)),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+				if err := state.Adapter.ValidateRequest(state); err != nil {
+					t.Fatal(err)
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+				request, err := resolved.ToBifrost(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := PrepareProviderRequest(ctx, state, request); err != nil {
+					t.Fatal(err)
+				}
+				var body []byte
+				if request.ChatRequest != nil {
+					body = preparedProviderBody(t, ctx, request.ChatRequest)
+				} else {
+					body = preparedProviderBody(t, ctx, request.ResponsesRequest)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(body, &fields); err != nil {
+					t.Fatal(err)
+				}
+				var conversation []struct{ Content json.RawMessage }
+				if err := json.Unmarshal(fields[outputField], &conversation); err != nil || len(conversation) != 1 {
+					t.Fatalf("unexpected prepared conversation: %v", err)
+				}
+				content := conversation[0].Content
+				var got string
+				if err := json.Unmarshal(content, &got); err != nil {
+					var blocks []struct{ Text string }
+					if err := json.Unmarshal(content, &blocks); err != nil || len(blocks) != 1 {
+						t.Fatalf("unexpected prepared content: %v", err)
+					}
+					got = blocks[0].Text
+				}
+				if got != want || resolved.StructuredPIIRedactionSummary() != nil {
+					t.Fatalf("prompt changed: got %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
 
 func TestPrepareProviderRequestRemovesClientIdentityAndAppliesStorePolicy(t *testing.T) {
 	text := "hello"
@@ -125,8 +195,13 @@ func TestPreparedProviderBodySurvivesCredentialInstallationAndDispatchBuilder(t 
 func TestPrepareProviderRequestAppliesPinnedAnthropicLimitBeforeSerialization(t *testing.T) {
 	const model = "stogas-prepared-body-max-output-test"
 	wrongLimit := 7
-	providerutils.SetModelParams(model, providerutils.ModelParams{MaxOutputTokens: &wrongLimit})
-	defer providerutils.DeleteModelParams(model)
+	schemas.SetCapabilityResolver(func(_ schemas.ModelProvider, candidate string) *schemas.ModelCapabilities {
+		if candidate == model {
+			return &schemas.ModelCapabilities{MaxOutputTokens: &wrongLimit}
+		}
+		return nil
+	})
+	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
 	text := "hello"
 	request := &schemas.BifrostRequest{
 		RequestType: schemas.ChatCompletionRequest,
@@ -226,8 +301,13 @@ func TestPrepareProviderRequestUsesNativeAnthropicBodiesForAzureClaude(t *testin
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
 	wrongLimit := 100000
-	providerutils.SetModelParams(wireModel, providerutils.ModelParams{MaxOutputTokens: &wrongLimit})
-	defer providerutils.DeleteModelParams(wireModel)
+	schemas.SetCapabilityResolver(func(_ schemas.ModelProvider, candidate string) *schemas.ModelCapabilities {
+		if candidate == wireModel {
+			return &schemas.ModelCapabilities{MaxOutputTokens: &wrongLimit}
+		}
+		return nil
+	})
+	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
 
 	text := "hello"
 	request := &schemas.BifrostRequest{

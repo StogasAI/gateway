@@ -140,13 +140,6 @@ func (r *Runtime) BillingDiagnostics() billing.DiagnosticsSnapshot {
 	return r.billing.Diagnostics()
 }
 
-func (r *Runtime) ProbeDependencies(ctx context.Context) error {
-	if r == nil || r.billing == nil {
-		return billing.ErrGatewayUnavailable
-	}
-	return r.billing.ProbeDatabase(ctx)
-}
-
 func (r *Runtime) Close() {
 	if r == nil {
 		return

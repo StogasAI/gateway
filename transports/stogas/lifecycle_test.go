@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/money"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"math/big"
 	"slices"
 	"strconv"
@@ -33,10 +36,11 @@ func (e *statusError) StatusCode() int {
 }
 
 type fakeBillingAuthorizer struct {
-	attempts    []string
-	errors      []error
-	finalEvents []billing.RequestEvent
-	callCount   int
+	attempts       []string
+	errors         []error
+	finalEvents    []billing.RequestEvent
+	encryptionKeys customerkey.Keys
+	callCount      int
 }
 
 func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorization, error) {
@@ -49,15 +53,16 @@ func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorizat
 	return nil, nil
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, _ int, _ string, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage billing.UsageReservation, _ *billing.KeyConfigSnapshot, _ *billing.PreparedCredential, _ []policy.RuleMatch, _ customerkey.Keys, _ *billing.UpstreamTarget, requestLifetime time.Duration, _ bool) (*billing.Authorization, error) {
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, _ int, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
+func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage billing.UsageReservation, _ *billing.KeyConfigSnapshot, _ *billing.PreparedCredential, _ []policy.RuleMatch, key customerkey.Keys, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
+	f.encryptionKeys = key
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent) error {
+func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent, retain billing.RetainMemory) error {
 	f.finalEvents = append(f.finalEvents, event)
 	return nil
 }
@@ -75,7 +80,9 @@ func TestPublicBillingErrorTypes(t *testing.T) {
 		{"key disabled", billing.ErrAPIKeyDisabled, 403, "permission_denied", "key_disabled"},
 		{"rate limit", billing.ErrAPIKeyRateLimit, 429, "rate_limit_error", "key_rate_limited"},
 		{"gateway unavailable", billing.ErrGatewayUnavailable, 503, "gateway_error", "gateway_unavailable"},
-		{"dashboard BYOK", passthroughDashboardError{}, 400, "invalid_request_error", "byok_api_key_required"},
+		{"missing encryption key", customerkey.ErrKey, 400, "invalid_request_error", "encryption_key_required"},
+		{"policy work limit", policy.ErrSourceBudget, 400, "invalid_request_error", "policy_work_limit_exceeded"},
+		{"invalid decrypted policy", fmt.Errorf("%w: private literal", policy.ErrInvalidConfig), 400, "invalid_request_error", "invalid_request"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got := PublicBillingErrorFor(tt.err)
@@ -143,7 +150,7 @@ func TestAuthorizeStateNeverRetriesAuthorizationConflict(t *testing.T) {
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5",
 	}, "sk-user", nil, DefaultAdapter{})
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
 
 	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrRequestAlreadyUsed) {
 		t.Fatalf("AuthorizeState error = %v, want request conflict", err)
@@ -170,7 +177,7 @@ func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
 		Model:       "gpt-5",
 	}, "sk-user", nil, DefaultAdapter{})
 	state.SingleUseRequestID = true
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
 
 	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrAuthorizationClosed) {
 		t.Fatalf("AuthorizeState error = %v, want authorization closed", err)
@@ -184,7 +191,7 @@ func TestAuthorizeStateNeverRewritesEncryptedRequestID(t *testing.T) {
 	}
 }
 
-func TestAuthorizeStateClearsPassThroughCredentialAfterFailure(t *testing.T) {
+func TestAuthorizeStateReleasesCredentialSnapshotAfterFailure(t *testing.T) {
 	requestID := "11111111-1111-1111-1111-111111111111"
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
@@ -194,8 +201,9 @@ func TestAuthorizeStateClearsPassThroughCredentialAfterFailure(t *testing.T) {
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5",
 	}, "sk-user", nil, DefaultAdapter{})
-	state.PassthroughByokSecret = "sk-upstream-secret"
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSDAtoms: "1000"}
+	state.EncryptionKeys, _ = customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
+	state.KeyConfig = &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"openai": {{Mode: "stored", Credential: &billing.CachedCredential{EncryptedSecret: "ciphertext"}}}}}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
 	authorizer := &fakeBillingAuthorizer{errors: []error{
 		&statusError{err: billing.ErrInvalidAPIKey, statusCode: 401},
 	}}
@@ -203,12 +211,12 @@ func TestAuthorizeStateClearsPassThroughCredentialAfterFailure(t *testing.T) {
 	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrInvalidAPIKey) {
 		t.Fatalf("AuthorizeState error = %v, want invalid API key", err)
 	}
-	if state.PassthroughByokSecret != "" {
-		t.Fatal("pass-through credential remained in request state after authorization failed")
+	if state.EncryptionKeys != nil || state.KeyConfig != nil {
+		t.Fatal("credential snapshot remained in request state after authorization failed")
 	}
 }
 
-func TestAuthorizeStateRejectsPassThroughWithDashboardCredential(t *testing.T) {
+func TestAuthorizeStateForwardsDashboardEncryptionKeyAndReleasesIt(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, "11111111-1111-1111-1111-111111111111")
 	state := NewState(&catalog.ResolvedRequest{
@@ -222,24 +230,20 @@ func TestAuthorizeStateRejectsPassThroughWithDashboardCredential(t *testing.T) {
 		KeyID:       "key",
 		SessionID:   "session",
 	})
-	state.PassthroughByokSecret = "sk-upstream-secret"
+	state.EncryptionKeys, _ = customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
 	state.Hold = HoldEstimate{
-		ProviderKey:                   "openai",
-		ProductKey:                    "gpt-5",
-		EstimatedUpstreamCostUSDAtoms: "1000",
+		ProviderKey:              "openai",
+		ProductKey:               "gpt-5",
+		EstimatedUpstreamCostUSD: "1000",
 	}
-	authorizer := &fakeBillingAuthorizer{}
-
-	err := AuthorizeState(ctx, authorizer, state)
-	var dashboardErr passthroughDashboardError
-	if !errors.As(err, &dashboardErr) || dashboardErr.StatusCode() != 400 {
-		t.Fatalf("AuthorizeState error = %v, want dashboard pass-through rejection", err)
+	key := state.EncryptionKeys
+	defer key.Clear()
+	authorizer := &fakeBillingAuthorizer{errors: []error{billing.ErrInvalidAPIKey}}
+	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrInvalidAPIKey) {
+		t.Fatal(err)
 	}
-	if authorizer.callCount != 0 {
-		t.Fatal("dashboard pass-through reached hold authorization")
-	}
-	if state.PassthroughByokSecret != "" {
-		t.Fatal("rejected dashboard pass-through credential remained in request state")
+	if authorizer.callCount != 1 || authorizer.encryptionKeys.Identity() != key.Identity() || state.EncryptionKeys != nil {
+		t.Fatal("dashboard encryption key was not forwarded or released")
 	}
 }
 
@@ -320,7 +324,7 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 
 func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *testing.T) {
 	const upstreamSecret = "sk-upstream-secret"
-	const credentialHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	const credentialHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
 		Authorization: &billing.Authorization{
@@ -395,16 +399,16 @@ func TestDefaultAdapterCalculateUpstreamCostUsesSignals(t *testing.T) {
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "5000" {
-		t.Fatalf("expected signal-derived final cost 5000, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "5000" {
+		t.Fatalf("expected signal-derived final cost 5000, got %s", state.UpstreamCostUSD)
 	}
 	if len(state.FinalMeters) != 2 {
 		t.Fatalf("expected final price to retain two pricing meters, got %#v", state.FinalMeters)
 	}
-	if state.FinalMeters[0].MeterKey != billing.MeterInputTokens || state.FinalMeters[0].RateKey != billing.RatePerMillionTokens || state.FinalMeters[0].AmountUSDAtoms != "1000" {
+	if state.FinalMeters[0].MeterKey != billing.MeterInputTokens || state.FinalMeters[0].RateKey != billing.RatePerMillionTokens || state.FinalMeters[0].AmountUSD != "1000" {
 		t.Fatalf("unexpected input final meter %#v", state.FinalMeters[0])
 	}
-	if state.FinalMeters[1].MeterKey != billing.MeterOutputTokens || state.FinalMeters[1].RateKey != billing.RatePerMillionTokens || state.FinalMeters[1].AmountUSDAtoms != "4000" {
+	if state.FinalMeters[1].MeterKey != billing.MeterOutputTokens || state.FinalMeters[1].RateKey != billing.RatePerMillionTokens || state.FinalMeters[1].AmountUSD != "4000" {
 		t.Fatalf("unexpected output final meter %#v", state.FinalMeters[1])
 	}
 }
@@ -449,8 +453,8 @@ func TestCalculateUpstreamCostPartitionsEveryInputAndOutputCategoryExactlyOnce(t
 			t.Fatalf("%s meter = %#v, want quantity %s", meterKey, meter, want)
 		}
 	}
-	if state.UpstreamCostUSDAtoms != "1613" {
-		t.Fatalf("exact partition cost = %s, want 1613; meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+	if state.UpstreamCostUSD != "1612.5" {
+		t.Fatalf("exact partition cost = %s, want 1612.5; meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
 	}
 }
 
@@ -466,8 +470,8 @@ func TestCalculateUpstreamCostKeepsUsablePromptWhenCacheBreakdownIsImpossible(t 
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "100" {
-		t.Fatalf("final cost = %s, want 100 from the usable aggregate prompt; meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+	if state.UpstreamCostUSD != "100" {
+		t.Fatalf("final cost = %s, want 100 from the usable aggregate prompt; meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
 	}
 	if meter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens); meterQuantity(meter) != "100" {
 		t.Fatalf("ordinary input meter = %#v, want quantity 100", meter)
@@ -477,7 +481,7 @@ func TestCalculateUpstreamCostKeepsUsablePromptWhenCacheBreakdownIsImpossible(t 
 			t.Fatalf("invalid cache detail must be discarded, got %s meter %#v", meterKey, meter)
 		}
 	}
-	if savings, err := cacheReadSavingsUSDAtoms(state); err != nil || savings == nil || *savings != "0" {
+	if savings, err := cacheReadSavingsUSD(state); err != nil || savings == nil || *savings != "0" {
 		t.Fatalf("cache savings = %#v, %v; want 0", savings, err)
 	}
 }
@@ -517,8 +521,8 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 					t.Fatalf("unpriced cache detail produced %s meter %#v", meterKey, meter)
 				}
 			}
-			savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-			overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+			savings, savingsErr := cacheReadSavingsUSD(state)
+			overhead, overheadErr := cacheWriteOverheadUSD(state)
 			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
 				t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 			}
@@ -569,8 +573,11 @@ func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 			t.Fatalf("expected high-context final meter for %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover high-context final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if state.UpstreamCostUSD != "2.720055" || findMeterEstimate(state.FinalMeters, billing.MeterInputTokens).Quantity != "272001" {
+		t.Fatalf("actual high-context usage was limited by its estimate: cost=%s meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
+	}
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) >= 0 {
+		t.Fatal("fixture must exercise usage above the local hold estimate")
 	}
 
 	state.Signals = &StandardSignals{Prompt: 1000, Completion: billing.LongContextThresholdTokens + 1}
@@ -582,6 +589,53 @@ func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionContextLTE272K {
 			t.Fatalf("expected normal-context final meter for large output %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
+	}
+}
+
+func TestCalculateUpstreamCostRetainsExplicitlyFreeCacheUsage(t *testing.T) {
+	pricing := catalog.Pricing{
+		billing.MeterInputTokens:       {billing.RatePerMillionTokens: "2"},
+		billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "0"},
+	}
+	state := &State{
+		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		Hold: HoldEstimate{Meters: billing.AppendTokenMeterCost(nil, pricing,
+			billing.MeterInputTokens, 1000, true, billing.TokenRateHighest), EstimatedUpstreamCostUSD: "0.002"},
+	}
+	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
+		PromptTokens:        1000,
+		PromptTokensDetails: &schemas.ChatPromptTokensDetails{CachedReadTokens: 300},
+	})
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatal(err)
+	}
+	if state.UpstreamCostUSD != "0.0014" {
+		t.Fatalf("free cached tokens were charged: %s", state.UpstreamCostUSD)
+	}
+	cached := findMeterEstimate(state.FinalMeters, billing.MeterCachedInputTokens)
+	if cached == nil || cached.Quantity != "300" || cached.RateUSD != "0" || cached.AmountUSD != "0" {
+		t.Fatalf("missing free cache usage: %#v", state.FinalMeters)
+	}
+	savings, err := cacheReadSavingsUSD(state)
+	if err != nil || savings == nil || *savings != "0.0006" {
+		t.Fatalf("free cache savings = %v, %v", savings, err)
+	}
+	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
+		PromptTokens:        1000,
+		PromptTokensDetails: &schemas.ChatPromptTokensDetails{CachedReadTokens: 1000},
+	})
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Signals == nil || len(state.FinalMeters) != 1 || state.UpstreamCostUSD != "0" {
+		t.Fatalf("zero-cost usage was discarded: %#v", state.FinalMeters)
+	}
+	delete(pricing, billing.MeterCachedInputTokens)
+	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
+		t.Fatal(err)
+	}
+	if state.UpstreamCostUSD != "0.002" || findMeterEstimate(state.FinalMeters, billing.MeterCachedInputTokens) != nil {
+		t.Fatalf("missing rate became a free rate: %s, %#v", state.UpstreamCostUSD, state.FinalMeters)
 	}
 }
 
@@ -608,18 +662,18 @@ func TestCalculateUpstreamCostPartitionsReasoningFromAggregateOutputWithoutDoubl
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "1500" {
-		t.Fatalf("expected aggregate-token final cost 1500, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "1500" {
+		t.Fatalf("expected aggregate-token final cost 1500, got %s", state.UpstreamCostUSD)
 	}
 	if len(state.FinalMeters) != 3 {
 		t.Fatalf("expected three final meters, got %#v", state.FinalMeters)
 	}
 	output := findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens)
-	if output == nil || output.Quantity != "70" || output.AmountUSDAtoms != "140" {
+	if output == nil || output.Quantity != "70" || output.AmountUSD != "140" {
 		t.Fatalf("expected non-reasoning output partition, got %#v", state.FinalMeters)
 	}
 	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
-	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSDAtoms != "360" {
+	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSD != "360" {
 		t.Fatalf("expected reasoning partition at the output fallback rate, got %#v", state.FinalMeters)
 	}
 }
@@ -641,15 +695,15 @@ func TestCalculateUpstreamCostUsesExplicitReasoningRateAndHoldReservesTheHigherO
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "1040" {
-		t.Fatalf("expected distinct output and reasoning rates to cost 1040, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "1040" {
+		t.Fatalf("expected distinct output and reasoning rates to cost 1040, got %s", state.UpstreamCostUSD)
 	}
 	reasoning := findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens)
-	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSDAtoms != "900" {
+	if reasoning == nil || reasoning.Quantity != "180" || reasoning.AmountUSD != "900" {
 		t.Fatalf("expected explicit reasoning rate, got %#v", state.FinalMeters)
 	}
 	holdMeters := appendOutputTokenHoldCost(nil, pricing, 250)
-	if len(holdMeters) != 1 || holdMeters[0].MeterKey != billing.MeterReasoningTokens || holdMeters[0].AmountUSDAtoms != "1250" {
+	if len(holdMeters) != 1 || holdMeters[0].MeterKey != billing.MeterReasoningTokens || holdMeters[0].AmountUSD != "1250" {
 		t.Fatalf("expected the output cap held at the higher reasoning rate, got %#v", holdMeters)
 	}
 	outputOnly := catalog.Pricing{
@@ -663,7 +717,7 @@ func TestCalculateUpstreamCostUsesExplicitReasoningRateAndHoldReservesTheHigherO
 		t.Fatalf("reasoning fallback did not inherit output pricing: %#v", withFallback)
 	}
 	fallbackHold := appendOutputTokenHoldCost(nil, withFallback, 250)
-	if len(fallbackHold) != 1 || fallbackHold[0].MeterKey != billing.MeterOutputTokens || fallbackHold[0].AmountUSDAtoms != "500" {
+	if len(fallbackHold) != 1 || fallbackHold[0].MeterKey != billing.MeterOutputTokens || fallbackHold[0].AmountUSD != "500" {
 		t.Fatalf("equal fallback rates should retain the output hold meter, got %#v", fallbackHold)
 	}
 }
@@ -713,7 +767,7 @@ func TestCalculateUpstreamCostIgnoresImpossibleReasoningDetailAndKeepsCompletion
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	output := findMeterEstimate(state.FinalMeters, billing.MeterOutputTokens)
-	if output == nil || output.Quantity != "10" || output.AmountUSDAtoms != "20" {
+	if output == nil || output.Quantity != "10" || output.AmountUSD != "20" {
 		t.Fatalf("usable completion aggregate was not retained: %#v", state.FinalMeters)
 	}
 	if findMeterEstimate(state.FinalMeters, billing.MeterReasoningTokens) != nil {
@@ -750,7 +804,7 @@ func TestDefaultAdapterCalculateUpstreamCostDoesNotChargeWithoutUsage(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &State{
-				Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(123)},
+				Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
 				BifrostError: &schemas.BifrostError{
 					StatusCode: tt.statusCode,
 					Error: &schemas.ErrorField{
@@ -761,8 +815,8 @@ func TestDefaultAdapterCalculateUpstreamCostDoesNotChargeWithoutUsage(t *testing
 			if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
-				t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
+			if state.UpstreamCostUSD != billing.ZeroChargeUSD {
+				t.Fatalf("UpstreamCostUSD = %s, want 0", state.UpstreamCostUSD)
 			}
 			if len(state.FinalMeters) != 0 {
 				t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
@@ -776,22 +830,22 @@ func TestDefaultAdapterCalculateUpstreamCostReturnsHoldWithoutUsage(t *testing.T
 		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
 			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
 		}}},
-		Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(123)},
+		Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
 		Signals:       &StandardSignals{},
 		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterOutputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "1000000",
-			Quantity:       "123",
-			AmountUSDAtoms: "123",
-			HoldRequired:   true,
+			MeterKey:     billing.MeterOutputTokens,
+			RateKey:      billing.RatePerMillionTokens,
+			RateUSD:      "1000000",
+			Quantity:     "123",
+			AmountUSD:    "123",
+			HoldRequired: true,
 		}}},
 	}
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
-		t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != billing.ZeroChargeUSD {
+		t.Fatalf("UpstreamCostUSD = %s, want 0", state.UpstreamCostUSD)
 	}
 	if len(state.FinalMeters) != 0 {
 		t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
@@ -840,16 +894,16 @@ func TestDefaultAdapterCalculateUpstreamCostChargesReportedUsageWithProviderErro
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "1500" {
-		t.Fatalf("UpstreamCostUSDAtoms = %s, want usage-derived 1500", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "1500" {
+		t.Fatalf("UpstreamCostUSD = %s, want usage-derived 1500", state.UpstreamCostUSD)
 	}
 	if len(state.FinalMeters) != 2 {
 		t.Fatalf("expected usage-derived final meters despite provider error, got %#v", state.FinalMeters)
 	}
-	if state.FinalMeters[0].MeterKey != billing.MeterInputTokens || state.FinalMeters[0].AmountUSDAtoms != "1000" {
+	if state.FinalMeters[0].MeterKey != billing.MeterInputTokens || state.FinalMeters[0].AmountUSD != "1000" {
 		t.Fatalf("unexpected input final meter %#v", state.FinalMeters[0])
 	}
-	if state.FinalMeters[1].MeterKey != billing.MeterOutputTokens || state.FinalMeters[1].AmountUSDAtoms != "500" {
+	if state.FinalMeters[1].MeterKey != billing.MeterOutputTokens || state.FinalMeters[1].AmountUSD != "500" {
 		t.Fatalf("unexpected output final meter %#v", state.FinalMeters[1])
 	}
 }
@@ -922,11 +976,11 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 			if err := withUsage.Adapter.CalculateUpstreamCost(withUsage); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if withUsage.UpstreamCostUSDAtoms != "136" {
-				t.Fatalf("usage-backed cost = %s, want 136; meters=%#v", withUsage.UpstreamCostUSDAtoms, withUsage.FinalMeters)
+			if withUsage.UpstreamCostUSD != "136" {
+				t.Fatalf("usage-backed cost = %s, want 136; meters=%#v", withUsage.UpstreamCostUSD, withUsage.FinalMeters)
 			}
-			savings, savingsErr := cacheReadSavingsUSDAtoms(withUsage)
-			overhead, overheadErr := cacheWriteOverheadUSDAtoms(withUsage)
+			savings, savingsErr := cacheReadSavingsUSD(withUsage)
+			overhead, overheadErr := cacheWriteOverheadUSD(withUsage)
 			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "9" || *overhead != "5" {
 				t.Fatalf("usage-backed cache economics = %#v/%#v (%v/%v), want 9/5", savings, overhead, savingsErr, overheadErr)
 			}
@@ -939,8 +993,8 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 			if err := (DefaultAdapter{}).CalculateUpstreamCost(withoutUsage); err != nil {
 				t.Fatalf("zero-usage CalculateUpstreamCost returned error: %v", err)
 			}
-			if withoutUsage.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(withoutUsage.FinalMeters) != 0 {
-				t.Fatalf("zero-usage error was charged: cost=%s meters=%#v", withoutUsage.UpstreamCostUSDAtoms, withoutUsage.FinalMeters)
+			if withoutUsage.UpstreamCostUSD != billing.ZeroChargeUSD || len(withoutUsage.FinalMeters) != 0 {
+				t.Fatalf("zero-usage error was charged: cost=%s meters=%#v", withoutUsage.UpstreamCostUSD, withoutUsage.FinalMeters)
 			}
 			providerErr.ExtraFields.BilledUsage = usage
 		})
@@ -952,16 +1006,16 @@ func TestNoUsageClientErrorHasNoFinalMeters(t *testing.T) {
 		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
 			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
 		}}},
-		Authorization: &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(2000)},
+		Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("2000")},
 		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSDAtoms: "2000",
+			EstimatedUpstreamCostUSD: "2000",
 			Meters: []catalog.MeterEstimate{{
-				MeterKey:       billing.MeterOutputTokens,
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "2000000",
-				Quantity:       "1000",
-				AmountUSDAtoms: "2000",
-				HoldRequired:   true,
+				MeterKey:     billing.MeterOutputTokens,
+				RateKey:      billing.RatePerMillionTokens,
+				RateUSD:      "2000000",
+				Quantity:     "1000",
+				AmountUSD:    "2000",
+				HoldRequired: true,
 			}},
 		},
 		BifrostError: &schemas.BifrostError{
@@ -973,14 +1027,14 @@ func TestNoUsageClientErrorHasNoFinalMeters(t *testing.T) {
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
-		t.Fatalf("UpstreamCostUSDAtoms = %s, want 0", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != billing.ZeroChargeUSD {
+		t.Fatalf("UpstreamCostUSD = %s, want 0", state.UpstreamCostUSD)
 	}
 	if len(state.FinalMeters) != 0 {
 		t.Fatalf("no-usage request produced final meters: %#v", state.FinalMeters)
 	}
 
-	pricing := pricingForState(state)
+	pricing := metersForState(state)
 	if len(pricing) != 0 {
 		t.Fatalf("no-usage request produced pricing: %#v", pricing)
 	}
@@ -1005,8 +1059,8 @@ func TestCalculateUpstreamCostUsesActualOpenAIServiceTierWhenExplicitTierReturne
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "12500000000000000" {
-		t.Fatalf("expected Fast input pricing from returned priority tier, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "0.0125" {
+		t.Fatalf("expected Fast input pricing from returned priority tier, got %s", state.UpstreamCostUSD)
 	}
 }
 
@@ -1033,7 +1087,7 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if input == nil || input.RateUSDAtoms != "5000000000000000000" || input.Quantity != strconv.Itoa(inputTokens) {
+	if input == nil || input.RateUSD != "5" || input.Quantity != strconv.Itoa(inputTokens) {
 		t.Fatalf("expected downgraded standard input pricing, got %#v", state.FinalMeters)
 	}
 	actual := ExecutionDeployment(state)
@@ -1042,16 +1096,16 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 	}
 
 	authorizer := &fakeBillingAuthorizer{}
-	authorizedBilledCostUSDAtoms, ok := new(big.Int).SetString(state.Hold.EstimatedUpstreamCostUSDAtoms, 10)
-	if !ok {
-		t.Fatalf("invalid hold amount %q", state.Hold.EstimatedUpstreamCostUSDAtoms)
+	authorizedBilledCostUSD, err := billing.ParseUSD(state.Hold.EstimatedUpstreamCostUSD)
+	if err != nil {
+		t.Fatalf("invalid hold amount %q", state.Hold.EstimatedUpstreamCostUSD)
 	}
 	state.Authorization = &billing.Authorization{
-		AuthorizedBilledCostUSDAtoms: authorizedBilledCostUSDAtoms,
-		CreatedAt:                    time.Now().UTC(),
-		ProviderKey:                  "openai",
-		ProductKey:                   resolution.Deployment.ID,
-		RequestID:                    "fast-downgrade",
+		AuthorizedBilledCostUSD: authorizedBilledCostUSD,
+		CreatedAt:               time.Now().UTC(),
+		ProviderKey:             "openai",
+		ProductKey:              resolution.Deployment.ID,
+		RequestID:               "fast-downgrade",
 	}
 	state.RequestType = string(schemas.ChatCompletionRequest)
 	state.StartedAt = time.Now().UTC()
@@ -1059,15 +1113,8 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
 	}
-	wantNodeIDs := []string{
-		"author:openai",
-		"model:gpt-5.5-2026-04-23",
-		"deployment:openai-gpt-5.5-2026-04-23",
-		"route:openai-chat-completions",
-		"provider:openai",
-	}
-	if got := authorizer.finalEvents[0].CatalogNodeIDs; strings.Join(got, ",") != strings.Join(wantNodeIDs, ",") {
-		t.Fatalf("resolved catalog node IDs = %#v, want %#v", got, wantNodeIDs)
+	if got := authorizer.finalEvents[0].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
+		t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
 	}
 }
 
@@ -1093,8 +1140,8 @@ func TestOpenAIFastHoldCoversActualPriorityServiceTier(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("Fast hold must cover the returned priority-tier cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("Fast hold must cover the returned priority-tier cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 	if state.Hold.ProductKey != "openai-gpt-5.5-2026-04-23-fast" {
 		t.Fatalf("expected Fast deployment hold product key, got %#v", state.Hold)
@@ -1175,7 +1222,7 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 				t.Fatalf("expected default deployment hold product key, got %#v", state.Hold)
 			}
 			defaultInput := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
-			if defaultInput == nil || defaultInput.RateKey != billing.RatePerMillionContextGT272K || defaultInput.RateUSDAtoms != "10000000000000000000" {
+			if defaultInput == nil || defaultInput.RateKey != billing.RatePerMillionContextGT272K || defaultInput.RateUSD != "10" {
 				t.Fatalf("default hold must reserve the deployment's highest possible input rate: %#v", state.Hold.Meters)
 			}
 		})
@@ -1191,12 +1238,12 @@ func TestOpenAICacheReadCalculateUpstreamCostStaysCoveredByNoCacheHold(t *testin
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
+			body: `{"model":"gpt-5.5","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1231,8 +1278,8 @@ func TestOpenAICacheReadCalculateUpstreamCostStaysCoveredByNoCacheHold(t *testin
 			if findMeterEstimate(state.FinalMeters, billing.MeterCachedInputTokens) == nil {
 				t.Fatalf("expected cached input final meter, got %#v", state.FinalMeters)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover OpenAI cached-read final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold must cover OpenAI cached-read final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -1369,7 +1416,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 				if err := state.Adapter.EstimateHold(state); err != nil {
 					t.Fatalf("%s/%s: estimate hold: %v", deploymentID, interfaceName, err)
 				}
-				if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms {
+				if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == billing.ZeroChargeUSD {
 					t.Fatalf("%s/%s: token hold is empty", deploymentID, interfaceName)
 				}
 
@@ -1460,17 +1507,17 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 						if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 							t.Fatalf("calculate final price: %v", err)
 						}
-						if state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms {
+						if state.UpstreamCostUSD == billing.ZeroChargeUSD {
 							t.Fatalf("final token price is zero: meters=%#v", state.FinalMeters)
 						}
 						if findMeterEstimate(state.FinalMeters, scenario.meter) == nil {
 							t.Fatalf("final price omitted %s: %#v", scenario.meter, state.FinalMeters)
 						}
-						if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
+						if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
 							t.Fatalf(
 								"hold does not cover final price: hold=%s final=%s holdMeters=%#v finalMeters=%#v",
-								state.Hold.EstimatedUpstreamCostUSDAtoms,
-								state.UpstreamCostUSDAtoms,
+								state.Hold.EstimatedUpstreamCostUSD,
+								state.UpstreamCostUSD,
 								state.Hold.Meters,
 								state.FinalMeters,
 							)
@@ -1605,8 +1652,8 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 					}
 					if meter.Quantity != strconv.Itoa(quantity) ||
 						meter.RateKey != rateKey ||
-						meter.RateUSDAtoms != rate.String() ||
-						meter.AmountUSDAtoms != wantAmount.String() {
+						meter.RateUSD != rate.String() ||
+						meter.AmountUSD != wantAmount.String() {
 						t.Fatalf(
 							"%s meter = %#v, want quantity=%d rate=%s/%s amount=%s",
 							meterKey,
@@ -1627,7 +1674,7 @@ func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *test
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1638,8 +1685,8 @@ func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *test
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "50000000000000" {
-		t.Fatalf("expected selected default deployment pricing for unknown actual tier, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "0.005" {
+		t.Fatalf("expected selected default deployment pricing for unknown actual tier, got %s", state.UpstreamCostUSD)
 	}
 }
 
@@ -1668,7 +1715,7 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 		{
 			name:        "Anthropic Standard cannot become Fast",
 			path:        "/v1/chat/completions",
-			body:        `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body:        `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 			actualSpeed: "fast",
 		},
 		{
@@ -1719,14 +1766,14 @@ func TestAnthropicNoOutputRefusalDoesNotChargeInformationalUsage(t *testing.T) {
 			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
 				FinishReason: &refusal,
 			}}}},
-			wantCost: billing.ZeroChargeUSDAtoms,
+			wantCost: billing.ZeroChargeUSD,
 		},
 		{
 			name: "responses refusal before output",
 			response: &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
 				StopReason: &refusal,
 			}},
-			wantCost: billing.ZeroChargeUSDAtoms,
+			wantCost: billing.ZeroChargeUSD,
 		},
 		{
 			name: "refusal after provider output reaches a disconnected caller",
@@ -1759,10 +1806,10 @@ func TestAnthropicNoOutputRefusalDoesNotChargeInformationalUsage(t *testing.T) {
 			if err := (AnthropicAdapter{}).CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.UpstreamCostUSDAtoms != tt.wantCost {
-				t.Fatalf("cost = %s, want %s; meters=%#v", state.UpstreamCostUSDAtoms, tt.wantCost, state.FinalMeters)
+			if state.UpstreamCostUSD != tt.wantCost {
+				t.Fatalf("cost = %s, want %s; meters=%#v", state.UpstreamCostUSD, tt.wantCost, state.FinalMeters)
 			}
-			if tt.wantCost == billing.ZeroChargeUSDAtoms && len(state.FinalMeters) != 0 {
+			if tt.wantCost == billing.ZeroChargeUSD && len(state.FinalMeters) != 0 {
 				t.Fatalf("informational refusal usage produced priced meters: %#v", state.FinalMeters)
 			}
 		})
@@ -1778,7 +1825,7 @@ func TestAnthropicCalculateUpstreamCostUsesReturnedServiceTierDeployment(t *test
 	}{
 		{
 			name:       "auto request returned standard",
-			body:       `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 			wantHold:   "anthropic-claude-opus-4-8",
 			actualTier: schemas.BifrostServiceTier("standard_only"),
 		},
@@ -1806,8 +1853,8 @@ func TestAnthropicCalculateUpstreamCostUsesReturnedServiceTierDeployment(t *test
 			state.Hold.Meters = nil
 
 			mutatedPricing := copyPricing(resolution.Deployment.Pricing)
-			mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "999000000000000000000"}
-			mutatedPricing[billing.MeterOutputTokens] = map[string]string{billing.RatePerMillionTokens: "999000000000000000000"}
+			mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "999"}
+			mutatedPricing[billing.MeterOutputTokens] = map[string]string{billing.RatePerMillionTokens: "999"}
 			resolution.Deployment.Pricing = mutatedPricing
 
 			state.Signals = &StandardSignals{
@@ -1818,8 +1865,8 @@ func TestAnthropicCalculateUpstreamCostUsesReturnedServiceTierDeployment(t *test
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.UpstreamCostUSDAtoms != "30000000000000000" {
-				t.Fatalf("expected cataloged actual service-tier pricing, got %s meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+			if state.UpstreamCostUSD != "0.03" {
+				t.Fatalf("expected cataloged actual service-tier pricing, got %s meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
 			}
 		})
 	}
@@ -1835,7 +1882,7 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 		{
 			name:       "responses default sent as standard only returns standard",
 			path:       "/v1/responses",
-			body:       `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
+			body:       `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
 			actualTier: schemas.BifrostServiceTier("standard_only"),
 		},
 	}
@@ -1864,8 +1911,8 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("Anthropic mapped service-tier hold must cover final: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("Anthropic mapped service-tier hold must cover final: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -1889,50 +1936,49 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 			},
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSDAtoms: big.NewInt(3000),
-			AvailableBalanceUSDAtoms:     big.NewInt(0),
-			CreatedAt:                    time.Now().UTC(),
-			KeyID:                        "key",
-			OrganizationID:               "org",
-			ProviderKey:                  "openai",
-			ProductKey:                   "gpt-5",
-			RequestID:                    "request",
-			UserID:                       "user",
-			WorkspaceID:                  "workspace",
+			AuthorizedBilledCostUSD: mustMoney("3000"),
+			AvailableBalanceUSD:     mustMoney("0"),
+			CreatedAt:               time.Now().UTC(),
+			KeyID:                   "key",
+			OrganizationID:          "org",
+			ProviderKey:             "openai",
+			ProductKey:              "gpt-5",
+			RequestID:               "request",
+			UserID:                  "user",
 		},
 		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSDAtoms: "3000",
+			EstimatedUpstreamCostUSD: "3000",
 			Meters: []catalog.MeterEstimate{
 				{
-					MeterKey:       billing.MeterInputTokens,
-					RateKey:        billing.RatePerMillionTokens,
-					RateUSDAtoms:   "1000000",
-					Quantity:       "1000",
-					AmountUSDAtoms: "1000",
-					HoldRequired:   true,
+					MeterKey:     billing.MeterInputTokens,
+					RateKey:      billing.RatePerMillionTokens,
+					RateUSD:      "1000000",
+					Quantity:     "1000",
+					AmountUSD:    "1000",
+					HoldRequired: true,
 				},
 				{
-					MeterKey:       billing.MeterOutputTokens,
-					RateKey:        billing.RatePerMillionTokens,
-					RateUSDAtoms:   "2000000",
-					Quantity:       "1000",
-					AmountUSDAtoms: "2000",
-					HoldRequired:   true,
+					MeterKey:     billing.MeterOutputTokens,
+					RateKey:      billing.RatePerMillionTokens,
+					RateUSD:      "2000000",
+					Quantity:     "1000",
+					AmountUSD:    "2000",
+					HoldRequired: true,
 				},
 			},
 		},
-		RequestType:          string(schemas.ChatCompletionRequest),
-		Model:                "gpt-5",
-		GatewayVersion:       "v1.5.13",
-		StartedAt:            time.Now().UTC(),
-		UpstreamCostUSDAtoms: "1000",
+		RequestType:     string(schemas.ChatCompletionRequest),
+		Model:           "gpt-5",
+		GatewayVersion:  "v1.5.13",
+		StartedAt:       time.Now().UTC(),
+		UpstreamCostUSD: "1000",
 		FinalMeters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterInputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "1000000",
-			Quantity:       "1000",
-			AmountUSDAtoms: "1000",
-			HoldRequired:   false,
+			MeterKey:     billing.MeterInputTokens,
+			RateKey:      billing.RatePerMillionTokens,
+			RateUSD:      "1000000",
+			Quantity:     "1000",
+			AmountUSD:    "1000",
+			HoldRequired: false,
 		}},
 		Signals: &StandardSignals{Prompt: 1000, Cached: 100},
 	}
@@ -1943,22 +1989,18 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	inputPricing := event.Pricing[billing.MeterInputTokens]
+	inputPricing := event.Meters[billing.MeterInputTokens]
 	if inputPricing.Quantity != "1000" {
-		t.Fatalf("unexpected final pricing %#v", event.Pricing)
+		t.Fatalf("unexpected final pricing %#v", event.Meters)
 	}
-	if _, ok := event.Pricing[billing.MeterOutputTokens]; ok {
-		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Pricing)
+	if _, ok := event.Meters[billing.MeterOutputTokens]; ok {
+		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Meters)
 	}
-	if event.UpstreamCostUSDAtoms != "1000" || event.BilledCostUSDAtoms != "1000" {
-		t.Fatalf("managed costs must match final meter sum, got upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
+	if event.UpstreamCostUSD != "1000" || event.BilledCostUSD != "1000" {
+		t.Fatalf("managed costs must match final meter sum, got upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway version = %q", event.GatewayVersion)
-	}
-	wantNodeIDs := []string{"model:gpt-5-2026-01-01", "deployment:gpt-5-standard", "route:openai-chat-completions", "provider:openai"}
-	if strings.Join(event.CatalogNodeIDs, ",") != strings.Join(wantNodeIDs, ",") {
-		t.Fatalf("resolved catalog node IDs = %#v, want %#v", event.CatalogNodeIDs, wantNodeIDs)
 	}
 }
 
@@ -1967,17 +2009,17 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 		name       string
 		dispatched bool
 		signals    *StandardSignals
-		want       *int64
+		want       string
 	}{
-		{name: "all partitions", dispatched: true, signals: &StandardSignals{Prompt: 600, Completion: 90, Reasoning: 30, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300}, want: func() *int64 { n := int64(690); return &n }()},
+		{name: "all partitions", dispatched: true, signals: &StandardSignals{Prompt: 600, Completion: 90, inputKnown: true, outputKnown: true, Reasoning: 30, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300}, want: "690"},
 		{name: "unknown provider usage", dispatched: true},
-		{name: "before dispatch", want: new(int64)},
+		{name: "before dispatch"},
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			now := time.Now().UTC()
 			state := &State{
-				Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(1), AvailableBalanceUSDAtoms: big.NewInt(0), RequestID: "request"},
-				UpstreamCostUSDAtoms: "0", StartedAt: now, Signals: item.signals,
+				Authorization:   &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("1"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request"},
+				UpstreamCostUSD: "0", StartedAt: now, Signals: item.signals,
 				RequestType: string(schemas.ChatCompletionRequest),
 			}
 			if item.dispatched {
@@ -1987,12 +2029,11 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 			if event == nil {
 				t.Fatal("missing final event")
 			}
-			if item.want == nil {
-				if event.PolicyTokens != nil {
-					t.Fatal("unknown usage must retain the reservation")
-				}
-			} else if event.PolicyTokens == nil || *event.PolicyTokens != *item.want {
-				t.Fatalf("policy tokens = %v, want %d", event.PolicyTokens, *item.want)
+			if got := event.Meters[billing.MeterTotalTokens].Quantity; got != item.want {
+				t.Fatalf("total token meter = %q, want %q", got, item.want)
+			}
+			if (len(event.ProviderAttempts) != 0) != item.dispatched {
+				t.Fatal("provider attempt is required to distinguish unknown usage from no dispatch")
 			}
 			state.Signals = &StandardSignals{Prompt: 1}
 			if PrepareFinalState(state) != event {
@@ -2009,12 +2050,12 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 			status := 503
 			state := &State{
 				Authorization: &billing.Authorization{
-					AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0), RequestID: "request",
+					AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request",
 				},
-				UpstreamCostUSDAtoms: billing.ZeroChargeUSDAtoms,
-				RequestType:          string(schemas.ChatCompletionRequest),
-				BifrostError:         &schemas.BifrostError{StatusCode: &status, Error: &schemas.ErrorField{Message: "unavailable"}},
-				StartedAt:            now.Add(-time.Second),
+				UpstreamCostUSD: billing.ZeroChargeUSD,
+				RequestType:     string(schemas.ChatCompletionRequest),
+				BifrostError:    &schemas.BifrostError{StatusCode: &status, Error: &schemas.ErrorField{Message: "unavailable"}},
+				StartedAt:       now.Add(-time.Second),
 			}
 			if dispatched {
 				state.ProviderStartedAt = now.Add(-time.Millisecond)
@@ -2028,17 +2069,17 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 				t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 			}
 			event := authorizer.finalEvents[0]
-			if event.StogasProcessingSuccess != dispatched || event.UpstreamCostUSDAtoms != "0" || event.BilledCostUSDAtoms != "0" {
+			if (event.Error == nil) != dispatched || event.UpstreamCostUSD != "0" || event.BilledCostUSD != "0" {
 				t.Fatalf("failure classification/cost = %#v", event)
 			}
 			if dispatched {
-				if event.StogasErrorCode != "" || event.StogasErrorStatusCode != nil {
+				if event.Error != nil {
 					t.Fatal("provider failure became a Stogas error")
 				}
 				if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 503 {
 					t.Fatalf("missing provider failure: %#v", event.ProviderAttempts)
 				}
-			} else if event.StogasErrorCode != "gateway_unavailable" || event.StogasErrorStatusCode == nil || *event.StogasErrorStatusCode != 503 || len(event.ProviderAttempts) != 0 {
+			} else if event.Error == nil || event.Error.Code != "gateway_unavailable" || event.Error.Status != 503 || len(event.ProviderAttempts) != 0 {
 				t.Fatalf("fabricated provider attempt: %#v", event.ProviderAttempts)
 			}
 		})
@@ -2062,10 +2103,10 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			state := &State{
-				Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0)},
-				UpstreamCostUSDAtoms: "0",
-				RequestType:          string(item.requestType),
-				StartedAt:            time.Now().Add(-time.Second), ProviderStartedAt: time.Now().Add(-time.Millisecond),
+				Authorization:   &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0")},
+				UpstreamCostUSD: "0",
+				RequestType:     string(item.requestType),
+				StartedAt:       time.Now().Add(-time.Second), ProviderStartedAt: time.Now().Add(-time.Millisecond),
 				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
 				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
@@ -2077,10 +2118,10 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 				state.BifrostError = &schemas.BifrostError{StatusCode: schemas.Ptr(wantCode)}
 			}
 			event := PrepareFinalState(state)
-			if event == nil || event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
+			if event == nil || event.Error == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
 				t.Fatalf("wrong independent outcomes: %#v", event)
 			}
-			if event.StogasErrorCode != "response_encoding_failed" || event.StogasErrorStatusCode == nil || *event.StogasErrorStatusCode != 500 {
+			if event.Error == nil || event.Error.Code != "response_encoding_failed" || event.Error.Status != 500 {
 				t.Fatalf("lost Stogas error: %#v", event)
 			}
 			code := event.ProviderAttempts[0].StatusCode
@@ -2099,12 +2140,12 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 	now := time.Now().UTC()
 	state := &State{
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
-			AvailableBalanceUSDAtoms:     big.NewInt(0),
-			RequestID:                    "request",
+			AuthorizedBilledCostUSD: mustMoney("0"),
+			AvailableBalanceUSD:     mustMoney("0"),
+			RequestID:               "request",
 		},
-		UpstreamCostUSDAtoms: billing.ZeroChargeUSDAtoms,
-		RequestType:          string(schemas.ChatCompletionRequest),
+		UpstreamCostUSD: billing.ZeroChargeUSD,
+		RequestType:     string(schemas.ChatCompletionRequest),
 		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 81},
 		}},
@@ -2123,8 +2164,8 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 	if attempt.LatencyMS != 81 {
 		t.Fatalf("expected provider total latency 81, got %#v", attempt)
 	}
-	if event.TTFTMS != nil {
-		t.Fatalf("buffered requests must not report TTFT, got %#v", event.TTFTMS)
+	if event.Performance.TTFTMS != nil {
+		t.Fatalf("buffered requests must not report TTFT, got %#v", event.Performance.TTFTMS)
 	}
 }
 
@@ -2557,17 +2598,17 @@ func TestCacheReadSavingsUsesSettledMeterAndComparableInputRate(t *testing.T) {
 			billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
 		}}},
 		FinalMeters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterCachedInputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "100000",
-			Quantity:       "100",
-			AmountUSDAtoms: "10",
+			MeterKey:  billing.MeterCachedInputTokens,
+			RateKey:   billing.RatePerMillionTokens,
+			RateUSD:   "100000",
+			Quantity:  "100",
+			AmountUSD: "10",
 		}},
 	}
 
-	savings, err := cacheReadSavingsUSDAtoms(state)
+	savings, err := cacheReadSavingsUSD(state)
 	if err != nil {
-		t.Fatalf("cacheReadSavingsUSDAtoms returned error: %v", err)
+		t.Fatalf("cacheReadSavingsUSD returned error: %v", err)
 	}
 	if savings == nil || *savings != "90" {
 		t.Fatalf("cache savings = %#v, want 90", savings)
@@ -2585,17 +2626,17 @@ func TestCacheReadSavingsUsesPromptContextTier(t *testing.T) {
 		}}},
 		Signals: &StandardSignals{Prompt: billing.LongContextThresholdTokens + 1, Cached: 100},
 		FinalMeters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterCachedInputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "100000",
-			Quantity:       "100",
-			AmountUSDAtoms: "10",
+			MeterKey:  billing.MeterCachedInputTokens,
+			RateKey:   billing.RatePerMillionTokens,
+			RateUSD:   "100000",
+			Quantity:  "100",
+			AmountUSD: "10",
 		}},
 	}
 
-	savings, err := cacheReadSavingsUSDAtoms(state)
+	savings, err := cacheReadSavingsUSD(state)
 	if err != nil {
-		t.Fatalf("cacheReadSavingsUSDAtoms returned error: %v", err)
+		t.Fatalf("cacheReadSavingsUSD returned error: %v", err)
 	}
 	if savings == nil || *savings != "190" {
 		t.Fatalf("long-context cache savings = %#v, want 190", savings)
@@ -2610,18 +2651,18 @@ func TestCacheReadSavingsDoesNotTreatCacheWritesAsSavings(t *testing.T) {
 		}}},
 		Signals: &StandardSignals{Prompt: 100, CacheWrite: 100},
 		FinalMeters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterCacheWriteInputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "1250000",
-			Quantity:       "100",
-			AmountUSDAtoms: "125",
+			MeterKey:  billing.MeterCacheWriteInputTokens,
+			RateKey:   billing.RatePerMillionTokens,
+			RateUSD:   "1250000",
+			Quantity:  "100",
+			AmountUSD: "125",
 		}},
 	}
-	savings, err := cacheReadSavingsUSDAtoms(state)
+	savings, err := cacheReadSavingsUSD(state)
 	if err != nil || savings == nil || *savings != "0" {
 		t.Fatalf("cache-write savings = %#v, %v; want 0", savings, err)
 	}
-	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	overhead, err := cacheWriteOverheadUSD(state)
 	if err != nil || overhead == nil || *overhead != "25" {
 		t.Fatalf("cache-write overhead = %#v, %v; want 25", overhead, err)
 	}
@@ -2637,23 +2678,23 @@ func TestCacheWriteOverheadKeepsAnthropicTTLMetersSeparate(t *testing.T) {
 		Signals: &StandardSignals{Prompt: 500, CacheWrite5m: 200, CacheWrite1h: 300},
 		FinalMeters: []catalog.MeterEstimate{
 			{
-				MeterKey:       billing.MeterCacheWrite5mInputTokens,
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "1250000",
-				Quantity:       "200",
-				AmountUSDAtoms: "250",
+				MeterKey:  billing.MeterCacheWrite5mInputTokens,
+				RateKey:   billing.RatePerMillionTokens,
+				RateUSD:   "1250000",
+				Quantity:  "200",
+				AmountUSD: "250",
 			},
 			{
-				MeterKey:       billing.MeterCacheWrite1hInputTokens,
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "2000000",
-				Quantity:       "300",
-				AmountUSDAtoms: "600",
+				MeterKey:  billing.MeterCacheWrite1hInputTokens,
+				RateKey:   billing.RatePerMillionTokens,
+				RateUSD:   "2000000",
+				Quantity:  "300",
+				AmountUSD: "600",
 			},
 		},
 	}
 
-	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	overhead, err := cacheWriteOverheadUSD(state)
 	if err != nil || overhead == nil || *overhead != "350" {
 		t.Fatalf("split cache-write overhead = %#v, %v; want 350", overhead, err)
 	}
@@ -2673,15 +2714,15 @@ func TestCacheWriteOverheadUsesPromptContextTier(t *testing.T) {
 			CacheWrite1h: 100,
 		},
 		FinalMeters: []catalog.MeterEstimate{{
-			MeterKey:       billing.MeterCacheWrite1hInputTokens,
-			RateKey:        billing.RatePerMillionTokens,
-			RateUSDAtoms:   "4000000",
-			Quantity:       "100",
-			AmountUSDAtoms: "400",
+			MeterKey:  billing.MeterCacheWrite1hInputTokens,
+			RateKey:   billing.RatePerMillionTokens,
+			RateUSD:   "4000000",
+			Quantity:  "100",
+			AmountUSD: "400",
 		}},
 	}
 
-	overhead, err := cacheWriteOverheadUSDAtoms(state)
+	overhead, err := cacheWriteOverheadUSD(state)
 	if err != nil || overhead == nil || *overhead != "200" {
 		t.Fatalf("long-context cache-write overhead = %#v, %v; want 200", overhead, err)
 	}
@@ -2691,15 +2732,15 @@ func TestCacheEconomicsUseTheRequestLevelOrdinaryInputCounterfactual(t *testing.
 	t.Run("cache read savings include ordinary-meter rounding", func(t *testing.T) {
 		state := &State{
 			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1500000"},
-				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
+				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000001"},
 			}}},
 			FinalMeters: []catalog.MeterEstimate{
-				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1500000", Quantity: "1", AmountUSDAtoms: "2"},
-				{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "100000", Quantity: "1", AmountUSDAtoms: "1"},
+				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000015", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000002"},
+				{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000001", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000001"},
 			},
 		}
-		savings, err := cacheReadSavingsUSDAtoms(state)
+		savings, err := cacheReadSavingsUSD(state)
 		if err != nil || savings == nil || *savings != "0" {
 			t.Fatalf("cache read savings = %#v, %v; want 0", savings, err)
 		}
@@ -2708,16 +2749,16 @@ func TestCacheEconomicsUseTheRequestLevelOrdinaryInputCounterfactual(t *testing.
 	t.Run("cache write overhead includes ordinary-meter rounding", func(t *testing.T) {
 		state := &State{
 			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "500000"},
-				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1500000"},
+				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "0.0000000000000000000000000000005"},
+				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
 			}}},
 			FinalMeters: []catalog.MeterEstimate{
-				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "500000", Quantity: "1", AmountUSDAtoms: "1"},
-				{MeterKey: billing.MeterCacheWriteInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1500000", Quantity: "1", AmountUSDAtoms: "2"},
+				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000005", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000001"},
+				{MeterKey: billing.MeterCacheWriteInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000015", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000002"},
 			},
 		}
-		overhead, err := cacheWriteOverheadUSDAtoms(state)
-		if err != nil || overhead == nil || *overhead != "2" {
+		overhead, err := cacheWriteOverheadUSD(state)
+		if err != nil || overhead == nil || *overhead != "0.000000000000000000000000000000000002" {
 			t.Fatalf("cache write overhead = %#v, %v; want 2", overhead, err)
 		}
 	})
@@ -2731,9 +2772,9 @@ func TestMixedCacheEconomicsMatchRequestLevelCounterfactual(t *testing.T) {
 		billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1800000"},
 		billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2500000"},
 	}
-	rate := func(meter string) *big.Int {
-		value, ok := new(big.Int).SetString(pricing[meter][billing.RatePerMillionTokens], 10)
-		if !ok {
+	rate := func(meter string) *money.USD {
+		value, err := billing.ParseUSD(pricing[meter][billing.RatePerMillionTokens])
+		if err != nil {
 			t.Fatalf("invalid test rate for %s", meter)
 		}
 		return value
@@ -2763,32 +2804,32 @@ func TestMixedCacheEconomicsMatchRequestLevelCounterfactual(t *testing.T) {
 
 							ordinaryCost := billing.CostPerMillion(ordinary, ordinaryRate)
 							readCost := billing.CostPerMillion(read, rate(billing.MeterCachedInputTokens))
-							readAsOrdinary := new(big.Int).Sub(
+							readAsOrdinary := new(money.USD).Sub(
 								billing.CostPerMillion(ordinary+read, ordinaryRate),
 								ordinaryCost,
 							)
-							wantSavings := big.NewInt(0)
+							wantSavings := new(money.USD)
 							if readAsOrdinary.Cmp(readCost) > 0 {
 								wantSavings.Sub(readAsOrdinary, readCost)
 							}
 
 							writeQuantity := genericWrite + write5m + write1h
-							writeCost := new(big.Int).Add(
+							writeCost := new(money.USD).Add(
 								billing.CostPerMillion(genericWrite, rate(billing.MeterCacheWriteInputTokens)),
 								billing.CostPerMillion(write5m, rate(billing.MeterCacheWrite5mInputTokens)),
 							)
 							writeCost.Add(writeCost, billing.CostPerMillion(write1h, rate(billing.MeterCacheWrite1hInputTokens)))
-							writeAsOrdinary := new(big.Int).Sub(
+							writeAsOrdinary := new(money.USD).Sub(
 								billing.CostPerMillion(ordinary+writeQuantity, ordinaryRate),
 								ordinaryCost,
 							)
-							wantOverhead := big.NewInt(0)
+							wantOverhead := new(money.USD)
 							if writeCost.Cmp(writeAsOrdinary) > 0 {
 								wantOverhead.Sub(writeCost, writeAsOrdinary)
 							}
 
-							savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-							overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+							savings, savingsErr := cacheReadSavingsUSD(state)
+							overhead, overheadErr := cacheWriteOverheadUSD(state)
 							if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
 								t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 							}
@@ -2859,7 +2900,7 @@ func FuzzCacheEconomicsMatchIndependentRequestCounterfactual(f *testing.F) {
 		genericCost := referenceCostPerMillion(genericWrite, genericRate)
 		write5mCost := referenceCostPerMillion(write5m, rate5m)
 		write1hCost := referenceCostPerMillion(write1h, rate1h)
-		wantTotal := new(big.Int).Add(ordinaryCost, readCost)
+		wantTotal := new(money.USD).Add(ordinaryCost, readCost)
 		wantTotal.Add(wantTotal, genericCost)
 		wantTotal.Add(wantTotal, write5mCost)
 		wantTotal.Add(wantTotal, write1hCost)
@@ -2867,22 +2908,22 @@ func FuzzCacheEconomicsMatchIndependentRequestCounterfactual(f *testing.F) {
 			t.Fatalf("settled cache total = %s, want %s; meters=%#v", actualTotal, wantTotal, state.FinalMeters)
 		}
 
-		readMarginal := new(big.Int).Sub(referenceCostPerMillion(ordinary+read, inputRate), ordinaryCost)
-		wantSavings := big.NewInt(0)
+		readMarginal := new(money.USD).Sub(referenceCostPerMillion(ordinary+read, inputRate), ordinaryCost)
+		wantSavings := new(money.USD)
 		if readMarginal.Cmp(readCost) > 0 {
 			wantSavings.Sub(readMarginal, readCost)
 		}
 		writeQuantity := genericWrite + write5m + write1h
-		writeMarginal := new(big.Int).Sub(referenceCostPerMillion(ordinary+writeQuantity, inputRate), ordinaryCost)
-		writeCost := new(big.Int).Add(genericCost, write5mCost)
+		writeMarginal := new(money.USD).Sub(referenceCostPerMillion(ordinary+writeQuantity, inputRate), ordinaryCost)
+		writeCost := new(money.USD).Add(genericCost, write5mCost)
 		writeCost.Add(writeCost, write1hCost)
-		wantOverhead := big.NewInt(0)
+		wantOverhead := new(money.USD)
 		if writeCost.Cmp(writeMarginal) > 0 {
 			wantOverhead.Sub(writeCost, writeMarginal)
 		}
 
-		savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-		overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+		savings, savingsErr := cacheReadSavingsUSD(state)
+		overhead, overheadErr := cacheWriteOverheadUSD(state)
 		if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
 			t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 		}
@@ -2920,10 +2961,10 @@ func TestCacheEconomicsDoNotAffectSettlementWhenComparableInputRateIsMissing(t *
 			if err != nil || cost != "200" || len(state.FinalMeters) != 1 {
 				t.Fatalf("settlement = cost %q meters %#v error %v", cost, state.FinalMeters, err)
 			}
-			if _, err := cacheReadSavingsUSDAtoms(state); meterKey == billing.MeterCachedInputTokens && err == nil {
+			if _, err := cacheReadSavingsUSD(state); meterKey == billing.MeterCachedInputTokens && err == nil {
 				t.Fatal("cache-read derivation unexpectedly invented a comparable input rate")
 			}
-			if _, err := cacheWriteOverheadUSDAtoms(state); meterKey != billing.MeterCachedInputTokens && err == nil {
+			if _, err := cacheWriteOverheadUSD(state); meterKey != billing.MeterCachedInputTokens && err == nil {
 				t.Fatal("cache-write derivation unexpectedly invented a comparable input rate")
 			}
 		})
@@ -2996,8 +3037,8 @@ func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
 			if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
 				t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
 			}
-			savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-			overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+			savings, savingsErr := cacheReadSavingsUSD(state)
+			overhead, overheadErr := cacheWriteOverheadUSD(state)
 			if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
 				t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 			}
@@ -3111,8 +3152,8 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 						if meterQuantity(inputMeter) != strconv.Itoa(mode.prompt) {
 							t.Fatalf("unpriced %s did not remain ordinary input: %#v", meterKey, state.FinalMeters)
 						}
-						savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-						overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+						savings, savingsErr := cacheReadSavingsUSD(state)
+						overhead, overheadErr := cacheWriteOverheadUSD(state)
 						if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
 							t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 						}
@@ -3121,7 +3162,7 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 					if meter == nil {
 						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
 					}
-					meterCostUSDAtoms, err := billing.ParseUSDAtoms(meter.AmountUSDAtoms)
+					meterCostUSD, err := billing.ParseUSD(meter.AmountUSD)
 					if err != nil {
 						t.Fatalf("parse settled cache cost: %v", err)
 					}
@@ -3130,16 +3171,16 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 						t.Fatal("deployment has no comparable ordinary input rate")
 					}
 					ordinaryCost := billing.CostPerMillion(mode.prompt, inputRate)
-					wantSavings := big.NewInt(0)
-					wantOverhead := big.NewInt(0)
-					if meterKey == billing.MeterCachedInputTokens && ordinaryCost.Cmp(meterCostUSDAtoms) > 0 {
-						wantSavings.Sub(ordinaryCost, meterCostUSDAtoms)
+					wantSavings := new(money.USD)
+					wantOverhead := new(money.USD)
+					if meterKey == billing.MeterCachedInputTokens && ordinaryCost.Cmp(meterCostUSD) > 0 {
+						wantSavings.Sub(ordinaryCost, meterCostUSD)
 					}
-					if meterKey != billing.MeterCachedInputTokens && meterCostUSDAtoms.Cmp(ordinaryCost) > 0 {
-						wantOverhead.Sub(meterCostUSDAtoms, ordinaryCost)
+					if meterKey != billing.MeterCachedInputTokens && meterCostUSD.Cmp(ordinaryCost) > 0 {
+						wantOverhead.Sub(meterCostUSD, ordinaryCost)
 					}
-					savings, savingsErr := cacheReadSavingsUSDAtoms(state)
-					overhead, overheadErr := cacheWriteOverheadUSDAtoms(state)
+					savings, savingsErr := cacheReadSavingsUSD(state)
+					overhead, overheadErr := cacheWriteOverheadUSD(state)
 					if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
 						t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 					}
@@ -3196,32 +3237,31 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 	}
 	state := &State{
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSDAtoms: big.NewInt(1200),
-			AvailableBalanceUSDAtoms:     big.NewInt(0),
-			KeyID:                        "key",
-			OrganizationID:               "org",
-			ProviderKey:                  "anthropic",
-			ProductKey:                   "claude",
-			RequestID:                    "request",
-			UpstreamByok:                 "stogas",
-			UserID:                       "user",
-			WorkspaceID:                  "workspace",
+			AuthorizedBilledCostUSD: mustMoney("1200"),
+			AvailableBalanceUSD:     mustMoney("0"),
+			KeyID:                   "key",
+			OrganizationID:          "org",
+			ProviderKey:             "anthropic",
+			ProductKey:              "claude",
+			RequestID:               "request",
+			UpstreamByok:            "stogas",
+			UserID:                  "user",
 		},
-		UpstreamCostUSDAtoms: "860",
+		UpstreamCostUSD: "860",
 		FinalMeters: []catalog.MeterEstimate{
-			{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "100000", Quantity: "100", AmountUSDAtoms: "10"},
-			{MeterKey: billing.MeterCacheWrite5mInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "1250000", Quantity: "200", AmountUSDAtoms: "250"},
-			{MeterKey: billing.MeterCacheWrite1hInputTokens, RateKey: billing.RatePerMillionTokens, RateUSDAtoms: "2000000", Quantity: "300", AmountUSDAtoms: "600"},
+			{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "100000", Quantity: "100", AmountUSD: "10"},
+			{MeterKey: billing.MeterCacheWrite5mInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "1250000", Quantity: "200", AmountUSD: "250"},
+			{MeterKey: billing.MeterCacheWrite1hInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "2000000", Quantity: "300", AmountUSD: "600"},
 		},
 		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSDAtoms: "1200",
+			EstimatedUpstreamCostUSD: "1200",
 			Meters: []catalog.MeterEstimate{{
-				MeterKey:       billing.MeterCacheWrite1hInputTokens,
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "2000000",
-				Quantity:       "600",
-				AmountUSDAtoms: "1200",
-				HoldRequired:   true,
+				MeterKey:     billing.MeterCacheWrite1hInputTokens,
+				RateKey:      billing.RatePerMillionTokens,
+				RateUSD:      "2000000",
+				Quantity:     "600",
+				AmountUSD:    "1200",
+				HoldRequired: true,
 			}},
 		},
 		RequestType: string(schemas.ChatCompletionRequest),
@@ -3244,22 +3284,22 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 	if event == nil {
 		t.Fatal("PrepareFinalState returned nil")
 	}
-	if event.CacheReadSavingsUSDAtoms == nil || *event.CacheReadSavingsUSDAtoms != "90" {
-		t.Fatalf("cache-read savings = %#v, want 90", event.CacheReadSavingsUSDAtoms)
+	if event.CacheReadSavingsUSD == nil || *event.CacheReadSavingsUSD != "90" {
+		t.Fatalf("cache-read savings = %#v, want 90", event.CacheReadSavingsUSD)
 	}
-	if event.CacheWriteOverheadUSDAtoms == nil || *event.CacheWriteOverheadUSDAtoms != "350" {
-		t.Fatalf("cache-write overhead = %#v, want 350", event.CacheWriteOverheadUSDAtoms)
+	if event.CacheWriteOverheadUSD == nil || *event.CacheWriteOverheadUSD != "350" {
+		t.Fatalf("cache-write overhead = %#v, want 350", event.CacheWriteOverheadUSD)
 	}
-	if event.UpstreamCostUSDAtoms != "860" || event.BilledCostUSDAtoms != "860" {
-		t.Fatalf("cache economics changed billing: upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
+	if event.UpstreamCostUSD != "860" || event.BilledCostUSD != "860" {
+		t.Fatalf("cache economics changed billing: upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
 	}
 	for _, meterKey := range []string{
 		billing.MeterCachedInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
 	} {
-		if _, ok := event.Pricing[meterKey]; !ok {
-			t.Fatalf("pricing bag omitted %s: %#v", meterKey, event.Pricing)
+		if _, ok := event.Meters[meterKey]; !ok {
+			t.Fatalf("pricing bag omitted %s: %#v", meterKey, event.Meters)
 		}
 	}
 }
@@ -3272,21 +3312,21 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	state := &State{
 		Resolution: &catalog.ResolvedRequest{
 			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens: {billing.RatePerMillionTokens: "1"},
+				billing.MeterInputTokens: {billing.RatePerMillionTokens: "0.000000000000000000000000000000000001"},
 			}},
 		},
 		FinalMeters: []catalog.MeterEstimate{
 			{
-				AmountUSDAtoms: "1",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "1",
-				RateKey:        billing.RatePerMillionTokens,
+				AmountUSD: "0.000000000000000000000000000000000001",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "1",
+				RateKey:   billing.RatePerMillionTokens,
 			},
 			{
-				AmountUSDAtoms: "1",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "1",
-				RateKey:        billing.RatePerMillionTokens,
+				AmountUSD: "0.000000000000000000000000000000000001",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "1",
+				RateKey:   billing.RatePerMillionTokens,
 			},
 		},
 	}
@@ -3296,39 +3336,39 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		t.Fatalf("canonicalizeMeters returned error: %v", err)
 	}
 	state.FinalMeters = meters
-	state.UpstreamCostUSDAtoms = total
-	pricing := pricingForState(state)
-	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "2", "1")
-	if total != "1" {
-		t.Fatalf("expected compacted meter total 1 atom, got %s", total)
+	state.UpstreamCostUSD = total
+	pricing := metersForState(state)
+	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "2", "0.000000000000000000000000000000000001")
+	if total != "0.000000000000000000000000000000000001" {
+		t.Fatalf("expected compacted meter total one USD quantum, got %s", total)
 	}
 
 	authorizer := &fakeBillingAuthorizer{}
 	state.Authorization = &billing.Authorization{
-		AuthorizedBilledCostUSDAtoms: big.NewInt(2),
-		AvailableBalanceUSDAtoms:     big.NewInt(0),
-		RequestID:                    "request",
+		AuthorizedBilledCostUSD: mustMoney("0.000000000000000000000000000000000002"),
+		AvailableBalanceUSD:     mustMoney("0"),
+		RequestID:               "request",
 	}
-	state.Hold.EstimatedUpstreamCostUSDAtoms = "2"
+	state.Hold.EstimatedUpstreamCostUSD = "0.000000000000000000000000000000000002"
 	state.Hold.Meters = []catalog.MeterEstimate{{
-		AmountUSDAtoms: "2",
-		HoldRequired:   true,
-		MeterKey:       billing.MeterInputTokens,
-		Quantity:       "2",
-		RateKey:        billing.RatePerMillionTokens,
+		AmountUSD:    "0.000000000000000000000000000000000002",
+		HoldRequired: true,
+		MeterKey:     billing.MeterInputTokens,
+		Quantity:     "2",
+		RateKey:      billing.RatePerMillionTokens,
 	}}
-	state.UpstreamCostUSDAtoms = total
+	state.UpstreamCostUSD = total
 	state.StartedAt = time.Now().UTC()
 	FinalizeState(context.Background(), authorizer, state)
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	if event.UpstreamCostUSDAtoms != "1" || event.BilledCostUSDAtoms != "1" {
-		t.Fatalf("managed costs must use compacted final meters, got upstream=%s billed=%s", event.UpstreamCostUSDAtoms, event.BilledCostUSDAtoms)
+	if event.UpstreamCostUSD != "0.000000000000000000000000000000000001" || event.BilledCostUSD != "0.000000000000000000000000000000000001" {
+		t.Fatalf("managed costs must use compacted final meters, got upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
 	}
-	if event.Pricing[billing.MeterInputTokens].Quantity != "2" {
-		t.Fatalf("unexpected compacted pricing %#v", event.Pricing)
+	if event.Meters[billing.MeterInputTokens].Quantity != "2" {
+		t.Fatalf("unexpected compacted pricing %#v", event.Meters)
 	}
 }
 
@@ -3337,11 +3377,11 @@ func TestCanonicalizeMetersRejectsInvalidBillingData(t *testing.T) {
 		billing.MeterInputTokens: {billing.RatePerMillionTokens: "1000000"},
 	}
 	valid := catalog.MeterEstimate{
-		AmountUSDAtoms: "1",
-		MeterKey:       billing.MeterInputTokens,
-		Quantity:       "1",
-		RateKey:        billing.RatePerMillionTokens,
-		RateUSDAtoms:   "1000000",
+		AmountUSD: "1",
+		MeterKey:  billing.MeterInputTokens,
+		Quantity:  "1",
+		RateKey:   billing.RatePerMillionTokens,
+		RateUSD:   "1000000",
 	}
 	tests := []struct {
 		name   string
@@ -3350,11 +3390,11 @@ func TestCanonicalizeMetersRejectsInvalidBillingData(t *testing.T) {
 		{
 			name: "negative quantity",
 			meters: []catalog.MeterEstimate{{
-				AmountUSDAtoms: "1",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "-1",
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "1000000",
+				AmountUSD: "1",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "-1",
+				RateKey:   billing.RatePerMillionTokens,
+				RateUSD:   "1000000",
 			}},
 		},
 		{
@@ -3362,42 +3402,42 @@ func TestCanonicalizeMetersRejectsInvalidBillingData(t *testing.T) {
 			meters: []catalog.MeterEstimate{
 				valid,
 				{
-					AmountUSDAtoms: "invalid",
-					MeterKey:       billing.MeterInputTokens,
-					Quantity:       "1",
-					RateKey:        billing.RatePerMillionTokens,
-					RateUSDAtoms:   "1000000",
+					AmountUSD: "invalid",
+					MeterKey:  billing.MeterInputTokens,
+					Quantity:  "1",
+					RateKey:   billing.RatePerMillionTokens,
+					RateUSD:   "1000000",
 				},
 			},
 		},
 		{
 			name: "catalog rate mismatch",
 			meters: []catalog.MeterEstimate{{
-				AmountUSDAtoms: "2",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "1",
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "2000000",
+				AmountUSD: "2",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "1",
+				RateKey:   billing.RatePerMillionTokens,
+				RateUSD:   "2000000",
 			}},
 		},
 		{
 			name: "unknown meter",
 			meters: []catalog.MeterEstimate{{
-				AmountUSDAtoms: "1",
-				MeterKey:       "unknown",
-				Quantity:       "1",
-				RateKey:        billing.RatePerMillionTokens,
-				RateUSDAtoms:   "1000000",
+				AmountUSD: "1",
+				MeterKey:  "unknown",
+				Quantity:  "1",
+				RateKey:   billing.RatePerMillionTokens,
+				RateUSD:   "1000000",
 			}},
 		},
 		{
 			name: "unknown rate",
 			meters: []catalog.MeterEstimate{{
-				AmountUSDAtoms: "1",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "1",
-				RateKey:        "per_million_unknown",
-				RateUSDAtoms:   "1000000",
+				AmountUSD: "1",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "1",
+				RateKey:   "per_million_unknown",
+				RateUSD:   "1000000",
 			}},
 		},
 	}
@@ -3411,7 +3451,7 @@ func TestCanonicalizeMetersRejectsInvalidBillingData(t *testing.T) {
 	}
 }
 
-func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProviderOutcome(t *testing.T) {
+func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T) {
 	tests := []struct {
 		name          string
 		hold          string
@@ -3421,10 +3461,10 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 		wantDiscard   bool
 	}{
 		{name: "exact hold", hold: "100", final: "100"},
-		{name: "above hold", hold: "100", final: "101", wantDiscard: true},
-		{name: "provider error above hold", hold: "100", final: "101", providerError: true, wantDiscard: true},
-		{name: "missing hold", final: "1", wantDiscard: true},
-		{name: "malformed hold", hold: "invalid", final: "1", wantDiscard: true},
+		{name: "above hold", hold: "100", final: "101"},
+		{name: "provider error above hold", hold: "100", final: "101", providerError: true},
+		{name: "missing hold", final: "1"},
+		{name: "malformed hold", hold: "invalid", final: "1"},
 		{name: "malformed final", hold: "100", final: "invalid", pricingError: true, wantDiscard: true},
 		{name: "negative final", hold: "100", final: "-1", pricingError: true, wantDiscard: true},
 		{name: "provider and pricing failure", hold: "100", final: "invalid", providerError: true, pricingError: true, wantDiscard: true},
@@ -3432,7 +3472,7 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			const rateUSDAtoms = "1000000"
+			const rateUSD = "1000000"
 			var providerErr *schemas.BifrostError
 			if tc.providerError {
 				status := 500
@@ -3442,36 +3482,36 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 			finalMeters := []catalog.MeterEstimate(nil)
 			if final, ok := new(big.Int).SetString(tc.final, 10); ok && final.Sign() > 0 {
 				holdMeters = []catalog.MeterEstimate{{
-					AmountUSDAtoms: tc.hold,
-					HoldRequired:   true,
-					MeterKey:       billing.MeterInputTokens,
-					Quantity:       tc.hold,
-					RateKey:        billing.RatePerMillionTokens,
-					RateUSDAtoms:   rateUSDAtoms,
+					AmountUSD:    tc.hold,
+					HoldRequired: true,
+					MeterKey:     billing.MeterInputTokens,
+					Quantity:     tc.hold,
+					RateKey:      billing.RatePerMillionTokens,
+					RateUSD:      rateUSD,
 				}}
 				finalMeters = []catalog.MeterEstimate{{
-					AmountUSDAtoms: tc.final,
-					MeterKey:       billing.MeterInputTokens,
-					Quantity:       tc.final,
-					RateKey:        billing.RatePerMillionTokens,
-					RateUSDAtoms:   rateUSDAtoms,
+					AmountUSD: tc.final,
+					MeterKey:  billing.MeterInputTokens,
+					Quantity:  tc.final,
+					RateKey:   billing.RatePerMillionTokens,
+					RateUSD:   rateUSD,
 				}}
 			}
 			state := &State{
 				Authorization: &billing.Authorization{
-					AuthorizedBilledCostUSDAtoms: big.NewInt(100),
-					AvailableBalanceUSDAtoms:     big.NewInt(0),
-					RequestID:                    "request",
+					AuthorizedBilledCostUSD: mustMoney("100"),
+					AvailableBalanceUSD:     mustMoney("0"),
+					RequestID:               "request",
 				},
-				UpstreamCostUSDAtoms: tc.final,
-				BifrostError:         providerErr,
-				FinalMeters:          finalMeters,
-				Hold:                 HoldEstimate{EstimatedUpstreamCostUSDAtoms: tc.hold, Meters: holdMeters},
+				UpstreamCostUSD: tc.final,
+				BifrostError:    providerErr,
+				FinalMeters:     finalMeters,
+				Hold:            HoldEstimate{EstimatedUpstreamCostUSD: tc.hold, Meters: holdMeters},
 				Resolution: &catalog.ResolvedRequest{
 					Provider: schemas.OpenAI,
 					Route:    catalog.RouteChat,
 					Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-						billing.MeterInputTokens: {billing.RatePerMillionTokens: rateUSDAtoms},
+						billing.MeterInputTokens: {billing.RatePerMillionTokens: rateUSD},
 					}},
 				},
 				Signals:           &StandardSignals{Prompt: 1},
@@ -3492,15 +3532,15 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 				t.Fatalf("Stogas pricing changed the provider result: %#v", event.ProviderAttempts)
 			}
 			if !tc.wantDiscard {
-				if state.BifrostError != nil || event.UpstreamCostUSDAtoms != tc.final {
+				if state.BifrostError != providerErr || event.UpstreamCostUSD != tc.final {
 					t.Fatalf("authorized final cost was changed: state=%#v event=%#v", state, event)
 				}
 				return
 			}
-			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || event.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms {
+			if state.UpstreamCostUSD != billing.ZeroChargeUSD || event.UpstreamCostUSD != billing.ZeroChargeUSD {
 				t.Fatalf("unsafe final cost was not discarded: state=%#v event=%#v", state, event)
 			}
-			if event.StogasProcessingSuccess == tc.pricingError {
+			if (event.Error != nil) != tc.pricingError {
 				t.Fatal("handled zero-charge settlement must keep successful processing; fatal pricing errors must fail it")
 			}
 			if tc.pricingError && state.ProcessingError == nil {
@@ -3530,167 +3570,76 @@ func TestPrepareFinalStateDiscardsCostsOutsideAuthorizedHoldWithoutChangingProvi
 	}
 }
 
-func TestFinalMeterQuantitiesStayWithinAuthorizedDimensions(t *testing.T) {
-	hold := []catalog.MeterEstimate{
-		{MeterKey: billing.MeterCacheWrite1hInputTokens, Quantity: "10", HoldRequired: true},
-		{MeterKey: billing.MeterInputTokens, Quantity: "3", HoldRequired: true},
-		{MeterKey: billing.MeterReasoningTokens, Quantity: "4", HoldRequired: true},
-		{MeterKey: meterAnthropicWebSearchCalls, Quantity: "2", HoldRequired: true},
-	}
-	tests := []struct {
-		name  string
-		hold  []catalog.MeterEstimate
-		final []catalog.MeterEstimate
-		want  bool
-	}{
-		{
-			name: "token partitions and tool calls at limits",
-			hold: hold,
-			final: []catalog.MeterEstimate{
-				{MeterKey: billing.MeterInputTokens, Quantity: "6"},
-				{MeterKey: billing.MeterCachedInputTokens, Quantity: "7"},
-				{MeterKey: billing.MeterOutputTokens, Quantity: "3"},
-				{MeterKey: billing.MeterReasoningTokens, Quantity: "1"},
-				{MeterKey: meterAnthropicWebSearchCalls, Quantity: "2"},
-			},
-			want: true,
-		},
-		{
-			name:  "input partitions exceed hold",
-			hold:  hold,
-			final: []catalog.MeterEstimate{{MeterKey: billing.MeterInputTokens, Quantity: "14"}},
-		},
-		{
-			name:  "output partitions exceed hold",
-			hold:  hold,
-			final: []catalog.MeterEstimate{{MeterKey: billing.MeterOutputTokens, Quantity: "5"}},
-		},
-		{
-			name:  "tool calls exceed hold",
-			hold:  hold,
-			final: []catalog.MeterEstimate{{MeterKey: meterAnthropicWebSearchCalls, Quantity: "3"}},
-		},
-		{
-			name:  "unheld meter",
-			hold:  hold,
-			final: []catalog.MeterEstimate{{MeterKey: "unexpected_fee", Quantity: "1"}},
-		},
-		{
-			name:  "malformed hold quantity",
-			hold:  []catalog.MeterEstimate{{MeterKey: billing.MeterInputTokens, Quantity: "invalid", HoldRequired: true}},
-			final: []catalog.MeterEstimate{{MeterKey: billing.MeterInputTokens, Quantity: "1"}},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := finalMeterQuantitiesWithinHold(tc.hold, tc.final); got != tc.want {
-				t.Fatalf("finalMeterQuantitiesWithinHold() = %t, want %t", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFinalMetersAreCappedToAuthorizedDimensions(t *testing.T) {
-	pricing := catalog.Pricing{
-		billing.MeterInputTokens:     {billing.RatePerMillionTokens: "1000000"},
-		meterAnthropicWebSearchCalls: {billing.RatePerThousandCalls: "1000"},
-	}
-	final := billing.AppendTokenMeterCost(nil, pricing, billing.MeterInputTokens, 5, false, billing.TokenRateStandard)
-	final = billing.AppendCallMeterCost(final, pricing, meterAnthropicWebSearchCalls, 3, false)
-	hold := []catalog.MeterEstimate{
-		{MeterKey: billing.MeterInputTokens, Quantity: "3", HoldRequired: true},
-		{MeterKey: meterAnthropicWebSearchCalls, Quantity: "2", HoldRequired: true},
-	}
-	bounded, total, err := capFinalMetersToHold(final, hold, pricing)
-	if err != nil {
-		t.Fatalf("capFinalMetersToHold returned error: %v", err)
-	}
-	if total != "5" || len(bounded) != 2 || bounded[0].Quantity != "3" || bounded[1].Quantity != "2" {
-		t.Fatalf("final meters were not capped exactly: total=%s meters=%#v", total, bounded)
-	}
-}
-
 func TestPricingMetricBagCarriesStackedCacheAndHostedToolMeters(t *testing.T) {
 	state := &State{
 		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
 			{
-				AmountUSDAtoms: "100",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "1000",
-				RateKey:        billing.RatePerMillionTokens,
-				HoldRequired:   true,
+				AmountUSD:    "100",
+				MeterKey:     billing.MeterInputTokens,
+				Quantity:     "1000",
+				RateKey:      billing.RatePerMillionTokens,
+				HoldRequired: true,
 			},
 			{
-				AmountUSDAtoms: "200",
-				MeterKey:       billing.MeterCacheWrite1hInputTokens,
-				Quantity:       "1000",
-				RateKey:        billing.RatePerMillionTokens,
-				HoldRequired:   true,
+				AmountUSD:    "200",
+				MeterKey:     billing.MeterCacheWrite1hInputTokens,
+				Quantity:     "1000",
+				RateKey:      billing.RatePerMillionTokens,
+				HoldRequired: true,
 			},
 			{
-				AmountUSDAtoms: "300",
-				MeterKey:       meterAnthropicWebSearchCalls,
-				Quantity:       "2",
-				RateKey:        billing.RatePerThousandCalls,
-				HoldRequired:   true,
+				AmountUSD:    "300",
+				MeterKey:     meterAnthropicWebSearchCalls,
+				Quantity:     "2",
+				RateKey:      billing.RatePerThousandCalls,
+				HoldRequired: true,
 			},
 		}},
 		FinalMeters: []catalog.MeterEstimate{
 			{
-				AmountUSDAtoms: "50",
-				MeterKey:       billing.MeterInputTokens,
-				Quantity:       "500",
-				RateKey:        billing.RatePerMillionTokens,
+				AmountUSD: "50",
+				MeterKey:  billing.MeterInputTokens,
+				Quantity:  "500",
+				RateKey:   billing.RatePerMillionTokens,
 			},
 			{
-				AmountUSDAtoms: "80",
-				MeterKey:       billing.MeterCacheWrite1hInputTokens,
-				Quantity:       "400",
-				RateKey:        billing.RatePerMillionTokens,
+				AmountUSD: "80",
+				MeterKey:  billing.MeterCacheWrite1hInputTokens,
+				Quantity:  "400",
+				RateKey:   billing.RatePerMillionTokens,
 			},
 			{
-				AmountUSDAtoms: "150",
-				MeterKey:       meterAnthropicWebSearchCalls,
-				Quantity:       "1",
-				RateKey:        billing.RatePerThousandCalls,
+				AmountUSD: "150",
+				MeterKey:  meterAnthropicWebSearchCalls,
+				Quantity:  "1",
+				RateKey:   billing.RatePerThousandCalls,
 			},
 		},
 	}
 
-	pricing := pricingForState(state)
+	pricing := metersForState(state)
 	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "500", "50")
 	assertPricingBagEntry(t, pricing, billing.MeterCacheWrite1hInputTokens, billing.RatePerMillionTokens, "400", "80")
 	assertPricingBagEntry(t, pricing, meterAnthropicWebSearchCalls, billing.RatePerThousandCalls, "1", "150")
-	for _, forbidden := range []string{"hold", "final", "hold_meters", "final_meters", "total_cost_usd_atoms", "usageMetrics"} {
+	for _, forbidden := range []string{"hold", "final", "hold_meters", "final_meters", "total_cost_usd", "usageMetrics"} {
 		if _, ok := pricing[forbidden]; ok {
 			t.Fatalf("pricing bag must not expose fixed key %q: %#v", forbidden, pricing)
 		}
 	}
 }
 
-func assertPricingBagEntry(t *testing.T, bag billing.EventPricing, meterKey string, rateKey string, quantity string, amount string) {
+func assertPricingBagEntry(t *testing.T, bag billing.EventMeters, meterKey string, rateKey string, quantity string, amount string) {
 	t.Helper()
 	meter, ok := bag[meterKey]
 	if !ok {
 		t.Fatalf("missing pricing meter %s in %#v", meterKey, bag)
 	}
-	if meter.RateKey != rateKey || meter.Quantity != quantity || meter.USDAtoms != amount {
+	if meter.RateKey == nil || *meter.RateKey != rateKey || meter.Quantity != quantity || meter.USD == nil || *meter.USD != amount {
 		t.Fatalf("unexpected pricing for %s: %#v", meterKey, meter)
 	}
 }
 
-func compareMoneyStrings(left string, right string) int {
-	leftValue, ok := new(big.Int).SetString(left, 10)
-	if !ok {
-		leftValue = big.NewInt(0)
-	}
-	rightValue, ok := new(big.Int).SetString(right, 10)
-	if !ok {
-		rightValue = big.NewInt(0)
-	}
-	return leftValue.Cmp(rightValue)
-}
+func compareMoneyStrings(left string, right string) int { return mustMoney(left).Cmp(mustMoney(right)) }
 
 func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
@@ -3712,7 +3661,7 @@ func TestOpenAIProviderHoldAddsSearchMeters(t *testing.T) {
 	if searchMeter.MeterKey != MeterOpenAIChatCompletionSearchModelCalls || searchMeter.RateKey != billing.RatePerThousandCalls {
 		t.Fatalf("expected search model call meter, got %#v", searchMeter)
 	}
-	if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
+	if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
 		t.Fatalf("expected non-zero hold after search meter, got %#v", state.Hold)
 	}
 }
@@ -3757,8 +3706,8 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover final search-model cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold must cover final search-model cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 			}
 			holdMeter := findMeterEstimate(state.Hold.Meters, tt.meterKey)
 			if holdMeter == nil {
@@ -3774,7 +3723,7 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			if finalMeter.RateKey != tt.rateKey || finalMeter.Quantity != "1" || finalMeter.HoldRequired {
 				t.Fatalf("unexpected final search meter: %#v", finalMeter)
 			}
-			pricing := pricingForState(state)
+			pricing := metersForState(state)
 			for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 				if _, ok := pricing[meterKey]; !ok {
 					t.Fatalf("search-model pricing bag must include token meter %s with tool meter, got %#v", meterKey, pricing)
@@ -3784,10 +3733,31 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 			if !ok {
 				t.Fatalf("missing search meter pricing bag: %#v", pricing)
 			}
-			if searchPricing.Quantity != "1" || searchPricing.RateKey != tt.rateKey || searchPricing.USDAtoms == "" {
+			if searchPricing.Quantity != "1" || searchPricing.RateKey == nil || *searchPricing.RateKey != tt.rateKey || searchPricing.USD == nil {
 				t.Fatalf("unexpected search pricing bag: %#v", searchPricing)
 			}
 		})
+	}
+}
+
+func TestInputTextBytesIsUnpricedAndDistinguishesZeroFromUnknown(t *testing.T) {
+	for _, text := range []string{"", "é🙂"} {
+		body, err := json.Marshal(map[string]any{"model": "gpt-5.5", "input": text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		meters := metersForState(&State{Resolution: resolution})
+		meter, ok := meters[billing.MeterInputTextBytes]
+		if !ok || meter.Quantity != strconv.Itoa(len(text)) || meter.RateKey != nil || meter.RateUSD != nil || meter.USD != nil {
+			t.Fatalf("decoded text meter = %#v (present %t)", meter, ok)
+		}
+	}
+	if _, present := metersForState(&State{})[billing.MeterInputTextBytes]; present {
+		t.Fatal("unknown decoded text size became a known zero")
 	}
 }
 
@@ -3799,22 +3769,22 @@ func TestOpenAIPromptCacheHoldCoversAllPossibleWrites(t *testing.T) {
 	}{
 		{
 			name:     "implicit breakpoint",
-			body:     `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
+			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 		{
 			name:     "explicit mode without breakpoints",
-			body:     `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hello"}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
 			meterKey: billing.MeterInputTokens,
 		},
 		{
 			name:     "two explicit breakpoints",
-			body:     `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
+			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 		{
 			name:     "implicit and four explicit breakpoints",
-			body:     `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":16}`,
+			body:     `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":16}`,
 			meterKey: billing.MeterCacheWriteInputTokens,
 		},
 	}
@@ -3851,8 +3821,8 @@ func TestOpenAIPromptCacheHoldCoversAllPossibleWrites(t *testing.T) {
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover all cache writes: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold must cover all cache writes: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
 			}
 		})
 	}
@@ -3862,7 +3832,7 @@ func TestAnthropicProviderHoldReservesCacheWrite(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"cache_control":{"type":"ephemeral","ttl":"5m"},"max_completion_tokens":100}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"cache_control":{"type":"ephemeral","ttl":"5m"},"max_completion_tokens":100}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3887,7 +3857,7 @@ func TestAnthropicProviderHoldReservesCacheWrite(t *testing.T) {
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("cache-write hold must not reserve the same prompt as ordinary input: %#v", state.Hold.Meters)
 	}
-	if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
+	if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
 		t.Fatalf("expected non-zero Anthropic hold, got %#v", state.Hold)
 	}
 }
@@ -3896,7 +3866,7 @@ func TestAnthropicHoldCoversWorstCaseOneHourCacheWrite(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":100}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":100}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3913,8 +3883,8 @@ func TestAnthropicHoldCoversWorstCaseOneHourCacheWrite(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover worst-case 1h cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover worst-case 1h cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -3922,7 +3892,7 @@ func TestAnthropicHoldCoversDefaultFiveMinuteCacheWrite(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral"}}]}],"max_output_tokens":100}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral"}}]}],"max_output_tokens":100}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3945,8 +3915,8 @@ func TestAnthropicHoldCoversDefaultFiveMinuteCacheWrite(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover default 5m cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover default 5m cache write: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -3954,7 +3924,7 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required","max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required","max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3986,8 +3956,8 @@ func TestAnthropicHoldCoversToolSystemPromptOverhead(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover Anthropic tool overhead final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover Anthropic tool overhead final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -4019,8 +3989,8 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover combined fast US cache/tool final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover combined fast US cache/tool final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 	if findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens) == nil {
 		t.Fatalf("expected 1h cache write hold meter, got %#v", state.Hold.Meters)
@@ -4089,15 +4059,19 @@ func TestSignalsFromUsageKeepsProviderUnspecifiedCacheWritesGeneric(t *testing.T
 	}
 }
 
-func referenceCostPerMillion(quantity int, rate uint64) *big.Int {
+func referenceCostPerMillion(quantity int, rate uint64) *money.USD {
 	if quantity <= 0 || rate == 0 {
-		return big.NewInt(0)
+		return new(money.USD)
 	}
-	numerator := new(big.Int).Mul(big.NewInt(int64(quantity)), new(big.Int).SetUint64(rate))
-	divisor := big.NewInt(billing.MillionTokens)
-	quotient, remainder := new(big.Int).QuoRem(numerator, divisor, new(big.Int))
-	if remainder.Sign() > 0 {
-		quotient.Add(quotient, big.NewInt(1))
+	exact := new(big.Rat).SetInt(new(big.Int).SetUint64(rate))
+	exact.Mul(exact, new(big.Rat).SetFrac64(int64(quantity), billing.MillionTokens))
+	return mustMoney(exact.FloatString(36))
+}
+
+func mustMoney(value string) *money.USD {
+	result, err := money.Parse(value)
+	if err != nil {
+		panic(err)
 	}
-	return quotient
+	return result
 }

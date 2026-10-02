@@ -8,9 +8,8 @@ import (
 )
 
 type SEVGuestDevice struct {
-	Path            string
-	VMPL            uint32
-	CertBufferBytes int
+	Path string
+	VMPL uint32
 }
 
 func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) ([]byte, error) {

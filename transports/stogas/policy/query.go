@@ -4,367 +4,259 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
-	"unicode"
-	"unicode/utf8"
+	"time"
+	"unsafe"
+
+	"cel.dev/cel-go/common/types"
 )
 
-const (
-	MaxSourceQueryRunes  = 4096
-	maxSourceExpressions = 64
-	maxSourceDepth       = 12
-	maxSourceSorts       = 4
-)
-
-type queryToken struct {
-	kind, value string
-	position    int
-}
-type queryParser struct {
-	tokens []queryToken
-	index  int
+// Query shares each source's checked filter instead of compiling a new
+// concatenation for every key. Sort expressions run once per candidate.
+type Query struct {
+	Filters []*CELExpression `json:"filters,omitempty"`
+	OrderBy []Sort           `json:"orderBy"`
 }
 
-// CompileQuery accepts the same bounded source grammar as saved policies.
-// It never accepts compiled instructions or arbitrary catalog field names.
-func CompileQuery(source string) (*Query, error) {
-	if !utf8.ValidString(source) || utf8.RuneCountInString(source) > MaxSourceQueryRunes {
-		return nil, configError("routing query must use valid Unicode and at most %d characters", MaxSourceQueryRunes)
+type Sort struct {
+	By         string `json:"by"`
+	Direction  string `json:"direction"`
+	expression *CELExpression
+}
+
+// CompositionBytes estimates this configuration's own retained structures.
+// Sources own their strings, programs and plugins; composition borrows them.
+func (c *Config) CompositionBytes() int64 {
+	if c == nil {
+		return 0
 	}
-	tokens, err := tokenizeQuery(source)
-	if err != nil {
-		return nil, err
+	total := int64(unsafe.Sizeof(*c)) + int64(cap(c.sources))*int64(unsafe.Sizeof(ScopedSource{}))
+	total += int64(cap(c.RedactionSources)+cap(c.ActiveEncryptedPlugins))*8 + int64(cap(c.RequiredEncryptionKeys))*16
+	total += int64(cap(c.ActiveRules)) * int64(unsafe.Sizeof(RuleMatch{}))
+	if c.Access != nil {
+		total += int64(unsafe.Sizeof(*c.Access)) + int64(cap(c.Access.Deny))*int64(unsafe.Sizeof(DenyWindow{}))
 	}
-	p := queryParser{tokens: tokens}
-	q := &Query{OrderBy: []Sort{}}
-	if p.match("where") {
-		q.Where, err = p.expression("or", 0)
-		if err != nil {
-			return nil, err
-		}
+	if c.Routing.Query != nil {
+		total += int64(unsafe.Sizeof(*c.Routing.Query)) + int64(cap(c.Routing.Query.Filters))*8
 	}
-	if p.match("order") {
-		if !p.match("by") {
-			return nil, p.error("expected by after order")
-		}
-		for {
-			if len(q.OrderBy) >= maxSourceSorts {
-				return nil, p.error("use no more than four sort fields")
-			}
-			field, err := p.field()
-			if err != nil {
-				return nil, err
-			}
-			if field.Type == "string_list" {
-				return nil, p.error("list fields cannot be sorted")
-			}
-			direction := "asc"
-			if p.match("desc") {
-				direction = "desc"
-			} else {
-				p.match("asc")
-			}
-			q.OrderBy = append(q.OrderBy, Sort{Path: field.Path, Type: field.Type, Direction: direction})
-			if !p.match(",") {
+	if nodes := c.Routing.AllowedCatalogNodes; nodes != nil {
+		borrowed := false
+		for _, entry := range c.sources {
+			if entry.Value.Config.Routing.AllowedCatalogNodes == nodes {
+				borrowed = true
 				break
 			}
 		}
+		if !borrowed {
+			total += int64(unsafe.Sizeof(*nodes))
+			for _, list := range [][]string{nodes.Authors, nodes.Deployments, nodes.Models, nodes.Providers, nodes.Routes} {
+				total += int64(cap(list)) * 16
+			}
+		}
 	}
-	if p.index != len(p.tokens) {
-		return nil, p.error("unexpected query token")
+	return total
+}
+
+func (e *CELExpression) MarshalJSON() ([]byte, error) { return json.Marshal(e.Source) }
+
+func CompileRouting(filter string, order []Sort) (*Query, error) {
+	return compileRouting(filter, order, &celCompiler{prepare: true})
+}
+
+// A combined view uses stored, already validated expressions. It does not
+// execute them and need not type-check every unchanged ancestor again.
+func compileRouting(filter string, order []Sort, compiler *celCompiler) (*Query, error) {
+	query := &Query{OrderBy: append([]Sort{}, order...)}
+	if filter != "" {
+		query.Filters = []*CELExpression{{Source: filter, kind: "boolean"}}
 	}
-	if err := q.validate(); err != nil {
+	if err := query.validate(); err != nil {
 		return nil, err
 	}
-	count, depth := sourceExpressionSize(q.Where)
-	if count > maxSourceExpressions || depth > maxSourceDepth {
-		return nil, p.error("routing query exceeds expression or nesting limits")
-	}
-	return q, nil
-}
-
-func tokenizeQuery(source string) ([]queryToken, error) {
-	runes := []rune(source)
-	tokens := make([]queryToken, 0)
-	for i := 0; i < len(runes); {
-		r := runes[i]
-		if (unicode.IsSpace(r) && r != '\u0085') || r == '\ufeff' {
-			i++
-			continue
-		}
-		start := i
-		if strings.ContainsRune("(),[]", r) {
-			tokens = append(tokens, queryToken{kind: string(r), position: start})
-			i++
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote := r
-			i++
-			var value strings.Builder
-			closed := false
-			for i < len(runes) {
-				next := runes[i]
-				i++
-				if next == quote {
-					closed = true
-					break
-				}
-				if next == '\\' {
-					if i >= len(runes) || (runes[i] != quote && runes[i] != '\\') {
-						return nil, configError("only quotes and backslashes can be escaped at character %d", i)
-					}
-					next = runes[i]
-					i++
-				}
-				if next <= 0x1f || (next >= 0x7f && next <= 0x9f) {
-					return nil, configError("string contains a control character")
-				}
-				value.WriteRune(next)
-			}
-			if !closed {
-				return nil, configError("close the string at character %d", start+1)
-			}
-			if value.Len() > 1024 {
-				return nil, configError("string values must use at most 1024 bytes")
-			}
-			tokens = append(tokens, queryToken{kind: "string", value: value.String(), position: start})
-			continue
-		}
-		if strings.ContainsRune("=!<>", r) {
-			i++
-			if i < len(runes) && runes[i] == '=' {
-				i++
-			}
-			operator := string(runes[start:i])
-			if operator == "=" || operator == "!" {
-				return nil, configError("invalid comparison operator")
-			}
-			tokens = append(tokens, queryToken{kind: "operator", value: operator, position: start})
-			continue
-		}
-		if r == '-' || (r >= '0' && r <= '9') {
-			if r == '-' {
-				i++
-			}
-			if i >= len(runes) || runes[i] < '0' || runes[i] > '9' {
-				return nil, configError("expected an integer")
-			}
-			if runes[i] == '0' {
-				i++
-			} else {
-				for i < len(runes) && runes[i] >= '0' && runes[i] <= '9' {
-					i++
-				}
-			}
-			tokens = append(tokens, queryToken{kind: "integer", value: string(runes[start:i]), position: start})
-			continue
-		}
-		if queryIdentifierStart(r) {
-			i++
-			for i < len(runes) && (queryIdentifierStart(runes[i]) || runes[i] == '.' || (runes[i] >= '0' && runes[i] <= '9')) {
-				i++
-			}
-			value := string(runes[start:i])
-			kind := "identifier"
-			switch strings.ToLower(value) {
-			case "where", "order", "by", "asc", "desc", "and", "or", "not", "in", "contains", "exists":
-				kind = strings.ToLower(value)
-			case "true", "false":
-				kind = "boolean"
-				value = strings.ToLower(value)
-			}
-			tokens = append(tokens, queryToken{kind: kind, value: value, position: start})
-			continue
-		}
-		return nil, configError("unexpected character at character %d", start+1)
-	}
-	return tokens, nil
-}
-
-func queryIdentifierStart(r rune) bool {
-	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-}
-
-func (p *queryParser) expression(kind string, depth int) (*Expression, error) {
-	next := func() (*Expression, error) {
-		if kind == "or" {
-			return p.expression("and", depth)
-		}
-		return p.primary(depth)
-	}
-	left, err := next()
-	if err != nil {
-		return nil, err
-	}
-	for p.match(kind) {
-		right, err := next()
+	for i, filter := range query.Filters {
+		expression, err := compiler.compile(filter.Source, true)
 		if err != nil {
 			return nil, err
 		}
-		operands := []*Expression{left}
-		if left.Kind == kind {
-			operands = append([]*Expression{}, left.Operands...)
-		}
-		if right.Kind == kind {
-			operands = append(operands, right.Operands...)
-		} else {
-			operands = append(operands, right)
-		}
-		left = &Expression{Kind: kind, Operands: operands}
+		query.Filters[i] = expression
 	}
-	return left, nil
-}
-
-func (p *queryParser) primary(depth int) (*Expression, error) {
-	if depth > maxSourceDepth {
-		return nil, p.error("routing query nesting exceeds the limit")
-	}
-	if p.match("not") {
-		operand, err := p.primary(depth + 1)
-		return &Expression{Kind: "not", Operand: operand}, err
-	}
-	if p.match("(") {
-		value, err := p.expression("or", depth+1)
+	for i := range query.OrderBy {
+		expression, err := compiler.compile(query.OrderBy[i].By, false)
 		if err != nil {
 			return nil, err
 		}
-		if !p.match(")") {
-			return nil, p.error("close the parenthesis")
-		}
-		return value, nil
+		query.OrderBy[i].expression = expression
 	}
-	if p.match("exists") {
-		if !p.match("(") {
-			return nil, p.error("expected ( after exists")
+	return query, nil
+}
+
+// ExpressionBytes accounts for the checked programs retained by this source.
+// Shared source references are charged once by the owning policy cache.
+func (c *Config) ExpressionBytes() int64 {
+	seen := map[*CELExpression]bool{}
+	var total int64
+	c.visitExpressions(func(expression *CELExpression) {
+		if expression != nil && !seen[expression] {
+			seen[expression] = true
+			total += expression.bytes
 		}
-		field, err := p.field()
+	})
+	return total
+}
+
+func (c *Config) visitExpressions(add func(*CELExpression)) {
+	if c == nil || c.Routing.Query == nil {
+		return
+	}
+	for _, expression := range c.Routing.Query.Filters {
+		add(expression)
+	}
+	for _, criterion := range c.Routing.Query.OrderBy {
+		add(criterion.expression)
+	}
+}
+
+func (q *Query) validate() error {
+	if q == nil {
+		return nil
+	}
+	if len(q.Filters) == 0 && len(q.OrderBy) == 0 {
+		return configError("routing requires a filter or sort")
+	}
+	if len(q.OrderBy) > MaxSorts {
+		return configError("use no more than three sort expressions")
+	}
+	for _, filter := range q.Filters {
+		if filter == nil || strings.TrimSpace(filter.Source) == "" || len(filter.Source) > MaxCELBytes {
+			return configError("routing filter is invalid")
+		}
+	}
+	seen := map[string]bool{}
+	for i := range q.OrderBy {
+		item := &q.OrderBy[i]
+		if item.Direction != "asc" && item.Direction != "desc" {
+			return configError("sort direction must be asc or desc")
+		}
+		if seen[strings.TrimSpace(item.By)] {
+			return configError("sort expressions must be unique")
+		}
+		seen[strings.TrimSpace(item.By)] = true
+		if strings.TrimSpace(item.By) == "" || len(item.By) > MaxCELBytes {
+			return configError("routing sort expression size is invalid")
+		}
+	}
+	return nil
+}
+
+func (q *Query) Matches(values Values) (bool, error) {
+	if q == nil {
+		return true, nil
+	}
+	for _, filter := range q.Filters {
+		known, matches, _, err := filter.Evaluate(values, policyTime(values))
 		if err != nil {
-			return nil, err
+			return false, fmt.Errorf("routing filter evaluation failed: %w", err)
 		}
-		if !p.match(")") {
-			return nil, p.error("close exists()")
+		if !known || !matches {
+			return false, nil
 		}
-		return &Expression{Kind: "exists", Path: field.Path}, nil
 	}
-	field, err := p.field()
-	if err != nil {
-		return nil, err
-	}
-	operator := p.peek()
-	if operator.kind != "operator" && operator.kind != "in" && operator.kind != "contains" {
-		return nil, p.error("expected a comparison operator")
-	}
-	p.index++
-	operatorValue := operator.value
-	if operator.kind != "operator" {
-		operatorValue = operator.kind
-	}
-	var right []byte
-	if operatorValue == "in" {
-		if !p.match("[") {
-			return nil, p.error("expected a list after in")
-		}
-		values := make([]Literal, 0)
-		for {
-			if len(values) >= MaxListItems {
-				return nil, p.error("routing list exceeds the limit")
-			}
-			value, err := p.literal(field.Type)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, value)
-			if !p.match(",") {
-				break
-			}
-		}
-		if !p.match("]") {
-			return nil, p.error("close the list")
-		}
-		right, err = json.Marshal(values)
-	} else {
-		literalType := field.Type
-		if literalType == "string_list" {
-			literalType = "string"
-		}
-		value, literalErr := p.literal(literalType)
-		if literalErr != nil {
-			return nil, literalErr
-		}
-		right, err = json.Marshal(value)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &Expression{Kind: "compare", Left: &field, Operator: operatorValue, Right: right}, nil
+	return true, nil
 }
 
-func (p *queryParser) literal(kind string) (Literal, error) {
-	token := p.peek()
-	if token.kind != kind {
-		return Literal{}, p.error("expected a " + kind + " value")
+func (q *Query) SameOrder(other *Query) bool {
+	if q == nil || other == nil {
+		return q == nil && other == nil
 	}
-	p.index++
-	var value any = token.value
-	if kind == "integer" {
-		number, ok := new(big.Int).SetString(token.value, 10)
-		if !ok {
-			return Literal{}, p.error("invalid integer")
-		}
-		value = number.String()
-	} else if kind == "boolean" {
-		value = token.value == "true"
-	}
-	raw, err := json.Marshal(value)
-	return Literal{Type: kind, Value: raw}, err
-}
-
-func (p *queryParser) field() (Field, error) {
-	token := p.peek()
-	if token.kind != "identifier" {
-		return Field{}, p.error("expected a catalog or request field")
-	}
-	p.index++
-	kind, ok := FieldType(token.value)
-	if !ok {
-		return Field{}, p.error("unknown policy field: " + token.value)
-	}
-	return Field{Path: token.value, Type: kind}, nil
-}
-
-func (p *queryParser) peek() queryToken {
-	if p.index >= len(p.tokens) {
-		return queryToken{position: MaxSourceQueryRunes}
-	}
-	return p.tokens[p.index]
-}
-func (p *queryParser) match(kind string) bool {
-	if p.peek().kind != kind {
+	if len(q.OrderBy) != len(other.OrderBy) {
 		return false
 	}
-	p.index++
-	return true
-}
-func (p *queryParser) error(message string) error {
-	return fmt.Errorf("%w: %s at character %d", ErrInvalidConfig, message, p.peek().position+1)
-}
-
-func sourceExpressionSize(e *Expression) (int, int) {
-	if e == nil {
-		return 0, 0
-	}
-	count, depth := 1, 0
-	children := e.Operands
-	if e.Operand != nil {
-		children = []*Expression{e.Operand}
-	}
-	for _, child := range children {
-		n, d := sourceExpressionSize(child)
-		count += n
-		if d+1 > depth {
-			depth = d + 1
+	for i, order := range q.OrderBy {
+		left, right := strings.TrimSpace(order.By), strings.TrimSpace(other.OrderBy[i].By)
+		if order.expression != nil && other.OrderBy[i].expression != nil {
+			left, right = order.expression.normalized, other.OrderBy[i].expression.normalized
+		}
+		if left != right || order.Direction != other.OrderBy[i].Direction {
+			return false
 		}
 	}
-	return count, depth
+	return true
+}
+
+// Sort returns indexes in order. Missing values sort last in either direction;
+// deployment IDs break final ties. Evaluation errors reject the whole ordering.
+func (q *Query) Sort(candidates []Values) ([]int, error) {
+	order := make([]int, len(candidates))
+	type item struct {
+		value   Value
+		present bool
+	}
+	keys := make([][]item, len(candidates))
+	for i, candidate := range candidates {
+		order[i] = i
+		if q == nil || len(q.OrderBy) == 0 {
+			continue
+		}
+		keys[i] = make([]item, len(q.OrderBy)+1)
+		for j, criterion := range q.OrderBy {
+			if criterion.expression == nil {
+				return nil, configError("routing sort has not been compiled")
+			}
+			result, _, err := criterion.expression.evaluate(candidate, policyTime(candidate))
+			if err != nil {
+				return nil, fmt.Errorf("routing sort evaluation failed: %w", err)
+			}
+			if types.IsUnknown(result) {
+				continue
+			}
+			value := Value{Type: criterion.expression.kind}
+			switch result := result.(type) {
+			case types.Bool:
+				value.Boolean = bool(result)
+			case types.Int:
+				value.Integer = big.NewInt(int64(result))
+			case types.String:
+				value.String = string(result)
+			case celDecimal:
+				value.Decimal = result.Decimal
+			default:
+				return nil, configError("routing sort returned an invalid value")
+			}
+			keys[i][j] = item{value: value, present: true}
+		}
+		id, present := candidate.PolicyValue("deployment.id")
+		keys[i][len(q.OrderBy)] = item{value: id, present: present}
+	}
+	if q == nil || len(q.OrderBy) == 0 {
+		return order, nil
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		left, right := keys[order[a]], keys[order[b]]
+		for i := range left {
+			if left[i].present != right[i].present {
+				return left[i].present
+			}
+			if !left[i].present {
+				continue
+			}
+			comparison := compareValues(left[i].value, right[i].value)
+			if comparison == 0 {
+				continue
+			}
+			if i < len(q.OrderBy) && q.OrderBy[i].Direction == "desc" {
+				return comparison > 0
+			}
+			return comparison < 0
+		}
+		return false
+	})
+	return order, nil
+}
+
+func policyTime(values Values) time.Time {
+	if timed, ok := values.(interface{ PolicyTime() time.Time }); ok {
+		return timed.PolicyTime()
+	}
+	return time.Time{}
 }

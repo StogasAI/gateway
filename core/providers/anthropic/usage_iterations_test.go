@@ -35,7 +35,7 @@ func TestAnthropicUsageBillingTotalsSumsEveryIteration(t *testing.T) {
 		},
 	}
 
-	total := usage.BillingTotals()
+	total := billableAnthropicUsage(usage)
 	if total.InputTokens != 203_000 || total.CacheCreationInputTokens != 2_000 || total.CacheReadInputTokens != 4_000 || total.OutputTokens != 4_500 {
 		t.Fatalf("unexpected billing total: %#v", total)
 	}
@@ -103,7 +103,7 @@ func TestAnthropicStreamingUsageAccumulatesIterationBillingTotals(t *testing.T) 
 }
 
 func TestAnthropicUsageBillingTotalsRetainsUsableMalformedCounts(t *testing.T) {
-	negative := (&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: 10}, {InputTokens: -1}}}).BillingTotals()
+	negative := billableAnthropicUsage(&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: 10}, {InputTokens: -1}}})
 	if negative.InputTokens != 10 {
 		t.Fatalf("negative iteration usage erased a usable count: %#v", negative)
 	}
@@ -111,7 +111,7 @@ func TestAnthropicUsageBillingTotalsRetainsUsableMalformedCounts(t *testing.T) {
 	if converted.TotalTokens != 7 {
 		t.Fatalf("negative input usage erased usable output usage: %#v", converted)
 	}
-	overflow := (&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: math.MaxInt}, {InputTokens: 1}}}).BillingTotals()
+	overflow := billableAnthropicUsage(&AnthropicUsage{Iterations: []AnthropicUsage{{InputTokens: math.MaxInt}, {InputTokens: 1}}})
 	if overflow.InputTokens != math.MaxInt {
 		t.Fatalf("overflowing iteration usage was not saturated: %#v", overflow)
 	}
@@ -161,7 +161,7 @@ func TestAnthropicCompactionNegativeFieldsCannotPoisonOtherUsableIterationUsage(
 			malformed := AnthropicUsage{}
 			test.set(&usable, 10)
 			test.set(&malformed, -1)
-			total := (&AnthropicUsage{Iterations: []AnthropicUsage{usable, malformed}}).BillingTotals()
+			total := billableAnthropicUsage(&AnthropicUsage{Iterations: []AnthropicUsage{usable, malformed}})
 			if got := test.get(total); got != 10 {
 				t.Fatalf("usable %s count was poisoned: got %d, want 10; total=%#v", test.name, got, total)
 			}
@@ -181,7 +181,7 @@ func TestAnthropicUsageBillingTotalsPreservesMixedRateIterationTopLevel(t *testi
 				},
 			}
 
-			if total := usage.BillingTotals(); total != usage {
+			if total := billableAnthropicUsage(usage); total != usage {
 				t.Fatalf("mixed-rate %s iterations must preserve authoritative top-level usage: %#v", iterationType, total)
 			}
 			converted := ConvertAnthropicUsageToBifrostUsage(usage)

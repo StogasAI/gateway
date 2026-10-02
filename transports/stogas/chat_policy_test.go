@@ -17,6 +17,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
@@ -43,19 +44,20 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"tool call array arguments", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"[]"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
 		{"tool call duplicate argument key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":1,\"key\":2}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
 		{"oversized tool call id", fmt.Sprintf(`{"model":"gpt-5.5","messages":[{"role":"assistant","tool_calls":[{"id":%q,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
-		{"Anthropic unsafe tool call id", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call:1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call:1","content":"done"}]}`, "only letters, digits, underscores, or hyphens"},
+		{"Anthropic unsafe tool call id", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call:1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call:1","content":"done"}]}`, "only letters, digits, underscores, or hyphens"},
 		{"stream-only tool call index", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].index is not supported"},
 		{"empty assistant", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
 		{"empty annotations", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
 		{"citation reversed range", `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
 		{"reasoning details on OpenAI", `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "supported only for Anthropic-format deployments"},
-		{"unsigned Anthropic reasoning", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"thought"},{"role":"user","content":"continue"}]}`, "requires signed reasoning_details"},
-		{"Anthropic reasoning detail index gap", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":1,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "must match its array position"},
-		{"Anthropic reasoning detail missing signature", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]},{"role":"user","content":"continue"}]}`, "signature is required"},
-		{"Anthropic reasoning detail unknown field", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque","future":true}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].future is not supported"},
-		{"Anthropic reasoning text mismatch", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"different","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning must match the visible text"},
+		{"unsigned Anthropic reasoning", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"thought"},{"role":"user","content":"continue"}]}`, "requires signed reasoning_details"},
+		{"Anthropic reasoning detail index gap", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":1,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "must match its array position"},
+		{"Anthropic reasoning detail missing signature", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]},{"role":"user","content":"continue"}]}`, "signature is required"},
+		{"Anthropic reasoning detail unknown field", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque","future":true}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].future is not supported"},
+		{"Anthropic reasoning text mismatch", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"different","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning must match the visible text"},
 		{"message audio", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","audio":{"data":"abc"}}]}`, "Only text message content"},
 		{"empty prompt", `{"model":"gpt-5.5","messages":[{"role":"user","content":"  "}]}`, "messages[0].content must contain non-empty text"},
+		{"Unicode whitespace prompt", `{"model":"gpt-5.5","messages":[{"role":"user","content":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}]}`, "messages[0].content must contain non-empty text"},
 		{"message file id", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_id":"file_123"}]}`, "file_id inputs are not supported"},
 		{"message file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_url":"https://example.com/a.pdf"}]}`, "file_url inputs are not supported"},
 		{"message file data", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_data":"data:text/plain;base64,aGk="}]}`, "file inputs are not supported"},
@@ -89,35 +91,35 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"function strict string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","strict":"true"}}]}`, "Invalid JSON body"},
 		{"tool choice shorthand", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","name":"lookup"}}`, "tool_choice.name is not supported"},
 		{"tool choice unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup","future":true}}}`, "tool_choice.function.future is not supported"},
-		{"anthropic hosted tool", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
-		{"anthropic custom tool", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported for the selected Chat deployment"},
-		{"anthropic custom tool choice", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported for the selected Chat deployment"},
-		{"anthropic message name", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","name":"alice","content":"hi"}]}`, "name is not supported for Anthropic-format history"},
+		{"anthropic hosted tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
+		{"anthropic custom tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported for the selected Chat deployment"},
+		{"anthropic custom tool choice", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported for the selected Chat deployment"},
+		{"anthropic message name", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","name":"alice","content":"hi"}]}`, "name is not supported for Anthropic-format history"},
 		{"azure claude tool result name", `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
-		{"anthropic refusal history", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
-		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
-		{"Anthropic reordered system message", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"anthropic refusal history", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
+		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
+		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Azure Claude reordered developer message", `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
-		{"Anthropic mid-conversation system placement", `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
+		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
 		{"metadata non-string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
 		{"anthropic-only cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
 		{"nested cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
-		{"prompt cache options anthropic", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
-		{"anthropic cache control bad ttl", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
-		{"anthropic cache control bad type", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
+		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
+		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
+		{"anthropic cache control bad type", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
 		{"openai task budget", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
 		{"openai context management", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
-		{"anthropic frequency penalty", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
-		{"anthropic logit bias", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is only supported for OpenAI"},
-		{"anthropic logprobs", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is only supported for OpenAI"},
-		{"anthropic prediction", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"hi"}}`, "prediction is only supported for OpenAI"},
-		{"anthropic presence penalty", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`, "prompt_cache_key is not supported for Anthropic-format"},
+		{"anthropic frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
+		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is only supported for OpenAI"},
+		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is only supported for OpenAI"},
+		{"anthropic prediction", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"hi"}}`, "prediction is only supported for OpenAI"},
+		{"anthropic presence penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
+		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
 		{"prompt cache isolation key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
-		{"anthropic seed", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"seed":1}`, "seed is only supported for OpenAI"},
-		{"anthropic top logprobs", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_logprobs":1}`, "top_logprobs is only supported for OpenAI"},
-		{"anthropic verbosity", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"verbosity":"medium"}`, "verbosity is only supported for OpenAI"},
-		{"anthropic web search options", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`, "web_search_options is only supported for OpenAI"},
+		{"anthropic seed", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"seed":1}`, "seed is only supported for OpenAI"},
+		{"anthropic top logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_logprobs":1}`, "top_logprobs is only supported for OpenAI"},
+		{"anthropic verbosity", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"verbosity":"medium"}`, "verbosity is only supported for OpenAI"},
+		{"anthropic web search options", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`, "web_search_options is only supported for OpenAI"},
 		{"openai repetition penalty", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"repetition_penalty":1.1}`, "only supported for Chutes"},
 		{"empty stop sequence", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":[""]}`, "stop sequences must be non-empty"},
 		{"duplicate stop sequence", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["END","END"]}`, "stop must not contain duplicate values"},
@@ -129,13 +131,13 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"response format unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object","future":true}}`, "supports only type"},
 		{"response format invalid schema name", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"bad name","schema":{"type":"object"}}}}`, "name must contain 1 to 64"},
 		{"openai reasoning display", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_display":"summarized"}`, "only supported for Anthropic-format"},
-		{"anthropic empty stop sequence", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":[""]}`, "stop_sequences must contain non-empty strings"},
-		{"anthropic duplicate stop sequence", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END","END"]}`, "stop_sequences must not contain duplicate values"},
-		{"anthropic too many stop sequences", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop_sequences contains too many items"},
-		{"anthropic json object response format", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`, "must be json_schema for Anthropic-format"},
+		{"anthropic empty stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":[""]}`, "stop_sequences must contain non-empty strings"},
+		{"anthropic duplicate stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END","END"]}`, "stop_sequences must not contain duplicate values"},
+		{"anthropic too many stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop_sequences contains too many items"},
+		{"anthropic json object response format", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`, "must be json_schema for Anthropic-format"},
 		{"top k openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"top_k":40}`, "top_k is only supported for Anthropic"},
 		{"stop sequences openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
-		{"anthropic stop conflicts with stop sequences", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop":["DONE"],"stop_sequences":["END"]}`, "stop conflicts with stop_sequences"},
+		{"anthropic stop conflicts with stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop":["DONE"],"stop_sequences":["END"]}`, "stop conflicts with stop_sequences"},
 		{"conflicting reasoning alias", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"minimal"},"reasoning_effort":"minimal"}`, "conflicts"},
 		{"bad reasoning object", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":"low"}`, "reasoning must be an object"},
 		{"bad reasoning max tokens", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
@@ -147,18 +149,18 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"manual reasoning limit on Chutes", `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"conflicting reasoning controls", `{"model":"anthropic/claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"effort":"high","max_tokens":1024}}`, "reasoning effort conflicts"},
+		{"conflicting reasoning controls", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"effort":"high","max_tokens":1024}}`, "reasoning effort conflicts"},
 		{"bad reasoning enabled type", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
 		{"unknown reasoning effort", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"ultra"}`, "must be one of"},
 		{"chat reasoning summary", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
 		{"unknown reasoning field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
 		{"store true", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":true}`, "store=true is not supported"},
 		{"store string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":"false"}`, "Invalid JSON body"},
-		{"anthropic parallel tool calls", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
+		{"anthropic parallel tool calls", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
 		{"stream options without stream", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":false}}`, "stream_options requires stream=true"},
 		{"stream options unknown key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"unknown":true}}`, "stream_options.unknown is not supported"},
 		{"chat stream obfuscation", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_obfuscation":true}}`, "stream_options.include_obfuscation is not supported for Chat Completions"},
-		{"anthropic mcp toolset", `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "provider execution cannot be bounded"},
+		{"anthropic mcp toolset", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "provider execution cannot be bounded"},
 		{"openai mcp toolset", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "Only function tools"},
 	}
 
@@ -180,11 +182,11 @@ func TestStoreFalseIsAcceptedAcrossProvidersAndInterfaces(t *testing.T) {
 	}{
 		{"OpenAI Chat", false, `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":false}`},
 		{"Azure Chat", false, `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"store":false}`},
-		{"Anthropic Chat", false, `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"store":false}`},
+		{"Anthropic Chat", false, `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"store":false}`},
 		{"Chutes Chat", false, `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"}],"store":false}`},
-		{"OpenAI Responses", true, `{"model":"gpt-5-nano","input":"hi","store":false}`},
+		{"OpenAI Responses", true, `{"model":"gpt-5.5","input":"hi","store":false}`},
 		{"Azure Responses", true, `{"model":"azure-gpt-5.6-sol","input":"hi","store":false}`},
-		{"Anthropic Responses", true, `{"model":"anthropic/claude-sonnet-4-6","input":"hi","store":false}`},
+		{"Anthropic Responses", true, `{"model":"anthropic-claude-sonnet-4-6","input":"hi","store":false}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var err error
@@ -247,7 +249,7 @@ func TestOpenAIProviderOwnedScalarsReachTheWireUnchanged(t *testing.T) {
 
 func TestChatPolicyAllowsAnthropicSpecificFieldsForAnthropicDeployments(t *testing.T) {
 	err := validateResolvedChat(t, `{
-		"model":"anthropic/claude-sonnet-4-6",
+		"model":"anthropic-claude-sonnet-4-6",
 		"messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"5m"}}]}],
 		"cache_control":{"type":"ephemeral","ttl":"1h"},
 		"top_p":0.9,
@@ -273,20 +275,20 @@ func TestAnthropicTaskBudgetValidation(t *testing.T) {
 		want                string
 		chatSchemaRejection bool
 	}{
-		{name: "minimum", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000}`},
-		{name: "remaining zero", model: "anthropic/claude-opus-4-8", taskBudget: `{"type":"tokens","total":20000,"remaining":0}`},
-		{name: "fable", model: "anthropic/claude-fable-5", taskBudget: `{"type":"tokens","total":20000,"remaining":19000}`},
-		{name: "unsupported model", model: "anthropic/claude-sonnet-4-6", taskBudget: `{"type":"tokens","total":20000}`, want: "not supported for this Anthropic model"},
-		{name: "not object", model: "anthropic/claude-opus-4-7", taskBudget: `[]`, want: "must be an object", chatSchemaRejection: true},
-		{name: "unknown field", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"future":true}`, want: "supports only type, total, and remaining"},
-		{name: "missing type", model: "anthropic/claude-opus-4-7", taskBudget: `{"total":20000}`, want: "type must be tokens"},
-		{name: "wrong type", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"future","total":20000}`, want: "type must be tokens"},
-		{name: "missing total", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens"}`, want: "total is required"},
-		{name: "fractional total", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000.5}`, want: "total must be an integer", chatSchemaRejection: true},
-		{name: "small total", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":19999}`, want: "below the provider minimum"},
-		{name: "fractional remaining", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":1.5}`, want: "remaining must be an integer", chatSchemaRejection: true},
-		{name: "negative remaining", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":-1}`, want: "remaining must be between zero"},
-		{name: "remaining above total", model: "anthropic/claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":20001}`, want: "remaining must be between zero"},
+		{name: "minimum", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000}`},
+		{name: "remaining zero", model: "anthropic-claude-opus-4-8", taskBudget: `{"type":"tokens","total":20000,"remaining":0}`},
+		{name: "fable", model: "anthropic-claude-fable-5", taskBudget: `{"type":"tokens","total":20000,"remaining":19000}`},
+		{name: "unsupported model", model: "anthropic-claude-sonnet-4-6", taskBudget: `{"type":"tokens","total":20000}`, want: "not supported for this Anthropic model"},
+		{name: "not object", model: "anthropic-claude-opus-4-7", taskBudget: `[]`, want: "must be an object", chatSchemaRejection: true},
+		{name: "unknown field", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"future":true}`, want: "supports only type, total, and remaining"},
+		{name: "missing type", model: "anthropic-claude-opus-4-7", taskBudget: `{"total":20000}`, want: "type must be tokens"},
+		{name: "wrong type", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"future","total":20000}`, want: "type must be tokens"},
+		{name: "missing total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens"}`, want: "total is required"},
+		{name: "fractional total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000.5}`, want: "total must be an integer", chatSchemaRejection: true},
+		{name: "small total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":19999}`, want: "below the provider minimum"},
+		{name: "fractional remaining", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":1.5}`, want: "remaining must be an integer", chatSchemaRejection: true},
+		{name: "negative remaining", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":-1}`, want: "remaining must be between zero"},
+		{name: "remaining above total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":20001}`, want: "remaining must be between zero"},
 	}
 	for _, route := range []struct {
 		name       string
@@ -326,15 +328,15 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 		model   string
 		payload string
 	}{
-		{name: "clear tool defaults", model: "anthropic/claude-haiku-4-5", payload: `{"edits":[{"type":"clear_tool_uses_20250919"}]}`},
-		{name: "clear tool full", model: "anthropic/claude-opus-5", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":0},"clear_tool_inputs":["lookup"],"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":0},"trigger":{"type":"tool_uses","value":1}}]}`},
-		{name: "clear thinking string all", model: "anthropic/claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`},
-		{name: "clear thinking object all", model: "anthropic/claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"all"}}]}`},
-		{name: "ordered editing strategies", model: "anthropic/claude-opus-5", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":1}},{"type":"clear_tool_uses_20250919","clear_tool_inputs":false,"exclude_tools":null}]}`},
-		{name: "compaction defaults", model: "anthropic/claude-opus-5", payload: `{"edits":[{"type":"compact_20260112"}]}`},
-		{name: "compaction full", model: "anthropic/claude-sonnet-4-6", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000},"pause_after_compaction":true,"instructions":"Preserve decisions"}]}`},
-		{name: "compaction null option", model: "anthropic/claude-sonnet-4-6", payload: `{"edits":[{"type":"compact_20260112","pause_after_compaction":null}]}`},
-		{name: "Azure compaction", model: "azure/claude-opus-4-8", payload: `{"edits":[{"type":"compact_20260112","trigger":null,"instructions":null}]}`},
+		{name: "clear tool defaults", model: "anthropic-claude-haiku-4-5-20251001", payload: `{"edits":[{"type":"clear_tool_uses_20250919"}]}`},
+		{name: "clear tool full", model: "anthropic-claude-opus-5", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":0},"clear_tool_inputs":["lookup"],"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":0},"trigger":{"type":"tool_uses","value":1}}]}`},
+		{name: "clear thinking string all", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`},
+		{name: "clear thinking object all", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"all"}}]}`},
+		{name: "ordered editing strategies", model: "anthropic-claude-opus-5", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":1}},{"type":"clear_tool_uses_20250919","clear_tool_inputs":false,"exclude_tools":null}]}`},
+		{name: "compaction defaults", model: "anthropic-claude-opus-5", payload: `{"edits":[{"type":"compact_20260112"}]}`},
+		{name: "compaction full", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000},"pause_after_compaction":true,"instructions":"Preserve decisions"}]}`},
+		{name: "compaction null option", model: "anthropic-claude-sonnet-4-6", payload: `{"edits":[{"type":"compact_20260112","pause_after_compaction":null}]}`},
+		{name: "Azure compaction", model: "azure-claude-opus-4-8", payload: `{"edits":[{"type":"compact_20260112","trigger":null,"instructions":null}]}`},
 	}
 	invalid := []struct {
 		name    string
@@ -368,7 +370,7 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 		{name: "clear tool keep null", payload: `{"edits":[{"type":"clear_tool_uses_20250919","keep":null}]}`, want: "must be an object"},
 		{name: "clear tool trigger fractional", payload: `{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"tool_uses","value":1.5}}]}`},
 		{name: "compaction unknown field", payload: `{"edits":[{"type":"compact_20260112","future":true}]}`, want: "contains unsupported fields"},
-		{name: "compaction unsupported model", model: "anthropic/claude-haiku-4-5", payload: `{"edits":[{"type":"compact_20260112"}]}`, want: "not supported for this Anthropic model"},
+		{name: "compaction unsupported model", model: "anthropic-claude-haiku-4-5-20251001", payload: `{"edits":[{"type":"compact_20260112"}]}`, want: "not supported for this Anthropic model"},
 		{name: "compaction trigger wrong type", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"tool_uses","value":50000}}]}`, want: "type is not supported"},
 		{name: "compaction trigger below minimum", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":49999}}]}`, want: "below the provider minimum"},
 		{name: "compaction instructions wrong type", payload: `{"edits":[{"type":"compact_20260112","instructions":true}]}`, want: "must be a string or null"},
@@ -393,7 +395,7 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 			t.Run(route.name+"/invalid/"+tc.name, func(t *testing.T) {
 				model := tc.model
 				if model == "" {
-					model = "anthropic/claude-opus-5"
+					model = "anthropic-claude-opus-5"
 				}
 				err := route.validate(t, fmt.Sprintf(route.format, model, tc.payload))
 				if err == nil {
@@ -581,8 +583,8 @@ func TestAnthropicContextManagementReachesBothProviderWireFormatsExactly(t *test
 		path string
 		body string
 	}{
-		{name: "chat", path: "/v1/chat/completions", body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"context_management":` + contextManagement + `}`},
-		{name: "responses", path: "/v1/responses", body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":16,"context_management":` + contextManagement + `}`},
+		{name: "chat", path: "/v1/chat/completions", body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"context_management":` + contextManagement + `}`},
+		{name: "responses", path: "/v1/responses", body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":16,"context_management":` + contextManagement + `}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: tc.path, Body: []byte(tc.body)})
@@ -652,11 +654,11 @@ func TestChatPolicyAllowsDeclaredFunctionToolChoice(t *testing.T) {
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"none"}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
-		`{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
+		`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false,"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
-		`{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
+		`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 	} {
 		if err := validateResolvedChat(t, body); err != nil {
 			t.Fatalf("expected declared tool choice to pass, got %v\nbody=%s", err, body)
@@ -683,7 +685,7 @@ func TestClientToolDefinitionLimits(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi"}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -717,7 +719,7 @@ func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing
 	}{
 		{name: "OpenAI", model: "gpt-5.5"},
 		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
-		{name: "Anthropic", model: "anthropic/claude-sonnet-4-6", anthropicWire: true},
+		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
 		{name: "Azure Claude", model: "azure-claude-sonnet-4-6", anthropicWire: true},
 		{name: "Chutes", model: "chutes-glm-5.2"},
 	}
@@ -812,7 +814,7 @@ func TestChatSignedReasoningHistoryReachesAnthropicFamilyWireLosslessly(t *testi
 		model string
 		name  string
 	}{
-		{name: "Anthropic", model: "anthropic/claude-sonnet-4-6"},
+		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6"},
 		{name: "Azure Claude", model: "azure-claude-sonnet-4-6"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -854,22 +856,22 @@ func TestAnthropicMidConversationSystemMessagesReachProviderWireInPlace(t *testi
 		{
 			name: "Opus Chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
 		},
 		{
 			name: "Opus Responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 		{
 			name: "Sonnet 5 Chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
 		},
 		{
 			name: "Sonnet 5 Responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 	}
 	for _, tc := range tests {
@@ -953,7 +955,7 @@ func TestChatResponseFormatReachesProviderWireRequest(t *testing.T) {
 		},
 		{
 			name: "anthropic json schema",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}}`,
 		},
 	}
 	for _, tc := range cases {
@@ -1015,7 +1017,7 @@ func TestChatResponseFormatReachesProviderWireRequest(t *testing.T) {
 }
 
 func TestChatPolicyRejectsUnsupportedCacheControlPositions(t *testing.T) {
-	err := validateResolvedChat(t, `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`)
+	err := validateResolvedChat(t, `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`)
 	if err == nil || !strings.Contains(err.Error(), "messages[0].cache_control is not supported") {
 		t.Fatalf("expected message-level cache_control rejection, got %v", err)
 	}
@@ -1030,12 +1032,12 @@ func TestAnthropicCacheControlRejectsUnknownKeys(t *testing.T) {
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h","scope":"future-provider-owned"},"max_completion_tokens":16}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h","scope":"future-provider-owned"},"max_completion_tokens":16}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h","scope":"future-provider-owned"},"max_output_tokens":16}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h","scope":"future-provider-owned"},"max_output_tokens":16}`,
 		},
 	}
 
@@ -1067,22 +1069,22 @@ func TestAnthropicCachePrewarmAllowsZeroOutputTokens(t *testing.T) {
 		{
 			name: "chat top-level cache_control",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"5m"},"max_completion_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"5m"},"max_completion_tokens":0}`,
 		},
 		{
 			name: "chat content cache_control max_tokens alias",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"max_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"max_tokens":0}`,
 		},
 		{
 			name: "responses top-level cache_control",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"5m"},"max_output_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"5m"},"max_output_tokens":0}`,
 		},
 		{
 			name: "responses input cache_control",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"max_output_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"max_output_tokens":0}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1128,22 +1130,22 @@ func TestZeroOutputTokensRequireAllowedAnthropicCacheControl(t *testing.T) {
 		{
 			name: "chat no cache_control",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
 		},
 		{
 			name: "chat schema property named cache_control",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"max_completion_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"max_completion_tokens":0}`,
 		},
 		{
 			name: "responses no cache_control",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":0}`,
 		},
 		{
 			name: "responses schema property named cache_control",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}],"max_output_tokens":0}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}],"max_output_tokens":0}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1246,12 +1248,12 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null}`,
+			body: `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1317,43 +1319,43 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 		{
 			name: "chat auto",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`,
 			want: "standard_only",
 		},
 		{
 			name: "chat default",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default"}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"default"}`,
 			want: "standard_only",
 		},
 		{
 			name: "chat standard",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard"}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard"}`,
 			want: "standard_only",
 		},
 		{
 			name: "chat standard only",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`,
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`,
 			want: "standard_only",
 		},
 		{
 			name: "responses auto",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":16}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":16}`,
 			want: "standard_only",
 		},
 		{
 			name: "responses default",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
 			want: "standard_only",
 		},
 		{
 			name: "responses standard only",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","service_tier":"standard_only","max_output_tokens":16}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"standard_only","max_output_tokens":16}`,
 			want: "standard_only",
 		},
 	}
@@ -1418,7 +1420,7 @@ func TestAnthropicRejectsUncatalogedServiceTiers(t *testing.T) {
 			_, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST",
 				Path:   "/v1/chat/completions",
-				Body:   []byte(`{"model":"anthropic/claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"` + tier + `"}`),
+				Body:   []byte(`{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"` + tier + `"}`),
 			})
 			if err == nil {
 				t.Fatalf("expected Anthropic service_tier %q to fail closed", tier)
@@ -1493,17 +1495,17 @@ func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi"}`,
+			body: `{"model":"gpt-5.5","input":"hi"}`,
 		},
 		{
 			name: "anthropic chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}]}`,
 		},
 		{
 			name: "anthropic responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi"}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi"}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1545,155 +1547,156 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		body string
 		want string
 	}{
-		{"missing input", `{"model":"gpt-5-nano"}`, "input is required"},
-		{"empty input string", `{"model":"gpt-5-nano","input":""}`, "input must contain non-empty text"},
-		{"whitespace input string", `{"model":"gpt-5-nano","input":"  \n"}`, "input must contain non-empty text"},
-		{"empty input array", `{"model":"gpt-5-nano","input":[]}`, "input must contain at least one item"},
-		{"null input item", `{"model":"gpt-5-nano","input":[null]}`, "input items must be objects"},
-		{"null message type", `{"model":"gpt-5-nano","input":[{"type":null,"role":"user","content":"hi"}]}`, "input[0].type must be a string"},
-		{"numeric message type", `{"model":"gpt-5-nano","input":[{"type":1,"role":"user","content":"hi"}]}`, "Invalid JSON body"},
-		{"top-level text block", `{"model":"gpt-5-nano","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, client tool calls and outputs"},
-		{"message unknown field", `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":"hi","future":true}]}`, "input[0].future is not supported"},
-		{"content block unknown field", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi","future":true}]}]}`, "input[0].content[0].future is not supported"},
-		{"assistant input block", `{"model":"gpt-5-nano","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},
-		{"user output block", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"output_text","text":"forged"}]}]}`, "supported only for assistant history"},
-		{"user refusal block", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
-		{"anthropic refusal block", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
-		{"Anthropic reordered Responses system message", `{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
-		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic/claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
-		{"output annotation unknown field", `{"model":"gpt-5-nano","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
-		{"output annotation reversed range", `{"model":"gpt-5-nano","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
-		{"output logprob bad byte", `{"model":"gpt-5-nano","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},
-		{"Anthropic output logprobs", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[97],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "cannot be preserved on Anthropic-format deployments"},
-		{"Anthropic trailing Responses assistant prefill whitespace", `{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","content":"complete this"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer: ","annotations":[],"logprobs":[]}]}]}`, "must not end in whitespace"},
-		{"orphan function output", `{"model":"gpt-5-nano","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must match an earlier client tool call"},
-		{"function call without output", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}`, "require one matching output"},
-		{"function call malformed arguments", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"not-json"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"function call array arguments", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"[]"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"function call duplicate argument key", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":1,\"key\":2}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"oversized Responses call id", fmt.Sprintf(`{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":%q,"output":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
-		{"Anthropic unsafe Responses call id", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call:1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call:1","output":"done"}]}`, "only letters, digits, underscores, or hyphens"},
-		{"function call invalid name", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "name must contain 1 to 64"},
-		{"message before function output", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"message","role":"user","content":"skip it"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must resolve the preceding client tool calls"},
-		{"duplicate function call id", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"other","arguments":"{}"}]}`, "duplicates another client tool call"},
-		{"duplicate function output", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"one"},{"type":"function_call_output","call_id":"call_1","output":"two"}]}`, "duplicates a client tool output"},
-		{"non-text function output", `{"model":"gpt-5-nano","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"done"}]}]}`, "input[1].output must be a string"},
-		{"custom call on Anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}]}`, "supported only for OpenAI-format deployments"},
-		{"reasoning item unknown field", `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":"continue"},{"type":"reasoning","encrypted_content":"opaque","future":true}]}`, "input[1].future is not supported"},
-		{"background", `{"model":"gpt-5-nano","input":"hi","background":true}`, "background is not supported"},
-		{"conversation", `{"model":"gpt-5-nano","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
-		{"fallbacks", `{"model":"gpt-5-nano","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
-		{"previous response", `{"model":"gpt-5-nano","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
-		{"reasoning input item without encrypted content", `{"model":"gpt-5-nano","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
-		{"reasoning input item on Anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
-		{"prompt cache options anthropic", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
-		{"openai cache control", `{"model":"gpt-5-nano","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
-		{"openai input cache control", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
-		{"openai tool cache control", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`, "cache_control is only supported for Anthropic"},
-		{"anthropic cache control bad ttl", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
-		{"anthropic message cache control unsupported", `{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`, "input[0].cache_control is not supported"},
-		{"anthropic responses frequency penalty", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
-		{"anthropic responses include", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is only supported for OpenAI"},
-		{"anthropic responses presence penalty", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"responses include unknown value", `{"model":"gpt-5-nano","input":"hi","include":["file_search_call.results"]}`, "not supported by the text-only Stogas API"},
-		{"responses duplicate include", `{"model":"gpt-5-nano","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
-		{"responses text unknown field", `{"model":"gpt-5-nano","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
-		{"responses text format unknown field", `{"model":"gpt-5-nano","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
-		{"responses text format missing schema", `{"model":"gpt-5-nano","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
-		{"anthropic responses verbosity", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
-		{"anthropic responses json object format", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
-		{"anthropic responses stream obfuscation", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`, "cannot be preserved on Anthropic-format"},
-		{"anthropic detailed reasoning summary", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto for Anthropic-format"},
-		{"anthropic truncation", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
-		{"anthropic prompt cache key", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt_cache_key is not supported for Anthropic-format"},
-		{"top k openai", `{"model":"gpt-5-nano","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
-		{"stop sequences openai", `{"model":"gpt-5-nano","input":"hi","stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
-		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
-		{"openai task budget", `{"model":"gpt-5-nano","input":"hi","task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
-		{"openai context management", `{"model":"gpt-5-nano","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
-		{"reasoning effort bad type", `{"model":"gpt-5-nano","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
-		{"responses bad reasoning object", `{"model":"gpt-5-nano","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
-		{"responses bad reasoning max tokens", `{"model":"gpt-5-nano","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
-		{"client reasoning mode", `{"model":"gpt-5.6-sol","input":"hi","reasoning":{"mode":"pro"}}`, "reasoning.mode is not supported"},
-		{"responses unsupported manual reasoning limit", `{"model":"gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"missing input", `{"model":"gpt-5.5"}`, "input is required"},
+		{"empty input string", `{"model":"gpt-5.5","input":""}`, "input must contain non-empty text"},
+		{"whitespace input string", `{"model":"gpt-5.5","input":"  \n"}`, "input must contain non-empty text"},
+		{"Unicode whitespace input string", `{"model":"gpt-5.5","input":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}`, "input must contain non-empty text"},
+		{"empty input array", `{"model":"gpt-5.5","input":[]}`, "input must contain at least one item"},
+		{"null input item", `{"model":"gpt-5.5","input":[null]}`, "input items must be objects"},
+		{"null message type", `{"model":"gpt-5.5","input":[{"type":null,"role":"user","content":"hi"}]}`, "input[0].type must be a string"},
+		{"numeric message type", `{"model":"gpt-5.5","input":[{"type":1,"role":"user","content":"hi"}]}`, "Invalid JSON body"},
+		{"top-level text block", `{"model":"gpt-5.5","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, client tool calls and outputs"},
+		{"message unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"hi","future":true}]}`, "input[0].future is not supported"},
+		{"content block unknown field", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","future":true}]}]}`, "input[0].content[0].future is not supported"},
+		{"assistant input block", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},
+		{"user output block", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"output_text","text":"forged"}]}]}`, "supported only for assistant history"},
+		{"user refusal block", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
+		{"anthropic refusal block", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
+		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
+		{"output annotation unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
+		{"output annotation reversed range", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
+		{"output logprob bad byte", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},
+		{"Anthropic output logprobs", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[97],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "cannot be preserved on Anthropic-format deployments"},
+		{"Anthropic trailing Responses assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"complete this"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer: ","annotations":[],"logprobs":[]}]}]}`, "must not end in whitespace"},
+		{"orphan function output", `{"model":"gpt-5.5","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must match an earlier client tool call"},
+		{"function call without output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}`, "require one matching output"},
+		{"function call malformed arguments", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"not-json"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"function call array arguments", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"[]"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"function call duplicate argument key", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":1,\"key\":2}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"oversized Responses call id", fmt.Sprintf(`{"model":"gpt-5.5","input":[{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":%q,"output":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
+		{"Anthropic unsafe Responses call id", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call:1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call:1","output":"done"}]}`, "only letters, digits, underscores, or hyphens"},
+		{"function call invalid name", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "name must contain 1 to 64"},
+		{"message before function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"message","role":"user","content":"skip it"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must resolve the preceding client tool calls"},
+		{"duplicate function call id", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"other","arguments":"{}"}]}`, "duplicates another client tool call"},
+		{"duplicate function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"one"},{"type":"function_call_output","call_id":"call_1","output":"two"}]}`, "duplicates a client tool output"},
+		{"non-text function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"done"}]}]}`, "input[1].output must be a string"},
+		{"custom call on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}]}`, "supported only for OpenAI-format deployments"},
+		{"reasoning item unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"continue"},{"type":"reasoning","encrypted_content":"opaque","future":true}]}`, "input[1].future is not supported"},
+		{"background", `{"model":"gpt-5.5","input":"hi","background":true}`, "background is not supported"},
+		{"conversation", `{"model":"gpt-5.5","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
+		{"fallbacks", `{"model":"gpt-5.5","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
+		{"previous response", `{"model":"gpt-5.5","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
+		{"reasoning input item without encrypted content", `{"model":"gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
+		{"reasoning input item on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
+		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
+		{"openai cache control", `{"model":"gpt-5.5","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
+		{"openai input cache control", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
+		{"openai tool cache control", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`, "cache_control is only supported for Anthropic"},
+		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
+		{"anthropic message cache control unsupported", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`, "input[0].cache_control is not supported"},
+		{"anthropic responses frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
+		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is only supported for OpenAI"},
+		{"anthropic responses presence penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
+		{"responses include unknown value", `{"model":"gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the text-only Stogas API"},
+		{"responses duplicate include", `{"model":"gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
+		{"responses text unknown field", `{"model":"gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
+		{"responses text format unknown field", `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
+		{"responses text format missing schema", `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
+		{"anthropic responses verbosity", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
+		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
+		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`, "cannot be preserved on Anthropic-format"},
+		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto for Anthropic-format"},
+		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
+		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
+		{"top k openai", `{"model":"gpt-5.5","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
+		{"stop sequences openai", `{"model":"gpt-5.5","input":"hi","stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
+		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
+		{"openai task budget", `{"model":"gpt-5.5","input":"hi","task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
+		{"openai context management", `{"model":"gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
+		{"reasoning effort bad type", `{"model":"gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
+		{"responses bad reasoning object", `{"model":"gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
+		{"responses bad reasoning max tokens", `{"model":"gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
+		{"client reasoning mode", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"mode":"pro"}}`, "reasoning.mode is not supported"},
+		{"responses unsupported manual reasoning limit", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"responses manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
 		{"responses manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"responses reasoning display", `{"model":"gpt-5-nano","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
-		{"responses unknown reasoning field", `{"model":"gpt-5-nano","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
-		{"reasoning effort conflict", `{"model":"gpt-5-nano","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
-		{"stream options without stream", `{"model":"gpt-5-nano","input":"hi","stream_options":{"include_obfuscation":true}}`, "stream_options requires stream=true"},
-		{"responses include usage stream option", `{"model":"gpt-5-nano","input":"hi","stream":true,"stream_options":{"include_usage":true}}`, "stream_options.include_usage is not supported for Responses"},
-		{"store true", `{"model":"gpt-5-nano","input":"hi","store":true}`, "store=true is not supported"},
-		{"store string", `{"model":"gpt-5-nano","input":"hi","store":"false"}`, "Invalid JSON body"},
-		{"metadata non-string", `{"model":"gpt-5-nano","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
-		{"anthropic parallel tool calls", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
-		{"anthropic max tool calls function only", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":2}`, "max_tool_calls is only supported for Anthropic hosted tools"},
-		{"max tool calls without tools", `{"model":"gpt-5-nano","input":"hi","max_tool_calls":2}`, "max_tool_calls requires supported tools"},
-		{"max tool calls too large", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":129}`, "max_tool_calls is outside the supported range"},
-		{"max tool calls with function only", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
-		{"parallel tools without tools", `{"model":"gpt-5-nano","input":"hi","parallel_tool_calls":true}`, "parallel_tool_calls requires supported tools"},
-		{"tool choice without tools", `{"model":"gpt-5-nano","input":"hi","tool_choice":"auto"}`, "tool_choice requires supported tools"},
-		{"openai file search", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"file_search"}]}`, "hosted retrieval and file storage have separate pricing"},
-		{"openai code interpreter", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"code_interpreter"}]}`, "hosted containers have separate pricing and lifecycle"},
-		{"openai hosted shell", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
-		{"openai local shell", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
-		{"openai apply patch", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
-		{"openai computer", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "text-only Stogas API"},
-		{"openai image generation", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"image_generation"}]}`, "text-only Stogas API"},
-		{"openai tool search", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"tool_search"}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai namespace", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai memory", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"memory"}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai remote mcp URL", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
-		{"openai remote mcp connector", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
-		{"anthropic remote mcp", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "provider execution cannot be bounded or approved"},
-		{"anthropic custom", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
-		{"anthropic local shell", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, web_fetch"},
-		{"anthropic max uses too large", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "max_uses is outside the supported range"},
-		{"anthropic web fetch max uses too large", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":129}]}`, "max_uses is outside the supported range"},
-		{"anthropic web fetch negative content cap", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":-1}]}`, "max_content_tokens is outside the supported range"},
-		{"anthropic hosted tool wrong name", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"lookup"}]}`, "name must be web_search"},
-		{"anthropic advanced function flag", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","defer_loading":true}]}`, "defer_loading is not supported"},
-		{"anthropic unsupported fetch flag", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","allowed_callers":["direct"]}]}`, "allowed_callers is not supported"},
-		{"anthropic overlapping domain filters", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["EXAMPLE.COM"]}}]}`, "duplicates a domain"},
-		{"anthropic max tool calls conflicts with max uses", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
-		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
-		{"anthropic multiple hosted tools", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260318","name":"web_search","max_uses":2},{"type":"web_fetch_20260318","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
-		{"anthropic code execution", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Explicit Anthropic code_execution tools are not supported"},
-		{"anthropic computer use", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, web_fetch"},
-		{"openai web fetch", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai code execution version", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
-		{"openai empty web search suffix", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai separator-only web search suffix", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai empty preview web search suffix", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai separator-only preview web search suffix", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview__"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai malformed preview web search prefix", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_previewfoo"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai unknown dated web search", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_2026_01_01"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai unknown web search alias", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_latest"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"responses function unknown field", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup","eager_input_streaming":true}]}`, "eager_input_streaming is not supported"},
-		{"responses function parameters array", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup","parameters":[]}]}`, "Invalid JSON body"},
-		{"responses duplicate tool names", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"custom","name":"lookup"}]}`, "duplicates another client tool"},
-		{"responses duplicate hosted type", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_2025_08_26"}]}`, "duplicates another hosted tool"},
-		{"responses custom grammar missing syntax", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD"}}]}`, "format.syntax is required"},
-		{"responses custom bad grammar syntax", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD","syntax":"peg"}}]}`, "format.syntax must be lark or regex"},
-		{"openai web search unknown field", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
-		{"openai preview filters", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
-		{"openai web search invalid domain", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
-		{"openai web search bad location country", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
-		{"unsupported tool choice", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
-		{"hosted tool choice not declared", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
-		{"hosted selector version mismatch", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
-		{"allowed tools missing mode", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"lookup"}]}}`, "tool_choice.mode is required"},
-		{"allowed hosted tool choice not declared", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
-		{"allowed hosted selector version mismatch", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
-		{"allowed tools web fetch", `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20260309"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
-		{"anthropic hosted selector", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
-		{"anthropic allowed tools selector", `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
-		{"image input", `{"model":"gpt-5-nano","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
-		{"file id input", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "file inputs are not supported"},
-		{"hosted file input", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.txt"}]}]}`, "file inputs are not supported"},
-		{"inline file input", `{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
+		{"responses reasoning display", `{"model":"gpt-5.5","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
+		{"responses unknown reasoning field", `{"model":"gpt-5.5","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
+		{"reasoning effort conflict", `{"model":"gpt-5.5","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
+		{"stream options without stream", `{"model":"gpt-5.5","input":"hi","stream_options":{"include_obfuscation":true}}`, "stream_options requires stream=true"},
+		{"responses include usage stream option", `{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_usage":true}}`, "stream_options.include_usage is not supported for Responses"},
+		{"store true", `{"model":"gpt-5.5","input":"hi","store":true}`, "store=true is not supported"},
+		{"store string", `{"model":"gpt-5.5","input":"hi","store":"false"}`, "Invalid JSON body"},
+		{"metadata non-string", `{"model":"gpt-5.5","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
+		{"anthropic parallel tool calls", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
+		{"anthropic max tool calls function only", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":2}`, "max_tool_calls is only supported for Anthropic hosted tools"},
+		{"max tool calls without tools", `{"model":"gpt-5.5","input":"hi","max_tool_calls":2}`, "max_tool_calls requires supported tools"},
+		{"max tool calls too large", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":129}`, "max_tool_calls is outside the supported range"},
+		{"max tool calls with function only", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
+		{"parallel tools without tools", `{"model":"gpt-5.5","input":"hi","parallel_tool_calls":true}`, "parallel_tool_calls requires supported tools"},
+		{"tool choice without tools", `{"model":"gpt-5.5","input":"hi","tool_choice":"auto"}`, "tool_choice requires supported tools"},
+		{"openai file search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"file_search"}]}`, "hosted retrieval and file storage have separate pricing"},
+		{"openai code interpreter", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`, "hosted containers have separate pricing and lifecycle"},
+		{"openai hosted shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
+		{"openai local shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
+		{"openai apply patch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
+		{"openai computer", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "text-only Stogas API"},
+		{"openai image generation", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "text-only Stogas API"},
+		{"openai tool search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"tool_search"}]}`, "tool-loading or provider-state lifecycle"},
+		{"openai namespace", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool-loading or provider-state lifecycle"},
+		{"openai memory", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "tool-loading or provider-state lifecycle"},
+		{"openai remote mcp URL", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
+		{"openai remote mcp connector", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
+		{"anthropic remote mcp", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "provider execution cannot be bounded or approved"},
+		{"anthropic custom", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
+		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, web_fetch"},
+		{"anthropic max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","max_uses":129}]}`, "max_uses is outside the supported range"},
+		{"anthropic web fetch max uses too large", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":129}]}`, "max_uses is outside the supported range"},
+		{"anthropic web fetch negative content cap", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":-1}]}`, "max_content_tokens is outside the supported range"},
+		{"anthropic hosted tool wrong name", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"lookup"}]}`, "name must be web_search"},
+		{"anthropic advanced function flag", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","defer_loading":true}]}`, "defer_loading is not supported"},
+		{"anthropic unsupported fetch flag", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","allowed_callers":["direct"]}]}`, "allowed_callers is not supported"},
+		{"anthropic overlapping domain filters", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["EXAMPLE.COM"]}}]}`, "duplicates a domain"},
+		{"anthropic max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
+		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
+		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260318","name":"web_search","max_uses":2},{"type":"web_fetch_20260318","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
+		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Explicit Anthropic code_execution tools are not supported"},
+		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, web_fetch"},
+		{"openai web fetch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai code execution version", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
+		{"openai empty web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai separator-only web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai empty preview web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai separator-only preview web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview__"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai malformed preview web search prefix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_previewfoo"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai unknown dated web search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2026_01_01"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai unknown web search alias", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_latest"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"responses function unknown field", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","eager_input_streaming":true}]}`, "eager_input_streaming is not supported"},
+		{"responses function parameters array", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","parameters":[]}]}`, "Invalid JSON body"},
+		{"responses duplicate tool names", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"custom","name":"lookup"}]}`, "duplicates another client tool"},
+		{"responses duplicate hosted type", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_2025_08_26"}]}`, "duplicates another hosted tool"},
+		{"responses custom grammar missing syntax", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD"}}]}`, "format.syntax is required"},
+		{"responses custom bad grammar syntax", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD","syntax":"peg"}}]}`, "format.syntax must be lark or regex"},
+		{"openai web search unknown field", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
+		{"openai preview filters", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
+		{"openai web search invalid domain", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
+		{"openai web search bad location country", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
+		{"unsupported tool choice", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
+		{"hosted tool choice not declared", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"hosted selector version mismatch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
+		{"allowed tools missing mode", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"lookup"}]}}`, "tool_choice.mode is required"},
+		{"allowed hosted tool choice not declared", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"allowed hosted selector version mismatch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
+		{"allowed tools web fetch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20260309"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"anthropic hosted selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
+		{"anthropic allowed tools selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
+		{"image input", `{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
+		{"file id input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "file inputs are not supported"},
+		{"hosted file input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.txt"}]}]}`, "file inputs are not supported"},
+		{"inline file input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
 	}
 
 	for _, tc := range cases {
@@ -1710,7 +1713,7 @@ func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *test
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","reasoning.effort":"high"}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","reasoning.effort":"high"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1783,13 +1786,13 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 		{
 			name: "Anthropic accepted max effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"max"}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"max"}}`,
 			want: "max",
 		},
 		{
 			name: "Anthropic Opus preserves xhigh",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-opus-4-8","input":"hi","reasoning":{"effort":"xhigh"}}`,
+			body: `{"model":"anthropic-claude-opus-4-8","input":"hi","reasoning":{"effort":"xhigh"}}`,
 			want: "xhigh",
 		},
 		{
@@ -1801,7 +1804,7 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 		{
 			name: "Anthropic maps xhigh upward to max on a tie",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","reasoning":{"effort":"xhigh"}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"effort":"xhigh"}}`,
 			want: "max",
 		},
 	}
@@ -2322,36 +2325,36 @@ func TestResponsesInputTextOnlyRejectsMultimodalAliases(t *testing.T) {
 
 func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 	for _, body := range []string{
-		`{"model":"gpt-5-nano","input":"hi","stream":false,"instructions":"be brief","temperature":2.01,"top_p":1.01,"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"},"strict":true},"verbosity":"future-verbosity"},"truncation":"future","prompt_cache_key":"tenant-cache"}`,
-		`{"model":"gpt-5-nano","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
-		`{"model":"gpt-5-nano","input":"hi","reasoning":{"summary":"future-summary","generate_summary":"future-generate-summary"}}`,
-		`{"model":"gpt-5-nano","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":3}`,
-		`{"model":"gpt-5-nano","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`,
-		`{"model":"gpt-5-nano","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"parallel_tool_calls":false}`,
-		`{"model":"gpt-5-nano","input":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","id":"fco_1","status":"completed","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"}}`,
-		`{"model":"gpt-5-nano","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"custom","name":"lookup"}]}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_2025_08_26","filters":{"allowed_domains":["example.com"]},"search_context_size":"high","user_location":{"type":"approximate","city":"Paris","country":"FR","region":"Ile-de-France","timezone":"Europe/Paris"}}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11","search_context_size":"low","user_location":{"type":"approximate","country":"US"}}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview_2025_03_11"},"max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":2}`,
-		`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":128}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]},"user_location":{"type":"approximate","country":"US","timezone":"America/New_York"}}],"tool_choice":"required","max_tool_calls":2}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"tool_choice":"required"}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"5m"}}]}],"cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}]}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","top_p":0.9,"top_k":40,"stop_sequences":["END"]}`,
-		`{"model":"anthropic/claude-sonnet-4-6","input":"hi","context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000},"pause_after_compaction":false,"instructions":null}]}}`,
-		`{"model":"anthropic/claude-opus-4-7","input":"hi","max_output_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
+		`{"model":"gpt-5.5","input":"hi","stream":false,"instructions":"be brief","temperature":2.01,"top_p":1.01,"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"},"strict":true},"verbosity":"future-verbosity"},"truncation":"future","prompt_cache_key":"tenant-cache"}`,
+		`{"model":"gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+		`{"model":"gpt-5.5","input":"hi","reasoning":{"summary":"future-summary","generate_summary":"future-generate-summary"}}`,
+		`{"model":"gpt-5.5","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":3}`,
+		`{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`,
+		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"parallel_tool_calls":false}`,
+		`{"model":"gpt-5.5","input":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","id":"fco_1","status":"completed","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"}}`,
+		`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"custom","name":"lookup"}]}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26","filters":{"allowed_domains":["example.com"]},"search_context_size":"high","user_location":{"type":"approximate","city":"Paris","country":"FR","region":"Ile-de-France","timezone":"Europe/Paris"}}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11","search_context_size":"low","user_location":{"type":"approximate","country":"US"}}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview_2025_03_11"},"max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":2}`,
+		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":128}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]},"user_location":{"type":"approximate","country":"US","timezone":"America/New_York"}}],"tool_choice":"required","max_tool_calls":2}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"tool_choice":"required"}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"5m"}}]}],"cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","top_p":0.9,"top_k":40,"stop_sequences":["END"]}`,
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","context_management":{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":50000},"pause_after_compaction":false,"instructions":null}]}}`,
+		`{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
 	} {
 		if err := validateResolvedResponses(t, body); err != nil {
 			t.Fatalf("expected Responses request to pass: %v\nbody=%s", err, body)
@@ -2365,9 +2368,9 @@ func TestResponsesClientToolContinuationReachesProviderWireLosslessly(t *testing
 		name          string
 		anthropicWire bool
 	}{
-		{name: "OpenAI", model: "gpt-5-nano"},
+		{name: "OpenAI", model: "gpt-5.5"},
 		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
-		{name: "Anthropic", model: "anthropic/claude-sonnet-4-6", anthropicWire: true},
+		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2460,11 +2463,11 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 		{
 			name:            "OpenAI output item",
 			wantAnnotations: true,
-			body:            `{"model":"gpt-5-nano","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body:            `{"model":"gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 		{
 			name: "Anthropic citation",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 	}
 	for _, tc := range tests {
@@ -2522,7 +2525,7 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 }
 
 func TestResponsesCustomToolContinuationReachesOpenAIWireLosslessly(t *testing.T) {
-	body := `{"model":"gpt-5-nano","input":[{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"shell","input":"printf safe"},{"type":"custom_tool_call_output","id":"ctco_1","status":"completed","call_id":"call_1","output":"safe"}],"tools":[{"type":"custom","name":"shell"}]}`
+	body := `{"model":"gpt-5.5","input":[{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"shell","input":"printf safe"},{"type":"custom_tool_call_output","id":"ctco_1","status":"completed","call_id":"call_1","output":"safe"}],"tools":[{"type":"custom","name":"shell"}]}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2556,7 +2559,7 @@ func TestResponsesCustomToolContinuationReachesOpenAIWireLosslessly(t *testing.T
 }
 
 func TestOpenAIAllowedToolsChoiceReachesProviderWireExactly(t *testing.T) {
-	body := `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`
+	body := `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2599,7 +2602,7 @@ func TestResponsesPolicyPreservesStreamObfuscationOption(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2691,7 +2694,7 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 		"message.output_text.logprobs",
 		"reasoning.encrypted_content",
 	}
-	body := `{"model":"gpt-5-nano","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
+	body := `{"model":"gpt-5.5","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -2745,7 +2748,7 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *testing.T) {
+func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 	cases := []struct {
 		name          string
 		body          string
@@ -2754,8 +2757,8 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 	}{
 		{
 			name:        "standard reasoning model",
-			body:        `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
-			wantContext: 400000,
+			body:        `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			wantContext: 1050000,
 		},
 		{
 			name:        "Fast deployment context cap",
@@ -2764,8 +2767,8 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 		},
 		{
 			name:          "hosted tool content headroom is already reserved",
-			body:          `{"model":"gpt-5-nano","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
-			wantContext:   400000,
+			body:          `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
+			wantContext:   1050000,
 			wantSearchCap: true,
 		},
 	}
@@ -2783,9 +2786,9 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			if resolution.Deployment.ContextWindowTokens != tc.wantContext {
 				t.Fatalf("expected deployment context cap %d, got %d for %#v", tc.wantContext, resolution.Deployment.ContextWindowTokens, resolution.Deployment)
 			}
-			wantInput := tc.wantContext - resolution.OutputTokenLimit()
-			if resolution.InputTokenLimit() != wantInput {
-				t.Fatalf("encrypted reasoning must reserve effective max input %d, got %d", wantInput, resolution.InputTokenLimit())
+			wantInput, known := resolution.EstimatedInputTokens()
+			if !known || resolution.InputTokenLimit() != wantInput || wantInput >= tc.wantContext/2 {
+				t.Fatalf("encrypted reasoning must use the shared local estimate, got %d", resolution.InputTokenLimit())
 			}
 
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -2798,8 +2801,14 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
-			if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(wantInput)) == nil {
-				t.Fatalf("expected max-input hold quantity %d, got %#v", wantInput, state.Hold.Meters)
+			wantHoldInput := wantInput
+			if tc.wantSearchCap {
+				// Hosted tools can add input after the local estimate. Their
+				// independent reservation still covers the remaining context.
+				wantHoldInput = tc.wantContext - resolution.OutputTokenLimit()
+			}
+			if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(wantHoldInput)) == nil {
+				t.Fatalf("expected input hold quantity %d, got %#v", wantHoldInput, state.Hold.Meters)
 			}
 			if got := countMeterEstimates(state.Hold.Meters, billing.MeterInputTokens); got != 1 {
 				t.Fatalf("encrypted reasoning hold must not add a second input-token meter, got %d in %#v", got, state.Hold.Meters)
@@ -2834,8 +2843,8 @@ func TestOpenAIResponsesEncryptedReasoningInputReservesEffectiveMaxInput(t *test
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover actual provider usage after encrypted reasoning replay: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold must cover actual provider usage after encrypted reasoning replay: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -2848,11 +2857,11 @@ func TestResponsesTextFormatReachesProviderWireRequest(t *testing.T) {
 	}{
 		{
 			name: "openai json schema",
-			body: `{"model":"gpt-5-nano","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
+			body: `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
 		},
 		{
 			name: "anthropic json schema",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}}`,
 		},
 	}
 	for _, tc := range cases {
@@ -2922,12 +2931,12 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
+			body: `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
 		},
 	}
 	for _, tc := range tests {
@@ -2994,7 +3003,7 @@ func TestOpenAIPromptCacheImplicitModeReachesTheWire(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"implicit","ttl":"30m"}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3032,73 +3041,74 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		{
 			name:          "non-string mode",
 			path:          "/v1/responses",
-			body:          `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":1}}`,
+			body:          `{"model":"openai/gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":1}}`,
 			resolveReject: true,
 		},
 		{
 			name:          "non-string ttl",
 			path:          "/v1/chat/completions",
-			body:          `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":30}}`,
+			body:          `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":30}}`,
 			resolveReject: true,
 		},
 		{
 			name: "extra option",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"explicit","future":true}}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"explicit","future":true}}`,
 			want: "supports only mode and ttl",
 		},
 		{
 			name: "unknown option mode",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"future"}}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":"hi","prompt_cache_options":{"mode":"future"}}`,
 			want: "mode must be implicit or explicit",
 		},
 		{
 			name: "unsupported option ttl",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"2h"}}`,
+			body: `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"ttl":"2h"}}`,
 			want: "ttl must be 30m",
 		},
 		{
-			name: "explicit controls on implicit-only model",
-			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
-			want: "explicit prompt caching is not supported",
+			name:          "explicit controls on implicit-only model",
+			resolveReject: true,
+			path:          "/v1/responses",
+			body:          `{"model":"gpt-5.5","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
+			want:          "explicit prompt caching is not supported",
 		},
 		{
 			name: "unknown retention",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":"hi","prompt_cache_retention":"forever"}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":"hi","prompt_cache_retention":"forever"}`,
 			want: "retention must be in_memory or 24h",
 		},
 		{
 			name: "breakpoint wrong block",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-luna","messages":[{"role":"user","prompt_cache_breakpoint":{"mode":"explicit"},"content":"hi"}]}`,
+			body: `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","prompt_cache_breakpoint":{"mode":"explicit"},"content":"hi"}]}`,
 			want: "messages[0].prompt_cache_breakpoint is not supported",
 		},
 		{
 			name: "unknown breakpoint mode",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"future"}}]}]}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"future"}}]}]}`,
 			want: "breakpoint.mode must be explicit",
 		},
 		{
 			name:          "breakpoint non-string mode",
 			path:          "/v1/responses",
-			body:          `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":1}}]}]}`,
+			body:          `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":1}}]}]}`,
 			resolveReject: true,
 		},
 		{
 			name: "too many breakpoints",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"five","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"}}`,
+			body: `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"five","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"}}`,
 			want: "at most four prompt blocks",
 		},
 		{
 			name: "anthropic breakpoint",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`,
+			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}]}`,
 			want: "only supported for OpenAI deployments",
 		},
 	}
@@ -3112,6 +3122,9 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			if tc.resolveReject {
 				if err == nil {
 					t.Fatal("request schema accepted an unrepresentable cache shape")
+				}
+				if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("expected %q, got %v", tc.want, err)
 				}
 				return
 			}
@@ -3130,7 +3143,7 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`),
+			Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`),
 		})
 		if err != nil {
 			t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3153,22 +3166,22 @@ func TestAnthropicSamplingParametersReachProviderRequestUnchanged(t *testing.T) 
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-sonnet-4-6","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 		{
 			name: "adaptive chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 		{
 			name: "adaptive responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-opus-4-7","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
+			body: `{"model":"anthropic-claude-opus-4-7","input":"hi","temperature":1.1,"top_p":1.2,"top_k":0,"stop_sequences":["END"],"context_management":{"edits":[{"type":"compact_20260112","instructions":"keep a compact summary"}]}}`,
 		},
 	}
 	for _, tc := range tests {
@@ -3269,12 +3282,12 @@ func TestAnthropicTaskBudgetReachesProviderRequest(t *testing.T) {
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"anthropic/claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
+			body: `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"anthropic/claude-opus-4-7","input":"hi","max_output_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
+			body: `{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":16,"task_budget":{"type":"tokens","total":20000,"remaining":19000}}`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3345,7 +3358,7 @@ func TestAnthropicTaskBudgetReachesProviderRequest(t *testing.T) {
 }
 
 func TestAnthropicChatMCPToolsetFailsBeforeProviderRequest(t *testing.T) {
-	body := `{"model":"anthropic/claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`
+	body := `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
 	if err == nil {
 		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -3365,37 +3378,37 @@ func TestResponsesHostedToolsInjectEffectiveCapBeforeHold(t *testing.T) {
 	}{
 		{
 			name:     "openai top-level max_tool_calls",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai required hosted tool",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai versioned allowed tool_choice",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview_2025_03_11"}]}}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview_2025_03_11"}]}}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai stable version",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":"auto"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":"auto"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "anthropic per-tool max_uses",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
 			provider: schemas.Anthropic,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
 		{
 			name:     "anthropic required hosted tool",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"required"}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"required"}`,
 			provider: schemas.Anthropic,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
@@ -3463,7 +3476,7 @@ func TestAnthropicResponsesExplicitMaxToolCallsBecomesMaxUses(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_tool_calls":3,"tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":3,"tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3498,7 +3511,7 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"Fetch https://example.com and summarize it.","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"max_output_tokens":64}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"Fetch https://example.com and summarize it.","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],"max_output_tokens":64}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3564,8 +3577,8 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 	if findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("web_fetch final price must not include Anthropic web-search call meters, got %#v", state.FinalMeters)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -3578,25 +3591,25 @@ func TestResponsesHostedToolsDoNotInjectCapWhenToolChoicePrecludesHostedCalls(t 
 	}{
 		{
 			name:     "openai",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"none"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"none"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "anthropic",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"none"}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"none"}`,
 			provider: schemas.Anthropic,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
 		{
 			name:     "openai selected function",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "anthropic selected function",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
 			provider: schemas.Anthropic,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
@@ -3660,7 +3673,7 @@ func TestAnthropicResponsesWebFetchToolChoiceNoneDoesNotReserveContentHeadroom(t
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body: []byte(`{
-			"model":"anthropic/claude-sonnet-4-6",
+			"model":"anthropic-claude-sonnet-4-6",
 			"input":"Summarize https://example.com/article.",
 			"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_content_tokens":1000}],
 			"tool_choice":"none",
@@ -3694,22 +3707,22 @@ func TestResponsesToolChoiceRequiresNamedFunctionSelectors(t *testing.T) {
 	}{
 		{
 			name: "function selector missing name",
-			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function"}}`,
+			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function"}}`,
 			want: "tool_choice must name a function tool",
 		},
 		{
 			name: "custom selector missing name",
-			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom"}}`,
+			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom"}}`,
 			want: "tool_choice must name a custom tool",
 		},
 		{
 			name: "allowed function missing name",
-			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function"}]}}`,
+			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function"}]}}`,
 			want: "tool_choice.allowed_tools function entries require name",
 		},
 		{
 			name: "allowed custom missing name",
-			body: `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"custom"}]}}`,
+			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"custom"}]}}`,
 			want: "tool_choice.allowed_tools custom entries require name",
 		},
 	} {
@@ -3739,22 +3752,22 @@ func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
 	}{
 		{
 			name:     "openai",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai required",
-			body:     `{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
+			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "anthropic",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
 		{
 			name:     "anthropic required",
-			body:     `{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"required"}`,
+			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"required"}`,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
 	}
@@ -3791,8 +3804,8 @@ func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
 			if finalMeter == nil || finalMeter.Quantity != "50" || finalMeter.HoldRequired {
 				t.Fatalf("expected final hosted calls at the authorized maximum, got %#v in %#v", finalMeter, state.FinalMeters)
 			}
-			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-				t.Fatalf("hold must cover omitted-cap final hosted-tool charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+				t.Fatalf("hold must cover omitted-cap final hosted-tool charge: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 			}
 		})
 	}
@@ -3803,7 +3816,7 @@ func TestResponsesPolicyForwardsAnthropicCacheControl(t *testing.T) {
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body: []byte(`{
-			"model":"anthropic/claude-sonnet-4-6",
+			"model":"anthropic-claude-sonnet-4-6",
 			"input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"5m"}}]}],
 			"cache_control":{"type":"ephemeral","ttl":"1h"},
 			"tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]
@@ -3841,7 +3854,7 @@ func TestResponsesPolicySanitizesMetadataBeforeUpstream(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","metadata":{"tenant":"test"}}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","metadata":{"tenant":"test"}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3866,7 +3879,7 @@ func TestResponsesPolicyMaxToolCallsScalesWebSearchHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":3}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":3}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3892,11 +3905,11 @@ func TestResponsesPolicyMaxToolCallsScalesWebSearchHold(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
+func TestOpenAIResponsesPricesActualHostedToolUsageAboveHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":1}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":1}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3919,26 +3932,26 @@ func TestOpenAIResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
 	if searchMeter == nil {
 		t.Fatalf("expected final web search preview meter in %#v", state.FinalMeters)
 	}
-	if searchMeter.Quantity != "1" || searchMeter.HoldRequired {
-		t.Fatalf("expected final pricing to cap web search calls to the authorized quantity, got %#v", searchMeter)
+	if searchMeter.Quantity != "3" || searchMeter.HoldRequired {
+		t.Fatalf("expected final pricing to include all observed web search calls, got %#v", searchMeter)
 	}
-	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
-		t.Fatalf("bounded hosted-tool usage did not settle normally: %#v", state)
+	if state.BifrostError != nil || state.UpstreamCostUSD == billing.ZeroChargeUSD {
+		t.Fatalf("actual hosted-tool usage did not settle normally: %#v", state)
 	}
 }
 
-func TestOpenAIResponsesCapsExcessNonPreviewSearchContent(t *testing.T) {
+func TestOpenAIResponsesPricesActualNonPreviewSearchContentAboveHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5-nano","input":"hi","tools":[{"type":"web_search"}],"max_tool_calls":1}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"}],"max_tool_calls":1}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
 	mutatedPricing := copyPricing(resolution.Deployment.Pricing)
 	mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "1000000"}
-	mutatedPricing[MeterOpenAIResponsesWebSearchCalls] = map[string]string{billing.RatePerThousandCalls: "10000000000000000000"}
+	mutatedPricing[MeterOpenAIResponsesWebSearchCalls] = map[string]string{billing.RatePerThousandCalls: "10"}
 	resolution.Deployment.Upstream.Model = "gpt-4o-mini"
 	resolution.Deployment.Pricing = mutatedPricing
 
@@ -3955,18 +3968,18 @@ func TestOpenAIResponsesCapsExcessNonPreviewSearchContent(t *testing.T) {
 	}
 
 	inputMeter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if inputMeter == nil || inputMeter.Quantity != "8124" || inputMeter.HoldRequired {
-		t.Fatalf("expected final fixed search content to stay within the authorized input quantity, got %#v in %#v", inputMeter, state.FinalMeters)
+	if inputMeter == nil || inputMeter.Quantity != "24001" || inputMeter.HoldRequired {
+		t.Fatalf("expected final fixed search content for all observed calls, got %#v in %#v", inputMeter, state.FinalMeters)
 	}
 	searchMeter := findMeterEstimate(state.FinalMeters, MeterOpenAIResponsesWebSearchCalls)
-	if searchMeter == nil || searchMeter.Quantity != "1" || searchMeter.HoldRequired {
-		t.Fatalf("expected final non-preview search meter to stay within the authorized call quantity, got %#v in %#v", searchMeter, state.FinalMeters)
+	if searchMeter == nil || searchMeter.Quantity != "3" || searchMeter.HoldRequired {
+		t.Fatalf("expected all observed non-preview search calls, got %#v in %#v", searchMeter, state.FinalMeters)
 	}
-	pricing := pricingForState(state)
-	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "8124", inputMeter.AmountUSDAtoms)
-	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "1", searchMeter.AmountUSDAtoms)
-	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
-		t.Fatalf("bounded fixed-content web search usage did not settle normally: %#v", state)
+	pricing := metersForState(state)
+	assertPricingBagEntry(t, pricing, billing.MeterInputTokens, billing.RatePerMillionTokens, "24001", inputMeter.AmountUSD)
+	assertPricingBagEntry(t, pricing, MeterOpenAIResponsesWebSearchCalls, billing.RatePerThousandCalls, "3", searchMeter.AmountUSD)
+	if state.BifrostError != nil || state.UpstreamCostUSD == billing.ZeroChargeUSD {
+		t.Fatalf("actual fixed-content web search usage did not settle normally: %#v", state)
 	}
 }
 
@@ -4224,7 +4237,7 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":3}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":3}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -4278,7 +4291,7 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
 	searchMeter := findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls)
-	if searchMeter == nil || searchMeter.Quantity != "2" || searchMeter.AmountUSDAtoms != "20000000000000000" {
+	if searchMeter == nil || searchMeter.Quantity != "2" || searchMeter.AmountUSD != "0.02" {
 		t.Fatalf("expected Anthropic web search settlement for 2 calls, got %#v", state.FinalMeters)
 	}
 }
@@ -4288,7 +4301,7 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body: []byte(`{
-			"model":"anthropic/claude-sonnet-4-6",
+			"model":"anthropic-claude-sonnet-4-6",
 			"input":"Summarize https://example.com/article in one sentence.",
 			"tools":[{
 				"type":"web_fetch_20260309",
@@ -4360,8 +4373,8 @@ func TestAnthropicResponsesWebFetchIsCappedAndTokenPriced(t *testing.T) {
 	if findMeterEstimate(state.FinalMeters, meterAnthropicWebSearchCalls) != nil {
 		t.Fatalf("web_fetch final price must not include Anthropic web-search call meters, got %#v", state.FinalMeters)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover token-priced Anthropic web_fetch final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 }
 
@@ -4374,17 +4387,17 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 	}{
 		{
 			name:           "clear-only context editing does not add sampling",
-			body:           `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]}}`,
+			body:           `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]}}`,
 			wantIterations: 1,
 		},
 		{
 			name:           "compaction can add one sampling step",
-			body:           `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]}}`,
+			body:           `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]}}`,
 			wantIterations: 2,
 		},
 		{
 			name:            "compaction can run before every hosted-tool sampling step",
-			body:            `{"model":"anthropic/claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20260318","name":"web_search"}],"max_tool_calls":2}`,
+			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20260318","name":"web_search"}],"max_tool_calls":2}`,
 			wantIterations:  6,
 			wantHostedCalls: "2",
 		},
@@ -4425,11 +4438,11 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 	}
 }
 
-func TestAnthropicResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
+func TestAnthropicResponsesPricesActualHostedToolUsageAboveHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":1}`),
+		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":1}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -4452,11 +4465,11 @@ func TestAnthropicResponsesCapsHostedToolUsageAtMaxToolCalls(t *testing.T) {
 	if searchMeter == nil {
 		t.Fatalf("expected final Anthropic web search meter in %#v", state.FinalMeters)
 	}
-	if searchMeter.Quantity != "1" || searchMeter.HoldRequired {
-		t.Fatalf("expected final pricing to cap Anthropic web search calls to the authorized quantity, got %#v", searchMeter)
+	if searchMeter.Quantity != "3" || searchMeter.HoldRequired {
+		t.Fatalf("expected final pricing to include all observed Anthropic web search calls, got %#v", searchMeter)
 	}
-	if state.BifrostError != nil || state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || !finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters) {
-		t.Fatalf("bounded Anthropic hosted-tool usage did not settle normally: %#v", state)
+	if state.BifrostError != nil || state.UpstreamCostUSD == billing.ZeroChargeUSD {
+		t.Fatalf("actual Anthropic hosted-tool usage did not settle normally: %#v", state)
 	}
 }
 
@@ -4508,8 +4521,8 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("hold must cover stacked Anthropic final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("hold must cover stacked Anthropic final cost: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 	}
 	finalCache := findMeterEstimate(state.FinalMeters, billing.MeterCacheWrite1hInputTokens)
 	if finalCache == nil {
@@ -4519,9 +4532,9 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 	if finalSearch == nil || finalSearch.Quantity != "2" || finalSearch.HoldRequired {
 		t.Fatalf("expected final Anthropic web-search meter for two authorized calls, got %#v in %#v", finalSearch, state.FinalMeters)
 	}
-	pricing := pricingForState(state)
-	assertPricingBagEntry(t, pricing, billing.MeterCacheWrite1hInputTokens, billing.RatePerMillionTokens, finalCache.Quantity, finalCache.AmountUSDAtoms)
-	assertPricingBagEntry(t, pricing, meterAnthropicWebSearchCalls, billing.RatePerThousandCalls, "2", finalSearch.AmountUSDAtoms)
+	pricing := metersForState(state)
+	assertPricingBagEntry(t, pricing, billing.MeterCacheWrite1hInputTokens, billing.RatePerMillionTokens, finalCache.Quantity, finalCache.AmountUSD)
+	assertPricingBagEntry(t, pricing, meterAnthropicWebSearchCalls, billing.RatePerThousandCalls, "2", finalSearch.AmountUSD)
 	if actualWebSearchCalls(state) != 2 {
 		t.Fatalf("expected telemetry to retain the two authorized observed calls, got %#v", state.Signals)
 	}
@@ -4549,8 +4562,8 @@ func TestAnthropicCalculateUpstreamCostUsesCacheWriteMeters(t *testing.T) {
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "2760" {
-		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "2760" {
+		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSD)
 	}
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterInputTokens, "400")
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterCachedInputTokens, "100")
@@ -4592,8 +4605,8 @@ func TestResponsesIngestionPreservesCacheWriteMeters(t *testing.T) {
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms != "2760" {
-		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSDAtoms)
+	if state.UpstreamCostUSD != "2760" {
+		t.Fatalf("expected cache-aware final price 2760, got %s", state.UpstreamCostUSD)
 	}
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterInputTokens, "400")
 	assertMeterQuantity(t, state.FinalMeters, billing.MeterCachedInputTokens, "100")
@@ -4688,4 +4701,49 @@ func containsString(values []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func TestSavedSelectionReachesProviderValidationWithoutRequestModel(t *testing.T) {
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		t.Run(path, func(t *testing.T) {
+			body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+			if path == "/v1/responses" {
+				body = []byte(`{"input":"hi"}`)
+			}
+			explicit, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST", Path: path, Body: []byte(`{"model":"gpt-5.5",` + string(body[1:])),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST", Path: path, Body: body,
+				Policy: &policy.Config{Routing: policy.Routing{
+					AllowedCatalogNodes: &policy.AllowedCatalogNodes{Deployments: []string{explicit.Deployment.ID}},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
+			request, err := resolution.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			if resolution.Deployment.ModelID != explicit.Deployment.ModelID {
+				t.Fatalf("wrong model %s", resolution.Deployment.ModelID)
+			}
+		})
+	}
 }

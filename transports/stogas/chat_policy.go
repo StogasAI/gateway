@@ -1,16 +1,19 @@
 package stogas
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 const (
@@ -31,9 +34,6 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	raw := state.Resolution.RawBody()
 	if len(raw) == 0 {
 		return invalidRequest("Invalid chat completion request")
-	}
-	if _, ok := raw["model"]; !ok {
-		return invalidRequest("model is required")
 	}
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
@@ -120,7 +120,7 @@ func validateNumber(raw map[string]json.RawMessage, name string) error {
 }
 
 func rawJSONValueSet(raw json.RawMessage) bool {
-	return len(raw) > 0 && strings.TrimSpace(string(raw)) != "null"
+	return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
 func validateChatStop(raw json.RawMessage) error {
@@ -509,7 +509,7 @@ func validateReasoningEffortValue(raw json.RawMessage, name string) error {
 		return nil
 	}
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+	if err := sonic.Unmarshal(raw, &value); err != nil || !hasNonWhitespace(value) {
 		return invalidRequest(name + " must be a string")
 	}
 	return nil
@@ -542,7 +542,7 @@ func validateReasoningSummaryValue(raw json.RawMessage, name string) error {
 		return nil
 	}
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+	if err := sonic.Unmarshal(raw, &value); err != nil || !hasNonWhitespace(value) {
 		return invalidRequest(name + " must be a string")
 	}
 	return nil
@@ -553,7 +553,7 @@ func validateReasoningDisplayValue(raw json.RawMessage, name string) error {
 		return nil
 	}
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil || strings.TrimSpace(value) == "" {
+	if err := sonic.Unmarshal(raw, &value); err != nil || !hasNonWhitespace(value) {
 		return invalidRequest(name + " must be a string")
 	}
 	return nil
@@ -577,11 +577,11 @@ type chatMessageInputValidation struct {
 }
 
 func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
-	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+	if !rawJSONValueSet(raw) {
 		return invalidRequest("messages must be a non-empty array")
 	}
-	var rawMessages []json.RawMessage
-	if err := sonic.Unmarshal(raw, &rawMessages); err != nil {
+	rawMessages, err := rawjson.Array(raw)
+	if err != nil {
 		return invalidRequest("messages must be an array")
 	}
 	if len(rawMessages) == 0 {
@@ -593,8 +593,8 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 	}
 	seenConversation := false
 	for index, messageRaw := range rawMessages {
-		var message map[string]json.RawMessage
-		if err := sonic.Unmarshal(messageRaw, &message); err != nil || message == nil {
+		message, err := rawjson.Object(messageRaw)
+		if err != nil {
 			return invalidRequest("messages must contain only objects")
 		}
 		path := fmt.Sprintf("messages[%d]", index)
@@ -714,7 +714,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 		if !ok {
 			return invalidRequest(path + ".refusal must be a string")
 		}
-		meaningful := strings.TrimSpace(value) != ""
+		meaningful := hasNonWhitespace(value)
 		hasPayload = hasPayload || meaningful
 		validation.meaningful = validation.meaningful || meaningful
 	}
@@ -726,7 +726,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 			return invalidRequest(path + ".reasoning must be a string")
 		}
 		reasoningValue = value
-		reasoningSet = strings.TrimSpace(value) != ""
+		reasoningSet = hasNonWhitespace(value)
 		hasPayload = hasPayload || reasoningSet
 	}
 	if _, ok := message["reasoning_content"]; ok {
@@ -873,9 +873,15 @@ func validateProviderToolCallID(state *State, value string, path string) error {
 	return nil
 }
 
+// Presence checks need only the leading whitespace scan. Trimming both ends
+// needlessly scans large trailing padding; keep the standard ASCII fast path.
+func hasNonWhitespace(text string) bool {
+	return strings.TrimLeftFunc(strings.TrimLeft(text, " \t\n\r\v\f"), unicode.IsSpace) != ""
+}
+
 func validateChatMessageTextContent(raw json.RawMessage, path string, requireNonEmpty bool) (bool, error) {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		if requireNonEmpty {
 			return false, invalidRequest(path + " must contain non-empty text")
 		}
@@ -883,22 +889,26 @@ func validateChatMessageTextContent(raw json.RawMessage, path string, requireNon
 	}
 	if trimmed[0] == '"' {
 		var content string
-		if err := sonic.Unmarshal(raw, &content); err != nil {
+		if err := json.Unmarshal(raw, &content); err != nil {
 			return false, invalidRequest(path + " must be text or an array of text blocks")
 		}
-		meaningful := strings.TrimSpace(content) != ""
+		meaningful := hasNonWhitespace(content)
 		if requireNonEmpty && !meaningful {
 			return false, invalidRequest(path + " must contain non-empty text")
 		}
 		return meaningful, nil
 	}
-	var blocks []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &blocks); err != nil || len(blocks) == 0 {
+	blocks, err := rawjson.Array(raw)
+	if err != nil || len(blocks) == 0 {
 		return false, invalidRequest(path + " must be text or a non-empty array of text blocks")
 	}
 	meaningful := false
-	for index, block := range blocks {
+	for index, blockRaw := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		block, err := rawjson.Object(blockRaw)
+		if err != nil {
+			return false, invalidRequest(blockPath + " must be an object")
+		}
 		if err := validateTextOnlyMediaFields(block, "Only text message content is supported"); err != nil {
 			return false, err
 		}
@@ -912,7 +922,7 @@ func validateChatMessageTextContent(raw json.RawMessage, path string, requireNon
 		if !ok {
 			return false, invalidRequest(blockPath + ".text must be a string")
 		}
-		meaningful = meaningful || strings.TrimSpace(text) != ""
+		meaningful = meaningful || hasNonWhitespace(text)
 	}
 	if requireNonEmpty && !meaningful {
 		return false, invalidRequest(path + " must contain non-empty text")

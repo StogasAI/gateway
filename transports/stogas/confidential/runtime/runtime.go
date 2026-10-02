@@ -2,872 +2,388 @@ package runtime
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
+	"math/rand/v2"
 	"sync"
 	"time"
 
+	verifier "github.com/StogasAI/verifier/go"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/drand"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/entropy"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/readiness"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
-type Runtime struct {
-	Identity           *identity.Material
-	Certs              *identity.CertificateStore
-	Proofs             *proofhttp.Service
-	Quotes             *quote.Manager
-	Secrets            *secretstore.Store
-	Control            *ControlLoop
-	EntropyReady       bool
-	ReleaseMeasurement string
-	cancel             context.CancelFunc
-}
-
-type ControlLoop struct {
-	client          provision.Client
-	config          stogas.ConfidentialConfig
-	certs           *identity.CertificateStore
-	candidateNodeID string
-	entropyReady    bool
-	identity        *identity.Material
-	quotes          *quote.Manager
-	secrets         *secretstore.Store
-
-	heartbeatMu                  sync.Mutex
-	mu                           sync.RWMutex
-	nodeID                       string
-	admissionReadyUntil          time.Time
-	lastHeartbeatAttemptAt       time.Time
-	lastHeartbeatSuccessAt       time.Time
-	lastHeartbeatFailureAt       time.Time
-	lastHeartbeatDuration        time.Duration
-	consecutiveHeartbeatFailures uint32
-	lastHeartbeatError           error
-	lastSecretError              error
-	lastCertificateError         error
-	runtimeDependencyProbe       func(context.Context) error
-	draining                     bool
-	shutdownOnce                 sync.Once
-	shutdownRequested            chan struct{}
-}
-
-type ControlDiagnostics struct {
-	AdmissionReadyUntil *time.Time `json:"admission_ready_until"`
-	ConsecutiveFailures uint32     `json:"consecutive_failures"`
-	LastAttemptAt       *time.Time `json:"last_attempt_at"`
-	LastDurationMS      int64      `json:"last_duration_ms"`
-	LastFailureAt       *time.Time `json:"last_failure_at"`
-	LastFailureClass    string     `json:"last_failure_class,omitempty"`
-	LastSuccessAt       *time.Time `json:"last_success_at"`
-}
-
-type startOptions struct {
-	certificateRoots *x509.CertPool
-}
-
-type entropyWaiter func(context.Context, time.Duration) error
-
-func waitForSystemEntropy(ctx context.Context, timeout time.Duration) error {
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	return entropy.Wait(ctx, nil)
-}
-
-// Keep the request below the ten-second heartbeat cadence while allowing ordinary
-// cross-region Control and Postgres tail latency to renew the short admission lease.
-const controlRequestTimeout = 8 * time.Second
-const localQuoteReadyWindow = 45 * time.Second
-const maxConsecutiveQuoteRefreshFailures = 2
-const runtimeDependencyTimeout = time.Second
+const sessionIdleTimeout = 10 * time.Minute
 
 var (
-	ErrCertificateInstruction    = errors.New("confidential certificate instruction failed")
-	ErrHeartbeatConfirmation     = errors.New("confidential heartbeat confirmation failed")
-	ErrHeartbeatExchange         = errors.New("confidential heartbeat exchange failed")
-	ErrSecretReleaseInstallation = errors.New("confidential secret release installation failed")
+	ErrCertificateInstruction    = errors.New("confidential certificate installation failed")
+	ErrSecretReleaseInstallation = errors.New("confidential secret installation failed")
 )
 
-func Start(ctx context.Context, config stogas.ConfidentialConfig) (*Runtime, error) {
-	return start(ctx, config, waitForSystemEntropy)
+// Resources uses the listener's aggregate memory admission, not a separate pool.
+type Resources struct {
+	Quote   attest.QuoteReservation
+	Session channel.SessionReservation
 }
 
-func start(ctx context.Context, config stogas.ConfidentialConfig, waitForEntropy entropyWaiter, options ...startOptions) (*Runtime, error) {
+type Runtime struct {
+	Certs        *identity.CertificateStore
+	Proofs       *proofhttp.Service
+	Secrets      *secretstore.Store
+	Sessions     *channel.Store
+	NativeIssuer attest.NativeCertificateIssuer
+	maintenance  *bootMaintenance
+	region       provision.Region
+	batcher      *attest.Batcher
+	material     *identity.Material
+	cancel       context.CancelFunc
+	done         chan struct{}
+	shutdown     chan struct{}
+	drainOnce    sync.Once
+	closeOnce    sync.Once
+}
+
+type MaintenanceDiagnostics struct {
+	Region                   provision.Region           `json:"region"`
+	ConsecutiveFailures      uint32                     `json:"consecutive_failures"`
+	LastAttemptAt            *time.Time                 `json:"last_attempt_at"`
+	LastSuccessAt            *time.Time                 `json:"last_success_at"`
+	EvidenceReason           string                     `json:"evidence_reason,omitempty"`
+	CertificateRenewalFailed bool                       `json:"certificate_renewal_failed"`
+	Quotes                   attest.QuoteDiagnostics    `json:"quotes"`
+	Sessions                 channel.SessionDiagnostics `json:"sessions"`
+}
+
+func Start(ctx context.Context, config stogas.ConfidentialConfig, resources Resources) (*Runtime, error) {
 	if !config.Enabled {
 		return nil, nil
 	}
 	config = config.WithRuntimeDefaults()
-	if config.AttesterMode == "" {
-		config.AttesterMode = config.DerivedAttesterMode()
-	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
-	if err := waitForEntropy(ctx, config.EntropyTimeout); err != nil {
-		return nil, fmt.Errorf("confidential entropy readiness failed: %w", err)
+	if config.Environment != "staging" && config.Environment != "production" {
+		return nil, errors.New("confidential startup requires a deployment environment")
 	}
-
+	if config.InstanceID == "" || resources.Quote == nil || resources.Session == nil {
+		return nil, errors.New("confidential startup requires an instance and memory admission")
+	}
+	entropyContext, cancel := context.WithTimeout(ctx, config.EntropyTimeout)
+	err := entropy.Wait(entropyContext, nil)
+	cancel()
+	if err != nil {
+		return nil, fmt.Errorf("confidential entropy readiness: %w", err)
+	}
+	evidence, err := newCurrentEvidence(config.Environment)
+	if err != nil {
+		return nil, err
+	}
 	material, err := identity.Generate(nil)
 	if err != nil {
+		evidence.close()
 		return nil, err
 	}
-	var certificateRoots *x509.CertPool
-	if len(options) > 0 {
-		certificateRoots = options[0].certificateRoots
-	}
-	certs, err := newCertificateStore(material, config, certificateRoots)
+	r, err := startBoot(ctx, config, resources, evidence, material, attest.DefaultSEVSNP(), nil)
 	if err != nil {
-		return nil, err
+		evidence.close()
+		material.SigningKey = nil
+		material.HPKEPrivateKey = nil
+		material.TLSPrivateKey = nil
 	}
-	drandSource, err := newDrandSource(config)
-	if err != nil {
-		return nil, err
-	}
-	attester, err := newAttester(config)
-	if err != nil {
-		return nil, err
-	}
-	builder := func(ctx context.Context) (reportdata.Payload, error) {
-		if err := drandSource.Refresh(ctx); err != nil {
-			return reportdata.Payload{}, err
-		}
-		beacon, err := drandSource.Current(ctx)
-		if err != nil {
-			return reportdata.Payload{}, err
-		}
-		certState := certs.State()
-		return reportdata.NewPayload(reportdata.Payload{
-			TLSSPKISHA256:      material.TLSSPKISHA256,
-			AcceptedCertSHA256: append([]string(nil), certState.AcceptedCertSHA256...),
-			HPKEPublicKey:      material.HPKEPublicKey,
-			Ed25519PublicKey:   material.Ed25519PublicKey,
-			Drand:              beacon,
-		})
-	}
-	manager, err := quote.New(attester, builder, config.QuoteRefresh)
-	if err != nil {
-		return nil, err
-	}
+	return r, err
+}
 
-	runtimeCtx, cancel := context.WithCancel(ctx)
-	if err := manager.Refresh(runtimeCtx); err != nil {
-		cancel()
-		return nil, fmt.Errorf("initial confidential quote refresh failed: %w", err)
+// startBoot does not expose listeners or secrets until registration, logged boot
+// verification and the reused-address route barrier have all completed.
+func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources Resources, evidence *currentEvidence, material *identity.Material, reporter attest.Attester, roots *x509.CertPool) (*Runtime, error) {
+	environment, hostname := attest.Production, "api.stogas.ai"
+	if config.Environment == "staging" {
+		environment, hostname = attest.Staging, "api-staging.stogas.ai"
 	}
-	releaseMeasurement := strings.Repeat("0", 64)
-	if config.AttesterMode == "sev-snp" {
-		initialQuote, err := manager.Current(runtimeCtx)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("read initial confidential quote: %w", err)
-		}
-		releaseMeasurement, err = attest.MeasurementHex(initialQuote.Quote)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("read confidential release measurement: %w", err)
-		}
+	environmentName := "prod"
+	if environment == attest.Staging {
+		environmentName = "staging"
 	}
-	manager.Start(runtimeCtx)
+	certs, err := identity.NewBootCertificateStore(material, roots)
+	if err != nil {
+		return nil, err
+	}
+	client := provision.Client{BaseURL: config.ControlURL, AccessClientID: config.AccessClientID, AccessClientSecret: config.AccessClientSecret, AllowInsecureLocal: config.ControlAllowHTTP}
 	secrets := secretstore.NewStore()
-	var controlLoop *ControlLoop
-	if config.ControlConfigured() {
-		controlLoop = newControlLoop(config, material, certs, manager, secrets, true)
-		err := controlLoop.sendHeartbeat(runtimeCtx)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("initial confidential heartbeat failed: %w", err)
+	installed := false
+	defer func() {
+		if !installed {
+			secrets.Close()
 		}
-		controlLoop.Start(runtimeCtx)
+	}()
+	var boot *preparedBoot
+	var response *provision.RegistrationResponse
+	// A challenge is renewed only before registration or after Control explicitly
+	// confirms that it expired unconsumed. Lost replies retry the exact boot and CSR.
+	for {
+		var challenge *provision.RegistrationChallenge
+		err = retryStartup(ctx, func() (bool, error) {
+			var e error
+			challenge, e = client.RegistrationChallenge(ctx, config.InstanceID)
+			return e == nil, e
+		})
+		if err != nil {
+			return nil, err
+		}
+		quoted, e := quoteBoot(ctx, environmentName, material, challenge.Challenge, reporter)
+		if e != nil {
+			return nil, e
+		}
+		err = retryStartup(ctx, func() (bool, error) {
+			var e error
+			boot, e = quoted.prepare(ctx, evidence)
+			return e == nil, e
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !evidence.now().Before(challenge.ExpiresAt) {
+			continue
+		}
+		csr, e := certs.CreateCSR(identity.CSRInput{CommonName: hostname, DNSNames: []string{hostname}})
+		if e != nil {
+			return nil, e
+		}
+		request := provision.NewBootRegistration(config.InstanceID, boot.record, csr)
+		err = retryStartup(ctx, func() (bool, error) {
+			var e error
+			response, e = client.RegisterBoot(ctx, request, boot.identity.NodeID)
+			return e == nil && response.Status == "ready", e
+		})
+		var rejected *provision.HTTPResponseError
+		if errors.As(err, &rejected) && rejected.Code == "challenge_expired" {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		break
 	}
-
-	return &Runtime{
-		Identity: material,
-		Certs:    certs,
-		Proofs: &proofhttp.Service{
-			Quotes: manager,
-			Signer: material.Ed25519PrivateKey,
-		},
-		Quotes:             manager,
-		Secrets:            secrets,
-		Control:            controlLoop,
-		EntropyReady:       true,
-		ReleaseMeasurement: releaseMeasurement,
-		cancel:             cancel,
-	}, nil
+	err = retryStartup(ctx, func() (bool, error) {
+		err := evidence.refresh(ctx, func(snapshot *verifier.EvidenceSnapshot, _ evidenceSummary) error {
+			_, e := snapshot.VerifyLoggedBootAt(boot.document, response.Inclusion, evidence.now())
+			return e
+		})
+		return err == nil, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	completion, err := installBootCompletion(boot, response, evidence.snapshot, evidence.now(), material, certs, secrets, hostname)
+	if err != nil {
+		return nil, err
+	}
+	logged, checked := completion.boot, completion.identity
+	// Provisioning decryption is one-shot. All later Control calls return public data.
+	material.HPKEPrivateKey = nil
+	proofs, err := proofhttp.New(boot.document, material.SigningKey)
+	if err != nil {
+		return nil, err
+	}
+	batcher, err := attest.NewBatcher(reporter, resources.Quote)
+	if err != nil {
+		return nil, err
+	}
+	cleanupBatcher := func() { _ = batcher.Close(context.Background()) }
+	issuer, err := attest.NewNativeIssuer(environment, hostname, logged, batcher)
+	if err != nil {
+		cleanupBatcher()
+		return nil, err
+	}
+	setup, err := channel.NewServerSetup(environment, logged, sessionIdleTimeout, batcher)
+	if err != nil {
+		cleanupBatcher()
+		return nil, err
+	}
+	sessions, err := channel.NewStore(setup, resources.Session)
+	if err != nil {
+		cleanupBatcher()
+		return nil, err
+	}
+	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, signingKey: material.SigningKey, identity: checked}
+	// A catalog delivery outage leaves this registered VM alive but unready; the
+	// same maintenance loop recovers it without a new quote or registration.
+	_ = maintenance.maintain(ctx)
+	runtimeContext, cancel := context.WithCancel(ctx)
+	r := &Runtime{Certs: certs, Proofs: proofs, Secrets: secrets, Sessions: sessions, NativeIssuer: issuer, maintenance: maintenance, region: completion.region, batcher: batcher, material: material, cancel: cancel, done: make(chan struct{}), shutdown: make(chan struct{})}
+	installed = true
+	go r.run(runtimeContext)
+	return r, nil
 }
 
-func newCertificateStore(material *identity.Material, config stogas.ConfidentialConfig, certificateRoots *x509.CertPool) (*identity.CertificateStore, error) {
-	if strings.TrimSpace(config.ActiveCertSHA256) == "" && len(config.AcceptedCertSHA256) == 0 && config.CertExpiresAt.IsZero() {
-		return identity.NewProvisionalCertificateStore(material, time.Now().UTC(), certificateRoots)
+// Startup retries are bounded in pace and memory, not by an arbitrary fleet
+// provisioning timeout. Cancellation and definitive Control rejection stop them.
+func retryStartup(ctx context.Context, attempt func() (bool, error)) error {
+	delay := time.Second
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		done, err := attempt()
+		if done && err == nil {
+			return nil
+		}
+		if provision.IsAuthoritativeRejection(err) {
+			return err
+		}
+		if err := waitContext(ctx, jitter(delay)); err != nil {
+			return err
+		}
+		delay = min(delay*2, 30*time.Second)
 	}
-	return identity.NewCertificateStore(
-		material,
-		config.ActiveCertSHA256,
-		config.AcceptedCertSHA256,
-		config.CertExpiresAt,
-		certificateRoots,
-	)
 }
 
-func (r *Runtime) Close() {
-	if r == nil || r.cancel == nil {
-		return
-	}
-	r.cancel()
+func jitter(interval time.Duration) time.Duration {
+	return interval - interval/10 + time.Duration(rand.Int64N(int64(interval/5)+1))
 }
-
-func (r *Runtime) Readiness() readiness.Result {
-	if r == nil {
-		return readiness.Result{Ready: true}
-	}
-	if r.Control == nil {
-		return readiness.Result{Ready: false, Reasons: []string{"control loop is not configured"}}
-	}
-	return r.Control.Readiness()
-}
-
-func (r *Runtime) SetRuntimeDependencyProbe(probe func(context.Context) error) {
-	if r == nil || r.Control == nil {
-		return
-	}
-	r.Control.mu.Lock()
-	r.Control.runtimeDependencyProbe = probe
-	r.Control.mu.Unlock()
-}
-
-func (r *Runtime) ControlDiagnostics() *ControlDiagnostics {
-	if r == nil || r.Control == nil {
+func waitContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
 		return nil
 	}
-	return r.Control.Diagnostics()
 }
 
-func (r *Runtime) ShutdownRequested() <-chan struct{} {
-	if r == nil || r.Control == nil {
-		return nil
-	}
-	return r.Control.ShutdownRequested()
-}
-
-func (l *ControlLoop) Readiness() readiness.Result {
-	if l == nil {
-		return readiness.Result{Ready: false, Reasons: []string{"control loop is not configured"}}
-	}
-	return l.readinessResult()
-}
-
-func newControlLoop(config stogas.ConfidentialConfig, material *identity.Material, certs *identity.CertificateStore, manager *quote.Manager, secrets *secretstore.Store, entropyReady bool) *ControlLoop {
-	return &ControlLoop{
-		client: provision.Client{
-			AccessClientID:     config.AccessClientID,
-			AccessClientSecret: config.AccessClientSecret,
-			AllowInsecureLocal: config.ControlAllowHTTP,
-			BaseURL:            config.ControlURL,
-		},
-		config:            config,
-		certs:             certs,
-		entropyReady:      entropyReady,
-		identity:          material,
-		candidateNodeID:   deriveCandidateNodeID(material),
-		quotes:            manager,
-		secrets:           secrets,
-		shutdownRequested: make(chan struct{}),
-	}
-}
-
-func (l *ControlLoop) ShutdownRequested() <-chan struct{} {
-	if l == nil {
-		return nil
-	}
-	return l.shutdownRequested
-}
-
-func (l *ControlLoop) Start(ctx context.Context) {
-	if l == nil {
-		return
-	}
-	go l.runHeartbeats(ctx)
-}
-
-func (l *ControlLoop) NodeID() string {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return l.nodeID
-}
-
-func (l *ControlLoop) Diagnostics() *ControlDiagnostics {
-	if l == nil {
-		return nil
-	}
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	result := &ControlDiagnostics{
-		AdmissionReadyUntil: timePointer(l.admissionReadyUntil),
-		ConsecutiveFailures: l.consecutiveHeartbeatFailures,
-		LastAttemptAt:       timePointer(l.lastHeartbeatAttemptAt),
-		LastDurationMS:      l.lastHeartbeatDuration.Milliseconds(),
-		LastFailureAt:       timePointer(l.lastHeartbeatFailureAt),
-		LastSuccessAt:       timePointer(l.lastHeartbeatSuccessAt),
-	}
-	if l.lastHeartbeatError != nil {
-		result.LastFailureClass = heartbeatFailureClass(l.lastHeartbeatError)
-	}
-	return result
-}
-
-func (l *ControlLoop) runHeartbeats(ctx context.Context) {
-	ticker := time.NewTicker(l.config.HeartbeatInterval)
-	defer ticker.Stop()
+func (r *Runtime) run(ctx context.Context) {
+	defer close(r.done)
+	// Acknowledgement only releases Control's recovery storage. Delivery failure
+	// cannot take away a locally verified boot's permission to serve.
+	_ = r.maintenance.completeRegistration(ctx)
+	// Idle-session cleanup is local and shares the maintenance owner; it does not
+	// cause a Control/evidence request on every cleanup tick.
+	timer := time.NewTimer(jitter(evidencePollInterval))
+	defer timer.Stop()
+	idle := time.NewTicker(time.Minute)
+	defer idle.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if err := l.sendScheduledHeartbeat(ctx); err != nil {
-				payload, _ := json.Marshal(map[string]string{
-					"environment": l.config.Environment,
-					"errorType":   "Error",
-					"event":       "confidential_heartbeat_failed",
-					"reasonCode":  heartbeatFailureClass(err),
-					"severity":    "error",
-				})
-				_, _ = fmt.Fprintln(os.Stderr, string(payload))
-			}
+		case <-idle.C:
+			r.Sessions.ExpireIdle()
+		case <-timer.C:
+			_ = r.maintenance.maintain(ctx)
+			_ = r.maintenance.completeRegistration(ctx)
+			err := r.maintenance.renewCertificate(ctx)
+			r.maintenance.mu.Lock()
+			r.maintenance.renewalFailed = err != nil
+			r.maintenance.mu.Unlock()
+			timer.Reset(jitter(evidencePollInterval))
 		}
 	}
 }
 
-func (l *ControlLoop) sendScheduledHeartbeat(ctx context.Context) error {
-	var lastErr error
-	for range 2 {
-		lastErr = l.sendHeartbeat(ctx)
-		if lastErr == nil || ctx.Err() != nil {
-			return lastErr
-		}
+func (r *Runtime) NodeID() string {
+	if r == nil || r.maintenance == nil {
+		return ""
 	}
-	return lastErr
+	r.maintenance.mu.RLock()
+	defer r.maintenance.mu.RUnlock()
+	return r.maintenance.identity.NodeID
 }
-
-func (l *ControlLoop) controlAttemptContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if ctx == nil {
-		ctx = context.Background()
+func (r *Runtime) Readiness() readiness.Result {
+	if r == nil {
+		return readiness.Result{Ready: true}
 	}
-	return context.WithTimeout(ctx, controlRequestTimeout)
-}
-
-func (l *ControlLoop) sendHeartbeatExchange(ctx context.Context) (*provision.HeartbeatResponse, error) {
-	exchangeCtx, cancel := l.controlAttemptContext(ctx)
-	defer cancel()
-	return l.sendHeartbeatOnce(exchangeCtx)
-}
-
-func (l *ControlLoop) sendHeartbeat(ctx context.Context) error {
-	l.heartbeatMu.Lock()
-	defer l.heartbeatMu.Unlock()
-	startedAt := time.Now()
-	var attemptErr error
-	defer func() {
-		l.recordHeartbeatAttempt(startedAt, attemptErr)
-	}()
-
-	response, err := l.sendHeartbeatExchange(ctx)
-	if err != nil {
-		if provision.IsAuthoritativeRejection(err) {
-			l.revokeAdmission()
-		}
-		wrapped := fmt.Errorf("%w: %w", ErrHeartbeatExchange, err)
-		attemptErr = wrapped
-		return wrapped
+	if r.maintenance == nil {
+		return readiness.Result{Reasons: []string{"confidential runtime is not initialized"}}
 	}
-	if response.Shutdown {
+	return r.maintenance.readiness()
+}
+func (r *Runtime) Diagnostics() *MaintenanceDiagnostics {
+	if r == nil || r.maintenance == nil {
 		return nil
 	}
-	changed := false
-	if response.Secrets != nil {
-		if err := l.secrets.Install(secretstore.InstallInput{
-			Bundle:   response.Secrets,
-			Identity: l.identity,
-		}); err != nil {
-			l.recordSecretError(err)
-			wrapped := fmt.Errorf("%w: %w", ErrSecretReleaseInstallation, err)
-			attemptErr = wrapped
-			return wrapped
-		}
-		l.recordSecretError(nil)
-		changed = true
+	m := r.maintenance
+	m.mu.RLock()
+	result := &MaintenanceDiagnostics{Region: r.region, ConsecutiveFailures: m.failures, LastAttemptAt: timePointer(m.lastAttempt), LastSuccessAt: timePointer(m.lastSuccess), EvidenceReason: m.evidenceReason, CertificateRenewalFailed: m.renewalFailed}
+	if result.EvidenceReason == "" && (m.identity.NodeID == "" || m.evidence.now().UnixMilli() < m.identity.ValidFromUnixMS || m.evidence.now().UnixMilli() >= m.identity.ValidUntilUnixMS) {
+		result.EvidenceReason = "required collateral is not valid"
 	}
-	instructionCtx, instructionCancel := l.controlAttemptContext(ctx)
-	certificateChanged, err := l.handleCertificateInstruction(
-		instructionCtx,
-		response.CertificateInstruction,
-	)
-	instructionCancel()
-	if err != nil {
-		l.recordCertificateError(err)
-		wrapped := fmt.Errorf("%w: %w", ErrCertificateInstruction, err)
-		attemptErr = wrapped
-		return wrapped
-	}
-	changed = changed || certificateChanged
-	if changed {
-		if _, err := l.sendHeartbeatExchange(ctx); err != nil {
-			wrapped := fmt.Errorf("%w: %w", ErrHeartbeatConfirmation, err)
-			attemptErr = wrapped
-			return wrapped
-		}
-	}
-	l.recordCertificateError(nil)
-	return nil
+	m.mu.RUnlock()
+	result.Quotes = r.batcher.Diagnostics()
+	result.Sessions = r.Sessions.Diagnostics()
+	return result
 }
-
-func (l *ControlLoop) revokeAdmission() {
-	l.mu.Lock()
-	l.admissionReadyUntil = time.Time{}
-	l.mu.Unlock()
-}
-
-func (l *ControlLoop) sendHeartbeatOnce(ctx context.Context) (*provision.HeartbeatResponse, error) {
-	snapshot, err := l.quotes.Current(ctx)
-	if err != nil {
-		l.recordHeartbeatError(err)
-		return nil, err
-	}
-	nodeID := l.NodeID()
-	if nodeID == "" {
-		nodeID = l.candidateNodeID
-	}
-	activeCatalog, ok := catalog.ActiveIdentity()
-	if !ok {
-		return nil, errors.New("active catalog identity is unavailable")
-	}
-	certState := l.certs.State()
-	input := provision.HeartbeatInput{
-		ActiveCertSHA256: certState.ActiveCertSHA256,
-		Catalog: provision.CatalogIdentity{
-			Digest:   activeCatalog.Digest,
-			Sequence: activeCatalog.Sequence,
-		},
-		CertExpiresAt: certState.ExpiresAt,
-		Health: provision.NodeHealth{
-			LastQuoteFailureClass: quoteFailureClass(l.quotes.LastError()),
-			Ready:                 l.localReadinessResultAt(time.Now()).Ready,
-			SecretVersions:        l.secrets.Versions(),
-		},
-		NodeID:     nodeID,
-		ObservedAt: time.Now().UTC(),
-		Quote:      snapshot,
-		SigningKey: l.identity.Ed25519PrivateKey,
-	}
-	response, err := l.client.SendHeartbeat(ctx, input)
-	if err != nil {
-		l.recordHeartbeatError(err)
-		return nil, err
-	}
-	l.mu.Lock()
-	l.nodeID = response.NodeID
-	if response.Shutdown {
-		l.draining = true
-		l.admissionReadyUntil = time.Time{}
-	} else if response.ReadyUntil != nil {
-		l.admissionReadyUntil = response.ReadyUntil.UTC()
-	} else {
-		l.admissionReadyUntil = time.Time{}
-	}
-	l.lastHeartbeatError = nil
-	l.mu.Unlock()
-	if response.Shutdown {
-		l.shutdownOnce.Do(func() { close(l.shutdownRequested) })
-	}
-	return response, nil
-}
-
-func (l *ControlLoop) handleCertificateInstruction(ctx context.Context, instruction *provision.CertificateInstruction) (bool, error) {
-	if instruction == nil {
-		return false, nil
-	}
-	switch instruction.Action {
-	case "request_csr":
-		csr, err := l.certs.CreateCSR(identity.CSRInput{
-			CommonName: instruction.CommonName,
-			DNSNames:   instruction.DNSNames,
-		})
-		if err != nil {
-			return false, fmt.Errorf("create certificate CSR: %w", err)
-		}
-		nodeID := l.NodeID()
-		if nodeID == "" {
-			return false, errors.New("node ID is not available for certificate CSR")
-		}
-		if _, err := l.client.SubmitCertificateCSR(ctx, provision.CertificateCSRSubmission{
-			CSRDER:     csr,
-			NodeID:     nodeID,
-			OrderID:    instruction.OrderID,
-			SigningKey: l.identity.Ed25519PrivateKey,
-		}); err != nil {
-			return false, fmt.Errorf("submit certificate CSR: %w", err)
-		}
-		return false, nil
-	case "install_renewed_chain":
-		current := l.certs.State()
-		if current.ActiveCertSHA256 == instruction.NewCertSHA256 && containsString(current.AcceptedCertSHA256, instruction.NewCertSHA256) {
-			return false, nil
-		}
-		state, err := l.certs.StageRenewedChain(identity.CertificateChainInput{
-			ChainPEM:       []byte(instruction.CertChainPEM),
-			DNSNames:       instruction.DNSNames,
-			ExpectedSHA256: instruction.NewCertSHA256,
-		})
-		if err != nil {
-			return false, fmt.Errorf("stage renewed certificate chain: %w", err)
-		}
-		if !containsString(state.AcceptedCertSHA256, instruction.NewCertSHA256) {
-			return false, errors.New("staged certificate hash did not match control instruction")
-		}
-		if err := l.refreshQuoteAfterCertificateChange(ctx); err != nil {
-			return false, err
-		}
-		return true, nil
-	case "install_active_chain":
-		current := l.certs.State()
-		if current.ActiveCertSHA256 == instruction.NewCertSHA256 && len(current.AcceptedCertSHA256) == 1 && current.AcceptedCertSHA256[0] == instruction.NewCertSHA256 {
-			return false, nil
-		}
-		state, err := l.certs.InstallActiveChain(identity.CertificateChainInput{
-			ChainPEM:       []byte(instruction.CertChainPEM),
-			DNSNames:       instruction.DNSNames,
-			ExpectedSHA256: instruction.NewCertSHA256,
-		})
-		if err != nil {
-			return false, fmt.Errorf("install active certificate chain: %w", err)
-		}
-		if state.ActiveCertSHA256 != instruction.NewCertSHA256 || len(state.AcceptedCertSHA256) != 1 || state.AcceptedCertSHA256[0] != instruction.NewCertSHA256 {
-			return false, errors.New("installed active certificate state did not match control instruction")
-		}
-		if err := l.replaceQuoteAfterCertificateChange(ctx); err != nil {
-			return false, err
-		}
-		return true, nil
-	case "activate_staged":
-		if l.certs.State().ActiveCertSHA256 == instruction.CertSHA256 {
-			return false, nil
-		}
-		state, err := l.certs.ActivateStaged(instruction.CertSHA256)
-		if err != nil {
-			return false, fmt.Errorf("activate staged certificate: %w", err)
-		}
-		if state.ActiveCertSHA256 != instruction.CertSHA256 {
-			return false, errors.New("active certificate hash did not match control instruction")
-		}
-		return true, nil
-	case "prune_accepted":
-		before := l.certs.State()
-		if before.ActiveCertSHA256 != instruction.ActiveCertSHA256 {
-			return false, errors.New("cannot prune accepted certificates for non-active control hash")
-		}
-		state, err := l.certs.PruneAcceptedToActive(instruction.ActiveCertSHA256)
-		if err != nil {
-			return false, fmt.Errorf("prune accepted certificates: %w", err)
-		}
-		if state.ActiveCertSHA256 != instruction.ActiveCertSHA256 || len(state.AcceptedCertSHA256) != 1 || state.AcceptedCertSHA256[0] != instruction.ActiveCertSHA256 {
-			return false, errors.New("pruned certificate state did not match control instruction")
-		}
-		if err := l.refreshQuoteAfterCertificateChange(ctx); err != nil {
-			return false, err
-		}
-		return true, nil
-	default:
-		return false, fmt.Errorf("unsupported certificate instruction %q", instruction.Action)
-	}
-}
-
-func (l *ControlLoop) refreshQuoteAfterCertificateChange(ctx context.Context) error {
-	if l == nil || l.quotes == nil {
-		return errors.New("confidential quote manager is not initialized")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := l.quotes.Refresh(ctx); err != nil {
-		return fmt.Errorf("refresh quote after certificate state change: %w", err)
-	}
-	return nil
-}
-
-func (l *ControlLoop) replaceQuoteAfterCertificateChange(ctx context.Context) error {
-	if l == nil || l.quotes == nil {
-		return errors.New("confidential quote manager is not initialized")
-	}
-	l.quotes.Invalidate()
-	return l.refreshQuoteAfterCertificateChange(ctx)
-}
-
-func (l *ControlLoop) readinessResult() readiness.Result {
-	return l.readinessResultAt(time.Now())
-}
-
-func (l *ControlLoop) readinessResultAt(now time.Time) readiness.Result {
-	local := l.localReadinessStateAt(now)
-	l.mu.RLock()
-	admissionReadyUntil := l.admissionReadyUntil
-	l.mu.RUnlock()
-	local.ControlAdmitted = !admissionReadyUntil.IsZero() && now.Before(admissionReadyUntil)
-	return readiness.Evaluate(local)
-}
-
-func (l *ControlLoop) localReadinessResultAt(now time.Time) readiness.Result {
-	state := l.localReadinessStateAt(now)
-	state.ControlAdmitted = true
-	return readiness.Evaluate(state)
-}
-
-func (l *ControlLoop) localReadinessStateAt(now time.Time) readiness.State {
-	l.mu.RLock()
-	draining := l.draining
-	l.mu.RUnlock()
-	quoteReady := false
-	quoteForwardSafe := false
-	if snapshot, err := l.quotes.Current(context.Background()); err == nil && snapshot != nil {
-		quoteReady = len(snapshot.Quote) > 0
-		quoteAge := now.Sub(snapshot.GeneratedAt)
-		quoteForwardSafe = quoteAge >= 0 &&
-			quoteAge <= localQuoteReadyWindow &&
-			l.quotes.ConsecutiveFailures() < maxConsecutiveQuoteRefreshFailures
-	}
-	certState := l.certs.State()
-	return readiness.State{
-		CertificateReady:           !certState.ExpiresAt.IsZero(),
-		CertificateSafe:            certState.ExpiresAt.Sub(now) > 48*time.Hour,
-		Draining:                   draining,
-		EntropyReady:               l.entropyReady,
-		IdentityReady:              true,
-		QuoteForwardSafe:           quoteForwardSafe,
-		QuoteReady:                 quoteReady,
-		RuntimeDependenciesHealthy: l.runtimeDependenciesHealthy(),
-		SecretsReady:               l.secrets != nil && l.secrets.Ready(),
-		Serving:                    true,
-	}
-}
-
-func (l *ControlLoop) runtimeDependenciesHealthy() bool {
-	l.mu.RLock()
-	probe := l.runtimeDependencyProbe
-	l.mu.RUnlock()
-	if probe == nil {
-		return true
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), runtimeDependencyTimeout)
-	defer cancel()
-	return probe(ctx) == nil
-}
-
-func (l *ControlLoop) recordHeartbeatError(err error) {
-	l.mu.Lock()
-	l.lastHeartbeatError = err
-	l.mu.Unlock()
-}
-
-func (l *ControlLoop) recordHeartbeatAttempt(startedAt time.Time, err error) {
-	completedAt := time.Now().UTC()
-	l.mu.Lock()
-	l.lastHeartbeatAttemptAt = startedAt.UTC()
-	l.lastHeartbeatDuration = completedAt.Sub(startedAt)
-	if err == nil {
-		l.lastHeartbeatSuccessAt = completedAt
-		l.consecutiveHeartbeatFailures = 0
-		l.lastHeartbeatError = nil
-	} else {
-		l.lastHeartbeatFailureAt = completedAt
-		l.consecutiveHeartbeatFailures++
-		l.lastHeartbeatError = err
-	}
-	l.mu.Unlock()
-}
-
-func (l *ControlLoop) recordSecretError(err error) {
-	l.mu.Lock()
-	l.lastSecretError = err
-	l.mu.Unlock()
-}
-
-func (l *ControlLoop) recordCertificateError(err error) {
-	l.mu.Lock()
-	l.lastCertificateError = err
-	l.mu.Unlock()
-}
-
-func deriveCandidateNodeID(material *identity.Material) string {
-	preimage, _ := json.Marshal(map[string]string{
-		"ed25519_public_key": material.Ed25519PublicKey,
-		"hpke_public_key":    material.HPKEPublicKey,
-		"tls_spki_sha256":    material.TLSSPKISHA256,
-	})
-	sum := sha256.Sum256(preimage)
-	return hex.EncodeToString(sum[:])
-}
-
-func heartbeatFailureClass(err error) string {
-	if err == nil {
-		return ""
-	}
-	if provision.IsAuthoritativeRejection(err) {
-		return "control_rejected"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "deadline_exceeded"
-	}
-	if errors.Is(err, context.Canceled) {
-		return "canceled"
-	}
-	message := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(message, "decode control"):
-		return "invalid_control_response"
-	case strings.Contains(message, "certificate"):
-		return "certificate"
-	case strings.Contains(message, "secret"):
-		return "secret_release"
-	default:
-		return "transport"
-	}
-}
-
-func quoteFailureClass(err error) string {
-	if err == nil {
-		return ""
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "deadline_exceeded"
-	}
-	if errors.Is(err, context.Canceled) {
-		return "canceled"
-	}
-	return "quote_refresh_failed"
-}
-
 func timePointer(value time.Time) *time.Time {
 	if value.IsZero() {
 		return nil
 	}
-	copy := value.UTC()
-	return &copy
+	return &value
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
+// Drain is terminal. Evidence recovery never overrides an operator removal.
+func (r *Runtime) Drain() {
+	if r == nil {
+		return
+	}
+	r.drainOnce.Do(func() {
+		if r.maintenance != nil {
+			r.maintenance.drain()
 		}
-	}
-	return false
-}
-
-type mockQuote struct {
-	AttesterMode     string `json:"attester_mode"`
-	ReportDataSHA512 string `json:"report_data_sha512"`
-	Schema           string `json:"schema"`
-	QuoteGeneratedAt string `json:"quote_generated_at"`
-}
-
-type mockAttester struct {
-	mode string
-	now  func() time.Time
-}
-
-func (a mockAttester) Quote(ctx context.Context, reportData [64]byte) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	now := a.now
-	if now == nil {
-		now = time.Now
-	}
-	payload, err := json.Marshal(mockQuote{
-		AttesterMode:     a.mode,
-		ReportDataSHA512: fmt.Sprintf("%x", reportData[:]),
-		Schema:           "stogas.local-mock-quote.v1",
-		QuoteGeneratedAt: now().UTC().Format(time.RFC3339Nano),
+		if r.Sessions != nil {
+			r.Sessions.Close()
+		}
+		if r.shutdown != nil {
+			close(r.shutdown)
+		}
 	})
-	if err != nil {
-		return nil, err
+}
+func (r *Runtime) ShutdownRequested() <-chan struct{} {
+	if r == nil {
+		return nil
 	}
-	return payload, nil
+	return r.shutdown
 }
 
-func newAttester(config stogas.ConfidentialConfig) (quote.Attester, error) {
-	switch config.AttesterMode {
-	case "mock", "igvm-native":
-		return mockAttester{mode: config.AttesterMode}, nil
-	case "sev-snp":
-		return attest.DefaultSEVSNP(), nil
-	default:
-		return nil, fmt.Errorf("unsupported attester mode %q", config.AttesterMode)
+// Close follows HTTP/provider drain. It joins maintenance before freeing the
+// offline verifier and keys; canceling a caller is not resource destruction.
+func (r *Runtime) Close() {
+	if r == nil {
+		return
 	}
-}
-
-func newDrandSource(config stogas.ConfidentialConfig) (*drand.Source, error) {
-	switch config.AttesterMode {
-	case "mock", "igvm-native":
-		return drand.NewSource(drand.FetcherFunc(func(ctx context.Context) (reportdata.Drand, error) {
-			if err := ctx.Err(); err != nil {
-				return reportdata.Drand{}, err
-			}
-			return mockDrandBeacon(), nil
-		}), drand.SignatureVerifierFunc(func(ctx context.Context, beacon reportdata.Drand) error {
-			return ctx.Err()
-		}))
-	case "sev-snp":
-		fetcher := drand.NewHTTPFetcher(nil, "")
-		verifier, err := drand.NewQuicknetVerifier()
-		if err != nil {
-			return nil, err
+	r.closeOnce.Do(func() {
+		r.Drain()
+		if r.cancel != nil {
+			r.cancel()
+			<-r.done
 		}
-		return drand.NewSource(fetcher, verifier)
-	default:
-		return nil, fmt.Errorf("unsupported attester mode %q", config.AttesterMode)
-	}
-}
-
-func mockDrandBeacon() reportdata.Drand {
-	signature := base64.RawURLEncoding.EncodeToString([]byte("stogas-local-mock-drand-signature"))
-	randomness, _ := drand.RandomnessFromSignature(hexish(signature, 96))
-	return reportdata.Drand{
-		Network:    reportdata.DrandNetworkQuicknet,
-		ChainHash:  reportdata.QuicknetChainHash,
-		Round:      1,
-		Randomness: randomness,
-		Signature:  hexish(signature, 96),
-	}
-}
-
-func hexish(seed string, length int) string {
-	const alphabet = "0123456789abcdef"
-	var builder strings.Builder
-	for builder.Len() < length {
-		for _, ch := range seed {
-			builder.WriteByte(alphabet[int(ch)%len(alphabet)])
-			if builder.Len() == length {
-				break
-			}
+		if r.Sessions != nil {
+			r.Sessions.Close()
 		}
-	}
-	return builder.String()
+		if r.batcher != nil {
+			_ = r.batcher.Close(context.Background())
+		}
+		if r.maintenance != nil {
+			r.maintenance.evidence.close()
+			r.maintenance.signingKey = nil
+		}
+		if r.Secrets != nil {
+			r.Secrets.Close()
+		}
+		if r.Proofs != nil {
+			r.Proofs.Close()
+		}
+		if r.material != nil {
+			r.material.SigningKey = nil
+			r.material.HPKEPrivateKey = nil
+			r.material.TLSPrivateKey = nil
+		}
+	})
 }

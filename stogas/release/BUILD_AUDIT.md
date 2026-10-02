@@ -43,7 +43,7 @@ The verified source view is written to `stogas/release/vendor/go-vendor`. The fi
 
 #### Rust Hydration
 
-`scripts/hydrate-rust-vendor.sh` downloads each fixed upstream archive, checks SHA-256, reads the ordered patch list from `pins.lock.json`, applies it with zero fuzz, installs the committed Cargo lock, and runs `cargo vendor --locked` with pinned Guix Rust.
+`scripts/hydrate-rust-vendor.sh` downloads each fixed archive, checks SHA-256 and runs `cargo vendor --locked` with pinned Guix Rust. Firmware tools apply the ordered patches with zero fuzz and use the committed Cargo locks. The offline verifier normally uses its published source revision and requires that source's lock to match the committed lock exactly. Its Go binding resolves to the same revision. An explicit `STOGAS_VERIFIER_SOURCE_ROOT` captures tracked and non-ignored working-tree files once for both bindings; the same Guix phases build that source with its Cargo lock and a Go module replacement. The release manifest records the actual verifier source hash, including this override.
 
 Go verifies restored module downloads, regenerates the vendor tree, and records its complete tree hash. Restored Rust vendor trees are accepted only when their fixed tree hashes match. The shared tree hash includes paths, file bytes, entry type, executable state, and empty directories. Links and special files fail.
 
@@ -67,7 +67,7 @@ Go verifies restored module downloads, regenerates the vendor tree, and records 
 
 6. Copies only the allowed output files.
 
-The final Guix derivation fixes `SOURCE_DATE_EPOCH=1`, `LC_ALL=C`, `TZ=UTC`, and umask `022`. It builds static Go binaries with a fixed empty build ID and `-trimpath`, normalizes the root file-system timestamps, writes deterministic cpio and zstd output, builds the UKI, creates four ordered SNP VMSAs, injects the UKI, and measures the result with `igvmmeasure --check-kvm`.
+The final Guix derivation fixes `SOURCE_DATE_EPOCH=1`, `LC_ALL=C`, `TZ=UTC`, and umask `022`. The gateway statically links the offline Rust verifier through CGO using pinned Guix GCC and its static libraries; the init binary uses pure Go. Both use an empty build ID and `-trimpath`. The verifier omits its HTTP transport and includes both explicit environment policies, so the same measured image can boot in either environment. Customer SDK production builds remain separate. The build normalizes root file-system timestamps, writes deterministic cpio and zstd output, builds the UKI, creates four ordered SNP VMSAs, injects the UKI, and measures the result with `igvmmeasure --check-kvm`.
 
 There is no same-store `guix build --check` pass. GitHub builds the tag once. Stogas independently builds the same tag once before publication and requires the complete release manifest to match. The manifest binds the IGVM, grouped launch-policy file, source identity, tools, inputs, and launch measurement. These two independent builds are the reproducibility check.
 
@@ -80,7 +80,7 @@ Each patched upstream project has one self-contained patch. `pins.lock.json` is 
 | `patches/virt-firmware-rs-qemu-kvm.patch` | `virt-firmware-rs` commit `e01dffc463934547a42506df656becd9061926f7` | Adds four-CPU SNP VMSAs, uses the OVMF AP reset vector, sets the required real-mode CR0 value, and orders VMSAs for QEMU/KVM measurement. Includes focused register tests.        |
 | `patches/svsm-igvmmeasure-qemu-kvm.patch` | SVSM commit `8850f7bd766e0b592d01efb67c615a9d8f171269`               | Makes `igvmmeasure` a standalone locked crate and checks and normalizes QEMU/KVM multi-VMSA measurement behavior. Includes focused ordering, validation, and normalization tests. |
 
-Both patched Rust packages run their tests inside their Guix builds.
+Both patched Rust packages and the offline verifier run their tests inside their Guix builds.
 
 ## Outputs
 

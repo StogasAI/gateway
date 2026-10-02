@@ -1,0 +1,725 @@
+[
+  {
+    "name": "service defaults",
+    "sources": [
+      {
+        "version": 1
+      },
+      null,
+      {
+        "version": 1
+      }
+    ],
+    "digest": "1f3d9ed58883bd86001ff06730aa6f32aa6622b01b47966eb7f77743481413a5",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "member defaults",
+    "sources": [
+      {
+        "version": 1
+      },
+      {
+        "version": 1
+      },
+      {
+        "version": 1
+      }
+    ],
+    "digest": "cbf40f06802df603cf35edd9773fca3d47e5535c4a0d8aa391523ba9795eb28e",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "request and missing fields",
+    "sources": [
+      {
+        "version": 1,
+        "delegation": {
+          "request": [
+            "routing.allowedCatalogNodes",
+            "routing.filter"
+          ]
+        }
+      },
+      {
+        "version": 1,
+        "delegation": {
+          "request": [
+            "routing"
+          ]
+        }
+      },
+      {
+        "version": 1,
+        "routing": {
+          "filter": "(!(has(deployment.contextWindowTokens))) || (deployment.contextWindowTokens < 1000)"
+        }
+      }
+    ],
+    "digest": "3aeb39c8abcc35a502ac16d4be94ed9526806caccf9b649ecdf13d336657d2d0",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": {
+          "filters": [
+            "(!(has(deployment.contextWindowTokens))) || (deployment.contextWindowTokens < 1000)"
+          ],
+          "orderBy": []
+        },
+        "sortDefault": false
+      },
+      "requestPermission": [
+        "routing.allowedCatalogNodes",
+        "routing.filter"
+      ],
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "allowed nodes intersection",
+    "sources": [
+      {
+        "version": 1,
+        "routing": {
+          "allowedCatalogNodes": {
+            "providers": [
+              "azure",
+              "openai"
+            ]
+          }
+        }
+      },
+      null,
+      {
+        "version": 1,
+        "routing": {
+          "allowedCatalogNodes": {
+            "providers": [
+              "chutes"
+            ]
+          }
+        }
+      }
+    ],
+    "digest": "3f33e1e856a2a86bad2e4ab4358bdd722e7c75ebdd7ac7df1681c00461046310",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": {
+          "providers": []
+        },
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "exact prices and Unicode",
+    "sources": [
+      {
+        "version": 1,
+        "routing": {
+          "filter": "blended_price(3, 1, 'per_mill_tokens') <= decimal(\"5\")"
+        }
+      },
+      null,
+      {
+        "version": 1,
+        "plugins": {
+          "stogasRedaction": {
+            "literals": [
+              {
+                "values": [
+                  "SECRET<& 😀"
+                ],
+                "wholeWord": false
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "digest": "50fef01ac48acbc95040835561e8e4dd9ae8628d399c6b11ff60ebbfb709b848",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": {
+        "stogasRedaction": {
+          "presets": [],
+          "literals": [
+            {
+              "text": "SECRET<& 😀",
+              "ignoreCase": false,
+              "wholeWord": false,
+              "fuzzy": false
+            }
+          ]
+        }
+      },
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": {
+          "filters": [
+            "blended_price(3, 1, 'per_mill_tokens') <= decimal(\"5\")"
+          ],
+          "orderBy": []
+        },
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "explicit fallback and ascii inheritance",
+    "sources": [
+      {
+        "version": 1,
+        "input": {
+          "asciiOnly": true
+        },
+        "routing": {
+          "fallbacks": {
+            "maxPreDispatchCandidates": 3
+          }
+        }
+      },
+      null,
+      {
+        "version": 1,
+        "input": {
+          "asciiOnly": false
+        },
+        "routing": {
+          "fallbacks": {
+            "maxPreDispatchCandidates": 2
+          }
+        }
+      }
+    ],
+    "digest": "e0e941be4a74baf0acd0ff98af160975f7dd326cf4a15a02a9fda1b4131a91e6",
+    "compiled": {
+      "access": null,
+      "input": {
+        "asciiOnly": true
+      },
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 2,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "redaction union and safe literal coverage",
+    "sources": [
+      {
+        "version": 1,
+        "plugins": {
+          "stogasRedaction": {
+            "email_address": true,
+            "customPattern": "ABCD",
+            "literals": [
+              {
+                "values": [
+                  "SECRETABC"
+                ],
+                "ignoreCase": true
+              },
+              {
+                "values": [
+                  "EXACT"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "version": 1,
+        "plugins": {
+          "stogasRedaction": {
+            "email_address": false,
+            "customPattern": "BCDE",
+            "literals": [
+              {
+                "values": [
+                  "secretabc"
+                ],
+                "fuzzy": true
+              },
+              {
+                "values": [
+                  "SECRETABC"
+                ],
+                "ignoreCase": true
+              },
+              {
+                "values": [
+                  "EXACT"
+                ],
+                "wholeWord": false
+              }
+            ]
+          }
+        }
+      },
+      {
+        "version": 1,
+        "plugins": {
+          "stogasRedaction": {
+            "customPattern": "CDEF",
+            "literals": [
+              {
+                "values": [
+                  "EXACT"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "digest": "722c5a77a12ebd792f3dc07cb18e8b6807aabf198ed1ca851955999e54a6e5e0",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": {
+        "stogasRedaction": {
+          "customPatterns": [
+            "ABCD",
+            "BCDE",
+            "CDEF"
+          ],
+          "presets": [
+            "email_address"
+          ],
+          "literals": [
+            {
+              "text": "EXACT",
+              "ignoreCase": false,
+              "wholeWord": false,
+              "fuzzy": false
+            },
+            {
+              "text": "secretabc",
+              "ignoreCase": false,
+              "wholeWord": true,
+              "fuzzy": true
+            },
+            {
+              "text": "secretabc",
+              "ignoreCase": true,
+              "wholeWord": true,
+              "fuzzy": false
+            }
+          ]
+        }
+      },
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "limits stay in database",
+    "sources": [
+      {
+        "version": 1,
+        "limits": {
+          "spend": {
+            "lifetimeUsd": "10"
+          }
+        }
+      },
+      {
+        "version": 1,
+        "limits": {
+          "requests": {
+            "rate": {
+              "max": 1,
+              "window": {
+                "count": 1,
+                "unit": "second"
+              }
+            }
+          }
+        }
+      },
+      {
+        "version": 1,
+        "limits": {
+          "tokens": {
+            "day": {
+              "max": 1000,
+              "window": {
+                "count": 1,
+                "unit": "day"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "digest": "390694f0a86370444582e50c73d1df07abf2461cd232734eebe6af7c95033aec",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "access windows merge",
+    "sources": [
+      {
+        "version": 1,
+        "access": {
+          "deny": [
+            {
+              "days": [
+                "mon"
+              ],
+              "start": "09:00",
+              "end": "10:00",
+              "timeZone": "UTC"
+            }
+          ]
+        }
+      },
+      null,
+      {
+        "version": 1,
+        "access": {
+          "deny": [
+            {
+              "days": [
+                "tue"
+              ],
+              "start": "00:00",
+              "end": "24:00",
+              "timeZone": "America/New_York"
+            }
+          ]
+        }
+      }
+    ],
+    "digest": "3800ea82664f2d6ca1fc8b8913a20f9d4caf89791a404cd78966c8109ec8b06e",
+    "compiled": {
+      "access": {
+        "deny": [
+          {
+            "days": [
+              "mon"
+            ],
+            "end": "10:00",
+            "start": "09:00",
+            "timeZone": "UTC"
+          },
+          {
+            "days": [
+              "tue"
+            ],
+            "end": "24:00",
+            "start": "00:00",
+            "timeZone": "America/New_York"
+          }
+        ]
+      },
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "required complete orders agree",
+    "sources": [
+      {
+        "version": 1,
+        "routing": {
+          "sort": [
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        }
+      },
+      {
+        "version": 1,
+        "routing": {
+          "sort": [
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        }
+      },
+      {
+        "version": 1,
+        "routing": {
+          "sort": [
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        }
+      }
+    ],
+    "digest": "4c7f095cf1b94bd68659b7628f60b501c248b1df01ad159d831e03a584f1fc11",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": {
+          "orderBy": [
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        },
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "default order waits for request facts",
+    "sources": [
+      {
+        "version": 1,
+        "rules": {
+          "baseline": {
+            "mode": "default",
+            "routing": {
+              "sort": [
+                {
+                  "by": "provider.id",
+                  "direction": "asc"
+                },
+                {
+                  "by": "model.id",
+                  "direction": "desc"
+                }
+              ]
+            }
+          }
+        }
+      },
+      null,
+      {
+        "version": 1
+      }
+    ],
+    "digest": "ad1158fee63f2c2b7aa958ed6c44a07da9ce6741ad29138a6f9c1157908f58c1",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "required order and deferred defaults",
+    "sources": [
+      {
+        "version": 1,
+        "rules": {
+          "baseline": {
+            "mode": "default",
+            "routing": {
+              "sort": [
+                {
+                  "by": "provider.id",
+                  "direction": "asc"
+                },
+                {
+                  "by": "model.id",
+                  "direction": "desc"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "version": 1,
+        "rules": {
+          "baseline": {
+            "mode": "default",
+            "routing": {
+              "sort": [
+                {
+                  "by": "model.id",
+                  "direction": "asc"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "version": 1,
+        "routing": {
+          "sort": [
+            {
+              "by": "deployment.id",
+              "direction": "desc"
+            }
+          ]
+        }
+      }
+    ],
+    "digest": "d582b7da7b991fd9adc2e7093ee61a8704cfd4a44eb2903899bf025cd1189ef1",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": {
+          "orderBy": [
+            {
+              "by": "deployment.id",
+              "direction": "desc"
+            }
+          ]
+        },
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "flat conditional policy preview",
+    "sources": [
+      {
+        "version": 1,
+        "rules": {
+          "private": {
+            "when": "provider.id == 'openai'",
+            "input": {
+              "asciiOnly": true
+            },
+            "plugins": {
+              "stogasRedaction": {
+                "email_address": true
+              }
+            },
+            "limits": {
+              "lifetimeTokens": 1000
+            }
+          }
+        }
+      },
+      null,
+      {
+        "version": 1
+      }
+    ],
+    "digest": "dfac3b47be3b22e640b4a9c8cfbdcee0c623117e82d86fbb7d7b718cec39a818",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "maxPreDispatchCandidates": 1,
+        "query": null,
+        "sortDefault": false
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  }
+]

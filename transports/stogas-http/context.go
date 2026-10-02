@@ -10,73 +10,55 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/valyala/fasthttp"
 )
 
 type stogasContextKey string
 
 const (
-	stogasReceiptKey stogasContextKey = "stogas.receipt"
+	stogasMetadataKey stogasContextKey = "stogas.receipt"
 
-	stogasHeaderReceipt = "Stogas-Receipt"
-	requestIDContextKey = "stogas.request-id"
+	stogasHeaderMetadata = "Stogas-Metadata"
 )
 
-func inferenceRequestID(ctx *fasthttp.RequestCtx) (string, error) {
-	if id, ok := ctx.UserValue(requestIDContextKey).(string); ok {
-		return id, nil
+func inferenceRequestID(ctx *requestContext) (string, error) {
+	if ctx.requestID != "" {
+		return ctx.requestID, nil
 	}
 	id, err := uuid.NewV7()
 	if err != nil {
 		return "", err
 	}
 	value := id.String()
-	ctx.SetUserValue(requestIDContextKey, value)
-	ctx.Response.Header.Set("X-Request-ID", value)
+	ctx.requestID = value
+	ctx.writer.Header().Set("X-Request-ID", value)
 	return value, nil
 }
 
-func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
+func newRequestContext(ctx *requestContext, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := billing.GatewayRequestLifetime
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
 		context.Background(),
 		lifetime,
 	)
 	if deadline, ok := bifrostCtx.Deadline(); ok {
-		setDownstreamWriteLimit(ctx.Conn(), deadline.Add(downstreamWriteIdleTimeout))
+		ctx.deliveryDeadline = deadline.Add(downstreamWriteIdleTimeout)
 	}
-	requestID := ""
-	if session := encryptedSession(ctx); session != nil {
-		requestID = session.RequestID
-		ctx.Response.Header.Set("X-Request-ID", requestID)
-	} else {
-		generated, err := inferenceRequestID(ctx)
-		if err != nil {
-			cancel()
-			return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
-		}
-		requestID = generated
+	requestID, err := inferenceRequestID(ctx)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, fmt.Errorf("generate request ID: %w", err)
 	}
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	state.RetainMemory = ctx.memory.retain
 	state.SetDashboardCredential(credential.Dashboard)
-	if upstreamSecret := credential.Upstream.get(string(resolution.Provider)); upstreamSecret != "" {
-		plaintext, credentialErr := stogas.CanonicalPassthroughCredential(
-			resolution.Provider,
-			upstreamSecret,
-		)
-		if credentialErr != nil {
-			cancel()
-			return nil, nil, nil, credentialErr
-		}
-		state.PassthroughByokSecret = plaintext
-	}
+	state.EncryptionKeys = credential.EncryptionKeys
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
 	state.RequestLifetime = lifetime
-	state.SingleUseRequestID = encryptedSession(ctx) != nil
+	state.SingleUseRequestID = ctx.encrypted
 	stogas.SetState(bifrostCtx, state)
 
 	receipt, err := receiptHeader(ctx)
@@ -85,7 +67,7 @@ func newRequestContext(ctx *fasthttp.RequestCtx, resolution *catalog.ResolvedReq
 		return nil, nil, nil, err
 	}
 	if receipt {
-		bifrostCtx.SetValue(stogasReceiptKey, true)
+		bifrostCtx.SetValue(stogasMetadataKey, true)
 	}
 
 	return bifrostCtx, state, cancel, nil
@@ -101,10 +83,10 @@ func configureProviderStreamIdleTimeout(
 	ctx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, state.RequestLifetime)
 }
 
-func receiptHeader(ctx *fasthttp.RequestCtx) (bool, error) {
-	values := ctx.Request.Header.PeekAll(stogasHeaderReceipt)
+func receiptHeader(ctx *requestContext) (bool, error) {
+	values := ctx.request.Header.Values(stogasHeaderMetadata)
 	if len(values) > 1 {
-		return false, fmt.Errorf("%s must appear at most once", stogasHeaderReceipt)
+		return false, fmt.Errorf("%s must appear at most once", stogasHeaderMetadata)
 	}
 	raw := ""
 	if len(values) == 1 {
@@ -117,7 +99,7 @@ func receiptHeader(ctx *fasthttp.RequestCtx) (bool, error) {
 	case "v1":
 		return true, nil
 	default:
-		return false, fmt.Errorf("%s must be v1", stogasHeaderReceipt)
+		return false, fmt.Errorf("%s must be v1", stogasHeaderMetadata)
 	}
 }
 
@@ -125,6 +107,6 @@ func wantsReceipt(ctx *schemas.BifrostContext) bool {
 	if ctx == nil {
 		return false
 	}
-	value, _ := ctx.Value(stogasReceiptKey).(bool)
+	value, _ := ctx.Value(stogasMetadataKey).(bool)
 	return value
 }

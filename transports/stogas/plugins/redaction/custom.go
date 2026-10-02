@@ -1,6 +1,7 @@
 package redaction
 
 import (
+	"bytes"
 	"io"
 	"math/bits"
 	"regexp"
@@ -9,11 +10,15 @@ import (
 )
 
 type customMatcher struct {
+	expression   string
+	instructions int
 	start, after *regexp.Regexp
+	prefix       []byte
 	firstASCII   [utf8.RuneSelf]bool
 	first        []syntax.Inst
 	weight       uint64
 	firstWeight  uint64
+	memoryBytes  int64
 }
 
 func newCustomMatcher(expression string, program *syntax.Prog) *customMatcher {
@@ -39,6 +44,7 @@ func newCustomMatcher(expression string, program *syntax.Prog) *customMatcher {
 		expression += `\E`
 	}
 	matcher := &customMatcher{
+		expression: expression, instructions: len(program.Inst),
 		start: regexp.MustCompile(`\A(?:` + expression + `)`),
 		// One real preceding rune preserves ^, \A and word-boundary semantics
 		// at nonzero positions. No synthetic prefix or end-of-input is used.
@@ -48,7 +54,12 @@ func newCustomMatcher(expression string, program *syntax.Prog) *customMatcher {
 	}
 	matcher.start.Longest()
 	matcher.after.Longest()
+	prefix, _ := program.Prefix()
+	matcher.prefix = []byte(prefix)
+	matcher.memoryBytes = 4096 + int64(len(expression))*4 + int64(len(program.Inst))*256
+	matcher.memoryBytes += int64(len(matcher.prefix))
 	for _, instruction := range program.Inst {
+		matcher.memoryBytes += int64(cap(instruction.Rune)) * 16
 		// MatchRune binary-searches large Unicode classes. Include their cost.
 		matcher.weight += uint64(bits.Len(uint(len(instruction.Rune))))
 	}
@@ -117,25 +128,40 @@ func (r *customReader) ReadRune() (rune, int, error) {
 }
 
 func (r *Redactor) scanCustomPatterns(text []byte, matches []match, expression *customMatcher) ([]match, error) {
-	reader := &customReader{redactor: r, weight: expression.weight}
+	if r.scanWork == maxScanWork {
+		return nil, ErrWorkLimit
+	}
+	var reader *customReader
 	for position := 0; position < len(text); {
+		if len(expression.prefix) > 0 {
+			// A required literal prefix proves skipped text cannot start a match.
+			// This advancing byte search is linear; only regex lookahead below
+			// can reread suffixes and consumes the variable-work allowance.
+			next := bytes.Index(text[position:], expression.prefix)
+			if next < 0 {
+				break
+			}
+			position += next
+		}
 		character, width := utf8.DecodeRune(text[position:])
-		cost := uint64(1)
-		if character >= utf8.RuneSelf {
-			cost = expression.firstWeight
-		}
-		if !r.chargeScanWork(cost) {
-			return nil, ErrWorkLimit
-		}
-		possible := false
-		if character < utf8.RuneSelf {
-			possible = expression.firstASCII[character]
-		} else {
-			possible = expression.canStart(character)
-		}
-		if !possible {
-			position += width
-			continue
+		if len(expression.prefix) == 0 {
+			cost := uint64(1)
+			if character >= utf8.RuneSelf {
+				cost = expression.firstWeight
+			}
+			if !r.chargeScanWork(cost) {
+				return nil, ErrWorkLimit
+			}
+			possible := false
+			if character < utf8.RuneSelf {
+				possible = expression.firstASCII[character]
+			} else {
+				possible = expression.canStart(character)
+			}
+			if !possible {
+				position += width
+				continue
+			}
 		}
 		base := position
 		matcher := expression.start
@@ -143,6 +169,9 @@ func (r *Redactor) scanCustomPatterns(text []byte, matches []match, expression *
 			_, previousWidth := utf8.DecodeLastRune(text[:position])
 			base -= previousWidth
 			matcher = expression.after
+		}
+		if reader == nil {
+			reader = &customReader{redactor: r, weight: expression.weight}
 		}
 		reader.text = text[base:]
 		index := matcher.FindReaderIndex(reader)

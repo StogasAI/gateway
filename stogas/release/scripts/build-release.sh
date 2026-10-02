@@ -105,6 +105,18 @@ cp -a -- \
   "$source_snapshot/"
 export STOGAS_GATEWAY_SOURCE_ROOT="$source_snapshot"
 
+# An explicit source input uses the same hermetic build as the published pin.
+# Keep the source separate from generated vendor inputs and capture it only once.
+unset STOGAS_VERIFIER_BUILD_ROOT
+if [ -n "${STOGAS_VERIFIER_SOURCE_ROOT:-}" ]; then
+  verifier_input="$STOGAS_VERIFIER_SOURCE_ROOT"
+  export STOGAS_VERIFIER_BUILD_ROOT="$source_snapshot/verifier"
+  mkdir -p "$STOGAS_VERIFIER_BUILD_ROOT"
+  node "$release_root/scripts/snapshot-source.mjs" \
+    "$verifier_input" "$STOGAS_VERIFIER_BUILD_ROOT/source"
+fi
+unset STOGAS_VERIFIER_SOURCE_ROOT
+
 "$release_root/scripts/hydrate-guix-closure.sh" "$tag" >/dev/null
 
 if [ "${STOGAS_RELEASE_ALLOW_DIRTY:-0}" != "1" ]; then

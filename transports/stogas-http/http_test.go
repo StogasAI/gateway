@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
+	"crypto/mldsa"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"io"
-	"math/big"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,17 +23,17 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
-	"github.com/valyala/fasthttp"
+	"net/http"
+	"net/http/httptest"
 )
 
 func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("x-request-id", "client-controlled")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("x-request-id", "client-controlled")
 
 	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
@@ -63,9 +65,9 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 }
 
 func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("Authorization", "Bearer sk-secret")
-	ctx.Request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("Authorization", "Bearer sk-secret")
+	ctx.request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
 
 	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
@@ -90,7 +92,7 @@ func testResolution() *catalog.ResolvedRequest {
 func mustResolvedRequest(t *testing.T, path, body string) *catalog.ResolvedRequest {
 	t.Helper()
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: fasthttp.MethodPost,
+		Method: http.MethodPost,
 		Path:   path,
 		Body:   []byte(body),
 	})
@@ -101,7 +103,7 @@ func mustResolvedRequest(t *testing.T, path, body string) *catalog.ResolvedReque
 }
 
 func TestNewRequestContextUsesSharedInferenceLifetime(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	resolution := testResolution()
 	resolution.Route = catalog.RouteResponses
 	resolution.RequestType = schemas.ResponsesStreamRequest
@@ -170,88 +172,159 @@ func TestPrivateReadinessProbeIsHealthyWhenConfidentialRuntimeIsDisabled(t *test
 	if err := server.routes(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
-	ctx.Request.SetRequestURI("/ready")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodGet
+	testRequestURI(ctx, "/ready")
 
-	server.readinessServer.Handler(ctx)
+	server.readinessServer.Handler.ServeHTTP(ctx.writer, ctx.request)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusNoContent {
-		t.Fatalf("expected 204 readiness, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusNoContent {
+		t.Fatalf("expected 204 readiness, got %d", testResponse(ctx).Code)
 	}
-	if len(ctx.Response.Body()) != 0 {
-		t.Fatalf("readiness probe should not return a body on success, got %q", ctx.Response.Body())
+	if len(testResponse(ctx).Body.Bytes()) != 0 {
+		t.Fatalf("readiness probe should not return a body on success, got %q", testResponse(ctx).Body.Bytes())
 	}
 }
 
 func TestPrivateReadinessProbeFailsClosedForIncompleteConfidentialRuntime(t *testing.T) {
 	server := &Server{
 		config: stogas.Config{MaxRequestBodyMiB: 1},
-		secure: &confidentialruntime.Runtime{EntropyReady: true},
+		secure: &confidentialruntime.Runtime{},
 	}
 	if err := server.routes(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
-	ctx.Request.SetRequestURI("/ready")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodGet
+	testRequestURI(ctx, "/ready")
 
-	server.readinessServer.Handler(ctx)
+	server.readinessServer.Handler.ServeHTTP(ctx.writer, ctx.request)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusServiceUnavailable {
-		t.Fatalf("expected 503 readiness, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 readiness, got %d", testResponse(ctx).Code)
 	}
-	if got := string(ctx.Response.Body()); got != `{"ok":false}` {
+	if got := string(testResponse(ctx).Body.Bytes()); got != `{"ok":false}` {
 		t.Fatalf("readiness probe should not leak private reasons, got %q", got)
 	}
 }
 
-func TestInferenceAttemptsWorkWhenPrivateReadinessIsUnhealthy(t *testing.T) {
+func TestTransientMemoryPressureShedsWorkWithoutFailingReadiness(t *testing.T) {
+	server := &Server{memory: &requestMemoryAdmission{budget: minimumRequestWeightBytes}}
+	lease, ok := server.memory.acquire(0)
+	if !ok {
+		t.Fatal("initial memory reservation failed")
+	}
+	defer lease.release()
+	ready := newTestRequest(t)
+	server.readiness(ready)
+	if testResponse(ready).Code != http.StatusNoContent {
+		t.Fatal("memory pressure ejected a healthy member")
+	}
+	request := newTestRequest(t)
+	request.memory = nil
+	request.body = []byte(`{}`)
+	server.inference(request)
+	if testResponse(request).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(request).Body.String(), "gateway_capacity_exceeded") {
+		t.Fatal("memory admission did not shed new work")
+	}
+	if !server.privateDiagnostics().Requests.Memory.Saturated {
+		t.Fatal("memory pressure was not observable")
+	}
+}
+
+func TestDenseJSONIsRejectedBeforeConfigurationFetchOrPolicyCompilation(t *testing.T) {
+	for _, path := range []string{"/v1/chat/completions", policyValidationPath} {
+		t.Run(path, func(t *testing.T) {
+			server := &Server{memory: &requestMemoryAdmission{budget: minimumRequestWeightBytes}}
+			ctx := newTestRequest(t)
+			ctx.memory.release()
+			ctx.request.Method = http.MethodPost
+			testRequestURI(ctx, path)
+			field := "messages"
+			if path == policyValidationPath {
+				field = "policySources"
+			}
+			testRequestBody(ctx, `{"`+field+`":[`+strings.Repeat(`{},`, 6000)+`{}]}`)
+			ctx.memory, _ = server.memory.acquire(cap(ctx.body))
+			t.Cleanup(ctx.memory.release)
+			ctx.credential = &apiCredential{Raw: "authenticated-fixture"}
+			if path == policyValidationPath {
+				server.validatePolicy(ctx)
+			} else {
+				// No runtime/database is installed: reaching configuration fetch
+				// instead of admission would fail this test.
+				server.inference(ctx)
+			}
+			if testResponse(ctx).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(ctx).Body.String(), "gateway_capacity_exceeded") {
+				t.Fatalf("dense JSON bypassed admission: %d, %s", testResponse(ctx).Code, testResponse(ctx).Body.String())
+			}
+			ctx.memory.release()
+			if server.memory.reserved.Load() != 0 {
+				t.Fatal("rejected JSON structure retained memory")
+			}
+		})
+	}
+}
+
+func TestPausedAdmissionDoesNotReadRequestBody(t *testing.T) {
+	server := &Server{secure: &confidentialruntime.Runtime{}, memory: newRequestMemoryAdmission()}
+	request := newTestRequest(t)
+	request.request.Method = http.MethodPost
+	testRequestURI(request, "/v1/chat/completions")
+	reader := &countingRequestReader{reader: strings.NewReader("request body")}
+	request.request.Body = io.NopCloser(reader)
+	server.publicAdmission(server.requestBodyAdmission(func(*requestContext) { t.Fatal("paused request reached dispatch") }))(request)
+	if reader.reads != 0 || server.memory.reserved.Load() != 0 || testResponse(request).Code != http.StatusServiceUnavailable {
+		t.Fatal("policy pause did not reject before request work")
+	}
+}
+
+func TestInferenceStopsBeforeParsingWhenConfidentialReadinessIsUnhealthy(t *testing.T) {
 	server := &Server{
 		config: stogas.Config{MaxRequestBodyMiB: 1},
-		secure: &confidentialruntime.Runtime{EntropyReady: true},
+		secure: &confidentialruntime.Runtime{},
 	}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.Set("Authorization", "Bearer sk-test")
-	ctx.Request.Header.SetContentType("application/json")
-	ctx.Request.SetRequestURI("/v1/chat/completions")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer sk-test")
+	ctx.request.Header.Set("Content-Type", "application/json")
+	testRequestURI(ctx, "/v1/chat/completions")
 
 	server.inference(ctx)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-		t.Fatalf("expected request processing to reach body validation, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected policy rejection before body validation, got %d", testResponse(ctx).Code)
 	}
-	if !strings.Contains(string(ctx.Response.Body()), "Request body is required") {
-		t.Fatalf("unexpected inference response %q", ctx.Response.Body())
+	if !strings.Contains(string(testResponse(ctx).Body.Bytes()), "gateway_unavailable") {
+		t.Fatalf("unexpected inference response %q", testResponse(ctx).Body.Bytes())
 	}
 }
 
 func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	server := &Server{
 		config: stogas.Config{MaxRequestBodyMiB: 1},
-		secure: &confidentialruntime.Runtime{EntropyReady: true},
+		secure: &confidentialruntime.Runtime{},
 	}
 	if err := server.routes(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodGet)
-	ctx.Request.SetRequestURI("/diagnostics/v1")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodGet
+	testRequestURI(ctx, "/diagnostics/v1")
 
-	server.diagnosticsServer.Handler(ctx)
+	server.diagnosticsServer.Handler.ServeHTTP(ctx.writer, ctx.request)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusOK {
-		t.Fatalf("expected 200 diagnostics, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusOK {
+		t.Fatalf("expected 200 diagnostics, got %d", testResponse(ctx).Code)
 	}
 	var payload struct {
-		Control *confidentialruntime.ControlDiagnostics `json:"control"`
-		Node    privateNodeDiagnostics                  `json:"node"`
-		Ready   bool                                    `json:"ready"`
-		Reasons []string                                `json:"reasons"`
-		Schema  string                                  `json:"schema"`
+		Maintenance *confidentialruntime.MaintenanceDiagnostics `json:"maintenance"`
+		Node        privateNodeDiagnostics                      `json:"node"`
+		Ready       bool                                        `json:"ready"`
+		Reasons     []string                                    `json:"reasons"`
+		Schema      string                                      `json:"schema"`
 	}
-	if err := json.Unmarshal(ctx.Response.Body(), &payload); err != nil {
+	if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode readiness details: %v", err)
 	}
 	if payload.Ready || len(payload.Reasons) == 0 {
@@ -260,11 +333,14 @@ func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	if payload.Schema != "stogas.node-diagnostics.v1" {
 		t.Fatalf("unexpected diagnostics schema %q", payload.Schema)
 	}
-	if payload.Control != nil {
-		t.Fatalf("runtime without a Control loop should report null diagnostics, got %#v", payload.Control)
+	if payload.Maintenance != nil || !bytes.Contains(testResponse(ctx).Body.Bytes(), []byte(`"maintenance":null`)) {
+		t.Fatalf("uninitialized maintenance should report null diagnostics, got %#v", payload.Maintenance)
 	}
 	if payload.Node.GeneratedAt.IsZero() || payload.Node.Process.NumCPU < 1 || payload.Node.Process.GOMAXPROCS < 1 {
 		t.Fatalf("private node diagnostics are incomplete: %#v", payload.Node)
+	}
+	if payload.Node.Process.CPUTimeMicros == nil || payload.Node.Process.AllocatedBytes < payload.Node.Process.HeapAllocBytes || payload.Node.Process.Allocations == 0 {
+		t.Fatalf("process cost diagnostics are incomplete: %#v", payload.Node.Process)
 	}
 	if payload.Node.Listeners.Public.MaximumConnections != serverConcurrency ||
 		payload.Node.Listeners.Private.MaximumConnections != readinessConcurrency {
@@ -278,34 +354,34 @@ func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	public := &fasthttp.RequestCtx{}
-	public.Request.Header.SetMethod(fasthttp.MethodGet)
-	public.Request.SetRequestURI("/ready")
-	server.server.Handler(public)
-	if public.Response.StatusCode() != fasthttp.StatusNotFound {
-		t.Fatalf("public GET /ready status = %d, want 404", public.Response.StatusCode())
+	public := newTestRequest(t)
+	public.request.Method = http.MethodGet
+	testRequestURI(public, "/ready")
+	server.server.Handler.ServeHTTP(public.writer, public.request)
+	if testResponse(public).Code != http.StatusNotFound {
+		t.Fatalf("public GET /ready status = %d, want 404", testResponse(public).Code)
 	}
-	publicDetails := &fasthttp.RequestCtx{}
-	publicDetails.Request.Header.SetMethod(fasthttp.MethodGet)
-	publicDetails.Request.SetRequestURI("/diagnostics/v1")
-	server.server.Handler(publicDetails)
-	if publicDetails.Response.StatusCode() != fasthttp.StatusNotFound {
-		t.Fatalf("public GET /diagnostics/v1 status = %d, want 404", publicDetails.Response.StatusCode())
+	publicDetails := newTestRequest(t)
+	publicDetails.request.Method = http.MethodGet
+	testRequestURI(publicDetails, "/diagnostics/v1")
+	server.server.Handler.ServeHTTP(publicDetails.writer, publicDetails.request)
+	if testResponse(publicDetails).Code != http.StatusNotFound {
+		t.Fatalf("public GET /diagnostics/v1 status = %d, want 404", testResponse(publicDetails).Code)
 	}
 
 	for _, request := range []struct {
 		method string
 		path   string
 	}{
-		{method: fasthttp.MethodGet, path: "/diagnostics/v1"},
-		{method: fasthttp.MethodGet, path: "/v1/models"},
-		{method: fasthttp.MethodPost, path: "/ready"},
+		{method: http.MethodGet, path: "/diagnostics/v1"},
+		{method: http.MethodGet, path: "/v1/models"},
+		{method: http.MethodPost, path: "/ready"},
 	} {
-		ctx := &fasthttp.RequestCtx{}
-		ctx.Request.Header.SetMethod(request.method)
-		ctx.Request.SetRequestURI(request.path)
-		server.readinessServer.Handler(ctx)
-		if ctx.Response.StatusCode() == fasthttp.StatusNoContent {
+		ctx := newTestRequest(t)
+		ctx.request.Method = request.method
+		testRequestURI(ctx, request.path)
+		server.readinessServer.Handler.ServeHTTP(ctx.writer, ctx.request)
+		if testResponse(ctx).Code == http.StatusNoContent {
 			t.Fatalf("private %s %s unexpectedly served readiness", request.method, request.path)
 		}
 	}
@@ -313,17 +389,17 @@ func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 
 func TestRequestDecompressionGzip(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.SetBody(gzipBody(t, `{"model":"gpt-5"}`))
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	testRequestBody(ctx, gzipBody(t, `{"model":"gpt-5"}`))
 
 	called := false
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		called = true
-		if got := string(ctx.Request.Body()); got != `{"model":"gpt-5"}` {
+		if got := string(ctx.body); got != `{"model":"gpt-5"}` {
 			t.Fatalf("expected decompressed body, got %q", got)
 		}
-		if encoding := string(ctx.Request.Header.ContentEncoding()); encoding != "" {
+		if encoding := string(ctx.request.Header.Get("Content-Encoding")); encoding != "" {
 			t.Fatalf("expected content encoding to be removed, got %q", encoding)
 		}
 	})(ctx)
@@ -335,24 +411,24 @@ func TestRequestDecompressionGzip(t *testing.T) {
 
 func TestRequestBodyAdmissionAuthenticatesBeforeReadingStream(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}, memory: &requestMemoryAdmission{}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.SetContentType("application/json")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Content-Type", "application/json")
 	reader := &countingRequestReader{reader: strings.NewReader(`{"model":"gpt-5"}`)}
-	ctx.Request.SetBodyStream(reader, reader.reader.Len())
+	testRequestBodyStream(ctx, reader, reader.reader.Len())
 
-	server.requestBodyAdmission(func(*fasthttp.RequestCtx) {
+	server.requestBodyAdmission(func(*requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
 	if reader.reads != 0 {
 		t.Fatalf("unauthenticated request body was read %d times", reader.reads)
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", testResponse(ctx).Code)
 	}
-	if !ctx.Response.Header.ConnectionClose() {
+	if !(ctx.writer.Header().Get("Connection") == "close") {
 		t.Fatal("rejected streamed request must close its connection")
 	}
 	if used := server.memory.reserved.Load(); used != 0 {
@@ -371,20 +447,20 @@ func TestRequestBodyAdmissionBoundsAndTransfersStreamLease(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}, memory: &requestMemoryAdmission{}}
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-			ctx.Request.Header.Set("Authorization", "Bearer test-key")
-			ctx.Request.Header.SetContentType("application/json")
-			ctx.Request.SetBodyStream(strings.NewReader(body), test.bodySize)
+			ctx := newTestRequest(t)
+			testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+			ctx.request.Method = http.MethodPost
+			ctx.request.Header.Set("Authorization", "Bearer test-key")
+			ctx.request.Header.Set("Content-Type", "application/json")
+			testRequestBodyStream(ctx, strings.NewReader(body), test.bodySize)
 
 			called := false
-			server.requestBodyAdmission(func(ctx *fasthttp.RequestCtx) {
+			server.requestBodyAdmission(func(ctx *requestContext) {
 				called = true
-				if ctx.Request.IsBodyStream() {
+				if ctx.body == nil {
 					t.Fatal("admitted body remained a stream")
 				}
-				if got := string(ctx.Request.Body()); got != body {
+				if got := string(ctx.body); got != body {
 					t.Fatalf("body = %q, want %q", got, body)
 				}
 				lease := requestMemoryLeaseForInference(ctx)
@@ -406,25 +482,25 @@ func TestRequestBodyAdmissionBoundsAndTransfersStreamLease(t *testing.T) {
 
 func TestRequestBodyAdmissionRejectsDeclaredOversizeWithoutReading(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}, memory: &requestMemoryAdmission{}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteResponses))
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.SetContentType("application/json")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteResponses))
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Type", "application/json")
 	reader := &countingRequestReader{reader: strings.NewReader("x")}
-	ctx.Request.SetBodyStream(reader, 1024*1024+1)
+	testRequestBodyStream(ctx, reader, 1024*1024+1)
 
-	server.requestBodyAdmission(func(*fasthttp.RequestCtx) {
+	server.requestBodyAdmission(func(*requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
 	if reader.reads != 0 {
 		t.Fatalf("oversized request body was read %d times", reader.reads)
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", testResponse(ctx).Code)
 	}
-	if !ctx.Response.Header.ConnectionClose() {
+	if !(ctx.writer.Header().Get("Connection") == "close") {
 		t.Fatal("oversized streamed request must close its connection")
 	}
 }
@@ -432,19 +508,19 @@ func TestRequestBodyAdmissionRejectsDeclaredOversizeWithoutReading(t *testing.T)
 func TestCompressedBodyKeepsMaximumReservationUntilBoundedDecompression(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}, memory: &requestMemoryAdmission{}}
 	compressed := gzipBody(t, `{"model":"gpt-5"}`)
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.SetContentType("application/json")
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.SetBodyStream(bytes.NewReader(compressed), len(compressed))
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Type", "application/json")
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	testRequestBodyStream(ctx, bytes.NewReader(compressed), len(compressed))
 
-	server.requestBodyAdmission(func(ctx *fasthttp.RequestCtx) {
-		if got, want := server.memory.reserved.Load(), int64(5*1024*1024); got != want {
+	server.requestBodyAdmission(func(ctx *requestContext) {
+		if got, want := server.memory.reserved.Load(), minimumRequestWeightBytes; got != want {
 			t.Fatalf("pre-decompression reservation = %d, want %d", got, want)
 		}
-		server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+		server.requestDecompression(func(ctx *requestContext) {
 			if got, want := server.memory.reserved.Load(), minimumRequestWeightBytes; got != want {
 				t.Fatalf("post-decompression reservation = %d, want %d", got, want)
 			}
@@ -463,88 +539,88 @@ func TestCompressedBodyKeepsMaximumReservationUntilBoundedDecompression(t *testi
 
 func TestRequestDecompressionRejectsInvalidCompressedBody(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.SetBodyString("not gzip")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	testRequestBody(ctx, "not gzip")
 
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", testResponse(ctx).Code)
 	}
-	if !strings.Contains(string(ctx.Response.Body()), "Invalid compressed request body") {
-		t.Fatalf("expected invalid compression error, got %s", ctx.Response.Body())
+	if !strings.Contains(string(testResponse(ctx).Body.Bytes()), "Invalid compressed request body") {
+		t.Fatalf("expected invalid compression error, got %s", testResponse(ctx).Body.Bytes())
 	}
 }
 
 func TestRequestDecompressionEnforcesDecompressedSize(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.SetBody(gzipBody(t, strings.Repeat("a", 1024*1024+1)))
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	testRequestBody(ctx, gzipBody(t, strings.Repeat("a", 1024*1024+1)))
 
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusRequestEntityTooLarge {
-		t.Fatalf("expected 413, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestRequestDecompressionChecksAPIKeyBeforeCompressedBody(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/v1/chat/completions")
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.Header.Set("Content-Type", "text/plain")
-	ctx.Request.SetBodyString("not gzip")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, "/v1/chat/completions")
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	ctx.request.Header.Set("Content-Type", "text/plain")
+	testRequestBody(ctx, "not gzip")
 
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
-		t.Fatalf("expected 401 before decompression, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 before decompression, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestRequestDecompressionChecksContentTypeBeforeCompressedBody(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/v1/responses")
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.Header.Set("Content-Type", "text/plain")
-	ctx.Request.SetBodyString("not gzip")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, "/v1/responses")
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	ctx.request.Header.Set("Content-Type", "text/plain")
+	testRequestBody(ctx, "not gzip")
 
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		t.Fatal("next handler should not be called")
 	})(ctx)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
-		t.Fatalf("expected 415 before decompression, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415 before decompression, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestRequestDecompressionCachesInferenceCredential(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.Set("Content-Encoding", "gzip")
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.SetBody(gzipBody(t, `{}`))
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Encoding", "gzip")
+	ctx.request.Header.Set("Content-Type", "application/json")
+	testRequestBody(ctx, gzipBody(t, `{}`))
 
 	called := false
-	server.requestDecompression(func(ctx *fasthttp.RequestCtx) {
+	server.requestDecompression(func(ctx *requestContext) {
 		called = true
-		ctx.Request.Header.Set("Content-Type", "text/plain")
+		ctx.request.Header.Set("Content-Type", "text/plain")
 		credential, ok := server.requireInferenceEnvelope(ctx)
 		if !ok {
-			t.Fatalf("expected cached inference credential to pass, got status %d body %s", ctx.Response.StatusCode(), ctx.Response.Body())
+			t.Fatalf("expected cached inference credential to pass, got status %d body %s", testResponse(ctx).Code, testResponse(ctx).Body.Bytes())
 		}
 		if credential.Raw != "test-key" {
 			t.Fatalf("expected cached token, got %q", credential.Raw)
@@ -556,97 +632,82 @@ func TestRequestDecompressionCachesInferenceCredential(t *testing.T) {
 	}
 }
 
-func TestWriteInferenceJSONAddsSignedStogasReceipt(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("p", 128)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	server, material := encryptedTestServer(t)
-	server.proofs = &proofhttp.Service{
-		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
-		Signer: privateKey,
-	}
-	ctx, clientSession := encryptedRequestContext(t, server, material)
+func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
+	service, publicKey, boot := testProofService(t)
+	server := &Server{proofs: service}
+	ctx := newTestRequest(t)
+	testRequestBody(ctx, `{"model":"gpt-5.5"}`)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	bifrostCtx.SetValue(stogasReceiptKey, true)
-	state := &stogas.State{
-		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5"}`),
-		RequestID:  clientSession.RequestID,
-		NodeID:     strings.Repeat("3", 64),
-		FinalEvent: &billing.RequestEvent{
-			CreatedAt:          "2026-08-24T12:34:56.789Z",
-			BilledCostUSDAtoms: "0",
-		},
+	bifrostCtx.SetValue(stogasMetadataKey, true)
+	state := &stogas.State{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)), RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}
+	state.FinalEvent.Meters = billing.EventMeters{
+		"input_tokens":        billing.PricedMeter("1000", "per_mill_tokens", "2", "0.002"),
+		"cached_input_tokens": billing.PricedMeter("300", "per_mill_tokens", "0", "0"),
+		"total_input_tokens":  {Quantity: "1300"},
 	}
-
-	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
-
-	if ctx.Response.StatusCode() != fasthttp.StatusOK {
-		t.Fatalf("expected status 200, got %d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
-	}
+	state.FinalEvent.UpstreamCostUSD, state.FinalEvent.BilledCostUSD = "0.002", "0.00004"
+	state.FinalEvent.CacheReadSavingsUSD, state.FinalEvent.CacheWriteOverheadUSD = schemas.Ptr("0.0006"), schemas.Ptr("0")
+	server.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, map[string]any{"ok": true})
 	var response struct {
 		OK     bool         `json:"ok"`
 		Stogas proof.Object `json:"stogas"`
 	}
-	if err := json.Unmarshal(ctx.Response.Body(), &response); err != nil {
+	if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
 	if !response.OK || response.Stogas.CreatedAt != state.FinalEvent.CreatedAt {
-		t.Fatalf("unexpected Stogas response: %#v", response)
+		t.Fatal("missing response metadata")
 	}
-	unsignedResponse, err := marshalPayload(map[string]any{"ok": true})
-	if err != nil {
-		t.Fatal(err)
+	wantMeters, _ := json.Marshal(state.FinalEvent.Meters)
+	gotMeters, _ := json.Marshal(response.Stogas.Meters)
+	if !bytes.Equal(wantMeters, gotMeters) || response.Stogas.UpstreamCostUSD != "0.002" || response.Stogas.BilledCostUSD != "0.00004" ||
+		response.Stogas.CacheReadSavingsUSD == nil || *response.Stogas.CacheReadSavingsUSD != "0.0006" ||
+		response.Stogas.CacheWriteOverheadUSD == nil || *response.Stogas.CacheWriteOverheadUSD != "0" {
+		t.Fatal("response metadata differs from final request history")
 	}
-	metadata := proofMetadata(state, encryptedSession(ctx).TranscriptSHA256())
-	if !proof.VerifyInput(publicKey, proof.Input{
-		RequestBody:  ctx.Request.Body(),
-		ResponseBody: unsignedResponse,
-		Metadata:     metadata,
-	}, response.Stogas.Proof.Signature) {
-		t.Fatal("proof did not bind the E2EE request transcript")
+	if !proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+		t.Fatal("receipt does not bind exact request and response")
 	}
-	metadata.E2EETranscriptSHA256 = ""
-	if proof.VerifyInput(publicKey, proof.Input{
-		RequestBody:  ctx.Request.Body(),
-		ResponseBody: unsignedResponse,
-		Metadata:     metadata,
-	}, response.Stogas.Proof.Signature) {
-		t.Fatal("E2EE proof verified without its request transcript")
+	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256([]byte(`{}`)), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+		t.Fatal("receipt accepted another request")
+	}
+	response.Stogas.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
+	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+		t.Fatal("receipt accepted a changed informational meter")
 	}
 }
 
 func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	server := &Server{proofs: &proofhttp.Service{}}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	bifrostCtx.SetValue(stogasReceiptKey, true)
+	bifrostCtx.SetValue(stogasMetadataKey, true)
 	state := &stogas.State{
-		Resolution:           testResolution(),
-		FinalEvent:           &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
-		Authorization:        &billing.Authorization{AuthorizedBilledCostUSDAtoms: big.NewInt(0), AvailableBalanceUSDAtoms: big.NewInt(0)},
-		StartedAt:            time.Now().Add(-time.Second),
-		ProviderStartedAt:    time.Now().Add(-time.Millisecond),
-		UpstreamCostUSDAtoms: "0",
-		Response:             &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+		Resolution:        testResolution(),
+		FinalEvent:        &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
+		Authorization:     &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD)},
+		StartedAt:         time.Now().Add(-time.Second),
+		ProviderStartedAt: time.Now().Add(-time.Millisecond),
+		UpstreamCostUSD:   "0",
+		Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 	}
 
-	server.writeInferenceJSON(ctx, bifrostCtx, state, fasthttp.StatusOK, map[string]any{"ok": true})
+	server.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, map[string]any{"ok": true})
 
-	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
-		t.Fatalf("expected proof failure to return 500, got %d body=%s", ctx.Response.StatusCode(), ctx.Response.Body())
+	if testResponse(ctx).Code != http.StatusInternalServerError {
+		t.Fatalf("expected proof failure to return 500, got %d body=%s", testResponse(ctx).Code, testResponse(ctx).Body.Bytes())
 	}
-	if !strings.Contains(string(ctx.Response.Body()), "Failed to build confidential response proof") {
-		t.Fatalf("unexpected proof failure body: %s", ctx.Response.Body())
+	if !strings.Contains(string(testResponse(ctx).Body.Bytes()), "Failed to build confidential response proof") {
+		t.Fatalf("unexpected proof failure body: %s", testResponse(ctx).Body.Bytes())
 	}
-	if !strings.Contains(string(ctx.Response.Body()), responseProofErrorCode) {
-		t.Fatalf("proof failure did not include its stable code: %s", ctx.Response.Body())
+	if !strings.Contains(string(testResponse(ctx).Body.Bytes()), responseProofErrorCode) {
+		t.Fatalf("proof failure did not include its stable code: %s", testResponse(ctx).Body.Bytes())
 	}
 	if state.FinalEvent != nil {
 		t.Fatalf("proof failure retained a prepared success event: %#v", state.FinalEvent)
 	}
 	event := stogas.PrepareFinalState(state)
-	if event == nil || event.StogasProcessingSuccess || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
+	if event == nil || event.Error == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
 		event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 200 {
 		t.Fatalf("proof failure overwrote the successful provider result: %#v", event)
 	}
@@ -654,27 +715,29 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 
 func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T) {
 	server := &Server{proofs: &proofhttp.Service{}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.SetRequestURI("/v1/chat/completions")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodPost
+	testRequestURI(ctx, "/v1/chat/completions")
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	bifrostCtx.SetValue(stogasReceiptKey, true)
+	bifrostCtx.SetValue(stogasMetadataKey, true)
 	completed := make(chan struct{})
 	state := &stogas.State{Resolution: testResolution()}
+	stream := make(chan *schemas.BifrostStreamChunk)
+	close(stream)
 
-	server.writeSSEStream(
+	_ = server.startSSEStream(
 		ctx,
 		bifrostCtx,
 		state,
-		make(chan *schemas.BifrostStreamChunk),
+		stream,
 		true,
 		false,
 		cancel,
 		func() { close(completed) },
 	)
 
-	if ctx.Response.StatusCode() != fasthttp.StatusInternalServerError {
-		t.Fatalf("expected proof failure to return 500, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusInternalServerError {
+		t.Fatalf("expected proof failure to return 500, got %d", testResponse(ctx).Code)
 	}
 	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil ||
 		state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != responseProofErrorCode {
@@ -688,27 +751,23 @@ func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T
 }
 
 func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("q", 128)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	quotes := &failSecondProofQuotes{snapshot: testProofSnapshot(t, publicKey)}
-	server := &Server{proofs: &proofhttp.Service{Quotes: quotes, Signer: privateKey}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetBodyString(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	service, _, _ := testProofService(t)
+	server := &Server{proofs: service}
+	ctx := newTestRequest(t)
+	testRequestBody(ctx, `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	bifrostCtx.SetValue(stogasReceiptKey, true)
+	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.Request.Body())),
-		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
+		Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)),
+		RequestID:  "", // Invalid final metadata must not become a successful receipt.
 		NodeID:     strings.Repeat("3", 64),
-		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSDAtoms: "0"},
+		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
 	}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
 	close(stream)
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	payload := requireSSEErrorPayload(t, body)
 	if payload["code"] != responseProofErrorCode {
 		t.Fatalf("proof failure code = %#v, want %q", payload["code"], responseProofErrorCode)
@@ -722,99 +781,75 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 	}
 }
 
-type staticProofQuotes struct {
-	snapshot *quote.Snapshot
-}
-
-func (s staticProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
-	return s.snapshot, nil
-}
-
-type failSecondProofQuotes struct {
-	mu       sync.Mutex
-	snapshot *quote.Snapshot
-	calls    int
-}
-
-func (s *failSecondProofQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls++
-	if s.calls > 1 {
-		return nil, errors.New("quote refresh failed")
-	}
-	return s.snapshot, nil
-}
-
-func testProofSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
+func testProofService(t *testing.T) (*proofhttp.Service, *mldsa.PublicKey, [32]byte) {
 	t.Helper()
-	payload, err := reportdata.NewPayload(reportdata.Payload{
-		TLSSPKISHA256:      strings.Repeat("c", 64),
-		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
-		HPKEPublicKey:      "aHBrZQ",
-		Ed25519PublicKey:   base64.RawURLEncoding.EncodeToString(publicKey),
-		Drand: reportdata.Drand{
-			Round:      1,
-			Randomness: strings.Repeat("e", 64),
-			Signature:  strings.Repeat("f", 96),
-		},
-	})
+	data, err := os.ReadFile("../stogas/confidential/attest/testdata/node-boot-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := reportdata.HashHex(payload)
+	var fixture struct {
+		Record attest.BootRecord `json:"record"`
+	}
+	if err = json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	document, err := fixture.Record.Document()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &quote.Snapshot{
-		Payload:       payload,
-		ReportDataHex: hash,
-		Quote:         []byte("quote"),
-		GeneratedAt:   time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
+	if err != nil {
+		t.Fatal(err)
 	}
+	service, err := proofhttp.New(document, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(service.Close)
+	return service, key.PublicKey(), sha256.Sum256(document)
 }
 
 func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyValidation(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.Set("Content-Type", "text/plain")
-	ctx.Request.SetBodyString("{}")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Header.Set("Content-Type", "text/plain")
+	testRequestBody(ctx, "{}")
 
 	if _, ok := server.requireInferenceEnvelope(ctx); ok {
 		t.Fatal("expected missing API key to fail")
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
-		t.Fatalf("expected auth to be checked before content type, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusUnauthorized {
+		t.Fatalf("expected auth to be checked before content type, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestRequireInferenceEnvelopeRejectsNonJSONContentType(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.Set("Content-Type", "text/plain")
-	ctx.Request.SetBodyString("{}")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Type", "text/plain")
+	testRequestBody(ctx, "{}")
 
 	if _, ok := server.requireInferenceEnvelope(ctx); ok {
 		t.Fatal("expected unsupported content type to fail")
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
-		t.Fatalf("expected 415, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestRequireInferenceEnvelopeAcceptsJSONContentTypeWithParameters(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.Set("Content-Type", "application/json; charset=utf-8")
-	ctx.Request.SetBodyString("{}")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	testRequestBody(ctx, "{}")
 
 	if _, ok := server.requireInferenceEnvelope(ctx); !ok {
-		t.Fatalf("expected JSON envelope to pass, got status %d body %s", ctx.Response.StatusCode(), ctx.Response.Body())
+		t.Fatalf("expected JSON envelope to pass, got status %d body %s", testResponse(ctx).Code, testResponse(ctx).Body.Bytes())
 	}
 }
 
@@ -827,17 +862,17 @@ func TestRequireInferenceEnvelopeRejectsAmbiguousJSONContentTypeParameters(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := &Server{}
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-			ctx.Request.Header.Set("Authorization", "Bearer test-key")
-			ctx.Request.Header.Set("Content-Type", contentType)
-			ctx.Request.SetBodyString("{}")
+			ctx := newTestRequest(t)
+			testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+			ctx.request.Header.Set("Authorization", "Bearer test-key")
+			ctx.request.Header.Set("Content-Type", contentType)
+			testRequestBody(ctx, "{}")
 
 			if _, ok := server.requireInferenceEnvelope(ctx); ok {
 				t.Fatalf("ambiguous Content-Type %q was accepted", contentType)
 			}
-			if ctx.Response.StatusCode() != fasthttp.StatusUnsupportedMediaType {
-				t.Fatalf("status = %d, want 415", ctx.Response.StatusCode())
+			if testResponse(ctx).Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("status = %d, want 415", testResponse(ctx).Code)
 			}
 		})
 	}
@@ -845,24 +880,24 @@ func TestRequireInferenceEnvelopeRejectsAmbiguousJSONContentTypeParameters(t *te
 
 func TestRequireInferenceEnvelopeRejectsEmptyBody(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI(mustCatalogPath(t, catalog.RouteChat))
-	ctx.Request.Header.Set("Authorization", "Bearer test-key")
-	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, mustCatalogPath(t, catalog.RouteChat))
+	ctx.request.Header.Set("Authorization", "Bearer test-key")
+	ctx.request.Header.Set("Content-Type", "application/json")
 
 	if _, ok := server.requireInferenceEnvelope(ctx); ok {
 		t.Fatal("expected empty body to fail")
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", testResponse(ctx).Code)
 	}
 }
 
 func TestSecurityHeaders(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("X-Forwarded-Proto", "https")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Set("X-Forwarded-Proto", "https")
 
-	securityHeaders(func(ctx *fasthttp.RequestCtx) {})(ctx)
+	securityHeaders(func(ctx *requestContext) {})(ctx)
 
 	expected := map[string]string{
 		"X-Frame-Options":           "DENY",
@@ -873,7 +908,7 @@ func TestSecurityHeaders(t *testing.T) {
 		"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 	}
 	for header, value := range expected {
-		if got := string(ctx.Response.Header.Peek(header)); got != value {
+		if got := string(ctx.writer.Header().Get(header)); got != value {
 			t.Fatalf("expected %s=%q, got %q", header, value, got)
 		}
 	}
@@ -889,7 +924,7 @@ func TestPublicBifrostErrorDoesNotClassifyMessageText(t *testing.T) {
 	} {
 		status, payload := publicBifrostError(testBifrostError(0, message, "", ""))
 		errorObject := publicErrorObject(t, payload)
-		if status != fasthttp.StatusInternalServerError || errorObject["type"] != "internal_error" ||
+		if status != http.StatusInternalServerError || errorObject["type"] != "internal_error" ||
 			errorObject["message"] != "Internal server error" {
 			t.Fatalf("message %q affected the public classification: status=%d error=%#v", message, status, errorObject)
 		}
@@ -930,15 +965,15 @@ func TestPublicBifrostErrorClassifiesProviderDependencyFailures(t *testing.T) {
 		wantCode    string
 		wantMessage string
 	}{
-		{name: "provider auth", status: fasthttp.StatusUnauthorized, msg: "OpenAI API key is invalid", code: "invalid_api_key", wantCode: "upstream_authentication_failed", wantMessage: "The configured provider credential was rejected"},
-		{name: "provider quota", status: fasthttp.StatusPaymentRequired, msg: "upstream account quota exceeded", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
-		{name: "provider quota code overrides rate-limit status", status: fasthttp.StatusTooManyRequests, msg: "quota exhausted", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
-		{name: "provider permission", status: fasthttp.StatusForbidden, msg: "organization policy disabled provider access", code: "permission_denied", wantCode: "upstream_access_denied", wantMessage: "The configured provider credential cannot access the requested model"},
+		{name: "provider auth", status: http.StatusUnauthorized, msg: "OpenAI API key is invalid", code: "invalid_api_key", wantCode: "upstream_authentication_failed", wantMessage: "The configured provider credential was rejected"},
+		{name: "provider quota", status: http.StatusPaymentRequired, msg: "upstream account quota exceeded", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
+		{name: "provider quota code overrides rate-limit status", status: http.StatusTooManyRequests, msg: "quota exhausted", code: "insufficient_quota", wantCode: "upstream_quota_exceeded", wantMessage: "The configured provider account has insufficient quota"},
+		{name: "provider permission", status: http.StatusForbidden, msg: "organization policy disabled provider access", code: "permission_denied", wantCode: "upstream_access_denied", wantMessage: "The configured provider credential cannot access the requested model"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			status, payload := publicBifrostError(testBifrostError(tt.status, tt.msg, "", tt.code))
 
-			if status != fasthttp.StatusBadGateway {
+			if status != http.StatusBadGateway {
 				t.Fatalf("expected 502, got %d", status)
 			}
 			errorObject := publicErrorObject(t, payload)
@@ -961,15 +996,15 @@ func TestPublicBifrostErrorExposesOnlySafePrivateProviderCategories(t *testing.T
 		status      int
 		wantMessage string
 	}{
-		{code: "upstream_verification_failed", status: fasthttp.StatusServiceUnavailable, wantMessage: "Provider verification failed; the request was not sent"},
-		{code: "upstream_capacity_unavailable", status: fasthttp.StatusServiceUnavailable, wantMessage: "No verified private provider capacity is currently available"},
-		{code: "upstream_configuration_error", status: fasthttp.StatusServiceUnavailable, wantMessage: "The managed provider configuration is unavailable"},
-		{code: "upstream_protocol_error", status: fasthttp.StatusBadGateway, wantMessage: "The provider returned an invalid private response"},
-		{code: "gateway_capacity_exceeded", status: fasthttp.StatusServiceUnavailable, wantMessage: "Gateway capacity is temporarily exhausted"},
+		{code: "upstream_verification_failed", status: http.StatusServiceUnavailable, wantMessage: "Provider verification failed; the request was not sent"},
+		{code: "upstream_capacity_unavailable", status: http.StatusServiceUnavailable, wantMessage: "Provider temporarily unavailable."},
+		{code: "upstream_configuration_error", status: http.StatusServiceUnavailable, wantMessage: "The managed provider configuration is unavailable"},
+		{code: "upstream_protocol_error", status: http.StatusBadGateway, wantMessage: "The provider returned an invalid private response"},
+		{code: "gateway_capacity_exceeded", status: http.StatusServiceUnavailable, wantMessage: "Gateway capacity is temporarily exhausted"},
 	} {
 		t.Run(tt.code, func(t *testing.T) {
 			status, payload := publicBifrostError(testBifrostError(
-				fasthttp.StatusServiceUnavailable,
+				http.StatusServiceUnavailable,
 				"sensitive backend detail",
 				tt.code,
 				tt.code,
@@ -994,8 +1029,8 @@ func TestPublicBifrostErrorMapsProviderRateLimitAndTimeout(t *testing.T) {
 		wantType    string
 		wantMessage string
 	}{
-		{name: "provider rate limit", status: fasthttp.StatusTooManyRequests, msg: "provider rate_limit exceeded", wantStatus: fasthttp.StatusTooManyRequests, wantType: "rate_limit_error", wantMessage: "The upstream provider rate limit was exceeded"},
-		{name: "provider timeout", status: fasthttp.StatusGatewayTimeout, msg: "upstream timed out", wantStatus: fasthttp.StatusGatewayTimeout, wantType: schemas.RequestTimedOut, wantMessage: "Upstream request timed out"},
+		{name: "provider rate limit", status: http.StatusTooManyRequests, msg: "provider rate_limit exceeded", wantStatus: http.StatusTooManyRequests, wantType: "rate_limit_error", wantMessage: "The upstream provider rate limit was exceeded"},
+		{name: "provider timeout", status: http.StatusGatewayTimeout, msg: "upstream timed out", wantStatus: http.StatusGatewayTimeout, wantType: schemas.RequestTimedOut, wantMessage: "Upstream request timed out"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			status, payload := publicBifrostError(testBifrostError(tt.status, tt.msg, "", ""))
@@ -1015,11 +1050,11 @@ func TestPublicBifrostErrorMapsProviderRateLimitAndTimeout(t *testing.T) {
 }
 
 func TestPublicBifrostErrorPreservesSafeClientProviderError(t *testing.T) {
-	bifrostErr := testBifrostError(fasthttp.StatusBadRequest, "messages.0.content is required", "invalid_request_error", "missing_required_parameter")
+	bifrostErr := testBifrostError(http.StatusBadRequest, "messages.0.content is required", "invalid_request_error", "missing_required_parameter")
 	bifrostErr.Error.Param = "messages[0].content"
 	status, payload := publicBifrostError(bifrostErr)
 
-	if status != fasthttp.StatusBadRequest {
+	if status != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", status)
 	}
 	errorObject := publicErrorObject(t, payload)
@@ -1039,14 +1074,14 @@ func TestPublicBifrostErrorPreservesSafeClientProviderError(t *testing.T) {
 
 func TestPublicBifrostErrorBoundsUntrustedProviderFields(t *testing.T) {
 	bifrostErr := testBifrostError(
-		fasthttp.StatusBadRequest,
+		http.StatusBadRequest,
 		strings.Repeat("x", 1025),
 		"invalid_request_error",
 		"invalid code with spaces",
 	)
 	bifrostErr.Error.Param = map[string]any{"attacker": strings.Repeat("x", 4096)}
 	status, payload := publicBifrostError(bifrostErr)
-	if status != fasthttp.StatusBadRequest {
+	if status != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", status)
 	}
 	errorObject := publicErrorObject(t, payload)
@@ -1071,9 +1106,9 @@ func TestPublicBifrostErrorMapsProviderOverload(t *testing.T) {
 }
 
 func TestPublicBifrostErrorMapsRequestTooLarge(t *testing.T) {
-	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusRequestEntityTooLarge, "request exceeds maximum size", "", ""))
+	status, payload := publicBifrostError(testBifrostError(http.StatusRequestEntityTooLarge, "request exceeds maximum size", "", ""))
 
-	if status != fasthttp.StatusRequestEntityTooLarge {
+	if status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413, got %d", status)
 	}
 	errorObject := publicErrorObject(t, payload)
@@ -1101,9 +1136,9 @@ func TestPublicBifrostErrorMapsRequestCancelled(t *testing.T) {
 }
 
 func TestPublicBifrostErrorHidesProviderServerDetails(t *testing.T) {
-	status, payload := publicBifrostError(testBifrostError(fasthttp.StatusInternalServerError, "provider stack trace: token=secret", "api_error", ""))
+	status, payload := publicBifrostError(testBifrostError(http.StatusInternalServerError, "provider stack trace: token=secret", "api_error", ""))
 
-	if status != fasthttp.StatusInternalServerError {
+	if status != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", status)
 	}
 	errorObject := publicErrorObject(t, payload)
@@ -1149,24 +1184,24 @@ func publicErrorObject(t *testing.T, payload any) map[string]any {
 }
 
 func TestCorsAllowsAnyOrigin(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.SetMethod(fasthttp.MethodOptions)
-	ctx.Request.Header.Set("Origin", "https://example.com")
-	ctx.Request.Header.Set("Access-Control-Request-Headers", "authorization,content-type,dnt,x-future-ai-sdk-feature")
+	ctx := newTestRequest(t)
+	ctx.request.Method = http.MethodOptions
+	ctx.request.Header.Set("Origin", "https://example.com")
+	ctx.request.Header.Set("Access-Control-Request-Headers", "authorization,content-type,dnt,x-future-ai-sdk-feature")
 
 	called := false
-	cors(func(ctx *fasthttp.RequestCtx) { called = true })(ctx)
+	cors(func(ctx *requestContext) { called = true })(ctx)
 
 	if called {
 		t.Fatal("preflight should not call next handler")
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusNoContent {
-		t.Fatalf("expected 204, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", testResponse(ctx).Code)
 	}
-	if got := string(ctx.Response.Header.Peek("Access-Control-Allow-Origin")); got != "*" {
+	if got := string(ctx.writer.Header().Get("Access-Control-Allow-Origin")); got != "*" {
 		t.Fatalf("expected wildcard CORS origin, got %q", got)
 	}
-	allowedHeaders := string(ctx.Response.Header.Peek("Access-Control-Allow-Headers"))
+	allowedHeaders := string(ctx.writer.Header().Get("Access-Control-Allow-Headers"))
 	for _, expected := range []string{
 		"authorization",
 		"content-type",
@@ -1177,7 +1212,7 @@ func TestCorsAllowsAnyOrigin(t *testing.T) {
 			t.Fatalf("expected CORS headers to include %q, got %q", expected, allowedHeaders)
 		}
 	}
-	if got := string(ctx.Response.Header.Peek("Vary")); !strings.Contains(strings.ToLower(got), "access-control-request-headers") {
+	if got := string(ctx.writer.Header().Get("Vary")); !strings.Contains(strings.ToLower(got), "access-control-request-headers") {
 		t.Fatalf("expected dynamic CORS response to vary by requested headers, got %q", got)
 	}
 }
@@ -1237,9 +1272,9 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
+			ctx := newTestRequest(t)
 			for key, value := range tt.headers {
-				ctx.Request.Header.Set(key, value)
+				ctx.request.Header.Set(key, value)
 			}
 
 			got, err := apiKeyToken(ctx, catalog.RouteChat)
@@ -1251,22 +1286,22 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 }
 
 func TestInferenceHeadersRejectConflictingAuthAliases(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/v1/chat/completions")
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.Set("Authorization", "Bearer sk-test-primary")
-	ctx.Request.Header.Set("X-API-Key", "sk-test-secondary")
-	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, "/v1/chat/completions")
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer sk-test-primary")
+	ctx.request.Header.Set("X-API-Key", "sk-test-secondary")
+	ctx.request.Header.Set("Content-Type", "application/json")
 
 	server := &Server{}
 	if _, ok := server.requireInferenceHeaders(ctx); ok {
 		t.Fatal("expected conflicting API key aliases to be rejected")
 	}
-	if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-		t.Fatalf("expected 400 conflicting API key response, got %d", ctx.Response.StatusCode())
+	if testResponse(ctx).Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 conflicting API key response, got %d", testResponse(ctx).Code)
 	}
-	if !strings.Contains(string(ctx.Response.Body()), "Conflicting API key headers") {
-		t.Fatalf("expected conflict message, got %s", string(ctx.Response.Body()))
+	if !strings.Contains(string(testResponse(ctx).Body.Bytes()), "Conflicting API key headers") {
+		t.Fatalf("expected conflict message, got %s", string(testResponse(ctx).Body.Bytes()))
 	}
 }
 
@@ -1283,7 +1318,7 @@ func TestInferenceHeadersRejectInvalidContentHeaders(t *testing.T) {
 				{"Content-Encoding", "gzip"},
 				{"Content-Encoding", "br"},
 			},
-			statusCode: fasthttp.StatusBadRequest,
+			statusCode: http.StatusBadRequest,
 		},
 		{
 			name: "unsupported content encoding",
@@ -1291,7 +1326,7 @@ func TestInferenceHeadersRejectInvalidContentHeaders(t *testing.T) {
 				{"Content-Type", "application/json"},
 				{"Content-Encoding", "compress"},
 			},
-			statusCode: fasthttp.StatusBadRequest,
+			statusCode: http.StatusBadRequest,
 		},
 		{
 			name: "conflicting accept values",
@@ -1300,38 +1335,38 @@ func TestInferenceHeadersRejectInvalidContentHeaders(t *testing.T) {
 				{"Accept", "application/json"},
 				{"Accept", "text/html"},
 			},
-			statusCode: fasthttp.StatusBadRequest,
+			statusCode: http.StatusBadRequest,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetRequestURI("/v1/chat/completions")
-			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-			ctx.Request.Header.Set("Authorization", "Bearer sk-test")
+			ctx := newTestRequest(t)
+			testRequestURI(ctx, "/v1/chat/completions")
+			ctx.request.Method = http.MethodPost
+			ctx.request.Header.Set("Authorization", "Bearer sk-test")
 			for _, header := range test.headers {
-				ctx.Request.Header.Add(header[0], header[1])
+				ctx.request.Header.Add(header[0], header[1])
 			}
 			if _, ok := (&Server{}).requireInferenceHeaders(ctx); ok {
 				t.Fatal("ambiguous headers were accepted")
 			}
-			if ctx.Response.StatusCode() != test.statusCode {
-				t.Fatalf("status = %d, want %d: %s", ctx.Response.StatusCode(), test.statusCode, ctx.Response.Body())
+			if testResponse(ctx).Code != test.statusCode {
+				t.Fatalf("status = %d, want %d: %s", testResponse(ctx).Code, test.statusCode, testResponse(ctx).Body.Bytes())
 			}
 		})
 	}
 }
 
 func TestAPIKeyTokenRejectsConflictingRepeatedHeaderValues(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Add("Authorization", "Bearer sk-sto-one")
-	ctx.Request.Header.Add("Authorization", "Bearer sk-sto-two")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Add("Authorization", "Bearer sk-sto-one")
+	ctx.request.Header.Add("Authorization", "Bearer sk-sto-two")
 	if token, err := apiKeyToken(ctx, catalog.RouteChat); token != "" || !errors.Is(err, errConflictingAPIKeyHeader) {
 		t.Fatalf("conflicting repeated authorization values returned token=%q error=%v", token, err)
 	}
 
-	ctx = &fasthttp.RequestCtx{}
-	ctx.Request.Header.Add("Authorization", "Bearer sk-sto-same")
-	ctx.Request.Header.Add("Authorization", "sk-sto-same")
+	ctx = newTestRequest(t)
+	ctx.request.Header.Add("Authorization", "Bearer sk-sto-same")
+	ctx.request.Header.Add("Authorization", "sk-sto-same")
 	if token, err := apiKeyToken(ctx, catalog.RouteChat); token != "" || !errors.Is(err, errConflictingAPIKeyHeader) {
 		t.Fatalf("mixed-scheme repeated authorization values returned token=%q error=%v", token, err)
 	}
@@ -1350,8 +1385,8 @@ func TestAPIKeyTokenRejectsEmptyWhitespaceAndNonASCIICredentials(t *testing.T) {
 		"wrong scheme": "Basic c2stdGVzdA==",
 	} {
 		t.Run(name, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.Header.Set("Authorization", value)
+			ctx := newTestRequest(t)
+			ctx.request.Header.Set("Authorization", value)
 			if token, err := apiKeyToken(ctx, catalog.RouteChat); token != "" || !errors.Is(err, errMalformedAPIKeyHeader) {
 				t.Fatalf("invalid credential returned token=%q error=%v", token, err)
 			}
@@ -1360,61 +1395,47 @@ func TestAPIKeyTokenRejectsEmptyWhitespaceAndNonASCIICredentials(t *testing.T) {
 }
 
 func TestReceiptHeaderRejectsRepeatedValues(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Add(stogasHeaderReceipt, "v1")
-	ctx.Request.Header.Add(stogasHeaderReceipt, "v1")
+	ctx := newTestRequest(t)
+	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
+	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
 	if _, err := receiptHeader(ctx); err == nil {
 		t.Fatal("repeated receipt header was accepted")
 	}
 }
 
-func TestTakeUpstreamCredentialsRejectsRepeatedHeadersAndClearsSecrets(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Add(upstreamOpenAIHeader, "provider-key-one")
-	ctx.Request.Header.Add(upstreamOpenAIHeader, "provider-key-two")
-	ctx.Request.Header.Set(upstreamAnthropicHeader, "anthropic-secret")
-	if credentials, err := takeUpstreamCredentials(ctx); err == nil || credentials != (upstreamCredentialInputs{}) {
-		t.Fatalf("repeated upstream credentials returned credentials=%#v error=%v", credentials, err)
-	}
-	if len(ctx.Request.Header.PeekAll(upstreamOpenAIHeader)) != 0 ||
-		len(ctx.Request.Header.PeekAll(upstreamAnthropicHeader)) != 0 {
-		t.Fatal("upstream credential headers were not cleared after rejection")
-	}
-}
-
 func TestInferenceHeadersIgnoreClientMetadata(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/v1/responses")
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.Set("Authorization", "Bearer sk-test")
-	ctx.Request.Header.Set("Content-Type", "application/json")
-	ctx.Request.Header.Set("Accept", "text/event-stream")
-	ctx.Request.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	ctx.Request.Header.Set("DNT", "1")
-	ctx.Request.Header.Set("HTTP-Referer", "https://client.example")
-	ctx.Request.Header.Set("Origin", "https://app.stogas.ai")
-	ctx.Request.Header.Set("Anthropic-Beta", "future-feature")
-	ctx.Request.Header.Set("Anthropic-Version", "2023-06-01")
-	ctx.Request.Header.Set("OpenAI-Organization", "org_client")
-	ctx.Request.Header.Set("OpenAI-Project", "proj_client")
-	ctx.Request.Header.Set("Priority", "u=1, i")
-	ctx.Request.Header.Set("Sec-GPC", "1")
-	ctx.Request.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
-	ctx.Request.Header.Set("X-Datadog-Trace-Id", "123")
-	ctx.Request.Header.Set("X-Request-ID", "client-controlled")
-	ctx.Request.Header.Set("X-Stainless-Arch", "x64")
-	ctx.Request.Header.Set("X-Stainless-Lang", "js")
-	ctx.Request.Header.Set("X-Stainless-Package-Version", "6.0.0")
-	ctx.Request.Header.Set("X-Stainless-Retry-Count", "0")
-	ctx.Request.Header.Set("X-Stainless-Runtime", "node")
-	ctx.Request.Header.Set("X-Stainless-Runtime-Version", "24.0.0")
-	ctx.Request.Header.Set("X-Stainless-Timeout", "600")
-	ctx.Request.Header.Set("X-Future-AI-SDK-Feature", "client-controlled")
-	ctx.Request.Header.Set("X-OpenRouter-Title", "client")
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, "/v1/responses")
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer sk-test")
+	ctx.request.Header.Set("Content-Type", "application/json")
+	ctx.request.Header.Set("Accept", "text/event-stream")
+	ctx.request.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	ctx.request.Header.Set("DNT", "1")
+	ctx.request.Header.Set("HTTP-Referer", "https://client.example")
+	ctx.request.Header.Set("Origin", "https://app.stogas.ai")
+	ctx.request.Header.Set("Anthropic-Beta", "future-feature")
+	ctx.request.Header.Set("Anthropic-Version", "2023-06-01")
+	ctx.request.Header.Set("OpenAI-Organization", "org_client")
+	ctx.request.Header.Set("OpenAI-Project", "proj_client")
+	ctx.request.Header.Set("Priority", "u=1, i")
+	ctx.request.Header.Set("Sec-GPC", "1")
+	ctx.request.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00")
+	ctx.request.Header.Set("X-Datadog-Trace-Id", "123")
+	ctx.request.Header.Set("X-Request-ID", "client-controlled")
+	ctx.request.Header.Set("X-Stainless-Arch", "x64")
+	ctx.request.Header.Set("X-Stainless-Lang", "js")
+	ctx.request.Header.Set("X-Stainless-Package-Version", "6.0.0")
+	ctx.request.Header.Set("X-Stainless-Retry-Count", "0")
+	ctx.request.Header.Set("X-Stainless-Runtime", "node")
+	ctx.request.Header.Set("X-Stainless-Runtime-Version", "24.0.0")
+	ctx.request.Header.Set("X-Stainless-Timeout", "600")
+	ctx.request.Header.Set("X-Future-AI-SDK-Feature", "client-controlled")
+	ctx.request.Header.Set("X-OpenRouter-Title", "client")
 
 	server := &Server{}
 	if _, ok := server.requireInferenceHeaders(ctx); !ok {
-		t.Fatalf("expected client metadata headers to be ignored, got status %d body %s", ctx.Response.StatusCode(), string(ctx.Response.Body()))
+		t.Fatalf("expected client metadata headers to be ignored, got status %d body %s", testResponse(ctx).Code, string(testResponse(ctx).Body.Bytes()))
 	}
 }
 
@@ -1428,22 +1449,22 @@ func TestInferenceHeadersRejectInternalControlHeaders(t *testing.T) {
 
 	for _, header := range tests {
 		t.Run(header, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetRequestURI("/v1/responses")
-			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-			ctx.Request.Header.Set("Authorization", "Bearer sk-test")
-			ctx.Request.Header.Set("Content-Type", "application/json")
-			ctx.Request.Header.Set(header, "client-controlled")
+			ctx := newTestRequest(t)
+			testRequestURI(ctx, "/v1/responses")
+			ctx.request.Method = http.MethodPost
+			ctx.request.Header.Set("Authorization", "Bearer sk-test")
+			ctx.request.Header.Set("Content-Type", "application/json")
+			ctx.request.Header.Set(header, "client-controlled")
 
 			server := &Server{}
 			if _, ok := server.requireInferenceHeaders(ctx); ok {
 				t.Fatalf("expected %s to be rejected", header)
 			}
-			if ctx.Response.StatusCode() != fasthttp.StatusBadRequest {
-				t.Fatalf("expected 400 unsupported header response, got %d", ctx.Response.StatusCode())
+			if testResponse(ctx).Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 unsupported header response, got %d", testResponse(ctx).Code)
 			}
-			if !strings.Contains(string(ctx.Response.Body()), strings.ToLower(header)) {
-				t.Fatalf("expected rejected header in response, got %s", string(ctx.Response.Body()))
+			if !strings.Contains(string(testResponse(ctx).Body.Bytes()), strings.ToLower(header)) {
+				t.Fatalf("expected rejected header in response, got %s", string(testResponse(ctx).Body.Bytes()))
 			}
 		})
 	}
@@ -1464,18 +1485,18 @@ func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.accept, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetRequestURI("/v1/responses")
-			ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-			ctx.Request.Header.Set("Authorization", "Bearer sk-test")
-			ctx.Request.Header.Set("Content-Type", "application/json")
+			ctx := newTestRequest(t)
+			testRequestURI(ctx, "/v1/responses")
+			ctx.request.Method = http.MethodPost
+			ctx.request.Header.Set("Authorization", "Bearer sk-test")
+			ctx.request.Header.Set("Content-Type", "application/json")
 			if tt.accept != "" {
-				ctx.Request.Header.Set("Accept", tt.accept)
+				ctx.request.Header.Set("Accept", tt.accept)
 			}
 
 			_, ok := (&Server{}).requireInferenceHeaders(ctx)
 			if ok != tt.ok {
-				t.Fatalf("expected ok=%v for Accept %q, got %v with status %d", tt.ok, tt.accept, ok, ctx.Response.StatusCode())
+				t.Fatalf("expected ok=%v for Accept %q, got %v with status %d", tt.ok, tt.accept, ok, testResponse(ctx).Code)
 			}
 		})
 	}
@@ -1522,96 +1543,15 @@ func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
 		{name: "number", value: "1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ctx := &fasthttp.RequestCtx{}
+			ctx := newTestRequest(t)
 			if test.value != "" {
-				ctx.Request.Header.Set(stogasHeaderReceipt, test.value)
+				ctx.request.Header.Set(stogasHeaderMetadata, test.value)
 			}
 			got, err := receiptHeader(ctx)
 			if (err == nil) != test.valid || got != test.want {
 				t.Fatalf("receiptHeader() = (%v, %v), want (%v, valid=%v)", got, err, test.want, test.valid)
 			}
 		})
-	}
-}
-
-func TestTakeUpstreamCredentialsReturnsBoundedPoolAndClearsSensitiveHeaders(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set(upstreamOpenAIHeader, "sk-openai")
-	ctx.Request.Header.Set(upstreamAnthropicHeader, "sk-anthropic")
-	credentials, err := takeUpstreamCredentials(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if credentials.OpenAI != "sk-openai" || credentials.Anthropic != "sk-anthropic" || credentials.Chutes != "" {
-		t.Fatalf("credentials = %#v", credentials)
-	}
-	for _, header := range []string{
-		upstreamAnthropicHeader,
-		upstreamChutesHeader,
-		upstreamOpenAIHeader,
-	} {
-		if len(ctx.Request.Header.Peek(header)) != 0 {
-			t.Fatalf("sensitive header %s was retained", header)
-		}
-	}
-}
-
-func TestPassThroughCredentialCannotAuthenticateStogasRequest(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetRequestURI("/v1/chat/completions")
-	ctx.Request.Header.SetMethod(fasthttp.MethodPost)
-	ctx.Request.Header.SetContentType("application/json")
-	ctx.Request.Header.Set(upstreamOpenAIHeader, "sk-upstream")
-
-	if _, ok := (&Server{}).requireInferenceHeaders(ctx); ok {
-		t.Fatal("pass-through credential authenticated a request without a Stogas API key")
-	}
-	if ctx.Response.StatusCode() != fasthttp.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", ctx.Response.StatusCode())
-	}
-	if len(ctx.Request.Header.Peek(upstreamOpenAIHeader)) != 0 {
-		t.Fatal("rejected pass-through credential remained in request headers")
-	}
-}
-
-func TestUpstreamCredentialPoolSelectsOnlyResolvedProvider(t *testing.T) {
-	pool := upstreamCredentialInputs{
-		Anthropic: "sk-anthropic",
-		Chutes:    "sk-chutes",
-		OpenAI:    "sk-openai",
-	}
-	selected := pool.only("anthropic")
-	if selected.Anthropic != "sk-anthropic" || selected.Chutes != "" || selected.OpenAI != "" {
-		t.Fatalf("selected pool = %#v", selected)
-	}
-	if selected.get("openai") != "" || pool.only("azure") != (upstreamCredentialInputs{}) {
-		t.Fatal("a credential crossed its resolved provider boundary")
-	}
-}
-
-func TestTakeUpstreamCredentialsRejectsLegacyGenericHeaders(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set("X-Stogas-Upstream-API-Key", "legacy-secret")
-	ctx.Request.Header.Set("X-Stogas-Upstream-Provider", "openai")
-	credentials, err := takeUpstreamCredentials(ctx)
-	if credentials != (upstreamCredentialInputs{}) || err == nil || !strings.Contains(err.Error(), "generic upstream credential headers are unsupported") {
-		t.Fatalf("takeUpstreamCredentials() = (%#v, %v)", credentials, err)
-	}
-	if len(ctx.Request.Header.Peek("X-Stogas-Upstream-API-Key")) != 0 ||
-		len(ctx.Request.Header.Peek("X-Stogas-Upstream-Provider")) != 0 {
-		t.Fatal("rejected legacy pass-through credential remained in the request headers")
-	}
-}
-
-func TestTakeUpstreamCredentialsRejectsEmptyCredential(t *testing.T) {
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.Header.Set(upstreamOpenAIHeader, " ")
-	credentials, err := takeUpstreamCredentials(ctx)
-	if credentials != (upstreamCredentialInputs{}) || err == nil || !strings.Contains(err.Error(), "is invalid") {
-		t.Fatalf("takeUpstreamCredentials() = (%#v, %v)", credentials, err)
-	}
-	if len(ctx.Request.Header.Peek(upstreamOpenAIHeader)) != 0 {
-		t.Fatal("rejected pass-through credential remained in the request headers")
 	}
 }
 
@@ -1651,43 +1591,17 @@ func publicPayloadObject(t *testing.T, payload any) map[string]any {
 
 func TestServerConnectionPolicy(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
-	server.routes()
-
-	if server.server.Concurrency != 2048 {
-		t.Fatalf("Concurrency = %d, want 2048", server.server.Concurrency)
+	if err := server.routes(); err != nil {
+		t.Fatal(err)
 	}
-	if server.readinessServer.Concurrency != 64 {
-		t.Fatalf("readiness Concurrency = %d, want 64", server.readinessServer.Concurrency)
+	if server.server.WriteTimeout != 0 || server.server.HTTP2.WriteByteTimeout <= 0 {
+		t.Fatal("quiet model time and blocked writes need separate deadlines")
 	}
-	if server.server.ReadTimeout != 5*time.Minute {
-		t.Fatalf("ReadTimeout = %s, want 5m", server.server.ReadTimeout)
+	if !server.server.Protocols.HTTP1() || !server.server.Protocols.HTTP2() || server.server.Protocols.UnencryptedHTTP2() {
+		t.Fatal("public server must support H1 and TLS H2 without h2c")
 	}
-	if server.readinessServer.ReadTimeout != 30*time.Second {
-		t.Fatalf("readiness ReadTimeout = %s, want 30s", server.readinessServer.ReadTimeout)
-	}
-	if server.server.IdleTimeout != 60*time.Second {
-		t.Fatalf("IdleTimeout = %s, want 60s", server.server.IdleTimeout)
-	}
-	if server.server.WriteTimeout != 0 {
-		t.Fatalf("WriteTimeout = %s, want unlimited", server.server.WriteTimeout)
-	}
-	if !server.server.TCPKeepalive || server.server.TCPKeepalivePeriod != 30*time.Second {
-		t.Fatalf("TCP keepalive = %t period=%s, want enabled with 30s period", server.server.TCPKeepalive, server.server.TCPKeepalivePeriod)
-	}
-	if server.server.ReadBufferSize != 16*1024 {
-		t.Fatalf("ReadBufferSize = %d, want 16384", server.server.ReadBufferSize)
-	}
-	if server.server.WriteBufferSize != 4*1024 || server.readinessServer.ReadBufferSize != 4*1024 || server.readinessServer.WriteBufferSize != 4*1024 {
-		t.Fatalf("connection buffers = public write %d, readiness read %d/write %d; want 4096 each", server.server.WriteBufferSize, server.readinessServer.ReadBufferSize, server.readinessServer.WriteBufferSize)
-	}
-	if !server.server.CloseOnShutdown || !server.readinessServer.CloseOnShutdown {
-		t.Fatal("both listeners must close keep-alive connections during shutdown")
-	}
-	if !server.server.StreamRequestBody {
-		t.Fatal("Stogas HTTP server must stream request bodies through memory admission")
-	}
-	if server.server.MaxRequestBodySize != 1024*1024 {
-		t.Fatalf("MaxRequestBodySize = %d, want 1048576", server.server.MaxRequestBodySize)
+	if server.server.MaxHeaderBytes <= 0 || server.server.HTTP2.MaxReceiveBufferPerConnection <= 0 || server.server.HTTP2.MaxReceiveBufferPerStream <= 0 {
+		t.Fatal("transport allocations must be bounded")
 	}
 }
 
@@ -1991,7 +1905,7 @@ func TestWriteSSEStreamRejectsAggregateMemoryGrowthWithoutLeakingReservation(t *
 	seeded := requestMemoryBudgetBytes - 1
 	admission.reserved.Store(seeded)
 	server := &Server{memory: admission}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 1)
 	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
@@ -2000,8 +1914,8 @@ func TestWriteSSEStreamRejectsAggregateMemoryGrowthWithoutLeakingReservation(t *
 	close(stream)
 	state := &stogas.State{}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	body := readResponseBodyStream(t, streamBodyReader)
 	payload := requireSSEErrorPayload(t, body)
 	if payload["code"] != "gateway_capacity_exceeded" || payload["message"] != "Gateway capacity is temporarily exhausted" {
 		t.Fatalf("unexpected capacity error: %#v", payload)
@@ -2017,7 +1931,7 @@ func TestWriteSSEStreamRejectsAggregateMemoryGrowthWithoutLeakingReservation(t *
 func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
 	admission := &requestMemoryAdmission{}
 	server := &Server{memory: admission}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 1)
 	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
@@ -2025,7 +1939,8 @@ func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
 	}}
 	close(stream)
 
-	server.writeSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel)
+	completed := make(chan struct{})
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel, func() { close(completed) })
 	deadline := time.Now().Add(time.Second)
 	for admission.reserved.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
@@ -2033,10 +1948,11 @@ func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
 	if admission.reserved.Load() == 0 {
 		t.Fatal("stream frame did not reserve memory")
 	}
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	if !strings.Contains(body, "chatcmpl_memory") {
 		t.Fatalf("stream frame missing: %q", body)
 	}
+	<-completed
 	if got := admission.reserved.Load(); got != 0 {
 		t.Fatalf("body drain left %d reserved bytes", got)
 	}
@@ -2044,17 +1960,17 @@ func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
 
 func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 
-	server.writeSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel)
-	defer ctx.Response.CloseBodyStream()
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel)
+	defer streamBodyReader.Close()
 
-	if !ctx.Response.IsBodyStream() {
-		t.Fatal("expected SSE response to use fasthttp body streaming")
+	if !(streamBodyReader != nil) {
+		t.Fatal("expected an SSE response reader")
 	}
-	if got := string(ctx.Response.Header.Peek("X-Accel-Buffering")); got != "no" {
+	if got := string(ctx.writer.Header().Get("X-Accel-Buffering")); got != "no" {
 		t.Fatalf("X-Accel-Buffering = %q, want no", got)
 	}
 
@@ -2070,7 +1986,7 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	payload := requireSSEDataPayload(t, body, "chatcmpl_stream_test")
 	if payload["object"] != "chat.completion.chunk" {
 		t.Fatalf("expected streamed chat chunk object, got %v in %q", payload["object"], body)
@@ -2096,7 +2012,7 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			body := `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true` + tc.streamOptions + `}`
 			server := &Server{}
-			ctx := &fasthttp.RequestCtx{}
+			ctx := newTestRequest(t)
 			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 			stream := make(chan *schemas.BifrostStreamChunk)
 			state := &stogas.State{
@@ -2105,8 +2021,8 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 				StartedAt:  time.Now().Add(-5 * time.Millisecond),
 			}
 
-			server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-			defer ctx.Response.CloseBodyStream()
+			streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+			defer streamBodyReader.Close()
 
 			go func() {
 				content := "hello"
@@ -2153,7 +2069,7 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 				close(stream)
 			}()
 
-			streamBody := readResponseBodyStream(t, ctx.Response.BodyStream())
+			streamBody := readResponseBodyStream(t, streamBodyReader)
 			if !strings.Contains(streamBody, "chatcmpl_content") || !strings.Contains(streamBody, "data: [DONE]\n\n") {
 				t.Fatalf("stream content or terminator missing: %q", streamBody)
 			}
@@ -2172,7 +2088,7 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 
 func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 3)
 	state := &stogas.State{
@@ -2205,9 +2121,9 @@ func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 		ID: "late_invalid_frame", Object: "not-a-chat-chunk",
 	}}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	defer ctx.Response.CloseBodyStream()
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer streamBodyReader.Close()
+	body := readResponseBodyStream(t, streamBodyReader)
 	if !strings.Contains(body, "chatcmpl_terminal") || !strings.Contains(body, "data: [DONE]\n\n") {
 		t.Fatalf("terminal response was not completed normally: %q", body)
 	}
@@ -2218,7 +2134,7 @@ func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 
 func TestWriteSSEStreamCompletesWithoutTerminalTokenUsage(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
@@ -2226,8 +2142,8 @@ func TestWriteSSEStreamCompletesWithoutTerminalTokenUsage(t *testing.T) {
 		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
 	}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	defer ctx.Response.CloseBodyStream()
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer streamBodyReader.Close()
 
 	go func() {
 		content := "hello"
@@ -2255,7 +2171,7 @@ func TestWriteSSEStreamCompletesWithoutTerminalTokenUsage(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	if !strings.Contains(body, "chatcmpl_missing_usage") || !strings.Contains(body, "data: [DONE]\n\n") {
 		t.Fatalf("stream without token usage did not complete normally: %q", body)
 	}
@@ -2269,7 +2185,7 @@ func TestWriteSSEStreamCompletesWithoutTerminalTokenUsage(t *testing.T) {
 
 func TestWriteSSEStreamIgnoresUnusableUsageWithoutFailingOutput(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
@@ -2277,8 +2193,8 @@ func TestWriteSSEStreamIgnoresUnusableUsageWithoutFailingOutput(t *testing.T) {
 		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
 	}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	defer ctx.Response.CloseBodyStream()
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer streamBodyReader.Close()
 	go func() {
 		role := string(schemas.ChatMessageRoleAssistant)
 		finishReason := "stop"
@@ -2312,7 +2228,7 @@ func TestWriteSSEStreamIgnoresUnusableUsageWithoutFailingOutput(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	if !strings.Contains(body, "chatcmpl_invalid_usage") || !strings.Contains(body, "data: [DONE]\n\n") || strings.Contains(body, `"prompt_tokens":-1`) {
 		t.Fatalf("unusable private usage changed the successful stream: %q", body)
 	}
@@ -2325,18 +2241,12 @@ func TestWriteSSEStreamIgnoresUnusableUsageWithoutFailingOutput(t *testing.T) {
 }
 
 func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("s", 128)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{proofs: &proofhttp.Service{
-		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
-		Signer: privateKey,
-	}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetBodyString(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	service, publicKey, boot := testProofService(t)
+	server := &Server{proofs: service}
+	ctx := newTestRequest(t)
+	testRequestBody(ctx, `{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	bifrostCtx.SetValue(stogasReceiptKey, true)
+	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
 		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
@@ -2344,13 +2254,13 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
 		NodeID:     strings.Repeat("3", 64),
 		FinalEvent: &billing.RequestEvent{
-			CreatedAt:          "2026-08-24T12:34:56.789Z",
-			BilledCostUSDAtoms: "0",
+			CreatedAt:     "2026-08-24T12:34:56.789Z",
+			BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{},
 		},
 	}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	defer ctx.Response.CloseBodyStream()
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	defer streamBodyReader.Close()
 
 	go func() {
 		content := "hello"
@@ -2387,7 +2297,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	chunkJSON := requireSSEDataFrames(t, body, "chatcmpl_stream_proof")
 	proofPrefix := ": " + proofhttp.SSECommentPrefix
 	proofIndex := strings.Index(body, proofPrefix)
@@ -2410,27 +2320,18 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		proofFrames = append(proofFrames, frameSSEEvent("", []byte(chunk)))
 	}
 	proofFrames = append(proofFrames, frameSSEDone())
-	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
-		RequestBody: ctx.Request.Body(),
-		Metadata:    proofMetadata(state, ""),
-	}, proofFrames, proofObject.Proof.Signature) {
-		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Proof.Signature, body)
+	if !proof.VerifyReceipt(publicKey, proofObject.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256(bytes.Join(proofFrames, nil)), proofObject) {
+		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Receipt.Signature, body)
 	}
 }
 
 func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("r", 128)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{proofs: &proofhttp.Service{
-		Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
-		Signer: privateKey,
-	}}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Request.SetBodyString(`{"model":"gpt-5.5","input":"hi","stream":true}`)
+	service, publicKey, boot := testProofService(t)
+	server := &Server{proofs: service}
+	ctx := newTestRequest(t)
+	testRequestBody(ctx, `{"model":"gpt-5.5","input":"hi","stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-	bifrostCtx.SetValue(stogasReceiptKey, true)
+	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
 		Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hi","stream":true}`),
@@ -2438,13 +2339,13 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
 		NodeID:     strings.Repeat("5", 64),
 		FinalEvent: &billing.RequestEvent{
-			CreatedAt:          "2026-08-24T12:34:56.789Z",
-			BilledCostUSDAtoms: "0",
+			CreatedAt:     "2026-08-24T12:34:56.789Z",
+			BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{},
 		},
 	}
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel)
-	defer ctx.Response.CloseBodyStream()
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel)
+	defer streamBodyReader.Close()
 	go func() {
 		inProgress := schemas.ResponsesResponseStatusInProgress
 		completed := schemas.ResponsesResponseStatusCompleted
@@ -2464,7 +2365,7 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	proofPrefix := ": " + proofhttp.SSECommentPrefix
 	proofIndex := strings.Index(body, proofPrefix)
 	terminalIndex := strings.Index(body, "event: response.completed\n")
@@ -2480,10 +2381,7 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsignedBody := body[:proofIndex] + body[proofIndex+proofEnd+2:]
-	if !proof.VerifyStreamingInput(publicKey, proof.StreamingInput{
-		RequestBody: ctx.Request.Body(),
-		Metadata:    proofMetadata(state, ""),
-	}, [][]byte{[]byte(unsignedBody)}, proofObject.Proof.Signature) {
+	if !proof.VerifyReceipt(publicKey, proofObject.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(unsignedBody)), proofObject) {
 		t.Fatal("Responses receipt did not cover the complete stream including its terminal event")
 	}
 }
@@ -2527,18 +2425,12 @@ func TestWriteSSEStreamDoesNotProofMalformedStream(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("u", 128)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			server := &Server{proofs: &proofhttp.Service{
-				Quotes: staticProofQuotes{snapshot: testProofSnapshot(t, publicKey)},
-				Signer: privateKey,
-			}}
-			ctx := &fasthttp.RequestCtx{}
-			ctx.Request.SetBodyString(`{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
+			service, _, _ := testProofService(t)
+			server := &Server{proofs: service}
+			ctx := newTestRequest(t)
+			testRequestBody(ctx, `{"messages":[{"role":"user","content":"hi"}],"stream":true}`)
 			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-			bifrostCtx.SetValue(stogasReceiptKey, true)
+			bifrostCtx.SetValue(stogasMetadataKey, true)
 			stream := make(chan *schemas.BifrostStreamChunk)
 			state := &stogas.State{
 				Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
@@ -2547,14 +2439,14 @@ func TestWriteSSEStreamDoesNotProofMalformedStream(t *testing.T) {
 				NodeID:     strings.Repeat("4", 64),
 			}
 
-			server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-			defer ctx.Response.CloseBodyStream()
+			streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+			defer streamBodyReader.Close()
 			go func() {
 				tc.send(stream, state)
 				close(stream)
 			}()
 
-			body := readResponseBodyStream(t, ctx.Response.BodyStream())
+			body := readResponseBodyStream(t, streamBodyReader)
 			if strings.Contains(body, ": "+proofhttp.SSECommentPrefix) {
 				t.Fatalf("invalid stream received a confidential proof: %q", body)
 			}
@@ -2568,7 +2460,7 @@ func TestWriteSSEStreamDoesNotProofMalformedStream(t *testing.T) {
 
 func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
@@ -2576,11 +2468,11 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
 		once.Do(func() { close(cancelled) })
 	})
 
-	closer, ok := ctx.Response.BodyStream().(io.Closer)
+	closer, ok := streamBodyReader.(io.Closer)
 	if !ok {
 		t.Fatal("expected response body stream to be closeable")
 	}
@@ -2639,7 +2531,7 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 
 func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
@@ -2647,11 +2539,11 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
 		once.Do(func() { close(cancelled) })
 	})
 
-	closer, ok := ctx.Response.BodyStream().(io.Closer)
+	closer, ok := streamBodyReader.(io.Closer)
 	if !ok {
 		t.Fatal("expected response body stream to be closeable")
 	}
@@ -2735,19 +2627,20 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 
 func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithTimeout(t.Context(), 10*time.Millisecond)
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
+	defer close(stream)
 	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteResponses}}
 	completed := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, false, true, func() {
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, false, true, func() {
 		once.Do(func() { close(completed) })
 	})
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	select {
 	case <-completed:
 	case <-time.After(time.Second):
@@ -2764,7 +2657,7 @@ func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 
 func TestWriteSSEStreamAllowsQuietChatStream(t *testing.T) {
 	server := &Server{}
-	ctx := &fasthttp.RequestCtx{}
+	ctx := newTestRequest(t)
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
@@ -2772,7 +2665,7 @@ func TestWriteSSEStreamAllowsQuietChatStream(t *testing.T) {
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	server.writeSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
 		once.Do(func() { close(cancelled) })
 	})
 
@@ -2789,7 +2682,7 @@ func TestWriteSSEStreamAllowsQuietChatStream(t *testing.T) {
 		close(stream)
 	}()
 
-	body := readResponseBodyStream(t, ctx.Response.BodyStream())
+	body := readResponseBodyStream(t, streamBodyReader)
 	select {
 	case <-cancelled:
 	case <-time.After(time.Second):
@@ -2921,4 +2814,178 @@ type countingRequestReader struct {
 func (r *countingRequestReader) Read(buffer []byte) (int, error) {
 	r.reads++
 	return r.reader.Read(buffer)
+}
+
+func TestSilentStreamKeepaliveDoesNotCountAsOutput(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server := &Server{memory: newRequestMemoryAdmission()}
+		ctx := newTestRequest(t)
+		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+		defer cancel()
+		state := &stogas.State{}
+		provider := make(chan *schemas.BifrostStreamChunk)
+		finished := make(chan struct{})
+		reader := server.startSSEStream(ctx, request, state, provider, true, false, cancel, func() { close(finished) })
+		defer reader.Close()
+		time.Sleep(responseKeepaliveInterval)
+		keepalive := make([]byte, len(": STOGAS PROCESSING\n\n"))
+		if _, err := io.ReadFull(reader, keepalive); err != nil {
+			t.Fatal(err)
+		}
+		if string(keepalive) != ": STOGAS PROCESSING\n\n" {
+			t.Fatalf("keepalive = %q", keepalive)
+		}
+		if got := server.memory.diagnostics().StreamStateReservedBytes; got != 0 {
+			t.Fatalf("keepalive counted as model output: %d", got)
+		}
+		close(provider)
+		rest, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(rest) != "data: [DONE]\n\n" {
+			t.Fatalf("terminal response = %q", rest)
+		}
+		<-finished
+	})
+}
+
+func TestIncrementalUploadAccountsGrowthAndFailsWithoutWaiting(t *testing.T) {
+	admission := &requestMemoryAdmission{budget: 2 << 20}
+	lease, ok := admission.acquire(0)
+	if !ok {
+		t.Fatal("initial admission")
+	}
+	// The next capacity growth needs both old and new storage at once.
+	_, err := readAdmittedBody(strings.NewReader(strings.Repeat("s", 1<<20)), 1<<20, lease, 0)
+	if !errors.Is(err, errRequestMemoryCapacity) {
+		t.Fatalf("growth = %v", err)
+	}
+	if admission.peakReserved.Load() > admission.budget {
+		t.Fatal("allocated beyond admission")
+	}
+	if admission.reserved.Load() < minimumRequestWeightBytes {
+		t.Fatal("failed read released its caller's work reservation")
+	}
+	lease.release()
+	if admission.reserved.Load() != 0 {
+		t.Fatal("failed upload leaked admission")
+	}
+	// Unknown-length short uploads reserve their actual capacity, not the ceiling.
+	lease, ok = admission.acquire(0)
+	if !ok {
+		t.Fatal("next admission")
+	}
+	body, err := readAdmittedBody(strings.NewReader("{}"), 128<<20, lease, 0)
+	if err != nil || string(body) != "{}" || admission.reserved.Load() != minimumRequestWeightBytes {
+		t.Fatalf("small upload = %q, %v, %d", body, err, admission.reserved.Load())
+	}
+	lease.release()
+}
+
+func TestHTTP2DisconnectRetainsInferenceAdmissionUntilProviderEnds(t *testing.T) {
+	server := &Server{memory: newRequestMemoryAdmission(), requests: newRequestDrain()}
+	provider := make(chan *schemas.BifrostStreamChunk, 1)
+	provider <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{ID: "first", Object: "chat.completion.chunk", Choices: []schemas.BifrostResponseChoice{}}}
+	handlerDone, providerDone := make(chan struct{}), make(chan struct{})
+	httpServer := httptest.NewUnstartedServer(requestHandler(func(ctx *requestContext) {
+		defer close(handlerDone)
+		lease, ok := server.memory.acquire(0)
+		if !ok || !server.requests.begin() {
+			t.Error("admission failed")
+			return
+		}
+		request, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), time.Minute)
+		reader := server.startSSEStream(ctx, request, &stogas.State{}, provider, true, false, cancel, func() { lease.release(); server.requests.end(); close(providerDone) })
+		server.writeStream(ctx, reader)
+	}))
+	httpServer.EnableHTTP2 = true
+	httpServer.StartTLS()
+	defer httpServer.Close()
+	response, err := httpServer.Client().Get(httpServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ProtoMajor != 2 {
+		t.Fatal("did not exercise HTTP/2")
+	}
+	if _, err := response.Body.Read(make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("reset did not stop downstream handler")
+	}
+	if server.requests.diagnostics().Active != 1 || server.memory.reserved.Load() < minimumRequestWeightBytes {
+		t.Fatal("handler exit released live provider ownership")
+	}
+	select {
+	case <-providerDone:
+		t.Fatal("provider stopped on downstream reset")
+	default:
+	}
+	// Detached provider reading must still consume later work before finalization.
+	provider <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{ID: "later", Object: "chat.completion.chunk", Choices: []schemas.BifrostResponseChoice{}}}
+	close(provider)
+	select {
+	case <-providerDone:
+	case <-time.After(time.Second):
+		t.Fatal("detached provider failed to finish")
+	}
+	if server.memory.reserved.Load() != 0 || server.requests.diagnostics().Active != 0 {
+		t.Fatal("finished provider retained admission")
+	}
+}
+
+func TestKeepaliveWhileProviderStartupIsSilent(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server := &Server{memory: newRequestMemoryAdmission()}
+		ctx := newTestRequest(t)
+		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+		state := &stogas.State{}
+		open := make(chan struct{})
+		provider := make(chan *schemas.BifrostStreamChunk)
+		prepared := make(chan chan *schemas.BifrostStreamChunk, 1)
+		go func() {
+			stream, failure := awaitProviderStream(ctx, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) { <-open; return provider, nil })
+			if failure != nil {
+				t.Error("unexpected startup failure")
+			}
+			prepared <- stream
+		}()
+		time.Sleep(responseKeepaliveInterval)
+		stream := <-prepared
+		if stream != nil || ctx.pendingStream == nil {
+			t.Fatal("silent startup was not retained")
+		}
+		finished := make(chan struct{})
+		reader := server.startSSEStream(ctx, request, state, stream, true, false, cancel, func() { close(finished) })
+		comment := make([]byte, len(": STOGAS PROCESSING\n\n"))
+		if _, err := io.ReadFull(reader, comment); err != nil || string(comment) != ": STOGAS PROCESSING\n\n" {
+			t.Fatalf("startup keepalive=%q, %v", comment, err)
+		}
+		_ = reader.Close()
+		cancel()
+		synctest.Wait()
+		select {
+		case <-finished:
+			t.Fatal("cancellation released a still-running startup task")
+		default:
+		}
+		close(open)
+		close(provider)
+		<-finished
+	})
+}
+
+func TestUnregisteredUpstreamCredentialsAreUnsupported(t *testing.T) {
+	for _, header := range []string{"X-Stogas-Upstream-OpenAI-API-Key", "X-Stogas-Upstream-Anthropic-API-Key", "X-Stogas-Upstream-Chutes-API-Key", "X-Stogas-Upstream-API-Key", "X-Stogas-Upstream-Provider"} {
+		ctx := newTestRequest(t)
+		ctx.request.Header.Set(header, "sensitive-value")
+		if unsupportedInferenceHeader(ctx) == "" {
+			t.Fatalf("accepted provider credential header %s", header)
+		}
+	}
 }

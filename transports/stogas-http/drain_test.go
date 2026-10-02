@@ -40,7 +40,7 @@ func TestServerDrainWaitsForActiveRequest(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		server.drainRequests()
+		server.shutdownWithContext(t.Context())
 		close(done)
 	}()
 

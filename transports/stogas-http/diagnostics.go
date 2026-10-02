@@ -1,44 +1,58 @@
 package stogashttp
 
 import (
+	"io"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
-	"github.com/valyala/fasthttp"
+	"net"
+	"net/http"
+	"sync/atomic"
 )
 
 type privateNodeDiagnostics struct {
-	OperationalLogs []stogas.OperationalLogSeries  `json:"operationalLogs"`
-	AzureAuth       azureauth.Diagnostics          `json:"azureAuth"`
-	Billing         billing.DiagnosticsSnapshot    `json:"billing"`
-	ChutesE2EE      chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
-	GeneratedAt     time.Time                      `json:"generatedAt"`
-	Listeners       listenerDiagnostics            `json:"listeners"`
-	Process         processDiagnostics             `json:"process"`
-	Requests        requestDiagnostics             `json:"requests"`
+	OmittedOperationalLogs int                            `json:"omittedOperationalLogs"`
+	OmittedChutes          int                            `json:"omittedChutes"`
+	DetailsUnavailable     bool                           `json:"detailsUnavailable"`
+	HTTPServerErrors       uint64                         `json:"httpServerErrors"`
+	OperationalLogs        []stogas.OperationalLogSeries  `json:"operationalLogs"`
+	AzureAuth              azureauth.Diagnostics          `json:"azureAuth"`
+	Billing                billing.DiagnosticsSnapshot    `json:"billing"`
+	ChutesE2EE             chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
+	GeneratedAt            time.Time                      `json:"generatedAt"`
+	Listeners              listenerDiagnostics            `json:"listeners"`
+	Process                processDiagnostics             `json:"process"`
+	Requests               requestDiagnostics             `json:"requests"`
 }
 
 type listenerDiagnostics struct {
-	Private serverListenerDiagnostics `json:"private"`
-	Public  serverListenerDiagnostics `json:"public"`
+	Private     serverListenerDiagnostics `json:"private"`
+	Public      serverListenerDiagnostics `json:"public"`
+	Diagnostics serverListenerDiagnostics `json:"diagnostics"`
 }
 
 type serverListenerDiagnostics struct {
-	CurrentConnections  uint32 `json:"currentConnections"`
+	AcceptedConnections uint64 `json:"acceptedConnections"`
 	MaximumConnections  int    `json:"maximumConnections"`
 	OpenConnections     int32  `json:"openConnections"`
-	RejectedConnections uint32 `json:"rejectedConnections"`
+	ActiveHandlers      int64  `json:"activeHandlers"`
+	IdleEvictions       uint64 `json:"idleEvictions"`
+	CapacityRejected    uint64 `json:"capacityRejected"`
 }
 
 type processDiagnostics struct {
+	CPUTimeMicros            *uint64 `json:"cpuTimeMicros,omitempty"`
+	AllocatedBytes           uint64  `json:"allocatedBytes"`
+	Allocations              uint64  `json:"allocations"`
 	GCCount                  uint32  `json:"gcCount"`
 	GCCPUFraction            float64 `json:"gcCpuFraction"`
 	GCPauseTotalMS           uint64  `json:"gcPauseTotalMs"`
@@ -64,47 +78,85 @@ type processDiagnostics struct {
 }
 
 type requestDiagnostics struct {
-	Admission requestAdmissionDiagnostics `json:"admission"`
-	Drain     requestDrainDiagnostics     `json:"drain"`
-	Memory    requestMemoryDiagnostics    `json:"memory"`
+	IPAdmission   ipAdmissionDiagnostics      `json:"ipAdmission"`
+	Admission     requestAdmissionDiagnostics `json:"admission"`
+	Drain         requestDrainDiagnostics     `json:"drain"`
+	Memory        requestMemoryDiagnostics    `json:"memory"`
+	JSONDecode    requestWorkDiagnostics      `json:"jsonDecode"`
+	Preprocessing requestWorkDiagnostics      `json:"preprocessing"`
 }
 
 func (s *Server) privateDiagnostics() privateNodeDiagnostics {
-	result := privateNodeDiagnostics{GeneratedAt: time.Now().UTC(), OperationalLogs: stogas.OperationalLogDiagnostics()}
+	return s.privateDiagnosticsSnapshot(true)
+}
+
+func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics {
+	result := privateNodeDiagnostics{GeneratedAt: time.Now().UTC(), DetailsUnavailable: !details}
+	if details {
+		result.OperationalLogs = stogas.OperationalLogDiagnostics()
+	}
 	if s == nil {
 		result.Process = currentProcessDiagnostics(time.Time{})
-		return result
+		return boundPrivateDiagnostics(result)
 	}
 	result.Process = currentProcessDiagnostics(s.startedAt)
-	result.Listeners = listenerDiagnostics{
-		Private: currentListenerDiagnostics(s.readinessServer, readinessConcurrency),
-		Public:  currentListenerDiagnostics(s.server, serverConcurrency),
+	if s.httpErrors != nil {
+		result.HTTPServerErrors = s.httpErrors.errors.Load()
 	}
+	result.Listeners = listenerDiagnostics{
+		Private:     s.privateConnections.snapshot(readinessConcurrency),
+		Public:      s.publicConnections.snapshot(serverConcurrency),
+		Diagnostics: s.diagnosticConnections.snapshot(readinessConcurrency),
+	}
+	s.idleConnections.mu.Lock()
+	result.Listeners.Public.IdleEvictions = s.idleConnections.evicted
+	result.Listeners.Public.CapacityRejected = s.idleConnections.rejected
+	s.idleConnections.mu.Unlock()
 	result.Requests = requestDiagnostics{
-		Admission: s.admission.diagnostics(),
-		Drain:     s.requests.diagnostics(),
-		Memory:    s.memory.diagnostics(),
+		IPAdmission:   s.ipAdmission.diagnostics(),
+		Admission:     s.admission.diagnostics(),
+		Drain:         s.requests.diagnostics(),
+		Memory:        s.memory.diagnostics(),
+		JSONDecode:    s.jsonDecode.diagnostics(),
+		Preprocessing: s.preprocessing.diagnostics(),
 	}
 	if s.runtime != nil {
 		result.AzureAuth = s.runtime.AzureAuthDiagnostics()
 		result.Billing = s.runtime.BillingDiagnostics()
-		result.ChutesE2EE = s.runtime.ChutesE2EEDiagnostics()
+		if details {
+			result.ChutesE2EE = s.runtime.ChutesE2EEDiagnostics()
+		}
 	}
-	return result
+	return boundPrivateDiagnostics(result)
 }
 
-func currentListenerDiagnostics(server *fasthttp.Server, defaultMaximum int) serverListenerDiagnostics {
-	result := serverListenerDiagnostics{MaximumConnections: defaultMaximum}
-	if server == nil {
-		return result
+type connectionCounters struct {
+	open     atomic.Int32
+	accepted atomic.Uint64
+	handlers atomic.Int64
+}
+
+func (c *connectionCounters) handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.handlers.Add(1)
+		defer c.handlers.Add(-1)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (c *connectionCounters) observe(_ net.Conn, state http.ConnState) {
+	switch state {
+	case http.StateNew:
+		c.open.Add(1)
+		c.accepted.Add(1)
+	case http.StateClosed, http.StateHijacked:
+		c.open.Add(-1)
 	}
-	if server.Concurrency > 0 {
-		result.MaximumConnections = server.Concurrency
-	}
-	result.CurrentConnections = server.GetCurrentConcurrency()
-	result.OpenConnections = max(0, server.GetOpenConnectionsCount())
-	result.RejectedConnections = server.GetRejectedConnectionsCount()
-	return result
+}
+
+func (c *connectionCounters) snapshot(maximum int) serverListenerDiagnostics {
+	count := max(0, c.open.Load())
+	return serverListenerDiagnostics{MaximumConnections: maximum, OpenConnections: count, AcceptedConnections: c.accepted.Load(), ActiveHandlers: c.handlers.Load()}
 }
 
 func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
@@ -123,6 +175,9 @@ func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
 		goManagedBytes = 0
 	}
 	return processDiagnostics{
+		CPUTimeMicros:            processCPUTimeMicros(),
+		AllocatedBytes:           memory.TotalAlloc,
+		Allocations:              memory.Mallocs,
 		GCCount:                  memory.NumGC,
 		GCCPUFraction:            memory.GCCPUFraction,
 		GCPauseTotalMS:           memory.PauseTotalNs / uint64(time.Millisecond),
@@ -146,6 +201,17 @@ func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
 		SystemBytes:              memory.Sys,
 		UptimeSeconds:            uptime,
 	}
+}
+
+// RUSAGE_SELF includes user and kernel CPU time across every process thread.
+// Omit unavailable measurements rather than reporting a misleading zero.
+func processCPUTimeMicros() *uint64 {
+	var usage syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &usage); err != nil {
+		return nil
+	}
+	micros := uint64(usage.Utime.Sec+usage.Stime.Sec)*1_000_000 + uint64(usage.Utime.Usec+usage.Stime.Usec)
+	return &micros
 }
 
 func linuxResidentBytes() uint64 {
@@ -203,9 +269,20 @@ func linuxLoadAverage() (float64, float64, float64) {
 }
 
 func linuxOpenFileDescriptors() int {
-	entries, err := os.ReadDir("/proc/self/fd")
+	directory, err := os.Open("/proc/self/fd")
 	if err != nil {
 		return 0
 	}
-	return len(entries)
+	defer directory.Close()
+	count := 0
+	for {
+		names, err := directory.Readdirnames(128)
+		count += len(names)
+		if err == io.EOF {
+			return count
+		}
+		if err != nil {
+			return 0
+		}
+	}
 }

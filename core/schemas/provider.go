@@ -27,6 +27,12 @@ const (
 	DefaultMaxConnsPerHost            = 5000
 	MaxConnsPerHostUpperBound         = 10000
 	DefaultMaxIdleConnsPerHost        = 40
+	// HTTP2PingIntervalUpperBoundSeconds matches the sibling *_in_seconds fields
+	// on NetworkConfig (StreamIdleTimeoutInSeconds, KeepAliveTimeoutInSeconds),
+	// which cap at 3600 in config.schema.json — a sensible range for this field
+	// and, incidentally, nowhere near where the * time.Second conversion in the
+	// Bedrock transport could overflow int64 (math.MaxInt64 / time.Second).
+	HTTP2PingIntervalUpperBoundSeconds = 3600
 )
 
 // Pre-defined errors for provider operations
@@ -59,8 +65,8 @@ type NetworkConfig struct {
 	// Transport is an in-process request transform for provider-specific wire protocols.
 	// It is runtime-only and is never serialized.
 	Transport fasthttp.RoundTripper `json:"-"`
-	// MaxResponseBodySize bounds buffered provider responses. Streaming clients use
-	// the same value as the threshold at which fasthttp switches to a body stream.
+	// MaxResponseBodySize bounds buffered provider responses. Streamed responses
+	// are read incrementally by the context-aware transport.
 	// It is runtime-only and zero keeps fasthttp's default behavior.
 	MaxResponseBodySize int `json:"-"`
 	// BaseURL is supported for OpenAI, Anthropic, Cohere, Mistral, and Ollama providers (required for Ollama)
@@ -76,6 +82,7 @@ type NetworkConfig struct {
 	KeepAliveTimeoutInSeconds      int               `json:"keep_alive_timeout_in_seconds,omitempty"`  // Idle keep-alive for pooled connections; set below the upstream server's keep-alive to avoid reusing connections it has already closed. Default: 30s
 	MaxConnsPerHost                int               `json:"max_conns_per_host,omitempty"`             // Max TCP connections per provider host (default: 5000)
 	EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`                  // Force HTTP/2 on provider connections (relevant for net/http-based providers like Bedrock)
+	HTTP2PingIntervalInSeconds     int               `json:"http2_ping_interval_in_seconds,omitempty"` // Seconds of stream idle before an HTTP/2 keepalive PING (0 = disabled; only when enforce_http2)
 	BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`          // Override default beta header support per provider (keys are prefixes like "redact-thinking-")
 	AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`          // Allow connections to RFC 1918 private IPs (for k8s pods, LAN deployments). Link-local (169.254.x.x) is always blocked.
 	RequireTLS13                   bool              `json:"require_tls_13,omitempty"`                 // Require TLS 1.3 without requiring a specific key exchange.
@@ -103,6 +110,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 		KeepAliveTimeoutInSeconds      int               `json:"keep_alive_timeout_in_seconds,omitempty"`
 		MaxConnsPerHost                int               `json:"max_conns_per_host,omitempty"`
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
+		HTTP2PingIntervalInSeconds     int               `json:"http2_ping_interval_in_seconds,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
 		RequireTLS13                   bool              `json:"require_tls_13,omitempty"`
@@ -125,6 +133,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 	nc.KeepAliveTimeoutInSeconds = alias.KeepAliveTimeoutInSeconds
 	nc.MaxConnsPerHost = alias.MaxConnsPerHost
 	nc.EnforceHTTP2 = alias.EnforceHTTP2
+	nc.HTTP2PingIntervalInSeconds = alias.HTTP2PingIntervalInSeconds
 	nc.BetaHeaderOverrides = alias.BetaHeaderOverrides
 	nc.AllowPrivateNetwork = alias.AllowPrivateNetwork
 	nc.RequireTLS13 = alias.RequireTLS13
@@ -200,6 +209,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		KeepAliveTimeoutInSeconds      int               `json:"keep_alive_timeout_in_seconds,omitempty"`
 		MaxConnsPerHost                int               `json:"max_conns_per_host,omitempty"`
 		EnforceHTTP2                   bool              `json:"enforce_http2,omitempty"`
+		HTTP2PingIntervalInSeconds     int               `json:"http2_ping_interval_in_seconds,omitempty"`
 		BetaHeaderOverrides            map[string]bool   `json:"beta_header_overrides,omitempty"`
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
 		RequireTLS13                   bool              `json:"require_tls_13,omitempty"`
@@ -219,6 +229,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		KeepAliveTimeoutInSeconds:  nc.KeepAliveTimeoutInSeconds,
 		MaxConnsPerHost:            nc.MaxConnsPerHost,
 		EnforceHTTP2:               nc.EnforceHTTP2,
+		HTTP2PingIntervalInSeconds: nc.HTTP2PingIntervalInSeconds,
 		BetaHeaderOverrides:        nc.BetaHeaderOverrides,
 		AllowPrivateNetwork:        nc.AllowPrivateNetwork,
 		RequireTLS13:               nc.RequireTLS13,
@@ -370,6 +381,7 @@ type AllowedRequests struct {
 	ImageEditStream       bool `json:"image_edit_stream"`
 	ImageVariation        bool `json:"image_variation"`
 	VideoGeneration       bool `json:"video_generation"`
+	VideoEdit             bool `json:"video_edit"`
 	VideoRetrieve         bool `json:"video_retrieve"`
 	VideoDownload         bool `json:"video_download"`
 	VideoDelete           bool `json:"video_delete"`
@@ -465,6 +477,8 @@ func (ar *AllowedRequests) IsOperationAllowed(operation RequestType) bool {
 		return ar.ImageVariation
 	case VideoGenerationRequest:
 		return ar.VideoGeneration
+	case VideoEditRequest:
+		return ar.VideoEdit
 	case VideoRetrieveRequest:
 		return ar.VideoRetrieve
 	case VideoDownloadRequest:
@@ -538,12 +552,15 @@ func (ar *AllowedRequests) IsOperationAllowed(operation RequestType) bool {
 	}
 }
 
+// CustomProviderConfig represent custom provider config
 type CustomProviderConfig struct {
-	CustomProviderKey    string                 `json:"-"`                                // Custom provider key, internally set by Bifrost
-	IsKeyLess            bool                   `json:"is_key_less"`                      // Whether the custom provider requires a key (not allowed for Bedrock)
-	BaseProviderType     ModelProvider          `json:"base_provider_type"`               // Base provider type
-	AllowedRequests      *AllowedRequests       `json:"allowed_requests,omitempty"`       // Allowed requests for the custom provider
-	RequestPathOverrides map[RequestType]string `json:"request_path_overrides,omitempty"` // Mapping of request type to its custom path which will override the default path of the provider (not allowed for Bedrock)
+	CustomProviderKey     string                 `json:"-"`                                // Custom provider key, internally set by Bifrost
+	IsKeyLess             bool                   `json:"is_key_less"`                      // Whether the custom provider requires a key (not allowed for Bedrock)
+	BaseProviderType      ModelProvider          `json:"base_provider_type"`               // Base provider type
+	AllowedRequests       *AllowedRequests       `json:"allowed_requests,omitempty"`       // Allowed requests for the custom provider
+	RequestPathOverrides  map[RequestType]string `json:"request_path_overrides,omitempty"` // Mapping of request type to its custom path which will override the default path of the provider (not allowed for Bedrock)
+	DoesNotSendDoneMarker bool                   `json:"does_not_send_done_marker"`        // Upstream ends its SSE stream after finish_reason without sending data: [DONE]
+	WaitForUsage          bool                   `json:"wait_for_usage"`                   // With DoesNotSendDoneMarker, keep reading past finish_reason so the trailing usage-only chunk is not dropped (#7143). A silent upstream then ends on network_config.stream_idle_timeout_in_seconds
 }
 
 // IsOperationAllowed checks if a specific operation is allowed for this custom provider
@@ -568,7 +585,51 @@ type ProviderConfig struct {
 	StoreRawRequestResponse bool                  `json:"store_raw_request_response"` // Capture raw request/response for internal logging only; strip from API responses returned to clients (default: false)
 	CustomProviderConfig    *CustomProviderConfig `json:"custom_provider_config,omitempty"`
 	OpenAIConfig            *OpenAIConfig         `json:"openai_config,omitempty"`
+	PromptCache             *PromptCacheConfig    `json:"prompt_cache,omitempty"`
 }
+
+// PromptCacheConfig opts a provider into synthesizing prompt-cache breakpoints for
+// requests that carry none.
+//
+// Agentic clients (Codex above all) send no cache markers, so providers that default
+// to implicit caching slide the cached prefix onto the latest message: every turn
+// rewrites the whole growing prompt at the cache-write rate and reads almost nothing
+// back. On Anthropic models nothing caches at all without an explicit marker.
+//
+// This is off by default and deliberately so. Bifrost otherwise never invents a
+// breakpoint - the four-marker ceiling is scarce and spending one the caller did not
+// ask for is a cost decision that belongs to the operator, not to the gateway. See
+// clampAnthropicCacheBreakpoints in core/providers/anthropic/utils.go.
+type PromptCacheConfig struct {
+	// AutoInject marks the first cacheable content block when the caller supplied no
+	// markers of its own. The first block is the prefix an agent loop replays verbatim
+	// every turn, which is what makes turn 2 onward a cache read rather than a write.
+	AutoInject bool `json:"auto_inject"`
+	// TTL is the lifetime requested for injected markers ("1h"). Empty means the
+	// provider default (5m on Anthropic). Providers that cannot carry a TTL ignore it.
+	TTL *string `json:"ttl,omitempty"`
+	// InjectionPoints targets specific messages instead of the first cacheable block.
+	// When non-empty it REPLACES the AutoInject strategy rather than adding to it.
+	// Mirrors LiteLLM's cache_control_injection_points.
+	InjectionPoints []CacheControlInjectionPoint `json:"cache_control_injection_points,omitempty"`
+}
+
+// CacheControlInjectionPoint names one place to mark. A point must carry at least one
+// of Role or Index; a point with neither matches nothing and is skipped.
+type CacheControlInjectionPoint struct {
+	// Location is "message". Reserved for future targets (tools, system) so the config
+	// shape does not have to change when they arrive.
+	Location string `json:"location"`
+	// Role matches messages by role ("system", "user", "assistant", "developer").
+	Role *string `json:"role,omitempty"`
+	// Index matches by position. Negative values count from the end, so -1 is the last
+	// message. Out-of-range indices match nothing rather than erroring - a conversation
+	// shorter than the configured index is normal, not a misconfiguration.
+	Index *int `json:"index,omitempty"`
+}
+
+// CacheControlInjectionLocationMessage is the only Location value currently honoured.
+const CacheControlInjectionLocationMessage = "message"
 
 // OpenAIConfig holds OpenAI-specific provider configuration.
 type OpenAIConfig struct {
@@ -612,6 +673,12 @@ func (config *ProviderConfig) CheckAndSetDefaults() {
 		config.NetworkConfig.MaxConnsPerHost = DefaultMaxConnsPerHost
 	} else if config.NetworkConfig.MaxConnsPerHost > MaxConnsPerHostUpperBound {
 		config.NetworkConfig.MaxConnsPerHost = MaxConnsPerHostUpperBound
+	}
+
+	// Clamp before the seconds-to-time.Duration conversion in the Bedrock
+	// transport (* time.Second) can silently overflow int64.
+	if config.NetworkConfig.HTTP2PingIntervalInSeconds > HTTP2PingIntervalUpperBoundSeconds {
+		config.NetworkConfig.HTTP2PingIntervalInSeconds = HTTP2PingIntervalUpperBoundSeconds
 	}
 
 	// Create a defensive copy of ExtraHeaders to prevent data races
@@ -685,6 +752,8 @@ type Provider interface {
 	ImageVariation(ctx *BifrostContext, key Key, request *BifrostImageVariationRequest) (*BifrostImageGenerationResponse, *BifrostError)
 	// VideoGeneration performs a video generation request
 	VideoGeneration(ctx *BifrostContext, key Key, request *BifrostVideoGenerationRequest) (*BifrostVideoGenerationResponse, *BifrostError)
+	// VideoEdit edits an existing video, returning a job in the same shape as video generation
+	VideoEdit(ctx *BifrostContext, key Key, request *BifrostVideoEditRequest) (*BifrostVideoEditResponse, *BifrostError)
 	// VideoRetrieve retrieves a video from the provider
 	VideoRetrieve(ctx *BifrostContext, key Key, request *BifrostVideoRetrieveRequest) (*BifrostVideoGenerationResponse, *BifrostError)
 	// VideoDownload downloads a video from the provider
@@ -761,6 +830,17 @@ type ResponsesLifecycleProvider interface {
 	ResponsesDelete(ctx *BifrostContext, key Key, req *BifrostResponsesDeleteRequest) (*BifrostResponsesDeleteResponse, *BifrostError)
 	ResponsesCancel(ctx *BifrostContext, key Key, req *BifrostResponsesCancelRequest) (*BifrostResponsesResponse, *BifrostError)
 	ResponsesInputItems(ctx *BifrostContext, key Key, req *BifrostResponsesInputItemsRequest) (*BifrostResponsesInputItemsResponse, *BifrostError)
+}
+
+// ResponsesNamespaceToolProvider is an optional interface for providers whose
+// support for OpenAI Responses `namespace` tools depends on how the attempt is
+// routed, not on the provider key alone. Bedrock is the case: a gpt model goes to
+// the Mantle OpenAI-compatible endpoint, which accepts namespaces, while Claude goes
+// to Converse or the Anthropic Messages surface, which do not. Checked via type
+// assertion in core dispatch before namespace tools are flattened; providers that do
+// not implement it fall back to a per-provider default in core/providers/utils.
+type ResponsesNamespaceToolProvider interface {
+	SupportsResponsesNamespaceTools(ctx *BifrostContext, key Key, model string) bool
 }
 
 // WebSocketCapableProvider is an optional interface that providers can implement

@@ -4,9 +4,169 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestEscapedStringRedactionDoesNotExpandUnchangedHTML(t *testing.T) {
+	compiled, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: "~"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := `"` + strings.Repeat("<>&", 4096) + `\n~"`
+	raw := map[string]json.RawMessage{"input": json.RawMessage(input)}
+	expansion := 0
+	r := NewWithPolicy(compiled)
+	if err := r.RedactRequestFields(raw, SurfaceResponses, func(bytes int) error {
+		if string(raw["input"]) != input || bytes < expansion {
+			t.Fatal("expansion must be admitted before applying replacements")
+		}
+		expansion = bytes
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if string(raw["input"]) != strings.Replace(input, "~", "<CUSTOM_PII>", 1) || expansion != len("<CUSTOM_PII>")-1 {
+		t.Fatal("redaction expanded unchanged HTML or missed the replacement growth")
+	}
+	var decoded string
+	if json.Unmarshal(raw["input"], &decoded) != nil || decoded != strings.Repeat("<>&", 4096)+"\n<CUSTOM_PII>" {
+		t.Fatal("redaction changed text outside the match")
+	}
+}
+
+func TestExpansionAdmissionFailureKeepsEveryOriginalField(t *testing.T) {
+	compiled, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: "~"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]json.RawMessage{"input": json.RawMessage(`"~"`), "instructions": json.RawMessage(`"~"`)}
+	r := NewWithPolicy(compiled)
+	capacity := errors.New("request memory capacity")
+	calls := 0
+	err = r.RedactRequestFields(raw, SurfaceResponses, func(bytes int) error {
+		calls++
+		if calls == 2 {
+			return capacity
+		}
+		return nil
+	})
+	if !errors.Is(err, capacity) || calls != 2 || r.Summary().ItemsRedacted != 0 || r.InputTextBytes() != 0 || string(raw["input"]) != `"~"` || string(raw["instructions"]) != `"~"` {
+		t.Fatalf("memory failure partially applied redaction: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestInputTextBytesCountsTransformedUTF8WithoutProtocolOrOpaqueData(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		surface Surface
+		body    string
+		want    int
+	}{
+		{"one byte", SurfaceResponses, `{"input":"a"}`, 1},
+		{"three bytes", SurfaceResponses, `{"input":"€"}`, 3},
+		{"four bytes", SurfaceResponses, `{"input":"🙂"}`, 4},
+		{"five bytes", SurfaceResponses, `{"input":"é€"}`, 5},
+		{"split five bytes", SurfaceResponses, `{"instructions":"é","input":[{"role":"user","content":"€"}]}`, 5},
+		{"literal unicode", SurfaceResponses, `{"input":"é🙂"}`, 6},
+		{"escaped unicode", SurfaceResponses, `{"input":"\u00e9\ud83d\ude42"}`, 6},
+		{"JSON controls", SurfaceResponses, `{"input":"a\n\"b"}`, 4},
+		{"known empty", SurfaceChat, `{"messages":[{"role":"user","content":""}]}`, 0},
+		{"protocol identifiers", SurfaceChat, `{"messages":[{"role":"assistant","tool_calls":[{"id":"call_123","type":"function","function":{"name":"search","arguments":"{}"}}]}]}`, 2},
+		{"protected responses", SurfaceResponses, `{"input":[{"summary":[{"type":"summary_text","text":"hidden"}],"encrypted_content":"opaque","type":"reasoning"},{"type":"message","role":"user","content":"é🙂"}]}`, 6},
+		{"protected chat", SurfaceChat, `{"messages":[{"role":"assistant","reasoning":"hidden","reasoning_details":[{"type":"reasoning.text","text":"hidden","signature":"opaque"}],"content":"é🙂"}]}`, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.body), &raw); err != nil {
+				t.Fatal(err)
+			}
+			r := NewWithPolicy(nil)
+			if err := r.RedactRequestFields(raw, tc.surface, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := r.InputTextBytes(); got != tc.want {
+				t.Fatalf("decoded text bytes = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	compiled, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: "~"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := NewWithPolicy(compiled)
+	raw := map[string]json.RawMessage{"input": json.RawMessage(`"é ~"`)}
+	if err := r.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := r.InputTextBytes(), len("é <CUSTOM_PII>"); got != want {
+		t.Fatalf("transformed text bytes = %d, want %d", got, want)
+	}
+}
+
+func TestEscapedTextNormalizationPreservesTextWithoutCountingPII(t *testing.T) {
+	raw := map[string]json.RawMessage{"input": json.RawMessage(`"\u0061\u00e9\ud83d\ude42\n<>&"`)}
+	r := NewWithPolicy(nil)
+	if err := r.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw["input"]); got != `"aé🙂\n<>&"` || r.Summary() != nil || r.InputTextBytes() != 11 {
+		t.Fatalf("normalization changed decoded text or redaction accounting: %s, %+v, %d", got, r.Summary(), r.InputTextBytes())
+	}
+}
+
+func FuzzJSONWithoutRedactionPreservesDecodedValues(f *testing.F) {
+	for _, seed := range []string{
+		`"\u0061\u00e9\ud83d\ude42\n<>&"`,
+		`"  \t\r\ne\u0301\u2028\u2029\\\/\"  "`,
+		`[{"role":"user","content":"\u0068ello"}]`,
+		`[{"type":"reasoning","summary":"\u0061","encrypted_content":"opaque"}]`,
+		`{"arguments":"{\"amount\":9007199254740993}","enum":[1.0,9007199254740993]}`,
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, source []byte) {
+		if len(source) > 8192 || !json.Valid(source) {
+			return
+		}
+		decode := func(value []byte) any {
+			t.Helper()
+			decoder := json.NewDecoder(bytes.NewReader(value))
+			decoder.UseNumber()
+			var decoded any
+			if err := decoder.Decode(&decoded); err != nil {
+				t.Fatal(err)
+			}
+			return decoded
+		}
+		want := decode(source)
+		for _, context := range []jsonValueContext{jsonContextGeneral, jsonContextChatMessages, jsonContextResponsesInput} {
+			r := NewWithPolicy(nil)
+			out, _, err := r.redactJSONContext(source, context)
+			if errors.Is(err, ErrNestingLimit) {
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decode(out), want) || r.Summary() != nil {
+				t.Fatalf("decoded value or PII accounting changed in context %d", context)
+			}
+		}
+	})
+}
+
+func TestCustomPatternStillReceivesAllWhitespace(t *testing.T) {
+	compiled, err := CompilePolicy(Options{CustomPatterns: []CustomPattern{{Expression: "^ +$"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, changed, err := NewWithPolicy(compiled).redactBytes([]byte("            "))
+	if err != nil || !changed || string(out) != "<CUSTOM_PII>" {
+		t.Fatalf("padding was hidden from the custom rule: %q, %t, %v", out, changed, err)
+	}
+}
 
 func TestProtectedReasoningDoesNotDependOnKeyOrder(t *testing.T) {
 	t.Parallel()
@@ -20,8 +180,8 @@ func TestProtectedReasoningDoesNotDependOnKeyOrder(t *testing.T) {
 		raw := map[string]json.RawMessage{
 			"messages": json.RawMessage(`[{"role":"user","content":"outside@corp.io"},` + message + `]`),
 		}
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, SurfaceChat); err != nil {
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, SurfaceChat, nil); err != nil {
 			t.Fatal(err)
 		}
 		protectedEmail := []byte("signed@corp.io")
@@ -46,8 +206,8 @@ func TestProtectedReasoningDoesNotDependOnKeyOrder(t *testing.T) {
 		raw := map[string]json.RawMessage{
 			"input": json.RawMessage(`[{"type":"message","role":"user","content":"outside@corp.io"},` + item + `]`),
 		}
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, SurfaceResponses); err != nil {
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Contains(raw["input"], []byte("<EMAIL_ADDRESS>")) ||
@@ -71,8 +231,8 @@ func TestEmptyProtectionMarkersDoNotBypassRedaction(t *testing.T) {
 		`{"type":"reasoning","type":"message","encrypted_content":"opaque","summary":"alice@corp.io"}`,
 	} {
 		raw := map[string]json.RawMessage{"input": json.RawMessage(`[` + item + `]`)}
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, SurfaceResponses); err != nil {
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Contains(raw["input"], []byte("<EMAIL_ADDRESS>")) || redactor.Summary().ItemsRedacted != 1 {
@@ -84,7 +244,7 @@ func TestEmptyProtectionMarkersDoNotBypassRedaction(t *testing.T) {
 func TestEscapedJSONStringIsAssertedAfterDecoding(t *testing.T) {
 	t.Parallel()
 	source := []byte(`{"text":"path:\/users\/alice and alice\u0040corp.io","count":1.25e+2,"enabled":true}`)
-	out, changed, err := New().redactJSON(source)
+	out, changed, err := newTestRedactor().redactJSON(source)
 	if err != nil || !changed || !json.Valid(out) {
 		t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
 	}
@@ -114,7 +274,7 @@ func TestJSONSyntaxValidation(t *testing.T) {
 		[]byte(`{"value":+1}`),
 	}
 	for _, source := range invalid {
-		if _, _, err := New().redactJSON(source); !errors.Is(err, errInvalidJSON) {
+		if _, _, err := newTestRedactor().redactJSON(source); !errors.Is(err, errInvalidJSON) {
 			t.Fatalf("invalid JSON %q returned %v", source, err)
 		}
 	}
@@ -123,7 +283,7 @@ func TestJSONSyntaxValidation(t *testing.T) {
 		`null`, `true`, `false`, `0`, `-0`, `12`, `-12.5`, `1e9`, `1E-9`,
 		`{"values":[null,true,false,0,-0,12,-12.5,1e9,1E-9]}`,
 	} {
-		out, changed, err := New().redactJSON([]byte(source))
+		out, changed, err := newTestRedactor().redactJSON([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("valid JSON %q returned %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -133,12 +293,12 @@ func TestJSONSyntaxValidation(t *testing.T) {
 func TestJSONNestingBoundary(t *testing.T) {
 	t.Parallel()
 	accepted := []byte(strings.Repeat("[", 128) + `"alice@corp.io"` + strings.Repeat("]", 128))
-	out, changed, err := New().redactJSON(accepted)
+	out, changed, err := newTestRedactor().redactJSON(accepted)
 	if err != nil || !changed || !json.Valid(out) {
 		t.Fatalf("depth 128 failed: changed=%t err=%v", changed, err)
 	}
 	rejected := []byte(strings.Repeat("[", 129) + `"alice@corp.io"` + strings.Repeat("]", 129))
-	if _, _, err := New().redactJSON(rejected); !errors.Is(err, ErrNestingLimit) {
+	if _, _, err := newTestRedactor().redactJSON(rejected); !errors.Is(err, ErrNestingLimit) {
 		t.Fatalf("depth 129 error = %v, want ErrNestingLimit", err)
 	}
 }
@@ -154,7 +314,7 @@ func TestProtocolKeyNamesCannotHideOrdinaryText(t *testing.T) {
 		`{"type":"reasoning.text","signature":"opaque","text":"alice@corp.io"}`,
 		`{"type":"reasoning","encrypted_content":"opaque","summary":"alice@corp.io"}`,
 	} {
-		redactor := New()
+		redactor := newTestRedactor()
 		out, changed, err := redactor.redactJSON([]byte(source))
 		if err != nil || !changed || !json.Valid(out) || bytes.Contains(out, []byte("alice@corp.io")) {
 			t.Fatalf("protocol-key redaction of %s = %s, changed=%t, err=%v", source, out, changed, err)
@@ -190,8 +350,8 @@ func TestReasoningShapesInToolSchemasAreNotProtected(t *testing.T) {
 	}
 	for _, test := range tests {
 		raw := map[string]json.RawMessage{test.field: json.RawMessage(test.value)}
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, test.surface); err != nil {
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, test.surface, nil); err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Contains(raw[test.field], []byte("<EMAIL_ADDRESS>")) || redactor.Summary().ItemsRedacted != 1 {
@@ -213,8 +373,8 @@ func TestStopSequencesAreProviderBoundText(t *testing.T) {
 		{surface: SurfaceResponses, field: "stop_sequences", value: `["alice@corp.io"]`},
 	} {
 		raw := map[string]json.RawMessage{test.field: json.RawMessage(test.value)}
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, test.surface); err != nil {
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, test.surface, nil); err != nil {
 			t.Fatal(err)
 		}
 		if bytes.Contains(raw[test.field], []byte("alice@corp.io")) ||
@@ -246,8 +406,8 @@ func TestProtectedReasoningRollbackIncludesMarkerValues(t *testing.T) {
 	for _, test := range tests {
 		raw := map[string]json.RawMessage{test.field: json.RawMessage(test.value)}
 		original := append([]byte(nil), raw[test.field]...)
-		redactor := New()
-		if err := redactor.RedactRequestFields(raw, test.surface); err != nil ||
+		redactor := newTestRedactor()
+		if err := redactor.RedactRequestFields(raw, test.surface, nil); err != nil ||
 			!bytes.Equal(raw[test.field], original) || redactor.Summary().ItemsRedacted != 0 {
 			t.Fatalf("protected object changed: output=%s summary=%#v err=%v", raw[test.field], redactor.Summary(), err)
 		}
@@ -256,7 +416,7 @@ func TestProtectedReasoningRollbackIncludesMarkerValues(t *testing.T) {
 
 func TestJSONErrorsRollBackMetricsAndFieldUpdates(t *testing.T) {
 	t.Parallel()
-	redactor := New()
+	redactor := newTestRedactor()
 	if _, _, err := redactor.redactJSON([]byte(`{"text":"alice@corp.io","broken":}`)); err == nil {
 		t.Fatal("invalid JSON was accepted")
 	}
@@ -270,7 +430,7 @@ func TestJSONErrorsRollBackMetricsAndFieldUpdates(t *testing.T) {
 	}
 	originalMessages := append([]byte(nil), raw["messages"]...)
 	originalTools := append([]byte(nil), raw["tools"]...)
-	if err := redactor.RedactRequestFields(raw, SurfaceChat); err == nil {
+	if err := redactor.RedactRequestFields(raw, SurfaceChat, nil); err == nil {
 		t.Fatal("invalid request field was accepted")
 	}
 	if redactor.Summary().ItemsRedacted != 0 || !bytes.Equal(raw["messages"], originalMessages) || !bytes.Equal(raw["tools"], originalTools) {

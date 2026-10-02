@@ -531,3 +531,18 @@ func pointerValue(value *int) any {
 	}
 	return *value
 }
+
+func TestUnavailableProviderHasNoInventedFinishReason(t *testing.T) {
+	status := 503
+	upstreamError := &schemas.BifrostError{StatusCode: &status}
+	at := time.Unix(1, 0)
+	for _, input := range []EventInput{
+		{ProviderStartedAt: at, Error: upstreamError},
+		{ProviderAttempts: []ProviderAttemptInput{{Provider: "openai", StartedAt: at, CompletedAt: at, Error: upstreamError}}},
+	} {
+		attempts := requestProviderAttempts(input, &Authorization{ProviderKey: "openai"}, 0)
+		if len(attempts) != 1 || attempts[0].Status != "provider_unavailable" || attempts[0].FinishReason != "" {
+			t.Fatalf("provider failure invented a terminal: %+v", attempts)
+		}
+	}
+}

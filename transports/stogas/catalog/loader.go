@@ -299,6 +299,9 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 		if _, ok := graph.Authors[model.AuthorID]; !ok {
 			return fmt.Errorf("model %s references unknown author %s", modelID, model.AuthorID)
 		}
+		if !model.TokenizerFamily.valid() {
+			return fmt.Errorf("model %s has unsupported tokenizerFamily %q", modelID, model.TokenizerFamily)
+		}
 		if err := validateModelReasoning(modelID, model); err != nil {
 			return err
 		}
@@ -373,6 +376,14 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	providerID, err := validateDeploymentRoutes(graph, deploymentID, deployment)
 	if err != nil {
 		return err
+	}
+	if len(deployment.ChainHashes) != len(deployment.RouteIDs) {
+		return fmt.Errorf("deployment %s must identify each resolved chain", deploymentID)
+	}
+	for _, routeID := range deployment.RouteIDs {
+		if !validSHA256Digest(deployment.ChainHashes[routeID]) {
+			return fmt.Errorf("deployment %s has an invalid resolved chain for %s", deploymentID, routeID)
+		}
 	}
 	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, model, deployment); err != nil {
 		return err

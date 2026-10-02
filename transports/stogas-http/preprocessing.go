@@ -1,61 +1,62 @@
 package stogashttp
 
 import (
-	"net/http"
-	"runtime"
+	"math/bits"
 	"sync"
-
-	"github.com/maximhq/bifrost/transports/stogas/billing"
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"time"
 )
 
-// Bound synchronous pre-dispatch CPU work separately from long-lived provider
-// requests. Keep only active organization IDs, with no queue or retained history.
-type preprocessingAdmission struct {
+// Each work phase keeps only aggregate counters. No request values or labels
+// survive completion. Snapshotting copies fixed storage under the same lock.
+type requestWorkActivity struct {
 	mu            sync.Mutex
-	active        int
-	organizations map[string]int
+	stats         requestWorkDiagnostics
+	totalWallTime time.Duration
 }
 
-func (a *preprocessingAdmission) acquire(organization string, capacity int) bool {
+type requestWorkDiagnostics struct {
+	Active                int        `json:"active"`
+	Peak                  int        `json:"peak"`
+	Completed             uint64     `json:"completed"`
+	InputBytes            uint64     `json:"inputBytes"`
+	TotalWallTimeMicros   uint64     `json:"totalWallTimeMicros"`
+	MaxWallTimeMicros     uint64     `json:"maxWallTimeMicros"`
+	InputBytesBuckets     [65]uint64 `json:"inputBytesBuckets"`
+	WallTimeMicrosBuckets [65]uint64 `json:"wallTimeMicrosBuckets"`
+}
+
+func (a *requestWorkActivity) start() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if capacity < 1 || a.active >= capacity || a.organizations[organization] >= max(1, (capacity+3)/4) {
-		return false
-	}
-	if a.organizations == nil {
-		a.organizations = make(map[string]int)
-	}
-	a.active++
-	a.organizations[organization]++
-	return true
+	a.stats.Active++
+	a.stats.Peak = max(a.stats.Peak, a.stats.Active)
 }
 
-func (a *preprocessingAdmission) release(organization string) {
+func (a *requestWorkActivity) finish(elapsed time.Duration, inputBytes uint64) {
+	micros := uint64(max(0, elapsed.Microseconds()))
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.active--
-	a.organizations[organization]--
-	if a.organizations[organization] == 0 {
-		delete(a.organizations, organization)
-	}
+	a.stats.Active--
+	a.stats.Completed++
+	a.stats.InputBytes += inputBytes
+	a.totalWallTime += max(0, elapsed)
+	a.stats.MaxWallTimeMicros = max(a.stats.MaxWallTimeMicros, micros)
+	// Disjoint buckets: zero, then [2^(i-1), 2^i) for i=1..64.
+	// This covers every uint64 without workload-specific bounds or overflow.
+	a.stats.InputBytesBuckets[bits.Len64(inputBytes)]++
+	a.stats.WallTimeMicrosBuckets[bits.Len64(micros)]++
 }
 
-func (s *Server) resolveRequests(claims *billing.APIKeyClaims, input catalog.RequestInput) ([]*catalog.ResolvedRequest, error) {
-	if claims == nil || claims.OrganizationID == "" {
-		return nil, billing.ErrGatewayUnavailable
-	}
-	organization := claims.OrganizationID
-	// Half the execution slots is an initial admission setting, not a CPU
-	// isolation guarantee. Leave room for active streams and control traffic.
-	if !s.preprocessing.acquire(organization, max(1, runtime.GOMAXPROCS(0)/2)) {
-		return nil, catalog.APIError{
-			Code:       "gateway_capacity_exceeded",
-			StatusCode: http.StatusServiceUnavailable,
-			Type:       "service_unavailable",
-			Message:    "Gateway preprocessing capacity is temporarily exhausted",
-		}
-	}
-	defer s.preprocessing.release(organization)
-	return catalog.ResolveRequests(input)
+func (a *requestWorkActivity) diagnostics() requestWorkDiagnostics {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	stats := a.stats
+	stats.TotalWallTimeMicros = uint64(a.totalWallTime.Microseconds())
+	return stats
+}
+
+func (a *requestWorkActivity) begin(inputBytes int) func() {
+	started := time.Now()
+	a.start()
+	return sync.OnceFunc(func() { a.finish(time.Since(started), uint64(max(0, inputBytes))) })
 }

@@ -2,69 +2,28 @@ package stogashttp
 
 import (
 	"errors"
-	"fmt"
 	"mime"
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/valyala/fasthttp"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"net/http"
 )
 
 type apiCredential struct {
-	Claims    *billing.APIKeyClaims
-	Dashboard *billing.DashboardCredential
-	Raw       string
-	Upstream  upstreamCredentialInputs
+	EncryptionKeys customerkey.Keys
+	Claims         *billing.APIKeyClaims
+	Dashboard      *billing.DashboardCredential
+	Raw            string
 }
-
-type upstreamCredentialInputs struct {
-	Anthropic string
-	Chutes    string
-	OpenAI    string
-}
-
-func (inputs upstreamCredentialInputs) only(provider string) upstreamCredentialInputs {
-	switch provider {
-	case "anthropic":
-		return upstreamCredentialInputs{Anthropic: inputs.Anthropic}
-	case "chutes":
-		return upstreamCredentialInputs{Chutes: inputs.Chutes}
-	case "openai":
-		return upstreamCredentialInputs{OpenAI: inputs.OpenAI}
-	default:
-		return upstreamCredentialInputs{}
-	}
-}
-
-func (inputs upstreamCredentialInputs) get(provider string) string {
-	switch provider {
-	case "anthropic":
-		return inputs.Anthropic
-	case "chutes":
-		return inputs.Chutes
-	case "openai":
-		return inputs.OpenAI
-	default:
-		return ""
-	}
-}
-
-const (
-	upstreamAnthropicHeader = "X-Stogas-Upstream-Anthropic-API-Key"
-	upstreamChutesHeader    = "X-Stogas-Upstream-Chutes-API-Key"
-	upstreamOpenAIHeader    = "X-Stogas-Upstream-OpenAI-API-Key"
-)
-
-const inferenceCredentialContextKey = "stogas.inference_credential"
-const inferenceRouteContextKey = "stogas.inference_route"
 
 var (
 	errMalformedAPIKeyHeader   = errors.New("malformed API key header")
 	errConflictingAPIKeyHeader = errors.New("conflicting API key headers")
 )
 
-func authorizationToken(raw []byte) (string, bool) {
+func authorizationToken(raw string) (string, bool) {
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
 		return "", false
@@ -76,20 +35,20 @@ func authorizationToken(raw []byte) (string, bool) {
 	return "", false
 }
 
-func apiKeyToken(ctx *fasthttp.RequestCtx, route catalog.Route) (string, error) {
+func apiKeyToken(ctx *requestContext, route catalog.Route) (string, error) {
 	var (
 		token            string
 		malformed        bool
 		headerValueCount int
 	)
 	for _, header := range catalog.AuthHeaderNames(route) {
-		for _, raw := range ctx.Request.Header.PeekAll(header) {
+		for _, raw := range ctx.request.Header.Values(header) {
 			headerValueCount++
 			var (
 				next string
 				ok   bool
 			)
-			if strings.EqualFold(header, fasthttp.HeaderAuthorization) {
+			if strings.EqualFold(header, "Authorization") {
 				next, ok = authorizationToken(raw)
 			} else {
 				next = strings.TrimSpace(string(raw))
@@ -129,41 +88,47 @@ func validCredentialValue(value string) bool {
 	return true
 }
 
-func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
-	route, ok := catalog.RouteForPath(string(ctx.Path()))
+func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
+	route, ok := catalog.RouteForPath(ctx.request.URL.Path)
+	if ctx.request.URL.Path == policyValidationPath {
+		route, ok = catalog.RouteChat, true
+	}
 	if !ok {
-		s.writeError(ctx, fasthttp.StatusNotFound, map[string]any{
+		s.writeError(ctx, http.StatusNotFound, map[string]any{
 			"error": map[string]any{"message": "Not found", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
 	token, err := apiKeyToken(ctx, route)
 	if errors.Is(err, errConflictingAPIKeyHeader) {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Conflicting API key headers", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
 	if err != nil {
-		s.writeError(ctx, fasthttp.StatusUnauthorized, map[string]any{
+		s.writeError(ctx, http.StatusUnauthorized, map[string]any{
 			"error": map[string]any{"message": "Invalid API key header", "type": "authentication_error"},
 		})
 		return apiCredential{}, false
 	}
 	if token == "" {
-		s.writeError(ctx, fasthttp.StatusUnauthorized, map[string]any{
+		s.writeError(ctx, http.StatusUnauthorized, map[string]any{
 			"error": map[string]any{"message": "Missing API key", "type": "authentication_error"},
 		})
 		return apiCredential{}, false
 	}
-	ctx.SetUserValue(inferenceRouteContextKey, route)
+
 	if s.runtime == nil {
 		return apiCredential{Raw: token}, true
 	}
-	if encryptedSession(ctx) != nil && billing.IsDashboardCredential(token) {
+	if ctx.encrypted && billing.IsDashboardCredential(token) {
 		dashboard, dashboardErr := s.runtime.ParseDashboardCredential(token)
+		if dashboard != nil {
+			ctx.dashboard = dashboard
+		}
 		if dashboard != nil && dashboard.Claims != nil {
-			ctx.SetUserValue(requestLogClaimsKey, dashboard.Claims)
+			ctx.claims = dashboard.Claims
 		}
 		if dashboardErr != nil {
 			s.writeBillingError(ctx, dashboardErr)
@@ -174,7 +139,7 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 	}
 	claims, err := s.runtime.ParseAPIKey(token)
 	if claims != nil {
-		ctx.SetUserValue(requestLogClaimsKey, claims)
+		ctx.claims = claims
 	}
 	if err != nil {
 		s.writeBillingError(ctx, err)
@@ -183,13 +148,13 @@ func (s *Server) requireAPIKey(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
 	return apiCredential{Raw: token, Claims: claims}, true
 }
 
-func (s *Server) requireInferenceEnvelope(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
+func (s *Server) requireInferenceEnvelope(ctx *requestContext) (apiCredential, bool) {
 	credential, ok := s.requireInferenceHeaders(ctx)
 	if !ok {
 		return apiCredential{}, false
 	}
-	if len(ctx.Request.Body()) == 0 {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+	if len(ctx.body) == 0 {
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Request body is required", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
@@ -197,56 +162,48 @@ func (s *Server) requireInferenceEnvelope(ctx *fasthttp.RequestCtx) (apiCredenti
 	return credential, true
 }
 
-func (s *Server) requireInferenceHeaders(ctx *fasthttp.RequestCtx) (apiCredential, bool) {
-	if cached, ok := ctx.UserValue(inferenceCredentialContextKey).(apiCredential); ok {
-		return cached, true
+func (s *Server) requireInferenceHeaders(ctx *requestContext) (apiCredential, bool) {
+	if ctx.credential != nil {
+		return *ctx.credential, true
 	}
-	upstream, upstreamErr := takeUpstreamCredentials(ctx)
 	credential, ok := s.requireAPIKey(ctx)
 	if !ok {
 		return apiCredential{}, false
 	}
-	contentTypes := ctx.Request.Header.PeekAll(fasthttp.HeaderContentType)
+	contentTypes := ctx.request.Header.Values("Content-Type")
 	if len(contentTypes) != 1 || !isJSONContentType(contentTypes[0]) {
-		s.writeError(ctx, fasthttp.StatusUnsupportedMediaType, map[string]any{
+		s.writeError(ctx, http.StatusUnsupportedMediaType, map[string]any{
 			"error": map[string]any{"message": "Content-Type must be application/json", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
-	if !validContentEncodingHeaders(ctx.Request.Header.PeekAll(fasthttp.HeaderContentEncoding)) {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+	if !validContentEncodingHeaders(ctx.request.Header.Values("Content-Encoding")) {
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Content-Encoding is invalid or ambiguous", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
 	if unsupported := unsupportedInferenceHeader(ctx); unsupported != "" {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Unsupported request header: " + unsupported, "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
-	if !validateAcceptHeaders(ctx.Request.Header.PeekAll(fasthttp.HeaderAccept)) {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
+	if !validateAcceptHeaders(ctx.request.Header.Values("Accept")) {
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
 			"error": map[string]any{"message": "Accept must be application/json or text/event-stream", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
-	if upstreamErr != nil {
-		s.writeError(ctx, fasthttp.StatusBadRequest, map[string]any{
-			"error": map[string]any{"message": upstreamErr.Error(), "type": "invalid_request_error"},
-		})
-		return apiCredential{}, false
-	}
-	credential.Upstream = upstream
-	ctx.SetUserValue(inferenceCredentialContextKey, credential)
+	ctx.credential = &credential
 	return credential, true
 }
 
-func isJSONContentType(raw []byte) bool {
+func isJSONContentType(raw string) bool {
 	return isContentType(raw, "application/json")
 }
 
-func isContentType(raw []byte, expected string) bool {
+func isContentType(raw string, expected string) bool {
 	mediaType, parameters, err := mime.ParseMediaType(string(raw))
 	if err != nil || !strings.EqualFold(mediaType, expected) {
 		return false
@@ -259,9 +216,9 @@ func isContentType(raw []byte, expected string) bool {
 	return true
 }
 
-func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx) string {
+func unsupportedInferenceHeader(ctx *requestContext) string {
 	unsupported := ""
-	for key := range ctx.Request.Header.All() {
+	for key := range ctx.request.Header {
 		normalized := strings.ToLower(strings.TrimSpace(string(key)))
 		if normalized == "" || !internalOrProviderControlHeader(normalized) {
 			continue
@@ -273,58 +230,10 @@ func unsupportedInferenceHeader(ctx *fasthttp.RequestCtx) string {
 }
 
 func internalOrProviderControlHeader(name string) bool {
-	return strings.HasPrefix(name, "x-bf-") ||
-		(strings.HasPrefix(name, "x-stogas-") &&
-			name != strings.ToLower(upstreamAnthropicHeader) &&
-			name != strings.ToLower(upstreamChutesHeader) &&
-			name != strings.ToLower(upstreamOpenAIHeader))
+	return strings.HasPrefix(name, "x-bf-") || strings.HasPrefix(name, "x-stogas-")
 }
 
-func takeUpstreamCredentials(ctx *fasthttp.RequestCtx) (upstreamCredentialInputs, error) {
-	legacyAPIKey := ctx.Request.Header.PeekAll("X-Stogas-Upstream-API-Key")
-	legacyProvider := ctx.Request.Header.PeekAll("X-Stogas-Upstream-Provider")
-	ctx.Request.Header.Del("X-Stogas-Upstream-API-Key")
-	ctx.Request.Header.Del("X-Stogas-Upstream-Provider")
-
-	values := make([]string, 3)
-	headers := [...]string{upstreamAnthropicHeader, upstreamChutesHeader, upstreamOpenAIHeader}
-	var parseErr error
-	for index, header := range headers {
-		values[index], parseErr = takeUpstreamCredentialHeader(ctx, header)
-		if parseErr != nil {
-			for _, remaining := range headers[index+1:] {
-				ctx.Request.Header.Del(remaining)
-			}
-			return upstreamCredentialInputs{}, parseErr
-		}
-	}
-	if len(legacyAPIKey) != 0 || len(legacyProvider) != 0 {
-		return upstreamCredentialInputs{}, fmt.Errorf("generic upstream credential headers are unsupported; use a provider-specific upstream API key header")
-	}
-	return upstreamCredentialInputs{
-		Anthropic: values[0],
-		Chutes:    values[1],
-		OpenAI:    values[2],
-	}, nil
-}
-
-func takeUpstreamCredentialHeader(ctx *fasthttp.RequestCtx, header string) (string, error) {
-	values := ctx.Request.Header.PeekAll(header)
-	ctx.Request.Header.Del(header)
-	if len(values) == 0 {
-		return "", nil
-	}
-	if len(values) != 1 {
-		return "", fmt.Errorf("%s must appear at most once", header)
-	}
-	value := string(values[0])
-	if !validCredentialValue(value) {
-		return "", fmt.Errorf("%s is invalid", header)
-	}
-	return value, nil
-}
-
-func validateAcceptHeader(raw []byte) bool {
+func validateAcceptHeader(raw string) bool {
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
 		return true
@@ -341,7 +250,7 @@ func validateAcceptHeader(raw []byte) bool {
 	return true
 }
 
-func validateAcceptHeaders(values [][]byte) bool {
+func validateAcceptHeaders(values []string) bool {
 	for _, value := range values {
 		if !validateAcceptHeader(value) {
 			return false
@@ -350,7 +259,7 @@ func validateAcceptHeaders(values [][]byte) bool {
 	return true
 }
 
-func validContentEncodingHeaders(values [][]byte) bool {
+func validContentEncodingHeaders(values []string) bool {
 	if len(values) == 0 {
 		return true
 	}
@@ -362,5 +271,13 @@ func validContentEncodingHeaders(values [][]byte) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func clearInferenceCredentials(ctx *requestContext) {
+	for _, route := range []catalog.Route{catalog.RouteChat, catalog.RouteResponses} {
+		for _, header := range catalog.AuthHeaderNames(route) {
+			ctx.request.Header.Del(header)
+		}
 	}
 }

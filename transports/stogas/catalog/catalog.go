@@ -446,36 +446,34 @@ func providerInList(provider schemas.ModelProvider, providers []schemas.ModelPro
 	return false
 }
 
-func (s *snapshot) nativeProviderForModelSelector(requested string, candidates []schemas.ModelProvider) (schemas.ModelProvider, bool) {
-	_, selector := splitQualifiedModel(requested)
-	modelID, ok := s.modelSelectors[selector]
-	if !ok {
-		return "", false
-	}
-	model, ok := s.graph.Models[modelID]
-	if !ok {
-		return "", false
-	}
-	for _, candidate := range candidates {
-		if string(candidate) == model.AuthorID {
-			return candidate, true
-		}
-	}
-	return "", false
-}
-
-func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[schemas.ModelProvider]bool) []schemas.ModelProvider {
+func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[string][]int) []schemas.ModelProvider {
 	seen := map[schemas.ModelProvider]bool{}
 	providers := []schemas.ModelProvider{}
+	// Exact deployment selectors visit only that deployment's routes.
+	_, selector := splitQualifiedModel(requested)
+	if id, pinned := s.deploymentSelectors[selector]; pinned {
+		for _, routeID := range s.graph.Deployments[id].RouteIDs {
+			routeNode := s.graph.Routes[routeID]
+			provider := schemas.ModelProvider(routeNode.ProviderID)
+			if !routeSupportsInterface(routeNode, route) || (allowed != nil && len(allowed[routeNode.ProviderID]) == 0) {
+				continue
+			}
+			if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID != "" && !seen[provider] {
+				seen[provider] = true
+				providers = append(providers, provider)
+			}
+		}
+		return providers
+	}
 	for _, routeNode := range s.graph.Routes {
 		if !routeSupportsInterface(routeNode, route) {
 			continue
 		}
-		if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID == "" {
+		provider := schemas.ModelProvider(routeNode.ProviderID)
+		if allowed != nil && len(allowed[string(provider)]) == 0 {
 			continue
 		}
-		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if allowed != nil && !allowed[provider] {
+		if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID == "" {
 			continue
 		}
 		if seen[provider] {
@@ -751,8 +749,9 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 		reasoningEfforts = override.ReasoningEfforts
 	}
 	return Deployment{
-		ID:      deploymentID,
-		ModelID: deployment.ModelID,
+		ID:        deploymentID,
+		ModelID:   deployment.ModelID,
+		ChainHash: deployment.ChainHashes[route.ID],
 		Upstream: Upstream{
 			Model:          deployment.Upstream.Model,
 			ModelFormat:    deployment.Upstream.ModelFormat,

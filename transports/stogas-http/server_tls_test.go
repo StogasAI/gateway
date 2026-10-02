@@ -1,22 +1,179 @@
 package stogashttp
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
+	proxyproto "github.com/pires/go-proxyproto"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 )
+
+func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
+	gateway := &Server{
+		config:   stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+		secure:   &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+		requests: newRequestDrain(),
+	}
+	if err := gateway.routes(); err != nil {
+		t.Fatal(err)
+	}
+	finish := make(chan struct{})
+	var finishOnce sync.Once
+	defer finishOnce.Do(func() { close(finish) })
+	gateway.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !gateway.requests.begin() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
+		defer gateway.requests.end()
+		writer := &responseWriter{writer: w, control: http.NewResponseController(w), idle: time.Second}
+		_, _ = writer.Write([]byte("before"))
+		select {
+		case <-finish:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = writer.Write([]byte("after"))
+	})
+	listener := testListener(t)
+	limited := &publicListener{Listener: listener, slots: make(chan struct{}, 1), idle: &gateway.idleConnections}
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- gateway.server.Serve(gateway.wrapListener(limited)) }()
+	t.Cleanup(func() { _ = gateway.server.Close() })
+	raw, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	if _, err := proxyproto.HeaderProxyFromAddrs(2, raw.LocalAddr(), raw.RemoteAddr()).WriteTo(raw); err != nil {
+		t.Fatal(err)
+	}
+	conn := tls.Client(raw, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}})
+	if err := conn.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if conn.ConnectionState().NegotiatedProtocol != "h2" {
+		t.Fatal("gateway listener did not negotiate HTTP/2")
+	}
+	if _, err := io.WriteString(conn, http2.ClientPreface); err != nil {
+		t.Fatal(err)
+	}
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatal(err)
+	}
+	var block bytes.Buffer
+	encoder := hpack.NewEncoder(&block)
+	for _, field := range []hpack.HeaderField{{Name: ":method", Value: "GET"}, {Name: ":scheme", Value: "https"}, {Name: ":authority", Value: "gateway.test"}, {Name: ":path", Value: "/"}} {
+		if err := encoder.WriteField(field); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: block.Bytes(), EndHeaders: true, EndStream: true}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if settings, ok := frame.(*http2.SettingsFrame); ok && !settings.IsAck() {
+			if err := framer.WriteSettingsAck(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if data, ok := frame.(*http2.DataFrame); ok && string(data.Data()) == "before" {
+			break
+		}
+	}
+	shutdownContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	// Saturation cannot evict the connection carrying this unfinished H2 stream.
+	candidate, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = candidate.SetReadDeadline(time.Now().Add(time.Second))
+	var rejected [1]byte
+	_, rejectErr := candidate.Read(rejected[:])
+	_ = candidate.Close()
+	if !errors.Is(rejectErr, io.EOF) {
+		t.Fatalf("full active pool did not reject new socket: %v", rejectErr)
+	}
+	gateway.idleConnections.mu.Lock()
+	evicted, refused := gateway.idleConnections.evicted, gateway.idleConnections.rejected
+	gateway.idleConnections.mu.Unlock()
+	if evicted != 0 || refused != 1 {
+		t.Fatalf("pressure evicted active work: %d/%d", evicted, refused)
+	}
+	defer cancel()
+	shutdownDone := make(chan struct{})
+	go func() { gateway.shutdownWithContext(shutdownContext); close(shutdownDone) }()
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if goaway, ok := frame.(*http2.GoAwayFrame); ok {
+			if goaway.ErrCode != http2.ErrCodeNo || goaway.LastStreamID != 1 {
+				t.Fatalf("unexpected GOAWAY: %v", goaway)
+			}
+			break
+		}
+	}
+	if gateway.requests.begin() {
+		t.Fatal("shutdown admitted new work")
+	}
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown abandoned active response")
+	default:
+	}
+	finishOnce.Do(func() { close(finish) })
+	var tail bytes.Buffer
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data, ok := frame.(*http2.DataFrame); ok && data.StreamID == 1 {
+			tail.Write(data.Data())
+			if data.StreamEnded() {
+				break
+			}
+		}
+	}
+	if tail.String() != "after" {
+		t.Fatalf("drained response = %q", tail.String())
+	}
+	select {
+	case <-shutdownDone:
+	case <-shutdownContext.Done():
+		t.Fatal("shutdown did not finish")
+	}
+	if err := <-serveDone; !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("Serve = %v", err)
+	}
+}
 
 func TestConfidentialStagingWrapsListenerWithTLS(t *testing.T) {
 	store := testCertificateStore(t)
@@ -53,10 +210,19 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate identity: %v", err)
 	}
-	nextChain, nextRoots := testCertificateChainPEM(t, material, time.Now().UTC().Add(90*24*time.Hour))
-	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC(), nextRoots)
+	firstChain, roots := testCertificateChainPEM(t, material, time.Now().Add(24*time.Hour))
+	nextChain, _ := testCertificateChainPEM(t, material, time.Now().Add(48*time.Hour))
+	nextCerts, err := parseTestCertificateChain(nextChain)
 	if err != nil {
-		t.Fatalf("create certificate store: %v", err)
+		t.Fatal(err)
+	}
+	roots.AddCert(nextCerts[0])
+	store, err := identity.NewBootCertificateStore(material, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.InstallBootChain(firstChain, "api-staging.stogas.ai"); err != nil {
+		t.Fatal(err)
 	}
 	server := &Server{
 		config: stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
@@ -69,15 +235,7 @@ func TestConfidentialTLSConfigReadsCurrentActiveCertificate(t *testing.T) {
 	}
 	firstHash := identity.CertSHA256Hex(first.Certificate[0])
 
-	certs, err := parseTestCertificateChain(nextChain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := store.InstallActiveChain(identity.CertificateChainInput{
-		ChainPEM:       nextChain,
-		DNSNames:       []string{"api-staging.stogas.ai"},
-		ExpectedSHA256: identity.CertSHA256Hex(certs[0].Raw),
-	})
+	state, err := store.InstallBootChain(nextChain, "api-staging.stogas.ai")
 	if err != nil {
 		t.Fatalf("install active chain: %v", err)
 	}
@@ -268,9 +426,13 @@ func testCertificateStore(t *testing.T) *identity.CertificateStore {
 	if err != nil {
 		t.Fatalf("generate identity: %v", err)
 	}
-	store, err := identity.NewProvisionalCertificateStore(material, time.Now().UTC(), nil)
+	chain, roots := testCertificateChainPEM(t, material, time.Now().Add(24*time.Hour))
+	store, err := identity.NewBootCertificateStore(material, roots)
 	if err != nil {
-		t.Fatalf("create certificate store: %v", err)
+		t.Fatal(err)
+	}
+	if _, err = store.InstallBootChain(chain, "api-staging.stogas.ai"); err != nil {
+		t.Fatal(err)
 	}
 	return store
 }

@@ -62,16 +62,9 @@ func TestRuntimeInitializationReasonUsesOnlyFixedStages(t *testing.T) {
 		want startupReasonCode
 	}{
 		{errors.New("unknown"), startupRuntimeInitFailed},
-		{fmt.Errorf("wrapped: %w", stogashttp.ErrCatalogInitialization), startupCatalogInitFailed},
-		{fmt.Errorf("wrapped: %w", secretstore.ErrReleaseAuthentication), startupConfidentialSecretReleaseAuthenticationFailed},
-		{secretstore.ErrReleaseBindingMismatch, startupConfidentialSecretReleaseBindingFailed},
 		{secretstore.ErrInvalidReleaseContents, startupConfidentialSecretReleaseContentsInvalid},
-		{secretstore.ErrInvalidReleaseEncoding, startupConfidentialSecretReleaseEncodingInvalid},
-		{secretstore.ErrInvalidReleaseIdentity, startupConfidentialSecretReleaseIdentityInvalid},
 		{stogashttp.ErrConfidentialSecretReleaseInstallation, startupConfidentialSecretReleaseFailed},
 		{stogashttp.ErrConfidentialCertificateProvisioning, startupCertificateProvisioningFailed},
-		{stogashttp.ErrConfidentialHeartbeatConfirmation, startupConfidentialHeartbeatConfirmationFailed},
-		{stogashttp.ErrConfidentialHeartbeat, startupConfidentialHeartbeatFailed},
 		{stogashttp.ErrConfidentialRuntimeSecretApplication, startupConfidentialRuntimeSecretApplicationFailed},
 		{stogashttp.ErrConfidentialRuntimeInitialization, startupConfidentialRuntimeInitFailed},
 		{stogashttp.ErrGatewayRuntimeInitialization, startupGatewayRuntimeInitFailed},

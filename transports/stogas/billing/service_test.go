@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,15 +27,14 @@ func TestParseSignedAPIKey(t *testing.T) {
 	secret := "test-token-pepper"
 	keyID := "019de515-eabf-7c0e-89bd-400629a79580"
 	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
-	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, "", apiKeyVersion)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, userID, "", apiKeyVersion)
 
 	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
 		t.Fatalf("parseSignedAPIKey returned error: %v", err)
 	}
-	if claims.KeyID != keyID || claims.OrganizationID != organizationID || claims.WorkspaceID != workspaceID || claims.ResponsibleID != userID {
+	if claims.KeyID != keyID || claims.OrganizationID != organizationID || claims.ResponsibleID != userID {
 		t.Fatalf("claims = %#v", claims)
 	}
 	if claims.GrantID != nil {
@@ -60,10 +59,9 @@ func TestParseGrantSignedAPIKey(t *testing.T) {
 	secret := "test-token-pepper"
 	keyID := "019de515-eabf-7c0e-89bd-400629a79580"
 	organizationID := "019de516-7df8-71d6-80e4-3c62090d4e94"
-	workspaceID := "019de516-9c1b-7061-a9f0-bbdcaa8946e5"
 	userID := "019de516-b10f-786f-97f8-b95c71dfe1b6"
 	grantID := "019de516-c9ac-79cf-b701-4cf1b21f0a8c"
-	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, workspaceID, userID, grantID, apiKeyVersion)
+	rawKey := testSignedAPIKey(t, secret, keyID, organizationID, userID, grantID, apiKeyVersion)
 
 	claims, err := parseSignedAPIKey(rawKey, secret)
 	if err != nil {
@@ -81,11 +79,9 @@ func TestParseSignedAPIKeyRejectsWrongVersion(t *testing.T) {
 		secret,
 		"019de515-eabf-7c0e-89bd-400629a79580",
 		"019de516-7df8-71d6-80e4-3c62090d4e94",
-		"019de516-9c1b-7061-a9f0-bbdcaa8946e5",
 		"019de516-b10f-786f-97f8-b95c71dfe1b6",
 		"",
-		apiKeyVersion+1,
-	)
+		apiKeyVersion+1)
 
 	if _, err := parseSignedAPIKey(rawKey, secret); err == nil {
 		t.Fatal("expected version mismatch to be rejected")
@@ -99,16 +95,14 @@ func TestParseSignedAPIKeyRejectsZeroIssuanceEntropy(t *testing.T) {
 		secret,
 		"019de515-eabf-7c0e-89bd-400629a79580",
 		"019de516-7df8-71d6-80e4-3c62090d4e94",
-		"019de516-9c1b-7061-a9f0-bbdcaa8946e5",
 		"019de516-b10f-786f-97f8-b95c71dfe1b6",
 		"",
-		apiKeyVersion,
-	)
+		apiKeyVersion)
 	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
 	if err != nil {
 		t.Fatalf("decode key: %v", err)
 	}
-	clear(body[84:100])
+	clear(body[68:84])
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(body[:apiKeyPayloadBytes])
 	copy(body[apiKeyPayloadBytes:], hasher.Sum(nil)[:apiKeyMACBytes])
@@ -118,24 +112,22 @@ func TestParseSignedAPIKeyRejectsZeroIssuanceEntropy(t *testing.T) {
 	}
 }
 
-func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID string, workspaceID string, userID string, grantID string, version uint32) string {
+func testSignedAPIKey(t testing.TB, secret string, keyID string, organizationID string, userID string, grantID string, version uint32) string {
 	t.Helper()
 	payload := make([]byte, apiKeyPayloadBytes)
 	binary.BigEndian.PutUint32(payload[0:4], version)
 	keyUUID := uuid.MustParse(keyID)
 	organizationUUID := uuid.MustParse(organizationID)
-	workspaceUUID := uuid.MustParse(workspaceID)
 	userUUID := uuid.MustParse(userID)
 	copy(payload[4:20], keyUUID[:])
 	copy(payload[20:36], organizationUUID[:])
-	copy(payload[36:52], workspaceUUID[:])
-	copy(payload[52:68], userUUID[:])
+	copy(payload[36:52], userUUID[:])
 	if grantID != "" {
 		grantUUID := uuid.MustParse(grantID)
-		copy(payload[68:84], grantUUID[:])
+		copy(payload[52:68], grantUUID[:])
 	}
-	for index := 84; index < 100; index++ {
-		payload[index] = byte(index - 83)
+	for index := 68; index < apiKeyPayloadBytes; index++ {
+		payload[index] = byte(index - 67)
 	}
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(payload)
@@ -143,41 +135,7 @@ func testSignedAPIKey(t *testing.T, secret string, keyID string, organizationID 
 	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(body)
 }
 
-func TestSettlementStatuses(t *testing.T) {
-	tests := []struct {
-		name             string
-		availableBalance string
-		authorizedBilled string
-		billed           string
-		wantStatus       string
-	}{
-		{name: "exact", availableBalance: "9000", authorizedBilled: "1000", billed: "1000", wantStatus: "complete"},
-		{name: "balance release", availableBalance: "9000", authorizedBilled: "1000", billed: "400", wantStatus: "complete"},
-		{name: "extra debit positive", availableBalance: "2000", authorizedBilled: "1000", billed: "1500", wantStatus: "under_reserved"},
-		{name: "extra debit negative", availableBalance: "0", authorizedBilled: "1000", billed: "1500", wantStatus: "negative_balance"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			authorization := &Authorization{
-				AuthorizedBilledCostUSDAtoms: mustBigInt(t, tt.authorizedBilled),
-				AvailableBalanceUSDAtoms:     mustBigInt(t, tt.availableBalance),
-				KeyID:                        "key",
-				ProductKey:                   "model",
-				ProviderKey:                  "provider",
-				RequestID:                    "request",
-				UserID:                       "user",
-			}
-
-			billedCostUSDAtoms := mustBigInt(t, tt.billed)
-			if got := calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms); got != tt.wantStatus {
-				t.Fatalf("settlementStatus = %s, want %s", got, tt.wantStatus)
-			}
-		})
-	}
-}
-
-func TestParseUSDAtomsRejectsNoncanonicalOrOutOfRangeValues(t *testing.T) {
+func TestParseUSDRejectsNoncanonicalOrOutOfRangeValues(t *testing.T) {
 	for _, value := range []string{
 		"",
 		"abc",
@@ -189,20 +147,20 @@ func TestParseUSDAtomsRejectsNoncanonicalOrOutOfRangeValues(t *testing.T) {
 		"1000000000000000000000000000001",
 	} {
 		t.Run(value, func(t *testing.T) {
-			if _, err := ParseUSDAtoms(value); err == nil {
-				t.Fatalf("ParseUSDAtoms(%q) succeeded", value)
+			if _, err := ParseUSD(value); err == nil {
+				t.Fatalf("ParseUSD(%q) succeeded", value)
 			}
 		})
 	}
 
-	for _, value := range []string{"0", "1", maximumUSDAtoms} {
+	for _, value := range []string{"0", "1", maximumUSD} {
 		t.Run("valid_"+value, func(t *testing.T) {
-			parsed, err := ParseUSDAtoms(value)
+			parsed, err := ParseUSD(value)
 			if err != nil {
-				t.Fatalf("ParseUSDAtoms(%q) returned error: %v", value, err)
+				t.Fatalf("ParseUSD(%q) returned error: %v", value, err)
 			}
 			if parsed.String() != value {
-				t.Fatalf("ParseUSDAtoms(%q) = %s", value, parsed)
+				t.Fatalf("ParseUSD(%q) = %s", value, parsed)
 			}
 		})
 	}
@@ -237,9 +195,9 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	if _, exists := decoded["hold_params_hash"]; exists {
 		t.Fatal("the private reconciliation hash must not enter the public request-log payload")
 	}
-	pricing, ok := decoded["pricing"].(map[string]any)
+	pricing, ok := decoded["meters"].(map[string]any)
 	if !ok || len(pricing) != 0 {
-		t.Fatalf("pricing = %#v, want empty object", decoded["pricing"])
+		t.Fatalf("pricing = %#v, want empty object", decoded["meters"])
 	}
 }
 
@@ -264,15 +222,14 @@ func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 
 func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing.T) {
 	event := testGatewayRequestEvent()
+	event.CatalogVersion = catalogVersion(39)
+	event.CatalogChainHash = optionalString("sha256:" + strings.Repeat("b", 64))
 	overhead := "29"
-	event.CacheWriteOverheadUSDAtoms = &overhead
-	event.Pricing = EventPricing{
-		MeterInputTokens: {
-			Quantity:     "17",
-			RateKey:      "per_mill_tokens",
-			RateUSDAtoms: "100",
-			USDAtoms:     "2",
-		},
+	event.CacheWriteOverheadUSD = &overhead
+	event.Meters = EventMeters{
+		MeterCachedInputTokens: PricedMeter("300", RatePerMillionTokens, "0", "0"),
+		MeterInputTokens:       PricedMeter("17", "per_mill_tokens", "100", "2"),
+		MeterTotalInputTokens:  {Quantity: "317"},
 	}
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
@@ -283,20 +240,24 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 		t.Fatalf("decodeGatewayRequestEvent returned error: %v", err)
 	}
 	projected := tinybirdGatewayRequestEvent(decoded)
+	if projected.CatalogVersion == nil || *projected.CatalogVersion != 39 || projected.CatalogChainHash == nil || *projected.CatalogChainHash != *event.CatalogChainHash {
+		t.Fatalf("outbox projection lost the historical catalog identity: %#v", projected)
+	}
 	if projected.SchemaVersion != RequestLogSchemaVersion || projected.RequestID != event.RequestID ||
-		projected.AnalyticsInputTokens != 17 ||
-		projected.CacheWriteOverheadUSDAtoms == nil ||
-		*projected.CacheWriteOverheadUSDAtoms != overhead {
+		projected.AnalyticsInputTokens == nil || *projected.AnalyticsInputTokens != 317 ||
+		projected.AnalyticsCachedInputTokens != 300 ||
+		projected.CacheWriteOverheadUSD == nil ||
+		*projected.CacheWriteOverheadUSD != overhead {
 		t.Fatalf("decoded Tinybird projection = %#v", projected)
 	}
 
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"pricing":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsdAtoms":"1","usdAtoms":"1"}}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"meters":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsd":"1","usd":"1"}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid canonical pricing")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_read_savings_usd_atoms":"-1","pricing":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_read_savings_usd":"-1","meters":{}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache read savings")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_write_overhead_usd_atoms":"-1","pricing":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_write_overhead_usd":"-1","meters":{}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache write overhead")
 	}
 }
@@ -306,33 +267,32 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	successStatus := 200
 	ttftMS := uint32(150)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		SchemaVersion:              RequestLogSchemaVersion,
-		CacheWriteOverheadUSDAtoms: stringPtr("23"),
-		Timings: RequestTimings{
-			AdmissionMS: 12,
-			ProviderMS:  120,
-			ResponseMS:  18,
-		},
-		Pricing: EventPricing{
-			"input_tokens":                {Quantity: "12", RateKey: "per_mill_tokens", RateUSDAtoms: "1", USDAtoms: "1"},
+		SchemaVersion:         RequestLogSchemaVersion,
+		CacheWriteOverheadUSD: stringPtr("23"),
+		Performance:           RequestPerformance{TotalMS: 150, ProviderMS: 140, TTFTMS: &ttftMS},
+		Meters: EventMeters{
+			"input_tokens":                PricedMeter("12", "per_mill_tokens", "1", "1"),
+			"total_input_tokens":          {Quantity: "19"},
+			"total_cache_write_tokens":    {Quantity: "7"},
 			"cache_write_input_tokens":    {Quantity: "1"},
 			"cache_write_5m_input_tokens": {Quantity: "2"},
 			"cache_write_1h_input_tokens": {Quantity: "4"},
 		},
 		analyticsQuantities: map[string]uint64{
 			"input_tokens":                12,
+			"total_input_tokens":          19,
+			"total_cache_write_tokens":    7,
 			"cache_write_input_tokens":    1,
 			"cache_write_5m_input_tokens": 2,
 			"cache_write_1h_input_tokens": 4,
 		},
 		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 3, DurationUS: 41}},
-		TTFTMS:  &ttftMS,
 		ProviderAttempts: []ProviderAttempt{{
 			LatencyMS:    30,
 			Provider:     "openai",
 			Status:       "connection_error",
 			StatusCode:   &failedStatus,
-			UpstreamByok: "stogas",
+			UpstreamByok: nil,
 		}, {
 			LatencyMS:         90,
 			Provider:          "anthropic",
@@ -340,41 +300,35 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			FinishReason:      "stop",
 			Status:            "success",
 			StatusCode:        &successStatus,
-			UpstreamByok:      "stogas",
+			UpstreamByok:      nil,
 		}},
-		GatewayVersion:          "v1.5.13",
-		CatalogNodeIDs:          []string{"route:chat", "provider:openai", "deployment:gpt-5"},
-		StogasProcessingSuccess: true,
+		GatewayVersion: "v1.5.13",
 	})
 
-	if event.StogasProcessingSuccess != 1 {
-		t.Fatalf("stogas_processing_success = %d, want 1", event.StogasProcessingSuccess)
+	if event.Error != "null" || event.AnalyticsErrorCode != "" || event.AnalyticsErrorStatus != nil {
+		t.Fatalf("unexpected error: %#v", event)
 	}
-	if event.AnalyticsInputTokens != 12 || event.AnalyticsProviderStatus != "success" {
+	if event.AnalyticsInputTokens == nil || *event.AnalyticsInputTokens != 19 || event.AnalyticsProviderStatus != "success" {
 		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
 	}
-	if event.AnalyticsProviderLatencyMS != 120 {
-		t.Fatalf("analytics_provider_latency_ms = %d, want 120", event.AnalyticsProviderLatencyMS)
+	if event.AnalyticsProviderLatencyMS != 140 {
+		t.Fatalf("analytics_provider_latency_ms = %d, want 140", event.AnalyticsProviderLatencyMS)
 	}
 	if event.AnalyticsCacheWriteTokens != 7 {
 		t.Fatalf("analytics cache-write tokens = %d, want 7", event.AnalyticsCacheWriteTokens)
 	}
-	if event.CacheWriteOverheadUSDAtoms == nil || *event.CacheWriteOverheadUSDAtoms != "23" {
-		t.Fatalf("cache-write overhead = %#v, want 23", event.CacheWriteOverheadUSDAtoms)
+	if event.CacheWriteOverheadUSD == nil || *event.CacheWriteOverheadUSD != "23" {
+		t.Fatalf("cache-write overhead = %#v, want 23", event.CacheWriteOverheadUSD)
 	}
 	if strings.Join(event.AnalyticsProviders, ",") != "openai,anthropic" ||
 		strings.Join(event.AnalyticsProviderStatuses, ",") != "connection_error,502,success,200" {
 		t.Fatalf("analytics provider projections do not include every attempt: %#v", event)
 	}
-	if event.TTFTMS == nil || *event.TTFTMS != 150 {
-		t.Fatalf("ttft_ms = %#v, want 150", event.TTFTMS)
+	if event.AnalyticsTTFTMS == nil || *event.AnalyticsTTFTMS != 150 {
+		t.Fatalf("ttft_ms = %#v, want 150", event.AnalyticsTTFTMS)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway_version = %q", event.GatewayVersion)
-	}
-	var nodeIDs []string
-	if err := json.Unmarshal([]byte(event.CatalogNodeIDs), &nodeIDs); err != nil || len(nodeIDs) != 3 {
-		t.Fatalf("catalog_node_ids = %q, err=%v", event.CatalogNodeIDs, err)
 	}
 	var attempts []ProviderAttempt
 	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil ||
@@ -382,8 +336,8 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
 	var pricing map[string]map[string]string
-	if err := json.Unmarshal([]byte(event.Pricing), &pricing); err != nil || pricing["input_tokens"]["quantity"] != "12" {
-		t.Fatalf("pricing = %q, err=%v", event.Pricing, err)
+	if err := json.Unmarshal([]byte(event.Meters), &pricing); err != nil || pricing["input_tokens"]["quantity"] != "12" {
+		t.Fatalf("pricing = %q, err=%v", event.Meters, err)
 	}
 	var pluginMetrics plugins.Metrics
 	if err := json.Unmarshal([]byte(event.Plugins), &pluginMetrics); err != nil ||
@@ -392,17 +346,17 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		pluginMetrics.StogasStructuredPIIRedaction.DurationUS != 41 {
 		t.Fatalf("plugins = %q, err=%v", event.Plugins, err)
 	}
-	var timings RequestTimings
-	if err := json.Unmarshal([]byte(event.Timings), &timings); err != nil ||
-		timings.AdmissionMS != 12 || timings.ProviderMS != 120 || timings.ResponseMS != 18 {
-		t.Fatalf("timings = %q, err=%v", event.Timings, err)
+	var performance RequestPerformance
+	if err := json.Unmarshal([]byte(event.Performance), &performance); err != nil ||
+		performance.TotalMS != 150 || performance.ProviderMS != 140 || performance.TTFTMS == nil || *performance.TTFTMS != 150 {
+		t.Fatalf("timings = %q, err=%v", event.Performance, err)
 	}
 }
 
-func TestTinybirdGatewayRequestEventSaturatesProviderDurationAndPreservesTTFT(t *testing.T) {
+func TestTinybirdGatewayRequestEventPreservesMaximumPerformance(t *testing.T) {
 	maximum := ^uint32(0)
 	ttftMS := uint32(1)
-	event := tinybirdGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, TTFTMS: &ttftMS, ProviderAttempts: []ProviderAttempt{
+	event := tinybirdGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, Performance: RequestPerformance{TotalMS: maximum, ProviderMS: maximum, TTFTMS: &ttftMS}, ProviderAttempts: []ProviderAttempt{
 		{LatencyMS: maximum, Provider: "openai", Status: "connection_error"},
 		{
 			LatencyMS: 1,
@@ -414,8 +368,8 @@ func TestTinybirdGatewayRequestEventSaturatesProviderDurationAndPreservesTTFT(t 
 	if event.AnalyticsProviderLatencyMS != maximum {
 		t.Fatalf("analytics_provider_latency_ms = %d, want %d", event.AnalyticsProviderLatencyMS, maximum)
 	}
-	if event.TTFTMS == nil || *event.TTFTMS != ttftMS {
-		t.Fatalf("ttft_ms = %#v, want %d", event.TTFTMS, ttftMS)
+	if event.AnalyticsTTFTMS == nil || *event.AnalyticsTTFTMS != ttftMS {
+		t.Fatalf("ttft_ms = %#v, want %d", event.AnalyticsTTFTMS, ttftMS)
 	}
 }
 
@@ -424,21 +378,21 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	ttftMS := uint32(8)
 	grantID := "019de515-eabf-7c0e-89bd-400629a79580"
 	event := mustNewRequestEvent(t, EventInput{
-		Authorization: &Authorization{AuthorizedBilledCostUSDAtoms: mustParseBigInt("10"), GrantID: &grantID, RequestID: "request-1"},
+		Authorization: &Authorization{AuthorizedBilledCostUSD: mustUSD("10"), GrantID: &grantID, RequestID: "request-1"},
 		TTFTMS:        &ttftMS,
 		RequestType:   string(schemas.ChatCompletionStreamRequest),
-		Pricing: EventPricing{
-			"input_tokens": {Quantity: "1", RateKey: "per_mill_tokens", RateUSDAtoms: "2000000", USDAtoms: "2"},
+		Meters: EventMeters{
+			"input_tokens": PricedMeter("1", "per_mill_tokens", "2000000", "2"),
 		},
 		Plugins:   plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
 		StartedAt: startedAt,
 	})
 
-	if event.Pricing["input_tokens"].RateUSDAtoms != "2000000" {
-		t.Fatalf("expected settled pricing audit, got %#v", event.Pricing)
+	if *event.Meters["input_tokens"].RateUSD != "2000000" {
+		t.Fatalf("expected settled pricing audit, got %#v", event.Meters)
 	}
-	if event.TTFTMS == nil || *event.TTFTMS != ttftMS {
-		t.Fatalf("expected request TTFT, got %#v", event.TTFTMS)
+	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != ttftMS {
+		t.Fatalf("expected request TTFT, got %#v", event.Performance.TTFTMS)
 	}
 	if event.StogasGrantID == nil || *event.StogasGrantID != grantID {
 		t.Fatalf("expected grant attribution, got %#v", event.StogasGrantID)
@@ -461,14 +415,14 @@ func TestBilledRequestCostUsesFullManagedCostAndCeilingTwoPercentForBYOK(t *test
 	}{
 		{name: "managed", authorization: managed, upstream: "101", want: "101"},
 		{name: "BYOK zero", authorization: byok, upstream: "0", want: "0"},
-		{name: "BYOK minimum nonzero", authorization: byok, upstream: "1", want: "1"},
+		{name: "BYOK minimum nonzero", authorization: byok, upstream: "0.000000000000000000000000000000000001", want: "0.000000000000000000000000000000000001"},
 		{name: "BYOK exact", authorization: byok, upstream: "100", want: "2"},
-		{name: "BYOK rounds up", authorization: byok, upstream: "101", want: "3"},
-		{name: "BYOK larger", authorization: byok, upstream: "999", want: "20"},
+		{name: "BYOK rounds up", authorization: byok, upstream: "101", want: "2.02"},
+		{name: "BYOK larger", authorization: byok, upstream: "999", want: "19.98"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := calculateBilledCostUSDAtoms(tc.authorization, mustBigInt(t, tc.upstream)).String(); got != tc.want {
-				t.Fatalf("calculateBilledCostUSDAtoms(%q) = %q, want %q", tc.upstream, got, tc.want)
+			if got := calculateBilledCostUSD(tc.authorization, mustUSDTest(t, tc.upstream)).String(); got != tc.want {
+				t.Fatalf("calculateBilledCostUSD(%q) = %q, want %q", tc.upstream, got, tc.want)
 			}
 		})
 	}
@@ -489,17 +443,17 @@ func TestNewRequestEventKeepsCacheEconomicsIndependentFromCustomerBilling(t *tes
 		{
 			name:           "BYOK",
 			authorization:  &Authorization{UpstreamByok: "0198f4cc-6c25-8000-8000-000000000001"},
-			wantBilledCost: "3",
+			wantBilledCost: "2.02",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			event := mustNewRequestEvent(t, EventInput{
-				UpstreamCostUSDAtoms:     "101",
-				Authorization:            tc.authorization,
-				CacheReadSavingsUSDAtoms: &upstreamSavings,
+				UpstreamCostUSD:     "101",
+				Authorization:       tc.authorization,
+				CacheReadSavingsUSD: &upstreamSavings,
 			})
-			if event.BilledCostUSDAtoms != tc.wantBilledCost ||
-				event.CacheReadSavingsUSDAtoms == nil || *event.CacheReadSavingsUSDAtoms != "90" {
+			if event.BilledCostUSD != tc.wantBilledCost ||
+				event.CacheReadSavingsUSD == nil || *event.CacheReadSavingsUSD != "90" {
 				t.Fatalf("unexpected cache savings projection: %#v", event)
 			}
 		})
@@ -518,8 +472,8 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		ProviderStartedAt:   providerStartedAt,
 		StartedAt:           startedAt,
 	})
-	if event.TotalTimeMS < 90 {
-		t.Fatalf("total time should begin at request admission, got %dms", event.TotalTimeMS)
+	if event.Performance.TotalMS < 90 {
+		t.Fatalf("total time should begin at request admission, got %dms", event.Performance.TotalMS)
 	}
 	providerTime := event.ProviderAttempts[0].LatencyMS
 	if providerTime < 35 || providerTime > 45 {
@@ -528,10 +482,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.ClientStopMS == nil || *event.ClientStopMS < 40 || *event.ClientStopMS > 50 {
 		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
 	}
-	if event.Timings.AdmissionMS < 35 || event.Timings.AdmissionMS > 45 ||
-		event.Timings.ProviderMS < 35 || event.Timings.ProviderMS > 45 ||
-		event.Timings.AdmissionMS+event.Timings.ProviderMS+event.Timings.ResponseMS != event.TotalTimeMS {
-		t.Fatalf("request stage timings do not partition the wall clock: %#v", event)
+	if event.Performance.ProviderMS < 35 || event.Performance.ProviderMS > 45 ||
+		event.Performance.ProviderMS > event.Performance.TotalMS {
+		t.Fatalf("provider duration exceeds the request clock: %#v", event)
 	}
 
 	event = mustNewRequestEvent(t, EventInput{
@@ -560,8 +513,8 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if len(event.ProviderAttempts) != 0 {
 		t.Fatalf("a request that never started a provider has attempts: %#v", event.ProviderAttempts)
 	}
-	if event.Timings.AdmissionMS != event.TotalTimeMS || event.Timings.ProviderMS != 0 || event.Timings.ResponseMS != 0 {
-		t.Fatalf("pre-provider timing must remain entirely in admission: %#v", event.Timings)
+	if event.Performance.ProviderMS != 0 {
+		t.Fatalf("a request never dispatched must not record provider time: %#v", event.Performance)
 	}
 	if payload := tinybirdGatewayRequestEvent(event); payload.ProviderAttempts != "[]" || len(payload.AnalyticsProviders) != 0 || payload.AnalyticsProviderStatus != "" {
 		t.Fatalf("pre-provider analytics projection is not empty: %#v", payload)
@@ -572,12 +525,12 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		ClientStoppedAt: now.Add(time.Hour),
 		StartedAt:       startedAt,
 	})
-	if event.ClientStopMS == nil || *event.ClientStopMS != event.TotalTimeMS {
-		t.Fatalf("client stop time must not exceed total time: stop=%#v total=%d", event.ClientStopMS, event.TotalTimeMS)
+	if event.ClientStopMS == nil || *event.ClientStopMS != event.Performance.TotalMS {
+		t.Fatalf("client stop time must not exceed total time: stop=%#v total=%d", event.ClientStopMS, event.Performance.TotalMS)
 	}
 }
 
-func TestNewRequestEventCanonicalizesStageTimingBounds(t *testing.T) {
+func TestNewRequestEventCanonicalizesPerformanceBounds(t *testing.T) {
 	now := time.Now().UTC()
 	for _, test := range []struct {
 		name              string
@@ -620,9 +573,9 @@ func TestNewRequestEventCanonicalizesStageTimingBounds(t *testing.T) {
 				ProviderStartedAt:   test.providerStartedAt,
 				StartedAt:           test.startedAt,
 			})
-			timings := event.Timings
-			if timings.AdmissionMS+timings.ProviderMS+timings.ResponseMS != event.TotalTimeMS {
-				t.Fatalf("stage timing sum = %#v, total = %d", timings, event.TotalTimeMS)
+			timings := event.Performance
+			if timings.ProviderMS > timings.TotalMS {
+				t.Fatalf("provider duration = %#v, total = %d", timings, event.Performance.TotalMS)
 			}
 			if test.wantProvider && timings.ProviderMS == 0 {
 				t.Fatalf("valid provider start lost provider wall time: %#v", timings)
@@ -644,8 +597,8 @@ func TestNewRequestEventCanonicalizesTTFT(t *testing.T) {
 		TTFTMS:        &ttftMS,
 	})
 	ttftMS = 1
-	if event.TTFTMS == nil || *event.TTFTMS != 40 {
-		t.Fatalf("request event did not preserve an immutable TTFT: %#v", event.TTFTMS)
+	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != 40 {
+		t.Fatalf("request event did not preserve an immutable TTFT: %#v", event.Performance.TTFTMS)
 	}
 
 	tooLarge := ^uint32(0)
@@ -655,7 +608,7 @@ func TestNewRequestEventCanonicalizesTTFT(t *testing.T) {
 		StartedAt:     startedAt,
 		TTFTMS:        &tooLarge,
 	})
-	if clamped.TTFTMS == nil || *clamped.TTFTMS != clamped.TotalTimeMS {
+	if clamped.Performance.TTFTMS == nil || *clamped.Performance.TTFTMS != clamped.Performance.TotalMS {
 		t.Fatalf("TTFT must not exceed total request time: %#v", clamped)
 	}
 
@@ -665,8 +618,8 @@ func TestNewRequestEventCanonicalizesTTFT(t *testing.T) {
 		StartedAt:     startedAt,
 		TTFTMS:        &tooLarge,
 	})
-	if buffered.TTFTMS != nil {
-		t.Fatalf("buffered request fabricated TTFT: %#v", buffered.TTFTMS)
+	if buffered.Performance.TTFTMS != nil {
+		t.Fatalf("buffered request fabricated TTFT: %#v", buffered.Performance.TTFTMS)
 	}
 }
 
@@ -715,11 +668,11 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 		t.Fatalf("provider attempt statuses = %#v", event.ProviderAttempts)
 	}
 	payload := tinybirdGatewayRequestEvent(event)
-	if payload.AnalyticsProviderLatencyMS != 120 {
-		t.Fatalf("analytics provider latency = %d, want 120", payload.AnalyticsProviderLatencyMS)
+	if payload.AnalyticsProviderLatencyMS != 145 {
+		t.Fatalf("analytics provider latency = %d, want 145", payload.AnalyticsProviderLatencyMS)
 	}
-	if payload.TTFTMS == nil || *payload.TTFTMS != ttftMS {
-		t.Fatalf("TTFT = %#v, want %d", payload.TTFTMS, ttftMS)
+	if payload.AnalyticsTTFTMS == nil || *payload.AnalyticsTTFTMS != ttftMS {
+		t.Fatalf("TTFT = %#v, want %d", payload.AnalyticsTTFTMS, ttftMS)
 	}
 	if payload.AnalyticsProviderStatus != "success" || strings.Join(payload.AnalyticsProviders, ",") != "openai,anthropic" {
 		t.Fatalf("analytics provider projection = %#v", payload)
@@ -738,7 +691,7 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 	if len(singleAttempt.ProviderAttempts) != 1 || singleAttempt.ProviderAttempts[0].Provider != "anthropic" || singleAttempt.ProviderAttempts[0].LatencyMS != 1 {
 		t.Fatalf("single observed attempt was not preserved: %#v", singleAttempt.ProviderAttempts)
 	}
-	if got := singleAttempt.TTFTMS; got == nil || *got != requestTTFTMS {
+	if got := singleAttempt.Performance.TTFTMS; got == nil || *got != requestTTFTMS {
 		t.Fatalf("single observed attempt lost request TTFT: %#v", got)
 	}
 }
@@ -772,23 +725,18 @@ func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
 	service.publishUncommittedFallback(
 		&Authorization{RequestID: "request-1"},
 		RequestEvent{
-			SchemaVersion:           RequestLogSchemaVersion,
-			RequestID:               "request-1",
-			StogasBillingStatus:     "complete",
-			StogasProcessingSuccess: true,
-			UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
-			BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
+			SchemaVersion:   RequestLogSchemaVersion,
+			RequestID:       "request-1",
+			UpstreamCostUSD: ZeroChargeUSD,
+			BilledCostUSD:   ZeroChargeUSD,
 		},
 	)
 
 	if captured.RequestID != "request-1" {
 		t.Fatalf("request_id = %q, want request-1", captured.RequestID)
 	}
-	if captured.StogasBillingStatus != "complete" {
-		t.Fatalf("stogas_billing_status = %q, want final status complete", captured.StogasBillingStatus)
-	}
-	if captured.StogasProcessingSuccess != 1 {
-		t.Fatalf("stogas_processing_success = %d, want 1", captured.StogasProcessingSuccess)
+	if captured.Error != "null" || captured.AnalyticsErrorCode != "" || captured.AnalyticsErrorStatus != nil {
+		t.Fatalf("unexpected error: %#v", captured)
 	}
 }
 
@@ -814,12 +762,10 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 		tinybird: newTestTinybirdClient(t, server.URL),
 	}
 	event := RequestEvent{
-		SchemaVersion:           RequestLogSchemaVersion,
-		RequestID:               "request-1",
-		StogasBillingStatus:     "complete",
-		StogasProcessingSuccess: true,
-		UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
-		BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
+		SchemaVersion:   RequestLogSchemaVersion,
+		RequestID:       "request-1",
+		UpstreamCostUSD: ZeroChargeUSD,
+		BilledCostUSD:   ZeroChargeUSD,
 	}
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
@@ -828,7 +774,7 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 	service.retrySettle(
 		&Authorization{RequestID: "request-1"},
 		"params",
-		ZeroChargeUSDAtoms,
+		ZeroChargeUSD,
 		payload,
 		true,
 	)
@@ -841,9 +787,6 @@ func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
 	}
 	if captured.HoldParamsHash != "params" {
 		t.Fatalf("fallback hold_params_hash = %q, want params", captured.HoldParamsHash)
-	}
-	if captured.StogasBillingStatus != "complete" {
-		t.Fatalf("fallback status = %q, want final billing status", captured.StogasBillingStatus)
 	}
 }
 
@@ -989,7 +932,7 @@ func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
 				},
 				tinybird: tinybird,
 			}
-			if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+			if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 				t.Fatalf("FinalizeRequest returned error: %v", err)
 			}
 			if writeOutbox == nil || *writeOutbox != tt.wantOutbox {
@@ -1006,34 +949,34 @@ func TestFinalizeRequestPassesUpstreamCostBasisAndBilledEventToSettlement(t *tes
 	authorization := testAuthorization()
 	authorization.UpstreamByok = "0198f4cc-6c25-8000-8000-000000000001"
 	event := mustNewRequestEvent(t, EventInput{
-		Authorization:        authorization,
-		UpstreamCostUSDAtoms: "100",
+		Authorization:   authorization,
+		UpstreamCostUSD: "100",
 	})
-	settlementUpstreamCostUSDAtoms := ""
+	settlementUpstreamCostUSD := ""
 	settlementRequestEventPayload := ""
 	service := &Service{
-		settleFunc: func(_ context.Context, _ *Authorization, _ string, upstreamCostUSDAtoms string, requestEventPayload string, _ bool) error {
-			settlementUpstreamCostUSDAtoms = upstreamCostUSDAtoms
+		settleFunc: func(_ context.Context, _ *Authorization, _ string, upstreamCostUSD string, requestEventPayload string, _ bool) error {
+			settlementUpstreamCostUSD = upstreamCostUSD
 			settlementRequestEventPayload = requestEventPayload
 			return nil
 		},
 	}
 
-	if err := service.FinalizeRequest(context.Background(), authorization, event); err != nil {
+	if err := service.FinalizeRequest(context.Background(), authorization, event, nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
-	if settlementUpstreamCostUSDAtoms != "100" {
-		t.Fatalf("settlement upstream cost = %q, want 100", settlementUpstreamCostUSDAtoms)
+	if settlementUpstreamCostUSD != "100" {
+		t.Fatalf("settlement upstream cost = %q, want 100", settlementUpstreamCostUSD)
 	}
 	settlementEvent, err := decodeGatewayRequestEvent(settlementRequestEventPayload)
 	if err != nil {
 		t.Fatalf("decode settlement request event: %v", err)
 	}
-	if settlementEvent.UpstreamCostUSDAtoms != "100" || settlementEvent.BilledCostUSDAtoms != "2" {
+	if settlementEvent.UpstreamCostUSD != "100" || settlementEvent.BilledCostUSD != "2" {
 		t.Fatalf(
 			"settlement event costs = upstream %q, billed %q; want upstream 100, billed 2",
-			settlementEvent.UpstreamCostUSDAtoms,
-			settlementEvent.BilledCostUSDAtoms,
+			settlementEvent.UpstreamCostUSD,
+			settlementEvent.BilledCostUSD,
 		)
 	}
 }
@@ -1060,7 +1003,7 @@ func TestFinalizeRequestBindsDirectTinybirdEvidenceToTheExactHold(t *testing.T) 
 	}
 	defer service.Close()
 
-	if err := service.FinalizeRequest(context.Background(), authorization, testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), authorization, testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	want := createHoldParamsHash(
@@ -1150,7 +1093,7 @@ func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *t
 	service.retrySettle(
 		testAuthorization(),
 		"params",
-		ZeroChargeUSDAtoms,
+		ZeroChargeUSD,
 		`{"request_id":"request-1"}`,
 		false,
 	)
@@ -1185,7 +1128,7 @@ func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend
 	}
 	defer service.Close()
 
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	select {
@@ -1226,7 +1169,7 @@ func TestFinalizeRequestRetriesTransactionalOutboxAfterTinybirdFailure(t *testin
 	}
 	defer service.Close()
 
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	select {
@@ -1267,7 +1210,7 @@ func TestFinalizeRequestRescuesEvidenceAfterBothInitialSinksFail(t *testing.T) {
 		tinybird: tinybird,
 	}
 
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	service.Close()
@@ -1301,7 +1244,7 @@ func TestFinalizeRequestBoundsMemoryWhenNeitherSinkRecovers(t *testing.T) {
 		tinybird: tinybird,
 	}
 
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	service.Close()
@@ -1339,7 +1282,7 @@ func TestCloseWaitsForActiveSettlementRetry(t *testing.T) {
 		},
 	}
 
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent()); err != nil {
+	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
 		t.Fatalf("FinalizeRequest returned error: %v", err)
 	}
 	<-retryStarted
@@ -1388,11 +1331,21 @@ func TestSettlementRetryQueueRetainsABoundedBurst(t *testing.T) {
 	}
 	defer service.Close()
 	defer release()
+	var retained atomic.Int64
+	var bytesRetained atomic.Int64
+	retain := func(bytes int) (func(), bool) {
+		if bytes < len(`{}`) || bytes >= tinybirdMaxEventBytes {
+			t.Fatalf("unexpected task size: %d", bytes)
+		}
+		retained.Add(1)
+		bytesRetained.Add(int64(bytes))
+		return func() { retained.Add(-1); bytesRetained.Add(-int64(bytes)) }, true
+	}
 
 	start := func(requestID string) bool {
 		authorization := testAuthorization()
 		authorization.RequestID = requestID
-		return service.startSettleRetry(authorization, "params", ZeroChargeUSDAtoms, `{}`, true)
+		return service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, true, retain)
 	}
 	if !start("request-1") {
 		t.Fatal("first settlement retry was not admitted")
@@ -1408,6 +1361,9 @@ func TestSettlementRetryQueueRetainsABoundedBurst(t *testing.T) {
 	if start("request-3") {
 		t.Fatal("settlement retry beyond the configured queue bound was admitted")
 	}
+	if retained.Load() != 2 || bytesRetained.Load() <= 0 {
+		t.Fatal("queue rejection leaked a retained task or released active work")
+	}
 	diagnostics := service.Diagnostics()
 	if diagnostics.SettlementRetries != 1 || diagnostics.SettlementRetryQueueDepth != 1 || diagnostics.SettlementRetryQueueCapacity != 1 {
 		t.Fatalf("settlement retry diagnostics = %#v", diagnostics)
@@ -1419,6 +1375,13 @@ func TestSettlementRetryQueueRetainsABoundedBurst(t *testing.T) {
 		t.Fatalf("settlement retry last deferred time = %v, want a current timestamp", diagnostics.SettlementRetryLastDeferredAt)
 	}
 	release()
+	service.Close()
+	if retained.Load() != 0 || bytesRetained.Load() != 0 {
+		t.Fatal("retry completion leaked memory ownership")
+	}
+	if start("closed") || retained.Load() != 0 || bytesRetained.Load() != 0 {
+		t.Fatal("closed service retained retry memory")
+	}
 }
 
 func TestFinalizeRequestAtRetryCapacityKeepsOnlyDurableEvidence(t *testing.T) {
@@ -1476,7 +1439,7 @@ func TestFinalizeRequestAtRetryCapacityKeepsOnlyDurableEvidence(t *testing.T) {
 			for _, requestID := range []string{"active-retry", "queued-retry"} {
 				authorization := testAuthorization()
 				authorization.RequestID = requestID
-				if !service.startSettleRetry(authorization, "params", ZeroChargeUSDAtoms, `{}`, false) {
+				if !service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, false, nil) {
 					t.Fatalf("failed to admit %s", requestID)
 				}
 				if requestID == "active-retry" {
@@ -1492,7 +1455,7 @@ func TestFinalizeRequestAtRetryCapacityKeepsOnlyDurableEvidence(t *testing.T) {
 			authorization.RequestID = "capacity-request"
 			event := testGatewayRequestEvent()
 			event.RequestID = authorization.RequestID
-			if err := service.FinalizeRequest(context.Background(), authorization, event); err != nil {
+			if err := service.FinalizeRequest(context.Background(), authorization, event, nil); err != nil {
 				t.Fatalf("FinalizeRequest returned error: %v", err)
 			}
 			diagnostics := service.Diagnostics()
@@ -1538,7 +1501,7 @@ func TestSettlementRetryQueueWaitsThroughDatabaseFailover(t *testing.T) {
 	for index := range requests {
 		authorization := testAuthorization()
 		authorization.RequestID = fmt.Sprintf("request-%d", index)
-		if !service.startSettleRetry(authorization, "params", ZeroChargeUSDAtoms, `{}`, true) {
+		if !service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, true, nil) {
 			t.Fatalf("settlement retry %d was not admitted", index)
 		}
 	}
@@ -1585,7 +1548,7 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 	service.retrySettle(
 		testAuthorization(),
 		"params",
-		ZeroChargeUSDAtoms,
+		ZeroChargeUSD,
 		`{"request_id":"request-1"}`,
 		true,
 	)
@@ -1597,43 +1560,66 @@ func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(
 
 func testAuthorization() *Authorization {
 	return &Authorization{
-		AuthorizedBilledCostUSDAtoms: mustParseBigInt(ZeroChargeUSDAtoms),
-		AvailableBalanceUSDAtoms:     mustParseBigInt("100000000000"),
-		KeyID:                        "key-1",
-		ProductKey:                   "gpt-4o-mini",
-		ProviderKey:                  "openai",
-		RequestID:                    "request-1",
-		UpstreamByok:                 "stogas",
-		UserID:                       "user-1",
+		AuthorizedBilledCostUSD: mustUSD(ZeroChargeUSD),
+		AvailableBalanceUSD:     mustUSD("100000000000"),
+		KeyID:                   "key-1",
+		ProductKey:              "gpt-4o-mini",
+		ProviderKey:             "openai",
+		RequestID:               "request-1",
+		UpstreamByok:            "stogas",
+		UserID:                  "user-1",
 	}
 }
 
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
-		SchemaVersion:           RequestLogSchemaVersion,
-		CreatedAt:               time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		RequestID:               "request-1",
-		StogasAPIKeyID:          "key-1",
-		StogasBillingStatus:     "complete",
-		StogasProcessingSuccess: true,
-		UpstreamCostUSDAtoms:    ZeroChargeUSDAtoms,
-		BilledCostUSDAtoms:      ZeroChargeUSDAtoms,
+		SchemaVersion:   RequestLogSchemaVersion,
+		CreatedAt:       time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		RequestID:       "request-1",
+		StogasAPIKeyID:  "key-1",
+		UpstreamCostUSD: ZeroChargeUSD,
+		BilledCostUSD:   ZeroChargeUSD,
 	}
 }
 
-func mustParseBigInt(value string) *big.Int {
-	parsed, ok := new(big.Int).SetString(value, 10)
-	if !ok {
+func mustUSD(value string) *money.USD {
+	parsed, err := money.Parse(value)
+	if err != nil {
 		panic("invalid big int test fixture")
 	}
 	return parsed
 }
 
-func mustBigInt(t *testing.T, value string) *big.Int {
+func mustUSDTest(t *testing.T, value string) *money.USD {
 	t.Helper()
-	parsed, ok := new(big.Int).SetString(value, 10)
-	if !ok {
+	parsed, err := money.Parse(value)
+	if err != nil {
 		t.Fatalf("invalid big int %q", value)
 	}
 	return parsed
+}
+
+func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
+	for name, meter := range map[string]EventMeter{
+		"free":       PricedMeter("300", RatePerMillionTokens, "0", "0"),
+		"unpriced":   {Quantity: "300"},
+		"known zero": {Quantity: "0"},
+	} {
+		if _, _, err := ValidateMeters(EventMeters{MeterCachedInputTokens: meter}); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	rate := "0"
+	for name, meters := range map[string]EventMeters{
+		"incomplete":        {MeterCachedInputTokens: {Quantity: "300", USD: &rate}},
+		"priced aggregate":  {MeterTotalTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced estimate":   {MeterEstimatedInputTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced text bytes": {MeterInputTextBytes: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"negative":          {MeterTotalTokens: {Quantity: "-1"}},
+		"overflow":          {MeterTotalTokens: {Quantity: "18446744073709551616"}},
+	} {
+		if _, _, err := ValidateMeters(meters); err == nil {
+			t.Fatalf("accepted %s", name)
+		}
+	}
 }

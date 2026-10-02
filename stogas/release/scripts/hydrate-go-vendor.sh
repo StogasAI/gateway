@@ -19,10 +19,6 @@ mkdir -p "$go_modcache" "$go_build_cache" "$(dirname "$go_vendor")"
 source "$release_root/scripts/guix.sh"
 resolve_stogas_guix "$release_root"
 
-go_mod_before="$(sha256sum "$transports_root/go.mod" | cut -d' ' -f1)"
-go_sum_before="$(sha256sum "$transports_root/go.sum" | cut -d' ' -f1)"
-core_mod_before="$(sha256sum "$gateway_source_root/core/go.mod" | cut -d' ' -f1)"
-core_sum_before="$(sha256sum "$gateway_source_root/core/go.sum" | cut -d' ' -f1)"
 
 hydrate_go() {
   # Variables expand inside the Guix shell.
@@ -33,7 +29,7 @@ hydrate_go() {
     STOGAS_GO_BUILD_CACHE="$go_build_cache" \
     STOGAS_GO_VENDOR="$go_vendor" \
     "$STOGAS_GUIX" shell -L "$release_root/guix/modules" \
-    -e '(@ (stogas release packages) stogas-go-1-26)' \
+    -e '(@ (stogas release packages) stogas-go-1-27)' \
     git nss-certs -- \
     bash -c '
         set -euo pipefail
@@ -52,28 +48,29 @@ hydrate_go() {
         export GOCACHE="$STOGAS_GO_BUILD_CACHE"
         export GOFLAGS=-modcacherw
 
-        go mod tidy
+        if [ -n "${STOGAS_VERIFIER_BUILD_ROOT:-}" ]; then
+          go mod edit -replace=github.com/StogasAI/verifier/go=../verifier/source/go
+        fi
+        ledgers=(go.mod go.sum ../core/go.mod ../core/go.sum)
+        before="$(sha256sum "${ledgers[@]}")"
+        # Tidy would remove the published verifier checksums for a local
+        # replacement. Preserve those ledgers; vendoring still requires a
+        # complete module graph and download checks every remote dependency.
+        if [ -z "${STOGAS_VERIFIER_BUILD_ROOT:-}" ]; then
+          go mod tidy
+        fi
         go mod download
         go mod verify
+        if [ "$before" != "$(sha256sum "${ledgers[@]}")" ]; then
+          echo "Go hydration changed a go.mod or go.sum ledger; update it before release." >&2
+          exit 70
+        fi
         rm -rf "$STOGAS_GO_VENDOR"
         go mod vendor -o "$STOGAS_GO_VENDOR"
       '
 }
 
 hydrate_go
-
-go_mod_after="$(sha256sum "$transports_root/go.mod" | cut -d' ' -f1)"
-go_sum_after="$(sha256sum "$transports_root/go.sum" | cut -d' ' -f1)"
-core_mod_after="$(sha256sum "$gateway_source_root/core/go.mod" | cut -d' ' -f1)"
-core_sum_after="$(sha256sum "$gateway_source_root/core/go.sum" | cut -d' ' -f1)"
-
-if [ "$go_mod_before" != "$go_mod_after" ] || \
-  [ "$go_sum_before" != "$go_sum_after" ] || \
-  [ "$core_mod_before" != "$core_mod_after" ] || \
-  [ "$core_sum_before" != "$core_sum_after" ]; then
-  echo "Go hydration changed a committed go.mod or go.sum ledger; commit it before release." >&2
-  exit 70
-fi
 
 if [ -n "$(git -C "$repo_root" ls-files transports/vendor)" ]; then
   echo "transports/vendor must remain an untracked local cache." >&2

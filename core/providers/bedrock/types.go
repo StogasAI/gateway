@@ -20,6 +20,19 @@ const bedrockSigningService = "bedrock"
 // credential scope; using "bedrock" will cause signature verification failures.
 const bedrockMantleSigningService = "bedrock-mantle"
 
+// bedrockService identifies an AWS endpoint service Bifrost dials. The value doubles as the
+// host prefix of the public regional endpoint. It is distinct from the SigV4 signing service
+// above: bedrock-runtime and bedrock-agent-runtime both sign as "bedrock".
+type bedrockService string
+
+const (
+	bedrockServiceRuntime      bedrockService = "bedrock-runtime"
+	bedrockServiceControlPlane bedrockService = "bedrock"
+	bedrockServiceMantle       bedrockService = "bedrock-mantle"
+	bedrockServiceAgentRuntime bedrockService = "bedrock-agent-runtime"
+	bedrockServiceS3           bedrockService = "s3"
+)
+
 const MinimumReasoningMaxTokens = 1
 const DefaultCompletionMaxTokens = 4096 // Only used for relative reasoning max token calculation - not passed in body by default
 
@@ -230,6 +243,29 @@ type BedrockContentBlock struct {
 
 	// Citations from nova_grounding — co-located with a text block in the same content block
 	CitationsContent *BedrockCitationsContent `json:"citationsContent,omitempty"`
+
+	// Replayed Anthropic tool-search blocks. A client must echo the assistant's
+	// server_tool_use and tool_search_tool_result back unchanged on the next turn,
+	// but Converse has no wire slot for either — so they ride across the invoke
+	// ingress on these json:"-" carriers (#7155).
+	AnthropicToolSearchUse    *BedrockAnthropicToolSearchUse    `json:"-"`
+	AnthropicToolSearchResult *BedrockAnthropicToolSearchResult `json:"-"`
+}
+
+// BedrockAnthropicToolSearchUse is a replayed server_tool_use naming a tool-search
+// variant. Input is the query the model searched with; Anthropic requires the client to
+// echo this block back unchanged, so dropping it rewrites the block on the next turn.
+type BedrockAnthropicToolSearchUse struct {
+	ID    string
+	Name  string
+	Input json.RawMessage
+}
+
+// BedrockAnthropicToolSearchResult is a replayed tool_search_tool_result: the id of the
+// server_tool_use it answers, plus the names of the tools that search discovered.
+type BedrockAnthropicToolSearchResult struct {
+	ToolUseID      string
+	ToolReferences []string
 }
 
 type BedrockCachePointType string
@@ -250,9 +286,12 @@ type BedrockImageSource struct {
 	Source BedrockImageSourceData `json:"source"` // Required: Image source data
 }
 
-// BedrockImageSourceData represents the source of image data
+// BedrockImageSourceData represents the source of image data.
+// This is a tagged union — exactly one of Bytes or S3Location should be set.
+// See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ImageSource.html
 type BedrockImageSourceData struct {
-	Bytes *string `json:"bytes,omitempty"` // Base64-encoded image bytes
+	Bytes      *string            `json:"bytes,omitempty"`      // Base64-encoded image bytes
+	S3Location *BedrockS3Location `json:"s3Location,omitempty"` // Optional: S3 location (model-dependent support)
 }
 
 // BedrockDocumentSource represents document content
@@ -262,10 +301,13 @@ type BedrockDocumentSource struct {
 	Source *BedrockDocumentSourceData `json:"source"` // Required: Document source data
 }
 
-// BedrockDocumentSourceData represents the source of document data
+// BedrockDocumentSourceData represents the source of document data.
+// This is a tagged union — exactly one of Bytes, Text or S3Location should be set.
+// See: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentSource.html
 type BedrockDocumentSourceData struct {
-	Bytes *string `json:"bytes,omitempty"` // Base64-encoded document bytes
-	Text  *string `json:"text,omitempty"`  // Plain text content
+	Bytes      *string            `json:"bytes,omitempty"`      // Base64-encoded document bytes
+	Text       *string            `json:"text,omitempty"`       // Plain text content; Converse rejects it unless the block enables citations
+	S3Location *BedrockS3Location `json:"s3Location,omitempty"` // Optional: S3 location (model-dependent support)
 }
 
 // BedrockVideoBlock represents a video content block.
@@ -334,11 +376,18 @@ type BedrockGuardContent struct {
 
 type BedrockReasoningContent struct {
 	ReasoningText *BedrockReasoningContentText `json:"reasoningText,omitempty"`
+
+	// Opaque reasoning blob used by OpenAI and xAI instead of ReasoningText.
+	// The two are mutually exclusive; see schemas.BedrockReasoningShape.
+	RedactedContent *string `json:"redactedContent,omitempty"`
 }
 
+// BedrockReasoningContentText is both the reasoningText block and the streaming
+// reasoning delta, which is why RedactedContent appears here too.
 type BedrockReasoningContentText struct {
-	Text      *string `json:"text,omitempty"`
-	Signature *string `json:"signature,omitempty"`
+	Text            *string `json:"text,omitempty"`
+	Signature       *string `json:"signature,omitempty"`
+	RedactedContent *string `json:"redactedContent,omitempty"`
 }
 
 // BedrockGuardContentText represents text content for guardrails
@@ -375,6 +424,21 @@ type BedrockTool struct {
 	ToolSpec   *BedrockToolSpec   `json:"toolSpec,omitempty"`   // Tool specification
 	CachePoint *BedrockCachePoint `json:"cachePoint,omitempty"` // Cache point for the tool
 	SystemTool *BedrockSystemTool `json:"systemTool,omitempty"` // Nova system tool (nova_grounding, nova_code_interpreter)
+
+	// AnthropicToolSearch carries an inbound tool_search_tool_* server tool across
+	// the Converse-shaped intermediate the invoke ingress has to build. Converse has
+	// no wire slot for it — AWS serves server-side tool search only through
+	// InvokeModel — so this is json:"-" and never reaches a Converse request body.
+	// It exists purely so the egress predicate can see the signal (#7155).
+	AnthropicToolSearch *BedrockAnthropicToolSearch `json:"-"`
+}
+
+// BedrockAnthropicToolSearch is the inbound tool_search_tool_* entry, preserved
+// verbatim so both the dated type and the regex/bm25 variant survive the invoke
+// ingress conversion.
+type BedrockAnthropicToolSearch struct {
+	Type string // e.g. "tool_search_tool_regex_20251119"
+	Name string // e.g. "tool_search_tool_regex"; may be absent on the wire
 }
 
 type BedrockSystemToolType string
@@ -397,6 +461,10 @@ type BedrockToolSpec struct {
 	Name        string                 `json:"name"`                  // Required: Tool name
 	Description *string                `json:"description,omitempty"` // Optional: Tool description
 	InputSchema BedrockToolInputSchema `json:"inputSchema"`           // Required: JSON schema for tool input
+
+	// DeferLoading carries Anthropic's per-tool defer_loading across the invoke
+	// ingress. Converse has no such field, so json:"-" keeps it off that wire.
+	DeferLoading *bool `json:"-"`
 }
 
 // BedrockToolInputSchema represents the input schema for a tool (union type)
@@ -667,8 +735,16 @@ type BedrockGuardrailTraceDetail struct {
 // BedrockCountTokensRequest represents a Bedrock CountTokens API request
 type BedrockCountTokensRequest struct {
 	Input struct {
-		Converse *BedrockConverseRequest `json:"converse,omitempty"`
+		Converse    *BedrockConverseRequest             `json:"converse,omitempty"`
+		InvokeModel *BedrockCountTokensInvokeModelInput `json:"invokeModel,omitempty"`
 	} `json:"input"`
+}
+
+// BedrockCountTokensInvokeModelInput is the "invokeModel" member of the
+// CountTokens input union. Body is the exact InvokeModel request body; AWS
+// takes it as base64-encoded binary, which []byte marshals to.
+type BedrockCountTokensInvokeModelInput struct {
+	Body []byte `json:"body"`
 }
 
 // BedrockCountTokensResponse represents a Bedrock CountTokens API response
@@ -692,6 +768,10 @@ type BedrockInvokeMessagesResponse struct {
 }
 
 // BedrockInvokeMessagesContentBlock represents a content block in an Anthropic Messages response.
+//
+// One struct serves every block type, so each field carries omitempty to keep a
+// text block from advertising empty tool fields and vice versa. See MarshalJSON
+// for the one case where that default is wrong.
 type BedrockInvokeMessagesContentBlock struct {
 	Type      string      `json:"type"`
 	Text      string      `json:"text,omitempty"`
@@ -700,6 +780,47 @@ type BedrockInvokeMessagesContentBlock struct {
 	Input     interface{} `json:"input,omitempty"`
 	Thinking  string      `json:"thinking,omitempty"`
 	Signature string      `json:"signature,omitempty"`
+
+	// tool_search_tool_result: the paired server_tool_use id, plus the nested
+	// tool_search_tool_search_result payload. Typed rather than a map so the two
+	// keys marshal in a stable order.
+	ToolUseID string                         `json:"tool_use_id,omitempty"`
+	Content   *BedrockInvokeToolSearchResult `json:"content,omitempty"`
+}
+
+// BedrockInvokeToolSearchResult is the "content" object of a tool_search_tool_result
+// block: {"type":"tool_search_tool_search_result","tool_references":[...]}.
+type BedrockInvokeToolSearchResult struct {
+	Type           string                       `json:"type"`
+	ToolReferences []BedrockInvokeToolReference `json:"tool_references"`
+}
+
+// BedrockInvokeToolReference is one discovered (deferred) tool.
+type BedrockInvokeToolReference struct {
+	Type     string `json:"type"`
+	ToolName string `json:"tool_name"`
+}
+
+// MarshalJSON forces the thinking key to be present on thinking blocks.
+//
+// A thinking block whose text is empty is a real state: a client replaying a
+// streamed assistant turn has the reasoning signature but not the prose it
+// signs. omitempty then deletes the key entirely, producing
+// {"type":"thinking","signature":"..."} -- which Bifrost's own re-ingest treats
+// as malformed and drops on the floor (invoke.go's decoder returns nil when
+// thinking is absent), silently losing the replay token the next turn needs.
+//
+// omitempty stays on the field so text and tool_use blocks are unaffected; only
+// thinking blocks are special-cased here.
+func (b BedrockInvokeMessagesContentBlock) MarshalJSON() ([]byte, error) {
+	type alias BedrockInvokeMessagesContentBlock
+	if b.Type != "thinking" || b.Thinking != "" {
+		return sonic.Marshal(alias(b))
+	}
+	return sonic.Marshal(struct {
+		alias
+		Thinking string `json:"thinking"`
+	}{alias: alias(b), Thinking: b.Thinking})
 }
 
 // BedrockInvokeMessagesUsage represents token usage in an Anthropic Messages response.
@@ -851,10 +972,11 @@ type BedrockMetadataEvent struct {
 
 // BedrockTitanEmbeddingRequest represents a Bedrock Titan embedding request
 type BedrockTitanEmbeddingRequest struct {
-	InputText   string                 `json:"inputText"`            // Required: Text to embed
-	Dimensions  *int                   `json:"dimensions,omitempty"` // Optional: 256, 512, or 1024 (titan-embed-text-v2 only)
-	Normalize   *bool                  `json:"normalize,omitempty"`  // Optional: normalize the embedding
-	ExtraParams map[string]interface{} `json:"-"`
+	InputText      string                 `json:"inputText"`                // Required: Text to embed
+	Dimensions     *int                   `json:"dimensions,omitempty"`     // Optional: 256, 512, or 1024 (titan-embed-text-v2 only)
+	Normalize      *bool                  `json:"normalize,omitempty"`      // Optional: normalize the embedding
+	EmbeddingTypes []string               `json:"embeddingTypes,omitempty"` // Optional: "float" and/or "binary" (titan-embed-text-v2 only)
+	ExtraParams    map[string]interface{} `json:"-"`
 }
 
 // GetExtraParams implements the RequestBodyWithExtraParams interface
@@ -864,8 +986,16 @@ func (req *BedrockTitanEmbeddingRequest) GetExtraParams() map[string]interface{}
 
 // BedrockTitanEmbeddingResponse represents a Bedrock Titan embedding response
 type BedrockTitanEmbeddingResponse struct {
-	Embedding           []float64 `json:"embedding"`           // The embedding vector
-	InputTextTokenCount int       `json:"inputTextTokenCount"` // Number of tokens in input
+	Embedding           []float64                     `json:"embedding"`                  // The default float embedding vector
+	EmbeddingsByType    *BedrockTitanEmbeddingsByType `json:"embeddingsByType,omitempty"` // Requested float and/or binary vectors
+	InputTextTokenCount int                           `json:"inputTextTokenCount"`        // Number of tokens in input
+}
+
+// BedrockTitanEmbeddingsByType is returned when Titan V2 embeddingTypes is set,
+// and is also how the native invoke response re-emits those representations.
+type BedrockTitanEmbeddingsByType struct {
+	Float  []float64 `json:"float,omitempty"`
+	Binary []int8    `json:"binary,omitempty"`
 }
 
 // BedrockCohereEmbeddingContentBlock represents a single content block in a mixed input
@@ -887,6 +1017,11 @@ type BedrockCohereEmbeddingInput struct {
 
 // BedrockCohereEmbeddingRequest represents a Bedrock Cohere embedding request.
 // Unlike the direct Cohere API, Bedrock does not accept a "model" field in the body.
+
+// BedrockCohereInputTypeSearchDocument is the input_type applied when a caller omits
+// one. AWS requires the field and defines no default.
+const BedrockCohereInputTypeSearchDocument = "search_document"
+
 type BedrockCohereEmbeddingRequest struct {
 	InputType       string                        `json:"input_type"`                 // Required
 	Texts           []string                      `json:"texts,omitempty"`            // text-only inputs
@@ -913,6 +1048,17 @@ type BedrockCohereEmbeddingResponse struct {
 	Embeddings   json.RawMessage `json:"embeddings"`
 	ResponseType string          `json:"response_type"`
 	Texts        []string        `json:"texts,omitempty"`
+}
+
+// BedrockCohereEmbeddingsByType is the "embeddings_by_type" object, used both when
+// parsing the provider response and when re-emitting it on the native invoke route.
+type BedrockCohereEmbeddingsByType struct {
+	Float   [][]float32 `json:"float,omitempty"`
+	Base64  []string    `json:"base64,omitempty"`
+	Int8    [][]int8    `json:"int8,omitempty"`
+	Uint8   [][]int32   `json:"uint8,omitempty"` // int32 avoids []byte→base64 JSON issue
+	Binary  [][]int8    `json:"binary,omitempty"`
+	Ubinary [][]int32   `json:"ubinary,omitempty"` // int32 avoids []byte→base64 JSON issue
 }
 
 const TaskTypeTextImage = "TEXT_IMAGE"
@@ -1294,14 +1440,15 @@ type BedrockInvokeRequest struct {
 
 	// ==================== EMBEDDINGS ====================
 
-	InputText       string                        `json:"inputText,omitempty"`        // Titan embed
-	Texts           []string                      `json:"texts,omitempty"`            // Cohere embed
-	InputType       *string                       `json:"input_type,omitempty"`       // Cohere embed
-	Normalize       *bool                         `json:"normalize,omitempty"`        // Titan embed v2
-	Dimensions      *int                          `json:"dimensions,omitempty"`       // Titan embed v2
-	EmbeddingTypes  []string                      `json:"embedding_types,omitempty"`  // Cohere embed: ["float","int8","uint8","binary","ubinary"]
-	OutputDimension *int                          `json:"output_dimension,omitempty"` // Cohere embed: 256, 512, 1024, 1536
-	Inputs          []BedrockCohereEmbeddingInput `json:"inputs,omitempty"`           // Cohere embed: mixed text+image inputs
+	InputText           string                        `json:"inputText,omitempty"`        // Titan embed
+	Texts               []string                      `json:"texts,omitempty"`            // Cohere embed
+	InputType           *string                       `json:"input_type,omitempty"`       // Cohere embed
+	Normalize           *bool                         `json:"normalize,omitempty"`        // Titan embed v2
+	Dimensions          *int                          `json:"dimensions,omitempty"`       // Titan embed v2
+	EmbeddingTypes      []string                      `json:"embedding_types,omitempty"`  // Cohere embed: ["float","int8","uint8","binary","ubinary"]
+	TitanEmbeddingTypes []string                      `json:"embeddingTypes,omitempty"`   // Titan V2 embed: ["float","binary"]
+	OutputDimension     *int                          `json:"output_dimension,omitempty"` // Cohere embed: 256, 512, 1024, 1536
+	Inputs              []BedrockCohereEmbeddingInput `json:"inputs,omitempty"`           // Cohere embed: mixed text+image inputs
 
 	// ==================== INTERNAL ====================
 	Stream      bool                   `json:"-"`
@@ -1315,13 +1462,25 @@ type BedrockCohereRMessage struct {
 }
 
 // BedrockInvokeEmbeddingResp is the Titan single-embedding invoke response format.
+// Embedding is omitted when only non-float representations were requested, matching
+// AWS, which drops the field for a binary-only embeddingTypes.
 type BedrockInvokeEmbeddingResp struct {
-	Embedding           []float32 `json:"embedding"`
-	InputTextTokenCount int       `json:"inputTextTokenCount"`
+	// float64 matches both the precision Titan actually returns and the type used
+	// under embeddingsByType, so the two copies of the float vector agree.
+	Embedding           []float64                     `json:"embedding,omitempty"`
+	EmbeddingsByType    *BedrockTitanEmbeddingsByType `json:"embeddingsByType,omitempty"`
+	InputTextTokenCount int                           `json:"inputTextTokenCount"`
 }
 
 // BedrockInvokeCohereEmbeddingResp is the Cohere multi-embedding invoke response format.
 type BedrockInvokeCohereEmbeddingResp struct {
 	Embeddings   [][]float32 `json:"embeddings"`
 	ResponseType string      `json:"response_type"`
+}
+
+// BedrockInvokeCohereTypedEmbeddingResp is the Cohere invoke response format once
+// embedding_types is set and Bedrock switches to the typed envelope.
+type BedrockInvokeCohereTypedEmbeddingResp struct {
+	Embeddings   BedrockCohereEmbeddingsByType `json:"embeddings"`
+	ResponseType string                        `json:"response_type"`
 }

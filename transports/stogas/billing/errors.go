@@ -22,42 +22,61 @@ var (
 	ErrInsufficientBalance = &RequestError{"insufficient_balance", "Insufficient credit. Add funds to your organization to retry this request.", 402}
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
+	ErrAbuseRateLimit      = &RequestError{"abuse_rate_limited", "Too many requests. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. Retry the request.", 503}
+	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
 	ErrAPIKeyLimit         = &RequestError{"key_limit_exceeded", "API key limit reached or disabled/expired", 402}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}
 	ErrDashboardKeyDenied  = &RequestError{"dashboard_key_denied", "API key is not available to this dashboard session", 403}
 	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "Stogas is temporarily unavailable. Retry the request later.", 503}
-	ErrLocalAdmissionLimit = &RequestError{"key_concurrency_limit", "Too many concurrent requests for this API key", 429}
 
-	errByokNotAllowed               = &RequestError{"byok_not_allowed", "Pass-through BYOK is not allowed by this API key", 400}
-	errOrganizationSpendLimit       = &RequestError{"organization_spend_limit", "Organization spend limit exceeded", 402}
-	errGrantSpendLimit              = &RequestError{"grant_spend_limit", "Grant spend limit exceeded", 402}
-	errOrganizationRateLimit        = &RequestError{"organization_rate_limited", "Organization request rate limit exceeded", 429}
-	errGrantRateLimit               = &RequestError{"grant_rate_limited", "Grant request rate limit exceeded", 429}
-	errKeyTokenLimit                = &RequestError{"key_token_limit", "API key token limit exceeded", 429}
-	errOrganizationTokenLimit       = &RequestError{"organization_token_limit", "Organization token limit exceeded", 429}
-	errGrantTokenLimit              = &RequestError{"grant_token_limit", "Grant token limit exceeded", 429}
-	errKeyConcurrencyLimit          = &RequestError{"key_concurrency_limit", "API key concurrent-request limit exceeded", 429}
-	errOrganizationConcurrencyLimit = &RequestError{"organization_concurrency_limit", "Organization concurrent-request limit exceeded", 429}
-	errGrantConcurrencyLimit        = &RequestError{"grant_concurrency_limit", "Grant concurrent-request limit exceeded", 429}
+	errByokNotAllowed = &RequestError{"byok_not_allowed", "The credential is not allowed by this API key", 400}
 )
+
+// Keep authorization and public history on one closed set of policy errors.
+var policyResultErrors = func() map[string]*RequestError {
+	errors := make(map[string]*RequestError, 42)
+	for scope, label := range map[string]string{
+		"organization": "Organization", "folder": "Folder", "grant": "Grant",
+		"role": "Role", "member": "Member", "credential": "Credential", "key": "API key",
+	} {
+		for _, reason := range []struct {
+			code, message string
+			status        int
+		}{
+			{"disabled", "policy is disabled", 403},
+			{"expired", "policy is expired", 403},
+			{"spend_limit", "spend limit exceeded", 402},
+			{"rate_limited", "request rate limit exceeded", 429},
+			{"token_limit", "token limit exceeded", 429},
+			{"concurrency_limit", "concurrent-request limit exceeded", 429},
+		} {
+			code := scope + "_" + reason.code
+			errors[code] = &RequestError{code, label + " " + reason.message, reason.status}
+		}
+	}
+	for _, err := range []*RequestError{ErrAPIKeyDisabled, ErrAPIKeyExpired, ErrGrantDisabled, ErrAPIKeySpendLimit, ErrAPIKeyRateLimit} {
+		errors[err.Code] = err
+	}
+	return errors
+}()
 
 // NormalizeStogasErrorCode bounds public history to identifiers owned by the
 // gateway. Unknown details remain private and fall back to the HTTP category.
 func NormalizeStogasErrorCode(code string, status int) string {
+	if policyResultErrors[code] != nil {
+		return code
+	}
 	switch code {
-	case "authorization_closed", "authorization_conflict", "billing_price_invalid", "byok_api_key_required",
+	case "abuse_rate_limited", "authorization_closed", "authorization_conflict", "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
 		"byok_not_allowed", "byok_required", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
-		"gateway_unavailable", "grant_concurrency_limit", "grant_disabled", "grant_rate_limited",
-		"grant_spend_limit", "grant_token_limit", "insufficient_balance", "internal_error",
-		"invalid_api_key", "invalid_json", "invalid_request", "key_concurrency_limit",
-		"key_configuration_changed", "key_disabled", "key_expired", "key_limit_exceeded",
-		"key_rate_limited", "key_spend_limit", "key_token_limit", "method_not_allowed",
-		"model_ambiguous", "model_unavailable", "organization_concurrency_limit", "organization_rate_limited",
-		"organization_spend_limit", "organization_token_limit", "parameter_limit_exceeded", "permission_denied",
+		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
+		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_limit_exceeded", "policy_work_limit_exceeded",
+		"method_not_allowed",
+		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded", "reconciliation_released",
 		"request_already_used", "request_preparation_failed", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",

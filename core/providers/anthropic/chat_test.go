@@ -9,6 +9,8 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToAnthropicChatRequest_PreservesPropertyOrder(t *testing.T) {
@@ -822,22 +824,25 @@ func TestToBifrostChatResponse_MultipleTextBlocksWithThinking(t *testing.T) {
 		t.Fatal("expected non-nil result")
 	}
 
-	// With multiple text blocks, ToBifrostChatResponse preserves them as ContentBlocks
-	// (only a single text block collapses to ContentStr — see chat.go:812-815).
-	// Thinking flows through ReasoningDetails below, not ContentStr.
+	// Sibling text blocks fold into one ContentStr: choices[].message.content is
+	// typed string|null on the chat completions surface, so an array would break
+	// clients generated from that spec. Thinking is not part of that fold - it
+	// flows through ReasoningDetails below, checked separately.
 	choice := result.Choices[0]
 	msg := choice.ChatNonStreamResponseChoice.Message
-	if msg.Content.ContentStr != nil {
-		t.Errorf("expected ContentStr to be nil with multiple text blocks, got %q", *msg.Content.ContentStr)
+	if msg.Content.ContentStr == nil {
+		t.Fatalf("expected text blocks to collapse into ContentStr, got blocks %+v", msg.Content.ContentBlocks)
 	}
-	if len(msg.Content.ContentBlocks) != 2 {
-		t.Fatalf("expected 2 content blocks (one per text block), got %d", len(msg.Content.ContentBlocks))
+	if len(msg.Content.ContentBlocks) != 0 {
+		t.Errorf("expected no leftover content blocks, got %d", len(msg.Content.ContentBlocks))
 	}
-	if msg.Content.ContentBlocks[0].Text == nil || *msg.Content.ContentBlocks[0].Text != textBlock1 {
-		t.Errorf("block 0 text mismatch: got %v, want %q", msg.Content.ContentBlocks[0].Text, textBlock1)
+	if want := textBlock1 + textBlock2; *msg.Content.ContentStr != want {
+		t.Errorf("collapsed content = %q, want %q", *msg.Content.ContentStr, want)
 	}
-	if msg.Content.ContentBlocks[1].Text == nil || *msg.Content.ContentBlocks[1].Text != textBlock2 {
-		t.Errorf("block 1 text mismatch: got %v, want %q", msg.Content.ContentBlocks[1].Text, textBlock2)
+	// The thinking text must not leak into the content string - that was the
+	// design reverted in #2287, and ReasoningDetails is where it belongs.
+	if strings.Contains(*msg.Content.ContentStr, thinkingText) {
+		t.Errorf("thinking text leaked into content: %q", *msg.Content.ContentStr)
 	}
 
 	// Thinking is surfaced via ReasoningDetails with the signature preserved
@@ -1398,6 +1403,50 @@ func TestToAnthropicChatRequest_StructuredOutput_ToolConversion_NoThinking(t *te
 	}
 }
 
+// TestToAnthropicChatRequest_StructuredOutput_Fable51_NoForcedToolChoice mirrors the
+// thinking-enabled case for Fable 5.1 / Mythos 5.1: the synthetic tool is still
+// added, but the pin is not, because those models reject tool_choice "tool" and
+// "any" with a 400. With only the bf_so_* tool bound the model reaches it under
+// the default "auto".
+func TestToAnthropicChatRequest_StructuredOutput_Fable51_NoForcedToolChoice(t *testing.T) {
+	for _, provider := range toolConversionProviders {
+		for _, model := range []string{"claude-fable-5-1", "claude-mythos-5-1"} {
+			t.Run(string(provider)+"/"+model, func(t *testing.T) {
+				rf := makeSOResponseFormat("my_schema")
+				bifrostReq := &schemas.BifrostChatRequest{
+					Provider: provider,
+					Model:    model,
+					Input: []schemas.ChatMessage{
+						{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello")}},
+					},
+					Params: &schemas.ChatParameters{ResponseFormat: &rf},
+				}
+
+				ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+				defer cancel()
+				result, err := ToAnthropicChatRequest(ctx, bifrostReq)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				var soTool *AnthropicTool
+				for i := range result.Tools {
+					if strings.HasPrefix(result.Tools[i].Name, "bf_so_") {
+						soTool = &result.Tools[i]
+						break
+					}
+				}
+				if soTool == nil {
+					t.Fatalf("expected the synthetic bf_so_* tool to still be added for %s/%s", provider, model)
+				}
+				if result.ToolChoice != nil {
+					t.Errorf("expected no forced ToolChoice for %s/%s, got %+v", provider, model, result.ToolChoice)
+				}
+			})
+		}
+	}
+}
+
 // TestToAnthropicChatRequest_StructuredOutput_ToolConversion_ThinkingEffort verifies that when
 // response_format=json_schema + reasoning_effort='medium' is sent to a tool-conversion provider,
 // Bifrost still adds the synthetic tool but does NOT set tool_choice (to avoid Anthropic's
@@ -1689,10 +1738,64 @@ func TestToAnthropicChatRequest_MidConversationSystem_Opus48(t *testing.T) {
 	}
 }
 
-// TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement verifies
-// that a mid-conv system message with invalid placement (followed by user, not
-// assistant) falls back to top-level system accumulation rather than emitting
-// a role:"system" that would 400 on the Anthropic API.
+// assertInlinedReminder asserts that `text` reached the messages array as a mid-conversation
+// reminder inlined into a user turn (the <system-reminder> envelope), and that it did NOT end up
+// in the top-level system block. Hoisting into `system` preserves the text but renders it ahead
+// of every message, invalidating the cached prefix behind it — measured at roughly half the
+// prompt on a warm conversation. See inlineMidConversationSystem.
+func assertInlinedReminder(t *testing.T, result *AnthropicMessageRequest, text string) {
+	t.Helper()
+	want := "<system-reminder>\n" + text + "\n</system-reminder>\n"
+
+	var found bool
+	for _, msg := range result.Messages {
+		if msg.Role != AnthropicMessageRoleUser {
+			continue
+		}
+		for _, block := range msg.Content.ContentBlocks {
+			if block.Text != nil && *block.Text == want {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected %q inlined as a <system-reminder> user turn, roles were %v", text, chatRoleSeq(result.Messages))
+	}
+
+	if result.System != nil {
+		if result.System.ContentStr != nil && strings.Contains(*result.System.ContentStr, text) {
+			t.Errorf("mid-conversation content %q was hoisted into top-level system; that collapses the cached prefix", text)
+		}
+		for _, block := range result.System.ContentBlocks {
+			if block.Text != nil && strings.Contains(*block.Text, text) {
+				t.Errorf("mid-conversation content %q was hoisted into top-level system; that collapses the cached prefix", text)
+			}
+		}
+	}
+
+	for i, msg := range result.Messages {
+		if msg.Role == AnthropicMessageRoleSystem {
+			t.Errorf("msg[%d] has role:system — the inline fallback must not emit one", i)
+		}
+	}
+}
+
+func chatRoleSeq(msgs []AnthropicMessage) []string {
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, string(m.Role))
+	}
+	return out
+}
+
+// TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement verifies that a mid-conv
+// system message Anthropic would reject on placement grounds is inlined rather than forwarded.
+//
+// Anthropic enforces two clauses: the turn must FOLLOW a user message and must be last or
+// followed by an assistant turn. This input violates both (it follows an assistant and is
+// followed by a user), so forwarding it returns 400. The converter previously fell back to
+// hoisting into top-level system, which avoided the 400 but collapsed the cached prefix; it now
+// inlines, which avoids the 400 AND keeps the cache anchor inside `messages`.
 func TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement(t *testing.T) {
 	bifrostReq := &schemas.BifrostChatRequest{
 		Provider: schemas.Anthropic,
@@ -1701,7 +1804,7 @@ func TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement(t *testin
 			{Role: schemas.ChatMessageRoleSystem, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Initial.")}},
 			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello")}},
 			{Role: schemas.ChatMessageRoleAssistant, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hi!")}},
-			// system followed by user — invalid placement, Anthropic returns 400
+			// Follows an assistant AND is followed by a user — violates both clauses.
 			{Role: schemas.ChatMessageRoleSystem, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Bad placement.")}},
 			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Continue")}},
 		},
@@ -1715,32 +1818,21 @@ func TestToAnthropicChatRequest_MidConversationSystem_InvalidPlacement(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Invalid placement: falls back to top-level system accumulation.
+	// The leading system prompt still hoists — only mid-conversation content inlines.
 	if result.System == nil {
-		t.Fatal("expected top-level System to contain both initial and fallback content")
+		t.Fatal("expected the leading system prompt to remain in top-level System")
 	}
-	blocks := result.System.ContentBlocks
-	if len(blocks) != 2 {
-		t.Fatalf("expected 2 system blocks (initial + fallback), got %d", len(blocks))
+	if got := textBlocks(result.System); len(got) != 1 || got[0] != "Initial." {
+		t.Errorf("top-level System = %v, want exactly [\"Initial.\"]", got)
 	}
-	if blocks[0].Text == nil || *blocks[0].Text != "Initial." {
-		t.Errorf("block[0] = %v, want \"Initial.\"", blocks[0].Text)
-	}
-	if blocks[1].Text == nil || *blocks[1].Text != "Bad placement." {
-		t.Errorf("block[1] = %v, want \"Bad placement.\"", blocks[1].Text)
-	}
-	// No role:"system" in messages array.
-	for i, msg := range result.Messages {
-		if msg.Role == AnthropicMessageRoleSystem {
-			t.Errorf("msg[%d] has role:system — invalid placement should have been caught", i)
-		}
-	}
+	assertInlinedReminder(t, result, "Bad placement.")
 }
 
-// TestToAnthropicChatRequest_MidConversationSystem_FallbackAppends verifies that
-// for a non-supporting model/provider the mid-conversation system content is
-// appended to (not overwrites) the top-level system field.
-func TestToAnthropicChatRequest_MidConversationSystem_FallbackAppends(t *testing.T) {
+// TestToAnthropicChatRequest_MidConversationSystem_FallbackInlines verifies the fallback for a
+// provider that cannot carry role:"system" at all. Bedrock, Vertex, and Foundry do not expose
+// mid-conversation system messages regardless of model, so every such message takes the fallback
+// path — which inlines rather than hoisting.
+func TestToAnthropicChatRequest_MidConversationSystem_FallbackInlines(t *testing.T) {
 	bifrostReq := &schemas.BifrostChatRequest{
 		Provider: schemas.Bedrock,
 		Model:    "global.anthropic.claude-opus-4-8",
@@ -1761,31 +1853,18 @@ func TestToAnthropicChatRequest_MidConversationSystem_FallbackAppends(t *testing
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Top-level system field must exist and contain BOTH the initial and mid-conv content.
 	if result.System == nil {
-		t.Fatal("expected top-level System to be set")
+		t.Fatal("expected the leading system prompt to remain in top-level System")
 	}
-	if len(result.System.ContentBlocks) != 2 {
-		t.Fatalf("expected 2 system content blocks (initial + mid-conv appended), got %d", len(result.System.ContentBlocks))
+	if got := textBlocks(result.System); len(got) != 1 || got[0] != "Initial system." {
+		t.Errorf("top-level System = %v, want exactly [\"Initial system.\"]", got)
 	}
-	if result.System.ContentBlocks[0].Text == nil || *result.System.ContentBlocks[0].Text != "Initial system." {
-		t.Errorf("block[0] = %v, want 'Initial system.'", result.System.ContentBlocks[0].Text)
-	}
-	if result.System.ContentBlocks[1].Text == nil || *result.System.ContentBlocks[1].Text != "Mid-conv instruction." {
-		t.Errorf("block[1] = %v, want 'Mid-conv instruction.'", result.System.ContentBlocks[1].Text)
-	}
-
-	// No role:"system" entry should appear in the messages array.
-	for i, msg := range result.Messages {
-		if msg.Role == AnthropicMessageRoleSystem {
-			t.Errorf("msg[%d] has role system — should not appear for Bedrock", i)
-		}
-	}
+	assertInlinedReminder(t, result, "Mid-conv instruction.")
 }
 
-// TestToAnthropicChatRequest_MidConversationSystem_NotOnOpus47 verifies that
-// mid-conversation system messages are NOT emitted for Opus 4.7 (feature is
-// Opus 4.8+ only).
+// TestToAnthropicChatRequest_MidConversationSystem_NotOnOpus47 verifies that a model predating
+// the feature (Opus 4.7; it is Opus 4.8+) takes the inline fallback rather than emitting a
+// role:"system" the API would reject.
 func TestToAnthropicChatRequest_MidConversationSystem_NotOnOpus47(t *testing.T) {
 	bifrostReq := &schemas.BifrostChatRequest{
 		Provider: schemas.Anthropic,
@@ -1806,29 +1885,7 @@ func TestToAnthropicChatRequest_MidConversationSystem_NotOnOpus47(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Mid-conv instruction must be preserved in the top-level System field.
-	if result.System == nil {
-		t.Fatal("expected top-level System to contain fallback mid-conversation instruction")
-	}
-	foundFallback := false
-	if result.System.ContentStr != nil && *result.System.ContentStr == "New instruction." {
-		foundFallback = true
-	}
-	for _, block := range result.System.ContentBlocks {
-		if block.Text != nil && *block.Text == "New instruction." {
-			foundFallback = true
-			break
-		}
-	}
-	if !foundFallback {
-		t.Fatal("expected mid-conversation system content to be preserved in top-level System")
-	}
-
-	for i, msg := range result.Messages {
-		if msg.Role == AnthropicMessageRoleSystem {
-			t.Errorf("msg[%d] has role system — should not appear for Opus 4.7", i)
-		}
-	}
+	assertInlinedReminder(t, result, "New instruction.")
 }
 
 // TestToBifrostChatCompletionStream_NoArgToolFlushesEmptyObject covers the
@@ -2153,4 +2210,436 @@ func TestToBifrostChatCompletionStream_MixedToolBlocks(t *testing.T) {
 	if args[argIdx] != `{"y":2}` {
 		t.Errorf("args accumulated arguments = %q, want %q", args[argIdx], `{"y":2}`)
 	}
+}
+
+// TestToAnthropicChatRequest_PromotesThinkingFromExtraParams pins that Anthropic's
+// native top-level "thinking" object survives the unified /v1/chat/completions
+// route. The unified request schema has no "thinking" field, so it decodes into
+// ChatParameters.ExtraParams — and ExtraParams only reach the wire when the
+// BifrostContextKeyPassthroughExtraParams flag is set (see
+// providerUtils.CheckContextAndGetRequestBody), which the plain unified route does
+// not set. Without an explicit promotion the parameter is silently dropped: the
+// model never thinks, and the response carries no reasoning_details.
+//
+// Promotion routes through the same model-aware mapping as Params.Reasoning rather
+// than copying the caller's object verbatim, because budget_tokens was removed on
+// Opus 4.7+ — a verbatim copy would turn a valid request into an upstream 400.
+//
+// Promotion is deliberately skipped when the ExtraParams passthrough flag is set:
+// there the key already reaches the wire untouched, so rewriting it would silently
+// change bytes that existing passthrough callers depend on. See
+// TestToAnthropicChatRequest_ThinkingPassthroughUnchanged.
+func TestToAnthropicChatRequest_PromotesThinkingFromExtraParams(t *testing.T) {
+	baseRequest := func(model string, extra map[string]interface{}, reasoning *schemas.ChatReasoning) *schemas.BifrostChatRequest {
+		return &schemas.BifrostChatRequest{
+			Provider: schemas.Anthropic,
+			Model:    model,
+			Input: []schemas.ChatMessage{{
+				Role:    schemas.ChatMessageRoleUser,
+				Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Solve 41*37 and explain your steps.")},
+			}},
+			Params: &schemas.ChatParameters{
+				MaxCompletionTokens: schemas.Ptr(4096),
+				Reasoning:           reasoning,
+				ExtraParams:         extra,
+			},
+		}
+	}
+
+	enabled2048 := map[string]interface{}{
+		"thinking": map[string]interface{}{"type": "enabled", "budget_tokens": float64(2048)},
+	}
+
+	tests := []struct {
+		name             string
+		model            string
+		extraParams      map[string]interface{}
+		reasoning        *schemas.ChatReasoning
+		wantType         string
+		wantBudgetTokens *int
+		wantDisplay      *string
+	}{
+		{
+			// budget_tokens is still the supported spelling on Sonnet 4.6, so it
+			// maps straight through to thinking.enabled.
+			name:             "enabled with budget_tokens on a budget-tokens model",
+			model:            "claude-sonnet-4-6",
+			extraParams:      enabled2048,
+			wantType:         "enabled",
+			wantBudgetTokens: schemas.Ptr(2048),
+		},
+		{
+			// Opus 4.7+ dropped budget_tokens; adaptive is the only thinking-on
+			// mode, and display defaults to summarized so the text stays visible.
+			name:        "enabled with budget_tokens on an adaptive-only model",
+			model:       "claude-opus-4-7",
+			extraParams: enabled2048,
+			wantType:    "adaptive",
+			wantDisplay: schemas.Ptr("summarized"),
+		},
+		{
+			name:        "explicitly disabled",
+			model:       "claude-sonnet-4-6",
+			extraParams: map[string]interface{}{"thinking": map[string]interface{}{"type": "disabled"}},
+			wantType:    "disabled",
+		},
+		{
+			name:  "adaptive passes through",
+			model: "claude-sonnet-4-6",
+			extraParams: map[string]interface{}{
+				"thinking": map[string]interface{}{"type": "adaptive", "display": "omitted"},
+			},
+			wantType:    "adaptive",
+			wantDisplay: schemas.Ptr("omitted"),
+		},
+		{
+			// An explicit neutral reasoning object is the documented spelling for
+			// this route, so it must win over the Anthropic-native alias.
+			name:             "explicit reasoning wins over thinking",
+			model:            "claude-sonnet-4-6",
+			extraParams:      enabled2048,
+			reasoning:        &schemas.ChatReasoning{MaxTokens: schemas.Ptr(4096)},
+			wantType:         "enabled",
+			wantBudgetTokens: schemas.Ptr(4096),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+
+			result, err := ToAnthropicChatRequest(ctx, baseRequest(tt.model, tt.extraParams, tt.reasoning))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Thinking == nil {
+				t.Fatalf("thinking was dropped: got nil, want type %q", tt.wantType)
+			}
+			if result.Thinking.Type != tt.wantType {
+				t.Errorf("thinking.type = %q, want %q", result.Thinking.Type, tt.wantType)
+			}
+			switch {
+			case tt.wantBudgetTokens == nil && result.Thinking.BudgetTokens != nil:
+				t.Errorf("thinking.budget_tokens = %d, want unset", *result.Thinking.BudgetTokens)
+			case tt.wantBudgetTokens != nil && result.Thinking.BudgetTokens == nil:
+				t.Errorf("thinking.budget_tokens unset, want %d", *tt.wantBudgetTokens)
+			case tt.wantBudgetTokens != nil && *result.Thinking.BudgetTokens != *tt.wantBudgetTokens:
+				t.Errorf("thinking.budget_tokens = %d, want %d", *result.Thinking.BudgetTokens, *tt.wantBudgetTokens)
+			}
+			switch {
+			case tt.wantDisplay == nil && result.Thinking.Display != nil:
+				t.Errorf("thinking.display = %q, want unset", *result.Thinking.Display)
+			case tt.wantDisplay != nil && result.Thinking.Display == nil:
+				t.Errorf("thinking.display unset, want %q", *tt.wantDisplay)
+			case tt.wantDisplay != nil && *result.Thinking.Display != *tt.wantDisplay:
+				t.Errorf("thinking.display = %q, want %q", *result.Thinking.Display, *tt.wantDisplay)
+			}
+			// ExtraParams must be left intact. anthropicReq.ExtraParams aliases the
+			// caller's map (chat.go assigns, it does not copy), so deleting the key
+			// here would strip it from the original request — and a cross-provider
+			// fallback re-converts that same request for the next provider.
+			if _, still := tt.extraParams["thinking"]; !still {
+				t.Error("promotion mutated the caller's ExtraParams; a fallback retry would lose the thinking directive")
+			}
+		})
+	}
+}
+
+// TestToAnthropicChatRequest_ThinkingPassthroughUnchanged pins the backward-compatible
+// half of the promotion above. With BifrostContextKeyPassthroughExtraParams set,
+// ExtraParams are merged onto the wire verbatim by
+// providerUtils.CheckContextAndGetRequestBody, so "thinking" already works and
+// already reaches Anthropic exactly as the caller wrote it. Promotion must not run
+// there: normalising budget_tokens to adaptive would rewrite bytes that existing
+// passthrough callers are relying on today.
+func TestToAnthropicChatRequest_ThinkingPassthroughUnchanged(t *testing.T) {
+	extraParams := map[string]interface{}{
+		"thinking": map[string]interface{}{"type": "enabled", "budget_tokens": float64(2048)},
+	}
+
+	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+	defer cancel()
+	ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
+
+	result, err := ToAnthropicChatRequest(ctx, &schemas.BifrostChatRequest{
+		Provider: schemas.Anthropic,
+		// An adaptive-only model: promotion would rewrite budget_tokens here, so
+		// this is where a regression would be visible.
+		Model: "claude-opus-4-7",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hi")},
+		}},
+		Params: &schemas.ChatParameters{
+			MaxCompletionTokens: schemas.Ptr(4096),
+			ExtraParams:         extraParams,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Thinking != nil {
+		t.Errorf("thinking was promoted under passthrough (type=%q); the raw ExtraParams merge would then send a second, conflicting thinking object", result.Thinking.Type)
+	}
+	raw, ok := result.ExtraParams["thinking"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("thinking missing from ExtraParams under passthrough: %#v", result.ExtraParams["thinking"])
+	}
+	if raw["type"] != "enabled" || raw["budget_tokens"] != float64(2048) {
+		t.Errorf("passthrough thinking was rewritten: got %#v, want type=enabled budget_tokens=2048", raw)
+	}
+}
+
+// TestToAnthropicChatRequest_MidConversationSystem_InlinesForNonAnthropicFamily removes the
+// Anthropic-family gate from the inline fallback. DeepSeek, Fireworks and SGL serve the Anthropic
+// wire shape too, and DeepSeek's context cache is automatic and prefix-based ("a subsequent
+// request must fully match a cached prefix unit", api-docs.deepseek.com/guides/kv_cache), so
+// hoisting a mid-conversation reminder into top-level `system` collapses their cache exactly as
+// it did for Claude. The reminder must inline as a user turn for every family.
+func TestToAnthropicChatRequest_MidConversationSystem_InlinesForNonAnthropicFamily(t *testing.T) {
+	bifrostReq := &schemas.BifrostChatRequest{
+		Provider: schemas.DeepSeek,
+		Model:    "deepseek-chat",
+		Input: []schemas.ChatMessage{
+			{Role: schemas.ChatMessageRoleSystem, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Initial system.")}},
+			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hello")}},
+			{Role: schemas.ChatMessageRoleAssistant, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Hi!")}},
+			{Role: schemas.ChatMessageRoleSystem, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Mid-conv instruction.")}},
+			{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("Continue")}},
+		},
+		Params: &schemas.ChatParameters{MaxCompletionTokens: schemas.Ptr(1024)},
+	}
+
+	result, err := ToAnthropicChatRequest(&schemas.BifrostContext{}, bifrostReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.System == nil {
+		t.Fatal("expected the leading system prompt to remain in top-level System")
+	}
+	if got := textBlocks(result.System); len(got) != 1 || got[0] != "Initial system." {
+		t.Errorf("top-level System = %v, want exactly [\"Initial system.\"] (mid-conversation content must not be hoisted for non-Anthropic families either)", got)
+	}
+	assertInlinedReminder(t, result, "Mid-conv instruction.")
+}
+
+// TestToAnthropicResponsesRequest_MidConversationSystem_InlinesForNonAnthropicFamily is the
+// Responses-path twin of the test above; ConvertBifrostMessagesToAnthropicMessages carries its own
+// copy of the family gate.
+func TestToAnthropicResponsesRequest_MidConversationSystem_InlinesForNonAnthropicFamily(t *testing.T) {
+	msg := func(role schemas.ResponsesMessageRoleType, text string) schemas.ResponsesMessage {
+		return schemas.ResponsesMessage{
+			Type:    schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+			Role:    schemas.Ptr(role),
+			Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr(text)},
+		}
+	}
+	bifrostReq := &schemas.BifrostResponsesRequest{
+		Provider: schemas.DeepSeek,
+		Model:    "deepseek-chat",
+		Input: []schemas.ResponsesMessage{
+			msg(schemas.ResponsesInputMessageRoleSystem, "Initial system."),
+			msg(schemas.ResponsesInputMessageRoleUser, "Hello"),
+			msg(schemas.ResponsesInputMessageRoleAssistant, "Hi!"),
+			msg(schemas.ResponsesInputMessageRoleSystem, "Mid-conv instruction."),
+			msg(schemas.ResponsesInputMessageRoleUser, "Continue"),
+		},
+		Params: &schemas.ResponsesParameters{MaxOutputTokens: schemas.Ptr(1024)},
+	}
+
+	result, err := ToAnthropicResponsesRequest(&schemas.BifrostContext{}, bifrostReq)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.System == nil {
+		t.Fatal("expected the leading system prompt to remain in top-level System")
+	}
+	if got := textBlocks(result.System); len(got) != 1 || got[0] != "Initial system." {
+		t.Errorf("top-level System = %v, want exactly [\"Initial system.\"] (mid-conversation content must not be hoisted for non-Anthropic families either)", got)
+	}
+	assertInlinedReminder(t, result, "Mid-conv instruction.")
+}
+
+// restrictionRequest builds a two-tool chat request so that a restriction has
+// something to remove. The model is a current one so that no capability
+// override drops the tool choice before these paths run.
+func restrictionRequest(tc *schemas.ChatToolChoice, parallel *bool) *schemas.BifrostChatRequest {
+	return &schemas.BifrostChatRequest{
+		Provider: schemas.Anthropic,
+		Model:    "claude-sonnet-5",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("What is the weather in Tokyo?")},
+		}},
+		Params: &schemas.ChatParameters{
+			ToolChoice:        tc,
+			ParallelToolCalls: parallel,
+			Tools: []schemas.ChatTool{
+				{Type: schemas.ChatToolTypeFunction, Function: &schemas.ChatToolFunction{Name: "tool_a"}},
+				{Type: schemas.ChatToolTypeFunction, Function: &schemas.ChatToolFunction{Name: "tool_b"}},
+			},
+		},
+	}
+}
+
+func allowedTools(mode string, names ...string) *schemas.ChatToolChoice {
+	tools := make([]schemas.ChatToolChoiceAllowedToolsTool, 0, len(names))
+	for _, n := range names {
+		tools = append(tools, schemas.ChatToolChoiceAllowedToolsTool{
+			Type:     "function",
+			Function: schemas.ChatToolChoiceFunction{Name: n},
+		})
+	}
+	return &schemas.ChatToolChoice{ChatToolChoiceStruct: &schemas.ChatToolChoiceStruct{
+		Type:         schemas.ChatToolChoiceTypeAllowedTools,
+		AllowedTools: &schemas.ChatToolChoiceAllowedTools{Mode: mode, Tools: tools},
+	}}
+}
+
+func toolNames(req *AnthropicMessageRequest) []string {
+	names := make([]string, 0, len(req.Tools))
+	for _, t := range req.Tools {
+		names = append(names, t.Name)
+	}
+	return names
+}
+
+// A caller that allows only tool_a must not have tool_b forwarded. Anthropic
+// has no subset form on tool_choice, so the restriction has to be carried by
+// the declaration list; mapping to "any" and forwarding both tools told the
+// upstream it could call either one.
+func TestToAnthropicChatRequest_AllowedToolsRestrictsDeclarations(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	req, err := ToAnthropicChatRequest(ctx, restrictionRequest(allowedTools("required", "tool_a"), nil))
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"tool_a"}, toolNames(req), "tool_b was not allowed and must not be forwarded")
+	require.NotNil(t, req.ToolChoice)
+	assert.Equal(t, "any", req.ToolChoice.Type, `mode "required" means a tool must be called`)
+}
+
+// mode "auto" means the model may call one of the allowed tools or none at all.
+// Forcing "any" changed an optional call into a mandatory one.
+func TestToAnthropicChatRequest_AllowedToolsAutoModeDoesNotForceACall(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	req, err := ToAnthropicChatRequest(ctx, restrictionRequest(allowedTools("auto", "tool_a"), nil))
+	require.NoError(t, err)
+
+	require.NotNil(t, req.ToolChoice)
+	assert.Equal(t, "auto", req.ToolChoice.Type, `mode "auto" must not force a tool call`)
+	assert.Equal(t, []string{"tool_a"}, toolNames(req))
+}
+
+// An allowed list naming only tools this request does not declare permits
+// nothing. Forwarding the declarations anyway would hand the model every tool
+// the caller just excluded - the same failure this conversion exists to stop,
+// arrived at from the other direction.
+func TestToAnthropicChatRequest_AllowedToolsUnknownNamesPermitNothing(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	req, err := ToAnthropicChatRequest(ctx, restrictionRequest(allowedTools("required", "not_declared"), nil))
+	require.NoError(t, err)
+
+	assert.Empty(t, toolNames(req), "no declared tool was allowed, so none may be forwarded")
+	require.NotNil(t, req.ToolChoice)
+	assert.Equal(t, "none", req.ToolChoice.Type,
+		`"any" with an empty tool list is a request Anthropic rejects`)
+}
+
+// parallel_tool_calls: false has a direct Anthropic equivalent that was never
+// populated, so the instruction was dropped and calls stayed parallel.
+func TestToAnthropicChatRequest_ParallelToolCallsFalseDisablesParallelUse(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	t.Run("with an explicit tool choice", func(t *testing.T) {
+		req, err := ToAnthropicChatRequest(ctx, restrictionRequest(
+			&schemas.ChatToolChoice{ChatToolChoiceStr: schemas.Ptr("auto")}, schemas.Ptr(false)))
+		require.NoError(t, err)
+		require.NotNil(t, req.ToolChoice)
+		require.NotNil(t, req.ToolChoice.DisableParallelToolUse)
+		assert.True(t, *req.ToolChoice.DisableParallelToolUse)
+	})
+
+	t.Run("with no tool choice of its own", func(t *testing.T) {
+		req, err := ToAnthropicChatRequest(ctx, restrictionRequest(nil, schemas.Ptr(false)))
+		require.NoError(t, err)
+		require.NotNil(t, req.ToolChoice, "the flag has nowhere to live without a tool_choice")
+		assert.Equal(t, "auto", req.ToolChoice.Type, "auto is Anthropic's default, so this adds no restriction")
+		require.NotNil(t, req.ToolChoice.DisableParallelToolUse)
+		assert.True(t, *req.ToolChoice.DisableParallelToolUse)
+	})
+}
+
+// parallel_tool_calls: true is Anthropic's default, so nothing should be sent.
+func TestToAnthropicChatRequest_ParallelToolCallsTrueSendsNothing(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	req, err := ToAnthropicChatRequest(ctx, restrictionRequest(nil, schemas.Ptr(true)))
+	require.NoError(t, err)
+	if req.ToolChoice != nil {
+		assert.Nil(t, req.ToolChoice.DisableParallelToolUse)
+	}
+}
+
+// A server tool - MCP toolset, web search, computer use - cannot be named in
+// an OpenAI allowed_tools list, which describes function tools only. Filtering
+// it on a name it cannot have would switch off a capability the caller enabled
+// elsewhere in the same request.
+func TestToAnthropicChatRequest_AllowedToolsLeavesServerToolsAlone(t *testing.T) {
+	ctx := schemas.NewBifrostContext(nil, schemas.NoDeadline)
+
+	req := restrictionRequest(allowedTools("required", "tool_a"), nil)
+	// Stand in for a converted server tool: it carries a Type, which a
+	// converted function tool never does.
+	converted, err := ToAnthropicChatRequest(ctx, req)
+	require.NoError(t, err)
+
+	// Two server-tool shapes, because they are filtered by different fields:
+	// web search sets Type, while an MCP toolset leaves Type nil and carries
+	// everything in MCPToolset with an empty Name.
+	webSearch := AnthropicToolType("web_search")
+	withServer := append([]AnthropicTool{
+		{Name: "web-search", Type: &webSearch},
+		{MCPToolset: &AnthropicMCPToolsetTool{Type: "mcp_toolset", MCPServerName: "docs"}},
+	}, converted.Tools...)
+	filtered := filterToolsByAllowed(withServer, []schemas.ChatToolChoiceAllowedToolsTool{
+		{Type: "function", Function: schemas.ChatToolChoiceFunction{Name: "tool_a"}},
+	})
+
+	names := make([]string, 0, len(filtered))
+	for _, tl := range filtered {
+		names = append(names, tl.Name)
+	}
+	assert.Contains(t, names, "web-search", "a Type-carrying server tool must survive")
+	assert.Contains(t, names, "tool_a")
+	assert.NotContains(t, names, "tool_b")
+
+	mcpKept := false
+	for _, tl := range filtered {
+		if tl.MCPToolset != nil {
+			mcpKept = true
+		}
+	}
+	assert.True(t, mcpKept, "an MCP toolset has Type nil and an empty Name; it must not be matched against the allowlist")
+}
+
+// With every nameable tool excluded, the choice must still be "none" even
+// though server tools remain in the list.
+func TestToAnthropicChatRequest_AllowedToolsNoneNameableStillMeansNone(t *testing.T) {
+	webSearch := AnthropicToolType("web_search")
+	tools := []AnthropicTool{
+		{Name: "web-search", Type: &webSearch},
+		{MCPToolset: &AnthropicMCPToolsetTool{Type: "mcp_toolset", MCPServerName: "docs"}},
+		{Name: "tool_a"},
+	}
+	assert.Equal(t, 1, countFunctionTools(tools), "only tool_a is nameable; neither server shape counts")
+
+	filtered := filterToolsByAllowed(tools, []schemas.ChatToolChoiceAllowedToolsTool{
+		{Type: "function", Function: schemas.ChatToolChoiceFunction{Name: "not_declared"}},
+	})
+	assert.Equal(t, 0, countFunctionTools(filtered), "no function tool was allowed, so the choice must be none")
+	assert.Len(t, filtered, 2, "both server tools are still there")
 }

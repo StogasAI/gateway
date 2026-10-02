@@ -15,10 +15,11 @@ func TestCustomMatcherPreservesRE2Semantics(t *testing.T) {
 		`\Aa`, `a\z`, `^a`, `a$`, `(?m)^a`, `(?m)a$`, `(?s)a.b`,
 		`\ba\b`, `\Ba\B`, `(?:\b|\B)a`, `a(?:\b|\B)`,
 		`(?i)élise`, `客户-\p{Han}{2}`, `(?i)k-id`, `a\x{FFFD}`,
+		`aba[0-9]`, `\x{FFFD}id`, `(?:ab|ac)d?`,
 		`.[0-9]{2}`, `(?s:.)Z-ID`,
 		`\Qabc`, `\Qabc\E`, `\Qabc\\E`, `\\Qabc`, `(?P<id>a+)`,
 	}
-	inputs := []string{"", "a", "aa", "aba ab", "a\na\nz", " a a ", "baab", "abc", "abc\\", "\\Qabc", "a\xffa", "éaélise ÉLISE", "客户-张三客户-李四", "k-id K-ID K-id", "\na\na\n", "a12 é34 \nZ-ID xZ-ID"}
+	inputs := []string{"", "a", "aa", "aba ab", "abababa1", "\xffid \uFFFDid", "a\na\nz", " a a ", "baab", "abc", "abc\\", "\\Qabc", "a\xffa", "éaélise ÉLISE", "客户-张三客户-李四", "k-id K-ID K-id", "\na\na\n", "a12 é34 \nZ-ID xZ-ID"}
 	for _, pattern := range patterns {
 		t.Run(pattern, func(t *testing.T) {
 			policy := mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: pattern}}})
@@ -84,9 +85,9 @@ func TestCustomBudgetSharedAcrossFieldsAndPatterns(t *testing.T) {
 	redactor.scanWork = maxScanWork - 300
 	input := map[string]json.RawMessage{
 		"input":        json.RawMessage(`"EMP-123"`),
-		"instructions": json.RawMessage(`"` + strings.Repeat("x", 300) + `"`),
+		"instructions": json.RawMessage(`"OTHER-` + strings.Repeat("1", 300) + `"`),
 	}
-	err := redactor.RedactRequestFields(input, SurfaceResponses)
+	err := redactor.RedactRequestFields(input, SurfaceResponses, nil)
 	if !errors.Is(err, ErrWorkLimit) || string(input["input"]) != `"EMP-123"` || redactor.items != 0 {
 		t.Fatalf("error=%v input=%s items=%d", err, input["input"], redactor.items)
 	}
@@ -104,6 +105,17 @@ func TestCustomSparseLargeInput(t *testing.T) {
 		if err != nil || !changed || !bytes.HasSuffix(out, []byte("<CUSTOM_PII>")) {
 			t.Fatalf("changed=%t error=%v", changed, err)
 		}
+	}
+}
+
+func TestCustomPrefixSkipsImpossibleMatchesWithoutSpendingLookaheadBudget(t *testing.T) {
+	policy := mustCompilePolicy(t, Options{CustomPatterns: []CustomPattern{{Expression: `客户-[0-9]{6}\b`}}})
+	redactor := NewWithPolicy(policy)
+	redactor.scanWork = maxScanWork - 1000
+	input := append(bytes.Repeat([]byte("ordinary 客 text "), 100_000), []byte("é客户-123456 end")...)
+	out, changed, err := redactor.redactBytes(input)
+	if err != nil || !changed || !bytes.HasSuffix(out, []byte("é<CUSTOM_PII> end")) || redactor.items != 1 {
+		t.Fatalf("changed=%t error=%v items=%d", changed, err, redactor.items)
 	}
 }
 

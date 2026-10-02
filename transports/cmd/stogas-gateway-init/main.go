@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
+	"os/signal"
 	"regexp"
 	"strings"
 	"syscall"
@@ -39,12 +41,20 @@ const (
 
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var forwardConfigKeys = map[string]struct{}{
+	"STOGAS_INSTANCE_ID":                     {},
 	"STOGAS_CLOUDFLARE_ACCESS_CLIENT_ID":     {},
 	"STOGAS_CLOUDFLARE_ACCESS_CLIENT_SECRET": {},
 	"STOGAS_ENVIRONMENT":                     {},
 }
 
 func main() {
+	if os.Getpid() != 1 {
+		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
+		os.Exit(1)
+	}
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(shutdown)
 	mount(os.Stderr, "proc", "/proc", "proc")
 	mount(os.Stderr, "sysfs", "/sys", "sysfs")
 	mount(os.Stderr, "devtmpfs", "/dev", "devtmpfs")
@@ -62,11 +72,18 @@ func main() {
 		"-log-style", "json",
 		"-log-level", "info",
 	}
-	if err := syscall.Exec(args[0], args, os.Environ()); err != nil {
+	closeButtons := watchPowerButtons(shutdown)
+	defer closeButtons()
+	command := exec.Command(args[0], args[1:]...)
+	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := runGateway(command, shutdown); err != nil {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
-		_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
-		os.Exit(127)
 	}
+	// Any gateway exit ends this ephemeral guest. The host's desired service
+	// state decides whether to start new capacity; this init never restarts keys.
+	_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_POWER_OFF)
+	_ = syscall.Reboot(syscall.LINUX_REBOOT_CMD_RESTART)
+	os.Exit(127)
 }
 
 func mount(output io.Writer, source, target, fstype string) {

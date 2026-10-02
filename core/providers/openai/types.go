@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,14 +168,15 @@ type OpenAIMessage struct {
 // stream-only index from assistant tool-call history.
 func (m OpenAIMessage) MarshalJSON() ([]byte, error) {
 	type wireMessage struct {
-		Name        *string                                  `json:"name,omitempty"`
-		Role        schemas.ChatMessageRole                  `json:"role,omitempty"`
-		Content     *schemas.ChatMessageContent              `json:"content,omitempty"`
-		ToolCallID  *string                                  `json:"tool_call_id,omitempty"`
-		Refusal     *string                                  `json:"refusal,omitempty"`
-		Reasoning   *string                                  `json:"reasoning_content,omitempty"`
-		Annotations []schemas.ChatAssistantMessageAnnotation `json:"annotations,omitempty"`
-		ToolCalls   []openAIChatAssistantToolCall            `json:"tool_calls,omitempty"`
+		Name           *string                                  `json:"name,omitempty"`
+		Role           schemas.ChatMessageRole                  `json:"role,omitempty"`
+		Content        *schemas.ChatMessageContent              `json:"content,omitempty"`
+		ToolCallID     *string                                  `json:"tool_call_id,omitempty"`
+		Refusal        *string                                  `json:"refusal,omitempty"`
+		Reasoning      *string                                  `json:"reasoning_content,omitempty"`
+		ReasoningAlias *string                                  `json:"reasoning,omitempty"`
+		Annotations    []schemas.ChatAssistantMessageAnnotation `json:"annotations,omitempty"`
+		ToolCalls      []openAIChatAssistantToolCall            `json:"tool_calls,omitempty"`
 	}
 	wire := wireMessage{Name: m.Name, Role: m.Role, Content: m.Content}
 	if m.ChatToolMessage != nil {
@@ -183,74 +185,45 @@ func (m OpenAIMessage) MarshalJSON() ([]byte, error) {
 	if m.OpenAIChatAssistantMessage != nil {
 		wire.Refusal = m.OpenAIChatAssistantMessage.Refusal
 		wire.Reasoning = m.OpenAIChatAssistantMessage.Reasoning
+		wire.ReasoningAlias = m.OpenAIChatAssistantMessage.ReasoningAlias
 		wire.Annotations = m.OpenAIChatAssistantMessage.Annotations
 		wire.ToolCalls = make([]openAIChatAssistantToolCall, 0, len(m.OpenAIChatAssistantMessage.ToolCalls))
 		for _, call := range m.OpenAIChatAssistantMessage.ToolCalls {
 			wire.ToolCalls = append(wire.ToolCalls, openAIChatAssistantToolCall{
-				Type:     call.Type,
-				ID:       call.ID,
-				Function: call.Function,
+				Type:         call.Type,
+				ID:           call.ID,
+				Function:     call.Function,
+				ExtraContent: json.RawMessage(call.ExtraContent),
 			})
 		}
 	}
 	return sonic.Marshal(wire)
 }
 
-// UnmarshalJSON accepts the normalized Stogas reasoning field and preserves
-// reasoning_details for Anthropic-family history replay.
-func (m *OpenAIMessage) UnmarshalJSON(data []byte) error {
-	var decoded struct {
-		Name             *string                                  `json:"name"`
-		Role             schemas.ChatMessageRole                  `json:"role"`
-		Content          *schemas.ChatMessageContent              `json:"content"`
-		ToolCallID       *string                                  `json:"tool_call_id"`
-		Refusal          *string                                  `json:"refusal"`
-		Reasoning        *string                                  `json:"reasoning"`
-		ReasoningContent *string                                  `json:"reasoning_content"`
-		ReasoningDetails []schemas.ChatReasoningDetails           `json:"reasoning_details"`
-		Annotations      []schemas.ChatAssistantMessageAnnotation `json:"annotations"`
-		ToolCalls        []schemas.ChatAssistantMessageToolCall   `json:"tool_calls"`
-	}
-	if err := sonic.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	m.Name = decoded.Name
-	m.Role = decoded.Role
-	m.Content = decoded.Content
-	m.ChatToolMessage = nil
-	m.OpenAIChatAssistantMessage = nil
-	if decoded.Role == schemas.ChatMessageRoleTool || decoded.ToolCallID != nil {
-		m.ChatToolMessage = &schemas.ChatToolMessage{ToolCallID: decoded.ToolCallID}
-	}
-	if decoded.Role == schemas.ChatMessageRoleAssistant || decoded.Refusal != nil || decoded.Reasoning != nil || decoded.ReasoningContent != nil || decoded.ReasoningDetails != nil || decoded.Annotations != nil || decoded.ToolCalls != nil {
-		reasoning := decoded.ReasoningContent
-		if decoded.Reasoning != nil {
-			reasoning = decoded.Reasoning
-		}
-		m.OpenAIChatAssistantMessage = &OpenAIChatAssistantMessage{
-			Refusal:          decoded.Refusal,
-			Reasoning:        reasoning,
-			ReasoningDetails: decoded.ReasoningDetails,
-			Annotations:      decoded.Annotations,
-			ToolCalls:        decoded.ToolCalls,
-		}
-	}
-	return nil
-}
-
 // OpenAIChatAssistantMessage represents an OpenAI chat assistant message
 type OpenAIChatAssistantMessage struct {
-	Refusal          *string                                  `json:"refusal,omitempty"`
-	Reasoning        *string                                  `json:"reasoning_content,omitempty"`
-	ReasoningDetails []schemas.ChatReasoningDetails           `json:"-"`
-	Annotations      []schemas.ChatAssistantMessageAnnotation `json:"annotations,omitempty"`
-	ToolCalls        []schemas.ChatAssistantMessageToolCall   `json:"tool_calls,omitempty"`
+	Refusal   *string `json:"refusal,omitempty"`
+	Reasoning *string `json:"reasoning_content,omitempty"`
+
+	// ReasoningAlias and ReasoningDetails capture the other two spellings callers use to
+	// replay assistant reasoning: OpenRouter-style "reasoning" and "reasoning_details".
+	//
+	// These are inbound-only. ConvertBifrostMessagesToOpenAIMessages is the sole
+	// construction site on the outbound path and never populates them, so they stay nil
+	// there and omitempty keeps them off the wire for every provider. Read them via
+	// ConvertOpenAIMessagesToBifrostMessages, which folds them into the Bifrost schema.
+	ReasoningAlias   *string                        `json:"reasoning,omitempty"`
+	ReasoningDetails []schemas.ChatReasoningDetails `json:"reasoning_details,omitempty"`
+
+	Annotations []schemas.ChatAssistantMessageAnnotation `json:"annotations,omitempty"`
+	ToolCalls   []schemas.ChatAssistantMessageToolCall   `json:"tool_calls,omitempty"`
 }
 
 type openAIChatAssistantToolCall struct {
-	Type     *string                                      `json:"type,omitempty"`
-	ID       *string                                      `json:"id,omitempty"`
-	Function schemas.ChatAssistantMessageToolCallFunction `json:"function"`
+	Type         *string                                      `json:"type,omitempty"`
+	ID           *string                                      `json:"id,omitempty"`
+	Function     schemas.ChatAssistantMessageToolCallFunction `json:"function"`
+	ExtraContent json.RawMessage                              `json:"extra_content,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshalling for OpenAIChatRequest.
@@ -327,11 +300,16 @@ func (req *OpenAIChatRequest) MarshalJSON() ([]byte, error) {
 							blockCopy.CacheControl = nil
 						}
 						blockCopy.Citations = nil
-						// Strip FileType and FileURL from file block
-						if blockCopy.File != nil && (blockCopy.File.FileType != nil || blockCopy.File.FileURL != nil) {
+						// Strip file_type: it is a Bifrost extension, not part of any
+						// OpenAI-shaped wire format. file_url is deliberately NOT stripped.
+						// Dropping it produced {"type":"file","file":{}} and an upstream
+						// complaint about a missing file_id, hiding the fact that a source
+						// was discarded. Providers that cannot take a URL now say so by
+						// name, and any OpenAI-compatible endpoint that does accept one
+						// keeps working without a Bifrost change.
+						if blockCopy.File != nil && blockCopy.File.FileType != nil {
 							fileCopy := *blockCopy.File
 							fileCopy.FileType = nil
-							fileCopy.FileURL = nil
 							blockCopy.File = &fileCopy
 						}
 						contentCopy.ContentBlocks[j] = blockCopy
@@ -549,12 +527,13 @@ func (r *OpenAIResponsesRequestInput) MarshalJSON() ([]byte, error) {
 						continue
 					}
 
-					needsBlockCopy := block.CacheControl != nil || block.Citations != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil) || (block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.Annotations) > 0)
+					needsBlockCopy := block.CacheControl != nil || block.Citations != nil || block.MediaResolution != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil) || (block.ResponsesOutputMessageContentText != nil && len(block.ResponsesOutputMessageContentText.Annotations) > 0)
 					if needsBlockCopy {
 						hasContentModification = true
 						blockCopy := block
 						blockCopy.CacheControl = nil
 						blockCopy.Citations = nil
+						blockCopy.MediaResolution = nil
 
 						// Filter out unsupported citation types from annotations
 						if blockCopy.ResponsesOutputMessageContentText != nil && len(blockCopy.ResponsesOutputMessageContentText.Annotations) > 0 {
@@ -642,7 +621,7 @@ func (r *OpenAIResponsesRequestInput) MarshalJSON() ([]byte, error) {
 					// Strip CacheControl and FileType from tool message output blocks if needed
 					hasToolModification := false
 					for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
-						if block.CacheControl != nil || block.Citations != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil) {
+						if block.CacheControl != nil || block.Citations != nil || block.MediaResolution != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil) {
 							hasToolModification = true
 							break
 						}
@@ -652,11 +631,12 @@ func (r *OpenAIResponsesRequestInput) MarshalJSON() ([]byte, error) {
 						outputCopy := *msg.ResponsesToolMessage.Output
 						outputCopy.ResponsesFunctionToolCallOutputBlocks = make([]schemas.ResponsesMessageContentBlock, len(msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks))
 						for j, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
-							needsBlockCopy := block.CacheControl != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil)
+							needsBlockCopy := block.CacheControl != nil || block.Citations != nil || block.MediaResolution != nil || (block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil)
 							if needsBlockCopy {
 								blockCopy := block
 								blockCopy.CacheControl = nil
 								blockCopy.Citations = nil
+								blockCopy.MediaResolution = nil
 								// Strip FileType from file block
 								if blockCopy.ResponsesInputMessageContentBlockFile != nil && blockCopy.ResponsesInputMessageContentBlockFile.FileType != nil {
 									fileCopy := *blockCopy.ResponsesInputMessageContentBlockFile
@@ -760,7 +740,7 @@ func hasFieldsToStripInChatMessage(msg OpenAIMessage, keepCacheControl bool) boo
 			if block.Citations != nil {
 				return true
 			}
-			if block.File != nil && (block.File.FileType != nil || block.File.FileURL != nil) {
+			if block.File != nil && block.File.FileType != nil {
 				return true
 			}
 		}
@@ -787,6 +767,10 @@ func hasFieldsToStripInResponsesMessage(msg schemas.ResponsesMessage) bool {
 				return true
 			}
 			if block.Citations != nil {
+				return true
+			}
+			// Gemini's per-part media resolution; OpenAI 400s on the unknown parameter.
+			if block.MediaResolution != nil {
 				return true
 			}
 			if block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil {
@@ -820,6 +804,15 @@ func hasFieldsToStripInResponsesMessage(msg schemas.ResponsesMessage) bool {
 			}
 			for _, block := range msg.ResponsesToolMessage.Output.ResponsesFunctionToolCallOutputBlocks {
 				if block.CacheControl != nil {
+					return true
+				}
+				// Citations and MediaResolution are stripped from these blocks further down,
+				// but this probe gates whether that stripping runs at all, so it has to look
+				// for everything the strip removes.
+				if block.Citations != nil {
+					return true
+				}
+				if block.MediaResolution != nil {
 					return true
 				}
 				if block.ResponsesInputMessageContentBlockFile != nil && block.ResponsesInputMessageContentBlockFile.FileType != nil {
@@ -1086,6 +1079,37 @@ type OpenAIListModelsResponse struct {
 	Data   []OpenAIModel `json:"data"`
 }
 
+// UnmarshalJSON accepts both OpenAI envelopes and compatible top-level model arrays.
+func (response *OpenAIListModelsResponse) UnmarshalJSON(data []byte) error {
+	type envelope OpenAIListModelsResponse
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return sonic.Unmarshal(trimmed, (*envelope)(response))
+	}
+
+	var models []struct {
+		OpenAIModel
+		Organization  string `json:"organization"`
+		ContextLength *int   `json:"context_length,omitempty"`
+	}
+	if err := sonic.Unmarshal(trimmed, &models); err != nil {
+		return err
+	}
+
+	response.Data = make([]OpenAIModel, len(models))
+	for i, model := range models {
+		response.Data[i] = model.OpenAIModel
+		if response.Data[i].OwnedBy == "" {
+			response.Data[i].OwnedBy = model.Organization
+		}
+		if response.Data[i].ContextWindow == nil {
+			response.Data[i].ContextWindow = model.ContextLength
+		}
+	}
+	return nil
+}
+
 // OpenAIImageGenerationRequest is the struct for Image Generation requests by OpenAI.
 type OpenAIImageGenerationRequest struct {
 	Model  string `json:"model"`
@@ -1205,8 +1229,9 @@ var ValidOpenAIVideoSizes = map[string]bool{
 
 // OpenAIVideoGenerationRequest is the request body for OpenAI video generation.
 type OpenAIVideoGenerationRequest struct {
-	Prompt         string `json:"prompt"`                    // Text prompt that describes the video to generate (max 32000, min 1)
-	InputReference []byte `json:"input_reference,omitempty"` // Optional image reference file that guides generation
+	Prompt         string  `json:"prompt"`                    // Text prompt that describes the video to generate (max 32000, min 1)
+	InputReference []byte  `json:"input_reference,omitempty"` // Optional image reference file that guides generation
+	VideoURI       *string `json:"video_uri,omitempty"`       // Optional source video for video-to-video
 
 	Model string `json:"model"` // Video generation model (defaults to sora-2)
 
@@ -1219,6 +1244,35 @@ type OpenAIVideoGenerationRequest struct {
 // GetExtraParams implements the ExtraParamsGetter interface
 func (req *OpenAIVideoGenerationRequest) GetExtraParams() map[string]interface{} {
 	return req.ExtraParams
+}
+
+// OpenAIVideoEditRequest is the request body for OpenAI video edits. The source video is either an
+// uploaded file, sent as multipart, or a reference to a completed video, sent as JSON.
+type OpenAIVideoEditRequest struct {
+	Prompt string                    `json:"prompt"` // Text prompt describing how to edit the source video
+	Video  OpenAIVideoEditVideoInput `json:"video"`  // Source video: uploaded bytes or a video reference
+
+	Model string `json:"model,omitempty"` // Inferred from the source video when it is referenced by ID
+
+	// Provider is resolved by the transport from the provider query parameter, the x-model-provider
+	// header, or a provider suffix on the source video ID. The official SDKs send no model on this
+	// route, so it is often the only routing signal available.
+	Provider schemas.ModelProvider `json:"-"`
+
+	Fallbacks   []string               `json:"fallbacks,omitempty"`
+	ExtraParams map[string]interface{} `json:"-"`
+}
+
+// OpenAIVideoEditVideoInput is the "video" field, which is overloaded: a file part on a multipart
+// request, or an object carrying the ID of a completed video on a JSON one.
+type OpenAIVideoEditVideoInput struct {
+	ID    string `json:"id,omitempty"`
+	Bytes []byte `json:"-"`
+}
+
+// GetExtraParams implements the ExtraParamsGetter interface
+func (r *OpenAIVideoEditRequest) GetExtraParams() map[string]interface{} {
+	return r.ExtraParams
 }
 
 // OpenAIVideoRemixRequest represents an OpenAI video remix request

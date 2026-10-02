@@ -13,7 +13,7 @@ func TestRepeatedSecretCandidatesHaveRequestWorkBound(t *testing.T) {
 		strings.Repeat("-----BEGIN PRIVATE KEY-----\n", 5000),
 		strings.Repeat("password=$password=", 5000),
 	} {
-		out, changed, err := New().redactBytes([]byte(input))
+		out, changed, err := newTestRedactor().redactBytes([]byte(input))
 		if !errors.Is(err, ErrWorkLimit) || changed || out != nil {
 			t.Fatalf("got output bytes=%d changed=%t err=%v", len(out), changed, err)
 		}
@@ -22,7 +22,7 @@ func TestRepeatedSecretCandidatesHaveRequestWorkBound(t *testing.T) {
 
 func TestPrivateKeyLookaheadChargesOnlySearchedPrefix(t *testing.T) {
 	input := strings.Repeat("-----BEGIN PRIVATE KEY-----\nYWJj\n-----END PRIVATE KEY-----\n", 1000)
-	redactor := New()
+	redactor := newTestRedactor()
 	out, changed, err := redactor.redactBytes([]byte(input))
 	if err != nil || !changed || strings.Count(string(out), "<PRIVATE_KEY>") != 1000 {
 		t.Fatalf("items=%d changed=%t err=%v", redactor.items, changed, err)
@@ -37,14 +37,14 @@ func TestTelegramTokenCurrentShapeAndBounds(t *testing.T) {
 	body := "Ab1C2d3E4f5G6h7I8j9K0l1M2n3O4p5Q6r7"
 	for _, botID := range []string{"12345", "1234567890123456"} {
 		source := botID + ":" + body
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || !changed || string(out) != "<VENDOR_TOKEN>" {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
 	}
 	for _, botID := range []string{"1234", "12345678901234567"} {
 		source := botID + ":" + body
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("out-of-range bot ID %q was redacted as %q", source, out)
 		}
@@ -58,7 +58,7 @@ func TestJWTRequiresThreeCanonicalParts(t *testing.T) {
 		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcdefghi",
 		"eyJ0eXAiOiJKV1QifQ.eyJzdWIiOiIxIn0.SflKxwRJSMeK",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("malformed JWT %q was redacted as %q (err=%v)", source, out, err)
 		}
@@ -72,7 +72,7 @@ func TestBasicCredentialValidation(t *testing.T) {
 		rawEncoding := base64.RawStdEncoding.EncodeToString([]byte(raw))
 		for _, encoded := range []string{padded, rawEncoding} {
 			source := "Authorization: Basic " + encoded
-			out, changed, err := New().redactBytes([]byte(source))
+			out, changed, err := newTestRedactor().redactBytes([]byte(source))
 			if err != nil || !changed || string(out) != "Authorization: Basic <CREDENTIAL>" {
 				t.Fatalf("redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 			}
@@ -89,13 +89,13 @@ func TestBasicCredentialValidation(t *testing.T) {
 	for _, decoded := range invalidDecoded {
 		encoded := base64.StdEncoding.EncodeToString(decoded)
 		source := "Authorization: Basic " + encoded
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("invalid Basic credential %q was redacted as %q (err=%v)", decoded, out, err)
 		}
 	}
 	nonCanonical := "Authorization: Basic dXNlcjpzZWNyZXR="
-	out, changed, err := New().redactBytes([]byte(nonCanonical))
+	out, changed, err := newTestRedactor().redactBytes([]byte(nonCanonical))
 	if err != nil || changed || string(out) != nonCanonical {
 		t.Fatalf("non-canonical Basic value was redacted as %q (err=%v)", out, err)
 	}
@@ -110,7 +110,7 @@ func TestDatabaseCredentialURLRequiresARealPassword(t *testing.T) {
 		"mongodb+srv://app:Sup3rSecret!@cluster.internal/data?retryWrites=true",
 	}
 	for _, source := range positives {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || !changed || string(out) != "<DATABASE_URL>" {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -125,7 +125,7 @@ func TestDatabaseCredentialURLRequiresARealPassword(t *testing.T) {
 		"postgresql://app:xxxxxxxx@db.internal/data",
 		"postgresql://app:${DB_PASSWORD}@db.internal/data",
 	} {
-		matches, err := scanDatabaseCredentials([]byte(source), nil, defaultEntityMask)
+		matches, err := scanDatabaseCredentials([]byte(source), nil, allBuiltInEntityMask.without(EntityIPAddress))
 		if err != nil || len(matches) != 0 {
 			t.Fatalf("URL without valid userinfo %q produced matches=%#v err=%v", source, matches, err)
 		}
@@ -141,7 +141,7 @@ func TestCredentialAssignmentForms(t *testing.T) {
 		"PASSWORD=huntertwo",
 		`password: "correct horse battery staple"`,
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || !changed || !bytes.Contains(out, []byte("<CREDENTIAL>")) {
 			t.Fatalf("credential redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -161,7 +161,7 @@ func TestStrongVendorTokensRejectMaskedAndPartialShapes(t *testing.T) {
 		"dp.pt." + strings.Repeat("a1B2c3D4", 5),
 		"pul-" + strings.Repeat("0123456789abcdef", 2),
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("masked or partial token %q was redacted as %q (err=%v)", source, out, err)
 		}
@@ -178,7 +178,7 @@ func TestCurrentGitHubAndSlackShapes(t *testing.T) {
 		"https://hooks.slack.com/workflows/" + workflowBody,
 		"hooks.slack.com/triggers/" + workflowBody,
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || !changed || string(out) != "<VENDOR_TOKEN>" {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -189,7 +189,7 @@ func TestGitHubFineGrainedTokenRequiresCanonicalSeparator(t *testing.T) {
 	t.Parallel()
 	body := strings.Repeat("A1b2C3d4", 10) + "Z9"
 	source := "github_pat_" + body
-	out, changed, err := New().redactBytes([]byte(source))
+	out, changed, err := newTestRedactor().redactBytes([]byte(source))
 	if err != nil || changed || string(out) != source {
 		t.Fatalf("non-canonical token %q was redacted as %q (err=%v)", source, out, err)
 	}
@@ -203,7 +203,7 @@ func TestSlackExamplesAndPartialURLsRemainVisible(t *testing.T) {
 		"https://hooks.slack.com/triggers/short",
 		"xapp-1-EXAMPLE-123-example",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("Slack example %q was redacted as %q (err=%v)", source, out, err)
 		}
@@ -216,7 +216,7 @@ func TestCredentialsInGeneralURLs(t *testing.T) {
 		"https://alice:Sup3rSecret!@api.internal/v1",
 		"sftp://deploy:AbCdEf012345!@files.internal/releases",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || !changed || string(out) != "<CREDENTIAL>" {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -234,14 +234,14 @@ func TestJWTSentencePunctuationAndSuffixBoundaries(t *testing.T) {
 		{source: "(" + token + ").", want: "(<JSON_WEB_TOKEN>)."},
 		{source: token + ". next", want: "<JSON_WEB_TOKEN>. next"},
 	} {
-		out, changed, err := New().redactBytes([]byte(test.source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(test.source))
 		if err != nil || !changed || string(out) != test.want {
 			t.Fatalf("JWT redaction of %q = %q, changed=%t, err=%v", test.source, out, changed, err)
 		}
 	}
 
 	for _, source := range []string{token + ".extra", "prefix" + token} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("partial JWT %q was redacted as %q (err=%v)", source, out, err)
 		}

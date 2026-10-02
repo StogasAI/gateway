@@ -1,7 +1,10 @@
 package stogashttp
 
 import (
+	"errors"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bytedance/sonic"
@@ -9,10 +12,10 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	stogasbilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/valyala/fasthttp"
+	"net/http"
 )
 
-func (s *Server) writeBifrostError(ctx *fasthttp.RequestCtx, bifrostErr *schemas.BifrostError) {
+func (s *Server) writeBifrostError(ctx *requestContext, bifrostErr *schemas.BifrostError) {
 	statusCode, payload := publicBifrostError(bifrostErr)
 	s.writeError(ctx, statusCode, payload)
 }
@@ -56,28 +59,28 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	code := bifrostErrorCode(bifrostErr)
 	switch code {
 	case "upstream_verification_failed":
-		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "gateway_error", code,
 			"Provider verification failed; the request was not sent", true
 	case "upstream_capacity_unavailable":
-		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
-			"No verified private provider capacity is currently available", true
+		return http.StatusServiceUnavailable, "gateway_error", code,
+			"Provider temporarily unavailable.", true
 	case "upstream_configuration_error":
-		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "gateway_error", code,
 			"The managed provider configuration is unavailable", true
 	case "upstream_protocol_error":
-		return fasthttp.StatusBadGateway, "gateway_error", code,
+		return http.StatusBadGateway, "gateway_error", code,
 			"The provider returned an invalid private response", true
 	case "gateway_capacity_exceeded":
-		return fasthttp.StatusServiceUnavailable, "gateway_error", code,
+		return http.StatusServiceUnavailable, "gateway_error", code,
 			"Gateway capacity is temporarily exhausted", true
 	case responseProofErrorCode:
-		return fasthttp.StatusInternalServerError, "internal_error", code,
+		return http.StatusInternalServerError, "internal_error", code,
 			"Failed to build confidential response proof", true
 	case "billing_price_invalid", "response_encoding_failed":
-		return fasthttp.StatusInternalServerError, "internal_error", code,
+		return http.StatusInternalServerError, "internal_error", code,
 			"Stogas could not complete the response. Retry the request later.", true
 	case "upstream_rate_limit_error":
-		return fasthttp.StatusTooManyRequests, "rate_limit_error", code,
+		return http.StatusTooManyRequests, "rate_limit_error", code,
 			"The upstream provider rate limit was exceeded", true
 	}
 
@@ -86,16 +89,16 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	// because the provider paired it with HTTP 429.
 	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
 	case "authentication_error":
-		return fasthttp.StatusBadGateway, "gateway_error", "upstream_authentication_failed",
+		return http.StatusBadGateway, "gateway_error", "upstream_authentication_failed",
 			"The configured provider credential was rejected", true
 	case "over_budget":
-		return fasthttp.StatusBadGateway, "gateway_error", "upstream_quota_exceeded",
+		return http.StatusBadGateway, "gateway_error", "upstream_quota_exceeded",
 			"The configured provider account has insufficient quota", true
 	case "permission_error":
-		return fasthttp.StatusBadGateway, "gateway_error", "upstream_access_denied",
+		return http.StatusBadGateway, "gateway_error", "upstream_access_denied",
 			"The configured provider credential cannot access the requested model", true
 	case "rate_limited":
-		return fasthttp.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
+		return http.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
 			"The upstream provider rate limit was exceeded", true
 	default:
 		return 0, "", "", "", false
@@ -104,35 +107,35 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 
 func publicBifrostStatus(bifrostErr *schemas.BifrostError) int {
 	if bifrostErr == nil {
-		return fasthttp.StatusInternalServerError
+		return http.StatusInternalServerError
 	}
 	if bifrostErr.StatusCode != nil {
 		status := *bifrostErr.StatusCode
 		if status >= 400 && status <= 599 {
 			switch status {
-			case fasthttp.StatusUnauthorized, fasthttp.StatusPaymentRequired, fasthttp.StatusForbidden:
-				return fasthttp.StatusServiceUnavailable
+			case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+				return http.StatusServiceUnavailable
 			}
 			return status
 		}
-		return fasthttp.StatusInternalServerError
+		return http.StatusInternalServerError
 	}
 
 	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
 	case "cancelled":
 		return 499
 	case "timeout":
-		return fasthttp.StatusGatewayTimeout
+		return http.StatusGatewayTimeout
 	case "connection_error", "invalid_response":
-		return fasthttp.StatusBadGateway
+		return http.StatusBadGateway
 	case "provider_unavailable", "provider_overloaded", "model_unavailable":
-		return fasthttp.StatusServiceUnavailable
+		return http.StatusServiceUnavailable
 	case "request_too_large":
-		return fasthttp.StatusRequestEntityTooLarge
+		return http.StatusRequestEntityTooLarge
 	case "invalid_request", "context_length_exceeded", "invalid_image":
-		return fasthttp.StatusBadRequest
+		return http.StatusBadRequest
 	default:
-		return fasthttp.StatusInternalServerError
+		return http.StatusInternalServerError
 	}
 }
 
@@ -148,25 +151,25 @@ func publicBifrostType(statusCode int, bifrostErr *schemas.BifrostError) string 
 	}
 
 	switch statusCode {
-	case fasthttp.StatusBadRequest, fasthttp.StatusMethodNotAllowed, fasthttp.StatusConflict, fasthttp.StatusUnprocessableEntity:
+	case http.StatusBadRequest, http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
 		return "invalid_request_error"
-	case fasthttp.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		return "authentication_error"
-	case fasthttp.StatusPaymentRequired:
+	case http.StatusPaymentRequired:
 		return "billing_error"
-	case fasthttp.StatusForbidden:
+	case http.StatusForbidden:
 		return "permission_denied"
-	case fasthttp.StatusNotFound:
+	case http.StatusNotFound:
 		return "not_found_error"
-	case fasthttp.StatusRequestEntityTooLarge:
+	case http.StatusRequestEntityTooLarge:
 		return "request_too_large"
-	case fasthttp.StatusTooManyRequests:
+	case http.StatusTooManyRequests:
 		return "rate_limit_error"
 	case 499:
 		return schemas.RequestCancelled
-	case fasthttp.StatusBadGateway, fasthttp.StatusServiceUnavailable:
+	case http.StatusBadGateway, http.StatusServiceUnavailable:
 		return "gateway_error"
-	case fasthttp.StatusGatewayTimeout:
+	case http.StatusGatewayTimeout:
 		return schemas.RequestTimedOut
 	case 529:
 		return "overloaded_error"
@@ -211,7 +214,7 @@ func publicBifrostMessage(statusCode int, errorType string, bifrostErr *schemas.
 	case "overloaded_error":
 		return "Upstream provider is overloaded"
 	case "gateway_error":
-		if statusCode == fasthttp.StatusServiceUnavailable {
+		if statusCode == http.StatusServiceUnavailable {
 			return "Upstream provider is unavailable"
 		}
 		return "Upstream provider error"
@@ -331,19 +334,21 @@ func safeProviderErrorIdentifier(value string, maximum int, allowBrackets bool) 
 	return true
 }
 
-func (s *Server) writeJSON(ctx *fasthttp.RequestCtx, statusCode int, payload any) {
+func (s *Server) writeJSON(ctx *requestContext, statusCode int, payload any) {
 	data, err := marshalPayload(payload)
 	if err != nil {
-		s.writeError(ctx, fasthttp.StatusInternalServerError, map[string]any{
+		s.writeError(ctx, http.StatusInternalServerError, map[string]any{
 			"error": map[string]any{"message": "Failed to encode response", "type": "internal_error"},
 		})
 		return
 	}
-	ctx.SetStatusCode(statusCode)
-	ctx.SetContentType("application/json")
-	_, _ = ctx.Write(data)
+	if _, borrowed := payload.([]byte); !borrowed {
+		defer clear(data)
+	}
+	s.writeResponse(ctx, statusCode, "application/json", data)
 }
 
+// Byte-slice payloads are borrowed; all other variants return an owned encoding.
 func marshalPayload(payload any) ([]byte, error) {
 	switch typed := payload.(type) {
 	case []byte:
@@ -355,7 +360,7 @@ func marshalPayload(payload any) ([]byte, error) {
 	}
 }
 
-func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload any) {
+func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 	code := ""
 	if body, ok := payload.(map[string]any); ok {
 		if detail, ok := body["error"].(map[string]any); ok {
@@ -370,29 +375,31 @@ func (s *Server) writeError(ctx *fasthttp.RequestCtx, statusCode int, payload an
 			}
 		}
 	}
-	if len(ctx.Response.Header.Peek("X-Request-ID")) == 0 {
+	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {
 		_, _ = inferenceRequestID(ctx)
 	}
 	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode))
-	ctx.SetStatusCode(statusCode)
-	ctx.SetContentType("application/json")
 	data, err := sonic.Marshal(payload)
 	if err != nil {
-		ctx.Response.SetBodyString(`{"error":{"message":"Stogas could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
-		return
+		data = []byte(`{"error":{"message":"Stogas could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
 	}
-	_, _ = ctx.Write(data)
+	defer clear(data)
+	s.writeResponse(ctx, statusCode, "application/json", data)
 }
 
-func (s *Server) writeCatalogError(ctx *fasthttp.RequestCtx, err error) {
+func (s *Server) writeCatalogError(ctx *requestContext, err error) {
 	apiErr := catalog.PublicError(err)
 	s.writeError(ctx, apiErr.StatusCode, map[string]any{
 		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode)},
 	})
 }
 
-func (s *Server) writeBillingError(ctx *fasthttp.RequestCtx, err error) {
+func (s *Server) writeBillingError(ctx *requestContext, err error) {
 	apiErr := stogas.PublicBillingErrorFor(err)
+	var retry interface{ RetryAfter() time.Duration }
+	if errors.As(err, &retry) {
+		ctx.writer.Header().Set("Retry-After", strconv.FormatInt(max(1, int64((retry.RetryAfter()+time.Second-1)/time.Second)), 10))
+	}
 	s.writeError(ctx, apiErr.StatusCode, map[string]any{
 		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": apiErr.Code, "param": nil},
 	})

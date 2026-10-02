@@ -16,7 +16,7 @@ import (
 const (
 	apiKeyPrefix       = "sk_stogas_v1_"
 	apiKeyVersion      = uint32(1)
-	apiKeyPayloadBytes = 100
+	apiKeyPayloadBytes = 84
 	apiKeyMACBytes     = 24
 	apiKeyBodyBytes    = apiKeyPayloadBytes + apiKeyMACBytes
 )
@@ -29,7 +29,6 @@ type APIKeyClaims struct {
 	GrantID        *string
 	OrganizationID string
 	ResponsibleID  string
-	WorkspaceID    string
 }
 
 func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error) {
@@ -63,16 +62,12 @@ func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error
 	if err != nil || organizationID == uuid.Nil {
 		return nil, errInvalidAPIKeyShape
 	}
-	workspaceID, err := uuid.FromBytes(payload[36:52])
-	if err != nil || workspaceID == uuid.Nil {
-		return nil, errInvalidAPIKeyShape
-	}
-	responsibleID, err := uuid.FromBytes(payload[52:68])
+	responsibleID, err := uuid.FromBytes(payload[36:52])
 	if err != nil || responsibleID == uuid.Nil {
 		return nil, errInvalidAPIKeyShape
 	}
 
-	grantID, err := uuid.FromBytes(payload[68:84])
+	grantID, err := uuid.FromBytes(payload[52:68])
 	if err != nil {
 		return nil, errInvalidAPIKeyShape
 	}
@@ -82,7 +77,7 @@ func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error
 		grantIDString = &value
 	}
 	issuanceEntropyIsZero := true
-	for _, value := range payload[84:100] {
+	for _, value := range payload[68:84] {
 		if value != 0 {
 			issuanceEntropyIsZero = false
 			break
@@ -98,7 +93,6 @@ func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error
 		GrantID:        grantIDString,
 		OrganizationID: organizationID.String(),
 		ResponsibleID:  responsibleID.String(),
-		WorkspaceID:    workspaceID.String(),
 	}, nil
 }
 

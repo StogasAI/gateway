@@ -1,184 +1,155 @@
 package proofhttp
 
 import (
+	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
+	"crypto/mldsa"
+	"crypto/sha256"
 	"encoding/json"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
 const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-var testCatalogSelectionIDs = []string{
-	"author:openai",
-	"model:gpt-5.5",
-	"deployment:openai-gpt-5.5",
-	"route:openai-responses",
-	"provider:openai",
-}
+var testCatalogSelectionIDs = []string{"author:openai", "model:gpt-5.5", "deployment:openai-gpt-5.5", "route:openai-responses", "provider:openai"}
 
-func TestBuildReturnsJSONAndVerifiableSignature(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("a", 128)))
+func receiptService(t *testing.T) (*Service, []byte, *mldsa.PrivateKey) {
+	t.Helper()
+	data, err := os.ReadFile("../attest/testdata/node-boot-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
-	input := Input{
-		RequestBody:  []byte(`{"request":true}`),
-		ResponseBody: []byte(`{"response":true}`),
-		Metadata:     testMetadata(),
+	var fixture struct {
+		Record attest.BootRecord `json:"record"`
 	}
+	if err = json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	document, err := fixture.Record.Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(document, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, document, key
+}
+
+func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
+	service, document, key := receiptService(t)
+	input := Input{RequestBody: []byte(`{"request":true}`), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
 	output, err := service.Build(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var object proof.Object
-	if err := json.Unmarshal(output.JSON, &object); err != nil {
-		t.Fatal(err)
+	var decoded proof.Object
+	if err = json.Unmarshal(output.JSON, &decoded); err != nil || !reflect.DeepEqual(decoded, output.Object) {
+		t.Fatal("metadata encoding differs", err)
 	}
-	if !reflect.DeepEqual(object, output.Object) {
-		t.Fatalf("proof JSON and output object diverged: %#v %#v", object, output.Object)
+	if !proof.VerifyReceipt(key.PublicKey(), decoded.Receipt, sha256.Sum256(document), sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody), decoded) {
+		t.Fatal("receipt does not verify")
 	}
-	if object.Schema != proof.DomainV1 {
-		t.Fatalf("proof identity context mismatch: %#v", object)
+	input.Metadata.BilledCostUSD = "21"
+	input.Metadata.Timing.TotalMS++
+	other, err := service.Build(context.Background(), input)
+	if err != nil || other.Object.Receipt == decoded.Receipt {
+		t.Fatal("metadata change did not change the signature", err)
 	}
-	if !proof.VerifyInput(publicKey, proof.Input(input), object.Proof.Signature) {
-		t.Fatal("response proof did not bind its complete receipt")
+	if bytes.Contains(output.JSON, []byte("durability")) || bytes.Contains(output.JSON, []byte("observed")) {
+		t.Fatal("unexpected receipt claim")
 	}
 }
 
-func TestFinishStreamSignsRunningChunkHash(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("b", 128)))
+func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
+	service, document, key := receiptService(t)
+	request := []byte(`{"stream":true}`)
+	requestDigest := sha256.Sum256(request)
+	stream, err := service.NewStream(context.Background(), Input{RequestBody: request, Metadata: testMetadata()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &Service{Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)}, Signer: privateKey}
-	metadata := testMetadata()
-	stream, err := service.NewStream(context.Background(), Input{
-		RequestBody: []byte(`{"request":true}`),
-		Metadata:    metadata,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream.WriteSentChunk([]byte(`{"delta":"a"}`))
-	stream.WriteSentChunk([]byte(`{"delta":"b"}`))
+	clear(request) // The stream retains only the digest of the received bytes.
+	stream.WriteSentChunk([]byte("data: one\n\n"))
+	stream.WriteSentChunk([]byte("data: two\n\n"))
+	final := testMetadata()
+	final.BilledCostUSD = "21"
+	stream.SetMetadata(final)
 	output, err := service.FinishStream(context.Background(), stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := proof.PayloadFromObject(output.Object)
-	if !proof.Verify(publicKey, payload, output.Object.Proof.Signature) {
-		t.Fatal("stream proof signature did not verify")
+	if output.Object.BilledCostUSD != "21" || !proof.VerifyReceipt(key.PublicKey(), output.Object.Receipt, sha256.Sum256(document), requestDigest, sha256.Sum256([]byte("data: one\n\ndata: two\n\n")), output.Object) {
+		t.Fatal("stream signature or final metadata differs")
 	}
-	expected := proof.NewStreamHasher(proof.StreamingInput{
-		RequestBody: []byte(`{"request":true}`),
-		Metadata:    metadata,
-	})
-	expected.WriteChunk([]byte(`{"delta":"a"}`))
-	expected.WriteChunk([]byte(`{"delta":"b"}`))
-	if !reflect.DeepEqual(payload, expected.FinalPayload()) {
-		t.Fatalf("stream payload mismatch: got %#v want %#v", payload, expected.FinalPayload())
+	stream.WriteSentChunk([]byte("late"))
+	if _, err := service.FinishStream(context.Background(), stream); err == nil {
+		t.Fatal("stream finalized twice")
 	}
 }
 
-func TestNilServiceIsNoopAndIncompleteServiceFailsClosed(t *testing.T) {
-	var service *Service
-	output, err := service.Build(context.Background(), Input{})
-	if err != nil || output != nil {
-		t.Fatalf("nil service should be noop, got output=%#v err=%v", output, err)
-	}
-	_, err = (&Service{}).Build(context.Background(), Input{})
-	if err == nil || !strings.Contains(err.Error(), "quote provider") {
-		t.Fatalf("expected missing quote provider error, got %v", err)
-	}
-}
-
-func TestEnabledServiceFailsClosedWhenSignerDoesNotMatchReportData(t *testing.T) {
-	publicKey, _, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("c", 128)))
+func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
+	service, document, key := receiptService(t)
+	other, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{43}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, otherPrivateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("d", 128)))
-	if err != nil {
-		t.Fatal(err)
+	for _, candidate := range []struct {
+		document []byte
+		key      *mldsa.PrivateKey
+	}{
+		{document, other}, {document, nil}, {append(bytes.Clone(document), ' '), key}, {[]byte(`{}`), key},
+	} {
+		if _, err := New(candidate.document, candidate.key); err == nil {
+			t.Fatal("invalid receipt identity accepted")
+		}
 	}
-	service := &Service{
-		Quotes: staticQuotes{snapshot: testSnapshot(t, publicKey)},
-		Signer: otherPrivateKey,
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := service.Build(ctx, Input{}); err == nil {
+		t.Fatal("cancelled receipt built")
 	}
-	_, err = service.Build(context.Background(), Input{
-		RequestBody:  []byte(`{"request":true}`),
-		ResponseBody: []byte(`{"response":true}`),
-		Metadata:     testMetadata(),
-	})
-	if err == nil || !strings.Contains(err.Error(), "does not match report-data ed25519 key") {
-		t.Fatalf("expected mismatched signer failure, got %v", err)
+	if _, err := service.NewStream(ctx, Input{}); err == nil {
+		t.Fatal("cancelled stream created")
 	}
-}
-
-func TestEnabledServiceFailsClosedWhenSnapshotReportDataHashDoesNotMatchPayload(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(strings.NewReader(strings.Repeat("e", 128)))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := service.Build(context.Background(), Input{RequestBody: []byte("a"), ResponseBody: []byte("b")}); err == nil {
+		t.Fatal("invalid metadata accepted")
 	}
-	snapshot := testSnapshot(t, publicKey)
-	snapshot.ReportDataHex = strings.Repeat("0", 128)
-	service := &Service{
-		Quotes: staticQuotes{snapshot: snapshot},
-		Signer: privateKey,
+	if _, err := (&Service{}).NewStream(context.Background(), Input{}); err == nil {
+		t.Fatal("uninitialized service accepted")
 	}
-	_, err = service.Build(context.Background(), Input{
-		RequestBody:  []byte(`{"request":true}`),
-		ResponseBody: []byte(`{"response":true}`),
-		Metadata:     testMetadata(),
-	})
-	if err == nil || !strings.Contains(err.Error(), "report-data hash mismatch") {
-		t.Fatalf("expected report-data mismatch failure, got %v", err)
+	var absent *Service
+	if out, err := absent.Build(context.Background(), Input{}); out != nil || err != nil {
+		t.Fatal("absent service is not a no-op")
 	}
 }
 
-type staticQuotes struct {
-	snapshot *quote.Snapshot
-}
-
-func (s staticQuotes) Current(ctx context.Context) (*quote.Snapshot, error) {
-	return s.snapshot, nil
-}
-
-func testSnapshot(t *testing.T, publicKey ed25519.PublicKey) *quote.Snapshot {
-	t.Helper()
-	payload, err := reportdata.NewPayload(reportdata.Payload{
-		TLSSPKISHA256:      strings.Repeat("c", 64),
-		AcceptedCertSHA256: []string{strings.Repeat("d", 64)},
-		HPKEPublicKey:      "aHBrZQ",
-		Ed25519PublicKey:   base64.RawURLEncoding.EncodeToString(publicKey),
-		Drand: reportdata.Drand{
-			Round:      1,
-			Randomness: strings.Repeat("e", 64),
-			Signature:  strings.Repeat("f", 96),
-		},
-	})
+func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *testing.T) {
+	service, document, key := receiptService(t)
+	input := Input{RequestBody: []byte(`{}`), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
+	input.Metadata.Provider = map[string]any{"detail": strings.Repeat("x", 7*1024)}
+	output, err := service.Build(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hash, err := reportdata.HashHex(payload)
-	if err != nil {
-		t.Fatal(err)
+	if len(output.JSON) <= 8*1024 || !proof.VerifyReceipt(key.PublicKey(), output.Object.Receipt,
+		sha256.Sum256(document), sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody), output.Object) {
+		t.Fatal("post-quantum signature crowded out previously supported metadata")
 	}
-	return &quote.Snapshot{
-		Payload:       payload,
-		ReportDataHex: hash,
-		Quote:         []byte("quote"),
-		GeneratedAt:   time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+	input.Metadata.Provider["detail"] = strings.Repeat("x", proof.MaxObjectBytes)
+	if _, err := service.Build(t.Context(), input); err == nil {
+		t.Fatal("oversized metadata accepted")
 	}
 }
 
@@ -187,28 +158,19 @@ func testMetadata() proof.Metadata {
 	return proof.Metadata{
 		RequestID: "req_1",
 		CreatedAt: "2026-08-24T12:34:56.789Z",
-		NodeID:    strings.Repeat("3", 64),
 		Catalog: proof.Catalog{
-			Digest:       testCatalogDigest,
-			Sequence:     7,
+			ChainHash:    testCatalogDigest,
+			Version:      7,
 			SelectionIDs: append([]string(nil), testCatalogSelectionIDs...),
 		},
-		Pricing: proof.Pricing{
-			Meters: map[string]proof.Meter{
-				"input_tokens": {
-					Quantity:     "10",
-					RateKey:      "input_tokens",
-					RateUSDAtoms: "2",
-					USDAtoms:     "20",
-				},
-			},
-			TotalCostUSDAtoms: "20",
+		Meters: map[string]proof.Meter{
+			"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
 		},
+		UpstreamCostUSD: "20", BilledCostUSD: "20",
 		Timing: proof.Timing{
 			TotalMS:    20,
 			ProviderMS: 15,
 			TTFTMS:     &ttft,
 		},
-		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	}
 }
