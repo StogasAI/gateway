@@ -98,12 +98,12 @@
 			]
 		},
 		"stogasVerifier": {
-			"commit": "09dd12d2265ade5749429ad7a0d1b60d3625b864",
-			"url": "https://github.com/StogasAI/verifier/archive/09dd12d2265ade5749429ad7a0d1b60d3625b864.tar.gz",
-			"sha256": "22a2ff2b2d11cff0e3d745f57a5eb5d45e3c197577b3c230cf0640e007ef9977",
-			"guixBase32": "0xwrxw3y0h06rwqc5cvpflckqpnlnmg7mxa5sziz1kqi5lmzz8i2",
-			"cargoVendorSha256": "760d3480987c945475fa067a50f632dfc603105ad9101df1e639914088a14dcd",
-			"cargoLockSha256": "f7ac3344cf7ea728abf67c9a9c4f8c4b3a940c3fe7e4d4c3f006366f7e5d85e1"
+			"commit": "ca9ec8aff62375260da51d9803b6885d00b5d0ea",
+			"url": "https://github.com/StogasAI/verifier/archive/ca9ec8aff62375260da51d9803b6885d00b5d0ea.tar.gz",
+			"sha256": "7c70c5590bd027486c20429a2352b8b22e6c0683c3d83239bd032e30b1f08394",
+			"guixBase32": "1543y2qk0bh3plwk5n63hc36qbmjp19276j241n4h9yh1dcwaw3w",
+			"cargoVendorSha256": "1abab014130339f84fd63f75d14a200b77cc69554493c3620fc1d8355be0e165",
+			"cargoLockSha256": "bb16de5c17ad3e194fda657788ee8713238a9226d6accb6aae4355693bf151f0"
 		}
 	}
 }

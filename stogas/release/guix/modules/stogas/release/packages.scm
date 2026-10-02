@@ -506,8 +506,8 @@ directory = \"vendor\"
                  "stogas-verifier-source" #:recursive? #t)
      (origin
      (method url-fetch)
-     (uri "https://github.com/StogasAI/verifier/archive/09dd12d2265ade5749429ad7a0d1b60d3625b864.tar.gz")
-     (sha256 (base32 "0xwrxw3y0h06rwqc5cvpflckqpnlnmg7mxa5sziz1kqi5lmzz8i2"))))
+     (uri "https://github.com/StogasAI/verifier/archive/ca9ec8aff62375260da51d9803b6885d00b5d0ea.tar.gz")
+     (sha256 (base32 "1543y2qk0bh3plwk5n63hc36qbmjp19276j241n4h9yh1dcwaw3w"))))
    "."
    (if %verifier-build-root
        (local-file (string-append %verifier-build-root "/vendor")
@@ -516,7 +516,7 @@ directory = \"vendor\"
    stogas-verifier-lock
    (if %verifier-build-root
        #~(call-with-input-file #$(verifier-input "vendor.sha256" "stogas-verifier-vendor.sha256") read-line)
-       "760d3480987c945475fa067a50f632dfc603105ad9101df1e639914088a14dcd")
+       "1abab014130339f84fd63f75d14a200b77cc69554493c3620fc1d8355be0e165")
    "[source.crates-io]
 replace-with = \"vendored-sources\"
 [source.vendored-sources]

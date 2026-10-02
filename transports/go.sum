@@ -20,6 +20,8 @@ github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 h1:XRzhVemXdgv
 github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0/go.mod h1:HKpQxkWaGLJ+D/5H8QRpyQXA1eKjxkFlOMwck5+33Jk=
 github.com/StogasAI/verifier/go v0.0.0-20260926232250-09dd12d2265a h1:r2HDLhgPiDZ3Ht/XpZfzeFX21Jf6Wlqk0nYnQ0kT6Uk=
 github.com/StogasAI/verifier/go v0.0.0-20260926232250-09dd12d2265a/go.mod h1:YLFuE1D+g1hx23cLgGZhGW8OnvT782qepX48Ce5moqM=
+github.com/StogasAI/verifier/go v0.0.0-20261002030418-ca9ec8aff623 h1:HPSl0wFfq9WB+h6FivwKmPmx2Uz6gyzwG8hShfjeFF8=
+github.com/StogasAI/verifier/go v0.0.0-20261002030418-ca9ec8aff623/go.mod h1:YLFuE1D+g1hx23cLgGZhGW8OnvT782qepX48Ce5moqM=
 github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=
 github.com/andybalholm/brotli v1.2.2/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
