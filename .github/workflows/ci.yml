@@ -27,9 +27,10 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             transports/go.sum
+      - uses: ./.github/actions/setup-verifier
       - name: Test Stogas packages with race detection
         working-directory: transports
-        run: GOWORK=off go test -race -shuffle=on -count=1 ./...
+        run: GOWORK=off go test -tags=stogas_offline -race -shuffle=on -count=1 ./...
       - name: Test deterministic retained core packages
         working-directory: core
         run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./mcp/... ./network ./providers/... ./schemas
