@@ -1,13 +1,6 @@
-name: PR Dependencies
+name: Dependency Checks
 
 on:
-  pull_request:
-    paths:
-      - '**/*.go'
-      - '**/go.mod'
-      - '**/go.sum'
-      - '.github/workflows/pr-dependencies.yml'
-      - 'stogas/release/**'
   workflow_dispatch:
 
 permissions:
