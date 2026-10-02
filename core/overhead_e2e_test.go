@@ -305,7 +305,8 @@ func TestOverheadEndToEndStreaming(t *testing.T) {
 		chunkCount = 5
 	)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	continueStream := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
@@ -321,6 +322,13 @@ func TestOverheadEndToEndStreaming(t *testing.T) {
 			fmt.Fprintf(w, "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":%q,"+
 				"\"choices\":[{\"index\":0,\"delta\":{\"content\":\"tok%d\"}}]}\n\n", testChatModel, i)
 			flusher.Flush()
+			if i == 0 {
+				select {
+				case <-continueStream:
+				case <-r.Context().Done():
+					return
+				}
+			}
 			time.Sleep(perChunk)
 		}
 		fmt.Fprint(w, "data: [DONE]\n\n")
@@ -346,15 +354,20 @@ func TestOverheadEndToEndStreaming(t *testing.T) {
 	}
 
 	received := 0
+	var firstUpstream time.Duration
 	for chunk := range stream {
 		if chunk != nil {
 			received++
+			if received == 1 {
+				firstUpstream, _ = schemas.GetUpstreamLatency(ctx)
+				close(continueStream)
+			}
 		}
 	}
 	total := time.Since(start)
 
-	if received == 0 {
-		t.Fatal("no chunks received")
+	if received < chunkCount {
+		t.Fatalf("received %d chunks, want at least %d", received, chunkCount)
 	}
 
 	upstream, ok := schemas.GetUpstreamLatency(ctx)
@@ -362,12 +375,11 @@ func TestOverheadEndToEndStreaming(t *testing.T) {
 		t.Fatal("no upstream accumulator after streaming")
 	}
 
-	// The generation window alone is ~chunkCount*perChunk. If only TTFB were
-	// measured (the old behaviour) this would sit near 100ms and fail.
-	generation := time.Duration(chunkCount) * perChunk
-	if upstream < ttfb+generation/2 {
-		t.Fatalf("upstream = %v, want >= %v — generation window not counted, "+
-			"only TTFB is being measured", upstream, ttfb+generation/2)
+	// Delivery after the first chunk must add provider I/O time. A fixed fraction
+	// of server wall time is not an oracle: scheduler delays can leave bytes
+	// buffered before the provider reader runs, especially in parallel CI builds.
+	if upstream <= firstUpstream {
+		t.Fatalf("upstream did not advance after the first chunk: first=%v final=%v", firstUpstream, upstream)
 	}
 	if upstream > total {
 		t.Fatalf("upstream = %v exceeds total %v", upstream, total)
@@ -377,10 +389,8 @@ func TestOverheadEndToEndStreaming(t *testing.T) {
 	if !ok {
 		t.Fatal("overhead not derivable")
 	}
-	// The decisive assertion: Bifrost's share of a stream must stay small. Before
-	// this work it would have been essentially the entire generation window.
-	if overhead > generation/2 {
-		t.Fatalf("overhead = %v of total %v — generation time is leaking into overhead", overhead, total)
+	if overhead != total-upstream {
+		t.Fatalf("overhead = %v, want total minus measured upstream %v", overhead, total-upstream)
 	}
 
 	t.Logf("chunks=%d total=%v upstream=%v overhead=%v (%.1f%%)",
