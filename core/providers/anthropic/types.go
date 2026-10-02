@@ -11,6 +11,7 @@ import (
 	"github.com/bytedance/sonic"
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
@@ -139,6 +140,13 @@ const (
 //
 //	A  = Anthropic feature-availability table:
 //	     https://platform.claude.com/docs/en/build-with-claude/overview
+//	B-compact = AWS Bedrock compaction page ("Compaction is currently not
+//	     supported by the Converse API, however it is supported with InvokeModel"):
+//	     https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-compaction.html
+//	TS-bedrock = tool search on Bedrock is InvokeModel-only ("On Amazon Bedrock,
+//	     server-side tool search is available only through the InvokeModel API,
+//	     not the Converse API"):
+//	     https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
 //	B-header = AWS Bedrock user guide beta-header list:
 //	     https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
 //	B-platform = https://platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock
@@ -162,7 +170,7 @@ type ProviderFeatureSupport struct {
 	Bash                   bool // bash client tool (cite: A, B-header)
 	Memory                 bool // memory client tool — on Bedrock bundled under context-management-2025-06-27 (cite: A, B-header)
 	TextEditor             bool // text_editor client tool (cite: A)
-	ToolSearch             bool // tool_search server tool + tool.defer_loading — tool-search-tool-2025-10-19 (cite: A). NOT supported on classic Amazon Bedrock: AWS restricts this to InvokeModel/InvokeModelWithResponseStream, never Converse, which is the only API Bifrost's Bedrock provider uses for tool-bearing requests.
+	ToolSearch             bool // tool_search server tool + tool.defer_loading — tool-search-tool-2025-10-19 (cite: A). On classic Amazon Bedrock AWS restricts this to InvokeModel/InvokeModelWithResponseStream, never Converse (cite: TS-bedrock); the Bedrock provider routes any request carrying a tool_search tool or defer_loading to InvokeModel (bedrock.go, InvokeModel section), so the flag is on.
 	MCP                    bool // MCP connector — explicit "not supported on Bedrock/Vertex" (cite: MCP-excl)
 	AdvancedToolUse        bool // advanced-tool-use-2025-11-20 bundle: allowed_callers only as of current docs — defer_loading now has its own beta, see ToolSearch (cite: A)
 	InputExamples          bool // tool.input_examples standalone — tool-examples-2025-10-29. Bedrock supports this independently of the AdvancedToolUse bundle (cite: B-header). On Anthropic / Azure the bundle implicitly covers it.
@@ -244,18 +252,19 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 	// AWS Bedrock — cite: A + B-header (definitive beta-header list).
 	// Notably NOT supported per docs: MCP, Skills, FilesAPI, WebFetch,
 	// WebSearch, CodeExecution, FastMode, TaskBudgets, AdvisorTool,
-	// InferenceGeo, RedactThinking, AdvancedToolUse (full), PromptCachingScope,
-	// ToolSearch (tool-search-tool-2025-10-19 is InvokeModel/InvokeModelWithResponseStream
-	// only per AWS's own docs; Bifrost's Bedrock provider always dispatches
-	// tool-bearing requests via Converse, so this can never work end-to-end —
-	// see the ToolSearch field comment above for citations).
+	// InferenceGeo, RedactThinking, AdvancedToolUse (full), PromptCachingScope.
+	// ToolSearch and Compaction are InvokeModel-only on AWS (TS-bedrock,
+	// B-compact) and are ON here because the Bedrock provider routes any
+	// request that carries them to InvokeModel / InvokeModelWithResponseStream
+	// instead of Converse (bedrock.go, InvokeModel section, #6825).
 	schemas.Bedrock: {
 		WebSearchNova: true, // nova_grounding — Responses path only
 		CodeExecNova:  true, // nova_code_interpreter — Responses path only
 		ComputerUse:   true, Bash: true, Memory: true, TextEditor: true,
+		ToolSearch:             true, // tool-search-tool-2025-10-19 is InvokeModel-only per TS-bedrock; delivered via InvokeModel routing (see block comment)
 		ContainerBasic:         true,
 		StructuredOutputs:      true, // documented on Bedrock per A overview matrix
-		Compaction:             true, // compact-2026-01-12 per B-header
+		Compaction:             true, // compact-2026-01-12 is InvokeModel-only per B-compact; delivered via InvokeModel routing (#6825)
 		ContextEditing:         true, // context-management-2025-06-27 per B-header (bundles memory)
 		ContextManagementField: true, // Bedrock accepts context_management body field
 		InterleavedThinking:    true, // per B-header; model-allowlisted
@@ -343,6 +352,60 @@ var ProviderFeatures = map[schemas.ModelProvider]ProviderFeatureSupport{
 		InterleavedThinking:    true,
 		ServiceTier:            true,
 	},
+	// Fireworks' Anthropic-compatible Messages endpoint (cite: FW-compat,
+	// https://docs.fireworks.ai/tools-sdks/anthropic-compatibility), reached
+	// through the use_anthropic_endpoints key/alias toggle.
+	//
+	// FW-compat's "Unsupported features" list is the source for every cell here:
+	//   - "Server-side execution of tool families such as code execution,
+	//     memory, web fetch, and web search is not supported" -> WebSearch,
+	//     WebFetch, CodeExecution, Memory off. Forwarding one is a hard 400:
+	//     'tools: server-side web search ("web_search_20250305") is not
+	//     supported on this endpoint'.
+	//   - "Fields such as caller and container are not supported" ->
+	//     ContainerBasic off (caller is not a flag; allowed_callers rides
+	//     AdvancedToolUse below).
+	//   - "eager_input_streaming, cache_control, allowed_callers, and
+	//     input_examples are not supported" -> EagerInputStreaming,
+	//     AdvancedToolUse, InputExamples off. PromptCachingScope is off too,
+	//     though note Bifrost only strips cache_control.scope, so the rest of
+	//     cache_control still reaches an endpoint that rejects it.
+	//   - "The output_config.speed option is not supported yet" -> FastMode off.
+	//   - inference_geo is documented as deprecated there -> InferenceGeo off.
+	//
+	// ToolSearch is ON despite server-side tool search being unsupported:
+	// FW-compat carves it out with "Tool search discovery and deferred tool
+	// loading are supported", translating "the client-side tool-search
+	// discovery and deferred-loading wire format only" and covering "both
+	// Anthropic-native tool_search_tool_* tool names and clients that name
+	// their discovery tool ToolSearch". This flag gates the tool type and
+	// tool.defer_loading together, so turning it off would break a pattern the
+	// endpoint implements. ServiceTier is ON per FW-compat's service_tier:
+	// "priority".
+	//
+	// Everything not named above is undocumented on FW-compat and stays off,
+	// fail-closed, matching how this map already treats undocumented Vertex and
+	// Bedrock features. Function tools, tool_choice and thinking are never gated
+	// here and keep working. Per-model overrides go through the capability
+	// datasheet; beta headers stay controllable through
+	// network_config.beta_header_overrides.
+	schemas.Fireworks: {
+		ToolSearch:  true,
+		ServiceTier: true,
+	},
+	// Self-hosted vLLM and SGLang, reached through the same toggle.
+	//
+	// Neither project documents Anthropic server or client tools on its
+	// /v1/messages surface, so unlike Fireworks above these cells are
+	// fail-closed inference rather than citation. Supporting evidence:
+	// SGLang's own report that the endpoint rejects built-in web_search_*
+	// tools (sgl-project/sglang#22655), and vLLM's Anthropic layer being an
+	// adapter onto an OpenAI ChatCompletionRequest, a shape with no
+	// representation for Anthropic server tools. Revisit per project if either
+	// starts documenting support; a single deployment can already opt back in
+	// through the capability datasheet.
+	schemas.VLLM: {},
+	schemas.SGL:  {},
 }
 
 // ==================== REQUEST TYPES ====================
@@ -875,31 +938,32 @@ func (req *AnthropicMessageRequest) IsStreamingRequested() bool {
 
 // Known fields for AnthropicMessageRequest
 var anthropicMessageRequestKnownFields = map[string]bool{
-	"model":              true,
-	"max_tokens":         true,
-	"messages":           true,
-	"metadata":           true,
-	"system":             true,
-	"cache_control":      true,
-	"temperature":        true,
-	"top_p":              true,
-	"top_k":              true,
-	"stop_sequences":     true,
-	"stream":             true,
-	"tools":              true,
-	"tool_choice":        true,
-	"mcp_servers":        true,
-	"thinking":           true,
-	"output_format":      true,
-	"output_config":      true,
-	"speed":              true,
-	"service_tier":       true,
-	"inference_geo":      true,
-	"context_management": true,
-	"container":          true,
-	"diagnostics":        true,
-	"extra_params":       true,
-	"fallbacks":          true,
+	"model":                 true,
+	"max_tokens":            true,
+	"messages":              true,
+	"metadata":              true,
+	"system":                true,
+	"cache_control":         true,
+	"temperature":           true,
+	"top_p":                 true,
+	"top_k":                 true,
+	"stop_sequences":        true,
+	"stream":                true,
+	"tools":                 true,
+	"tool_choice":           true,
+	"mcp_servers":           true,
+	"thinking":              true,
+	"output_format":         true,
+	"output_config":         true,
+	"speed":                 true,
+	"service_tier":          true,
+	"inference_geo":         true,
+	"context_management":    true,
+	"container":             true,
+	"diagnostics":           true,
+	"fallback_credit_token": true,
+	"extra_params":          true,
+	"fallbacks":             true,
 }
 
 // UnmarshalJSON implements custom JSON unmarshalling for AnthropicMessageRequest.
@@ -919,30 +983,7 @@ func (req *AnthropicMessageRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	// Parse JSON to extract unknown fields
-	var rawData map[string]json.RawMessage
-	if err := sonic.Unmarshal(data, &rawData); err != nil {
-		return err
-	}
-
-	// Initialize ExtraParams if not already initialized
-	if req.ExtraParams == nil {
-		req.ExtraParams = make(map[string]interface{})
-	}
-
-	// Extract unknown fields, preserving nested key ordering for prompt caching.
-	// Store as json.RawMessage (compacted) instead of parsing into map[string]interface{}
-	// which would destroy key order on re-serialization.
-	for key, value := range rawData {
-		if !anthropicMessageRequestKnownFields[key] {
-			var buf bytes.Buffer
-			if err := json.Compact(&buf, value); err == nil {
-				req.ExtraParams[key] = json.RawMessage(buf.Bytes())
-			} else {
-				req.ExtraParams[key] = json.RawMessage(value)
-			}
-		}
-	}
+	extractAnthropicMessageRequestUnknownFields(data, req)
 
 	// Compact known json.RawMessage fields for deterministic cache keys
 	if len(req.OutputFormat) > 0 {
@@ -959,6 +1000,28 @@ func (req *AnthropicMessageRequest) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// extractAnthropicMessageRequestUnknownFields scans only the top-level object,
+// avoiding a second decode and RawMessage copy for every known request field.
+func extractAnthropicMessageRequestUnknownFields(data []byte, req *AnthropicMessageRequest) {
+	gjson.ParseBytes(data).ForEach(func(key, value gjson.Result) bool {
+		keyString := key.String()
+		if anthropicMessageRequestKnownFields[keyString] {
+			return true
+		}
+
+		if req.ExtraParams == nil {
+			req.ExtraParams = make(map[string]interface{})
+		}
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, []byte(value.Raw)); err == nil {
+			req.ExtraParams[keyString] = json.RawMessage(buf.Bytes())
+		} else {
+			req.ExtraParams[keyString] = json.RawMessage(value.Raw)
+		}
+		return true
+	})
 }
 
 // MarshalJSON implements custom JSON marshalling for AnthropicMessageRequest.
@@ -1264,6 +1327,42 @@ type AnthropicContentBlock struct {
 	From    *AnthropicFallbackModel   `json:"from,omitempty"`    // declining model
 	To      *AnthropicFallbackModel   `json:"to,omitempty"`      // model that continues
 	Trigger *AnthropicFallbackTrigger `json:"trigger,omitempty"` // why the handoff happened
+}
+
+// DiscoveredToolReferences returns the tool_reference blocks a
+// tool_search_tool_result carries, accepting both shapes the payload arrives in.
+//
+// Anthropic nests them one level down, inside a tool_search_tool_search_result
+// "content" object:
+//
+//	{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_...",
+//	 "content":{"type":"tool_search_tool_search_result",
+//	            "tool_references":[{"type":"tool_reference","tool_name":"..."}]}}
+//
+// (https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)
+//
+// ToolReferences is declared flat, so live traffic never populates it:
+// AnthropicContent.UnmarshalJSON's single-object fallback parks the inner object in
+// Content.ContentBlocks, one level below where every reader was looking. Bifrost's
+// own rebuild (convertBifrostToolSearchCallToAnthropicBlocks) does set the flat
+// field, so both are honoured, flat first. The error variant
+// (tool_search_tool_result_error) legitimately carries none and yields nil.
+func (b *AnthropicContentBlock) DiscoveredToolReferences() []AnthropicContentBlock {
+	if b == nil {
+		return nil
+	}
+	if len(b.ToolReferences) > 0 {
+		return b.ToolReferences
+	}
+	if b.Content == nil {
+		return nil
+	}
+	for _, inner := range b.Content.ContentBlocks {
+		if len(inner.ToolReferences) > 0 {
+			return inner.ToolReferences
+		}
+	}
+	return nil
 }
 
 // AnthropicFallbackModel is the {model} object on a fallback content block's from/to fields.
@@ -1824,6 +1923,14 @@ const (
 	AnthropicStopReasonCompaction                 AnthropicStopReason = "compaction"
 )
 
+// MarshalJSON preserves Anthropic's required-null response contract for stop_reason.
+func (r AnthropicStopReason) MarshalJSON() ([]byte, error) {
+	if r == "" {
+		return []byte("null"), nil
+	}
+	return json.Marshal(string(r))
+}
+
 // AnthropicResponseContainer is the "container" object returned on responses
 // that used the code execution tool. The id can be passed back as the request
 // "container" to reuse the sandbox across turns.
@@ -1840,9 +1947,9 @@ type AnthropicMessageResponse struct {
 	Role         string                  `json:"role"`
 	Content      []AnthropicContentBlock `json:"content"`
 	Model        string                  `json:"model"`
-	StopReason   AnthropicStopReason     `json:"stop_reason,omitempty"`
+	StopReason   AnthropicStopReason     `json:"stop_reason"`
 	StopDetails  *AnthropicStopDetails   `json:"stop_details,omitempty"` // refusal detail; null for every stop_reason other than "refusal"
-	StopSequence *string                 `json:"stop_sequence,omitempty"`
+	StopSequence *string                 `json:"stop_sequence"`
 	Usage        *AnthropicUsage         `json:"usage,omitempty"`
 	// Container is the code-execution sandbox container, present on responses that
 	// used the code execution tool. Distinct from the request-side AnthropicContainer
@@ -1852,6 +1959,18 @@ type AnthropicMessageResponse struct {
 	// omitempty when absent; a present-but-null value (no divergence) is conveyed by a
 	// non-nil pointer with a nil CacheMissReason — see schemas.CacheDiagnostics.
 	Diagnostics *schemas.CacheDiagnostics `json:"diagnostics,omitempty"`
+
+	// ExtraFields carries Bifrost's own response metadata (raw_request, raw_response,
+	// routing info, latency) on this route, mirroring the extra_fields member that
+	// BifrostChatResponse and BifrostResponsesResponse serialize directly.
+	//
+	// Anthropic's Messages schema has no such member, so this is a Bifrost extension and
+	// is populated ONLY when a raw capture is actually present -- i.e. when the provider
+	// config enables send_back_raw_request/response, or a request sets
+	// x-bf-send-back-raw-request with allow_per_request_raw_override on. Without a
+	// capture it stays nil and omitempty keeps the response byte-identical to the
+	// documented Anthropic shape, so ordinary clients never see a non-conformant field.
+	ExtraFields *schemas.BifrostResponseExtraFields `json:"extra_fields,omitempty"`
 }
 
 // AnthropicTextResponse represents the response structure from Anthropic's text completion API
@@ -1884,7 +2003,7 @@ type AnthropicUsage struct {
 	Iterations               []AnthropicUsage              `json:"iterations,omitempty"`            // Iterations statistics
 }
 
-// BillingTotals returns the token totals that Anthropic charges at the
+// billableAnthropicUsage returns the token totals that Anthropic charges at the
 // top-level model's rates. When compaction iterations are present, Anthropic's
 // top-level token counters exclude them. The documented billing total is then
 // the sum of every iteration, not the top-level counters plus the iterations.
@@ -1894,7 +2013,7 @@ type AnthropicUsage struct {
 // Usage is untrusted provider data and these conversion methods cannot return an
 // error. Negative iteration fields are ignored without discarding other usable
 // iterations. Overflow saturates so downstream settlement can apply its own bound.
-func (u *AnthropicUsage) BillingTotals() *AnthropicUsage {
+func billableAnthropicUsage(u *AnthropicUsage) *AnthropicUsage {
 	if u == nil || len(u.Iterations) == 0 {
 		return u
 	}
@@ -1913,10 +2032,9 @@ func (u *AnthropicUsage) BillingTotals() *AnthropicUsage {
 		ServiceTier:  u.ServiceTier,
 		Speed:        u.Speed,
 		InferenceGeo: u.InferenceGeo,
-		Iterations:   u.Iterations,
 	}
 	for i := range u.Iterations {
-		iteration := u.Iterations[i].BillingTotals()
+		iteration := billableAnthropicUsage(&u.Iterations[i])
 		if iteration == nil {
 			continue
 		}
@@ -1981,6 +2099,10 @@ type AnthropicOutputTokensDetails struct {
 // the attempt that actually served the response after a server-side fallback
 // handoff. Declining attempts appear as ordinary "message" entries.
 const AnthropicUsageIterationTypeFallbackMessage = "fallback_message"
+
+// AnthropicUsageIterationTypeCompaction marks the usage.iterations entry for the
+// compaction summarization pass when context_management compaction fires.
+const AnthropicUsageIterationTypeCompaction = "compaction"
 
 // ServerSideFallbackModel returns the model named by the fallback_message entry in
 // usage.iterations — the attempt whose token counts the top-level usage mirrors,
@@ -2101,8 +2223,18 @@ type AnthropicMessageError struct {
 
 // AnthropicMessageErrorStruct represents the error structure of an Anthropic messages API error response
 type AnthropicMessageErrorStruct struct {
-	Type    string `json:"type"`    // Error type
-	Message string `json:"message"` // Error message
+	Type    string                        `json:"type"`              // Error type
+	Message string                        `json:"message"`           // Error message
+	Details *AnthropicMessageErrorDetails `json:"details,omitempty"` // Machine-readable details some errors carry (e.g. thread error codes)
+}
+
+// AnthropicMessageErrorDetails is the optional machine-readable payload of an
+// Anthropic error envelope. Clients key recovery behavior on ErrorCode (e.g.
+// "thread_not_found" triggers a full-conversation replay, and
+// "thread_unsupported_request" additionally drops the thread field for the
+// rest of the session).
+type AnthropicMessageErrorDetails struct {
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // AnthropicError represents the error response structure from Anthropic's API (legacy)
@@ -2157,10 +2289,10 @@ type AnthropicFileResponse struct {
 	ID           string `json:"id"`
 	Type         string `json:"type"`
 	Filename     string `json:"filename"`
-	MimeType     string `json:"mime_type"`
+	MimeType     string `json:"mime_type,omitempty"`
 	SizeBytes    int64  `json:"size_bytes"`
 	CreatedAt    string `json:"created_at"`
-	Downloadable bool   `json:"downloadable"`
+	Downloadable *bool  `json:"downloadable,omitempty"`
 }
 
 // AnthropicFileListResponse represents the response from listing files.
@@ -2185,6 +2317,8 @@ func (r *AnthropicFileResponse) ToBifrostFileUploadResponse(latency time.Duratio
 		Bytes:          r.SizeBytes,
 		CreatedAt:      parseAnthropicFileTimestamp(r.CreatedAt),
 		Filename:       r.Filename,
+		ContentType:    r.MimeType,
+		Downloadable:   r.Downloadable,
 		Purpose:        schemas.FilePurposeBatch, // We hardcode as purpose is not supported by Anthropic
 		Status:         schemas.FileStatusProcessed,
 		StorageBackend: schemas.FileStorageAPI,
@@ -2212,6 +2346,8 @@ func (r *AnthropicFileResponse) ToBifrostFileRetrieveResponse(latency time.Durat
 		Bytes:          r.SizeBytes,
 		CreatedAt:      parseAnthropicFileTimestamp(r.CreatedAt),
 		Filename:       r.Filename,
+		ContentType:    r.MimeType,
+		Downloadable:   r.Downloadable,
 		Purpose:        schemas.FilePurposeBatch,
 		Status:         schemas.FileStatusProcessed,
 		StorageBackend: schemas.FileStorageAPI,

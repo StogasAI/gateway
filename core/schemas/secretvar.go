@@ -258,6 +258,17 @@ func (e *SecretVar) Equals(other *SecretVar) bool {
 		e.SecretType == other.SecretType
 }
 
+// Clone returns a SecretVar holding the same value as e, backed by a
+// distinct pointer — so a caller mutating the clone's fields (e.g. in-place
+// encryption before a DB write) never touches e itself.
+func (e *SecretVar) Clone() *SecretVar {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	return &clone
+}
+
 // Redacted returns a new SecretVar with the value redacted.
 func (e *SecretVar) Redacted() *SecretVar {
 	if e == nil {
@@ -273,6 +284,22 @@ func (e *SecretVar) Redacted() *SecretVar {
 	suffix := e.Val[len(e.Val)-4:]
 	middle := strings.Repeat("*", 24)
 	return &SecretVar{Val: prefix + middle + suffix, ref: e.ref, SecretType: e.SecretType}
+}
+
+// RedactedIfSecret returns a copy holding the literal value when the SecretVar
+// is plain text, and a Redacted copy when it is env/vault-backed. Use it for
+// fields that are identifiers or network addresses rather than credentials — a
+// region or a service URL is not worth hiding, but the resolved contents of a
+// secret reference still are. Like Redacted it always returns a fresh pointer,
+// so a redacted API response never aliases the live config.
+func (e *SecretVar) RedactedIfSecret() *SecretVar {
+	if e == nil {
+		return nil
+	}
+	if e.IsFromSecret() {
+		return e.Redacted()
+	}
+	return e.Clone()
 }
 
 // FullyRedacted returns a copy of the SecretVar with Val replaced by a fixed placeholder

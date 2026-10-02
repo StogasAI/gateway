@@ -23,6 +23,7 @@ type Identity struct {
 
 type Deployment struct {
 	ID                  string
+	ChainHash           string
 	ModelID             string
 	Upstream            Upstream
 	Capabilities        Capabilities
@@ -105,6 +106,7 @@ type compiledAuthor struct {
 
 type compiledDeployment struct {
 	Aliases             []string                                   `json:"aliases"`
+	ChainHashes         map[string]string                          `json:"chainHashes"`
 	Capabilities        Capabilities                               `json:"capabilities"`
 	ContextWindowTokens int                                        `json:"contextWindowTokens"`
 	InputModalities     []string                                   `json:"inputModalities"`
@@ -158,14 +160,15 @@ type compiledUpstream struct {
 }
 
 type compiledModel struct {
-	Aliases            []string            `json:"aliases"`
-	AuthorID           string              `json:"authorId"`
-	MaxOutputTokens    int                 `json:"maxOutputTokens"`
-	Name               string              `json:"name"`
-	Reasoning          string              `json:"reasoning"`
-	ReasoningEfforts   []string            `json:"reasoningEfforts"`
-	ReasoningMaxTokens *ReasoningMaxTokens `json:"reasoningMaxTokens"`
-	ReleaseDate        string              `json:"releaseDate"`
+	Aliases            []string             `json:"aliases"`
+	AuthorID           string               `json:"authorId"`
+	TokenizerFamily    tokenizationStrategy `json:"tokenizerFamily"`
+	MaxOutputTokens    int                  `json:"maxOutputTokens"`
+	Name               string               `json:"name"`
+	Reasoning          string               `json:"reasoning"`
+	ReasoningEfforts   []string             `json:"reasoningEfforts"`
+	ReasoningMaxTokens *ReasoningMaxTokens  `json:"reasoningMaxTokens"`
+	ReleaseDate        string               `json:"releaseDate"`
 }
 
 type compiledProvider struct {
@@ -179,21 +182,4 @@ type compiledRoute struct {
 	DeploymentIDs []string `json:"-"`
 	Interfaces    []string `json:"interfaces"`
 	ProviderID    string   `json:"providerId"`
-}
-
-type releaseManifest struct {
-	Schema                 string               `json:"schema"`
-	Sequence               uint64               `json:"sequence"`
-	CatalogSchema          int                  `json:"catalogSchema"`
-	MinimumGatewaySequence uint64               `json:"minimumGatewaySequence"`
-	Runtime                string               `json:"runtime"`
-	Public                 string               `json:"public"`
-	Source                 catalogReleaseSource `json:"source"`
-}
-
-type catalogReleaseSource struct {
-	Commit     string `json:"commit"`
-	Repository string `json:"repository"`
-	Tag        string `json:"tag"`
-	Tree       string `json:"tree"`
 }

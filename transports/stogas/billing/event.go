@@ -2,6 +2,7 @@ package billing
 
 import (
 	"fmt"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"strings"
 	"time"
@@ -17,36 +18,38 @@ const (
 )
 
 type EventInput struct {
-	UpstreamCostUSDAtoms       string
-	Authorization              *Authorization
-	Cancelled                  bool
-	ClientStoppedAt            time.Time
-	CatalogDigest              string
-	Error                      *schemas.BifrostError
-	Pricing                    EventPricing
-	Plugins                    plugins.Metrics
-	ProviderAttempts           []ProviderAttemptInput
-	ProviderCompletedAt        time.Time
-	ProviderStartedAt          time.Time
-	TTFTMS                     *uint32
-	ProviderOutputObserved     bool
-	CacheReadSavingsUSDAtoms   *string
-	CacheWriteOverheadUSDAtoms *string
-	NodeID                     string
-	GatewayVersion             string
-	RequestType                string
-	CatalogNodeIDs             []string
-	Response                   *schemas.BifrostResponse
-	StartedAt                  time.Time
+	PolicyVersions         *PolicyVersions
+	UpstreamCostUSD        string
+	Authorization          *Authorization
+	Cancelled              bool
+	ClientStoppedAt        time.Time
+	CatalogVersion         uint64
+	CatalogChainHash       string
+	Error                  *schemas.BifrostError
+	Meters                 EventMeters
+	Plugins                plugins.Metrics
+	ProviderAttempts       []ProviderAttemptInput
+	ProviderCompletedAt    time.Time
+	ProviderStartedAt      time.Time
+	TTFTMS                 *uint32
+	ProviderOutputObserved bool
+	CacheReadSavingsUSD    *string
+	CacheWriteOverheadUSD  *string
+	NodeID                 string
+	GatewayVersion         string
+	RequestType            string
+	Response               *schemas.BifrostResponse
+	StartedAt              time.Time
 }
 
 type ProviderAttemptInput struct {
-	Provider       string
-	StartedAt      time.Time
-	CompletedAt    time.Time
-	OutputObserved bool
-	Response       *schemas.BifrostResponse
-	Error          *schemas.BifrostError
+	CatalogChainHash string
+	Provider         string
+	StartedAt        time.Time
+	CompletedAt      time.Time
+	OutputObserved   bool
+	Response         *schemas.BifrostResponse
+	Error            *schemas.BifrostError
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -56,9 +59,11 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	}
 	startedAt := input.StartedAt
 	if startedAt.IsZero() {
-		startedAt = time.Now().UTC()
+		startedAt = time.Now()
 	}
-	finishedAt := time.Now().UTC()
+	// Keep monotonic clocks for elapsed time. Convert only persisted wall
+	// timestamps to UTC; UTC() here would make NTP adjustments affect latency.
+	finishedAt := time.Now()
 	createdAt := startedAt
 	if !authorization.CreatedAt.IsZero() {
 		createdAt = authorization.CreatedAt
@@ -85,11 +90,11 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		}
 		clientStopMS = &value
 	}
-	upstreamCostRaw := input.UpstreamCostUSDAtoms
+	upstreamCostRaw := input.UpstreamCostUSD
 	if upstreamCostRaw == "" {
-		upstreamCostRaw = ZeroChargeUSDAtoms
+		upstreamCostRaw = ZeroChargeUSD
 	}
-	upstreamCostUSDAtoms, err := ParseUSDAtoms(upstreamCostRaw)
+	upstreamCostUSD, err := ParseUSD(upstreamCostRaw)
 	if err != nil {
 		return RequestEvent{}, fmt.Errorf("invalid upstream cost: %w", err)
 	}
@@ -99,20 +104,20 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	} else if ttftMS != nil && *ttftMS > totalTimeMS {
 		*ttftMS = totalTimeMS
 	}
-	pricing, analyticsQuantities, err := validateEventPricing(input.Pricing)
+	pricing, analyticsQuantities, err := ValidateMeters(input.Meters)
 	if err != nil {
 		return RequestEvent{}, err
 	}
-	billedCostUSDAtoms := calculateBilledCostUSDAtoms(authorization, upstreamCostUSDAtoms)
-	cacheReadSavingsUSDAtoms, err := requestOptionalUSDAtoms(
-		input.CacheReadSavingsUSDAtoms,
+	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
+	cacheReadSavingsUSD, err := requestOptionalUSD(
+		input.CacheReadSavingsUSD,
 		"cache read savings",
 	)
 	if err != nil {
 		return RequestEvent{}, err
 	}
-	cacheWriteOverheadUSDAtoms, err := requestOptionalUSDAtoms(
-		input.CacheWriteOverheadUSDAtoms,
+	cacheWriteOverheadUSD, err := requestOptionalUSD(
+		input.CacheWriteOverheadUSD,
 		"cache write overhead",
 	)
 	if err != nil {
@@ -121,42 +126,56 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
 
 	return RequestEvent{
-		SchemaVersion:              RequestLogSchemaVersion,
-		RequestID:                  authorization.RequestID,
-		CreatedAt:                  createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		LastRequestAt:              createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		RequestCount:               1,
-		StogasAPIKeyID:             authorization.KeyID,
-		StogasGrantID:              authorization.GrantID,
-		StogasUserID:               authorization.UserID,
-		StogasOrganizationID:       authorization.OrganizationID,
-		StogasWorkspaceID:          authorization.WorkspaceID,
-		RequestType:                normalizeRequestType(input.RequestType),
-		Cancelled:                  input.Cancelled,
-		ClientStopMS:               clientStopMS,
-		CatalogDigest:              strings.TrimSpace(input.CatalogDigest),
-		ProviderAttempts:           providerAttempts,
-		StogasProcessingSuccess:    true,
-		StogasBillingStatus:        calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms),
-		NodeID:                     strings.ToLower(strings.TrimSpace(input.NodeID)),
-		TotalTimeMS:                totalTimeMS,
-		Timings:                    requestTimings(input, startedAt, finishedAt, totalTimeMS),
-		TTFTMS:                     ttftMS,
-		UpstreamCostUSDAtoms:       upstreamCostUSDAtoms.String(),
-		BilledCostUSDAtoms:         billedCostUSDAtoms.String(),
-		CacheReadSavingsUSDAtoms:   cacheReadSavingsUSDAtoms,
-		CacheWriteOverheadUSDAtoms: cacheWriteOverheadUSDAtoms,
-		Pricing:                    pricing,
-		Plugins:                    input.Plugins,
-		GatewayVersion:             strings.TrimSpace(input.GatewayVersion),
-		CatalogNodeIDs:             append([]string(nil), input.CatalogNodeIDs...),
-		analyticsQuantities:        analyticsQuantities,
+		SchemaVersion:        RequestLogSchemaVersion,
+		PolicyVersions:       input.PolicyVersions,
+		RequestID:            authorization.RequestID,
+		CreatedAt:            createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		LastRequestAt:        createdAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		RequestCount:         1,
+		StogasAPIKeyID:       authorization.KeyID,
+		StogasGrantID:        authorization.GrantID,
+		StogasUserID:         authorization.UserID,
+		StogasOrganizationID: authorization.OrganizationID,
+		RequestType:          normalizeRequestType(input.RequestType),
+		Cancelled:            input.Cancelled,
+		ClientStopMS:         clientStopMS,
+		CatalogVersion:       catalogVersion(input.CatalogVersion),
+		CatalogChainHash:     optionalString(input.CatalogChainHash),
+		ProviderAttempts:     providerAttempts,
+		NodeID:               strings.ToLower(strings.TrimSpace(input.NodeID)),
+		Performance: RequestPerformance{
+			TotalMS:    totalTimeMS,
+			ProviderMS: requestProviderDuration(input, startedAt, finishedAt, totalTimeMS),
+			TTFTMS:     ttftMS,
+		},
+		UpstreamCostUSD:       upstreamCostUSD.String(),
+		BilledCostUSD:         billedCostUSD.String(),
+		CacheReadSavingsUSD:   cacheReadSavingsUSD,
+		CacheWriteOverheadUSD: cacheWriteOverheadUSD,
+		Meters:                pricing,
+		Plugins:               input.Plugins,
+		GatewayVersion:        strings.TrimSpace(input.GatewayVersion),
+		analyticsQuantities:   analyticsQuantities,
 	}, nil
 }
 
-func requestTimings(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) RequestTimings {
+func catalogVersion(value uint64) *uint64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func requestProviderDuration(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) uint32 {
 	if input.ProviderStartedAt.IsZero() || input.ProviderStartedAt.Before(startedAt) {
-		return RequestTimings{AdmissionMS: totalTimeMS}
+		return 0
 	}
 
 	admissionMS := min(uint32Duration(input.ProviderStartedAt.Sub(startedAt)), totalTimeMS)
@@ -164,15 +183,10 @@ func requestTimings(input EventInput, startedAt time.Time, finishedAt time.Time,
 	if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
 		providerCompletedAt = finishedAt
 	}
-	providerMS := min(
+	return min(
 		uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt)),
 		totalTimeMS-admissionMS,
 	)
-	return RequestTimings{
-		AdmissionMS: admissionMS,
-		ProviderMS:  providerMS,
-		ResponseMS:  totalTimeMS - admissionMS - providerMS,
-	}
 }
 
 func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32) []ProviderAttempt {
@@ -182,13 +196,14 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 		}
 		return []ProviderAttempt{{
 			Provider:          authorization.ProviderKey,
+			CatalogChainHash:  optionalString(input.CatalogChainHash),
 			Status:            providerAttemptStatus(input.Error, input.Response),
 			StatusCode:        providerStatusCode(input.Error),
 			LatencyMS:         fallbackLatencyMS,
 			OutputObserved:    input.ProviderOutputObserved,
 			ProviderRequestID: upstreamRequestID(input.Response),
 			FinishReason:      finishReason(input.Response),
-			UpstreamByok:      normalizedUpstreamByok(authorization),
+			UpstreamByok:      loggedCredentialID(authorization),
 		}}
 	}
 
@@ -200,13 +215,14 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 		}
 		attempts[index] = ProviderAttempt{
 			Provider:          provider,
+			CatalogChainHash:  optionalString(observed.CatalogChainHash),
 			Status:            providerAttemptStatus(observed.Error, observed.Response),
 			StatusCode:        providerStatusCode(observed.Error),
 			LatencyMS:         uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
 			OutputObserved:    observed.OutputObserved,
 			ProviderRequestID: upstreamRequestID(observed.Response),
 			FinishReason:      finishReason(observed.Response),
-			UpstreamByok:      normalizedUpstreamByok(authorization),
+			UpstreamByok:      loggedCredentialID(authorization),
 		}
 	}
 	return attempts
@@ -239,11 +255,11 @@ func providerResponseContentFiltered(response *schemas.BifrostResponse) bool {
 	return incomplete != nil && incomplete.Reason == schemas.ResponsesResponseIncompleteReasonContentFilter
 }
 
-func requestOptionalUSDAtoms(raw *string, name string) (*string, error) {
+func requestOptionalUSD(raw *string, name string) (*string, error) {
 	if raw == nil {
 		return nil, nil
 	}
-	value, err := ParseUSDAtoms(*raw)
+	value, err := ParseUSD(*raw)
 	if err != nil {
 		return nil, fmt.Errorf("invalid %s: %w", name, err)
 	}
@@ -256,14 +272,6 @@ func (event RequestEvent) FinalProviderAttempt() (ProviderAttempt, bool) {
 		return ProviderAttempt{}, false
 	}
 	return event.ProviderAttempts[len(event.ProviderAttempts)-1], true
-}
-
-func (event RequestEvent) ProviderDurationMS() uint32 {
-	var providerDurationMS uint64
-	for _, attempt := range event.ProviderAttempts {
-		providerDurationMS += uint64(attempt.LatencyMS)
-	}
-	return saturatingUint32(providerDurationMS)
 }
 
 func cloneUint32Pointer(value *uint32) *uint32 {
@@ -281,13 +289,19 @@ func normalizedUpstreamByok(authorization *Authorization) string {
 	return strings.TrimSpace(authorization.UpstreamByok)
 }
 
-func calculateBilledCostUSDAtoms(authorization *Authorization, upstreamCostUSDAtoms *big.Int) *big.Int {
-	if normalizedUpstreamByok(authorization) == "stogas" {
-		return new(big.Int).Set(upstreamCostUSDAtoms)
+func loggedCredentialID(authorization *Authorization) *string {
+	id := normalizedUpstreamByok(authorization)
+	if id == ManagedUpstreamByok {
+		return nil
 	}
-	numerator := new(big.Int).Mul(upstreamCostUSDAtoms, big.NewInt(2))
-	numerator.Add(numerator, big.NewInt(99))
-	return numerator.Quo(numerator, big.NewInt(100))
+	return &id
+}
+
+func calculateBilledCostUSD(authorization *Authorization, upstreamCostUSD *money.USD) *money.USD {
+	if normalizedUpstreamByok(authorization) == "stogas" {
+		return new(money.USD).Set(upstreamCostUSD)
+	}
+	return new(money.USD).MulRatioCeil(upstreamCostUSD, big.NewInt(2), 100)
 }
 
 func isStreamingRequest(requestType string) bool {
@@ -487,21 +501,49 @@ func boundedTelemetryValue(value string, maximum int) string {
 	return value
 }
 
-func validateEventPricing(pricing EventPricing) (EventPricing, map[string]uint64, error) {
-	cloned := make(EventPricing, len(pricing))
+// PricedMeter records the quantity used in the charge, including a known free rate.
+func PricedMeter(quantity, rateKey, rateUSD, usd string) EventMeter {
+	return EventMeter{Quantity: quantity, RateKey: &rateKey, RateUSD: &rateUSD, USD: &usd}
+}
+
+// IsInformationalMeter identifies quantities that never carry prices.
+func IsInformationalMeter(key string) bool {
+	switch key {
+	case MeterInputTextBytes, MeterEstimatedInputTokens, MeterTotalInputTokens, MeterTotalOutputTokens, MeterTotalTokens, MeterTotalCacheWriteTokens, MeterHostedToolCalls, MeterClientToolCalls:
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidateMeters(pricing EventMeters) (EventMeters, map[string]uint64, error) {
+	cloned := make(EventMeters, len(pricing))
 	quantities := make(map[string]uint64, len(pricing))
 	for key, meter := range pricing {
-		if key == "" || strings.TrimSpace(key) != key || meter.RateKey == "" || strings.TrimSpace(meter.RateKey) != meter.RateKey {
-			return nil, nil, fmt.Errorf("invalid pricing meter identity")
+		if key == "" || strings.TrimSpace(key) != key {
+			return nil, nil, fmt.Errorf("invalid meter identity")
 		}
 		quantity, err := ParseNonnegativeInteger(meter.Quantity)
-		if err != nil || quantity.Sign() <= 0 || !quantity.IsUint64() {
-			return nil, nil, fmt.Errorf("invalid pricing meter quantity for %s", key)
+		if err != nil || !quantity.IsUint64() {
+			return nil, nil, fmt.Errorf("invalid meter quantity for %s", key)
 		}
-		rate, rateErr := ParseUSDAtoms(meter.RateUSDAtoms)
-		amount, amountErr := ParseUSDAtoms(meter.USDAtoms)
-		if rateErr != nil || amountErr != nil || rate.Sign() <= 0 || amount.Sign() <= 0 {
-			return nil, nil, fmt.Errorf("invalid pricing meter amount for %s", key)
+		if meter.RateKey == nil && meter.RateUSD == nil && meter.USD == nil {
+			// A count without a price is not evidence of a free rate.
+		} else {
+			if IsInformationalMeter(key) {
+				return nil, nil, fmt.Errorf("informational meter cannot be priced: %s", key)
+			}
+			if meter.RateKey == nil || meter.RateUSD == nil || meter.USD == nil ||
+				*meter.RateKey == "" || strings.TrimSpace(*meter.RateKey) != *meter.RateKey {
+				return nil, nil, fmt.Errorf("incomplete meter pricing for %s", key)
+			}
+			rate, rateErr := ParseUSD(*meter.RateUSD)
+			amount, amountErr := ParseUSD(*meter.USD)
+			if rateErr != nil || amountErr != nil ||
+				(quantity.Sign() == 0 && amount.Sign() != 0) ||
+				(quantity.Sign() > 0 && (rate.Sign() == 0) != (amount.Sign() == 0)) {
+				return nil, nil, fmt.Errorf("invalid meter amount for %s", key)
+			}
 		}
 		cloned[key] = meter
 		quantities[key] = quantity.Uint64()

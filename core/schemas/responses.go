@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +46,12 @@ type BifrostResponsesRequest struct {
 	Params         *ResponsesParameters `json:"params,omitempty"`
 	Fallbacks      []Fallback           `json:"fallbacks,omitempty"`
 	RawRequestBody []byte               `json:"-"` // set bifrost-use-raw-request-body to true in ctx to use the raw request body. Bifrost will directly send this to the downstream provider.
+
+	// NamespaceToolAliases maps each flattened tool name back to the namespace and
+	// function the caller sent. Core dispatch sets it on the prepared copy when the
+	// target wire does not support namespace tools, and the response path reads it to
+	// restore function_call items. Never serialized; the shared request never has it.
+	NamespaceToolAliases map[string]NamespaceToolAlias `json:"-"`
 }
 
 func (r *BifrostResponsesRequest) GetRawRequestBody() []byte {
@@ -227,7 +235,7 @@ type BifrostResponsesResponse struct {
 	Instructions         *ResponsesResponseInstructions      `json:"instructions"`
 	MaxOutputTokens      *int                                `json:"max_output_tokens"`
 	MaxToolCalls         *int                                `json:"max_tool_calls"`
-	Metadata             *map[string]any                     `json:"metadata,omitempty"`
+	Metadata             *map[string]any                     `json:"metadata"`
 	Model                string                              `json:"model"`
 	Output               []ResponsesMessage                  `json:"output"`
 	ParallelToolCalls    *bool                               `json:"parallel_tool_calls,omitempty"`
@@ -411,7 +419,7 @@ func (resp *BifrostResponsesResponse) WithDefaults() *BifrostResponsesResponse {
 
 	if resp.ServiceTier != nil {
 		switch *resp.ServiceTier {
-		case BifrostServiceTierAuto, BifrostServiceTierDefault, BifrostServiceTierFlex, BifrostServiceTierPriority:
+		case BifrostServiceTierAuto, BifrostServiceTierDefault, BifrostServiceTierFlex, BifrostServiceTierPriority, BifrostServiceTierUltrafast:
 			result.ServiceTier = resp.ServiceTier
 		default:
 			result.ServiceTier = new(BifrostServiceTierAuto)
@@ -534,6 +542,9 @@ type ResponsesParameters struct {
 	// the combination; providers without the concept ignore it.
 	IncludeServerSideToolInvocations *bool `json:"include_server_side_tool_invocations,omitempty"`
 
+	// ContextManagement configures automatic context window management.
+	ContextManagement json.RawMessage `json:"context_management,omitempty"`
+
 	// Dynamic parameters that can be provider-specific, they are directly
 	// added to the request as is.
 	ExtraParams map[string]interface{} `json:"-"`
@@ -603,6 +614,133 @@ type ResponsesTextConfigFormatJSONSchema struct {
 	Nullable         *bool       `json:"nullable,omitempty"`         // Nullable indicator (OpenAPI 3.0 style)
 	Enum             []string    `json:"enum,omitempty"`             // Enum values
 	PropertyOrdering []string    `json:"propertyOrdering,omitempty"` // Ordering of properties, specific to Gemini
+
+	// keyOrder records the order in which the schema object's own keys arrived,
+	// so re-encoding does not reshuffle them into struct declaration order.
+	// Providers generate output in schema key order (see the type doc), and a
+	// schema that reads type/title/description before properties must keep
+	// reading that way after a round-trip through this struct.
+	keyOrder []string
+}
+
+// UnmarshalJSON decodes the schema and remembers its key order.
+func (s *ResponsesTextConfigFormatJSONSchema) UnmarshalJSON(data []byte) error {
+	type Alias ResponsesTextConfigFormatJSONSchema
+	var aux Alias
+	if err := Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*s = ResponsesTextConfigFormatJSONSchema(aux)
+	s.keyOrder = jsonObjectKeyOrder(data)
+	return nil
+}
+
+// MarshalJSON encodes the schema, restoring the key order it was decoded with.
+// Keys added after decoding (or all keys, for a schema built in Go) follow in
+// struct declaration order.
+func (s ResponsesTextConfigFormatJSONSchema) MarshalJSON() ([]byte, error) {
+	type Alias ResponsesTextConfigFormatJSONSchema
+	raw, err := MarshalSorted(Alias(s))
+	if err != nil {
+		return nil, err
+	}
+	return reorderJSONObjectKeys(raw, s.keyOrder), nil
+}
+
+// KeyOrder returns the schema object's key order as decoded, or nil when the
+// schema was built in Go rather than decoded from JSON.
+func (s *ResponsesTextConfigFormatJSONSchema) KeyOrder() []string {
+	if s == nil || len(s.keyOrder) == 0 {
+		return nil
+	}
+	out := make([]string, len(s.keyOrder))
+	copy(out, s.keyOrder)
+	return out
+}
+
+// SetKeyOrder records the key order to re-encode this schema with. Used when a
+// schema crosses APIs (chat response_format <-> responses text.format) and the
+// order has to be carried over from the source representation.
+func (s *ResponsesTextConfigFormatJSONSchema) SetKeyOrder(order []string) {
+	if s == nil {
+		return
+	}
+	if len(order) == 0 {
+		s.keyOrder = nil
+		return
+	}
+	s.keyOrder = append([]string(nil), order...)
+}
+
+// jsonObjectKeyOrder returns the top-level keys of a JSON object in document order.
+func jsonObjectKeyOrder(data []byte) []string {
+	parsed := gjson.ParseBytes(data)
+	if !parsed.IsObject() {
+		return nil
+	}
+	keys := make([]string, 0, 8)
+	parsed.ForEach(func(key, _ gjson.Result) bool {
+		keys = append(keys, key.String())
+		return true
+	})
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+// reorderJSONObjectKeys rewrites a JSON object so the keys listed in order come
+// first, in that order; any remaining keys keep their existing relative order.
+// Values are copied verbatim, so nested ordering is untouched.
+func reorderJSONObjectKeys(raw []byte, order []string) []byte {
+	if len(order) == 0 {
+		return raw
+	}
+	parsed := gjson.ParseBytes(raw)
+	if !parsed.IsObject() {
+		return raw
+	}
+
+	type jsonPair struct{ key, value string }
+	pairs := make([]jsonPair, 0, 8)
+	index := make(map[string]int, 8)
+	parsed.ForEach(func(key, value gjson.Result) bool {
+		keyRaw := key.Raw
+		if len(keyRaw) == 0 || keyRaw[0] != '"' {
+			keyRaw = strconv.Quote(key.String())
+		}
+		index[key.String()] = len(pairs)
+		pairs = append(pairs, jsonPair{key: keyRaw, value: value.Raw})
+		return true
+	})
+	if len(pairs) == 0 {
+		return raw
+	}
+
+	written := make([]bool, len(pairs))
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	writePair := func(p jsonPair) {
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(p.key)
+		buf.WriteByte(':')
+		buf.WriteString(p.value)
+	}
+	for _, key := range order {
+		if i, ok := index[key]; ok && !written[i] {
+			written[i] = true
+			writePair(pairs[i])
+		}
+	}
+	for i, p := range pairs {
+		if !written[i] {
+			writePair(p)
+		}
+	}
+	buf.WriteByte('}')
+	return buf.Bytes()
 }
 
 // JSONSchemaOrBool holds a JSON Schema value that is either a boolean schema
@@ -687,6 +825,7 @@ func (s *ResponsesTextConfigFormatJSONSchema) CompositeSchema() (*OrderedMap, bo
 // JSONSchemaFromMap builds a ResponsesTextConfigFormatJSONSchema from a raw interface{}
 func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 	var m map[string]interface{}
+	var keyOrder []string
 	switch src := v.(type) {
 	case map[string]interface{}:
 		m = src
@@ -695,12 +834,28 @@ func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 			return nil
 		}
 		m = src.ToMap() // shallow: nested *OrderedMap values keep their order
+		keyOrder = src.Keys()
 	case OrderedMap:
 		m = src.ToMap()
+		keyOrder = src.Keys()
+	case json.RawMessage:
+		decoded := NewOrderedMap()
+		if err := decoded.UnmarshalJSON(src); err != nil {
+			return nil
+		}
+		m = decoded.ToMap()
+		keyOrder = decoded.Keys()
+	case []byte:
+		decoded := NewOrderedMap()
+		if err := decoded.UnmarshalJSON(src); err != nil {
+			return nil
+		}
+		m = decoded.ToMap()
+		keyOrder = decoded.Keys()
 	default:
 		return nil
 	}
-	s := &ResponsesTextConfigFormatJSONSchema{}
+	s := &ResponsesTextConfigFormatJSONSchema{keyOrder: keyOrder}
 	if t, ok := m["type"].(string); ok {
 		s.Type = Ptr(t)
 	}
@@ -822,6 +977,52 @@ func JSONSchemaFromMap(v interface{}) *ResponsesTextConfigFormatJSONSchema {
 	return s
 }
 
+// RawSchemaJSON returns the schema body as JSON bytes, with the key order this
+// schema was decoded with. Prefer it over ToMap when the result is headed
+// straight back out to a provider: it avoids rebuilding a Go map only to
+// re-encode it, and it keeps numeric literals as written.
+//
+// `name` and `strict` are dropped: they are wrapper fields that OpenAI carries
+// beside the schema, not JSON Schema keywords, which is also why ToMap omits them.
+func (s *ResponsesTextConfigFormatJSONSchema) RawSchemaJSON() json.RawMessage {
+	if s == nil {
+		return nil
+	}
+
+	// A composite schema is already a self-contained schema object.
+	if s.Schema != nil {
+		if s.Schema.SchemaMap != nil {
+			encoded, err := MarshalSorted(s.Schema.SchemaMap)
+			if err != nil {
+				return nil
+			}
+			return encoded
+		}
+		if s.Schema.SchemaBool != nil {
+			if *s.Schema.SchemaBool {
+				return json.RawMessage("true")
+			}
+			return json.RawMessage("false")
+		}
+	}
+
+	// Decomposed form: the struct's own encoding already restores key order.
+	encoded, err := MarshalSorted(s)
+	if err != nil {
+		return nil
+	}
+	for _, key := range []string{"name", "strict", "schema"} {
+		encoded, err = sjson.DeleteBytes(encoded, key)
+		if err != nil {
+			return nil
+		}
+	}
+	if len(gjson.ParseBytes(encoded).Map()) == 0 {
+		return nil
+	}
+	return encoded
+}
+
 // ToMap reconstructs the raw schema map from a ResponsesTextConfigFormatJSONSchema.
 func (s *ResponsesTextConfigFormatJSONSchema) ToMap() interface{} {
 	if s == nil {
@@ -915,7 +1116,43 @@ func (s *ResponsesTextConfigFormatJSONSchema) ToMap() interface{} {
 	if len(m) == 0 {
 		return nil
 	}
-	return m
+	// Hand back an order-preserving map: the caller usually re-encodes this into
+	// a provider payload, and the model reads the schema in key order.
+	return orderedMapWithKeyOrder(m, s.keyOrder)
+}
+
+// orderedMapWithKeyOrder converts a plain map into an OrderedMap, emitting the
+// keys named in order first (in that order) and any remaining keys after them,
+// alphabetically. Only this map's own key sequence is decided here: values are
+// carried over by reference, so nested schemas keep the order they already have.
+// (OrderedMap.SortKeys is deliberately not used - it recurses into nested
+// *OrderedMap values and sorts them in place, which would reorder the caller's
+// `properties` as a side effect.)
+func orderedMapWithKeyOrder(m map[string]interface{}, order []string) *OrderedMap {
+	if m == nil {
+		return nil
+	}
+	om := NewOrderedMapWithCapacity(len(m))
+	for _, key := range order {
+		if value, ok := m[key]; ok {
+			om.Set(key, value)
+		}
+	}
+	if om.Len() == len(m) {
+		return om
+	}
+
+	remaining := make([]string, 0, len(m)-om.Len())
+	for key := range m {
+		if _, taken := om.Get(key); !taken {
+			remaining = append(remaining, key)
+		}
+	}
+	sort.Strings(remaining)
+	for _, key := range remaining {
+		om.Set(key, m[key])
+	}
+	return om
 }
 
 type ResponsesResponseConversation struct {
@@ -1026,6 +1263,11 @@ type ResponsesResponseConversationStruct struct {
 }
 
 type ResponsesResponseError struct {
+	// Type is present on the top-level `error` stream event used by Azure
+	// OpenAI (for example, `too_many_requests`). It is optional on
+	// `response.failed`, whose response.error object normally only contains
+	// code and message.
+	Type    string `json:"type,omitempty"`
 	Code    string `json:"code"`    // The error code for the response
 	Message string `json:"message"` // A human-readable description of the error
 }
@@ -1067,15 +1309,16 @@ type ResponsesStopDetails struct {
 }
 
 type ResponsesResponseUsage struct {
-	Type                *string                        `json:"type,omitempty"`        // type field is sent by anthropic
-	Model               *string                        `json:"model,omitempty"`       // model that produced this (iteration) attempt; sent on iterations[] for Anthropic server-side fallback
-	InputTokens         int                            `json:"input_tokens"`          // Number of input tokens (prompt tokens + cached tokens)
-	InputTokensDetails  *ResponsesResponseInputTokens  `json:"input_tokens_details"`  // Detailed breakdown of input tokens
-	OutputTokens        int                            `json:"output_tokens"`         // Number of output tokens (completion tokens + reasoning tokens)
-	OutputTokensDetails *ResponsesResponseOutputTokens `json:"output_tokens_details"` // Detailed breakdown of output tokens	TotalTokens int `json:"total_tokens"` // Total number of tokens used
-	TotalTokens         int                            `json:"total_tokens"`          // Total number of tokens used
-	Cost                *BifrostCost                   `json:"cost,omitempty"`        // Only for the providers which support cost calculation
-	Iterations          []ResponsesResponseUsage       `json:"iterations,omitempty"`  // iterations field is sent by anthropic
+	Type                *string                        `json:"type,omitempty"`          // type field is sent by anthropic
+	Model               *string                        `json:"model,omitempty"`         // model that produced this (iteration) attempt; sent on iterations[] for Anthropic server-side fallback
+	InputTokens         int                            `json:"input_tokens"`            // Number of input tokens (prompt tokens + cached tokens)
+	InputTokensDetails  *ResponsesResponseInputTokens  `json:"input_tokens_details"`    // Detailed breakdown of input tokens
+	OutputTokens        int                            `json:"output_tokens"`           // Number of output tokens (completion tokens + reasoning tokens)
+	OutputTokensDetails *ResponsesResponseOutputTokens `json:"output_tokens_details"`   // Detailed breakdown of output tokens	TotalTokens int `json:"total_tokens"` // Total number of tokens used
+	TotalTokens         int                            `json:"total_tokens"`            // Total number of tokens used
+	AudioSeconds        *float64                       `json:"audio_seconds,omitempty"` // Duration-based audio usage when tokens are unavailable
+	Cost                *BifrostCost                   `json:"cost,omitempty"`          // Only for the providers which support cost calculation
+	Iterations          []ResponsesResponseUsage       `json:"iterations,omitempty"`    // iterations field is sent by anthropic
 
 	// xAI-specific usage fields
 	NumSourcesUsed             *int                                 `json:"num_sources_used,omitempty"`
@@ -1083,6 +1326,14 @@ type ResponsesResponseUsage struct {
 	CostInUsdTicks             *int64                               `json:"cost_in_usd_ticks,omitempty"`
 	ServerSideToolUsageDetails *ResponsesServerSideToolUsageDetails `json:"server_side_tool_usage_details,omitempty"`
 	ContextDetails             *ResponsesContextDetails             `json:"context_details,omitempty"`
+}
+
+// NormalizeProviderCost mirrors BifrostLLMUsage.NormalizeProviderCost for the responses path.
+func (u *ResponsesResponseUsage) NormalizeProviderCost() {
+	if u == nil || u.Cost != nil {
+		return
+	}
+	u.Cost = costFromUSDTicks(u.CostInUsdTicks)
 }
 
 // ResponsesServerSideToolUsageDetails holds per-tool call counts returned by xAI.
@@ -1244,6 +1495,18 @@ type ResponsesMessage struct {
 	// Tools declared by a codex additional_tools item, surfaced so providers that
 	// reject the item type can hoist them into the top-level tools param.
 	AdditionalTools json.RawMessage `json:"-"`
+
+	// ProviderNativeParts carries a provider's own response fragment for this item when
+	// the canonical shape cannot hold it losslessly, so a native-surface integration can
+	// re-emit exactly what the provider sent. Currently Gemini's server-side
+	// toolCall/toolResponse parts: the web_search_call item keeps their queries, but not
+	// the raw tool response or the thoughtSignature bytes Gemini demands back on replay.
+	// The non-streaming path carries these on the response's ProviderExtraFields; a
+	// per-chunk stream item has no such field, which is what this one supplies.
+	//
+	// json:"-" like the two above: it rides the in-process item between a provider and an
+	// integration and is never part of the public wire shape.
+	ProviderNativeParts json.RawMessage `json:"-"`
 
 	*ResponsesToolMessage // For Tool calls and outputs
 
@@ -1508,6 +1771,10 @@ const (
 	ResponsesOutputMessageContentTypeRefusal   ResponsesMessageContentBlockType = "refusal"
 	ResponsesOutputMessageContentTypeReasoning ResponsesMessageContentBlockType = "reasoning_text"
 
+	// Part type on response.reasoning_summary_part.{added,done}, where the event's
+	// part field is required.
+	ResponsesOutputMessageContentTypeSummaryText ResponsesMessageContentBlockType = "summary_text"
+
 	// gemini sends rendered content in google search results
 	ResponsesOutputMessageContentTypeRenderedContent ResponsesMessageContentBlockType = "rendered_content"
 
@@ -1543,6 +1810,13 @@ type ResponsesMessageContentBlock struct {
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
 	Citations    *Citations    `json:"citations,omitempty"`
 
+	// MediaResolution carries Gemini's per-part Part.mediaResolution, which overrides the
+	// request-level generationConfig.mediaResolution for this block alone. It lives on the
+	// block rather than on the image sub-struct because per-part resolution applies to PDFs
+	// and file URIs too, which arrive as file blocks. Providers that have no equivalent
+	// simply never read it, so it drops itself on a cross-provider fallback.
+	MediaResolution *MediaResolution `json:"media_resolution,omitempty"`
+
 	// PromptCacheBreakpoint marks an explicit prompt-cache breakpoint on this block (OpenAI gpt-5.6+).
 	PromptCacheBreakpoint *PromptCacheBreakpoint `json:"prompt_cache_breakpoint,omitempty"`
 }
@@ -1567,6 +1841,14 @@ type ResponsesOutputMessageContentRenderedContent struct {
 
 type Citations struct {
 	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// MediaResolution is the per-part media resolution for an input media block (Gemini 3+).
+// Level is a provider enum string (e.g. MEDIA_RESOLUTION_HIGH) forwarded verbatim; NumTokens
+// is accepted by the Gemini API surface only.
+type MediaResolution struct {
+	Level     string `json:"level,omitempty"`
+	NumTokens *int32 `json:"num_tokens,omitempty"`
 }
 type ResponsesInputMessageContentBlockImage struct {
 	ImageURL *string `json:"image_url,omitempty"`
@@ -1784,6 +2066,7 @@ type ResponsesCodeExecutionCall struct {
 }
 
 type ResponsesToolMessageActionStruct struct {
+	ResponsesToolCallActionStr        *string // Bare-string action (e.g. image_generation_call's "generate")
 	ResponsesComputerToolCallAction   *ResponsesComputerToolCallAction
 	ResponsesWebSearchToolCallAction  *ResponsesWebSearchToolCallAction
 	ResponsesWebFetchToolCallAction   *ResponsesWebFetchToolCallAction
@@ -1792,6 +2075,9 @@ type ResponsesToolMessageActionStruct struct {
 }
 
 func (action ResponsesToolMessageActionStruct) MarshalJSON() ([]byte, error) {
+	if action.ResponsesToolCallActionStr != nil {
+		return MarshalSorted(*action.ResponsesToolCallActionStr)
+	}
 	if action.ResponsesComputerToolCallAction != nil {
 		return MarshalSorted(action.ResponsesComputerToolCallAction)
 	}
@@ -1811,6 +2097,13 @@ func (action ResponsesToolMessageActionStruct) MarshalJSON() ([]byte, error) {
 }
 
 func (action *ResponsesToolMessageActionStruct) UnmarshalJSON(data []byte) error {
+	// Some actions are bare strings, not objects (e.g. image_generation_call's "generate")
+	var str string
+	if err := Unmarshal(data, &str); err == nil {
+		action.ResponsesToolCallActionStr = &str
+		return nil
+	}
+
 	// First, peek at the type field to determine which variant to unmarshal
 	var typeStruct struct {
 		Type string `json:"type"`
@@ -2127,6 +2420,13 @@ type ResponsesReasoningSummary struct {
 // ResponsesImageGenerationCall represents an image generation tool call
 type ResponsesImageGenerationCall struct {
 	Result string `json:"result"`
+
+	// Generation settings echoed back on the completed item.
+	Background    *string `json:"background,omitempty"`
+	OutputFormat  *string `json:"output_format,omitempty"`
+	Quality       *string `json:"quality,omitempty"`
+	RevisedPrompt *string `json:"revised_prompt,omitempty"`
+	Size          *string `json:"size,omitempty"`
 }
 
 // -----------------------------------------------------------------------------
@@ -2334,6 +2634,45 @@ type ResponsesToolChoice struct {
 	ResponsesToolChoiceStruct *ResponsesToolChoiceStruct
 }
 
+// IsForced reports whether the choice obliges the model to call a tool, in any
+// of its spellings — "any"/"required", a named function or custom tool, a
+// pinned server tool, or an allowed-tools set in "required" mode. Only "none"
+// and "auto" are unforced. Models that reject forced tool use (Fable 5.1+)
+// need the choice dropped; see ModelCaps.SupportsForcedToolChoice.
+func (tc *ResponsesToolChoice) IsForced() bool {
+	if tc == nil {
+		return false
+	}
+	if tc.ResponsesToolChoiceStr != nil {
+		return forcedResponsesToolChoiceMode(*tc.ResponsesToolChoiceStr)
+	}
+	if s := tc.ResponsesToolChoiceStruct; s != nil {
+		switch s.Type {
+		case ResponsesToolChoiceTypeNone, ResponsesToolChoiceTypeAuto:
+			return false
+		case ResponsesToolChoiceTypeAllowedTools:
+			// The set is a constraint, not a forcing; only its mode forces.
+			return s.Mode != nil && forcedResponsesToolChoiceMode(*s.Mode)
+		case "":
+			// Mode-only choice; it serializes as the bare mode string.
+			return s.Mode != nil && forcedResponsesToolChoiceMode(*s.Mode)
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// forcedResponsesToolChoiceMode reports whether a bare mode string forces a call.
+func forcedResponsesToolChoiceMode(mode string) bool {
+	switch ResponsesToolChoiceType(mode) {
+	case ResponsesToolChoiceTypeNone, ResponsesToolChoiceTypeAuto:
+		return false
+	default:
+		return true
+	}
+}
+
 // MarshalJSON implements custom JSON marshalling for ChatMessageContent.
 // It marshals either ContentStr or ContentBlocks directly without wrapping.
 func (tc ResponsesToolChoice) MarshalJSON() ([]byte, error) {
@@ -2346,6 +2685,22 @@ func (tc ResponsesToolChoice) MarshalJSON() ([]byte, error) {
 		return MarshalSorted(tc.ResponsesToolChoiceStr)
 	}
 	if tc.ResponsesToolChoiceStruct != nil {
+		// A choice that carries only a mode - no function name, no server label, no allowed-tools
+		// list - is a bare string on the wire. The object form's `type` names a TOOL TYPE
+		// ("function", "code_interpreter", ...), so serializing {"type":"auto"} is rejected with
+		// Invalid value: 'auto'. Supported values are: 'function', 'code_interpreter', ...
+		// Normalizing here rather than in each inbound converter keeps every drop-in shape
+		// consistent; the struct form remains Bifrost's internal representation.
+		if s := tc.ResponsesToolChoiceStruct; s.Name == nil && s.ServerLabel == nil && len(s.Tools) == 0 {
+			switch s.Type {
+			case ResponsesToolChoiceTypeAuto, ResponsesToolChoiceTypeNone,
+				ResponsesToolChoiceTypeRequired, ResponsesToolChoiceTypeAny:
+				return MarshalSorted(string(s.Type))
+			}
+			if s.Mode != nil && s.Type == "" {
+				return MarshalSorted(*s.Mode)
+			}
+		}
 		return MarshalSorted(tc.ResponsesToolChoiceStruct)
 	}
 	// If both are nil, return null
@@ -2442,8 +2797,58 @@ func normalizeResponsesToolType(t ResponsesToolType) ResponsesToolType {
 	case strings.HasPrefix(s, "advisor") && t != ResponsesToolTypeAdvisor:
 		// Covers "advisor_20260301" and future dated versions.
 		return ResponsesToolTypeAdvisor
+	case ToolSearchVariantName(s) != "":
+		// Covers Anthropic's server-side tool-search meta-tool in both variants
+		// and both spellings: "tool_search_tool_regex_20251119",
+		// "tool_search_tool_bm25_20251119" and their undated forms. Without this
+		// the dated type reached the providers verbatim, missed every switch on
+		// ResponsesToolTypeToolSearch, and got downcast to a plain custom tool —
+		// so Anthropic treated tool_search as a client tool and never ran the
+		// server-side search. The regex/bm25 variant is preserved on Name (see
+		// ToolSearchVariantName), which is what the Anthropic converter reads.
+		//
+		// Matching on the recognized variants rather than a bare "tool_search"
+		// prefix keeps an unrecognized sibling type out of the server-tool
+		// converter and provider feature gate: it should reach unknown-tool
+		// handling instead of silently becoming a variant-less tool_search.
+		return ResponsesToolTypeToolSearch
 	default:
 		return t
+	}
+}
+
+// ToolSearchVariantName recovers the tool-search variant name from a raw tool
+// type string. normalizeResponsesToolType collapses every tool_search_tool_*
+// spelling to the canonical "tool_search", which erases the regex-vs-bm25
+// distinction from Type — but the two are not interchangeable: regex expects
+// Python re.search() patterns and bm25 expects natural language, so a silent
+// downgrade hands the model the wrong query grammar. The Anthropic converter
+// recovers the variant from Name, so the decoder backfills it here when the
+// caller declared the tool by type alone (as Anthropic's own Go and C# SDK
+// examples do). Returns "" when the type carries no variant.
+//
+// Cite: https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool
+// It is exported so a provider ingress that rebuilds a tool_search tool outside
+// ResponsesTool.UnmarshalJSON resolves the variant the same way. Regex and bm25 are
+// not interchangeable, so a second spelling of this rule elsewhere is a drift bug
+// waiting to happen.
+func ToolSearchVariantName(rawType string) string {
+	const prefix = "tool_search_tool_"
+	if !strings.HasPrefix(rawType, prefix) {
+		return ""
+	}
+	// Anthropic documents exactly two variants, dated and undated. Anchoring on
+	// the variant token (rather than searching anywhere in the string) keeps an
+	// unrelated type that merely contains "regex"/"bm25" from being claimed, and
+	// keeps a future sibling variant from being misreported as one of these two.
+	variant := strings.TrimPrefix(rawType, prefix)
+	switch {
+	case variant == "regex" || strings.HasPrefix(variant, "regex_"):
+		return "tool_search_tool_regex"
+	case variant == "bm25" || strings.HasPrefix(variant, "bm25_"):
+		return "tool_search_tool_bm25"
+	default:
+		return ""
 	}
 }
 
@@ -2650,67 +3055,84 @@ func (t ResponsesTool) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON implements custom JSON unmarshaling for ResponsesTool
 // It unmarshals common fields first, then the appropriate embedded struct based on type
 func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
-	// First unmarshal into a map to inspect the type
-	var raw map[string]interface{}
-	if err := Unmarshal(data, &raw); err != nil {
-		return err
+	// gjson never validates its input, so the malformed-JSON rejection the
+	// previous map decode gave us for free has to be explicit here.
+	if !gjson.ValidBytes(data) {
+		return fmt.Errorf("invalid JSON in ResponsesTool")
 	}
+
+	// One pass over the object for every common field. This replaces a decode
+	// into map[string]interface{} (which parsed the whole tool a second time
+	// just to read the type discriminator) plus a MarshalSorted/Unmarshal
+	// round-trip per structured field to convert interface{} back to a struct.
+	// The indices below must stay aligned with this path list.
+	fields := gjson.GetManyBytes(data,
+		"type",                  // 0
+		"name",                  // 1
+		"description",           // 2
+		"cache_control",         // 3
+		"defer_loading",         // 4
+		"allowed_callers",       // 5
+		"input_examples",        // 6
+		"eager_input_streaming", // 7
+		"function",              // 8 — Chat Completions wrapper, lifted below
+	)
 
 	// Extract type field
-	typeValue, ok := raw["type"]
-	if !ok {
+	typeField := fields[0]
+	if !typeField.Exists() {
 		return fmt.Errorf("missing required 'type' field in ResponsesTool")
 	}
-
-	typeStr, ok := typeValue.(string)
-	if !ok {
+	if typeField.Type != gjson.String {
 		return fmt.Errorf("'type' field must be a string")
 	}
+	typeStr := typeField.String()
 	t.Type = normalizeResponsesToolType(ResponsesToolType(typeStr))
 
-	// Unmarshal common fields
-	if name, ok := raw["name"].(string); ok {
-		t.Name = &name
+	// Unmarshal common fields. Values of the wrong JSON type are skipped rather
+	// than rejected, preserving the tolerance of the `raw[k].(string)` /
+	// `raw[k].(bool)` type assertions this replaced — clients in the wild send
+	// e.g. "defer_loading": "true", and that has always been a no-op, not a 400.
+	if v := fields[1]; v.Type == gjson.String {
+		t.Name = new(v.String())
 	}
-	if description, ok := raw["description"].(string); ok {
-		t.Description = &description
+	if v := fields[2]; v.Type == gjson.String {
+		t.Description = new(v.String())
 	}
-	if cacheControl, ok := raw["cache_control"]; ok {
-		bytes, err := MarshalSorted(cacheControl)
-		if err != nil {
-			return err
-		}
+	if v := fields[3]; v.Exists() {
 		var cc CacheControl
-		if err := Unmarshal(bytes, &cc); err != nil {
+		if err := Unmarshal([]byte(v.Raw), &cc); err != nil {
 			return err
 		}
 		t.CacheControl = &cc
 	}
 	// Anthropic-native tool flags. Mirror the emit side in MarshalJSON above —
 	// without these reads, a round-trip silently drops the fields.
-	if v, ok := raw["defer_loading"].(bool); ok {
-		t.DeferLoading = Ptr(v)
+	if v := fields[4]; v.IsBool() {
+		t.DeferLoading = new(v.Bool())
 	}
-	if v, ok := raw["allowed_callers"]; ok {
-		bytes, err := MarshalSorted(v)
-		if err != nil {
-			return err
-		}
-		if err := Unmarshal(bytes, &t.AllowedCallers); err != nil {
+	if v := fields[5]; v.Exists() {
+		if err := Unmarshal([]byte(v.Raw), &t.AllowedCallers); err != nil {
 			return err
 		}
 	}
-	if v, ok := raw["input_examples"]; ok {
-		bytes, err := MarshalSorted(v)
-		if err != nil {
-			return err
-		}
-		if err := Unmarshal(bytes, &t.InputExamples); err != nil {
+	if v := fields[6]; v.Exists() {
+		if err := Unmarshal([]byte(v.Raw), &t.InputExamples); err != nil {
 			return err
 		}
 	}
-	if v, ok := raw["eager_input_streaming"].(bool); ok {
-		t.EagerInputStreaming = Ptr(v)
+	if v := fields[7]; v.IsBool() {
+		t.EagerInputStreaming = new(v.Bool())
+	}
+
+	// Anthropic's tool-search meta-tool identifies its variant (regex vs bm25)
+	// in the type, which normalizeResponsesToolType has just collapsed to the
+	// canonical "tool_search". Backfill the variant onto Name so it survives —
+	// an explicitly supplied name always wins.
+	if t.Type == ResponsesToolTypeToolSearch && t.Name == nil {
+		if variant := ToolSearchVariantName(typeStr); variant != "" {
+			t.Name = new(variant)
+		}
 	}
 
 	// Based on type, unmarshal into the appropriate embedded struct
@@ -2726,31 +3148,31 @@ func (t *ResponsesTool) UnmarshalJSON(data []byte) error {
 		// lifting the nested fields the tool parses with a nil name and
 		// providers that require one (e.g. Bedrock) reject the request.
 		// Top-level (Responses format) fields win when both are present.
-		if _, hasWrapper := raw["function"]; hasWrapper {
-			var wrapper struct {
-				Function *struct {
-					Name        *string                 `json:"name"`
-					Description *string                 `json:"description"`
-					Parameters  *ToolFunctionParameters `json:"parameters"`
-					Strict      *bool                   `json:"strict"`
-				} `json:"function"`
+		//
+		// Only the wrapper subobject is decoded, not the whole tool again. A
+		// JSON null matches the old map decoder's behaviour: the key is present
+		// but the wrapper stays nil, so nothing is lifted and nothing errors.
+		if wrapper := fields[8]; wrapper.Exists() && wrapper.Type != gjson.Null {
+			var nested struct {
+				Name        *string                 `json:"name"`
+				Description *string                 `json:"description"`
+				Parameters  *ToolFunctionParameters `json:"parameters"`
+				Strict      *bool                   `json:"strict"`
 			}
-			if err := Unmarshal(data, &wrapper); err != nil {
+			if err := Unmarshal([]byte(wrapper.Raw), &nested); err != nil {
 				return fmt.Errorf("invalid 'function' object in ResponsesTool: %w", err)
 			}
-			if wrapper.Function != nil {
-				if t.Name == nil {
-					t.Name = wrapper.Function.Name
-				}
-				if t.Description == nil {
-					t.Description = wrapper.Function.Description
-				}
-				if funcTool.Parameters == nil {
-					funcTool.Parameters = wrapper.Function.Parameters
-				}
-				if funcTool.Strict == nil {
-					funcTool.Strict = wrapper.Function.Strict
-				}
+			if t.Name == nil {
+				t.Name = nested.Name
+			}
+			if t.Description == nil {
+				t.Description = nested.Description
+			}
+			if funcTool.Parameters == nil {
+				funcTool.Parameters = nested.Parameters
+			}
+			if funcTool.Strict == nil {
+				funcTool.Strict = nested.Strict
 			}
 		}
 		t.ResponsesToolFunction = &funcTool
@@ -3278,6 +3700,7 @@ type ResponsesToolCodeInterpreter struct {
 
 // ResponsesToolImageGeneration represents a tool image generation
 type ResponsesToolImageGeneration struct {
+	Action            *string                                     `json:"action,omitempty"`             // "generate" | "edit" | "auto"
 	Background        *string                                     `json:"background,omitempty"`         // "transparent" | "opaque" | "auto"
 	InputFidelity     *string                                     `json:"input_fidelity,omitempty"`     // "high" | "low"
 	InputImageMask    *ResponsesToolImageGenerationInputImageMask `json:"input_image_mask,omitempty"`   // Optional mask for inpainting
@@ -3365,6 +3788,16 @@ type ResponsesToolAdvisor struct {
 // ResponsesToolNamespace represents a namespace tool that groups related function tools.
 type ResponsesToolNamespace struct {
 	Tools []ResponsesTool `json:"tools,omitempty"`
+}
+
+// NamespaceToolAlias is what a flattened tool name stands for: the namespace and the
+// bare function name the caller sent. Bifrost flattens namespace tools to
+// "<namespace>__<function>" for wires that do not understand the namespace type, keeps
+// one of these per alias on the request context, and uses it to hand the caller back
+// a function_call item with the OpenAI shape (bare name plus a separate namespace).
+type NamespaceToolAlias struct {
+	Namespace string
+	Name      string
 }
 
 // ResponsesToolXSearch represents the xAI-native x_search server-side tool.
@@ -3471,8 +3904,11 @@ type BifrostResponsesStreamResponse struct {
 
 	Response *BifrostResponsesResponse `json:"response,omitempty"`
 
-	OutputIndex *int              `json:"output_index,omitempty"`
-	Item        *ResponsesMessage `json:"item"`
+	OutputIndex *int `json:"output_index,omitempty"`
+	// Item is only emitted on output_item.added / output_item.done. omitempty is
+	// required: other event types must not serialize "item": null — strict
+	// Responses clients (opencode open-responses protocol) reject null there.
+	Item *ResponsesMessage `json:"item,omitempty"`
 	// SummaryIndex identifies which summary block within an item a delta belongs to.
 	// Emitted on response.reasoning_summary_text.{delta,done} and
 	// response.reasoning_summary_part.{added,done}.
@@ -3496,7 +3932,8 @@ type BifrostResponsesStreamResponse struct {
 	Refusal *string `json:"refusal,omitempty"`
 
 	Arguments *string `json:"arguments,omitempty"`
-	Input     *string `json:"input,omitempty"` // Full custom tool input on response.custom_tool_call_input.done
+	// Input carries the full custom-tool payload on custom_tool_call_input.done.
+	Input *string `json:"input,omitempty"`
 
 	PartialImageB64   *string `json:"partial_image_b64,omitempty"`
 	PartialImageIndex *int    `json:"partial_image_index,omitempty"`
@@ -3515,6 +3952,21 @@ type BifrostResponsesStreamResponse struct {
 	SearchResults []SearchResult `json:"search_results,omitempty"`
 	Videos        []VideoResult  `json:"videos,omitempty"`
 	Citations     []string       `json:"citations,omitempty"`
+}
+
+// MarshalJSON omits event-scoped fields that are nil so strict Responses
+// clients do not see explicit nulls on unrelated event types. Some event types
+// still intentionally emit empty arrays after WithDefaults populates them.
+func (resp BifrostResponsesStreamResponse) MarshalJSON() ([]byte, error) {
+	type alias BifrostResponsesStreamResponse
+	encoded, err := Marshal(alias(resp))
+	if err != nil {
+		return nil, err
+	}
+	if resp.LogProbs == nil && gjson.GetBytes(encoded, "logprobs").Exists() {
+		return sjson.DeleteBytes(encoded, "logprobs")
+	}
+	return encoded, nil
 }
 
 func (resp *BifrostResponsesStreamResponse) WithDefaults() *BifrostResponsesStreamResponse {

@@ -33,3 +33,11 @@ jobs:
       - name: Test deterministic retained core packages
         working-directory: core
         run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./mcp/... ./network ./providers/... ./schemas
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24.14.1
+          cache: npm
+      - name: Test the shared WebAssembly policy compiler
+        run: |
+          npm ci --ignore-scripts
+          npm run test:policy

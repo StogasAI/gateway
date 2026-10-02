@@ -22,6 +22,7 @@ const (
 // WhiteList is a list of values that are allowed to be used.
 // Semantics:
 //   - "*" (alone) means all values are allowed.
+//   - "regex:<pattern>" entries match any value the RE2 pattern fully matches (see MatchEntry).
 //   - Empty list means nothing is allowed.
 //   - Non-empty list (without "*") means only the listed values are allowed.
 //
@@ -33,7 +34,7 @@ type WhiteList []string
 // Returns true if value is in the list.
 func (wl WhiteList) Contains(value string) bool {
 	return slices.ContainsFunc(wl, func(s string) bool {
-		return strings.EqualFold(s, value)
+		return MatchEntry(s, value)
 	})
 }
 
@@ -61,9 +62,13 @@ func (wl WhiteList) IsRestricted() bool {
 }
 
 // Validate checks that the whitelist is well-formed.
-// Returns an error if "*" is present alongside other values, or if there are duplicate entries.
+// Returns an error if "*" is present alongside other values, if there are duplicate entries,
+// or if a regex: entry does not compile.
 func (wl WhiteList) Validate() error {
-	if wl.Contains("*") && len(wl) > 1 {
+	if err := ValidateRegexEntries(wl); err != nil {
+		return err
+	}
+	if slices.Contains(wl, "*") && len(wl) > 1 {
 		return fmt.Errorf("wildcard '*' cannot be used with other values in the whitelist")
 	}
 	seen := make(map[string]struct{}, len(wl))
@@ -80,13 +85,14 @@ func (wl WhiteList) Validate() error {
 // BlackList is a list of values that are denied.
 // Semantics:
 //   - "*" (alone) means all values are blocked.
+//   - "regex:<pattern>" entries block any value the RE2 pattern fully matches (see MatchEntry).
 //   - Empty list means nothing is blocked.
 //   - Non-empty list (without "*") means only the listed values are blocked.
 type BlackList []string
 
 func (bl BlackList) Contains(value string) bool {
 	return slices.ContainsFunc(bl, func(s string) bool {
-		return strings.EqualFold(s, value)
+		return MatchEntry(s, value)
 	})
 }
 
@@ -107,7 +113,10 @@ func (bl BlackList) IsBlockAll() bool {
 
 // Validate checks that the blacklist is well-formed.
 func (bl BlackList) Validate() error {
-	if bl.Contains("*") && len(bl) > 1 {
+	if err := ValidateRegexEntries(bl); err != nil {
+		return err
+	}
+	if slices.Contains(bl, "*") && len(bl) > 1 {
 		return fmt.Errorf("wildcard '*' cannot be used with other values in the blacklist")
 	}
 	seen := make(map[string]struct{}, len(bl))
@@ -139,9 +148,12 @@ type Key struct {
 	ReplicateKeyConfig     *ReplicateKeyConfig     `json:"replicate_key_config,omitempty"`      // Replicate-specific key configuration
 	OllamaKeyConfig        *OllamaKeyConfig        `json:"ollama_key_config,omitempty"`         // Ollama-specific key configuration
 	SGLKeyConfig           *SGLKeyConfig           `json:"sgl_key_config,omitempty"`            // SGLang-specific key configuration
+	DatabricksKeyConfig    *DatabricksKeyConfig    `json:"databricks_key_config,omitempty"`     // Databricks-specific key configuration
+	GithubCopilotKeyConfig *GithubCopilotKeyConfig `json:"github_copilot_key_config,omitempty"` // GitHub Copilot-specific key configuration
 	Enabled                *bool                   `json:"enabled,omitempty"`                   // Whether the key is active (default:true)
 	UseForBatchAPI         *bool                   `json:"use_for_batch_api,omitempty"`         // Whether this key can be used for batch API operations (default:false for new keys, migrated keys default to true)
 	UseAnthropicEndpoints  *bool                   `json:"use_anthropic_endpoints,omitempty"`   // Whether to use anthropic endpoints for this key
+	UseOpenAIEndpoints     *bool                   `json:"use_openai_endpoints,omitempty"`      // Whether to use OpenAI-compatible endpoints for this key
 	ConfigHash             string                  `json:"config_hash,omitempty"`               // Hash of config.json version, used for change detection
 	Status                 KeyStatusType           `json:"status,omitempty"`                    // Status of key
 	Description            string                  `json:"description,omitempty"`               // Description of key
@@ -232,6 +244,7 @@ type AliasConfig struct {
 	// a field name shared by multiple same-depth anonymous structs.
 	ProjectID             *SecretVar `json:"project_id,omitempty"`
 	UseAnthropicEndpoints *bool      `json:"use_anthropic_endpoints,omitempty"` // Whether to use anthropic endpoints for this alias
+	UseOpenAIEndpoints    *bool      `json:"use_openai_endpoints,omitempty"`    // Whether to use OpenAI-compatible endpoints for this alias
 
 	*AzureAliasCfg
 	*VertexAliasCfg
@@ -250,6 +263,7 @@ func (ac AliasConfig) isLegacyShape() bool {
 		ac.Region == nil &&
 		ac.ProjectID == nil &&
 		ac.UseAnthropicEndpoints == nil &&
+		ac.UseOpenAIEndpoints == nil &&
 		ac.AzureAliasCfg == nil &&
 		ac.VertexAliasCfg == nil &&
 		ac.BedrockAliasCfg == nil &&
@@ -460,6 +474,20 @@ func ResolveCanonicalModel(ctx *BifrostContext, fallbackModel string) string {
 		}
 	}
 	return fallbackModel
+}
+
+// ResolveBaseProvider returns the built-in provider that actually served this
+// attempt. Custom providers surface their own key (e.g. "my-openai") wherever a
+// ModelProvider is reported, so provider-family gating must resolve through the
+// base type Bifrost records on the context. Falls back to provider when the
+// context carries none (direct converter calls, tests).
+func ResolveBaseProvider(ctx *BifrostContext, provider ModelProvider) ModelProvider {
+	if ctx != nil {
+		if base, ok := ctx.Value(BifrostContextKeyBaseProviderType).(ModelProvider); ok && base != "" {
+			return base
+		}
+	}
+	return provider
 }
 
 // IsAnthropicModelFamily reports whether the current attempt resolves to the
@@ -684,6 +712,43 @@ type BatchS3Config struct {
 	Buckets []S3BucketConfig `json:"buckets,omitempty"` // List of S3 bucket configurations
 }
 
+// BedrockEndpoints overrides the host Bifrost dials for each AWS endpoint service, so Bedrock
+// traffic can be routed through interface VPC endpoints (AWS PrivateLink) when private DNS is
+// not in effect. Each value is the endpoint's DNS name as listed in the VPC console, e.g.
+// "vpce-0abc123-x1y2z3.bedrock-runtime.eu-west-2.vpce.amazonaws.com". The endpoint ID alone is
+// not enough: AWS appends a random string to it that cannot be derived. Zonal names and custom
+// Route 53 aliases for the endpoint work here too. Region stays required either way, since it
+// sets the SigV4 credential scope independently of which host is dialled.
+//
+// S3 is the exception to the naming shape: its endpoint DNS is a wildcard whose leading label
+// selects the API surface, so the value must carry the literal "bucket." prefix. Bifrost prepends
+// the bucket name to whatever is set here, matching the virtual-hosted URL the AWS SDKs build.
+// An S3 Gateway endpoint needs no value at all — it routes via the route table under the public
+// S3 hostname and has no DNS name to configure.
+type BedrockEndpoints struct {
+	Runtime      *SecretVar `json:"runtime,omitempty"`       // com.amazonaws.{region}.bedrock-runtime — all inference
+	ControlPlane *SecretVar `json:"control_plane,omitempty"` // com.amazonaws.{region}.bedrock — model listing, batch jobs
+	Mantle       *SecretVar `json:"mantle,omitempty"`        // com.amazonaws.{region}.bedrock-mantle — mantle-routed models
+	AgentRuntime *SecretVar `json:"agent_runtime,omitempty"` // com.amazonaws.{region}.bedrock-agent-runtime — rerank
+	S3           *SecretVar `json:"s3,omitempty"`            // com.amazonaws.{region}.s3 — batch file I/O, "bucket."-prefixed
+}
+
+// NormalizeEndpointHost returns a configured endpoint value as a bare host, or "" when unset.
+// A value may be pasted with a scheme or a trailing path; both are stripped so callers can slot
+// the result straight into a URL template.
+func NormalizeEndpointHost(v *SecretVar) string {
+	if v == nil {
+		return ""
+	}
+	host := strings.TrimSpace(v.GetValue())
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	return host
+}
+
 // BedrockKeyConfig represents the AWS Bedrock-specific configuration.
 // It contains AWS-specific settings required for authentication and service access.
 type BedrockKeyConfig struct {
@@ -708,6 +773,9 @@ type BedrockKeyConfig struct {
 	ProjectID *SecretVar `json:"project_id,omitempty"`
 
 	BatchS3Config *BatchS3Config `json:"batch_s3_config,omitempty"` // S3 bucket configuration for batch operations
+
+	// Endpoints routes each AWS endpoint service through an interface VPC endpoint. See BedrockEndpoints.
+	Endpoints *BedrockEndpoints `json:"endpoints,omitempty"`
 }
 
 // NOTE: To use Bedrock IAM role authentication, set both AccessKey and SecretKey to empty strings.
@@ -733,6 +801,9 @@ type BedrockMantleKeyConfig struct {
 	// header on the native-Anthropic (Claude) surface. When empty, AWS routes to the account's
 	// default project.
 	ProjectID *SecretVar `json:"project_id,omitempty"`
+
+	// Endpoints routes each AWS endpoint service through an interface VPC endpoint. See BedrockEndpoints.
+	Endpoints *BedrockEndpoints `json:"endpoints,omitempty"`
 }
 
 // NOTE: To use Bedrock Mantle IAM role authentication, set both AccessKey and SecretKey to empty
@@ -764,6 +835,59 @@ type OllamaKeyConfig struct {
 // enabling per-key routing and round-robin load balancing across multiple SGLang instances.
 type SGLKeyConfig struct {
 	URL SecretVar `json:"url"` // SGLang server base URL (required, supports env. prefix)
+}
+
+// DatabricksAPIFormat selects which Databricks inference surface a key targets. Both surfaces
+// speak the OpenAI wire format, so this only selects the base path under the workspace host.
+type DatabricksAPIFormat string
+
+const (
+	// DatabricksAPIFormatAuto picks the surface from the model name: a catalog-qualified name
+	// (system.ai.*, or a <catalog>.<schema>.<service> Unity Catalog model service) goes to the
+	// Unity AI Gateway; a databricks-* name or an alias model_id is a Model Serving endpoint;
+	// any other bare name is a short name for a system.ai model and goes to the Unity AI
+	// Gateway with the system.ai. prefix added.
+	DatabricksAPIFormatAuto DatabricksAPIFormat = "auto"
+	// DatabricksAPIFormatModelServing targets /serving-endpoints — the Foundation Model APIs,
+	// covering pay-per-token endpoints (databricks-*) and provisioned-throughput endpoints.
+	DatabricksAPIFormatModelServing DatabricksAPIFormat = "model_serving"
+	// DatabricksAPIFormatAIGateway targets /ai-gateway/mlflow/v1 — the Unity AI Gateway model
+	// APIs (model services), governed through Unity Catalog.
+	DatabricksAPIFormatAIGateway DatabricksAPIFormat = "ai_gateway"
+)
+
+// DatabricksKeyConfig represents the Databricks-specific key configuration.
+// It allows each key to target a different Databricks workspace and inference surface, and
+// carries the OAuth machine-to-machine service principal credentials when a personal access
+// token is not used.
+//
+// NOTE: To use OAuth M2M authentication, leave Value in the Key struct empty and set both
+// ClientID and ClientSecret. To use a personal access token, set Value instead.
+type DatabricksKeyConfig struct {
+	WorkspaceURL       SecretVar           `json:"workspace_url"`                  // Databricks workspace URL (required, supports env. prefix); a scheme and trailing path are tolerated
+	APIFormat          DatabricksAPIFormat `json:"api_format,omitempty"`           // Which inference surface to target (default: auto)
+	ClientID           *SecretVar          `json:"client_id,omitempty"`            // OAuth M2M service principal client ID
+	ClientSecret       *SecretVar          `json:"client_secret,omitempty"`        // OAuth M2M service principal client secret
+	ForwardGatewayTags bool                `json:"forward_gateway_tags,omitempty"` // Whether to forward Bifrost governance labels as Databricks-Ai-Gateway-Request-Tags
+}
+
+// GithubCopilotKeyConfig holds GitHub App credentials for server-to-server Copilot access.
+//
+// A GitHub App carrying the "Copilot Requests" permission mints short-lived installation
+// tokens, and Copilot usage is billed to the account that owns the installation. No
+// individual Copilot seat is involved, which is what makes this the correct auth mode for
+// a shared gateway.
+//
+// The organization must also have the "Allow use of Copilot CLI billed to the
+// organization" policy enabled, and the installation needs All repositories access.
+//
+// See https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/server-to-server-tokens
+type GithubCopilotKeyConfig struct {
+	AppID          SecretVar `json:"app_id"`                  // GitHub App ID or Client ID; the App JWT issuer (required)
+	InstallationID SecretVar `json:"installation_id"`         // Installation to mint tokens for; digits only (required)
+	RepositoryID   SecretVar `json:"repository_id"`           // Repository the installation token is scoped to; digits only (required)
+	PrivateKey     SecretVar `json:"private_key"`             // GitHub App private key, PKCS#1 or PKCS#8 PEM (required)
+	GithubDomain   SecretVar `json:"github_domain,omitempty"` // GitHub Enterprise domain, e.g. "acme.ghe.com". Empty means github.com.
 }
 
 // Account defines the interface for managing provider accounts and their configurations.

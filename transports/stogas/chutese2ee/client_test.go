@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"testing"
@@ -52,5 +53,26 @@ func TestRetryAfterIsBounded(t *testing.T) {
 		5*time.Second,
 	); ok {
 		t.Fatal("accepted Retry-After beyond the synchronous delay bound")
+	}
+}
+
+func TestRetryAfterParsingDoesNotOverflowOrAdvanceRetries(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	for _, tc := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"120", 2 * time.Minute},
+		{now.Add(2 * time.Minute).Format(http.TimeFormat), 2 * time.Minute},
+		{"9223372036854775807", time.Duration(math.MaxInt64/int64(time.Second)) * time.Second},
+		{"-1", 0},
+		{"garbage", 0},
+		{now.Add(-time.Second).Format(http.TimeFormat), 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			if got := parseRetryAfter(tc.value, now); got != tc.want {
+				t.Fatalf("Retry-After %q = %s, want %s", tc.value, got, tc.want)
+			}
+		})
 	}
 }

@@ -1,13 +1,31 @@
 {
 	"name": "@stogas/api",
 	"private": true,
+	"exports": {
+		"./policy/compiler": {
+			"types": "./bindings/policy/compiler.d.mts",
+			"default": "./bindings/policy/compiler.mjs"
+		},
+		"./policy/wasm": "./dist/stogas-policy.wasm",
+		"./policy": {
+			"types": "./bindings/policy/index.d.mts",
+			"workerd": "./bindings/policy/worker.mjs",
+			"node": "./bindings/policy/node.mjs",
+			"default": "./bindings/policy/worker.mjs"
+		}
+	},
 	"scripts": {
+		"build:policy": "cd transports && GOWORK=off GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -trimpath -ldflags='-s -w' -o ../dist/stogas-policy.wasm ./cmd/stogas-policy-wasm",
 		"build": "cd transports && GOWORK=off go build -o ../dist/stogas-gateway ./cmd/stogas-gateway",
 		"check": "cd transports && GOWORK=off go test ./...",
+		"test:policy": "npm run build:policy && node --test bindings/policy/compiler.test.mjs",
 		"clean": "rm -rf dist tmp transports/vendor stogas/release/vendor",
 		"dev": "cd transports && GOWORK=off go run ./cmd/stogas-gateway",
 		"release:build": "stogas/release/scripts/build-release.sh",
 		"release:verify-pins": "node stogas/release/scripts/verify-pins.mjs"
 	},
-	"version": "0.0.1"
+	"version": "0.0.1",
+	"dependencies": {
+		"@bjorn3/browser_wasi_shim": "0.4.2"
+	}
 }

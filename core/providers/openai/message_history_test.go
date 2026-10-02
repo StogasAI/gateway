@@ -8,15 +8,17 @@ import (
 )
 
 func TestOpenAIMessageHistoryCodecPreservesNeutralFieldsAndOmitsStreamIndex(t *testing.T) {
-	input := []byte(`{"role":"assistant","content":null,"reasoning":"thought","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}`)
+	input := []byte(`{"role":"assistant","content":null,"reasoning":"thought","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"},"extra_content":{"google":{"thought_signature":"sig"}}}]}`)
 	var message OpenAIMessage
 	if err := json.Unmarshal(input, &message); err != nil {
 		t.Fatalf("unmarshal assistant history: %v", err)
 	}
-	if message.OpenAIChatAssistantMessage == nil || message.OpenAIChatAssistantMessage.Reasoning == nil || *message.OpenAIChatAssistantMessage.Reasoning != "thought" || len(message.OpenAIChatAssistantMessage.ReasoningDetails) != 1 || len(message.OpenAIChatAssistantMessage.ToolCalls) != 1 {
-		t.Fatalf("assistant history fields were not preserved: %#v", message.OpenAIChatAssistantMessage)
+	neutral := ConvertOpenAIMessagesToBifrostMessages([]OpenAIMessage{message})
+	if len(neutral) != 1 || neutral[0].ChatAssistantMessage == nil || neutral[0].Reasoning == nil || *neutral[0].Reasoning != "thought" || len(neutral[0].ReasoningDetails) != 1 || len(neutral[0].ToolCalls) != 1 {
+		t.Fatalf("assistant history fields were not preserved: %#v", neutral)
 	}
-	message.OpenAIChatAssistantMessage.ToolCalls[0].Index = 7
+	neutral[0].ToolCalls[0].Index = 7
+	message = ConvertBifrostMessagesToOpenAIMessages(neutral)[0]
 	wire, err := json.Marshal(message)
 	if err != nil {
 		t.Fatalf("marshal assistant history: %v", err)
@@ -39,6 +41,10 @@ func TestOpenAIMessageHistoryCodecPreservesNeutralFieldsAndOmitsStreamIndex(t *t
 	if !ok || toolCall["id"] != "call_1" || toolCall["type"] != "function" {
 		t.Fatalf("tool call changed: %#v", toolCalls[0])
 	}
+	if extra, ok := toolCall["extra_content"].(map[string]any); !ok || extra["google"].(map[string]any)["thought_signature"] != "sig" {
+		t.Fatalf("provider tool-call metadata was lost: %s", wire)
+	}
+
 	if _, exists := toolCall["index"]; exists {
 		t.Fatalf("stream-only tool-call index leaked to request wire: %s", wire)
 	}

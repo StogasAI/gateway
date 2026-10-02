@@ -47,7 +47,7 @@ func TestGemini(t *testing.T) {
 		SpeechSynthesisFallbacks: []schemas.Fallback{
 			{Provider: schemas.Gemini, Model: "gemini-2.5-pro-preview-tts"},
 		},
-		ReasoningModel:       "gemini-3-pro-preview",
+		ReasoningModel:       "gemini-3.1-pro-preview",
 		VideoGenerationModel: "veo-3.1-generate-preview",
 		PassthroughModel:     "gemini-2.5-flash",
 		Scenarios: llmtests.TestScenarios{
@@ -179,7 +179,9 @@ func TestEmptyCandidatesRegression(t *testing.T) {
 			var bifrostResp *schemas.BifrostChatResponse
 
 			if tt.isStream {
-				bifrostResp, _, _ = tt.response.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
+				chunks, _, _ := tt.response.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
+				require.Len(t, chunks, 1, "a chunk without inline media converts to exactly one delta")
+				bifrostResp = chunks[0]
 			} else {
 				bifrostResp = tt.response.ToBifrostChatResponse()
 			}
@@ -297,7 +299,9 @@ func TestThoughtSignatureInToolCalls(t *testing.T) {
 			var bifrostResp *schemas.BifrostChatResponse
 
 			if tt.isStream {
-				bifrostResp, _, _ = tt.response.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
+				chunks, _, _ := tt.response.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
+				require.Len(t, chunks, 1, "a chunk without inline media converts to exactly one delta")
+				bifrostResp = chunks[0]
 			} else {
 				bifrostResp = tt.response.ToBifrostChatResponse()
 			}
@@ -1561,17 +1565,22 @@ func TestStructuredOutputConversion(t *testing.T) {
 				assert.Equal(t, "application/json", result.GenerationConfig.ResponseMIMEType)
 				assert.NotNil(t, result.GenerationConfig.ResponseJSONSchema)
 
-				schemaMap := result.GenerationConfig.ResponseJSONSchema.(map[string]interface{})
-				properties := schemaMap["properties"].(map[string]interface{})
-				items := properties["items"].(map[string]interface{})
+				schemaMap, ok := asPlainMap(t, result.GenerationConfig.ResponseJSONSchema)
+				require.True(t, ok, "ResponseJSONSchema should be a schema object")
+				properties, ok := asPlainMap(t, schemaMap["properties"])
+				require.True(t, ok, "properties should be a schema object")
+				items, ok := asPlainMap(t, properties["items"])
+				require.True(t, ok, "items should be a schema object")
 
 				// Validate array items
 				assert.Equal(t, "array", items["type"])
-				itemsSchema := items["items"].(map[string]interface{})
+				itemsSchema, ok := asPlainMap(t, items["items"])
+				require.True(t, ok, "items.items should be a schema object")
 				assert.Equal(t, "object", itemsSchema["type"])
 
 				// Validate nested properties
-				nestedProps := itemsSchema["properties"].(map[string]interface{})
+				nestedProps, ok := asPlainMap(t, itemsSchema["properties"])
+				require.True(t, ok, "nested properties should be a schema object")
 				assert.Contains(t, nestedProps, "id")
 				assert.Contains(t, nestedProps, "name")
 			},
@@ -1762,6 +1771,14 @@ func asPlainMap(t *testing.T, v interface{}) (map[string]interface{}, bool) {
 		return m.ToMap(), true
 	case schemas.OrderedMap:
 		return m.ToMap(), true
+	case json.RawMessage:
+		// A schema Gemini needs no rewrites on is forwarded as the client's own
+		// raw bytes, so decode it here to inspect it.
+		var decoded map[string]interface{}
+		if err := schemas.Unmarshal(m, &decoded); err != nil {
+			return nil, false
+		}
+		return decoded, true
 	}
 	return nil, false
 }
@@ -3893,6 +3910,216 @@ func TestThinkingBudgetEffortUsesModelRange(t *testing.T) {
 	})
 }
 
+// TestThinkingLevelFromEffort covers the effort → thinkingLevel mapping on
+// Gemini 3+. Pro accepts low/high only, so minimal and medium fold onto them;
+// other models also accept minimal.
+func TestThinkingLevelFromEffort(t *testing.T) {
+	tests := []struct {
+		model  string
+		effort string
+		want   string
+	}{
+		{"gemini-3-pro-preview", "minimal", "low"},
+		{"gemini-3-pro-preview", "low", "low"},
+		{"gemini-3-pro-preview", "medium", "high"},
+		{"gemini-3-pro-preview", "high", "high"},
+		{"gemini-3-pro-preview", "xhigh", "high"},
+		{"gemini-3-pro-preview", "max", "high"},
+		{"gemini-3-flash-preview", "minimal", "minimal"},
+		{"gemini-3-flash-preview", "low", "low"},
+		{"gemini-3-flash-preview", "medium", "medium"},
+		{"gemini-3-flash-preview", "high", "high"},
+		{"gemini-3-flash-preview", "xhigh", "high"},
+		{"gemini-3-flash-preview", "max", "high"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model+"_"+tt.effort, func(t *testing.T) {
+			req := &schemas.BifrostChatRequest{
+				Model: tt.model,
+				Input: minimalChatInput(),
+				Params: &schemas.ChatParameters{
+					Reasoning: &schemas.ChatReasoning{Effort: &tt.effort},
+				},
+			}
+			result, err := gemini.ToGeminiChatCompletionRequest(nil, req)
+			require.NoError(t, err)
+			require.NotNil(t, result.GenerationConfig.ThinkingConfig)
+			require.NotNil(t, result.GenerationConfig.ThinkingConfig.ThinkingLevel)
+			assert.Equal(t, tt.want, *result.GenerationConfig.ThinkingConfig.ThinkingLevel)
+			assert.Nil(t, result.GenerationConfig.ThinkingConfig.ThinkingBudget)
+		})
+	}
+}
+
+// TestThinkingConfigResolvesPerProvider verifies capability lookups carry the
+// request's provider, so a Vertex request reads the vertex_ai row instead of the
+// Gemini one. The datasheet keys these separately and the rows can disagree.
+func TestThinkingConfigResolvesPerProvider(t *testing.T) {
+	const model = "gemini-capability-probe"
+	schemas.SetCapabilityResolver(func(provider schemas.ModelProvider, m string) *schemas.ModelCapabilities {
+		if m != model || provider != schemas.Vertex {
+			return nil
+		}
+		return &schemas.ModelCapabilities{SupportsReasoning: new(true)}
+	})
+	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+
+	effort := "low"
+	for _, tt := range []struct {
+		provider     schemas.ModelProvider
+		wantThinking bool
+	}{
+		{schemas.Gemini, false},
+		{schemas.Vertex, true},
+	} {
+		t.Run(string(tt.provider), func(t *testing.T) {
+			req := &schemas.BifrostChatRequest{
+				Provider: tt.provider,
+				Model:    model,
+				Input:    minimalChatInput(),
+				Params: &schemas.ChatParameters{
+					Reasoning: &schemas.ChatReasoning{Effort: &effort},
+				},
+			}
+			result, err := gemini.ToGeminiChatCompletionRequest(nil, req)
+			require.NoError(t, err)
+			if tt.wantThinking {
+				assert.NotNil(t, result.GenerationConfig.ThinkingConfig)
+			} else {
+				assert.Nil(t, result.GenerationConfig.ThinkingConfig)
+			}
+		})
+	}
+}
+
+// TestGemini3CapabilityGatesReadDatasheet covers the three model gates that used
+// to be Gemini-3 name checks. Each subtest pins a 2.5-era model, which the name
+// fallback answers false, and asserts the datasheet record flips it. The
+// fallback side is covered by TestStructuredOutputWithToolsConflict,
+// TestThinkingLevelFromEffort and TestMultimodalFunctionResponse_RoundTrip.
+func TestGemini3CapabilityGatesReadDatasheet(t *testing.T) {
+	const model = "gemini-2.5-flash"
+
+	withCaps := func(t *testing.T, record *schemas.ModelCapabilities) {
+		schemas.SetCapabilityResolver(func(_ schemas.ModelProvider, m string) *schemas.ModelCapabilities {
+			if m != model {
+				return nil
+			}
+			return record
+		})
+		t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+	}
+
+	t.Run("effort_control_selects_thinking_level", func(t *testing.T) {
+		withCaps(t, &schemas.ModelCapabilities{
+			SupportsReasoning:     new(true),
+			ReasoningEffortLevels: []string{"low", "high"},
+		})
+
+		effort := "low"
+		result, err := gemini.ToGeminiChatCompletionRequest(nil, &schemas.BifrostChatRequest{
+			Model: model,
+			Input: minimalChatInput(),
+			Params: &schemas.ChatParameters{
+				Reasoning: &schemas.ChatReasoning{Effort: &effort},
+			},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, result.GenerationConfig.ThinkingConfig)
+		require.NotNil(t, result.GenerationConfig.ThinkingConfig.ThinkingLevel)
+		assert.Equal(t, "low", *result.GenerationConfig.ThinkingConfig.ThinkingLevel)
+		assert.Nil(t, result.GenerationConfig.ThinkingConfig.ThinkingBudget,
+			"an effort control must send thinkingLevel rather than convert to a budget")
+	})
+
+	t.Run("response_schema_survives_alongside_tools", func(t *testing.T) {
+		withCaps(t, &schemas.ModelCapabilities{SupportsResponseSchemaWithTools: new(true)})
+
+		result, err := gemini.ToGeminiChatCompletionRequest(nil, &schemas.BifrostChatRequest{
+			Model: model,
+			Input: minimalChatInput(),
+			Params: &schemas.ChatParameters{
+				Tools: []schemas.ChatTool{{
+					Type: schemas.ChatToolTypeFunction,
+					Function: &schemas.ChatToolFunction{
+						Name:       "get_weather",
+						Parameters: &schemas.ToolFunctionParameters{Type: "object"},
+					},
+				}},
+				ResponseFormat: schemas.Ptr[interface{}](map[string]interface{}{"type": "json_object"}),
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "application/json", result.GenerationConfig.ResponseMIMEType)
+		assert.NotEmpty(t, result.Tools)
+	})
+
+	t.Run("multimodal_tool_output_keeps_media_parts", func(t *testing.T) {
+		withCaps(t, &schemas.ModelCapabilities{SupportsMultimodalToolOutput: new(true)})
+
+		result, err := gemini.ToGeminiResponsesRequest(nil, &schemas.BifrostResponsesRequest{
+			Model: model,
+			Input: multimodalToolOutputInput(),
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, mediaPartsInFunctionResponse(result),
+			"media blocks must ride along as functionResponse.parts when the model supports them")
+	})
+
+	t.Run("multimodal_tool_output_drops_media_when_unsupported", func(t *testing.T) {
+		withCaps(t, &schemas.ModelCapabilities{SupportsMultimodalToolOutput: new(false)})
+
+		result, err := gemini.ToGeminiResponsesRequest(nil, &schemas.BifrostResponsesRequest{
+			Model: model,
+			Input: multimodalToolOutputInput(),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, mediaPartsInFunctionResponse(result),
+			"media blocks must be dropped rather than sent to a model that rejects them")
+	})
+}
+
+// multimodalToolOutputInput builds a function_call_output carrying one text and
+// one image block, the shape the multimodal tool-output gate acts on.
+func multimodalToolOutputInput() []schemas.ResponsesMessage {
+	const redPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	return []schemas.ResponsesMessage{{
+		Type: schemas.Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{
+			CallID: schemas.Ptr("c1"),
+			Name:   schemas.Ptr("read_file"),
+			Output: &schemas.ResponsesToolMessageOutputStruct{
+				ResponsesFunctionToolCallOutputBlocks: []schemas.ResponsesMessageContentBlock{
+					{
+						Type: schemas.ResponsesInputMessageContentBlockTypeText,
+						Text: schemas.Ptr("result:"),
+					},
+					{
+						Type: schemas.ResponsesInputMessageContentBlockTypeImage,
+						ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{
+							ImageURL: schemas.Ptr("data:image/png;base64," + redPNG),
+						},
+					},
+				},
+			},
+		},
+	}}
+}
+
+// mediaPartsInFunctionResponse returns the media parts hanging off the first
+// functionResponse in the request.
+func mediaPartsInFunctionResponse(req *gemini.GeminiGenerationRequest) []*gemini.Part {
+	for _, content := range req.Contents {
+		for _, part := range content.Parts {
+			if part.FunctionResponse != nil {
+				return part.FunctionResponse.Parts
+			}
+		}
+	}
+	return nil
+}
+
 // Regression: GenAI /generateContent path must not turn thinkingLevel into a derived
 // thinkingBudget (which changes Gemini 3.x behavior). Inbound should set effort only;
 // outbound for Gemini 3+ should emit thinkingLevel again.
@@ -3948,6 +4175,183 @@ func TestGenAIMediaResolution_PreservedThroughBifrostRoundTrip(t *testing.T) {
 		"mediaResolution must round-trip into the outbound generationConfig")
 }
 
+// --- per-part mediaResolution ---------------------------------------------------------------
+//
+// Google models media resolution twice: once request-wide on generationConfig (covered above) and
+// once per Part (Vertex AI v1 Part field 12, outside the data/metadata oneofs; Gemini 3+ only).
+// The per-part value overrides the request-level one for that part, so dropping it silently
+// downgrades image/PDF tokenization. Bifrost's Part had no such field, and Part.UnmarshalJSON
+// decodes into a closed alias, so the key was discarded before any conversion ran.
+
+const testPixelJPEG = "/9j/4AAQSkZJRg=="
+
+func geminiImagePartRequest(mr *gemini.PartMediaResolution) *gemini.GeminiGenerationRequest {
+	return &gemini.GeminiGenerationRequest{
+		Model: "gemini-3.1-flash-lite",
+		Contents: []gemini.Content{{
+			Role: "user",
+			Parts: []*gemini.Part{
+				{Text: "what is in this image?"},
+				{
+					InlineData:      &gemini.Blob{MIMEType: "image/jpeg", Data: testPixelJPEG},
+					MediaResolution: mr,
+				},
+			},
+		}},
+	}
+}
+
+// roundTripGeminiRequest runs the full /genai conversion: Gemini → Bifrost → Gemini.
+func roundTripGeminiRequest(t *testing.T, req *gemini.GeminiGenerationRequest) *gemini.GeminiGenerationRequest {
+	t.Helper()
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostReq := req.ToBifrostResponsesRequest(bifrostCtx)
+	require.NotNil(t, bifrostReq)
+	out, err := gemini.ToGeminiResponsesRequest(nil, bifrostReq)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	return out
+}
+
+// findPartWithMediaResolution returns the first part carrying a media resolution.
+func findPartWithMediaResolution(req *gemini.GeminiGenerationRequest) *gemini.PartMediaResolution {
+	for _, c := range req.Contents {
+		for _, p := range c.Parts {
+			if p != nil && p.MediaResolution != nil {
+				return p.MediaResolution
+			}
+		}
+	}
+	return nil
+}
+
+// Regression: a per-part mediaResolution on an inline image must survive Gemini → Bifrost → Gemini.
+// It used to be dropped at Part.UnmarshalJSON, so image tokens were billed at the model default
+// (~21k instead of ~22.1k for MEDIA_RESOLUTION_ULTRA_HIGH).
+func TestGenAIPartMediaResolution_PreservedThroughBifrostRoundTrip(t *testing.T) {
+	req := geminiImagePartRequest(&gemini.PartMediaResolution{Level: "MEDIA_RESOLUTION_ULTRA_HIGH"})
+
+	got := findPartWithMediaResolution(roundTripGeminiRequest(t, req))
+	require.NotNil(t, got, "per-part mediaResolution must survive the round trip")
+	assert.Equal(t, "MEDIA_RESOLUTION_ULTRA_HIGH", got.Level)
+	assert.Nil(t, got.NumTokens, "numTokens must stay unset when the caller omitted it")
+}
+
+// numTokens is Gemini-API-only (Vertex v1's nested message carries level alone), but when a caller
+// sends it we must pass it through rather than normalize it away.
+func TestGenAIPartMediaResolution_NumTokensRoundTrips(t *testing.T) {
+	numTokens := int32(512)
+	req := geminiImagePartRequest(&gemini.PartMediaResolution{NumTokens: &numTokens})
+
+	got := findPartWithMediaResolution(roundTripGeminiRequest(t, req))
+	require.NotNil(t, got)
+	require.NotNil(t, got.NumTokens)
+	assert.Equal(t, int32(512), *got.NumTokens)
+}
+
+// "Omitted settings should remain omitted": a part without a media resolution must not grow one,
+// and must not emit an empty mediaResolution object on the wire.
+func TestGenAIPartMediaResolution_OmittedStaysOmitted(t *testing.T) {
+	out := roundTripGeminiRequest(t, geminiImagePartRequest(nil))
+	assert.Nil(t, findPartWithMediaResolution(out), "no part may gain a media resolution")
+
+	encoded, err := sonic.Marshal(out.Contents)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "mediaResolution",
+		"an unset media resolution must not be serialized")
+}
+
+// Google's own REST example uses the snake_case key, and the google-genai SDK emits snake_case
+// inside functionResponse.parts, so Part must accept both spellings — camelCase winning when both
+// are present, matching the existing inlineData/fileData and generationConfig precedence.
+func TestGenAIPartMediaResolution_AcceptsSnakeCaseKey(t *testing.T) {
+	t.Run("snake_case only", func(t *testing.T) {
+		var part gemini.Part
+		require.NoError(t, sonic.Unmarshal([]byte(
+			`{"inline_data":{"mime_type":"image/jpeg","data":"`+testPixelJPEG+`"},`+
+				`"media_resolution":{"level":"MEDIA_RESOLUTION_HIGH"}}`), &part))
+		require.NotNil(t, part.MediaResolution)
+		assert.Equal(t, "MEDIA_RESOLUTION_HIGH", part.MediaResolution.Level)
+	})
+
+	t.Run("camelCase wins over snake_case", func(t *testing.T) {
+		var part gemini.Part
+		require.NoError(t, sonic.Unmarshal([]byte(
+			`{"text":"hi","mediaResolution":{"level":"MEDIA_RESOLUTION_LOW"},`+
+				`"media_resolution":{"level":"MEDIA_RESOLUTION_ULTRA_HIGH"}}`), &part))
+		require.NotNil(t, part.MediaResolution)
+		assert.Equal(t, "MEDIA_RESOLUTION_LOW", part.MediaResolution.Level)
+	})
+
+	t.Run("num_tokens snake_case", func(t *testing.T) {
+		var part gemini.Part
+		require.NoError(t, sonic.Unmarshal([]byte(
+			`{"text":"hi","mediaResolution":{"num_tokens":256}}`), &part))
+		require.NotNil(t, part.MediaResolution)
+		require.NotNil(t, part.MediaResolution.NumTokens)
+		assert.Equal(t, int32(256), *part.MediaResolution.NumTokens)
+	})
+
+	t.Run("marshals back as camelCase", func(t *testing.T) {
+		numTokens := int32(256)
+		encoded, err := sonic.Marshal(gemini.Part{
+			Text:            "hi",
+			MediaResolution: &gemini.PartMediaResolution{Level: "MEDIA_RESOLUTION_LOW", NumTokens: &numTokens},
+		})
+		require.NoError(t, err)
+		assert.Contains(t, string(encoded), `"mediaResolution":{"level":"MEDIA_RESOLUTION_LOW","numTokens":256}`)
+	})
+}
+
+// Per-part media resolution applies to PDFs and file URIs too, not just inline images. Those take
+// different branches of the Gemini↔Bifrost part conversion (File block rather than Image block),
+// so each needs its own coverage.
+func TestGenAIPartMediaResolution_NonImageParts(t *testing.T) {
+	t.Run("inline pdf", func(t *testing.T) {
+		req := &gemini.GeminiGenerationRequest{
+			Model: "gemini-3.1-flash-lite",
+			Contents: []gemini.Content{{Role: "user", Parts: []*gemini.Part{{
+				InlineData:      &gemini.Blob{MIMEType: "application/pdf", Data: "JVBERi0xLjQK"},
+				MediaResolution: &gemini.PartMediaResolution{Level: "MEDIA_RESOLUTION_HIGH"},
+			}}}},
+		}
+		got := findPartWithMediaResolution(roundTripGeminiRequest(t, req))
+		require.NotNil(t, got, "media resolution must survive on an inline PDF part")
+		assert.Equal(t, "MEDIA_RESOLUTION_HIGH", got.Level)
+	})
+
+	t.Run("file uri", func(t *testing.T) {
+		req := &gemini.GeminiGenerationRequest{
+			Model: "gemini-3.1-flash-lite",
+			Contents: []gemini.Content{{Role: "user", Parts: []*gemini.Part{{
+				FileData:        &gemini.FileData{MIMEType: "image/png", FileURI: "https://example.com/a.png"},
+				MediaResolution: &gemini.PartMediaResolution{Level: "MEDIA_RESOLUTION_MEDIUM"},
+			}}}},
+		}
+		got := findPartWithMediaResolution(roundTripGeminiRequest(t, req))
+		require.NotNil(t, got, "media resolution must survive on a fileData part")
+		assert.Equal(t, "MEDIA_RESOLUTION_MEDIUM", got.Level)
+	})
+}
+
+// Retry/fallback guarantee. Unlike generationConfig.mediaResolution — which is tunnelled through the
+// shared ExtraParams map and was consumed by the first attempt (#7138) — the per-part value lives on
+// a typed field that is read, never popped. Converting the same Bifrost request repeatedly, as a
+// retry or a provider fallback does, must yield the identical media resolution every time.
+func TestGenAIPartMediaResolution_StableAcrossRepeatedConversions(t *testing.T) {
+	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostReq := geminiImagePartRequest(
+		&gemini.PartMediaResolution{Level: "MEDIA_RESOLUTION_ULTRA_HIGH"}).ToBifrostResponsesRequest(bifrostCtx)
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		out, err := gemini.ToGeminiResponsesRequest(nil, bifrostReq)
+		require.NoError(t, err, "attempt %d", attempt)
+		got := findPartWithMediaResolution(out)
+		require.NotNil(t, got, "attempt %d lost the per-part media resolution", attempt)
+		assert.Equal(t, "MEDIA_RESOLUTION_ULTRA_HIGH", got.Level, "attempt %d", attempt)
+	}
+}
+
 // Regression: MAX_TOKENS from Gemini must survive Gemini → Bifrost → Gemini on the GenAI path
 // (StopReason used to be dropped, so clients saw STOP instead of MAX_TOKENS).
 func TestGenAIFinishReasonMaxTokens_PersistsThroughBifrostRoundTrip(t *testing.T) {
@@ -3976,6 +4380,61 @@ func TestGenAIFinishReasonMaxTokens_PersistsThroughBifrostRoundTrip(t *testing.T
 	require.NotNil(t, out)
 	require.Len(t, out.Candidates, 1)
 	assert.Equal(t, gemini.FinishReasonMaxTokens, out.Candidates[0].FinishReason)
+}
+
+// Regression: candidates[0].safetyRatings, candidates[0].avgLogprobs, and the native
+// responseId must survive Gemini/Vertex → Bifrost → Gemini on the GenAI generateContent
+// path. These fields have no home in Bifrost's OpenAI-shaped Responses schema, so they
+// must be preserved via ProviderExtraFields rather than silently dropped.
+// See https://github.com/maximhq/bifrost/issues/5843
+func TestGenAISafetyRatingsAvgLogprobsResponseID_PersistThroughBifrostRoundTrip(t *testing.T) {
+	geminiResp := &gemini.GenerateContentResponse{
+		ResponseID:   "abcd1234",
+		ModelVersion: "gemini-2.5-flash",
+		Candidates: []*gemini.Candidate{
+			{
+				Index:        0,
+				FinishReason: gemini.FinishReasonStop,
+				AvgLogprobs:  -0.1234,
+				Content: &gemini.Content{
+					Role: "model",
+					Parts: []*gemini.Part{
+						{Text: "hello there"},
+					},
+				},
+				SafetyRatings: []*gemini.SafetyRating{
+					{
+						Category:    "HARM_CATEGORY_HARASSMENT",
+						Probability: "NEGLIGIBLE",
+					},
+					{
+						Category:    "HARM_CATEGORY_DANGEROUS_CONTENT",
+						Probability: "LOW",
+						Blocked:     false,
+					},
+				},
+			},
+		},
+	}
+
+	bifrostResp := geminiResp.ToResponsesBifrostResponsesResponse()
+	require.NotNil(t, bifrostResp)
+	require.NotNil(t, bifrostResp.ProviderExtraFields, "safetyRatings/avgLogprobs/responseId must be captured in ProviderExtraFields since Bifrost's Responses schema has no field for them")
+	assert.Equal(t, "abcd1234", bifrostResp.ProviderExtraFields["responseId"])
+	assert.NotNil(t, bifrostResp.ProviderExtraFields["safetyRatings"])
+	assert.Equal(t, -0.1234, bifrostResp.ProviderExtraFields["avgLogprobs"])
+
+	out := gemini.ToGeminiResponsesResponse(bifrostResp)
+	require.NotNil(t, out)
+	require.Len(t, out.Candidates, 1)
+
+	assert.Equal(t, "abcd1234", out.ResponseID, "native responseId must be restored, not the synthesized resp_... internal ID")
+	assert.InDelta(t, -0.1234, out.Candidates[0].AvgLogprobs, 0.0001)
+	require.Len(t, out.Candidates[0].SafetyRatings, 2)
+	assert.Equal(t, "HARM_CATEGORY_HARASSMENT", out.Candidates[0].SafetyRatings[0].Category)
+	assert.Equal(t, "NEGLIGIBLE", out.Candidates[0].SafetyRatings[0].Probability)
+	assert.Equal(t, "HARM_CATEGORY_DANGEROUS_CONTENT", out.Candidates[0].SafetyRatings[1].Category)
+	assert.Equal(t, "LOW", out.Candidates[0].SafetyRatings[1].Probability)
 }
 
 // Regression: GenAI usageMetadata modality details must include tokenCount even when zero.
@@ -4457,6 +4916,42 @@ func TestImageEditSizeRoundtrip(t *testing.T) {
 	assert.Equal(t, "1:1", outReq.GenerationConfig.ImageConfig.AspectRatio)
 }
 
+// TestImageAspectRatioPassthrough verifies imageConfig.aspectRatio values that size cannot express
+// reach the outbound generateContent request unchanged on both image paths.
+func TestImageAspectRatioPassthrough(t *testing.T) {
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	pngPixel := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+	for _, aspectRatio := range []string{"3:2", "2:3", "21:9"} {
+		t.Run(aspectRatio, func(t *testing.T) {
+			inReq := &gemini.GeminiGenerationRequest{
+				Model: "gemini-3-pro-image",
+				GenerationConfig: gemini.GenerationConfig{
+					ResponseModalities: []gemini.Modality{gemini.ModalityImage},
+					ImageConfig:        &gemini.GeminiImageConfig{ImageSize: "2K", AspectRatio: aspectRatio},
+				},
+				Contents: []gemini.Content{{
+					Role:  "user",
+					Parts: []*gemini.Part{{Text: "hello kitty"}},
+				}},
+			}
+
+			genReq := gemini.ToGeminiImageGenerationRequest(inReq.ToBifrostImageGenerationRequest(ctx))
+			require.NotNil(t, genReq)
+			require.NotNil(t, genReq.GenerationConfig.ImageConfig)
+			assert.Equal(t, aspectRatio, genReq.GenerationConfig.ImageConfig.AspectRatio)
+			assert.Equal(t, "2K", genReq.GenerationConfig.ImageConfig.ImageSize)
+
+			inReq.Contents[0].Parts = append(inReq.Contents[0].Parts, &gemini.Part{InlineData: &gemini.Blob{MIMEType: "image/png", Data: pngPixel}})
+			editReq := gemini.ToGeminiImageEditRequest(inReq.ToBifrostImageEditRequest(ctx))
+			require.NotNil(t, editReq)
+			require.NotNil(t, editReq.GenerationConfig.ImageConfig)
+			assert.Equal(t, aspectRatio, editReq.GenerationConfig.ImageConfig.AspectRatio)
+			assert.Equal(t, "2K", editReq.GenerationConfig.ImageConfig.ImageSize)
+		})
+	}
+}
+
 // TestImagenImageSizeCasing verifies that the Imagen :predict path sends uppercase imageSize.
 func TestImagenImageSizeCasing(t *testing.T) {
 	tests := []struct {
@@ -4715,9 +5210,11 @@ func TestGroundingMetadataToChatAnnotations(t *testing.T) {
 
 	t.Run("stream emits annotations on the finish-reason chunk", func(t *testing.T) {
 		state := gemini.NewGeminiStreamState()
-		bifrostResp, bifrostErr, isLast := response.ToBifrostChatCompletionStream(state)
+		chunks, bifrostErr, isLast := response.ToBifrostChatCompletionStream(state)
 		require.Nil(t, bifrostErr)
 		assert.True(t, isLast)
+		require.Len(t, chunks, 1)
+		bifrostResp := chunks[0]
 		require.Len(t, bifrostResp.Choices, 1)
 		delta := bifrostResp.Choices[0].ChatStreamResponseChoice.Delta
 		require.Len(t, delta.Annotations, 3)
@@ -4739,9 +5236,11 @@ func TestGroundingMetadataToChatAnnotations(t *testing.T) {
 				},
 			},
 		}
-		bifrostResp, bifrostErr, isLast := intermediate.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
+		chunks, bifrostErr, isLast := intermediate.ToBifrostChatCompletionStream(gemini.NewGeminiStreamState())
 		require.Nil(t, bifrostErr)
 		assert.False(t, isLast)
+		require.Len(t, chunks, 1)
+		bifrostResp := chunks[0]
 		require.Len(t, bifrostResp.Choices, 1)
 		assert.Empty(t, bifrostResp.Choices[0].ChatStreamResponseChoice.Delta.Annotations)
 	})
@@ -4749,7 +5248,7 @@ func TestGroundingMetadataToChatAnnotations(t *testing.T) {
 
 // TestIncludeServerSideToolInvocations covers Gemini's tool-combination opt-in:
 // without it Gemini rejects function declarations sent alongside Google Search, so
-// the declarations are dropped; with it both go on the wire.
+// Google Search is dropped and the declarations are preserved; with it both go on the wire.
 func TestIncludeServerSideToolInvocations(t *testing.T) {
 	responsesReq := func(include *bool) *schemas.BifrostResponsesRequest {
 		return &schemas.BifrostResponsesRequest{
@@ -4771,21 +5270,149 @@ func TestIncludeServerSideToolInvocations(t *testing.T) {
 		}
 	}
 
-	t.Run("flag absent drops function declarations (unchanged behaviour)", func(t *testing.T) {
+	t.Run("flag absent drops google search, keeps function declarations", func(t *testing.T) {
 		out, err := gemini.ToGeminiResponsesRequest(nil, responsesReq(nil))
 		require.NoError(t, err)
 		require.Len(t, out.Tools, 1)
-		assert.NotNil(t, out.Tools[0].GoogleSearch)
-		assert.Empty(t, out.Tools[0].FunctionDeclarations)
-		assert.Nil(t, out.ToolConfig)
+		assert.Nil(t, out.Tools[0].GoogleSearch)
+		require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+		assert.Equal(t, "get_weather", out.Tools[0].FunctionDeclarations[0].Name)
 	})
 
-	t.Run("flag false drops function declarations", func(t *testing.T) {
+	t.Run("flag false drops google search, keeps function declarations", func(t *testing.T) {
 		out, err := gemini.ToGeminiResponsesRequest(nil, responsesReq(schemas.Ptr(false)))
 		require.NoError(t, err)
 		require.Len(t, out.Tools, 1)
+		assert.Nil(t, out.Tools[0].GoogleSearch)
+		require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+	})
+
+	t.Run("vertex sends both without the flag", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Provider = schemas.Vertex
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.Len(t, out.Tools, 2, "vertex accepts built-in and function tools together")
+		require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+		assert.Equal(t, "get_weather", out.Tools[0].FunctionDeclarations[0].Name)
+		assert.NotNil(t, out.Tools[1].GoogleSearch)
+	})
+
+	// Tool combination arrived with Gemini 3. Sending both tool kinds to an older model
+	// makes Vertex reject the whole request with
+	// "Multiple tools are supported only when they are all search tools", so the
+	// declarations-win drop still has to apply there -- a degraded answer beats a 400.
+	t.Run("vertex drops google search for models without tool combination", func(t *testing.T) {
+		for _, model := range []string{"gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"} {
+			t.Run(model, func(t *testing.T) {
+				req := responsesReq(nil)
+				req.Provider = schemas.Vertex
+				req.Model = model
+				out, err := gemini.ToGeminiResponsesRequest(nil, req)
+				require.NoError(t, err)
+				require.Len(t, out.Tools, 1, "pre-Gemini-3 models cannot combine tool kinds")
+				assert.Nil(t, out.Tools[0].GoogleSearch)
+				require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+				assert.Equal(t, "get_weather", out.Tools[0].FunctionDeclarations[0].Name)
+			})
+		}
+	})
+
+	t.Run("vertex sends both for gemini 3 and newer", func(t *testing.T) {
+		for _, model := range []string{"gemini-3-flash-preview", "gemini-3.6-flash", "gemini-4-pro"} {
+			t.Run(model, func(t *testing.T) {
+				req := responsesReq(nil)
+				req.Provider = schemas.Vertex
+				req.Model = model
+				out, err := gemini.ToGeminiResponsesRequest(nil, req)
+				require.NoError(t, err)
+				require.Len(t, out.Tools, 2, "gemini 3+ accepts both tool kinds on vertex")
+				require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+				assert.NotNil(t, out.Tools[1].GoogleSearch)
+			})
+		}
+	})
+
+	// An unrecognised model must not be assumed capable: dropping google search yields a
+	// degraded answer, sending both yields a hard 400.
+	t.Run("vertex drops google search for unrecognised models", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Provider = schemas.Vertex
+		req.Model = "some-tuned-endpoint"
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.Len(t, out.Tools, 1)
+		assert.Nil(t, out.Tools[0].GoogleSearch)
+	})
+
+	t.Run("vertex keeps search localization alongside declarations", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Provider = schemas.Vertex
+		req.Params.Tools[0].ResponsesToolWebSearch = &schemas.ResponsesToolWebSearch{
+			UserLocation: &schemas.ResponsesToolWebSearchUserLocation{
+				Latitude:  schemas.Ptr(48.85),
+				Longitude: schemas.Ptr(2.35),
+			},
+		}
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.Len(t, out.Tools, 2)
+		require.NotNil(t, out.ToolConfig)
+		require.NotNil(t, out.ToolConfig.RetrievalConfig)
+		require.NotNil(t, out.ToolConfig.RetrievalConfig.LatLng)
+		require.NotNil(t, out.ToolConfig.RetrievalConfig.LatLng.Latitude)
+		assert.Equal(t, 48.85, *out.ToolConfig.RetrievalConfig.LatLng.Latitude)
+		// Both coordinates have to survive: a half-populated LatLng points at the wrong
+		// place rather than at no place, which Gemini accepts without complaint.
+		require.NotNil(t, out.ToolConfig.RetrievalConfig.LatLng.Longitude)
+		assert.Equal(t, 2.35, *out.ToolConfig.RetrievalConfig.LatLng.Longitude)
+	})
+
+	t.Run("vertex does not force the server-side invocation flag on", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Provider = schemas.Vertex
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		if out.ToolConfig != nil {
+			assert.Nil(t, out.ToolConfig.IncludeServerSideToolInvocations,
+				"vertex needs no opt-in; the flag must not be synthesized")
+		}
+	})
+
+	t.Run("surviving declarations carry the tool choice through", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: schemas.Ptr("required")}
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.NotNil(t, out.ToolConfig, "toolConfig must survive alongside the declarations")
+		require.NotNil(t, out.ToolConfig.FunctionCallingConfig)
+		assert.Equal(t, gemini.FunctionCallingConfigModeAny, out.ToolConfig.FunctionCallingConfig.Mode)
+	})
+
+	t.Run("web search alone is untouched", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Params.Tools = req.Params.Tools[:1]
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.Len(t, out.Tools, 1)
 		assert.NotNil(t, out.Tools[0].GoogleSearch)
-		assert.Nil(t, out.ToolConfig)
+	})
+
+	t.Run("dropped google search takes its localization with it", func(t *testing.T) {
+		req := responsesReq(nil)
+		req.Params.Tools[0].ResponsesToolWebSearch = &schemas.ResponsesToolWebSearch{
+			UserLocation: &schemas.ResponsesToolWebSearchUserLocation{
+				Latitude:  schemas.Ptr(48.85),
+				Longitude: schemas.Ptr(2.35),
+			},
+		}
+		out, err := gemini.ToGeminiResponsesRequest(nil, req)
+		require.NoError(t, err)
+		require.Len(t, out.Tools, 1)
+		assert.Nil(t, out.Tools[0].GoogleSearch)
+		if out.ToolConfig != nil {
+			assert.Nil(t, out.ToolConfig.RetrievalConfig, "retrievalConfig is meaningless without googleSearch")
+		}
 	})
 
 	t.Run("flag true sends both as separate tool entries", func(t *testing.T) {
@@ -4882,9 +5509,11 @@ func TestIncludeServerSideToolInvocationsGenAIRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 
 			if !tt.want {
-				// Combination not requested: today's behaviour keeps search, drops declarations.
+				// Combination not requested: declarations win, googleSearch is dropped.
 				require.Len(t, out.Tools, 1)
-				assert.NotNil(t, out.Tools[0].GoogleSearch)
+				assert.Nil(t, out.Tools[0].GoogleSearch)
+				require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+				assert.Equal(t, "get_weather", out.Tools[0].FunctionDeclarations[0].Name)
 				return
 			}
 
@@ -4897,6 +5526,37 @@ func TestIncludeServerSideToolInvocationsGenAIRoundTrip(t *testing.T) {
 			assert.True(t, *out.ToolConfig.IncludeServerSideToolInvocations)
 		})
 	}
+}
+
+// TestGenAICombinedToolEntryKeepsDeclarations covers a single tools[] entry carrying both
+// googleSearch and functionDeclarations (legal on Gemini 3+): the declarations must reach
+// the wire, since they may be MCP-derived tools the caller has to be able to invoke.
+func TestGenAICombinedToolEntryKeepsDeclarations(t *testing.T) {
+	body := `{
+		"contents": [{"role": "user", "parts": [{"text": "weather in tokyo?"}]}],
+		"toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
+		"tools": [{
+			"googleSearch": {},
+			"functionDeclarations": [{"name": "get_weather", "parametersJsonSchema": {"type": "object"}}]
+		}]
+	}`
+
+	var req gemini.GeminiGenerationRequest
+	require.NoError(t, sonic.Unmarshal([]byte(body), &req))
+
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostReq := req.ToBifrostResponsesRequest(ctx)
+	require.NotNil(t, bifrostReq)
+	require.Len(t, bifrostReq.Params.Tools, 2, "both tool kinds must survive ingest")
+
+	out, err := gemini.ToGeminiResponsesRequest(ctx, bifrostReq)
+	require.NoError(t, err)
+	require.Len(t, out.Tools, 1)
+	require.Len(t, out.Tools[0].FunctionDeclarations, 1)
+	assert.Equal(t, "get_weather", out.Tools[0].FunctionDeclarations[0].Name)
+	require.NotNil(t, out.ToolConfig)
+	require.NotNil(t, out.ToolConfig.FunctionCallingConfig)
+	assert.Equal(t, gemini.FunctionCallingConfigModeAny, out.ToolConfig.FunctionCallingConfig.Mode)
 }
 
 // TestGroundingMultiSourceCitationsResponses covers the non-streaming Responses path
@@ -5119,11 +5779,13 @@ func TestGoogleSearchBillingUnits(t *testing.T) {
 
 		var billed *int
 		for _, chunk := range chunks {
-			resp, bifrostErr, _ := chunk.ToBifrostChatCompletionStream(state)
+			resps, bifrostErr, _ := chunk.ToBifrostChatCompletionStream(state)
 			require.Nil(t, bifrostErr)
-			if resp != nil && resp.Usage != nil && resp.Usage.CompletionTokensDetails != nil &&
-				resp.Usage.CompletionTokensDetails.NumSearchQueries != nil {
-				billed = resp.Usage.CompletionTokensDetails.NumSearchQueries
+			for _, resp := range resps {
+				if resp.Usage != nil && resp.Usage.CompletionTokensDetails != nil &&
+					resp.Usage.CompletionTokensDetails.NumSearchQueries != nil {
+					billed = resp.Usage.CompletionTokensDetails.NumSearchQueries
+				}
 			}
 		}
 		require.NotNil(t, billed, "streaming must bill search queries on the finish chunk")
@@ -5171,4 +5833,52 @@ func TestChatToolConfigRequiresFunctionDeclarations(t *testing.T) {
 		assert.Empty(t, out.Tools, "custom tools produce no Gemini declarations")
 		assert.Nil(t, out.ToolConfig, "functionCallingConfig without function_declarations is rejected by Gemini")
 	})
+}
+
+// The outbound converter stamps media resolution only onto parts that actually carry media.
+// A text, reasoning or refusal part has nothing to resolve, and Gemini rejects the field there,
+// so a block that somehow carries one must not leak it onto a text part.
+func TestGenAIPartMediaResolution_NeverStampedOnTextParts(t *testing.T) {
+	text := "hello"
+	bifrostReq := &schemas.BifrostResponsesRequest{
+		Model: "gemini-3.1-flash-lite",
+		Input: []schemas.ResponsesMessage{{
+			Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+			Type: schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+			Content: &schemas.ResponsesMessageContent{
+				ContentBlocks: []schemas.ResponsesMessageContentBlock{{
+					Type:            schemas.ResponsesInputMessageContentBlockTypeText,
+					Text:            &text,
+					MediaResolution: &schemas.MediaResolution{Level: "MEDIA_RESOLUTION_HIGH"},
+				}},
+			},
+		}},
+	}
+
+	out, err := gemini.ToGeminiResponsesRequest(nil, bifrostReq)
+	require.NoError(t, err)
+	assert.Nil(t, findPartWithMediaResolution(out),
+		"a text part must never carry a media resolution")
+}
+
+// The batch path re-marshals each inline body through GeminiBatchGenerateContentRequest, which
+// reuses the same Part type, so per-part media resolution was dropped there too.
+func TestGenAIPartMediaResolution_SurvivesBatchConversion(t *testing.T) {
+	body := map[string]interface{}{
+		"contents": []interface{}{map[string]interface{}{
+			"role": "user",
+			"parts": []interface{}{map[string]interface{}{
+				"inlineData":      map[string]interface{}{"mimeType": "image/jpeg", "data": testPixelJPEG},
+				"mediaResolution": map[string]interface{}{"level": "MEDIA_RESOLUTION_ULTRA_HIGH"},
+			}},
+		}},
+	}
+
+	batchReq, err := gemini.ToGeminiBatchGenerateContentRequest(body)
+	require.NoError(t, err)
+	require.NotEmpty(t, batchReq.Contents)
+	require.NotEmpty(t, batchReq.Contents[0].Parts)
+	got := batchReq.Contents[0].Parts[0].MediaResolution
+	require.NotNil(t, got, "batch conversion must preserve per-part media resolution")
+	assert.Equal(t, "MEDIA_RESOLUTION_ULTRA_HIGH", got.Level)
 }

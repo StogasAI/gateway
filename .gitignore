@@ -4,7 +4,6 @@
 *.env
 *_creds*
 private.*
-.infisical
 
 .vscode/
 .idea/
@@ -52,6 +51,7 @@ node_modules/
 
 go.work
 go.work.sum
+*.test
 transports/vendor/
 stogas/release/vendor/
 *.db

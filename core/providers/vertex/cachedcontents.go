@@ -67,12 +67,19 @@ func validateVertexTTLExpireMutex(ttl, expireTime *string) *schemas.BifrostError
 // expandVertexCachedContentName ensures the name is the full Vertex resource path.
 // If the user passes "abc123" or "cachedContents/abc123", rewrite to
 // "projects/{p}/locations/{l}/cachedContents/abc123". Idempotent for already-full paths.
-func expandVertexCachedContentName(name, projectID, region string) string {
+func expandVertexCachedContentName(name, projectID, region string) (string, *schemas.BifrostError) {
 	if strings.HasPrefix(name, "projects/") {
-		return name
+		parts, bifrostErr := parseVertexResourceName(name, "name", "projects", "", "locations", "", "cachedContents", "")
+		if bifrostErr != nil {
+			return "", bifrostErr
+		}
+		return strings.Join(parts, "/"), nil
 	}
-	id := strings.TrimPrefix(name, "cachedContents/")
-	return fmt.Sprintf("projects/%s/locations/%s/cachedContents/%s", projectID, region, id)
+	escapedID, bifrostErr := providerUtils.EscapeResourceID(strings.TrimPrefix(name, "cachedContents/"), "name")
+	if bifrostErr != nil {
+		return "", bifrostErr
+	}
+	return fmt.Sprintf("projects/%s/locations/%s/cachedContents/%s", projectID, region, escapedID), nil
 }
 
 // expandVertexModelPath rewrites a bare model id ("gemini-2.5-pro") to the full
@@ -85,8 +92,16 @@ func expandVertexModelPath(model, projectID, region string) string {
 	return fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", projectID, region, model)
 }
 
-// vertexAuthHeaders pulls an OAuth bearer token from the key and applies it.
+// vertexAuthHeaders applies Vertex AI authentication to the request. When the key
+// carries an API key value, it is passed as the "key" query parameter (mirroring
+// the Gemini generation endpoints) and any Authorization header already set from
+// context extra headers is left intact. Otherwise an OAuth bearer token is fetched
+// from the key credentials and set on the Authorization header.
 func vertexAuthHeaders(req *fasthttp.Request, key schemas.Key) *schemas.BifrostError {
+	if key.Value.GetValue() != "" {
+		req.URI().QueryArgs().Set("key", key.Value.GetValue())
+		return nil
+	}
 	tokenSource, err := getAuthTokenSource(key)
 	if err != nil {
 		return providerUtils.NewBifrostOperationError("error creating auth token source", err)
@@ -306,7 +321,10 @@ func (provider *VertexProvider) cachedContentRetrieveByKey(ctx *schemas.BifrostC
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	name := expandVertexCachedContentName(request.Name, projectID, region)
+	name, idErr := expandVertexCachedContentName(request.Name, projectID, region)
+	if idErr != nil {
+		return nil, 0, idErr
+	}
 	requestURL := fmt.Sprintf("%s/%s", getVertexAPIBaseURL(region, "v1"), name)
 
 	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
@@ -406,7 +424,10 @@ func (provider *VertexProvider) cachedContentUpdateByKey(ctx *schemas.BifrostCon
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	name := expandVertexCachedContentName(request.Name, projectID, region)
+	name, idErr := expandVertexCachedContentName(request.Name, projectID, region)
+	if idErr != nil {
+		return nil, 0, idErr
+	}
 	requestURL := fmt.Sprintf("%s/%s", getVertexAPIBaseURL(region, "v1"), name)
 	if len(updateMaskFields) > 0 {
 		requestURL += "?updateMask=" + strings.Join(updateMaskFields, ",")
@@ -496,7 +517,10 @@ func (provider *VertexProvider) cachedContentDeleteByKey(ctx *schemas.BifrostCon
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	name := expandVertexCachedContentName(request.Name, projectID, region)
+	name, idErr := expandVertexCachedContentName(request.Name, projectID, region)
+	if idErr != nil {
+		return nil, 0, idErr
+	}
 	requestURL := fmt.Sprintf("%s/%s", getVertexAPIBaseURL(region, "v1"), name)
 
 	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)

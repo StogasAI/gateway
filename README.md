@@ -8,16 +8,27 @@ The repository contains:
 - `transports/`: the Stogas API transport, signed catalog loader, routing, and gateway entrypoint;
 - `stogas/`: the reproducible IGVM release pipeline.
 
-The signed catalog loader accepts the separate staging key only in staging mode. Production
-signatures remain valid in both environments; production mode rejects staging signatures.
+The gateway verifies the current evidence package for its selected environment before serving.
+It matches its measured release and loads the newest approved catalog compatible with that
+release. Catalog artifacts and vendor collateral are verified locally.
 
 The public inference listener uses port `5185`. Private `GET /ready` on port `5186` returns only readiness. Confidential deployments serve versioned `GET /diagnostics/v1` on port `5187` with TLS 1.3 and a pinned client-certificate key. Neither private route is part of the public API; diagnostics are never served over plaintext.
 
-The normal `/v1/responses` and `/v1/chat/completions` routes also accept Stogas E2EE envelopes addressed to every node in a verified fleet bundle. The E2EE media type selects encrypted request handling; any outer credential is ignored and the authenticated inner credential is authoritative. Decryption, provider dispatch, signed response proof generation, and authenticated response streaming all remain inside the confidential guest; no plaintext-aware router or separate E2EE endpoint is required.
+Confidential ingress requires a PROXYv2 TCP header before TLS. Restrict backend access to trusted load balancers and authorized monitors; PROXY metadata is not authenticated client identity. Both passthrough and terminating load balancers must preserve the original connection address, including when reusing backend connections. HTTP forwarding headers do not override that address. Clients connect to the load balancer with ordinary HTTPS and do not send PROXY headers.
 
-`Stogas-Receipt: v1` requests a signed receipt. A buffered response adds one final top-level
+Native attested TLS uses TLS 1.3 with X25519MLKEM768 and fresh challenge-bound evidence in the
+handshake. Ordinary HTTPS remains available on the same listener for compatible clients.
+E2EE establishes a reusable session through `POST /v1/session`, then carries encrypted binary
+records on the inference routes. Each session belongs to one confidential guest; its authenticated
+owner identity directs later requests to that guest. Credentials, decryption, provider dispatch,
+receipts and response encryption remain inside the guest. Clients verify the final authenticated
+record before reporting stream completion.
+
+`Stogas-Metadata: v1` requests metadata and one signed receipt. A buffered response adds one final top-level
 `stogas` object. A stream emits the same compact JSON in an ignored `: stogas {...}` SSE comment
-before `[DONE]`, `response.completed`, or `response.incomplete`. The signed `created_at` uses canonical UTC milliseconds.
+before `[DONE]`, `response.completed`, or `response.incomplete`. The receipt binds the request,
+response and canonical final metadata, excluding the receipt itself. Provider-specific metadata
+uses the same signature.
 
 Direct Chat Completions and Responses requests have a 60-minute lifecycle, including provider transport. Streaming clients can use that full period while they keep accepting bytes. A downstream socket write that makes no progress for one minute is closed; model silence does not start this timer. Final response delivery cannot continue more than one minute past the request deadline. Process cleanup has a separate five-minute bound after the request-drain wait, which keeps the guest shutdown hard cap at 65 minutes.
 
@@ -28,30 +39,26 @@ model and deployment capabilities; they do not grant support for those modalitie
 API. Requests containing image, audio, video, file, or PDF content are rejected, and responses never
 expose binary or file artifacts. Supported hosted tools can return text, citations, and control records.
 
-The gateway always replaces high-confidence structured PII and secrets in provider-bound text with
-irreversible typed placeholders before token estimation and provider conversion. There is no request
-header or runtime switch. The detector validates check digits and surrounding context where needed,
-and deliberately does not guess names, street addresses, locations, IP addresses, or ordinary dates
-and numbers. The internal policy compiler accepts explicit detector options for email, phone, U.S.
-Social Security, payment card, IP, credentials, private keys, JSON Web Tokens, database URLs, exact
-vendor tokens, bank identifiers, national identifiers, health identifiers, and bounded custom RE2
-patterns. There are no presets, and no public control selects these options today.
-Signed and encrypted reasoning payloads remain unchanged.
+Policies select structured PII and secret detectors, bounded custom RE2 patterns and literal rules.
+The gateway replaces matches with irreversible typed placeholders before token estimation and
+provider conversion. Parent requirements cannot be weakened by a child policy. Only configured detectors apply. Signed and
+encrypted reasoning payloads remain unchanged.
 
-Requests must authenticate with a Stogas API key. They can also supply at most one credential for
-each supported provider with
-`X-Stogas-Upstream-OpenAI-API-Key`, `X-Stogas-Upstream-Anthropic-API-Key`, and
-`X-Stogas-Upstream-Chutes-API-Key`. These credentials do not constrain routing. After catalog
-resolution, the gateway keeps only the credential for the resolved provider. Azure requires one
-stored, ARM-discovered credential assigned to the Stogas API key and does not accept pass-through
-credentials. The gateway removes pass-through fields from the request, derives a stable keyed ID for
-the hold and analytics, and never persists the plaintext secret.
+Requests authenticate with a Stogas API key. Each key assigns an ordered list of credentials to
+its providers. Requests unlock customer-encrypted credentials with labeled `encryption_keys`;
+they never submit raw provider credentials. A missing matching key excludes that credential.
+Catalog selection includes each candidate's credential policy. Credential order breaks ties for
+one deployment, and only explicit policy fallback permits a second local preparation attempt.
+The selected request is transformed once, and provider errors never switch credentials. Every
+hold checks current assignments, policy revisions, and credential status. Stored credentials and
+customer-encrypted credentials use their registered IDs in analytics; plaintext secrets and
+customer encryption keys are never persisted.
 
 Request analytics begin when a billing hold is authorized. Every admitted request retains one
 logical final record, including provider errors, cancellations, and zero-cost failures. Records
 contain bounded accounting and outcome metadata, never prompts, responses, or raw error messages.
-Pre-admission inference failures increment fixed diagnostic counters without creating request
-records. Operational failures use code-owned categories and source locations, cumulative counts,
+Verified-identity rejections are grouped in request history; anonymous protocol failures use fixed
+diagnostic counters. Operational failures use code-owned categories and source locations, cumulative counts,
 and at most one emitted line per minute per group. Client logging preferences cannot disable accounting.
 
 ## Build and test

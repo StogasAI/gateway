@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
-	"strings"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"strconv"
 	"time"
 
 	azureprovider "github.com/maximhq/bifrost/core/providers/azure"
@@ -13,6 +13,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	gatewaybilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 type PublicBillingError struct {
@@ -23,22 +25,18 @@ type PublicBillingError struct {
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequestWithPassthrough(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, passthroughSecret string, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
-	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
-	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
-}
-
-type passthroughDashboardError struct{}
-
-func (passthroughDashboardError) Error() string {
-	return "Pass-through BYOK requires a standard Stogas API key"
-}
-
-func (passthroughDashboardError) StatusCode() int {
-	return 400
+	AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
+	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
+	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent, retain gatewaybilling.RetainMemory) error
 }
 
 func PublicBillingErrorFor(err error) PublicBillingError {
+	if errors.Is(err, policy.ErrSourceBudget) || errors.Is(err, policy.ErrPolicyWorkLimit) {
+		return PublicBillingError{400, "policy_work_limit_exceeded", "invalid_request_error", "The applicable policies exceed the request's policy work limit. Reduce distinct policy content or expressions."}
+	}
+	if errors.Is(err, policy.ErrInvalidConfig) {
+		return PublicBillingError{400, "invalid_request", "invalid_request_error", "The applicable policy configuration is invalid. Review the saved policies and encrypted plugin content."}
+	}
 	statusCode := gatewaybilling.ErrorStatus(err)
 	errorType := "internal_error"
 	message := "Internal server error"
@@ -70,8 +68,10 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 	var requestError *gatewaybilling.RequestError
 	if errors.As(err, &requestError) {
 		code, message = requestError.Code, requestError.Message
-	} else if errors.Is(err, passthroughDashboardError{}) {
-		code, message = "byok_api_key_required", "Pass-through BYOK requires a standard Stogas API key"
+	} else if errors.Is(err, customerkey.ErrKey) {
+		code, message = "encryption_key_required", customerkey.ErrKey.Error()
+	} else if errors.Is(err, customerkey.ErrEnvelope) {
+		code, message = "encrypted_content_invalid", customerkey.ErrEnvelope.Error()
 	}
 	return PublicBillingError{StatusCode: statusCode, Code: code, Type: errorType, Message: message}
 }
@@ -83,9 +83,14 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	passthroughSecret := state.PassthroughByokSecret
+	encryptionKeys := state.EncryptionKeys
 	defer func() {
-		state.PassthroughByokSecret = ""
+		state.EncryptionKeys = nil
+		// Routing and credential selection are finished when authorization returns.
+		// Long inference streams retain only the selected dispatch credential.
+		state.KeyConfig = nil
+		state.PreparedCredential.Clear()
+		state.PreparedCredential = nil
 	}()
 	if state.StartedAt.IsZero() {
 		state.StartedAt = time.Now()
@@ -101,7 +106,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 		return fmt.Errorf("missing request ID")
 	}
 	hold := state.Hold
-	if hold.EstimatedUpstreamCostUSDAtoms == "" {
+	if hold.EstimatedUpstreamCostUSD == "" {
 		var holdErr error
 		hold, holdErr = baseHoldEstimate(state)
 		if holdErr != nil {
@@ -112,25 +117,27 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 
 	var authorization *gatewaybilling.Authorization
 	var err error
+	textBytes, _ := state.Resolution.InputTextBytes()
+	usage := gatewaybilling.UsageReservation{Tokens: hold.ReservedTokens, InputTextBytes: int64(textBytes)}
 	upstreamTarget := billingUpstreamTarget(state.Resolution)
 	if state.DashboardCredential != nil {
-		if passthroughSecret != "" {
-			return passthroughDashboardError{}
-		}
 		authorization, err = billing.AuthorizeDashboardRequestWithDuration(
 			ctx,
 			state.DashboardCredential,
 			requestID,
 			hold.ProviderKey,
 			hold.ProductKey,
-			hold.EstimatedUpstreamCostUSDAtoms,
-			hold.ReservedTokens,
-			state.ConfigGeneration,
+			hold.EstimatedUpstreamCostUSD,
+			usage,
+			state.KeyConfig,
+			state.PreparedCredential,
+			state.Resolution.ActivePolicyRules(),
+			encryptionKeys,
 			upstreamTarget,
 			state.RequestLifetime,
 		)
 	} else {
-		authorization, err = billing.AuthorizeRequestWithPassthrough(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSDAtoms, hold.ReservedTokens, state.ConfigGeneration, passthroughSecret, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
+		authorization, err = billing.AuthorizeRequestWithEncryptionKeys(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSD, usage, state.KeyConfig, state.PreparedCredential, state.Resolution.ActivePolicyRules(), encryptionKeys, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
 	}
 	if err != nil && authorization != nil {
 		state.Authorization = authorization
@@ -242,7 +249,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	if event == nil {
 		return
 	}
-	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event); err != nil {
+	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event, state.RetainMemory); err != nil {
 		writeOperationalLog(operationalLogEvent{
 			ErrorType:  safeOperationalErrorType(err),
 			Event:      "billing_settlement_schedule_failed",
@@ -263,7 +270,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		return state.FinalEvent
 	}
 	pricingFailed := false
-	if state.UpstreamCostUSDAtoms == "" {
+	if state.UpstreamCostUSD == "" {
 		adapter := state.Adapter
 		if adapter == nil {
 			adapter = DefaultAdapter{}
@@ -277,20 +284,17 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		if err := validateCanonicalMeterSummary(
 			state.FinalMeters,
 			effectivePricingForState(state),
-			state.UpstreamCostUSDAtoms,
+			state.UpstreamCostUSD,
 		); err != nil {
 			markFinalPricingFailure(state, err)
 			pricingFailed = true
 		}
 	}
-	if discardUpstreamCostOutsideHold(state) {
-		pricingFailed = true
-	}
 	var cacheSavings *string
 	var cacheWriteOverhead *string
 	if !pricingFailed {
 		var cacheSavingsErr error
-		cacheSavings, cacheSavingsErr = cacheReadSavingsUSDAtoms(state)
+		cacheSavings, cacheSavingsErr = cacheReadSavingsUSD(state)
 		if cacheSavingsErr != nil {
 			writeOperationalLog(operationalLogEvent{
 				ErrorType:  safeOperationalErrorType(cacheSavingsErr),
@@ -301,7 +305,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			})
 		}
 		var cacheWriteOverheadErr error
-		cacheWriteOverhead, cacheWriteOverheadErr = cacheWriteOverheadUSDAtoms(state)
+		cacheWriteOverhead, cacheWriteOverheadErr = cacheWriteOverheadUSD(state)
 		if cacheWriteOverheadErr != nil {
 			writeOperationalLog(operationalLogEvent{
 				ErrorType:  safeOperationalErrorType(cacheWriteOverheadErr),
@@ -315,37 +319,40 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 	catalogIdentity := state.Resolution.CatalogIdentity()
 	executionDeployment := ExecutionDeployment(state)
 	event, err := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-		UpstreamCostUSDAtoms:       state.UpstreamCostUSDAtoms,
-		Authorization:              state.Authorization,
-		Cancelled:                  state.Cancelled,
-		ClientStoppedAt:            state.ClientStoppedAt,
-		CatalogDigest:              catalogIdentity.Digest,
-		Error:                      state.BifrostError,
-		Pricing:                    pricingForState(state),
-		Plugins:                    state.PluginMetrics,
-		ProviderAttempts:           state.providerAttemptInputs(),
-		ProviderCompletedAt:        state.ProviderCompletedAt,
-		ProviderStartedAt:          state.ProviderStartedAt,
-		TTFTMS:                     state.TTFTMS,
-		ProviderOutputObserved:     state.ProviderOutputObserved,
-		CacheReadSavingsUSDAtoms:   cacheSavings,
-		CacheWriteOverheadUSDAtoms: cacheWriteOverhead,
-		NodeID:                     state.NodeID,
-		GatewayVersion:             state.GatewayVersion,
-		RequestType:                state.RequestType,
-		CatalogNodeIDs:             state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
-		Response:                   state.Response,
-		StartedAt:                  state.StartedAt,
+		UpstreamCostUSD:        state.UpstreamCostUSD,
+		Authorization:          state.Authorization,
+		Cancelled:              state.Cancelled,
+		ClientStoppedAt:        state.ClientStoppedAt,
+		CatalogVersion:         catalogIdentity.Sequence,
+		PolicyVersions:         state.PolicyVersions,
+		CatalogChainHash:       executionDeployment.ChainHash,
+		Error:                  state.BifrostError,
+		Meters:                 metersForState(state),
+		Plugins:                state.PluginMetrics,
+		ProviderAttempts:       state.providerAttemptInputs(),
+		ProviderCompletedAt:    state.ProviderCompletedAt,
+		ProviderStartedAt:      state.ProviderStartedAt,
+		TTFTMS:                 state.TTFTMS,
+		ProviderOutputObserved: state.ProviderOutputObserved,
+		CacheReadSavingsUSD:    cacheSavings,
+		CacheWriteOverheadUSD:  cacheWriteOverhead,
+		NodeID:                 state.NodeID,
+		GatewayVersion:         state.GatewayVersion,
+		RequestType:            state.RequestType,
+		Response:               state.Response,
+		StartedAt:              state.StartedAt,
 	})
 	if err != nil {
 		markFinalPricingFailure(state, err)
 		pricingFailed = true
 		event, err = gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-			UpstreamCostUSDAtoms:   gatewaybilling.ZeroChargeUSDAtoms,
+			UpstreamCostUSD:        gatewaybilling.ZeroChargeUSD,
 			Authorization:          state.Authorization,
 			Cancelled:              state.Cancelled,
 			ClientStoppedAt:        state.ClientStoppedAt,
-			CatalogDigest:          catalogIdentity.Digest,
+			CatalogVersion:         catalogIdentity.Sequence,
+			PolicyVersions:         state.PolicyVersions,
+			CatalogChainHash:       executionDeployment.ChainHash,
 			Error:                  state.BifrostError,
 			ProviderAttempts:       state.providerAttemptInputs(),
 			Plugins:                state.PluginMetrics,
@@ -356,7 +363,6 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			NodeID:                 state.NodeID,
 			GatewayVersion:         state.GatewayVersion,
 			RequestType:            state.RequestType,
-			CatalogNodeIDs:         state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
 			Response:               state.Response,
 			StartedAt:              state.StartedAt,
 		})
@@ -365,7 +371,6 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		}
 	}
 	if state.ProcessingError != nil {
-		event.StogasProcessingSuccess = false
 		status := 500
 		if state.ProcessingError.StatusCode != nil && *state.ProcessingError.StatusCode >= 400 && *state.ProcessingError.StatusCode <= 599 {
 			status = *state.ProcessingError.StatusCode
@@ -374,8 +379,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		if state.ProcessingError.Error != nil && state.ProcessingError.Error.Code != nil {
 			code = *state.ProcessingError.Error.Code
 		}
-		event.StogasErrorCode = gatewaybilling.NormalizeStogasErrorCode(code, status)
-		event.StogasErrorStatusCode = &status
+		event.Error = &gatewaybilling.EventError{Code: gatewaybilling.NormalizeStogasErrorCode(code, status), Status: status}
 	}
 	// A local failure can interrupt a provider stream before its outcome is
 	// known. Keep completed provider results; do not invent success or HTTP 500.
@@ -385,17 +389,6 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		last := &event.ProviderAttempts[len(event.ProviderAttempts)-1]
 		if !completed && last.Status == "success" {
 			last.Status, last.StatusCode = "unknown", nil
-		}
-	}
-	if len(event.ProviderAttempts) == 0 {
-		zero := int64(0)
-		event.PolicyTokens = &zero
-	} else if hasMeasuredUsage(state.Signals) {
-		// Prompt includes cached input; completion includes reasoning. Adding
-		// those detail partitions again would charge the same tokens twice.
-		tokens := int64(state.Signals.PromptTokens()) + int64(state.Signals.CompletionTokens())
-		if tokens >= 0 && tokens <= 1_000_000_000_000 {
-			event.PolicyTokens = &tokens
 		}
 	}
 	state.FinalEvent = &event
@@ -425,108 +418,89 @@ func markFinalPricingFailure(state *State, err error) {
 			Message: "Internal server error",
 		},
 	}
+	// Keep observed quantities in the request log when pricing cannot be used.
+	state.observedUsage, _ = state.Signals.(*StandardSignals)
 	state.Signals = nil
 	state.FinalMeters = nil
-	state.UpstreamCostUSDAtoms = gatewaybilling.ZeroChargeUSDAtoms
+	state.UpstreamCostUSD = gatewaybilling.ZeroChargeUSD
 }
 
-func discardUpstreamCostOutsideHold(state *State) bool {
-	if state == nil || state.UpstreamCostUSDAtoms == "" {
-		return false
-	}
-	estimatedUpstreamCost, estimateOK := new(big.Int).SetString(state.Hold.EstimatedUpstreamCostUSDAtoms, 10)
-	upstreamCost, upstreamCostOK := new(big.Int).SetString(state.UpstreamCostUSDAtoms, 10)
-	zeroCost := upstreamCostOK && upstreamCost.Sign() == 0 && len(state.FinalMeters) == 0
-	costWithinEstimate := estimateOK && upstreamCostOK && estimatedUpstreamCost.Sign() >= 0 && upstreamCost.Sign() > 0 && upstreamCost.Cmp(estimatedUpstreamCost) <= 0 &&
-		len(state.FinalMeters) > 0 && finalMeterQuantitiesWithinHold(state.Hold.Meters, state.FinalMeters)
-	if zeroCost || costWithinEstimate {
-		return false
-	}
-	requestID := state.RequestID
-	if state.Authorization != nil {
-		requestID = state.Authorization.RequestID
-	}
-	writeOperationalLog(operationalLogEvent{
-		ErrorType:  "billing_error",
-		Event:      "billing_upstream_cost_outside_hold",
-		ReasonCode: "upstream_cost_outside_hold",
-		RequestID:  requestID,
-		Severity:   "error",
-	})
-	state.Signals = nil
-	state.FinalMeters = nil
-	state.UpstreamCostUSDAtoms = gatewaybilling.ZeroChargeUSDAtoms
-	return true
-}
-
-func finalMeterQuantitiesWithinHold(holdMeters []catalog.MeterEstimate, finalMeters []catalog.MeterEstimate) bool {
-	capacities := map[string]*big.Int{}
-	for _, meter := range holdMeters {
-		if !meter.HoldRequired {
-			continue
-		}
-		class, ok := meterQuantityClass(meter.MeterKey)
-		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok || !quantityOK || quantity.Sign() < 0 {
-			return false
-		}
-		if capacities[class] == nil {
-			capacities[class] = big.NewInt(0)
-		}
-		capacities[class].Add(capacities[class], quantity)
-	}
-	used := map[string]*big.Int{}
-	for _, meter := range finalMeters {
-		class, ok := meterQuantityClass(meter.MeterKey)
-		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok || !quantityOK || quantity.Sign() < 0 {
-			return false
-		}
-		if used[class] == nil {
-			used[class] = big.NewInt(0)
-		}
-		used[class].Add(used[class], quantity)
-	}
-	for class, quantity := range used {
-		capacity := capacities[class]
-		if capacity == nil || quantity.Cmp(capacity) > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func meterQuantityClass(meterKey string) (string, bool) {
-	switch {
-	case isInputTokenMeter(meterKey):
-		return "input_tokens", true
-	case isOutputTokenMeter(meterKey):
-		return "output_tokens", true
-	case strings.TrimSpace(meterKey) != "":
-		return "meter:" + meterKey, true
-	default:
-		return "", false
-	}
-}
-
-func pricingForState(state *State) gatewaybilling.EventPricing {
-	out := gatewaybilling.EventPricing{}
+func metersForState(state *State) gatewaybilling.EventMeters {
+	out := gatewaybilling.EventMeters{}
 	if state == nil {
 		return out
 	}
 	for _, meter := range state.FinalMeters {
 		key := meter.MeterKey
 		if existing, ok := out[key]; ok {
-			if existing.RateKey != meter.RateKey {
+			if existing.RateKey != nil && *existing.RateKey != meter.RateKey {
 				key = meter.MeterKey + ":" + meter.RateKey
 			}
 		}
-		out[key] = gatewaybilling.EventMeter{
-			Quantity:     meter.Quantity,
-			RateKey:      meter.RateKey,
-			RateUSDAtoms: meter.RateUSDAtoms,
-			USDAtoms:     meter.AmountUSDAtoms,
+		out[key] = gatewaybilling.PricedMeter(meter.Quantity, meter.RateKey, meter.RateUSD, meter.AmountUSD)
+	}
+	observed := state.observedUsage
+	if observed == nil {
+		observed, _ = state.Signals.(*StandardSignals)
+	}
+	addCount := func(key string, quantity int) {
+		if quantity >= 0 {
+			if _, priced := out[key]; !priced {
+				out[key] = gatewaybilling.EventMeter{Quantity: strconv.Itoa(quantity)}
+			}
 		}
 	}
+	if estimate, known := state.Resolution.EstimatedInputTokens(); known {
+		addCount(billing.MeterEstimatedInputTokens, estimate)
+	}
+	if textBytes, known := state.Resolution.InputTextBytes(); known {
+		addCount(billing.MeterInputTextBytes, textBytes)
+	}
+	if observed != nil {
+		if observed.inputKnown {
+			addCount(billing.MeterTotalInputTokens, observed.Prompt)
+		}
+		if observed.outputKnown {
+			addCount(billing.MeterTotalOutputTokens, observed.Completion)
+		}
+		if observed.inputKnown && observed.outputKnown {
+			if total, ok := addTokenCounts(observed.Prompt, observed.Completion); ok {
+				addCount(billing.MeterTotalTokens, total)
+			}
+		}
+		writes := saturatingTokenTotal(observed.CacheWrite, observed.CacheWrite5m, observed.CacheWrite1h)
+		parts := map[string]int{
+			billing.MeterCachedInputTokens:       observed.Cached,
+			billing.MeterCacheWriteInputTokens:   observed.CacheWrite,
+			billing.MeterCacheWrite5mInputTokens: observed.CacheWrite5m,
+			billing.MeterCacheWrite1hInputTokens: observed.CacheWrite1h,
+			billing.MeterReasoningTokens:         observed.Reasoning,
+			billing.MeterTotalCacheWriteTokens:   writes,
+		}
+		for key, quantity := range parts {
+			if quantity > 0 {
+				addCount(key, quantity)
+			}
+		}
+		ordinary := observed.Prompt - observed.Cached - writes
+		if ordinary > 0 {
+			addCount(billing.MeterInputTokens, ordinary)
+		}
+		output := observed.Completion - observed.Reasoning
+		if output > 0 {
+			addCount(billing.MeterOutputTokens, output)
+		}
+	}
+	// Both response validators retain one identity per observed call. Terminal
+	// snapshots and stream updates reuse that identity; input results never enter it.
+	clientCalls := state.responsesClientCalls + len(state.chatToolCalls)
+	hostedCalls := state.responsesToolCalls - state.responsesClientCalls
+	if clientCalls > 0 {
+		addCount(billing.MeterClientToolCalls, clientCalls)
+	}
+	if hostedCalls > 0 {
+		addCount(billing.MeterHostedToolCalls, hostedCalls)
+	}
+
 	return out
 }

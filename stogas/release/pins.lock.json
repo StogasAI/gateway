@@ -44,12 +44,12 @@
 			"baseGuixPackage": "linux-libre@6.18.38"
 		},
 		"go": {
-			"version": "1.26.5",
+			"version": "1.27.1",
 			"guixRecipeBaseVersion": "1.26.4",
-			"guixPackage": "stogas-go-1.26",
-			"url": "https://go.dev/dl/go1.26.5.src.tar.gz",
-			"sha256": "495be4bc87176ac567392e5b4116abd98466d33d7b49d41e764ccc6976b2dc42",
-			"guixSourceBase32": "0hnwn9v6kk2cfqgd8jbv7p9nd16rmcb42nrf75kwashphyyf8ns9"
+			"guixPackage": "stogas-go-1.27",
+			"url": "https://go.dev/dl/go1.27.1.src.tar.gz",
+			"sha256": "4e408abae126d916b6164627193f2c54f0e3ca1312d693b86db45f862ab238b1",
+			"guixSourceBase32": "1c9qn8m8cpxldnw97mhj2g5f7w2l5hzij9s62sv1dn96w6x8lh2f"
 		},
 		"systemdUkify": {
 			"version": "261",
@@ -96,6 +96,14 @@
 					"sha256": "b7e834eaa4802a7d4c967754425c2c4c2ee4d7619165a27d0e54cc4a73ad6ceb"
 				}
 			]
+		},
+		"stogasVerifier": {
+			"commit": "09dd12d2265ade5749429ad7a0d1b60d3625b864",
+			"url": "https://github.com/StogasAI/verifier/archive/09dd12d2265ade5749429ad7a0d1b60d3625b864.tar.gz",
+			"sha256": "22a2ff2b2d11cff0e3d745f57a5eb5d45e3c197577b3c230cf0640e007ef9977",
+			"guixBase32": "0xwrxw3y0h06rwqc5cvpflckqpnlnmg7mxa5sziz1kqi5lmzz8i2",
+			"cargoVendorSha256": "760d3480987c945475fa067a50f632dfc603105ad9101df1e639914088a14dcd",
+			"cargoLockSha256": "f7ac3344cf7ea728abf67c9a9c4f8c4b3a940c3fe7e4d4c3f006366f7e5d85e1"
 		}
 	}
 }

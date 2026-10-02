@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"fmt"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"slices"
 	"strings"
@@ -38,26 +39,26 @@ func baseHoldEstimate(state *State) (HoldEstimate, error) {
 		)
 	}
 	meters = appendOutputTokenHoldCost(meters, pricing, outputTokenLimit)
-	meters, estimatedUpstreamCostUSDAtoms, err := canonicalizeMeters(meters, pricing)
+	meters, estimatedUpstreamCostUSD, err := canonicalizeMeters(meters, pricing)
 	if err != nil {
 		return HoldEstimate{}, err
 	}
 	return HoldEstimate{
-		EstimatedUpstreamCostUSDAtoms: estimatedUpstreamCostUSDAtoms,
-		ReservedTokens:                int64(inputTokenLimit) + int64(outputTokenLimit),
-		ProductKey:                    resolution.Deployment.ID,
-		ProviderKey:                   string(resolution.Provider),
-		Meters:                        meters,
+		EstimatedUpstreamCostUSD: estimatedUpstreamCostUSD,
+		ReservedTokens:           int64(inputTokenLimit) + int64(outputTokenLimit),
+		ProductKey:               resolution.Deployment.ID,
+		ProviderKey:              string(resolution.Provider),
+		Meters:                   meters,
 	}, nil
 }
 
 func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate) (string, error) {
 	if state == nil {
-		return billing.ZeroChargeUSDAtoms, nil
+		return billing.ZeroChargeUSD, nil
 	}
 	if !hasMeasuredUsage(state.Signals) && len(extraMeters) == 0 {
 		state.FinalMeters = nil
-		return billing.ZeroChargeUSDAtoms, nil
+		return billing.ZeroChargeUSD, nil
 	}
 	promptTokens := 0
 	completionTokens := 0
@@ -96,8 +97,8 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		{meterKey: billing.MeterCacheWrite1hInputTokens, quantity: &cacheWrite1hTokens},
 	}
 	for _, cache := range cacheQuantities {
-		_, rate, ok := billing.PricingRate(pricing, cache.meterKey, rateMode)
-		if !ok || rate.Sign() <= 0 {
+		_, _, ok := billing.PricingRate(pricing, cache.meterKey, rateMode)
+		if !ok {
 			*cache.quantity = 0
 		}
 	}
@@ -138,21 +139,15 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		meters = billing.AppendTokenMeterCost(meters, pricing, billing.MeterReasoningTokens, reasoningTokens, false, rateMode)
 	}
 	meters = append(meters, extraMeters...)
-	meters, upstreamCostUSDAtoms, err := canonicalizeMeters(meters, pricing)
+	meters, upstreamCostUSD, err := canonicalizeMeters(meters, pricing)
 	if err != nil {
 		return "", err
 	}
-	if len(state.Hold.Meters) > 0 {
-		meters, upstreamCostUSDAtoms, err = capFinalMetersToHold(meters, state.Hold.Meters, pricing)
-		if err != nil {
-			return "", err
-		}
-	}
 	state.FinalMeters = meters
-	return upstreamCostUSDAtoms, nil
+	return upstreamCostUSD, nil
 }
 
-func cacheReadSavingsUSDAtoms(state *State) (*string, error) {
+func cacheReadSavingsUSD(state *State) (*string, error) {
 	if state == nil || state.Resolution == nil {
 		return nil, nil
 	}
@@ -167,7 +162,7 @@ func cacheReadSavingsUSDAtoms(state *State) (*string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("calculate uncached input counterfactual: %w", err)
 	}
-	savings := big.NewInt(0)
+	savings := new(money.USD)
 	if uncachedCost.Cmp(cachedCost) > 0 {
 		savings.Sub(uncachedCost, cachedCost)
 	}
@@ -175,10 +170,10 @@ func cacheReadSavingsUSDAtoms(state *State) (*string, error) {
 	return &value, nil
 }
 
-// cacheWriteOverheadUSDAtoms reports only the extra cost of cache
+// cacheWriteOverheadUSD reports only the extra cost of cache
 // creation compared with sending the same tokens as ordinary input. The full
 // cache-write charge remains in FinalMeters and the request pricing bag.
-func cacheWriteOverheadUSDAtoms(state *State) (*string, error) {
+func cacheWriteOverheadUSD(state *State) (*string, error) {
 	if state == nil || state.Resolution == nil {
 		return nil, nil
 	}
@@ -202,7 +197,7 @@ func cacheWriteOverheadUSDAtoms(state *State) (*string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("calculate ordinary input counterfactual: %w", err)
 	}
-	overhead := big.NewInt(0)
+	overhead := new(money.USD)
 	if writeCost.Cmp(ordinaryCost) > 0 {
 		overhead.Sub(writeCost, ordinaryCost)
 	}
@@ -213,9 +208,9 @@ func cacheWriteOverheadUSDAtoms(state *State) (*string, error) {
 func cacheMeterTotals(
 	meters []catalog.MeterEstimate,
 	matches func(string) bool,
-) (*big.Int, *big.Int, error) {
+) (*big.Int, *money.USD, error) {
 	quantity := big.NewInt(0)
-	amount := big.NewInt(0)
+	amount := new(money.USD)
 	for _, meter := range meters {
 		if !matches(meter.MeterKey) {
 			continue
@@ -224,7 +219,7 @@ func cacheMeterTotals(
 		if !ok || meterQuantity.Sign() <= 0 {
 			return nil, nil, fmt.Errorf("meter has an invalid quantity")
 		}
-		meterAmount, err := billing.ParseUSDAtoms(meter.AmountUSDAtoms)
+		meterAmount, err := billing.ParseUSD(meter.AmountUSD)
 		if err != nil {
 			return nil, nil, fmt.Errorf("meter has an invalid amount: %w", err)
 		}
@@ -234,9 +229,9 @@ func cacheMeterTotals(
 	return quantity, amount, nil
 }
 
-func ordinaryInputMarginalCost(state *State, quantity *big.Int) (*big.Int, error) {
+func ordinaryInputMarginalCost(state *State, quantity *big.Int) (*money.USD, error) {
 	if quantity == nil || quantity.Sign() == 0 {
-		return big.NewInt(0), nil
+		return new(money.USD), nil
 	}
 	mode := billing.TokenRateStandard
 	if state.Signals != nil && state.Signals.PromptTokens() > longContextThresholdTokens {
@@ -468,12 +463,12 @@ func ExecutionDeployment(state *State) catalog.Deployment {
 
 func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {
 	if len(meters) == 0 {
-		return nil, billing.ZeroChargeUSDAtoms, nil
+		return nil, billing.ZeroChargeUSD, nil
 	}
 	type meterGroup struct {
 		meter    catalog.MeterEstimate
 		quantity *big.Int
-		rate     *big.Int
+		rate     *money.USD
 	}
 	order := make([]string, 0, len(meters))
 	groups := map[string]*meterGroup{}
@@ -491,16 +486,16 @@ func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing)
 		if !meterExists || !rateExists || catalogRateRaw == "" {
 			return nil, "", fmt.Errorf("meter %s has no catalog rate", meter.MeterKey)
 		}
-		rateRaw := meter.RateUSDAtoms
+		rateRaw := meter.RateUSD
 		if rateRaw == "" {
 			rateRaw = catalogRateRaw
 		}
-		rate, rateErr := billing.ParseUSDAtoms(rateRaw)
-		amount, amountErr := billing.ParseUSDAtoms(meter.AmountUSDAtoms)
-		if rateErr != nil || amountErr != nil || rate.Sign() <= 0 || amount.Sign() <= 0 {
+		rate, rateErr := billing.ParseUSD(rateRaw)
+		amount, amountErr := billing.ParseUSD(meter.AmountUSD)
+		if rateErr != nil || amountErr != nil {
 			return nil, "", fmt.Errorf("meter %s has an invalid rate or amount", meter.MeterKey)
 		}
-		catalogRate, err := billing.ParseUSDAtoms(catalogRateRaw)
+		catalogRate, err := billing.ParseUSD(catalogRateRaw)
 		if err != nil || catalogRate.Cmp(rate) != 0 {
 			return nil, "", fmt.Errorf("meter %s does not match its catalog rate", meter.MeterKey)
 		}
@@ -512,7 +507,7 @@ func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing)
 		group := groups[key]
 		if group == nil {
 			order = append(order, key)
-			meter.RateUSDAtoms = rate.String()
+			meter.RateUSD = rate.String()
 			groups[key] = &meterGroup{meter: meter, quantity: quantity, rate: rate}
 			continue
 		}
@@ -525,7 +520,7 @@ func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing)
 		}
 	}
 	compacted := make([]catalog.MeterEstimate, 0, len(groups))
-	total := big.NewInt(0)
+	total := new(money.USD)
 	for _, key := range order {
 		group := groups[key]
 		meter := group.meter
@@ -534,68 +529,20 @@ func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing)
 		if err != nil {
 			return nil, "", err
 		}
-		if _, err := billing.ParseUSDAtoms(amount.String()); err != nil {
+		if _, err := billing.ParseUSD(amount.String()); err != nil {
 			return nil, "", fmt.Errorf("meter %s amount exceeds the settlement limit", meter.MeterKey)
 		}
-		meter.AmountUSDAtoms = amount.String()
+		meter.AmountUSD = amount.String()
 		total.Add(total, amount)
 		compacted = append(compacted, meter)
 	}
-	if _, err := billing.ParseUSDAtoms(total.String()); err != nil {
+	if _, err := billing.ParseUSD(total.String()); err != nil {
 		return nil, "", fmt.Errorf("meter total exceeds the settlement limit")
 	}
 	return compacted, total.String(), nil
 }
 
-func capFinalMetersToHold(finalMeters []catalog.MeterEstimate, holdMeters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {
-	capacities := map[string]*big.Int{}
-	for _, meter := range holdMeters {
-		if !meter.HoldRequired {
-			continue
-		}
-		class, ok := meterQuantityClass(meter.MeterKey)
-		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok || !quantityOK || quantity.Sign() < 0 {
-			return nil, "", fmt.Errorf("held meter quantity is invalid")
-		}
-		if capacities[class] == nil {
-			capacities[class] = big.NewInt(0)
-		}
-		capacities[class].Add(capacities[class], quantity)
-	}
-
-	bounded := make([]catalog.MeterEstimate, 0, len(finalMeters))
-	for _, meter := range finalMeters {
-		class, ok := meterQuantityClass(meter.MeterKey)
-		quantity, quantityOK := new(big.Int).SetString(meter.Quantity, 10)
-		if !ok || !quantityOK || quantity.Sign() <= 0 {
-			return nil, "", fmt.Errorf("final meter quantity is invalid")
-		}
-		remaining := capacities[class]
-		if remaining == nil || remaining.Sign() <= 0 {
-			continue
-		}
-		allowed := new(big.Int).Set(quantity)
-		if allowed.Cmp(remaining) > 0 {
-			allowed.Set(remaining)
-		}
-		remaining.Sub(remaining, allowed)
-		rate, err := billing.ParseUSDAtoms(meter.RateUSDAtoms)
-		if err != nil || rate.Sign() <= 0 {
-			return nil, "", fmt.Errorf("final meter rate is invalid")
-		}
-		amount, err := calculatedMeterAmount(meter.RateKey, allowed, rate)
-		if err != nil {
-			return nil, "", err
-		}
-		meter.Quantity = allowed.String()
-		meter.AmountUSDAtoms = amount.String()
-		bounded = append(bounded, meter)
-	}
-	return canonicalizeMeters(bounded, pricing)
-}
-
-func calculatedMeterAmount(rateKey string, quantity *big.Int, rate *big.Int) (*big.Int, error) {
+func calculatedMeterAmount(rateKey string, quantity *big.Int, rate *money.USD) (*money.USD, error) {
 	var divisor int64
 	switch {
 	case strings.HasPrefix(rateKey, "per_mill"):
@@ -605,12 +552,7 @@ func calculatedMeterAmount(rateKey string, quantity *big.Int, rate *big.Int) (*b
 	default:
 		return nil, fmt.Errorf("unsupported meter rate key %s", rateKey)
 	}
-	cost := new(big.Int).Mul(new(big.Int).Set(quantity), rate)
-	quotient, remainder := new(big.Int).QuoRem(cost, big.NewInt(divisor), new(big.Int))
-	if remainder.Sign() > 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
-	return quotient, nil
+	return new(money.USD).MulRatioCeil(rate, quantity, divisor), nil
 }
 
 func validateCanonicalMeterSummary(meters []catalog.MeterEstimate, pricing catalog.Pricing, total string) error {

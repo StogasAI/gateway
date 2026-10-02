@@ -3,6 +3,8 @@ package billing
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,42 @@ import (
 
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
+
+func TestTinybirdRequiresAuthenticatedHybridTLS(t *testing.T) {
+	for _, mode := range []string{"hybrid", "classical", "tls12", "untrusted"} {
+		t.Run(mode, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+			server.TLS = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}}
+			if mode == "classical" || mode == "tls12" {
+				server.TLS.CurvePreferences = []tls.CurveID{tls.X25519}
+			}
+			if mode == "tls12" {
+				server.TLS.MinVersion = tls.VersionTLS12
+				server.TLS.MaxVersion = tls.VersionTLS12
+			}
+			server.StartTLS()
+			defer server.Close()
+			client, err := NewTinybirdClient(server.URL, "fixture", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := client.client.Transport.(*http.Transport)
+			defer transport.CloseIdleConnections()
+			if mode != "untrusted" {
+				roots := x509.NewCertPool()
+				roots.AddCert(server.Certificate())
+				transport.TLSClientConfig.RootCAs = roots
+			}
+			response, err := client.client.Get(server.URL)
+			if response != nil {
+				response.Body.Close()
+			}
+			if (err == nil) != (mode == "hybrid") {
+				t.Fatalf("TLS mode %s accepted=%v", mode, err == nil)
+			}
+		})
+	}
+}
 
 func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
 	for _, metrics := range []*plugins.StogasStructuredPIIRedactionMetrics{nil, {}, {ItemsRedacted: ^uint32(0), DurationUS: 125}} {
@@ -41,24 +79,27 @@ func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
 }
 
 func TestTokenUsageSurvivesOutboxAndAnalyticsProjection(t *testing.T) {
-	for _, quantity := range []*int64{nil, new(int64), func() *int64 { n := int64(123456); return &n }()} {
+	for _, quantity := range []*uint64{nil, new(uint64), func() *uint64 { n := uint64(1_000_000_000_000); return &n }()} {
 		event := testGatewayRequestEvent()
-		event.PolicyTokens = quantity
-		encoded, err := json.Marshal(event)
+		event.Meters = EventMeters{}
+		if quantity != nil {
+			event.Meters[MeterTotalTokens] = EventMeter{Quantity: fmt.Sprint(*quantity)}
+		}
+		encoded, err := encodeGatewayRequestEvent(event)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var restored RequestEvent
-		if err := json.Unmarshal(encoded, &restored); err != nil {
+		restored, err := decodeGatewayRequestEvent(encoded)
+		if err != nil {
 			t.Fatal(err)
 		}
 		payload := tinybirdGatewayRequestEvent(restored)
 		if quantity == nil {
-			if payload.PolicyTokens != nil {
+			if payload.AnalyticsTotalTokens != nil {
 				t.Fatal("unknown usage became a known value")
 			}
-		} else if payload.PolicyTokens == nil || *payload.PolicyTokens != *quantity {
-			t.Fatalf("token usage changed: got %v, want %d", payload.PolicyTokens, *quantity)
+		} else if payload.AnalyticsTotalTokens == nil || *payload.AnalyticsTotalTokens != *quantity {
+			t.Fatalf("token usage changed: got %v, want %d", payload.AnalyticsTotalTokens, *quantity)
 		}
 	}
 }
@@ -499,12 +540,7 @@ func TestTinybirdAppendRejectsOversizedEventBeforeAdmission(t *testing.T) {
 
 	client := newTestTinybirdClient(t, server.URL)
 	event := testGatewayRequestEvent()
-	event.Pricing = EventPricing{"oversized": {
-		Quantity:     "1",
-		RateKey:      strings.Repeat("x", tinybirdMaxEventBytes),
-		RateUSDAtoms: "1",
-		USDAtoms:     "1",
-	}}
+	event.Meters = EventMeters{"oversized": PricedMeter("1", strings.Repeat("x", tinybirdMaxEventBytes), "1", "1")}
 
 	err := client.AppendGatewayRequest(context.Background(), event)
 	if err == nil || !strings.Contains(err.Error(), "encoded event") {
@@ -568,4 +604,29 @@ func newTestTinybirdClient(t *testing.T, host string) *TinybirdClient {
 	client.minRequestInterval = time.Millisecond
 	t.Cleanup(client.Close)
 	return client
+}
+
+func TestPolicyVersionsSurviveOutboxAndTinybirdEncoding(t *testing.T) {
+	event := testGatewayRequestEvent()
+	event.PolicyVersions = &PolicyVersions{{Scope: "organization", ID: "org", Revision: 3}, {Scope: "grant", ID: "grant", Revision: 4}, {Scope: "key", ID: "key", Revision: 8}}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored RequestEvent
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	payload := tinybirdGatewayRequestEvent(restored)
+	var versions PolicyVersions
+	if err := json.Unmarshal([]byte(payload.PolicyVersions), &versions); err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 3 || versions[0].Revision != 3 || versions[1].Revision != 4 || versions[2].Revision != 8 {
+		t.Fatalf("wrong recorded snapshot: %#v", versions)
+	}
+	event.PolicyVersions = nil
+	if tinybirdGatewayRequestEvent(event).PolicyVersions != "null" {
+		t.Fatal("unknown snapshot was invented")
+	}
 }

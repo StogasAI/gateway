@@ -20,17 +20,19 @@ func testDeploymentForRoute(provider schemas.ModelProvider, model string, route 
 	return DeploymentForRouteServiceTier(provider, model, route, nil)
 }
 
-func TestClientHeaderCatalogPublishesBoundedPassThroughPool(t *testing.T) {
+func TestClientHeaderCatalogOmitsRemovedProviderSecrets(t *testing.T) {
 	for _, header := range []string{
-		"x-stogas-upstream-anthropic-api-key",
-		"x-stogas-upstream-chutes-api-key",
-		"x-stogas-upstream-openai-api-key",
+		"stogas-metadata",
 	} {
 		if !strings.Contains(allClientHeadersValue, header) {
 			t.Fatalf("client header catalog omitted %q", header)
 		}
 	}
 	for _, legacy := range []string{
+		"stogas-receipt",
+		"x-stogas-upstream-anthropic-api-key",
+		"x-stogas-upstream-chutes-api-key",
+		"x-stogas-upstream-openai-api-key",
 		"x-stogas-upstream-api-key",
 		"x-stogas-upstream-provider",
 	} {
@@ -46,10 +48,10 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
 	if len(snap.graph.Authors) != 10 ||
-		len(snap.graph.Models) != 36 ||
+		len(snap.graph.Models) != 31 ||
 		len(snap.graph.Providers) != 4 ||
 		len(snap.graph.Routes) != 7 ||
-		len(snap.graph.Deployments) != 114 {
+		len(snap.graph.Deployments) != 106 {
 		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
 			len(snap.graph.Authors),
 			len(snap.graph.Models),
@@ -58,8 +60,8 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 			len(snap.graph.Deployments),
 		)
 	}
-	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; !exists {
-		t.Fatal("historical search preview deployment must remain reproducible")
+	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; exists {
+		t.Fatal("retired search preview deployment must not remain in the current catalog")
 	}
 	euDeployment := snap.graph.Deployments["azure-gpt-5.6-sol-eu"]
 	for routeID, handling := range euDeployment.DataHandlingByRoute {
@@ -90,7 +92,7 @@ func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *tes
 		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
 	}
 
-	if len(snap.graph.Models) != 36 {
+	if len(snap.graph.Models) != 31 {
 		t.Fatalf("runtime catalog unexpectedly contains informational-only models: %d", len(snap.graph.Models))
 	}
 }
@@ -479,7 +481,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	}
 }
 
-func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.T) {
+func TestProviderRestrictionStillRequiresAnUnambiguousDeployment(t *testing.T) {
 	loadTestCatalog(t)
 	for _, route := range []Route{RouteChat, RouteResponses} {
 		path := "/v1/responses"
@@ -489,8 +491,8 @@ func TestSharedModelDefaultsToItsAuthorAndAllowsExplicitAzureRouting(t *testing.
 			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"only":["azure"]}}`
 		}
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
-		if err != nil || resolution.Provider != schemas.Azure {
-			t.Fatalf("provider preference must select Azure: resolution=%#v err=%v", resolution, err)
+		if PublicError(err).Code != "model_ambiguous" || resolution != nil {
+			t.Fatalf("provider restriction chose an arbitrary region: resolution=%#v err=%v", resolution, err)
 		}
 	}
 }
@@ -502,8 +504,8 @@ func TestResolveRequestSupportsModelProviderAndDeploymentSelectors(t *testing.T)
 		provider   schemas.ModelProvider
 		selector   string
 	}{
-		{selector: "gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
-		{selector: "azure/gpt-5.6-sol", provider: schemas.Azure, deployment: "azure-gpt-5.6-sol"},
+		{selector: "openai/gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
+		{selector: "azure/azure-gpt-5.6-sol", provider: schemas.Azure, deployment: "azure-gpt-5.6-sol"},
 		{selector: "openai-gpt-5.6-sol", provider: schemas.OpenAI, deployment: "openai-gpt-5.6-sol"},
 	}
 	for _, route := range []struct {
@@ -596,8 +598,8 @@ func TestFailedPreferredProviderDoesNotHideRemainingAmbiguity(t *testing.T) {
 			Path:   "/v1/chat/completions",
 			Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2` + providerRule + `}`),
 		})
-		if err == nil || !strings.Contains(err.Error(), "azure/gpt-5.6-sol") ||
-			!strings.Contains(err.Error(), "chutes/gpt-5.6-sol") {
+		if err == nil || !strings.Contains(err.Error(), "azure-gpt-5.6-sol") ||
+			!strings.Contains(err.Error(), "chutes-gpt-5.6-sol") {
 			t.Fatalf("failed preferred provider error = %v, want both remaining selectors", err)
 		}
 	}
@@ -607,8 +609,8 @@ func TestFailedPreferredProviderDoesNotHideRemainingAmbiguity(t *testing.T) {
 		Path:   "/v1/chat/completions",
 		Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2,"provider":{"order":["openai","azure"]}}`),
 	})
-	if err != nil || resolution.Provider != schemas.Azure {
-		t.Fatalf("next compatible ordered provider = %#v, err = %v", resolution, err)
+	if PublicError(err).Code != "model_ambiguous" || resolution != nil {
+		t.Fatalf("provider order chose an arbitrary Azure region: %#v, err = %v", resolution, err)
 	}
 }
 
@@ -1080,11 +1082,15 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 		"route:openai-responses",
 		"provider:openai",
 	}
-	if got := resolution.CatalogNodeIDs(); strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := resolution.CatalogNodeIDsForDeployment(resolution.Deployment); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("catalog chain = %#v, want %#v", got, want)
 	}
 	if identity := resolution.CatalogIdentity(); identity != snap.identity {
 		t.Fatalf("catalog identity = %#v, want %#v", identity, snap.identity)
+	}
+	expectedHash := snap.graph.Deployments[resolution.Deployment.ID].ChainHashes["openai-responses"]
+	if !validSHA256Digest(expectedHash) || resolution.Deployment.ChainHash != expectedHash {
+		t.Fatalf("request selected the wrong historical chain: %s", resolution.Deployment.ChainHash)
 	}
 }
 
@@ -1225,6 +1231,21 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	}
 }
 
+func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
+	for _, hashes := range []map[string]string{nil, {"openai-responses": "invalid"}, {"other-route": "sha256:" + strings.Repeat("a", 64)}} {
+		var runtime compiledCatalog
+		if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			t.Fatal(err)
+		}
+		deployment := runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"]
+		deployment.ChainHashes = hashes
+		runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"] = deployment
+		if err := validateCompiledCatalog(runtime); err == nil {
+			t.Fatalf("invalid historical chain mapping was accepted: %#v", hashes)
+		}
+	}
+}
+
 func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 	var runtime map[string]any
 	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
@@ -1302,8 +1323,8 @@ func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T)
 	}
 }
 
-func TestSnapshotValidationPreservesFreeAndAtomPreciseRates(t *testing.T) {
-	for _, rate := range []string{"0", "1", "1000000000000000", "42000000000000000", "1000000000000000000000000000000", "-1", "01", "0.001", "1e15", "1000000000000000000000000000001"} {
+func TestSnapshotValidationPreservesExactUSDRates(t *testing.T) {
+	for _, rate := range []string{"0", "0.001", "0.042", "0.000000000000000000000000000000000001", "1000000000000", "-1", "01", "0.010", "1e15", "1000000000000.000000000000000000000000000000000001"} {
 		t.Run(rate, func(t *testing.T) {
 			var runtime map[string]any
 			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
@@ -1317,7 +1338,7 @@ func TestSnapshotValidationPreservesFreeAndAtomPreciseRates(t *testing.T) {
 			}
 			loaded, err := snapshotFromCatalogBytes(data)
 			switch rate {
-			case "-1", "01", "0.001", "1e15", "1000000000000000000000000000001":
+			case "-1", "01", "0.010", "1e15", "1000000000000.000000000000000000000000000000000001":
 				if err == nil {
 					t.Fatal("invalid monetary rate was accepted")
 				}

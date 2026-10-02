@@ -1,6 +1,7 @@
 package redaction
 
 import (
+	"bytes"
 	"errors"
 	"sort"
 	"time"
@@ -16,6 +17,7 @@ const (
 
 var ErrMatchLimit = errors.New("PII redaction match limit exceeded")
 var ErrWorkLimit = errors.New("redaction work limit exceeded")
+var ErrNonASCII = errors.New("input text must contain only ASCII characters")
 
 // Entity is a high-confidence structured value that can be replaced without
 // retaining the source value. The MVP deliberately excludes inferred names,
@@ -84,30 +86,39 @@ type Summary struct {
 // Redactor is request-local. It retains only a count and elapsed duration,
 // never source values, hashes, offsets, or replacement maps.
 type Redactor struct {
-	policy   *Policy
-	items    uint32
-	duration time.Duration
-	scanWork uint64
-}
-
-func New() *Redactor {
-	return NewWithPolicy(defaultPolicy)
+	policy           *Policy
+	items            uint32
+	inputTextBytes   int
+	duration         time.Duration
+	scanWork         uint64
+	asciiOnly        bool
+	expansion        int
+	reserveExpansion func(int) error
 }
 
 // NewWithPolicy creates request-local state for an immutable compiled policy.
-// A nil policy uses the secure default.
+// A nil policy leaves text unchanged.
 func NewWithPolicy(policy *Policy) *Redactor {
-	if policy == nil {
-		policy = defaultPolicy
-	}
 	return &Redactor{policy: policy}
 }
 
-func (r *Redactor) Summary() Summary {
-	if r == nil {
-		return Summary{}
+// Summary is absent when no redaction rules were applied. A configured scan
+// retains its metrics even when it finds no matches.
+func (r *Redactor) Summary() *Summary {
+	if r == nil || r.policy == nil || (r.policy.entities == 0 && len(r.policy.custom) == 0 && len(r.policy.literals) == 0) {
+		return nil
 	}
-	return Summary{ItemsRedacted: r.items, DurationUS: boundedDurationMicroseconds(r.duration)}
+	return &Summary{ItemsRedacted: r.items, DurationUS: boundedDurationMicroseconds(r.duration)}
+}
+
+// InputTextBytes counts decoded UTF-8 text after transformation. It uses the
+// same request text traversal even when redaction is disabled, excluding
+// protocol identifiers and protected reasoning replay.
+func (r *Redactor) InputTextBytes() int {
+	if r == nil {
+		return 0
+	}
+	return r.inputTextBytes
 }
 
 func (r *Redactor) chargeScanWork(amount uint64) bool {
@@ -117,6 +128,14 @@ func (r *Redactor) chargeScanWork(amount uint64) bool {
 	}
 	r.scanWork += amount
 	return true
+}
+
+func (r *Redactor) reserveGrowth(bytes int) error {
+	if bytes <= 0 || r.reserveExpansion == nil {
+		return nil
+	}
+	r.expansion += bytes
+	return r.reserveExpansion(r.expansion)
 }
 
 func boundedDurationMicroseconds(duration time.Duration) uint32 {
@@ -134,50 +153,46 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 	if r == nil {
 		return text, false, nil
 	}
+	if r.asciiOnly {
+		for _, b := range text {
+			if b >= 128 {
+				return nil, false, ErrNonASCII
+			}
+		}
+		return text, false, nil
+	}
 	policy := r.policy
 	if policy == nil {
-		policy = defaultPolicy
+		return text, false, nil
 	}
 	if len(text) < policy.minimumBytes {
 		return text, false, nil
 	}
 
-	var matches []match
-	var err error
-	if policy.entities&secretEntityMask != 0 {
-		matches, err = r.scanSecrets(text, matches, policy.entities)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	if policy.entities.has(EntityEmail) {
-		matches, err = scanEmails(text, matches)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	if policy.entities.has(EntityIPAddress) {
-		matches, err = scanIPAddresses(text, matches)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	if policy.entities&structuredNumberEntityMask != 0 {
-		matches, err = scanStructuredNumbers(text, matches, policy.entities)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-	if policy.entities&structuredIdentifierEntityMask != 0 {
-		matches, err = scanStructuredIdentifiers(text, matches, policy.entities)
-		if err != nil {
-			return nil, false, err
-		}
+	matches, err := r.scanBuiltinMatches(text)
+	if err != nil {
+		return nil, false, err
 	}
 	// Each requirement scans the original text. A combined alternation would
 	// hide overlapping matches from another scope before interval merging.
 	for _, expression := range policy.custom {
 		matches, err = r.scanCustomPatterns(text, matches, expression)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	longestRun, neededRun := 0, 0
+	for _, selection := range policy.literals {
+		neededRun = max(neededRun, selection.matcher.minWordRun)
+	}
+	if neededRun > 0 {
+		longestRun = longestASCIIWordRun(text, neededRun)
+	}
+	for _, selection := range policy.literals {
+		if selection.matcher.minWordRun > longestRun {
+			continue
+		}
+		matches, err = r.scanLiterals(text, matches, selection)
 		if err != nil {
 			return nil, false, err
 		}
@@ -202,6 +217,9 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 	if outputSize < 0 {
 		return nil, false, ErrMatchLimit
 	}
+	if err := r.reserveGrowth(outputSize - len(text)); err != nil {
+		return nil, false, err
+	}
 	out := make([]byte, 0, outputSize)
 	position := 0
 	for _, found := range matches {
@@ -212,6 +230,62 @@ func (r *Redactor) redactBytes(text []byte) ([]byte, bool, error) {
 	out = append(out, text[position:]...)
 	r.items += uint32(len(matches))
 	return out, true, nil
+}
+
+// Built-in PII cannot consist of surrounding whitespace. Retain one original
+// boundary byte on either side, so detectors keep their boundary context while
+// avoiding a complete padding scan for every detector. Custom rules still see
+// the entire original text.
+func (r *Redactor) scanBuiltinMatches(text []byte) ([]match, error) {
+	if r.policy.entities == 0 {
+		return nil, nil
+	}
+	start := max(0, len(text)-len(bytes.TrimLeft(text, " \t\r\n"))-1)
+	end := start + len(bytes.TrimRight(text[start:], " \t\r\n"))
+	end = min(len(text), end+1)
+	matches, err := r.scanBuiltinText(text[start:end])
+	for i := range matches {
+		matches[i].start += start
+		matches[i].end += start
+	}
+	return matches, err
+}
+
+func (r *Redactor) scanBuiltinText(text []byte) ([]match, error) {
+	policy := r.policy
+	var matches []match
+	var err error
+	if policy.entities&secretEntityMask != 0 {
+		matches, err = r.scanSecrets(text, matches, policy.entities)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if policy.entities.has(EntityEmail) {
+		matches, err = scanEmails(text, matches)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if policy.entities.has(EntityIPAddress) {
+		matches, err = scanIPAddresses(text, matches)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if policy.entities&structuredNumberEntityMask != 0 {
+		matches, err = scanStructuredNumbers(text, matches, policy.entities)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if policy.entities&structuredIdentifierEntityMask != 0 {
+		matches, err = scanStructuredIdentifiers(text, matches, policy.entities)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return matches, nil
 }
 
 func filterEnabledMatches(matches []match, enabled entityMask) []match {

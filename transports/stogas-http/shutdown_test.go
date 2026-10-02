@@ -8,27 +8,29 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
-	"github.com/valyala/fasthttp"
+	"net/http"
 )
 
 func TestBlockedSSESendEndsWhenRequestContextCloses(t *testing.T) {
 	server := &Server{}
 	requestCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
+	var closeStream sync.Once
 	drain := newRequestDrain()
 	if !drain.begin() {
 		t.Fatal("request drain rejected work before draining")
 	}
 	state := &stogas.State{}
-	responseCtx := &fasthttp.RequestCtx{}
+	responseCtx := newTestRequest(t)
 
-	server.writeSSEStream(responseCtx, requestCtx, state, stream, true, false, cancel, drain.end)
+	streamBodyReader := server.startSSEStream(responseCtx, requestCtx, state, stream, true, false, cancel, drain.end)
 	t.Cleanup(func() {
 		cancel()
-		_ = responseCtx.Response.CloseBodyStream()
-		close(stream)
+		_ = streamBodyReader.Close()
+		closeStream.Do(func() { close(stream) })
 	})
 
 	sendChunk := func(id string) {
@@ -57,6 +59,15 @@ func TestBlockedSSESendEndsWhenRequestContextCloses(t *testing.T) {
 	}
 
 	cancel()
+	if _, err := io.Copy(io.Discard, streamBodyReader); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-idle:
+		t.Fatal("cancellation released provider work before its source closed")
+	default:
+	}
+	closeStream.Do(func() { close(stream) })
 	select {
 	case <-idle:
 	case <-time.After(time.Second):
@@ -69,16 +80,14 @@ func TestBlockedSSESendEndsWhenRequestContextCloses(t *testing.T) {
 
 func TestServerShutdownContextBoundsActiveBodyStream(t *testing.T) {
 	body := newBlockingResponseBody()
-	fastHTTPServer := &fasthttp.Server{Handler: func(ctx *fasthttp.RequestCtx) {
-		ctx.Response.SetBodyStream(body, -1)
-	}}
+	httpServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(w, body) })}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	serveDone := make(chan error, 1)
 	go func() {
-		serveDone <- fastHTTPServer.Serve(listener)
+		serveDone <- httpServer.Serve(listener)
 	}()
 
 	conn, err := net.Dial("tcp", listener.Addr().String())
@@ -102,7 +111,7 @@ func TestServerShutdownContextBoundsActiveBodyStream(t *testing.T) {
 		t.Fatal("response body stream did not start")
 	}
 
-	server := &Server{server: fastHTTPServer}
+	server := &Server{server: httpServer}
 	shutdownDone := make(chan struct{})
 	go func() {
 		server.shutdownWithContext(shutdownCtx)
@@ -111,8 +120,8 @@ func TestServerShutdownContextBoundsActiveBodyStream(t *testing.T) {
 
 	select {
 	case err := <-serveDone:
-		if err != nil {
-			t.Fatalf("fasthttp Serve returned an error during shutdown: %v", err)
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("HTTP Serve returned an error during shutdown: %v", err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("shutdown did not close the listener")

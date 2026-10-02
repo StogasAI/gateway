@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -77,7 +78,7 @@ func TestStructuredPIIRedaction(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			redactor := New()
+			redactor := newTestRedactor()
 			out, changed, err := redactor.redactBytes([]byte(test.text))
 			if err != nil {
 				t.Fatal(err)
@@ -122,7 +123,7 @@ func TestSecretRedaction(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			redactor := New()
+			redactor := newTestRedactor()
 			out, changed, err := redactor.redactBytes([]byte(test.text))
 			if err != nil {
 				t.Fatal(err)
@@ -174,7 +175,7 @@ func TestKnownSecretPrefixShapes(t *testing.T) {
 		"rk_prod_" + strings.Repeat("A1b2C3d4", 2),
 	}
 	for _, source := range tests {
-		redactor := New()
+		redactor := newTestRedactor()
 		out, changed, err := redactor.redactBytes([]byte(source))
 		if err != nil || !changed || string(out) != "<VENDOR_TOKEN>" || redactor.Summary().ItemsRedacted != 1 {
 			t.Fatalf("redaction of %q = %q, changed=%t, summary=%#v, err=%v", source, out, changed, redactor.Summary(), err)
@@ -186,14 +187,14 @@ func TestKnownSecretBoundaries(t *testing.T) {
 	t.Parallel()
 	token := "ghp_" + strings.Repeat("A1", 18)
 
-	redactor := New()
+	redactor := newTestRedactor()
 	out, changed, err := redactor.redactBytes([]byte("(" + token + ")."))
 	if err != nil || !changed || string(out) != "(<VENDOR_TOKEN>)." {
 		t.Fatalf("punctuated token redaction = %q, changed=%t, err=%v", out, changed, err)
 	}
 
 	for _, source := range []string{"x" + token, token + "Z", token + "_suffix"} {
-		out, changed, err = New().redactBytes([]byte(source))
+		out, changed, err = newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || string(out) != source {
 			t.Fatalf("partial token redaction of %q = %q, changed=%t, err=%v", source, out, changed, err)
 		}
@@ -203,7 +204,7 @@ func TestKnownSecretBoundaries(t *testing.T) {
 func TestLongCredentialIsFullyRedacted(t *testing.T) {
 	t.Parallel()
 	source := "CLIENT_SECRET=" + strings.Repeat("Ab1!Cd2@", 1_500)
-	out, changed, err := New().redactBytes([]byte(source))
+	out, changed, err := newTestRedactor().redactBytes([]byte(source))
 	if err != nil || !changed || string(out) != "CLIENT_SECRET=<CREDENTIAL>" {
 		t.Fatalf("long credential redaction length=%d, changed=%t, err=%v", len(out), changed, err)
 	}
@@ -265,7 +266,7 @@ func TestFalsePositiveCorpus(t *testing.T) {
 		"Canadian SIN 046 454 286 is in a reserved range.",
 	}
 	for _, source := range texts {
-		redactor := New()
+		redactor := newTestRedactor()
 		out, changed, err := redactor.redactBytes([]byte(source))
 		if err != nil {
 			t.Fatalf("%q: %v", source, err)
@@ -281,8 +282,8 @@ func TestArbitrarySignatureFieldDoesNotDisableRedaction(t *testing.T) {
 	raw := map[string]json.RawMessage{
 		"input": json.RawMessage(`[{"type":"input_text","text":"alice@corp.io","signature":"application-signature"}]`),
 	}
-	redactor := New()
-	if err := redactor.RedactRequestFields(raw, SurfaceResponses); err != nil {
+	redactor := newTestRedactor()
+	if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
 		t.Fatal(err)
 	}
 	if redactor.Summary().ItemsRedacted != 1 || !bytes.Contains(raw["input"], []byte("<EMAIL_ADDRESS>")) {
@@ -306,8 +307,8 @@ func TestJSONFieldScopeAndSignedObjects(t *testing.T) {
 		"tools":    json.RawMessage(fmt.Sprintf(`[{"type":"function","function":{"name":%q,"description":"Contact tools@corp.io"}}]`, githubToken)),
 	}
 
-	redactor := New()
-	if err := redactor.RedactRequestFields(raw, SurfaceChat); err != nil {
+	redactor := newTestRedactor()
+	if err := redactor.RedactRequestFields(raw, SurfaceChat, nil); err != nil {
 		t.Fatal(err)
 	}
 	if redactor.Summary().ItemsRedacted != 3 {
@@ -341,8 +342,8 @@ func TestEncryptedObjectRollsBackNestedRedactions(t *testing.T) {
 			{"type":"reasoning","summary":[{"type":"summary_text","text":"inside@corp.io"}],"encrypted_content":"ciphertext"}
 		]`),
 	}
-	redactor := New()
-	if err := redactor.RedactRequestFields(raw, SurfaceResponses); err != nil {
+	redactor := newTestRedactor()
+	if err := redactor.RedactRequestFields(raw, SurfaceResponses, nil); err != nil {
 		t.Fatal(err)
 	}
 	if redactor.Summary().ItemsRedacted != 1 || !bytes.Contains(raw["input"], []byte("<EMAIL_ADDRESS>")) || !bytes.Contains(raw["input"], []byte("inside@corp.io")) {
@@ -353,7 +354,7 @@ func TestEncryptedObjectRollsBackNestedRedactions(t *testing.T) {
 func TestValidEscapedJSONString(t *testing.T) {
 	t.Parallel()
 	source := []byte(`{"text":"path:\/users\/alice and alice\u0040corp.io"}`)
-	out, changed, err := New().redactJSON(source)
+	out, changed, err := newTestRedactor().redactJSON(source)
 	if err != nil || !changed || !json.Valid(out) || !bytes.Contains(out, []byte("EMAIL_ADDRESS")) {
 		t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
 	}
@@ -362,7 +363,7 @@ func TestValidEscapedJSONString(t *testing.T) {
 func TestIncompleteEncryptedShapeDoesNotBypassRedaction(t *testing.T) {
 	t.Parallel()
 	source := []byte(`{"type":"reasoning.encrypted","text":"alice@corp.io"}`)
-	out, changed, err := New().redactJSON(source)
+	out, changed, err := newTestRedactor().redactJSON(source)
 	if err != nil || !changed || !bytes.Contains(out, []byte("<EMAIL_ADDRESS>")) {
 		t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
 	}
@@ -371,7 +372,7 @@ func TestIncompleteEncryptedShapeDoesNotBypassRedaction(t *testing.T) {
 func TestRedactionIsTypedIrreversibleAndIdempotent(t *testing.T) {
 	t.Parallel()
 	source := []byte("alice@corp.io and alice@corp.io use 4532 0151 1283 0366")
-	redactor := New()
+	redactor := newTestRedactor()
 	first, changed, err := redactor.redactBytes(source)
 	if err != nil || !changed {
 		t.Fatalf("first redaction changed=%t err=%v", changed, err)
@@ -379,7 +380,7 @@ func TestRedactionIsTypedIrreversibleAndIdempotent(t *testing.T) {
 	if redactor.Summary().ItemsRedacted != 3 || bytes.Contains(first, []byte("alice")) || bytes.Contains(first, []byte("4532")) {
 		t.Fatalf("unexpected first redaction: summary=%#v output=%s", redactor.Summary(), first)
 	}
-	secondRedactor := New()
+	secondRedactor := newTestRedactor()
 	second, changed, err := secondRedactor.redactBytes(first)
 	if err != nil || changed || !bytes.Equal(first, second) || secondRedactor.Summary().ItemsRedacted != 0 {
 		t.Fatalf("redaction is not idempotent: changed=%t err=%v first=%s second=%s", changed, err, first, second)
@@ -413,7 +414,7 @@ func TestEqualMatchesUseAStableEntityOrder(t *testing.T) {
 func TestCleanTextReturnsOriginalStorage(t *testing.T) {
 	t.Parallel()
 	source := []byte(strings.Repeat("ordinary source code and prose 12345\n", 4096))
-	out, changed, err := New().redactBytes(source)
+	out, changed, err := newTestRedactor().redactBytes(source)
 	if err != nil || changed {
 		t.Fatalf("clean redaction changed=%t err=%v", changed, err)
 	}
@@ -425,7 +426,7 @@ func TestCleanTextReturnsOriginalStorage(t *testing.T) {
 func TestMatchLimitFailsClosed(t *testing.T) {
 	t.Parallel()
 	source := []byte(strings.Repeat("person@corp.io ", maxMatchesPerText+1))
-	_, _, err := New().redactBytes(source)
+	_, _, err := newTestRedactor().redactBytes(source)
 	if !errors.Is(err, ErrMatchLimit) {
 		t.Fatalf("error = %v, want ErrMatchLimit", err)
 	}
@@ -434,7 +435,7 @@ func TestMatchLimitFailsClosed(t *testing.T) {
 func TestNestingLimitFailsClosed(t *testing.T) {
 	t.Parallel()
 	source := []byte(strings.Repeat("[", 130) + `"alice@corp.io"` + strings.Repeat("]", 130))
-	_, _, err := New().redactJSON(source)
+	_, _, err := newTestRedactor().redactJSON(source)
 	if !errors.Is(err, ErrNestingLimit) {
 		t.Fatalf("error = %v, want ErrNestingLimit", err)
 	}
@@ -458,9 +459,17 @@ func FuzzRedactBytes(f *testing.F) {
 		"\x00\xff malformed UTF-8",
 	} {
 		f.Add([]byte(seed))
+		f.Add([]byte(" \t\r\n " + seed + " \r\n\t "))
 	}
 	f.Fuzz(func(t *testing.T, source []byte) {
-		redactor := New()
+		if len(source) <= 8192 {
+			bounded, boundedErr := newTestRedactor().scanBuiltinMatches(source)
+			original, originalErr := newTestRedactor().scanBuiltinText(source)
+			if boundedErr == nil && originalErr == nil && !reflect.DeepEqual(normalizeMatches(bounded), normalizeMatches(original)) {
+				t.Fatalf("padding optimization changed built-in matches: %v != %v", bounded, original)
+			}
+		}
+		redactor := newTestRedactor()
 		out, changed, err := redactor.redactBytes(source)
 		if err != nil {
 			if !errors.Is(err, ErrMatchLimit) && !errors.Is(err, ErrWorkLimit) {
@@ -496,7 +505,7 @@ func FuzzRedactJSON(f *testing.F) {
 	f.Fuzz(func(t *testing.T, source []byte) {
 		valid := json.Valid(source)
 		for _, context := range []jsonValueContext{jsonContextGeneral, jsonContextChatMessages, jsonContextResponsesInput} {
-			redactor := New()
+			redactor := newTestRedactor()
 			out, _, err := redactor.redactJSONContext(source, context)
 			if errors.Is(err, ErrNestingLimit) || errors.Is(err, ErrMatchLimit) || errors.Is(err, ErrWorkLimit) {
 				continue
@@ -544,8 +553,8 @@ func BenchmarkRedactRequestSizes(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					fields := map[string]json.RawMessage{"input": encoded}
-					redactor := New()
-					if err := redactor.RedactRequestFields(fields, SurfaceResponses); err != nil {
+					redactor := newTestRedactor()
+					if err := redactor.RedactRequestFields(fields, SurfaceResponses, nil); err != nil {
 						b.Fatal(err)
 					}
 					if (redactor.Summary().ItemsRedacted > 0) != (kind != "clean") {
@@ -563,7 +572,7 @@ func BenchmarkRedactCleanTwoMillionTokens(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, changed, err := New().redactBytes(text); err != nil || changed {
+		if _, changed, err := newTestRedactor().redactBytes(text); err != nil || changed {
 			b.Fatalf("changed=%t err=%v", changed, err)
 		}
 	}
@@ -607,7 +616,7 @@ func BenchmarkRedactDensePII(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, changed, err := New().redactBytes(text); err != nil || !changed {
+		if _, changed, err := newTestRedactor().redactBytes(text); err != nil || !changed {
 			b.Fatalf("changed=%t err=%v", changed, err)
 		}
 	}

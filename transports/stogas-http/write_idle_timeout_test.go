@@ -2,150 +2,167 @@ package stogashttp
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
-	"net"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
-	"github.com/valyala/fasthttp"
-	"github.com/valyala/fasthttp/fasthttputil"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 )
 
-func TestWriteIdleTimeoutRefreshesForEveryWrite(t *testing.T) {
-	connection := &deadlineRecordingConn{}
-	timeout := time.Minute
-	wrapped := &writeIdleTimeoutConn{Conn: connection, timeout: timeout}
-
-	startedAt := time.Now()
-	if _, err := wrapped.Write([]byte("first")); err != nil {
-		t.Fatal(err)
+func TestResponseWritesBoundChunksAndClearDeadlines(t *testing.T) {
+	recorder := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
+	limit := time.Now().Add(time.Second)
+	writer := &responseWriter{writer: recorder, control: http.NewResponseController(recorder), deadline: limit, idle: time.Minute}
+	data := make([]byte, (128<<10)+1)
+	if n, err := writer.Write(data); err != nil || n != len(data) {
+		t.Fatalf("write = %d, %v", n, err)
 	}
-	if _, err := wrapped.Write([]byte("second")); err != nil {
-		t.Fatal(err)
+	if len(recorder.deadlines) != 6 || recorder.maxWrite != 64<<10 {
+		t.Fatalf("deadlines=%v max write=%d", recorder.deadlines, recorder.maxWrite)
 	}
-	if len(connection.deadlines) != 2 {
-		t.Fatalf("write deadline count = %d, want 2", len(connection.deadlines))
-	}
-	for _, deadline := range connection.deadlines {
-		remaining := deadline.Sub(startedAt)
-		if remaining <= 0 || remaining > timeout+time.Second {
-			t.Fatalf("write deadline remaining = %s, want within %s", remaining, timeout)
+	for i, deadline := range recorder.deadlines {
+		if i%2 == 0 && !deadline.Equal(limit) || i%2 != 0 && !deadline.IsZero() {
+			t.Fatalf("deadline %d = %s", i, deadline)
 		}
 	}
-}
-
-func TestWriteIdleTimeoutHonorsAbsoluteDeliveryLimit(t *testing.T) {
-	connection := &deadlineRecordingConn{}
-	wrapped := &writeIdleTimeoutConn{Conn: connection, timeout: time.Minute}
-	limit := time.Now().Add(time.Second)
-
-	setDownstreamWriteLimit(wrapped, limit)
-	if _, err := wrapped.Write([]byte("payload")); err != nil {
-		t.Fatal(err)
-	}
-	if len(connection.deadlines) != 1 || !connection.deadlines[0].Equal(limit) {
-		t.Fatalf("write deadline = %v, want absolute limit %v", connection.deadlines, limit)
-	}
-}
-
-func TestSetDownstreamWriteLimitUnwrapsTLS(t *testing.T) {
-	serverConnection, clientConnection := net.Pipe()
-	defer serverConnection.Close()
-	defer clientConnection.Close()
-	raw := &writeIdleTimeoutConn{Conn: serverConnection, timeout: time.Minute}
-	secured := tls.Server(raw, &tls.Config{})
-	limit := time.Now().Add(time.Minute)
-
-	setDownstreamWriteLimit(secured, limit)
-	raw.limitMu.RLock()
-	got := raw.limit
-	raw.limitMu.RUnlock()
-	if !got.Equal(limit) {
-		t.Fatalf("TLS write deadline limit = %s, want %s", got, limit)
+	// An unsupported writer cannot silently remove the write bound.
+	unsupported := httptest.NewRecorder()
+	writer = &responseWriter{writer: unsupported, control: http.NewResponseController(unsupported), idle: time.Minute}
+	if _, err := writer.Write([]byte("private")); !errors.Is(err, http.ErrNotSupported) || unsupported.Body.Len() != 0 {
+		t.Fatalf("unsupported writer = %v, %s", err, unsupported.Body)
 	}
 }
 
 func TestRequestContextSetsAbsoluteDownstreamDeliveryLimit(t *testing.T) {
-	raw := &writeIdleTimeoutConn{Conn: &deadlineRecordingConn{}, timeout: downstreamWriteIdleTimeout}
-	ctx := &fasthttp.RequestCtx{}
-	ctx.Init2(raw, nil, false)
-
+	ctx := newTestRequest(t)
 	_, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cancel()
-	raw.limitMu.RLock()
-	limit := raw.limit
-	raw.limitMu.RUnlock()
-	remaining := time.Until(limit)
+	remaining := time.Until(ctx.deliveryDeadline)
 	if remaining <= billing.GatewayRequestLifetime || remaining > billing.GatewayRequestLifetime+downstreamWriteIdleTimeout+time.Second {
-		t.Fatalf("downstream delivery limit remaining = %s, want request lifetime plus final delivery window", remaining)
+		t.Fatalf("delivery deadline = %s", remaining)
 	}
 }
 
-func TestWriteIdleTimeoutBoundsNonReadingClientDuringShutdown(t *testing.T) {
-	const timeout = 25 * time.Millisecond
-
-	requestStarted := make(chan struct{})
-	server := &fasthttp.Server{Handler: func(ctx *fasthttp.RequestCtx) {
-		close(requestStarted)
-		ctx.Response.SetBodyStream(bytes.NewReader(make([]byte, 1<<20)), -1)
-	}}
-	listener := fasthttputil.NewInmemoryListener()
-	serveDone := make(chan error, 1)
-	go func() {
-		serveDone <- server.Serve(withWriteIdleTimeout(listener, timeout))
-	}()
-
-	connection, err := listener.Dial()
+// A client grants no flow-control credit to stream 1 but continues reading the
+// connection. The stream deadline must reset only stream 1, including while
+// other streams keep connection-level byte progress healthy.
+func TestHTTP2StalledStreamDeadlinePreservesOtherStreams(t *testing.T) {
+	stalled := make(chan error, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writer := &responseWriter{writer: w, control: http.NewResponseController(w), idle: 100 * time.Millisecond}
+		if r.URL.Path == "/stalled" {
+			_, err := writer.Write(make([]byte, 64<<10))
+			stalled <- err
+			return
+		}
+		_, _ = writer.Write([]byte("healthy"))
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	conn, err := tls.Dial("tcp", server.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = connection.Close()
-		_ = listener.Close()
-	})
-	if _, err := connection.Write([]byte("GET / HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\n\r\n")); err != nil {
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if conn.ConnectionState().NegotiatedProtocol != "h2" {
+		t.Fatal("HTTP/2 was not negotiated")
+	}
+	if _, err := io.WriteString(conn, http2.ClientPreface); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-requestStarted:
-	case <-time.After(time.Second):
-		t.Fatal("request handler did not start")
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(http2.Setting{ID: http2.SettingInitialWindowSize, Val: 0}); err != nil {
+		t.Fatal(err)
 	}
-
-	shutdownCtx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	startedAt := time.Now()
-	if err := server.ShutdownWithContext(shutdownCtx); err != nil {
-		t.Fatalf("shutdown waited for its outer context instead of the write idle timeout: %v", err)
+	send := func(id uint32, path string, credit bool) {
+		t.Helper()
+		var block bytes.Buffer
+		encoder := hpack.NewEncoder(&block)
+		for _, field := range []hpack.HeaderField{{Name: ":method", Value: "GET"}, {Name: ":scheme", Value: "https"}, {Name: ":authority", Value: "gateway.test"}, {Name: ":path", Value: path}} {
+			if err := encoder.WriteField(field); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := framer.WriteHeaders(http2.HeadersFrameParam{StreamID: id, BlockFragment: block.Bytes(), EndHeaders: true, EndStream: true}); err != nil {
+			t.Fatal(err)
+		}
+		if credit {
+			if err := framer.WriteWindowUpdate(id, 1024); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	if elapsed := time.Since(startedAt); elapsed >= time.Second {
-		t.Fatalf("shutdown elapsed = %s, want less than outer context", elapsed)
-	}
-	select {
-	case err := <-serveDone:
+	send(1, "/stalled", false)
+	send(3, "/healthy", true)
+	healthy, reset := false, false
+	for !healthy || !reset {
+		frame, err := framer.ReadFrame()
 		if err != nil {
-			t.Fatalf("fasthttp Serve returned an error during shutdown: %v", err)
+			t.Fatal(err)
+		}
+		switch frame := frame.(type) {
+		case *http2.SettingsFrame:
+			if !frame.IsAck() {
+				if err := framer.WriteSettingsAck(); err != nil {
+					t.Fatal(err)
+				}
+			}
+		case *http2.DataFrame:
+			if frame.StreamID == 3 && string(frame.Data()) == "healthy" {
+				healthy = true
+			}
+		case *http2.RSTStreamFrame:
+			if frame.StreamID == 1 {
+				reset = true
+			} else {
+				t.Fatalf("healthy stream reset: %v", frame)
+			}
+		case *http2.GoAwayFrame:
+			t.Fatalf("connection closed instead of one stream: %v", frame)
+		}
+	}
+	select {
+	case err := <-stalled:
+		if err == nil {
+			t.Fatal("stalled stream succeeded")
 		}
 	case <-time.After(time.Second):
-		t.Fatal("fasthttp Serve did not stop")
+		t.Fatal("stalled handler did not return")
+	}
+	send(5, "/healthy", true)
+	for {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data, ok := frame.(*http2.DataFrame); ok && data.StreamID == 5 && string(data.Data()) == "healthy" {
+			break
+		}
 	}
 }
 
-type deadlineRecordingConn struct {
-	net.Conn
+type deadlineRecordingWriter struct {
+	*httptest.ResponseRecorder
 	deadlines []time.Time
+	maxWrite  int
 }
 
-func (c *deadlineRecordingConn) Write(p []byte) (int, error) {
-	return len(p), nil
+func (w *deadlineRecordingWriter) Write(p []byte) (int, error) {
+	w.maxWrite = max(w.maxWrite, len(p))
+	return w.ResponseRecorder.Write(p)
 }
-
-func (c *deadlineRecordingConn) SetWriteDeadline(deadline time.Time) error {
-	c.deadlines = append(c.deadlines, deadline)
+func (w *deadlineRecordingWriter) SetWriteDeadline(deadline time.Time) error {
+	w.deadlines = append(w.deadlines, deadline)
 	return nil
 }

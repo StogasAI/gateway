@@ -1,0 +1,1389 @@
+{
+  "source": "Pinned published tokenizer data; each family count is the maximum across its listed models, without chat templates.",
+  "references": {
+    "deepseek": [
+      {
+        "repo": "deepseek-ai/DeepSeek-V3.2",
+        "revision": "a7e62ac04ecb2c0a54d736dc46601c5606cf10a6"
+      },
+      {
+        "repo": "deepseek-ai/DeepSeek-V4-Flash",
+        "revision": "60d8d70770c6776ff598c94bb586a859a38244f1"
+      },
+      {
+        "repo": "deepseek-ai/DeepSeek-V4-Flash-0731",
+        "revision": "7872f01b1d1fe23eabc4c98b48bffcef5a386062"
+      },
+      {
+        "repo": "deepseek-ai/DeepSeek-V4-Pro",
+        "revision": "b5968e9190ef611bbf34a7229255be88a0e937c1"
+      }
+    ],
+    "qwen3": [
+      {
+        "repo": "Qwen/Qwen3-32B",
+        "revision": "9216db5781bf21249d130ec9da846c4624c16137"
+      }
+    ],
+    "qwen35": [
+      {
+        "repo": "Qwen/Qwen3.5-397B-A17B",
+        "revision": "8472618112abcbd45acbcdc58436aff4233c23f7"
+      },
+      {
+        "repo": "Qwen/Qwen3.8-27B",
+        "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+      },
+      {
+        "repo": "Qwen/Qwen3.6-27B",
+        "revision": "6a9e13bd6fc8f0983b9b99948120bc37f49c13e9"
+      }
+    ],
+    "gemma": [
+      {
+        "repo": "google/gemma-4-31B",
+        "revision": "5bbc2fb1c1b2c611d06e3d9f23c170ba21659d89"
+      }
+    ],
+    "minimax": [
+      {
+        "repo": "MiniMaxAI/MiniMax-M3",
+        "revision": "f0e1c1e04d40177e4673a22097036854f536e9c0"
+      }
+    ],
+    "mistral": [
+      {
+        "repo": "mistralai/Mistral-Nemo-Instruct-2407",
+        "revision": "04d8a90549d23fc6bd7f642064003592df51e9b3"
+      },
+      {
+        "repo": "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+        "revision": "e5e9932441de940c9a62185c870ea5bcd4cd24e2"
+      }
+    ],
+    "kimi": [
+      {
+        "repo": "moonshotai/Kimi-K2.6",
+        "revision": "7eb5002f6aadc958aed6a9177b7ed26bb94011bb"
+      },
+      {
+        "repo": "moonshotai/Kimi-K3",
+        "revision": "f831ab66814297da540d832a5235f8e904f29d06"
+      }
+    ],
+    "glm": [
+      {
+        "repo": "zai-org/GLM-5.1",
+        "revision": "26e1bd6e011feb778d25ae34b09b07074139d92d"
+      },
+      {
+        "repo": "zai-org/GLM-5.2",
+        "revision": "cf457fa734ab149ffef225f80893eb38c6ff5cdc"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "text": "Cmd ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 2,
+        "qwen3": 2,
+        "qwen35": 2,
+        "gemma": 2,
+        "minimax": 2,
+        "mistral": 2,
+        "kimi": 2,
+        "glm": 2
+      }
+    },
+    {
+      "text": "Iİıißẞſ ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 8,
+        "qwen3": 7,
+        "qwen35": 9,
+        "gemma": 7,
+        "minimax": 8,
+        "mistral": 9,
+        "kimi": 10,
+        "glm": 8
+      }
+    },
+    {
+      "text": "⁦A⁩ ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 6,
+        "qwen3": 6,
+        "qwen35": 6,
+        "gemma": 4,
+        "minimax": 6,
+        "mistral": 6,
+        "kimi": 6,
+        "glm": 6
+      }
+    },
+    {
+      "text": "äཱི́ ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 6,
+        "qwen3": 7,
+        "qwen35": 6,
+        "gemma": 6,
+        "minimax": 7,
+        "mistral": 6,
+        "kimi": 6,
+        "glm": 4
+      }
+    },
+    {
+      "text": "﷐﷑﷒﷓﷔",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 15,
+        "qwen3": 10,
+        "qwen35": 15,
+        "gemma": 15,
+        "minimax": 15,
+        "mistral": 15,
+        "kimi": 15,
+        "glm": 15
+      }
+    },
+    {
+      "text": "A",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 6,
+        "qwen3": 7,
+        "qwen35": 7,
+        "gemma": 3,
+        "minimax": 7,
+        "mistral": 7,
+        "kimi": 7,
+        "glm": 6
+      }
+    },
+    {
+      "text": "󰀀􏿿",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 8,
+        "qwen3": 8,
+        "qwen35": 8,
+        "gemma": 8,
+        "minimax": 8,
+        "mistral": 8,
+        "kimi": 8,
+        "glm": 8
+      }
+    },
+    {
+      "text": "ํา",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 2,
+        "qwen3": 3,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 3,
+        "mistral": 3,
+        "kimi": 3,
+        "glm": 2
+      }
+    },
+    {
+      "text": "ܑܰA",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 5,
+        "qwen3": 5,
+        "qwen35": 5,
+        "gemma": 5,
+        "minimax": 5,
+        "mistral": 5,
+        "kimi": 5,
+        "glm": 5
+      }
+    },
+    {
+      "text": "x'll x'LL 'First ('word)",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 10,
+        "qwen3": 10,
+        "qwen35": 10,
+        "gemma": 11,
+        "minimax": 10,
+        "mistral": 10,
+        "kimi": 10,
+        "glm": 10
+      }
+    },
+    {
+      "text": "<|endoftext|><|im_start|>",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 12,
+        "qwen3": 2,
+        "qwen35": 2,
+        "gemma": 12,
+        "minimax": 11,
+        "mistral": 12,
+        "kimi": 12,
+        "glm": 7
+      }
+    },
+    {
+      "text": "⟨bow⟩⟨shift⟩hello⟨eow⟩",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 11,
+        "qwen3": 11,
+        "qwen35": 14,
+        "gemma": 11,
+        "minimax": 14,
+        "mistral": 23,
+        "kimi": 11,
+        "glm": 14
+      }
+    },
+    {
+      "text": "A\u0000\u0001\u001bB",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 5,
+        "qwen3": 5,
+        "qwen35": 5,
+        "gemma": 5,
+        "minimax": 5,
+        "mistral": 5,
+        "kimi": 5,
+        "glm": 5
+      }
+    },
+    {
+      "text": "👩🏽‍💻🏳️‍🌈🇺🇳",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 16,
+        "qwen3": 12,
+        "qwen35": 25,
+        "gemma": 10,
+        "minimax": 16,
+        "mistral": 33,
+        "kimi": 18,
+        "glm": 14
+      }
+    },
+    {
+      "text": "KÅﬁ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 5,
+        "qwen3": 3,
+        "qwen35": 3,
+        "gemma": 7,
+        "minimax": 3,
+        "mistral": 7,
+        "kimi": 6,
+        "glm": 6
+      }
+    },
+    {
+      "text": "𰻞𫝀𐐀𑼀",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 15,
+        "qwen3": 13,
+        "qwen35": 15,
+        "gemma": 16,
+        "minimax": 16,
+        "mistral": 16,
+        "kimi": 16,
+        "glm": 16
+      }
+    },
+    {
+      "text": "Cmd ",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 514,
+        "qwen3": 258,
+        "qwen35": 258,
+        "gemma": 258,
+        "minimax": 258,
+        "mistral": 514,
+        "kimi": 258,
+        "glm": 258
+      }
+    },
+    {
+      "text": "Iİıißẞſ ",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1800,
+        "qwen3": 1543,
+        "qwen35": 2057,
+        "gemma": 1543,
+        "minimax": 1800,
+        "mistral": 2057,
+        "kimi": 2314,
+        "glm": 1800
+      }
+    },
+    {
+      "text": "⁦A⁩ ",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1542,
+        "qwen3": 1286,
+        "qwen35": 1286,
+        "gemma": 1028,
+        "minimax": 1286,
+        "mistral": 1286,
+        "kimi": 1286,
+        "glm": 1286
+      }
+    },
+    {
+      "text": "äཱི́ ",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1286,
+        "qwen3": 1543,
+        "qwen35": 1286,
+        "gemma": 1286,
+        "minimax": 1543,
+        "mistral": 1286,
+        "kimi": 1286,
+        "glm": 772
+      }
+    },
+    {
+      "text": "﷐﷑﷒﷓﷔",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 3855,
+        "qwen3": 2570,
+        "qwen35": 3855,
+        "gemma": 3855,
+        "minimax": 3855,
+        "mistral": 3855,
+        "kimi": 3855,
+        "glm": 3855
+      }
+    },
+    {
+      "text": "A",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1542,
+        "qwen3": 1799,
+        "qwen35": 1799,
+        "gemma": 771,
+        "minimax": 1799,
+        "mistral": 1799,
+        "kimi": 1799,
+        "glm": 1542
+      }
+    },
+    {
+      "text": "󰀀􏿿",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 2056,
+        "qwen3": 2056,
+        "qwen35": 2056,
+        "gemma": 2056,
+        "minimax": 2056,
+        "mistral": 2056,
+        "kimi": 2056,
+        "glm": 2056
+      }
+    },
+    {
+      "text": "ํา",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 514,
+        "qwen3": 771,
+        "qwen35": 257,
+        "gemma": 257,
+        "minimax": 771,
+        "mistral": 771,
+        "kimi": 771,
+        "glm": 514
+      }
+    },
+    {
+      "text": "ܑܰA",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1285,
+        "qwen3": 1285,
+        "qwen35": 1285,
+        "gemma": 1285,
+        "minimax": 1285,
+        "mistral": 1285,
+        "kimi": 1285,
+        "glm": 1285
+      }
+    },
+    {
+      "text": "x'll x'LL 'First ('word)",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 2314,
+        "qwen3": 2314,
+        "qwen35": 2314,
+        "gemma": 2827,
+        "minimax": 2314,
+        "mistral": 2314,
+        "kimi": 2314,
+        "glm": 2314
+      }
+    },
+    {
+      "text": "<|endoftext|><|im_start|>",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 2828,
+        "qwen3": 514,
+        "qwen35": 514,
+        "gemma": 3084,
+        "minimax": 2827,
+        "mistral": 2828,
+        "kimi": 2828,
+        "glm": 1799
+      }
+    },
+    {
+      "text": "⟨bow⟩⟨shift⟩hello⟨eow⟩",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 2827,
+        "qwen3": 2827,
+        "qwen35": 3598,
+        "gemma": 2827,
+        "minimax": 3598,
+        "mistral": 5911,
+        "kimi": 2827,
+        "glm": 3598
+      }
+    },
+    {
+      "text": "A\u0000\u0001\u001bB",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1029,
+        "qwen3": 1029,
+        "qwen35": 1029,
+        "gemma": 1029,
+        "minimax": 1029,
+        "mistral": 1029,
+        "kimi": 1029,
+        "glm": 1029
+      }
+    },
+    {
+      "text": "👩🏽‍💻🏳️‍🌈🇺🇳",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 4112,
+        "qwen3": 3084,
+        "qwen35": 6425,
+        "gemma": 2570,
+        "minimax": 4112,
+        "mistral": 8481,
+        "kimi": 4626,
+        "glm": 3598
+      }
+    },
+    {
+      "text": "KÅﬁ",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 1285,
+        "qwen3": 771,
+        "qwen35": 771,
+        "gemma": 1799,
+        "minimax": 771,
+        "mistral": 1799,
+        "kimi": 1542,
+        "glm": 1542
+      }
+    },
+    {
+      "text": "𰻞𫝀𐐀𑼀",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 3855,
+        "qwen3": 3341,
+        "qwen35": 3855,
+        "gemma": 4112,
+        "minimax": 4112,
+        "mistral": 4112,
+        "kimi": 4112,
+        "glm": 4112
+      }
+    },
+    {
+      "text": "The engineer checked the invoice on Tuesday. Record 4621933 includes clear instructions and useful examples.\nThe scientist explained the findings on Tuesday. Record 6137223 includes clear instructions",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 36,
+        "qwen3": 44,
+        "qwen35": 45,
+        "gemma": 45,
+        "minimax": 36,
+        "mistral": 44,
+        "kimi": 36,
+        "glm": 40
+      }
+    },
+    {
+      "text": "func load4621933(ctx context.Context, key string) (string, error) {\n  if key == \"\" { return \"\", errors.New(\"missing key\") }\n  return cache.Get(ctx, key)\n}\nfunc load1022603(ctx context.Context, key str",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 53,
+        "qwen3": 61,
+        "qwen35": 65,
+        "gemma": 72,
+        "minimax": 53,
+        "mistral": 61,
+        "kimi": 53,
+        "glm": 55
+      }
+    },
+    {
+      "text": "我们正在设计安全高效的人工智能网关。每个请求都需要准确记录输入并保护用户的数据。item_4621933: test(); 👩🏽‍💻\nเรากำลังพัฒนาระบบที่ปลอดภัยและรวดเร็วสำหรับผู้ใช้ทุกคนและการประมวลผลข้อมูลitem_4495329: test(); 👩🏽‍💻\nنحن نطور نظاما آمنا وسريعا لمعال",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 92,
+        "qwen3": 112,
+        "qwen35": 90,
+        "gemma": 93,
+        "minimax": 138,
+        "mistral": 142,
+        "kimi": 124,
+        "glm": 134
+      }
+    },
+    {
+      "text": "我们正在设计安全高效的人工智能网关。每个请求都需要准确记录输入并保护用户的数据。 4621933\n我们正在设计安全高效的人工智能网关。每个请求都需要准确记录输入并保护用户的数据。 1022603\n我们正在设计安全高效的人工智能网关。每个请求都需要准确记录输入并保护用户的数据。 4495329\n我们正在设计安全高效的人工智能网关。每个请求都需要准确记录输入并保护用户的数据。 6137223\n我们正在",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 102,
+        "qwen3": 126,
+        "qwen35": 109,
+        "gemma": 126,
+        "minimax": 98,
+        "mistral": 179,
+        "kimi": 93,
+        "glm": 112
+      }
+    },
+    {
+      "text": "安全で効率的なシステムを設計しています。東京の研究者は新しい技術を使います。 4621933\n安全で効率的なシステムを設計しています。東京の研究者は新しい技術を使います。 1022603\n安全で効率的なシステムを設計しています。東京の研究者は新しい技術を使います。 4495329\n安全で効率的なシステムを設計しています。東京の研究者は新しい技術を使います。 6137223\n安全で効率的なシステムを",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 103,
+        "qwen3": 128,
+        "qwen35": 119,
+        "gemma": 110,
+        "minimax": 76,
+        "mistral": 154,
+        "kimi": 137,
+        "glm": 113
+      }
+    },
+    {
+      "text": "안전하고 효율적인 시스템을 개발합니다. 모든 요청의 데이터를 정확하게 기록합니다.  4621933\n안전하고 효율적인 시스템을 개발합니다. 모든 요청의 데이터를 정확하게 기록합니다.  1022603\n안전하고 효율적인 시스템을 개발합니다. 모든 요청의 데이터를 정확하게 기록합니다.  4495329\n안전하고 효율적인 시스템을 개발합니다. 모든 요청의 데이터를 정",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 102,
+        "qwen3": 128,
+        "qwen35": 91,
+        "gemma": 99,
+        "minimax": 82,
+        "mistral": 106,
+        "kimi": 135,
+        "glm": 147
+      }
+    },
+    {
+      "text": "نحن نطور نظاما آمنا وسريعا لمعالجة الطلبات وحماية المعلومات الشخصية لجميع المستخدمين.  4621933\nنحن نطور نظاما آمنا وسريعا لمعالجة الطلبات وحماية المعلومات الشخصية لجميع المستخدمين.  1022603\nنحن نطور ن",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 77,
+        "qwen3": 74,
+        "qwen35": 66,
+        "gemma": 75,
+        "minimax": 58,
+        "mistral": 71,
+        "kimi": 94,
+        "glm": 85
+      }
+    },
+    {
+      "text": "हम सुरक्षित और तेज प्रणाली विकसित कर रहे हैं। प्रत्येक अनुरोध की जानकारी सही ढंग से दर्ज करें।  4621933\nहम सुरक्षित और तेज प्रणाली विकसित कर रहे हैं। प्रत्येक अनुरोध की जानकारी सही ढंग से दर्ज करें।  ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 102,
+        "qwen3": 179,
+        "qwen35": 87,
+        "gemma": 50,
+        "minimax": 109,
+        "mistral": 71,
+        "kimi": 105,
+        "glm": 175
+      }
+    },
+    {
+      "text": "เรากำลังพัฒนาระบบที่ปลอดภัยและรวดเร็วสำหรับผู้ใช้ทุกคนและการประมวลผลข้อมูล 4621933\nเรากำลังพัฒนาระบบที่ปลอดภัยและรวดเร็วสำหรับผู้ใช้ทุกคนและการประมวลผลข้อมูล 1022603\nเรากำลังพัฒนาระบบที่ปลอดภัยและรวดเ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 74,
+        "qwen3": 115,
+        "qwen35": 60,
+        "gemma": 74,
+        "minimax": 198,
+        "mistral": 129,
+        "kimi": 151,
+        "glm": 176
+      }
+    },
+    {
+      "text": "Мы разрабатываем безопасную и быструю систему обработки запросов. Проверьте данные пользователя.  4621933\nМы разрабатываем безопасную и быструю систему обработки запросов. Проверьте данные пользовател",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 52,
+        "qwen3": 62,
+        "qwen35": 55,
+        "gemma": 49,
+        "minimax": 61,
+        "mistral": 63,
+        "kimi": 74,
+        "glm": 50
+      }
+    },
+    {
+      "text": "L'été était agréable à Zürich. Überprüfen Sie die Gebühren. ¿Dónde está la información? Café naïve.  4621933\nL'été était agréable à Zürich. Überprüfen Sie die Gebühren. ¿Dónde está la información? Caf",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 63,
+        "qwen3": 69,
+        "qwen35": 57,
+        "gemma": 57,
+        "minimax": 52,
+        "mistral": 58,
+        "kimi": 72,
+        "glm": 63
+      }
+    },
+    {
+      "text": "d3IlN1rvF0dcO6nW9mDcFzRQbGG6XkdFDIrKmECNGWTXZg7rIpRqLzJViRFBCkgK3CK4FaZgZxHYduF\n7Pv7FH97PStVbgFWzVxrYPInAMbiPArDyX0M2XQa27XUJGkZL0l4oGiwaDRkPh2VImVGh6zgFf4uw9P\ndIBRoFZesl71bNX2rfLtc35uo0xjPGn5z4sSTkmL",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 145,
+        "qwen3": 154,
+        "qwen35": 152,
+        "gemma": 140,
+        "minimax": 136,
+        "mistral": 158,
+        "kimi": 135,
+        "glm": 149
+      }
+    },
+    {
+      "text": "d5KmP3rwG2dcQ8nY/nEcGATSbHH7ZkdGEJrLnFDPHYUY1g9rJpSrMAKWiTGBDkgL5DM6Ga0g1yIZdvGqwPufrN4LqL7YmwLTLJSQ7e5MySTVEyecTFvLHgKUMbx/p1H7==\n2l6pHixaETkQh4WJnWHh7AgGf6ux/Qlb+LQElwE75BePgbKnBndgWs7kG4pP4r24Chq1H",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 142,
+        "qwen3": 147,
+        "qwen35": 145,
+        "gemma": 142,
+        "minimax": 138,
+        "mistral": 151,
+        "kimi": 137,
+        "glm": 143
+      }
+    },
+    {
+      "text": "0e93ad458d00af3cf37086bb088ec2087849377a8cbcd1f483b4969c2b867219e79e80d1d68c05845a5149e949ec359b\nc64da836902a6476cd9dca0efcc982d9d2e382507b2a1ec83c81e6181e55fa20f9a7257ee61a10936301c4e28e3ae4de\n4bb239",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 116,
+        "qwen3": 181,
+        "qwen35": 181,
+        "gemma": 181,
+        "minimax": 116,
+        "mistral": 181,
+        "kimi": 116,
+        "glm": 137
+      }
+    },
+    {
+      "text": "👨‍👩‍👧‍👦 🧑🏻‍🚀 ❤️ 👩🏽‍💻 ❤️ 1️⃣ 🏳️‍🌈 🇳🇿 🫨 1️⃣ 👨‍👩‍👧‍👦 👨‍👩‍👧‍👦\n🧑🏻‍🚀 👩🏽‍💻 1️⃣ 🧑🏻‍🚀 👩🏽‍💻 🫨 👨‍👩‍👧‍👦 🫨 🇳🇿 👍🏿 👍🏿 👨‍👩‍👧‍👦\n👩🏽‍💻 👨‍👩‍👧‍👦 👨‍👩‍👧‍👦 🇳🇿 👨‍👩‍👧‍👦 1️⃣ 👨‍👩‍👧‍👦 👩🏽‍💻 🫨 🇳🇿 👍🏿 🇳🇿\n🇳🇿 🫨 👨‍👩‍👧‍👦 ❤️ 👨‍👩‍👧‍👦 🇳🇿 🧑🏻",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 262,
+        "qwen3": 262,
+        "qwen35": 387,
+        "gemma": 202,
+        "minimax": 254,
+        "mistral": 454,
+        "kimi": 276,
+        "glm": 244
+      }
+    },
+    {
+      "text": "𠾚𤒗𥶥𩁗𪅝𣂕𦯁𪓽𡖑𤛔𧘅𥩃𢕓𨍭𧭊𡮆𠹵𣦀𠡵𦝶𡆐𣚴𤍔𣔬𧣝𠨭𩱓𨇶𥎼𦩐𡂑𩐫𣝆𠑪𤄋𨒫𡶏𨔙𡐲𠲻\n𢧍𠻓𠶳𨂉𡈄𧣚𣖾𨾚𧾇𤙽𦃜𩚢𣕭𦁐𧶾𧜣𥙙𪓼𨒳𨘨𡗯𠢻𦹿𡯶𡡣𡯁𤚕𣛻𨷟𧙷𣼉𣅲𢯗𤒐𪎺𩯽𦦫𩄙𢌔𣢒\n𦿭𧞵𦅉𢬗𥑸𡥝𠊼𩓙𤶓𡀚𧚳𢬾𩢆𤿡𩡈𨊤𧸖𠄋𣌬𣚝𡪾𣻠𩨭𦇂𦮰𨤦𠰰𠹎𣅐𥔥𠅫𨄅𤈘𥫂𪑰𥨳𥅘𡙇𨃨𤑀\n𩿥𩓷𤏪𩕊𥃗𠚳𣁹𡯓𥢿𨊒𩔿𦥾𩐯𨾰𦈌𤜏𡊶𨿲𣝿𩭋𦰊𦄕𩹥𠔸𢓂𧠣𦹟𦁽𤥿𡇄𧨽𠤑𦘵𧳽𥒼𩿒𩖊𨐖𡦦𩇯\n𩮀𠟇𥴸𩊓𣺀𨗅𢨘𨓺𩥴𩝌𤭞𢶥𣴰𡞟𨓜𡈘𢄛𥷴𠂪𧡾𣿺𩭹𢭩𨘑𡹴𥈨𨶷𦈘𨺭𧼁𣔕𣟪𡂭𨖜𡸎𨛯",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 782,
+        "qwen3": 588,
+        "qwen35": 781,
+        "gemma": 788,
+        "minimax": 779,
+        "mistral": 780,
+        "kimi": 778,
+        "glm": 776
+      }
+    },
+    {
+      "text": "ȧ̵̵̷̢̡̛̛̮͈̘̣̻̭̜̳͔͚̼͎̩͚̠̼͇̣͐͒̊ͮ̒́̽ͭ̍̇̄̈ͨͭͤͨ̅̀̈͊̂͂̎͂̊̆ͦ̔̇̆ͩ̀̉̿̚͘̚\na̷̴̷̢̧̛̰̻̫͓̣̻̟̘͙͍͈͔͖͚̜̻̰̪̦̻͋̾ͥ͒͂̓̊ͤ̄ͥͪ̍̌̍͆͑͛ͯ̑ͦ̀̌́͊̈͌͌́͘̚̕͘̕̕͝͡͡\nà̵̡̨̢̛̙̟͍̰̘̪̭͕̭ͩ̍ͪ̈́ͬͧ̆̇̀̀͗͒̋̀ͅ͏̴̶̡̨̛͔̘̬͇̱͙̣͔͔͇͍̰͊͊ͤ̃̍́͊ͤ͛͊ͨ̉͜͢͢\na͚͖̒͞",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 369,
+        "qwen3": 380,
+        "qwen35": 381,
+        "gemma": 217,
+        "minimax": 356,
+        "mistral": 390,
+        "kimi": 389,
+        "glm": 200
+      }
+    },
+    {
+      "text": "a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n​‮⁦x⁩﻿   a\u0000b\u0001c\u001bd\t\r\n",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 250,
+        "qwen3": 228,
+        "qwen35": 228,
+        "gemma": 250,
+        "minimax": 217,
+        "mistral": 270,
+        "kimi": 228,
+        "glm": 228
+      }
+    },
+    {
+      "text": "},~)@:=-_:}{#.<^?<\\}_/$${||.&(}_\\~>!<_\\@|^%^:].>~>$>!*~^]$_/\\([~;\\!,_{&]:*|&}+_>\n#-._|?.#%+^{]_^*^*=&#~</!{(#/=\\*&:@;&#{;.&%~|(:!:),<|]-{\\$(#];^~<^|]./[_[,+-?#){\n!#\\)-\\.,/}#[{~)/<}[^=.(_;>@;>:;/]>:|<^",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 138,
+        "qwen3": 134,
+        "qwen35": 136,
+        "gemma": 128,
+        "minimax": 128,
+        "mistral": 138,
+        "kimi": 127,
+        "glm": 132
+      }
+    },
+    {
+      "text": "<|endoftext|><|im_start|>system<|im_end|><|fim_prefix|><|endofprompt|>\n<|endoftext|><|im_start|>system<|im_end|><|fim_prefix|><|endofprompt|>\n<|endoftext|><|im_start|>system<|im_end|><|fim_prefix|><|e",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 91,
+        "qwen3": 32,
+        "qwen35": 34,
+        "gemma": 92,
+        "minimax": 83,
+        "mistral": 89,
+        "kimi": 89,
+        "glm": 74
+      }
+    },
+    {
+      "text": "L'été était agréable à Zürich. Überprüfen Sie die Gebühren. ¿Dónde está la información? Café naïve. L'été était agréable à Zürich. Überprüfen Sie die Gebühren. ¿Dónde está la información? ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 76,
+        "qwen3": 59,
+        "qwen35": 47,
+        "gemma": 69,
+        "minimax": 46,
+        "mistral": 77,
+        "kimi": 85,
+        "glm": 73
+      }
+    },
+    {
+      "text": "{\"id\":4621933,\"name\":\"project_4621933\",\"enabled\":true,\"items\":[\"alpha\",\"beta\"],\"metadata\":{\"attempt\":3}}\n{\"id\":1022603,\"name\":\"project_1022603\",\"enabled\":true,\"items\":[\"alpha\",\"beta\"],\"metadata\":{\"att",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 65,
+        "qwen3": 75,
+        "qwen35": 76,
+        "gemma": 76,
+        "minimax": 59,
+        "mistral": 80,
+        "kimi": 59,
+        "glm": 63
+      }
+    },
+    {
+      "text": "b x o e q w h j n w b a r y f u z f m b n k s r a n n y u e b n m o h p f m m q n u s u v c y h o g s g p k o t d s n l m e c p x m p x n a v c v j n v b i n g\nr j y n o z y r s i u a c n u k t j h v ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 102,
+        "qwen3": 102,
+        "qwen35": 102,
+        "gemma": 102,
+        "minimax": 102,
+        "mistral": 102,
+        "kimi": 102,
+        "glm": 102
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 1,
+        "mistral": 2,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 31,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 1,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 31,
+      "counts": {
+        "deepseek": 4,
+        "qwen3": 3,
+        "qwen35": 3,
+        "gemma": 1,
+        "minimax": 3,
+        "mistral": 8,
+        "kimi": 4,
+        "glm": 3
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 31,
+      "counts": {
+        "deepseek": 5,
+        "qwen3": 5,
+        "qwen35": 5,
+        "gemma": 5,
+        "minimax": 4,
+        "mistral": 15,
+        "kimi": 5,
+        "glm": 5
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 31,
+      "counts": {
+        "deepseek": 31,
+        "qwen3": 31,
+        "qwen35": 31,
+        "gemma": 31,
+        "minimax": 31,
+        "mistral": 62,
+        "kimi": 31,
+        "glm": 31
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 32,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 2,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 32,
+      "counts": {
+        "deepseek": 2,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 2,
+        "minimax": 2,
+        "mistral": 8,
+        "kimi": 2,
+        "glm": 1
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 32,
+      "counts": {
+        "deepseek": 4,
+        "qwen3": 4,
+        "qwen35": 4,
+        "gemma": 4,
+        "minimax": 2,
+        "mistral": 16,
+        "kimi": 4,
+        "glm": 4
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 32,
+      "counts": {
+        "deepseek": 32,
+        "qwen3": 32,
+        "qwen35": 32,
+        "gemma": 32,
+        "minimax": 32,
+        "mistral": 64,
+        "kimi": 32,
+        "glm": 32
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 33,
+      "counts": {
+        "deepseek": 1,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 2,
+        "minimax": 1,
+        "mistral": 1,
+        "kimi": 1,
+        "glm": 1
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 33,
+      "counts": {
+        "deepseek": 4,
+        "qwen3": 2,
+        "qwen35": 2,
+        "gemma": 2,
+        "minimax": 4,
+        "mistral": 8,
+        "kimi": 4,
+        "glm": 2
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 33,
+      "counts": {
+        "deepseek": 5,
+        "qwen3": 5,
+        "qwen35": 5,
+        "gemma": 5,
+        "minimax": 3,
+        "mistral": 16,
+        "kimi": 5,
+        "glm": 5
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 33,
+      "counts": {
+        "deepseek": 33,
+        "qwen3": 33,
+        "qwen35": 33,
+        "gemma": 33,
+        "minimax": 33,
+        "mistral": 66,
+        "kimi": 33,
+        "glm": 33
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 16383,
+      "counts": {
+        "deepseek": 129,
+        "qwen3": 129,
+        "qwen35": 129,
+        "gemma": 529,
+        "minimax": 129,
+        "mistral": 256,
+        "kimi": 66,
+        "glm": 35
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 16383,
+      "counts": {
+        "deepseek": 1026,
+        "qwen3": 514,
+        "qwen35": 514,
+        "gemma": 529,
+        "minimax": 1025,
+        "mistral": 4096,
+        "kimi": 1026,
+        "glm": 514
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 16383,
+      "counts": {
+        "deepseek": 2049,
+        "qwen3": 2049,
+        "qwen35": 2049,
+        "gemma": 2049,
+        "minimax": 1026,
+        "mistral": 8191,
+        "kimi": 2049,
+        "glm": 2049
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 16383,
+      "counts": {
+        "deepseek": 16383,
+        "qwen3": 16383,
+        "qwen35": 16383,
+        "gemma": 16383,
+        "minimax": 16383,
+        "mistral": 32766,
+        "kimi": 16383,
+        "glm": 16383
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 16384,
+      "counts": {
+        "deepseek": 128,
+        "qwen3": 128,
+        "qwen35": 128,
+        "gemma": 529,
+        "minimax": 128,
+        "mistral": 256,
+        "kimi": 64,
+        "glm": 32
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 16384,
+      "counts": {
+        "deepseek": 1024,
+        "qwen3": 512,
+        "qwen35": 512,
+        "gemma": 529,
+        "minimax": 1024,
+        "mistral": 4096,
+        "kimi": 1024,
+        "glm": 512
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 16384,
+      "counts": {
+        "deepseek": 2048,
+        "qwen3": 2048,
+        "qwen35": 2048,
+        "gemma": 2048,
+        "minimax": 1024,
+        "mistral": 8192,
+        "kimi": 2048,
+        "glm": 2048
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 16384,
+      "counts": {
+        "deepseek": 16384,
+        "qwen3": 16384,
+        "qwen35": 16384,
+        "gemma": 16384,
+        "minimax": 16384,
+        "mistral": 32768,
+        "kimi": 16384,
+        "glm": 16384
+      }
+    },
+    {
+      "text": " ",
+      "repeat": 16385,
+      "counts": {
+        "deepseek": 129,
+        "qwen3": 129,
+        "qwen35": 129,
+        "gemma": 529,
+        "minimax": 129,
+        "mistral": 257,
+        "kimi": 65,
+        "glm": 35
+      }
+    },
+    {
+      "text": "\n",
+      "repeat": 16385,
+      "counts": {
+        "deepseek": 1026,
+        "qwen3": 513,
+        "qwen35": 513,
+        "gemma": 529,
+        "minimax": 1026,
+        "mistral": 4096,
+        "kimi": 1026,
+        "glm": 513
+      }
+    },
+    {
+      "text": "a",
+      "repeat": 16385,
+      "counts": {
+        "deepseek": 2049,
+        "qwen3": 2049,
+        "qwen35": 2049,
+        "gemma": 2049,
+        "minimax": 1025,
+        "mistral": 8192,
+        "kimi": 2049,
+        "glm": 2049
+      }
+    },
+    {
+      "text": "́",
+      "repeat": 16385,
+      "counts": {
+        "deepseek": 16385,
+        "qwen3": 16385,
+        "qwen35": 16385,
+        "gemma": 16385,
+        "minimax": 16385,
+        "mistral": 32770,
+        "kimi": 16385,
+        "glm": 16385
+      }
+    },
+    {
+      "text": "",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 0,
+        "qwen3": 0,
+        "qwen35": 0,
+        "gemma": 0,
+        "minimax": 0,
+        "mistral": 0,
+        "kimi": 0,
+        "glm": 0
+      }
+    },
+    {
+      "text": " Janus  ክፍል",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 11,
+        "qwen3": 8,
+        "qwen35": 9,
+        "gemma": 5,
+        "minimax": 11,
+        "mistral": 12,
+        "kimi": 8,
+        "glm": 12
+      }
+    },
+    {
+      "text": " phospholipid  показатель",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 4,
+        "qwen3": 7,
+        "qwen35": 6,
+        "gemma": 5,
+        "minimax": 5,
+        "mistral": 5,
+        "kimi": 8,
+        "glm": 6
+      }
+    },
+    {
+      "text": " Holdings  puro europa  suministro  quarterfinals  Yelp  комнаты  حاضر",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 22,
+        "qwen3": 23,
+        "qwen35": 17,
+        "gemma": 23,
+        "minimax": 20,
+        "mistral": 20,
+        "kimi": 24,
+        "glm": 20
+      }
+    },
+    {
+      "text": " அடையாளம்",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 6,
+        "qwen3": 11,
+        "qwen35": 5,
+        "gemma": 1,
+        "minimax": 6,
+        "mistral": 4,
+        "kimi": 7,
+        "glm": 15
+      }
+    },
+    {
+      "text": " निवडणूक",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 6,
+        "qwen3": 9,
+        "qwen35": 6,
+        "gemma": 1,
+        "minimax": 6,
+        "mistral": 5,
+        "kimi": 6,
+        "glm": 8
+      }
+    },
+    {
+      "text": "x'ſ WE'LL HTTPServer",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 8,
+        "qwen3": 8,
+        "qwen35": 9,
+        "gemma": 8,
+        "minimax": 8,
+        "mistral": 9,
+        "kimi": 9,
+        "glm": 8
+      }
+    },
+    {
+      "text": "▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 102,
+        "qwen3": 102,
+        "qwen35": 102,
+        "gemma": 2,
+        "minimax": 102,
+        "mistral": 102,
+        "kimi": 102,
+        "glm": 102
+      }
+    },
+    {
+      "text": " YYYY",
+      "repeat": 1,
+      "counts": {
+        "deepseek": 3,
+        "qwen3": 1,
+        "qwen35": 1,
+        "gemma": 3,
+        "minimax": 2,
+        "mistral": 3,
+        "kimi": 2,
+        "glm": 1
+      }
+    },
+    {
+      "text": " YYYY",
+      "repeat": 257,
+      "counts": {
+        "deepseek": 771,
+        "qwen3": 257,
+        "qwen35": 257,
+        "gemma": 771,
+        "minimax": 514,
+        "mistral": 771,
+        "kimi": 514,
+        "glm": 257
+      }
+    }
+  ]
+}

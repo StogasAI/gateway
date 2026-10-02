@@ -3,6 +3,7 @@ package billing
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,71 +81,71 @@ type tinybirdAppendRequest struct {
 }
 
 type ProviderAttempt struct {
-	Provider          string `json:"provider"`
-	Status            string `json:"status"`
-	StatusCode        *int   `json:"status_code"`
-	LatencyMS         uint32 `json:"latency_ms"`
-	OutputObserved    bool   `json:"output_observed"`
-	ProviderRequestID string `json:"provider_request_id"`
-	FinishReason      string `json:"finish_reason"`
-	UpstreamByok      string `json:"upstream_byok"`
+	CatalogChainHash  *string `json:"catalog_chain_hash"`
+	Provider          string  `json:"provider"`
+	Status            string  `json:"status"`
+	StatusCode        *int    `json:"status_code"`
+	LatencyMS         uint32  `json:"latency_ms"`
+	OutputObserved    bool    `json:"output_observed"`
+	ProviderRequestID string  `json:"provider_request_id"`
+	FinishReason      string  `json:"finish_reason"`
+	UpstreamByok      *string `json:"upstream_byok"`
 }
 
-// RequestTimings partitions the request wall clock into non-overlapping stages.
-// Provider attempts retain their independent durations for retry diagnostics.
-type RequestTimings struct {
-	AdmissionMS uint32 `json:"admission_ms"`
-	ProviderMS  uint32 `json:"provider_ms"`
-	ResponseMS  uint32 `json:"response_ms"`
+// RequestPerformance records elapsed request and provider time.
+// Provider attempts retain their own durations and outcomes.
+type RequestPerformance struct {
+	TotalMS    uint32  `json:"total_ms"`
+	ProviderMS uint32  `json:"provider_ms"`
+	TTFTMS     *uint32 `json:"ttft_ms"`
+}
+
+type EventError struct {
+	Code   string `json:"code"`
+	Status int    `json:"status"`
 }
 
 const RequestLogSchemaVersion uint8 = 1
 
 type RequestEvent struct {
-	SchemaVersion              uint8             `json:"schema_version"`
-	RequestID                  string            `json:"request_id"`
-	CreatedAt                  string            `json:"created_at"`
-	LastRequestAt              string            `json:"last_request_at"`
-	RequestCount               uint32            `json:"request_count"`
-	StogasErrorCode            string            `json:"stogas_error_code"`
-	StogasErrorStatusCode      *int              `json:"stogas_error_status_code"`
-	StogasAPIKeyID             string            `json:"stogas_api_key_id"`
-	StogasGrantID              *string           `json:"stogas_grant_id"`
-	StogasUserID               string            `json:"stogas_user_id"`
-	StogasOrganizationID       string            `json:"stogas_organization_id"`
-	StogasWorkspaceID          string            `json:"stogas_workspace_id"`
-	RequestType                string            `json:"request_type"`
-	Cancelled                  bool              `json:"cancelled"`
-	ClientStopMS               *uint32           `json:"client_stop_ms"`
-	CatalogDigest              string            `json:"catalog_digest"`
-	ProviderAttempts           []ProviderAttempt `json:"provider_attempts"`
-	StogasProcessingSuccess    bool              `json:"stogas_processing_success"`
-	StogasBillingStatus        string            `json:"stogas_billing_status"`
-	NodeID                     string            `json:"node_id"`
-	TotalTimeMS                uint32            `json:"total_time_ms"`
-	Timings                    RequestTimings    `json:"timings"`
-	TTFTMS                     *uint32           `json:"ttft_ms"`
-	UpstreamCostUSDAtoms       string            `json:"upstream_cost_usd_atoms"`
-	BilledCostUSDAtoms         string            `json:"billed_cost_usd_atoms"`
-	CacheReadSavingsUSDAtoms   *string           `json:"cache_read_savings_usd_atoms"`
-	CacheWriteOverheadUSDAtoms *string           `json:"cache_write_overhead_usd_atoms"`
-	Pricing                    EventPricing      `json:"pricing"`
-	PolicyTokens               *int64            `json:"policy_tokens"`
-	Plugins                    plugins.Metrics   `json:"plugins"`
-	GatewayVersion             string            `json:"gateway_version"`
-	CatalogNodeIDs             []string          `json:"catalog_node_ids"`
-	analyticsQuantities        map[string]uint64
-	holdParamsHash             string
+	SchemaVersion         uint8              `json:"schema_version"`
+	RequestID             string             `json:"request_id"`
+	CreatedAt             string             `json:"created_at"`
+	LastRequestAt         string             `json:"last_request_at"`
+	RequestCount          uint32             `json:"request_count"`
+	Error                 *EventError        `json:"error"`
+	StogasAPIKeyID        string             `json:"stogas_api_key_id"`
+	StogasGrantID         *string            `json:"stogas_grant_id"`
+	StogasUserID          string             `json:"stogas_user_id"`
+	StogasOrganizationID  string             `json:"stogas_organization_id"`
+	RequestType           string             `json:"request_type"`
+	Cancelled             bool               `json:"cancelled"`
+	ClientStopMS          *uint32            `json:"client_stop_ms"`
+	CatalogVersion        *uint64            `json:"catalog_version"`
+	PolicyVersions        *PolicyVersions    `json:"policy_versions"`
+	CatalogChainHash      *string            `json:"catalog_chain_hash"`
+	ProviderAttempts      []ProviderAttempt  `json:"provider_attempts"`
+	NodeID                string             `json:"node_id"`
+	Performance           RequestPerformance `json:"performance"`
+	UpstreamCostUSD       string             `json:"upstream_cost_usd"`
+	BilledCostUSD         string             `json:"billed_cost_usd"`
+	CacheReadSavingsUSD   *string            `json:"cache_read_savings_usd"`
+	CacheWriteOverheadUSD *string            `json:"cache_write_overhead_usd"`
+	Meters                EventMeters        `json:"meters"`
+	Plugins               plugins.Metrics    `json:"plugins"`
+	GatewayVersion        string             `json:"gateway_version"`
+	analyticsQuantities   map[string]uint64
+	holdParamsHash        string
 }
 
 type EventMeter struct {
-	Quantity     string `json:"quantity"`
-	RateKey      string `json:"rateKey"`
-	RateUSDAtoms string `json:"rateUsdAtoms"`
-	USDAtoms     string `json:"usdAtoms"`
+	Quantity string  `json:"quantity"`
+	RateKey  *string `json:"rateKey,omitempty"`
+	RateUSD  *string `json:"rateUsd,omitempty"`
+	USD      *string `json:"usd,omitempty"`
 }
 
-type EventPricing map[string]EventMeter
+type EventMeters map[string]EventMeter
 
 type tinybirdEventsResponse struct {
 	QuarantinedRows int `json:"quarantined_rows"`
@@ -166,6 +167,13 @@ func NewTinybirdClient(host string, token string, allowInsecurePrivateNetwork bo
 	}
 	return &TinybirdClient{
 		client: &http.Client{
+			Transport: &http.Transport{
+				Proxy:               http.ProxyFromEnvironment,
+				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{tls.X25519MLKEM768}},
+				TLSHandshakeTimeout: 10 * time.Second,
+				IdleConnTimeout:     90 * time.Second,
+				ForceAttemptHTTP2:   true,
+			},
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -604,61 +612,63 @@ type tinybirdGatewayRequestEventPayload struct {
 	CreatedAt                       string   `json:"created_at"`
 	LastRequestAt                   string   `json:"last_request_at"`
 	RequestCount                    uint32   `json:"request_count"`
-	StogasErrorCode                 string   `json:"stogas_error_code"`
-	StogasErrorStatusCode           *int     `json:"stogas_error_status_code"`
+	Error                           string   `json:"error"`
+	AnalyticsErrorCode              string   `json:"analytics_error_code"`
+	AnalyticsErrorStatus            *int     `json:"analytics_error_status"`
 	StogasAPIKeyID                  string   `json:"stogas_api_key_id"`
 	StogasGrantID                   *string  `json:"stogas_grant_id"`
 	StogasUserID                    string   `json:"stogas_user_id"`
 	StogasOrganizationID            string   `json:"stogas_organization_id"`
-	StogasWorkspaceID               string   `json:"stogas_workspace_id"`
 	RequestType                     string   `json:"request_type"`
 	Cancelled                       uint8    `json:"cancelled"`
 	ClientStopMS                    *uint32  `json:"client_stop_ms"`
-	CatalogDigest                   string   `json:"catalog_digest"`
+	CatalogVersion                  *uint64  `json:"catalog_version"`
+	PolicyVersions                  string   `json:"policy_versions"`
+	CatalogChainHash                *string  `json:"catalog_chain_hash"`
 	ProviderAttempts                string   `json:"provider_attempts"`
 	AnalyticsProviderStatus         string   `json:"analytics_provider_status"`
 	AnalyticsProviderOutputObserved uint8    `json:"analytics_provider_output_observed"`
 	AnalyticsProviderLatencyMS      uint32   `json:"analytics_provider_latency_ms"`
 	AnalyticsProviders              []string `json:"analytics_providers"`
 	AnalyticsProviderStatuses       []string `json:"analytics_provider_statuses"`
-	StogasProcessingSuccess         uint8    `json:"stogas_processing_success"`
-	StogasBillingStatus             string   `json:"stogas_billing_status"`
 	NodeID                          string   `json:"node_id"`
-	TotalTimeMS                     uint32   `json:"total_time_ms"`
-	Timings                         string   `json:"timings"`
-	TTFTMS                          *uint32  `json:"ttft_ms"`
-	UpstreamCostUSDAtoms            string   `json:"upstream_cost_usd_atoms"`
-	BilledCostUSDAtoms              string   `json:"billed_cost_usd_atoms"`
-	CacheReadSavingsUSDAtoms        *string  `json:"cache_read_savings_usd_atoms"`
-	CacheWriteOverheadUSDAtoms      *string  `json:"cache_write_overhead_usd_atoms"`
+	Performance                     string   `json:"performance"`
+	AnalyticsTotalMS                uint32   `json:"analytics_total_ms"`
+	AnalyticsTTFTMS                 *uint32  `json:"analytics_ttft_ms"`
+	UpstreamCostUSD                 string   `json:"upstream_cost_usd"`
+	BilledCostUSD                   string   `json:"billed_cost_usd"`
+	CacheReadSavingsUSD             *string  `json:"cache_read_savings_usd"`
+	CacheWriteOverheadUSD           *string  `json:"cache_write_overhead_usd"`
 	AnalyticsUpstreamByok           []string `json:"analytics_upstream_byok"`
-	Pricing                         string   `json:"pricing"`
-	PolicyTokens                    *int64   `json:"policy_tokens"`
+	Meters                          string   `json:"meters"`
 	Plugins                         string   `json:"plugins"`
 	AnalyticsRedactedItems          *uint32  `json:"analytics_redacted_items"`
-	AnalyticsInputTokens            uint64   `json:"analytics_input_tokens"`
+	AnalyticsInputTokens            *uint64  `json:"analytics_input_tokens"`
 	AnalyticsCachedInputTokens      uint64   `json:"analytics_cached_input_tokens"`
 	AnalyticsCacheWriteTokens       uint64   `json:"analytics_cache_write_input_tokens"`
-	AnalyticsOutputTokens           uint64   `json:"analytics_output_tokens"`
+	AnalyticsOutputTokens           *uint64  `json:"analytics_output_tokens"`
+	AnalyticsTotalTokens            *uint64  `json:"analytics_total_tokens"`
+	AnalyticsHostedToolCalls        *uint64  `json:"analytics_hosted_tool_calls"`
+	AnalyticsClientToolCalls        *uint64  `json:"analytics_client_tool_calls"`
 	AnalyticsReasoningTokens        uint64   `json:"analytics_reasoning_tokens"`
 	GatewayVersion                  string   `json:"gateway_version"`
-	CatalogNodeIDs                  string   `json:"catalog_node_ids"`
 	HoldParamsHash                  string   `json:"hold_params_hash"`
 }
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
-	pricingJSON := mustJSONString(event.Pricing, "{}")
+	pricingJSON := mustJSONString(event.Meters, "{}")
 	pluginsJSON := mustJSONString(event.Plugins, `{}`)
 	var redactedItems *uint32
 	if metrics := event.Plugins.StogasStructuredPIIRedaction; metrics != nil {
 		redactedItems = &metrics.ItemsRedacted
 	}
-	timingsJSON := mustJSONString(event.Timings, `{}`)
-	catalogNodeIDsJSON := mustJSONString(event.CatalogNodeIDs, "[]")
-	processed := uint8(0)
-	if event.StogasProcessingSuccess {
-		processed = 1
+	performanceJSON := mustJSONString(event.Performance, `{}`)
+	errorCode := ""
+	var errorStatus *int
+	if event.Error != nil {
+		errorCode = event.Error.Code
+		errorStatus = &event.Error.Status
 	}
 	cancelled := uint8(0)
 	if event.Cancelled {
@@ -666,7 +676,7 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	}
 	providerStatus := ""
 	providerOutputObserved := uint8(0)
-	providerLatencyMS := event.ProviderDurationMS()
+	providerLatencyMS := event.Performance.ProviderMS
 	upstreamByok := make([]string, 0, len(event.ProviderAttempts))
 	providers := make([]string, 0, len(event.ProviderAttempts))
 	providerStatuses := make([]string, 0, len(event.ProviderAttempts))
@@ -686,60 +696,59 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		if attempt.StatusCode != nil && *attempt.StatusCode >= 100 && *attempt.StatusCode <= 599 {
 			providerStatuses = append(providerStatuses, strconv.Itoa(*attempt.StatusCode))
 		}
-		if byokID := strings.TrimSpace(attempt.UpstreamByok); byokID != "" {
-			upstreamByok = append(upstreamByok, byokID)
+		if attempt.UpstreamByok == nil {
+			upstreamByok = append(upstreamByok, ManagedUpstreamByok)
+		} else {
+			upstreamByok = append(upstreamByok, *attempt.UpstreamByok)
 		}
 	}
-	cacheWriteTokens :=
-		event.analyticsPricingQuantity(MeterCacheWriteInputTokens) +
-			event.analyticsPricingQuantity(MeterCacheWrite5mInputTokens) +
-			event.analyticsPricingQuantity(MeterCacheWrite1hInputTokens)
 	return tinybirdGatewayRequestEventPayload{
 		SchemaVersion:                   event.SchemaVersion,
-		PolicyTokens:                    event.PolicyTokens,
 		AnalyticsCachedInputTokens:      event.analyticsPricingQuantity(MeterCachedInputTokens),
-		AnalyticsCacheWriteTokens:       cacheWriteTokens,
-		AnalyticsInputTokens:            event.analyticsPricingQuantity(MeterInputTokens),
-		AnalyticsOutputTokens:           event.analyticsPricingQuantity(MeterOutputTokens),
+		AnalyticsCacheWriteTokens:       event.analyticsPricingQuantity(MeterTotalCacheWriteTokens),
+		AnalyticsInputTokens:            event.analyticsMeterQuantity(MeterTotalInputTokens),
+		AnalyticsOutputTokens:           event.analyticsMeterQuantity(MeterTotalOutputTokens),
 		AnalyticsProviderLatencyMS:      providerLatencyMS,
 		AnalyticsProviderStatus:         providerStatus,
 		AnalyticsProviderOutputObserved: providerOutputObserved,
 		AnalyticsProviders:              providers,
 		AnalyticsProviderStatuses:       providerStatuses,
+		AnalyticsTotalTokens:            event.analyticsMeterQuantity(MeterTotalTokens),
+		AnalyticsHostedToolCalls:        event.analyticsMeterQuantity(MeterHostedToolCalls),
+		AnalyticsClientToolCalls:        event.analyticsMeterQuantity(MeterClientToolCalls),
 		AnalyticsReasoningTokens:        event.analyticsPricingQuantity(MeterReasoningTokens),
-		TTFTMS:                          event.TTFTMS,
+		AnalyticsTTFTMS:                 event.Performance.TTFTMS,
 		AnalyticsUpstreamByok:           upstreamByok,
 		Cancelled:                       cancelled,
 		ClientStopMS:                    event.ClientStopMS,
-		CatalogDigest:                   strings.TrimSpace(event.CatalogDigest),
+		CatalogVersion:                  event.CatalogVersion,
+		PolicyVersions:                  mustJSONString(event.PolicyVersions, "null"),
+		CatalogChainHash:                event.CatalogChainHash,
 		CreatedAt:                       event.CreatedAt,
 		LastRequestAt:                   event.LastRequestAt,
 		RequestCount:                    event.RequestCount,
-		StogasErrorCode:                 event.StogasErrorCode,
-		StogasErrorStatusCode:           event.StogasErrorStatusCode,
-		Pricing:                         pricingJSON,
+		Error:                           mustJSONString(event.Error, "null"),
+		AnalyticsErrorCode:              errorCode,
+		AnalyticsErrorStatus:            errorStatus,
+		Meters:                          pricingJSON,
 		Plugins:                         pluginsJSON,
 		AnalyticsRedactedItems:          redactedItems,
-		Timings:                         timingsJSON,
+		Performance:                     performanceJSON,
 		ProviderAttempts:                attemptsJSON,
 		NodeID:                          strings.ToLower(strings.TrimSpace(event.NodeID)),
 		GatewayVersion:                  strings.TrimSpace(event.GatewayVersion),
 		RequestID:                       event.RequestID,
 		RequestType:                     event.RequestType,
-		CatalogNodeIDs:                  catalogNodeIDsJSON,
 		HoldParamsHash:                  event.holdParamsHash,
 		StogasAPIKeyID:                  event.StogasAPIKeyID,
 		StogasGrantID:                   event.StogasGrantID,
-		StogasBillingStatus:             event.StogasBillingStatus,
 		StogasOrganizationID:            event.StogasOrganizationID,
-		StogasProcessingSuccess:         processed,
 		StogasUserID:                    event.StogasUserID,
-		StogasWorkspaceID:               event.StogasWorkspaceID,
-		UpstreamCostUSDAtoms:            event.UpstreamCostUSDAtoms,
-		BilledCostUSDAtoms:              event.BilledCostUSDAtoms,
-		CacheReadSavingsUSDAtoms:        event.CacheReadSavingsUSDAtoms,
-		CacheWriteOverheadUSDAtoms:      event.CacheWriteOverheadUSDAtoms,
-		TotalTimeMS:                     event.TotalTimeMS,
+		UpstreamCostUSD:                 event.UpstreamCostUSD,
+		BilledCostUSD:                   event.BilledCostUSD,
+		CacheReadSavingsUSD:             event.CacheReadSavingsUSD,
+		CacheWriteOverheadUSD:           event.CacheWriteOverheadUSD,
+		AnalyticsTotalMS:                event.Performance.TotalMS,
 	}
 }
 
@@ -749,6 +758,14 @@ func saturatingUint32(value uint64) uint32 {
 		return maximum
 	}
 	return uint32(value)
+}
+
+func (event RequestEvent) analyticsMeterQuantity(meter string) *uint64 {
+	value, known := event.analyticsQuantities[meter]
+	if !known {
+		return nil
+	}
+	return &value
 }
 
 func (event RequestEvent) analyticsPricingQuantity(meter string) uint64 {

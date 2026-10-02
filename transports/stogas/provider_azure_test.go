@@ -21,11 +21,11 @@ func TestAzureGPT56CacheFieldsReachBothReviewedWireFormats(t *testing.T) {
 	}{
 		{
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64,"prompt_cache_key":"tenant-a","prompt_cache_retention":"24h"}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64,"prompt_cache_key":"tenant-a","prompt_cache_retention":"24h"}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","input":"hi","max_output_tokens":64,"prompt_cache_key":"tenant-a","prompt_cache_retention":"24h"}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","max_output_tokens":64,"prompt_cache_key":"tenant-a","prompt_cache_retention":"24h"}`,
 		},
 	}
 	for _, tc := range tests {
@@ -76,7 +76,7 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 	}
 	for name, field := range tests {
 		t.Run(name, func(t *testing.T) {
-			body := `{"model":"gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64,` + field + `}`
+			body := `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64,` + field + `}`
 			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(body), Method: "POST", Path: "/v1/chat/completions"})
 			if err != nil {
 				return
@@ -88,7 +88,7 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 		})
 	}
 
-	breakpointBody := `{"model":"gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":64}`
+	breakpointBody := `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":64}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(breakpointBody), Method: "POST", Path: "/v1/chat/completions"})
 	if err == nil {
 		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -105,11 +105,11 @@ func TestAzureAllowsClientExecutedToolsAndRejectsRemoteMCP(t *testing.T) {
 	}{
 		{
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]}`,
 		},
 	}
 	for _, tc := range valid {
@@ -124,19 +124,19 @@ func TestAzureAllowsClientExecutedToolsAndRejectsRemoteMCP(t *testing.T) {
 	}{
 		{
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"shell","format":{"type":"text"}}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"shell","format":{"type":"text"}}]}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"web_search"}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"web_search"}]}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}]}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
+			body: `{"model":"azure-gpt-5.6-sol","provider":"azure","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`,
 		},
 	}
 	for _, tc := range invalid {
@@ -312,8 +312,8 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-		t.Fatalf("Azure Claude hold does not cover cache-write execution: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms)
+	if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+		t.Fatalf("Azure Claude hold does not cover cache-write execution: hold=%s final=%s", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD)
 	}
 }
 

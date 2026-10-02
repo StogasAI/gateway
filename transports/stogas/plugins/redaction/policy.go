@@ -44,6 +44,7 @@ const (
 type Options struct {
 	Patterns       []Pattern
 	CustomPatterns []CustomPattern
+	Literals       []Literal
 }
 
 // Policy is immutable after compilation and can be shared by concurrent
@@ -52,6 +53,7 @@ type Policy struct {
 	entities     entityMask
 	custom       []*customMatcher
 	minimumBytes int
+	literals     []literalSelection
 }
 
 type entityMask uint64
@@ -105,8 +107,6 @@ var (
 		EntityGermanySocialSecurity,
 	)
 	allBuiltInEntityMask = maskRange(EntityEmail, EntityDatabaseCredential)
-	defaultEntityMask    = allBuiltInEntityMask.without(EntityIPAddress)
-	defaultPolicy        = &Policy{entities: defaultEntityMask, minimumBytes: defaultMinimumTextBytes}
 )
 
 var supportedPatterns = [...]Pattern{
@@ -121,21 +121,14 @@ var supportedPatterns = [...]Pattern{
 	PatternHealthIdentifiers,
 }
 
-// DefaultPatterns returns the default selection without sharing mutable state.
-func DefaultPatterns() []Pattern {
-	patterns := make([]Pattern, 0, len(supportedPatterns)-1)
-	for _, pattern := range supportedPatterns {
-		if pattern != PatternIPAddress {
-			patterns = append(patterns, pattern)
-		}
-	}
-	return patterns
-}
-
 // CompilePolicy validates and compiles configuration once. It does not retain
 // the caller's slices; the resulting policy retains only the entity mask and
 // compiled matchers.
 func CompilePolicy(options Options) (*Policy, error) {
+	literals, err := compileLiterals(options.Literals)
+	if err != nil {
+		return nil, err
+	}
 	var enabled entityMask
 	for index, pattern := range options.Patterns {
 		entities, supported := entitiesForPattern(pattern)
@@ -156,10 +149,30 @@ func CompilePolicy(options Options) (*Policy, error) {
 	if enabled.has(EntityIPAddress) && minimumBytes > 2 {
 		minimumBytes = 2
 	}
-	if len(custom) > 0 {
+	if len(custom) > 0 || literals != nil {
 		minimumBytes = 1
 	}
-	return &Policy{entities: enabled, custom: custom, minimumBytes: minimumBytes}, nil
+	var selections []literalSelection
+	if literals != nil {
+		selections = []literalSelection{{matcher: literals}}
+	}
+	return &Policy{entities: enabled, custom: custom, minimumBytes: minimumBytes, literals: selections}, nil
+}
+
+// MemoryBytes conservatively accounts for retained matcher allocations, not
+// process RSS. Compile callers separately bound concurrency and transient work.
+func (p *Policy) MemoryBytes() int64 {
+	if p == nil {
+		return 0
+	}
+	bytes := int64(4096)
+	for _, matcher := range p.custom {
+		bytes += matcher.memoryBytes
+	}
+	for _, selection := range p.literals {
+		bytes += selection.matcher.bytes + int64(len(selection.enabled))
+	}
+	return bytes
 }
 
 func entitiesForPattern(pattern Pattern) (entityMask, bool) {
@@ -196,6 +209,13 @@ func entitiesForPattern(pattern Pattern) (entityMask, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// ValidateCustomPatterns uses the same compiler as request execution without
+// constructing a literal matcher. Policy editors use it before saving rules.
+func ValidateCustomPatterns(patterns []CustomPattern) error {
+	_, err := compileCustomPatterns(patterns)
+	return err
 }
 
 func compileCustomPatterns(patterns []CustomPattern) ([]*customMatcher, error) {
@@ -331,4 +351,80 @@ func builtInEntity(entity Entity) bool {
 
 func maxInt() int {
 	return int(^uint(0) >> 1)
+}
+
+// A combined policy selects rules from shared matchers. The selection is small;
+// parent dictionaries and automata remain owned by their original policies.
+type literalSelection struct {
+	matcher *literalMatcher
+	enabled []bool
+}
+
+// CombinePolicies scans each component against the original text and merges
+// intervals once. Applying redaction sequentially would lose overlapping matches.
+func CombinePolicies(policies []*Policy) (*Policy, error) {
+	if len(policies) == 1 {
+		return policies[0], nil
+	}
+	out := &Policy{minimumBytes: maxInt()}
+	seenCustom := map[string]bool{}
+	seenMatcher := map[*literalMatcher]bool{}
+	var all []Literal
+	instructions := 0
+	for _, p := range policies {
+		if p == nil {
+			continue
+		}
+		out.entities |= p.entities
+		out.minimumBytes = min(out.minimumBytes, p.minimumBytes)
+		for _, custom := range p.custom {
+			if seenCustom[custom.expression] {
+				continue
+			}
+			seenCustom[custom.expression] = true
+			instructions += custom.instructions
+			out.custom = append(out.custom, custom)
+		}
+		for _, selection := range p.literals {
+			if !seenMatcher[selection.matcher] {
+				seenMatcher[selection.matcher] = true
+				out.literals = append(out.literals, literalSelection{matcher: selection.matcher, enabled: make([]bool, len(selection.matcher.rules))})
+			}
+			for i, rule := range selection.matcher.rules {
+				if selection.enabled == nil || selection.enabled[i] {
+					all = append(all, rule)
+				}
+			}
+		}
+	}
+	if instructions > maxCustomInstructions || len(out.custom) > maxCustomPatterns {
+		return nil, policyError("combined custom patterns exceed complexity limit")
+	}
+	normalized := NormalizeLiterals(all)
+	if err := ValidateLiterals(normalized); err != nil {
+		return nil, err
+	}
+	active := make(map[string]bool, len(normalized))
+	for _, rule := range normalized {
+		active[literalIdentity(rule)] = true
+	}
+	retained := out.literals[:0]
+	for i := range out.literals {
+		selection := &out.literals[i]
+		selected := false
+		for j, rule := range selection.matcher.rules {
+			key := literalIdentity(rule)
+			if active[key] {
+				selection.enabled[j] = true
+				selected = true
+				delete(active, key)
+			}
+		}
+		if selected {
+			retained = append(retained, *selection)
+		}
+	}
+	clear(out.literals[len(retained):])
+	out.literals = retained
+	return out, nil
 }

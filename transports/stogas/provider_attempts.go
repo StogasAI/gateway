@@ -8,7 +8,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// providerAttemptTracer observes Bifrost's canonical llm.call and retry spans.
+// providerAttemptTracer observes Bifrost's LLM-call and retry spans.
 // Bifrost creates one of these spans for every provider attempt, including each
 // fallback and same-provider retry.
 type providerAttemptTracer struct {
@@ -41,18 +41,27 @@ func newProviderAttemptTracer(inner schemas.Tracer) *providerAttemptTracer {
 
 func (t *providerAttemptTracer) StartSpan(ctx context.Context, name string, kind schemas.SpanKind) (context.Context, schemas.SpanHandle) {
 	spanCtx, inner := t.Tracer.StartSpan(ctx, name, kind)
+	return spanCtx, t.wrapAttempt(ctx, kind, inner)
+}
+
+func (t *providerAttemptTracer) StartSpanID(ctx context.Context, name string, kind schemas.SpanKind) (string, schemas.SpanHandle) {
+	id, inner := t.Tracer.StartSpanID(ctx, name, kind)
+	return id, t.wrapAttempt(ctx, kind, inner)
+}
+
+func (t *providerAttemptTracer) wrapAttempt(ctx context.Context, kind schemas.SpanKind, inner schemas.SpanHandle) schemas.SpanHandle {
 	if kind != schemas.SpanKindLLMCall && kind != schemas.SpanKindRetry {
-		return spanCtx, inner
+		return inner
 	}
 	bifrostCtx, ok := ctx.(*schemas.BifrostContext)
 	if !ok {
-		return spanCtx, inner
+		return inner
 	}
 	state, ok := StateFrom(bifrostCtx)
 	if !ok {
-		return spanCtx, inner
+		return inner
 	}
-	return spanCtx, &providerAttemptSpan{
+	return &providerAttemptSpan{
 		inner: inner,
 		state: state,
 		index: state.beginProviderAttempt(t.now()),
@@ -90,8 +99,19 @@ func (t *providerAttemptTracer) AddEvent(handle schemas.SpanHandle, name string,
 	t.Tracer.AddEvent(inner, name, attrs)
 }
 
-func (t *providerAttemptTracer) PopulateLLMRequestAttributes(handle schemas.SpanHandle, req *schemas.BifrostRequest) {
+func (t *providerAttemptTracer) SpanFromHandle(handle schemas.SpanHandle) *schemas.Span {
 	_, inner := providerAttemptHandle(handle)
+	return t.Tracer.SpanFromHandle(inner)
+}
+
+func (t *providerAttemptTracer) PopulateLLMRequestAttributes(handle schemas.SpanHandle, req *schemas.BifrostRequest) {
+	span, inner := providerAttemptHandle(handle)
+	if span != nil && req != nil {
+		// Core now writes provider attributes directly onto its resolved span.
+		// The request supplies the same identity even when tracing is disabled.
+		provider, _, _ := req.GetRequestFields()
+		span.state.setProviderAttemptProvider(span.index, string(provider))
+	}
 	t.Tracer.PopulateLLMRequestAttributes(inner, req)
 }
 

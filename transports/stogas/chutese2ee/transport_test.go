@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/mlkem"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +18,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/valyala/fasthttp"
 )
 
@@ -103,9 +107,21 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
 	request.SetBodyString(`{"model":"upstream-model","messages":[{"role":"user","content":"private prompt"}]}`)
 
-	retry, err := transport.RoundTrip(nil, request, response)
-	if err != nil || retry {
-		t.Fatalf("RoundTrip retry=%t error=%v", retry, err)
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	defer ctx.Cancel()
+	if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
+		t.Fatal(err)
+	}
+	metadata := InvocationMetadata(ctx)
+	digest := sha256.Sum256(instanceKey.EncapsulationKey().Bytes())
+	if metadata["instance_id"] != testInstanceID || metadata["encryption_key_sha256"] != hex.EncodeToString(digest[:]) {
+		t.Fatalf("metadata differs from selected instance: %v", metadata)
+	}
+	if len(metadata) != 4 || metadata["measurement"].(map[string]string)["version"] != "fixture-v1" {
+		t.Fatal("provider metadata missing or contains unexpected fields")
+	}
+	if InvocationMetadata(t.Context()) != nil {
+		t.Fatal("request metadata leaked across contexts")
 	}
 	if response.StatusCode() != http.StatusOK {
 		t.Fatalf("response status = %d, body=%s", response.StatusCode(), response.Body())
@@ -118,6 +134,164 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	}
 	if snapshot := transport.Diagnostics(); len(snapshot.Chutes) != 1 || snapshot.Chutes[0].UsableTickets != 4 {
 		t.Fatalf("unexpected diagnostics: %#v", snapshot)
+	}
+}
+
+func TestTransportEncryptedStreamOwnsCredentialAndNeverReplays(t *testing.T) {
+	for _, outcome := range []string{"complete", "truncated", "provider error"} {
+		t.Run(outcome, func(t *testing.T) {
+			instanceKey, err := mlkem.GenerateKey768()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var invokes atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != invocationPath {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				invokes.Add(1)
+				if r.Header.Get("X-E2E-Stream") != "true" {
+					t.Error("stream invocation was not marked encrypted streaming")
+				}
+				if outcome == "provider error" {
+					w.Header().Set("Retry-After", "2")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `{"error":{"code":"upstream_failed"}}`)
+					return
+				}
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				object, err := decryptRequestObjectForTest(instanceKey, body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				var encodedKey string
+				if err := json.Unmarshal(object["e2e_response_pk"], &encodedKey); err != nil {
+					t.Error(err)
+					return
+				}
+				keyBytes, err := base64.StdEncoding.DecodeString(encodedKey)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				publicKey, err := mlkem.NewEncapsulationKey768(keyBytes)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				shared, ciphertext := publicKey.Encapsulate()
+				streamKey, err := deriveKey(shared, ciphertext, streamKeyInfo)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, sseEnvelopeForTest(t, map[string]any{"e2e_init": base64.StdEncoding.EncodeToString(ciphertext)}))
+				_, _ = io.WriteString(w, sseEnvelopeForTest(t, map[string]any{"e2e": encryptStreamEventForTest(t, streamKey, `data: {"choices":[],"usage":{"total_tokens":3}}`)}))
+				if outcome == "complete" {
+					_, _ = io.WriteString(w, sseEnvelopeForTest(t, map[string]any{"e2e": encryptStreamEventForTest(t, streamKey, "data: [DONE]\n\n")}))
+					// Authenticated completion must close without leaking outer framing.
+					_, _ = io.WriteString(w, "data: [DONE]\n\n")
+				}
+			}))
+			defer server.Close()
+			transport := transportWithPoolForTest(t, server.URL, instanceKey, strings.Repeat("T", 32))
+			defer transport.Close()
+			transport.pools.mu.Lock()
+			transport.pools.warming[testChuteID] = true
+			transport.pools.mu.Unlock()
+			request := fasthttp.AcquireRequest()
+			response := fasthttp.AcquireResponse()
+			defer fasthttp.ReleaseRequest(request)
+			defer fasthttp.ReleaseResponse(response)
+			request.SetRequestURI("http://provider.invalid/v1/chat/completions")
+			request.Header.SetMethod(http.MethodPost)
+			request.Header.Set("Authorization", "Bearer managed-key")
+			request.SetBodyString(`{"model":"upstream-model","stream":true,"messages":[{"role":"user","content":"private prompt"}]}`)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
+				t.Fatal(err)
+			}
+			if outcome == "provider error" {
+				if response.StatusCode() != http.StatusServiceUnavailable || string(response.Header.Peek("Retry-After")) != "2" || string(response.Body()) != `{"error":{"code":"upstream_failed"}}` {
+					t.Fatalf("provider error changed: %s", response)
+				}
+			} else {
+				transport.credentialsMu.Lock()
+				active := transport.managedCredential.active
+				transport.credentialsMu.Unlock()
+				if active != 1 {
+					t.Fatalf("live stream holds %d credentials, want 1", active)
+				}
+				plaintext, readErr := io.ReadAll(response.BodyStream())
+				want := "data: {\"choices\":[],\"usage\":{\"total_tokens\":3}}\n\n"
+				if outcome == "complete" {
+					want += "data: [DONE]\n\n"
+					if readErr != nil {
+						t.Fatal(readErr)
+					}
+				} else if !errors.Is(readErr, ErrInvalidE2EEResponse) {
+					t.Fatalf("truncated encrypted stream = %v, want authenticated completion failure", readErr)
+				}
+				if string(plaintext) != want {
+					t.Fatalf("decrypted stream = %q, want %q", plaintext, want)
+				}
+			}
+			transport.credentialsMu.Lock()
+			active := transport.managedCredential.active
+			transport.credentialsMu.Unlock()
+			if active != 0 || invokes.Load() != 1 {
+				t.Fatalf("terminal stream retains %d credentials or replays inference: calls=%d", active, invokes.Load())
+			}
+			wantFailures := uint64(0)
+			if outcome == "truncated" {
+				wantFailures = 1
+			}
+			if snapshot := transport.Diagnostics(); len(snapshot.Chutes) != 1 || snapshot.Chutes[0].ProtocolFailures != wantFailures {
+				t.Fatalf("stream protocol failure count changed: %#v", snapshot)
+			}
+		})
+	}
+}
+
+func TestStreamErrorResponseBodyBound(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		reader    io.Reader
+		valid     bool
+		wantBytes int
+	}{
+		{"empty", strings.NewReader(""), true, 0},
+		{"exact limit", strings.NewReader(strings.Repeat("x", 2<<20)), true, 2 << 20},
+		{"over limit", strings.NewReader(strings.Repeat("x", (2<<20)+1)), false, 0},
+		{"broken body", io.MultiReader(strings.NewReader("partial"), iotest.ErrReader(io.ErrUnexpectedEOF)), false, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source, target := fasthttp.AcquireResponse(), fasthttp.AcquireResponse()
+			defer fasthttp.ReleaseResponse(source)
+			defer fasthttp.ReleaseResponse(target)
+			source.SetStatusCode(http.StatusServiceUnavailable)
+			source.Header.Set("Retry-After", "2")
+			source.SetBodyStream(test.reader, -1)
+			copyStreamErrorResponse(source, target)
+			if test.valid {
+				if target.StatusCode() != http.StatusServiceUnavailable || string(target.Header.Peek("Retry-After")) != "2" {
+					t.Fatalf("valid error response lost status or retry delay: %s", target)
+				}
+				if len(target.Body()) != test.wantBytes || bytes.Count(target.Body(), []byte("x")) != test.wantBytes {
+					t.Fatal("valid provider error body changed")
+				}
+			} else if target.StatusCode() != http.StatusBadGateway || !bytes.Contains(target.Body(), []byte(`"code":"upstream_protocol_error"`)) || len(target.Body()) > 1024 {
+				t.Fatalf("invalid error body did not fail within a bounded response: status=%d bytes=%d", target.StatusCode(), len(target.Body()))
+			}
+		})
 	}
 }
 
@@ -960,11 +1134,13 @@ func installPoolForTest(pool *poolState, instanceKey *mlkem.DecapsulationKey768,
 	pool.mu.Lock()
 	pool.verified[testChuteID] = map[string]verifiedInstance{
 		testInstanceID: {
-			InstanceID: testInstanceID,
-			PublicKey:  publicKey,
-			GPUCount:   testGPUCount,
-			VerifiedAt: now,
-			ValidUntil: now.Add(time.Minute),
+			InstanceID:         testInstanceID,
+			PublicKey:          publicKey,
+			GPUCount:           testGPUCount,
+			VerifiedAt:         now,
+			ValidUntil:         now.Add(time.Minute),
+			MeasurementName:    "fixture-image",
+			MeasurementVersion: "fixture-v1",
 		},
 	}
 	pool.mu.Unlock()

@@ -1,56 +1,22 @@
 package proof
 
 import (
-	"crypto/ed25519"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"strings"
 	"testing"
 )
 
-func TestProofSignsTheCompleteResolvedExchange(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := Input{
-		RequestBody:  []byte(`{"model":"gpt-5.5"}`),
-		ResponseBody: []byte(`{"id":"resp_1"}`),
-		Metadata:     testMetadata(),
-	}
-	payload := PayloadFor(input)
+func TestMetadataValidation(t *testing.T) {
+	input := Input{Metadata: testMetadata()}
 	if !ValidMetadata(input.Metadata) {
-		t.Fatal("expected canonical proof metadata")
+		t.Fatal("valid metadata rejected")
 	}
-	signature, err := Sign(privateKey, payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !VerifyInput(publicKey, input, signature) {
-		t.Fatal("expected proof signature to verify")
-	}
-
-	for name, mutate := range map[string]func(*Input){
-		"request":    func(value *Input) { value.RequestBody = []byte(`{"model":"other"}`) },
-		"response":   func(value *Input) { value.ResponseBody = []byte(`{"id":"resp_2"}`) },
-		"created at": func(value *Input) { value.Metadata.CreatedAt = "2026-08-24T12:34:56.790Z" },
-		"node":       func(value *Input) { value.Metadata.NodeID = strings.Repeat("4", 64) },
-		"catalog":    func(value *Input) { value.Metadata.Catalog.Digest = "sha256:" + strings.Repeat("c", 64) },
-		"catalog ID": func(value *Input) { value.Metadata.Catalog.SelectionIDs[2] = "deployment:other" },
-		"pricing":    func(value *Input) { value.Metadata.Pricing.TotalCostUSDAtoms = "2" },
-		"timing":     func(value *Input) { value.Metadata.Timing.TotalMS++ },
-		"transcript": func(value *Input) { value.Metadata.E2EETranscriptSHA256 = strings.Repeat("d", 64) },
-	} {
-		tampered := input
-		tampered.Metadata = cloneMetadata(input.Metadata)
-		mutate(&tampered)
-		if VerifyInput(publicKey, tampered, signature) {
-			t.Fatalf("tampered %s should not verify", name)
-		}
-	}
-
 	for name, mutate := range map[string]func(*Metadata){
+		"unpublished catalog":    func(value *Metadata) { value.Catalog.Version = 0 },
+		"invalid chain hash":     func(value *Metadata) { value.Catalog.ChainHash = "sha256:wrong" },
 		"noncanonical timestamp": func(value *Metadata) { value.CreatedAt = "2026-08-24T12:34:56Z" },
-		"noncanonical atoms": func(value *Metadata) {
-			value.Pricing.TotalCostUSDAtoms = "020"
+		"noncanonical USD": func(value *Metadata) {
+			value.BilledCostUSD = "020"
 		},
 		"TTFT after request end": func(value *Metadata) {
 			ttft := value.Timing.TotalMS + 1
@@ -72,72 +38,25 @@ func TestProofSignsTheCompleteResolvedExchange(t *testing.T) {
 	}
 }
 
-func TestStreamingProofUsesExactSentChunksAndFinalMetadata(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	initialMetadata := testMetadata()
-	initialMetadata.Pricing.TotalCostUSDAtoms = "0"
-	input := StreamingInput{
-		RequestBody: []byte(`{"stream":true}`),
-		Metadata:    initialMetadata,
-	}
-	finalMetadata := testMetadata()
-	stream := NewStreamHasher(input)
-	stream.WriteChunk([]byte("data: one\n\n"))
-	stream.WriteChunk([]byte("data: two\n\n"))
-	stream.SetMetadata(finalMetadata)
-	signature, err := Sign(privateKey, stream.FinalPayload())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	verified := NewStreamHasher(input)
-	verified.WriteChunk([]byte("data: one\n\n"))
-	verified.WriteChunk([]byte("data: two\n\n"))
-	verified.SetMetadata(finalMetadata)
-	if !Verify(publicKey, verified.FinalPayload(), signature) {
-		t.Fatal("expected streaming proof to verify")
-	}
-
-	tampered := NewStreamHasher(input)
-	tampered.WriteChunk([]byte("data: one\n\n"))
-	tampered.WriteChunk([]byte("data: changed\n\n"))
-	tampered.SetMetadata(finalMetadata)
-	if Verify(publicKey, tampered.FinalPayload(), signature) {
-		t.Fatal("tampered stream chunks should not verify")
-	}
-}
-
 func testMetadata() Metadata {
 	ttft := uint32(4)
 	return Metadata{
 		RequestID: "req_1",
 		CreatedAt: "2026-08-24T12:34:56.789Z",
-		NodeID:    strings.Repeat("3", 64),
 		Catalog: Catalog{
-			Digest:       "sha256:" + strings.Repeat("a", 64),
-			Sequence:     7,
+			ChainHash:    "sha256:" + strings.Repeat("a", 64),
+			Version:      7,
 			SelectionIDs: testCatalogSelectionIDs(),
 		},
-		Pricing: Pricing{
-			Meters: map[string]Meter{
-				"input_tokens": {
-					Quantity:     "10",
-					RateKey:      "input_tokens",
-					RateUSDAtoms: "2",
-					USDAtoms:     "20",
-				},
-			},
-			TotalCostUSDAtoms: "20",
+		Meters: map[string]Meter{
+			"input_tokens": billing.PricedMeter("10", "input_tokens", "2", "20"),
 		},
+		UpstreamCostUSD: "20", BilledCostUSD: "20",
 		Timing: Timing{
 			TotalMS:    20,
 			ProviderMS: 15,
 			TTFTMS:     &ttft,
 		},
-		E2EETranscriptSHA256: strings.Repeat("b", 64),
 	}
 }
 
@@ -149,4 +68,18 @@ func testCatalogSelectionIDs() []string {
 		"route:openai-responses",
 		"provider:openai",
 	}
+}
+
+func cloneMetadata(metadata Metadata) Metadata {
+	metadata.Catalog.SelectionIDs = append([]string(nil), metadata.Catalog.SelectionIDs...)
+	meters := make(map[string]Meter, len(metadata.Meters))
+	for key, meter := range metadata.Meters {
+		meters[key] = meter
+	}
+	metadata.Meters = meters
+	if metadata.Timing.TTFTMS != nil {
+		value := *metadata.Timing.TTFTMS
+		metadata.Timing.TTFTMS = &value
+	}
+	return metadata
 }

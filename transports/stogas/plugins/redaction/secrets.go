@@ -63,7 +63,7 @@ var secretSpecsByInitial = func() [256][]secretSpec {
 		{prefix: "xoxc-", minimumBody: 10, maximumBody: 72, characters: secretToken, strict: true},
 		{prefix: "xoxe-", minimumBody: 10, maximumBody: 72, characters: secretToken, strict: true},
 		{prefix: "sk-ant-", minimumBody: 24, maximumBody: 255, characters: secretToken},
-		{prefix: "sk_stogas_v1_", minimumBody: 166, maximumBody: 166, characters: secretToken},
+		{prefix: "sk_stogas_v1_", minimumBody: 144, maximumBody: 144, characters: secretToken},
 		{prefix: "sk-proj-", minimumBody: 40, maximumBody: 255, characters: secretToken},
 		{prefix: "sk-svcacct-", minimumBody: 40, maximumBody: 255, characters: secretToken, strict: true},
 		{prefix: "sk-admin-", minimumBody: 40, maximumBody: 255, characters: secretToken, strict: true},
@@ -579,8 +579,11 @@ func privateKeyEndMarker(kind []byte) string {
 
 func scanKnownSecretPrefixes(text []byte, matches []match) ([]match, error) {
 	for start, character := range text {
+		if len(secretSpecsByInitial[character]) == 0 || !wordBoundaryBeforeSecret(text, start) {
+			continue
+		}
 		for _, spec := range secretSpecsByInitial[character] {
-			if start+len(spec.prefix)+spec.minimumBody > len(text) || !bytes.Equal(text[start:start+len(spec.prefix)], []byte(spec.prefix)) || !wordBoundaryBeforeSecret(text, start) {
+			if start+len(spec.prefix)+spec.minimumBody > len(text) || !bytes.Equal(text[start:start+len(spec.prefix)], []byte(spec.prefix)) {
 				continue
 			}
 			end := start + len(spec.prefix)
@@ -900,33 +903,44 @@ func (r *Redactor) scanCredentialAssignments(text []byte, matches []match, enabl
 // 1=password, 2=strong secret assignment, 3=bearer, 4=basic,
 // 5=weak token assignment.
 func credentialWordKind(word []byte) uint8 {
-	for _, value := range []string{"password", "passwordhash", "passwd", "pwd"} {
-		if credentialWordEqual(word, value) {
+	// Normalize once into stack storage, rather than rescanning every word for
+	// each accepted spelling. Longer words can still match a delimited suffix.
+	var normalized [18]byte // longest exact spelling: awssecretaccesskey
+	length := 0
+	for _, character := range word {
+		if character == '_' || character == '-' {
+			continue
+		}
+		if length == len(normalized) {
+			length++
+			break
+		}
+		normalized[length] = lowerASCII(character)
+		length++
+	}
+	if length <= len(normalized) {
+		switch string(normalized[:length]) {
+		case "password", "passwordhash", "passwd", "pwd":
 			return 1
-		}
-	}
-	for _, value := range []string{
-		"secret", "secretkey", "apikey", "serviceapikey", "apitoken", "accesskey", "accesstoken", "authtoken",
-		"clientsecret", "privatekey", "credential", "credentials", "databaseurl", "dburl",
-		"connectionstring", "awssecretaccesskey", "awssessiontoken", "sastoken", "auth", "xapikey",
-	} {
-		if credentialWordEqual(word, value) {
+		case "secret", "secretkey", "apikey", "serviceapikey", "apitoken", "accesskey", "accesstoken", "authtoken",
+			"clientsecret", "privatekey", "credential", "credentials", "databaseurl", "dburl",
+			"connectionstring", "awssecretaccesskey", "awssessiontoken", "sastoken", "auth", "xapikey":
 			return 2
+		case "token":
+			return 5
+		case "bearer":
+			return 3
+		case "basic":
+			return 4
 		}
 	}
-	if credentialWordEqual(word, "token") || credentialWordDelimitedSuffix(word, "token") {
+	if credentialWordDelimitedSuffix(word, "token") {
 		return 5
 	}
 	for _, suffix := range []string{"password", "secret", "apikey", "accesskey"} {
 		if credentialWordDelimitedSuffix(word, suffix) {
 			return 2
 		}
-	}
-	if credentialWordEqual(word, "bearer") {
-		return 3
-	}
-	if credentialWordEqual(word, "basic") {
-		return 4
 	}
 	return 0
 }
@@ -952,20 +966,6 @@ func credentialWordDelimitedSuffix(word []byte, expected string) bool {
 	}
 	return word[start] >= 'A' && word[start] <= 'Z' &&
 		(word[start-1] >= 'a' && word[start-1] <= 'z' || isASCIIDigit(word[start-1]))
-}
-
-func credentialWordEqual(word []byte, expected string) bool {
-	position := 0
-	for _, character := range word {
-		if character == '_' || character == '-' {
-			continue
-		}
-		if position >= len(expected) || lowerASCII(character) != expected[position] {
-			return false
-		}
-		position++
-	}
-	return position == len(expected)
 }
 
 func assignmentValueStart(text []byte, position int) (int, byte, bool, bool) {

@@ -1,11 +1,21 @@
 package billing
 
 import (
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"strings"
 )
 
 const (
+	MeterInputTextBytes        = "input_text_bytes"
+	MeterEstimatedInputTokens  = "estimated_input_tokens"
+	MeterTotalInputTokens      = "total_input_tokens"
+	MeterTotalOutputTokens     = "total_output_tokens"
+	MeterTotalTokens           = "total_tokens"
+	MeterTotalCacheWriteTokens = "total_cache_write_tokens"
+	MeterHostedToolCalls       = "hosted_tool_calls"
+	MeterClientToolCalls       = "client_tool_calls"
+
 	MeterInputTokens             = "input_tokens"
 	MeterCachedInputTokens       = "cached_input_tokens"
 	MeterCacheWriteInputTokens   = "cache_write_input_tokens"
@@ -42,12 +52,12 @@ func WithReasoningTokenFallback(pricing Pricing) Pricing {
 }
 
 type MeterEstimate struct {
-	MeterKey       string
-	RateKey        string
-	RateUSDAtoms   string
-	Quantity       string
-	AmountUSDAtoms string
-	HoldRequired   bool
+	MeterKey     string
+	RateKey      string
+	RateUSD      string
+	Quantity     string
+	AmountUSD    string
+	HoldRequired bool
 }
 
 type TokenRateMode int
@@ -62,12 +72,12 @@ func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey stri
 	if quantity <= 0 {
 		return meters
 	}
-	rateKey, rateAtoms, ok := PricingRate(pricing, meterKey, mode)
+	rateKey, rateUsd, ok := PricingRate(pricing, meterKey, mode)
 	if !ok {
 		return meters
 	}
-	amount := CostPerMillion(quantity, rateAtoms)
-	return appendMeterCost(meters, meterKey, rateKey, rateAtoms, quantity, amount, holdRequired)
+	amount := CostPerMillion(quantity, rateUsd)
+	return appendMeterCost(meters, meterKey, rateKey, rateUsd, quantity, amount, holdRequired)
 }
 
 func AppendCallMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool) []MeterEstimate {
@@ -82,29 +92,26 @@ func AppendCallMeterCostWithRate(meters []MeterEstimate, pricing Pricing, meterK
 	if !ok {
 		return meters
 	}
-	rateAtoms, ok := ParseRate(meter[rateKey])
+	rateUsd, ok := ParseRate(meter[rateKey])
 	if !ok {
 		return meters
 	}
-	amount := CostPerThousand(quantity, rateAtoms)
-	return appendMeterCost(meters, meterKey, rateKey, rateAtoms, quantity, amount, holdRequired)
+	amount := CostPerThousand(quantity, rateUsd)
+	return appendMeterCost(meters, meterKey, rateKey, rateUsd, quantity, amount, holdRequired)
 }
 
-func appendMeterCost(meters []MeterEstimate, meterKey string, rateKey string, rateAtoms *big.Int, quantity int, amount *big.Int, holdRequired bool) []MeterEstimate {
-	if amount.Sign() == 0 {
-		return meters
-	}
+func appendMeterCost(meters []MeterEstimate, meterKey string, rateKey string, rateUsd *money.USD, quantity int, amount *money.USD, holdRequired bool) []MeterEstimate {
 	return append(meters, MeterEstimate{
-		MeterKey:       meterKey,
-		RateKey:        rateKey,
-		RateUSDAtoms:   rateAtoms.String(),
-		Quantity:       big.NewInt(int64(quantity)).String(),
-		AmountUSDAtoms: amount.String(),
-		HoldRequired:   holdRequired,
+		MeterKey:     meterKey,
+		RateKey:      rateKey,
+		RateUSD:      rateUsd.String(),
+		Quantity:     big.NewInt(int64(quantity)).String(),
+		AmountUSD:    amount.String(),
+		HoldRequired: holdRequired,
 	})
 }
 
-func PricingRate(pricing Pricing, meterKey string, mode TokenRateMode) (string, *big.Int, bool) {
+func PricingRate(pricing Pricing, meterKey string, mode TokenRateMode) (string, *money.USD, bool) {
 	if len(pricing) == 0 {
 		return "", nil, false
 	}
@@ -130,9 +137,9 @@ func PricingRate(pricing Pricing, meterKey string, mode TokenRateMode) (string, 
 	return HighestRate(meter)
 }
 
-func HighestRate(rates map[string]string) (string, *big.Int, bool) {
+func HighestRate(rates map[string]string) (string, *money.USD, bool) {
 	var selectedKey string
-	var selected *big.Int
+	var selected *money.USD
 	for key, raw := range rates {
 		rate, ok := ParseRate(raw)
 		if !ok {
@@ -149,25 +156,19 @@ func HighestRate(rates map[string]string) (string, *big.Int, bool) {
 	return selectedKey, selected, true
 }
 
-func ParseRate(raw string) (*big.Int, bool) {
-	rate, err := ParseUSDAtoms(raw)
+func ParseRate(raw string) (*money.USD, bool) {
+	rate, err := ParseUSD(raw)
 	return rate, err == nil
 }
 
-func CostPerMillion(quantity int, rateAtoms *big.Int) *big.Int {
-	return CeilingMulDiv(quantity, rateAtoms, MillionTokens)
+func CostPerMillion(quantity int, rateUsd *money.USD) *money.USD {
+	return CeilingMulDiv(quantity, rateUsd, MillionTokens)
 }
 
-func CostPerThousand(quantity int, rateAtoms *big.Int) *big.Int {
-	return CeilingMulDiv(quantity, rateAtoms, ThousandCalls)
+func CostPerThousand(quantity int, rateUsd *money.USD) *money.USD {
+	return CeilingMulDiv(quantity, rateUsd, ThousandCalls)
 }
 
-func CeilingMulDiv(quantity int, rateAtoms *big.Int, divisorQuantity int64) *big.Int {
-	cost := new(big.Int).Mul(big.NewInt(int64(quantity)), rateAtoms)
-	divisor := big.NewInt(divisorQuantity)
-	quotient, remainder := new(big.Int).QuoRem(cost, divisor, new(big.Int))
-	if remainder.Sign() > 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
-	return quotient
+func CeilingMulDiv(quantity int, rateUsd *money.USD, divisorQuantity int64) *money.USD {
+	return new(money.USD).MulRatioCeil(rateUsd, big.NewInt(int64(quantity)), divisorQuantity)
 }

@@ -4,17 +4,18 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/money"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
-	"math/big"
 	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
@@ -26,7 +27,7 @@ const (
 	settleRetryWindow          = 90 * time.Second
 	settleRetryInitialDelay    = 250 * time.Millisecond
 	settleRetryMaxDelay        = 5 * time.Second
-	settleRetryWorkerCount     = 64
+	settleRetryWorkerCount     = 6
 	settleRetryQueueCapacity   = 8192
 	holdSettlementExpiryBuffer = 10 * time.Minute
 
@@ -54,7 +55,12 @@ const authorizeHoldArguments = `
   $14::integer,
   $15::boolean,
   $16::numeric,
-  $17::timestamptz
+  $17::timestamptz,
+  $18::integer,
+  $19::jsonb,
+  $20::jsonb,
+  $21::jsonb,
+  $22::numeric
 `
 
 const settleHoldArguments = `
@@ -68,44 +74,45 @@ const settleHoldArguments = `
 `
 
 type authorizeRow struct {
-	Result                       string
-	HoldID                       *string
-	UserID                       *string
-	KeyID                        *string
-	GrantID                      *string
-	OrganizationID               *string
-	WorkspaceID                  *string
-	AuthorizedBilledCostUSDAtoms *string
-	CreatedAt                    *time.Time
-	ExpiresAt                    *time.Time
-	AvailableBalanceUSDAtoms     *string
-	UpstreamByok                 *string
-	UpstreamByokCiphertext       *string
+	Result                  string
+	HoldID                  *string
+	UserID                  *string
+	KeyID                   *string
+	GrantID                 *string
+	OrganizationID          *string
+	AuthorizedBilledCostUSD *string
+	CreatedAt               *time.Time
+	ExpiresAt               *time.Time
+	AvailableBalanceUSD     *string
+	UpstreamByok            *string
+	UpstreamByokBinding     *string
+	ConfigCurrent           bool
 }
 
 type settleRow struct {
-	Result                    string
-	BilledCostUSDAtoms        *string
-	BalanceAdjustmentUSDAtoms *string
-	AvailableBalanceUSDAtoms  *string
+	Result               string
+	BilledCostUSD        *string
+	BalanceAdjustmentUSD *string
+	AvailableBalanceUSD  *string
 }
 
 type Authorization struct {
-	AuthorizedBilledCostUSDAtoms *big.Int
-	AvailableBalanceUSDAtoms     *big.Int
-	CreatedAt                    time.Time
-	GrantID                      *string
-	KeyID                        string
-	OrganizationID               string
-	ProductKey                   string
-	ProviderKey                  string
-	RequestID                    string
-	UserID                       string
-	WorkspaceID                  string
-	UpstreamByok                 string
-	UpstreamByokSecret           string
-	AzureBinding                 *AzureBinding
-	UpstreamTargetJSON           string
+	admissionStartedAt         time.Time
+	dashboardAdmissionIdentity string
+	AuthorizedBilledCostUSD    *money.USD
+	AvailableBalanceUSD        *money.USD
+	CreatedAt                  time.Time
+	GrantID                    *string
+	KeyID                      string
+	OrganizationID             string
+	ProductKey                 string
+	ProviderKey                string
+	RequestID                  string
+	UserID                     string
+	UpstreamByok               string
+	UpstreamByokSecret         string
+	AzureBinding               *AzureBinding
+	UpstreamTargetJSON         string
 }
 
 type UpstreamTarget struct {
@@ -132,24 +139,22 @@ type AzureBinding struct {
 	TokenScope         string `json:"tokenScope"`
 }
 
-type azureBoundCiphertext struct {
-	Binding              AzureBinding `json:"binding"`
-	CredentialCiphertext string       `json:"credentialCiphertext"`
-	Schema               string       `json:"schema"`
+type azureBoundBinding struct {
+	Binding AzureBinding `json:"binding"`
+	Schema  string       `json:"schema"`
 }
 
-func parseAzureBoundCiphertext(raw string) (azureBoundCiphertext, error) {
+func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	decoder.DisallowUnknownFields()
-	value := azureBoundCiphertext{}
+	value := azureBoundBinding{}
 	if err := decoder.Decode(&value); err != nil {
-		return azureBoundCiphertext{}, err
+		return azureBoundBinding{}, err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return azureBoundCiphertext{}, errors.New("invalid Azure binding: trailing JSON")
+		return azureBoundBinding{}, errors.New("invalid Azure binding: trailing JSON")
 	}
-	if value.Schema != "stogas.azure-bound.v2" ||
-		value.CredentialCiphertext == "" ||
+	if value.Schema != "stogas.azure-binding.v1" ||
 		value.Binding.AccountLocation == "" ||
 		value.Binding.DeploymentName == "" ||
 		value.Binding.DeploymentType == "" ||
@@ -161,72 +166,78 @@ func parseAzureBoundCiphertext(raw string) (azureBoundCiphertext, error) {
 		value.Binding.ProcessingLocation == "" ||
 		value.Binding.StorageLocation == "" ||
 		value.Binding.TokenScope == "" {
-		return azureBoundCiphertext{}, errors.New("invalid Azure binding")
+		return azureBoundBinding{}, errors.New("invalid Azure binding")
 	}
 	return value, nil
 }
 
-type passthroughCredential struct {
-	Hash   string
-	Secret string
-}
-
 type Service struct {
-	db                        *GatewayDB
-	authorizeHoldQuery        string
-	keyConfigQuery            string
-	keyConfigs                keyConfigCache
-	keyConfigFlights          singleflight.Group
-	localAuthorizations       *localAuthorizationLimiter
-	localRequests             localRequestLimiter
-	apiKeys                   verifiedAPIKeyCache
-	rejections                authorizationRejectionCache
-	rejectionLogs             rejectionLogBuffer
-	rejectionOutboxQuery      string
-	retryInitialDelay         time.Duration
-	retryMaxDelay             time.Duration
-	retryWindow               time.Duration
-	retryActive               atomic.Int64
-	retryDeferred             atomic.Int64
-	retryLastDeferredAt       atomic.Int64
-	retryMu                   sync.Mutex
-	retryQueue                chan settlementRetryTask
-	retryWorkerCount          int
-	retryWorkersStarted       bool
-	retryWorkersWG            sync.WaitGroup
-	retryClosed               bool
-	settleFunc                settleHoldFunc
-	tinybird                  *TinybirdClient
-	settleHoldQuery           string
-	settleHoldWithOutboxQuery string
-	apiKeyPepper              string
-	inferenceTokenPublicKey   ed25519.PublicKey
-	byok                      *byokDecryptor
+	db                         *GatewayDB
+	authorizeHoldQuery         string
+	keyConfigQuery             string
+	keyConfigs                 keyConfigCache
+	keyConfigFlights           singleflight.Group
+	authorizations             authorizationActivity
+	localRequests              localRequestLimiter
+	apiKeys                    verifiedAPIKeyCache
+	rejections                 authorizationRejectionCache
+	rejectionLogs              rejectionLogBuffer
+	rejectionOutboxQuery       string
+	retryInitialDelay          time.Duration
+	retryMaxDelay              time.Duration
+	retryWindow                time.Duration
+	retryActive                atomic.Int64
+	retryDeferred              atomic.Int64
+	retryLastDeferredAt        atomic.Int64
+	underReservedSettlements   atomic.Uint64
+	negativeBalanceSettlements atomic.Uint64
+	retryMu                    sync.Mutex
+	retryQueue                 chan settlementRetryTask
+	retryWorkerCount           int
+	retryWorkersStarted        bool
+	retryWorkersWG             sync.WaitGroup
+	retryClosed                bool
+	settleFunc                 settleHoldFunc
+	tinybird                   *TinybirdClient
+	settleHoldQuery            string
+	settleHoldWithOutboxQuery  string
+	apiKeyPepper               string
+	inferenceTokenPublicKey    ed25519.PublicKey
+	byok                       *byokDecryptor
 }
 
 type settlementRetryTask struct {
-	authorization        Authorization
-	holdParamsHash       string
-	upstreamCostUSDAtoms string
-	requestEventPayload  string
-	writeOutbox          bool
-	deadline             time.Time
+	authorization       Authorization
+	holdParamsHash      string
+	upstreamCostUSD     string
+	requestEventPayload string
+	writeOutbox         bool
+	deadline            time.Time
+	releaseMemory       func()
 }
+
+// RetainMemory transfers existing request admission to a smaller retained
+// owner. A nil function is used by callers without an aggregate byte budget.
+type RetainMemory func(bytes int) (release func(), ok bool)
 
 type settleHoldFunc func(
 	ctx context.Context,
 	authorization *Authorization,
 	holdParamsHash string,
-	upstreamCostUSDAtoms string,
+	upstreamCostUSD string,
 	requestEventPayload string,
 	writeOutbox bool,
 ) error
 
 type DiagnosticsSnapshot struct {
+	KeyConfigCache                PolicyCacheDiagnostics    `json:"keyConfigCache"`
+	RedactionCache                PolicyCacheDiagnostics    `json:"redactionCache"`
 	RejectionLogs                 RejectionLogDiagnostics   `json:"rejectionLogs"`
 	Database                      *DatabaseDiagnostics      `json:"database,omitempty"`
 	LocalAdmission                LocalAdmissionDiagnostics `json:"localAdmission"`
 	SettlementRetries             int64                     `json:"settlementRetries"`
+	UnderReservedSettlements      uint64                    `json:"underReservedSettlements"`
+	NegativeBalanceSettlements    uint64                    `json:"negativeBalanceSettlements"`
 	SettlementRetryDeferrals      int64                     `json:"settlementRetryDeferrals"`
 	SettlementRetryLastDeferredAt *time.Time                `json:"settlementRetryLastDeferredAt,omitempty"`
 	SettlementRetryQueueCapacity  int                       `json:"settlementRetryQueueCapacity"`
@@ -269,22 +280,23 @@ func NewService(
 		return nil, err
 	}
 
-	return &Service{
+	service := &Service{
 		db:                        db,
 		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
 		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigArguments),
 		rejectionOutboxQuery:      db.functionQuery("enqueue_gateway_rejections", "$1::json"),
 		inferenceTokenPublicKey:   publicKey,
-		localAuthorizations:       newLocalAuthorizationLimiter(databasePool.MaxConns),
 		tinybird:                  tinybird,
 		settleHoldQuery:           db.functionQuery("settle_gateway_hold", settleHoldArguments),
 		settleHoldWithOutboxQuery: db.functionQuery("settle_gateway_hold_with_outbox", settleHoldArguments),
 		apiKeyPepper:              apiKeyPepper,
 		byok:                      byok,
-	}, nil
+	}
+	return service, nil
 }
 
 func (s *Service) Close() {
+	s.keyConfigs.close()
 	s.closeRejectionLogs()
 	s.retryMu.Lock()
 	if !s.retryClosed {
@@ -303,13 +315,6 @@ func (s *Service) Close() {
 	}
 }
 
-func (s *Service) ProbeDatabase(ctx context.Context) error {
-	if s == nil || s.db == nil {
-		return fmt.Errorf("gateway database is unavailable")
-	}
-	return s.db.Ping(ctx)
-}
-
 func (s *Service) Diagnostics() DiagnosticsSnapshot {
 	if s == nil {
 		return DiagnosticsSnapshot{}
@@ -321,10 +326,14 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		retryLastDeferredAt = &value
 	}
 	return DiagnosticsSnapshot{
+		KeyConfigCache:                s.keyConfigs.diagnostics(),
+		RedactionCache:                s.keyConfigs.redactionDiagnostics(),
 		RejectionLogs:                 s.rejectionLogs.snapshot(),
 		Database:                      s.db.Diagnostics(),
-		LocalAdmission:                localAdmissionDiagnostics(&s.localRequests, s.localAuthorizations, &s.rejections, &s.apiKeys),
+		LocalAdmission:                localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.rejections, &s.apiKeys),
 		SettlementRetries:             s.retryActive.Load(),
+		UnderReservedSettlements:      s.underReservedSettlements.Load(),
+		NegativeBalanceSettlements:    s.negativeBalanceSettlements.Load(),
 		SettlementRetryDeferrals:      s.retryDeferred.Load(),
 		SettlementRetryLastDeferredAt: retryLastDeferredAt,
 		SettlementRetryQueueCapacity:  retryQueueCapacity,
@@ -363,15 +372,15 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if s == nil {
 		return nil, ErrInvalidAPIKey
 	}
-	claims, _, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
+	claims, _, _, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return claims, ErrAPIKeyRateLimit
+	if err := s.callerBackoff(claims, nil, time.Now()); err != nil {
+		return claims, err
 	}
-	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
-		return claims, authorizationResultError(result)
+	if retryAfter := s.localRequests.allow("org:"+claims.OrganizationID, time.Now()); retryAfter > 0 {
+		return claims, &retryAfterError{delay: retryAfter}
 	}
 	return claims, nil
 }
@@ -388,66 +397,63 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), time.Now()); ok {
 		credential.Claims = snapshot.Claims
 	}
-	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return credential, ErrAPIKeyRateLimit
+	if err := s.callerBackoff(credential.Claims, credential, time.Now()); err != nil {
+		return credential, err
 	}
-	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
-		return credential, authorizationResultError(result)
+	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
+		return credential, &retryAfterError{delay: retryAfter}
 	}
 	return credential, nil
 }
 
-func (s *Service) AuthorizeRequestWithPassthrough(
+// UsageReservation records quantities once before authorization. Text remains
+// in exact UTF-8 bytes; STT presentation divides it by four.
+type UsageReservation struct {
+	Tokens         int64
+	InputTextBytes int64
+}
+
+func (s *Service) AuthorizeRequestWithEncryptionKeys(
 	ctx context.Context,
 	rawAPIKey string,
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
-	configGeneration int,
-	passthroughSecret string,
+	estimatedUpstreamCostUSD string, usage UsageReservation,
+	snapshot *KeyConfigSnapshot,
+	prepared *PreparedCredential,
+	activeRules []policy.RuleMatch,
+	encryptionKeys customerkey.Keys,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSDAtoms, reservedTokens, configGeneration, passthroughSecret, upstreamTarget, requestLifetime, singleUse)
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSD, usage, snapshot, prepared, activeRules, encryptionKeys, upstreamTarget, requestLifetime, singleUse)
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSDAtoms string, reservedTokens int64, configGeneration int, passthroughSecret string, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
-	claims, apiKeyHash, cacheKey, err := s.parseVerifiedAPIKey(rawAPIKey)
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage UsageReservation, snapshot *KeyConfigSnapshot, prepared *PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
+	claims, apiKeyHash, _, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if result, _, ok := s.rejections.get(cacheKey, time.Now()); ok {
-		return nil, authorizationResultError(result)
-	}
-	var passthrough *passthroughCredential
-	if passthroughSecret != "" {
-		credentialHash, hashErr := s.byok.credentialHash(
-			passthroughSecret,
-			claims.OrganizationID,
-			claims.WorkspaceID,
-			providerKey,
-		)
-		if hashErr != nil {
-			return nil, ErrByok
-		}
-		passthrough = &passthroughCredential{Hash: credentialHash, Secret: passthroughSecret}
+	if err := s.callerBackoff(claims, nil, time.Now()); err != nil {
+		return nil, err
 	}
 
 	return s.authorizeResolvedRequest(
 		ctx,
 		apiKeyHash,
-		cacheKey,
 		nil,
 		claims,
 		requestID,
 		providerKey,
 		productKey,
-		estimatedUpstreamCostUSDAtoms,
-		reservedTokens,
-		configGeneration,
-		passthrough,
+		estimatedUpstreamCostUSD,
+		usage,
+		snapshot,
+		prepared,
+		activeRules,
+		encryptionKeys,
 		upstreamTarget,
 		requestLifetime,
 		singleUse,
@@ -460,27 +466,34 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
-	configGeneration int,
+	estimatedUpstreamCostUSD string, usage UsageReservation,
+	snapshot *KeyConfigSnapshot,
+	prepared *PreparedCredential,
+	activeRules []policy.RuleMatch,
+	encryptionKeys customerkey.Keys,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 ) (*Authorization, error) {
 	if credential == nil {
 		return nil, ErrInvalidAPIKey
 	}
+	if err := s.callerBackoff(credential.Claims, credential, time.Now()); err != nil {
+		return nil, err
+	}
 	return s.authorizeResolvedRequest(
 		ctx,
 		"",
-		dashboardAdmissionKey(credential),
 		credential,
 		nil,
 		requestID,
 		providerKey,
 		productKey,
-		estimatedUpstreamCostUSDAtoms,
-		reservedTokens,
-		configGeneration,
-		nil,
+		estimatedUpstreamCostUSD,
+		usage,
+		snapshot,
+		prepared,
+		activeRules,
+		encryptionKeys,
 		upstreamTarget,
 		requestLifetime,
 		true,
@@ -490,27 +503,61 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 func (s *Service) authorizeResolvedRequest(
 	ctx context.Context,
 	apiKeyHash string,
-	rejectionCacheKey string,
 	dashboard *DashboardCredential,
 	claims *APIKeyClaims,
 	requestID string,
 	providerKey string,
 	productKey string,
-	estimatedUpstreamCostUSDAtoms string, reservedTokens int64,
-	configGeneration int,
-	passthrough *passthroughCredential,
+	estimatedUpstreamCostUSD string, usage UsageReservation,
+	snapshot *KeyConfigSnapshot,
+	prepared *PreparedCredential,
+	activeRules []policy.RuleMatch,
+	encryptionKeys customerkey.Keys,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
-	expiresAt := requestHoldExpiresAt(time.Now().UTC(), requestLifetime)
+	if snapshot == nil || snapshot.Config == nil || snapshot.Claims == nil || snapshot.Generation < 1 || snapshot.CredentialsGeneration < 1 || snapshot.Versions == nil {
+		return nil, ErrGatewayUnavailable
+	}
+	if prepared == nil || prepared.snapshot != snapshot || prepared.provider != providerKey {
+		return nil, ErrByok
+	}
+	selection := prepared.selection
+	// Plugin roots are covered by the checked source revisions. SQL needs only
+	// the root identifier for the selected encrypted provider credential.
+	credentialKeyID := ""
+	if selection.Mode == "encrypted" && selection.Credential != nil {
+		credentialKeyID = selection.Credential.EncryptionKeyID
+	}
+	selectedPolicy, err := snapshot.PolicyForCredential(providerKey, prepared.index, encryptionKeys, time.Now(), nil)
+	if err != nil {
+		return nil, err
+	}
+	matchedRules := make([]struct {
+		Scope policy.Scope `json:"scope"`
+		ID    string       `json:"id"`
+		Rule  string       `json:"rule"`
+	}, len(activeRules))
+	for i, match := range activeRules {
+		if match.Source < 0 || match.Source >= len(*selectedPolicy.Versions) {
+			return nil, ErrGatewayUnavailable
+		}
+		version := (*selectedPolicy.Versions)[match.Source]
+		matchedRules[i].Scope, matchedRules[i].ID, matchedRules[i].Rule = version.Scope, version.ID, match.Name
+	}
+	selectionJSON, err := json.Marshal(struct {
+		Mode string  `json:"mode"`
+		ID   *string `json:"byokId"`
+	}{selection.Mode, nullableString(selection.ID)})
+	if err != nil {
+		return nil, ErrGatewayUnavailable
+	}
+	started := time.Now()
+	expiresAt := requestHoldExpiresAt(started.UTC(), requestLifetime)
 	holdID, err := newUUIDV7String()
 	if err != nil {
 		return nil, fmt.Errorf("generate hold id: %w", err)
-	}
-	passthroughHash := ""
-	if passthrough != nil {
-		passthroughHash = passthrough.Hash
 	}
 	upstreamTargetJSON := ""
 	if upstreamTarget != nil {
@@ -521,10 +568,7 @@ func (s *Service) authorizeResolvedRequest(
 		upstreamTargetJSON = string(encoded)
 	}
 	holdParamsHash := createHoldParamsHash(providerKey, productKey, upstreamTargetJSON)
-	releaseAuthorization, acquired := s.localAuthorizations.acquire(rejectionCacheKey)
-	if !acquired {
-		return nil, ErrLocalAdmissionLimit
-	}
+	releaseAuthorization := s.authorizations.start()
 	defer releaseAuthorization()
 
 	row := authorizeRow{}
@@ -551,24 +595,31 @@ func (s *Service) authorizeResolvedRequest(
 		holdID,
 		providerKey,
 		productKey,
-		estimatedUpstreamCostUSDAtoms,
+		estimatedUpstreamCostUSD,
 		expiresAt,
 		holdParamsHash,
 		nullableString(upstreamTargetJSON),
-		nullableString(passthroughHash),
-		configGeneration,
+		nullableString(credentialKeyID),
+		snapshot.Generation,
 		singleUse,
-		reservedTokens,
+		usage.Tokens,
 		expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
+		snapshot.CredentialsGeneration,
+		string(selectionJSON),
+		selectedPolicy.Versions,
+		matchedRules,
+		usage.InputTextBytes,
 	).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.WorkspaceID, &row.AuthorizedBilledCostUSDAtoms, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSDAtoms, &row.UpstreamByok, &row.UpstreamByokCiphertext,
+		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 
 	if resultErr := authorizationResultError(row.Result); resultErr != nil {
-		s.rejections.record(rejectionCacheKey, row.Result, time.Now())
+		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {
+			s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, false, started)
+		}
 		return nil, resultErr
 	}
 
@@ -577,11 +628,9 @@ func (s *Service) authorizeResolvedRequest(
 		keyID := derefString(row.KeyID)
 		organizationID := derefString(row.OrganizationID)
 		userID := derefString(row.UserID)
-		workspaceID := derefString(row.WorkspaceID)
 		grantID := row.GrantID
 		if dashboard != nil {
 			if keyID != dashboard.KeyID || userID != dashboard.ActorUserID {
-				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
 				return nil, ErrInvalidAPIKey
 			}
 		} else {
@@ -589,57 +638,54 @@ func (s *Service) authorizeResolvedRequest(
 				keyID != claims.KeyID ||
 				organizationID != claims.OrganizationID ||
 				userID != claims.ResponsibleID ||
-				workspaceID != claims.WorkspaceID ||
 				!equalOptionalString(grantID, claims.GrantID) {
-				s.rejections.record(rejectionCacheKey, "invalid_key", time.Now())
 				return nil, ErrInvalidAPIKey
 			}
 		}
 		upstreamByok := derefString(row.UpstreamByok)
-		authorizedBilledCostUSDAtoms, amountErr := parseDatabaseMoney(row.AuthorizedBilledCostUSDAtoms, "authorized billed cost")
+		authorizedBilledCostUSD, amountErr := parseDatabaseMoney(row.AuthorizedBilledCostUSD, "authorized billed cost")
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		availableBalanceUSDAtoms, amountErr := parseDatabaseMoney(row.AvailableBalanceUSDAtoms, "available balance")
+		availableBalanceUSD, amountErr := parseDatabaseMoney(row.AvailableBalanceUSD, "available balance")
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		authorization := &Authorization{AuthorizedBilledCostUSDAtoms: authorizedBilledCostUSDAtoms, AvailableBalanceUSDAtoms: availableBalanceUSDAtoms, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID, WorkspaceID: workspaceID}
+		authorization := &Authorization{AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		if upstreamByok == "" {
 			return authorization, ErrByok
 		}
-		ciphertext := derefString(row.UpstreamByokCiphertext)
-		if ciphertext != "" {
-			if upstreamByok == ManagedUpstreamByok || validCredentialHash(upstreamByok) {
+		s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, row.ConfigCurrent, started)
+		if selection.Mode == "stored" {
+			credential := selection.Credential
+			if credential == nil || credential.ID != upstreamByok || credential.OrganizationID != organizationID ||
+				credential.Provider != providerKey {
 				return authorization, ErrByok
 			}
 			if providerKey == "azure" {
-				bound, parseErr := parseAzureBoundCiphertext(ciphertext)
+				bound, parseErr := parseAzureBoundBinding(derefString(row.UpstreamByokBinding))
 				if parseErr != nil {
 					return authorization, ErrByok
 				}
-				ciphertext = bound.CredentialCiphertext
 				authorization.AzureBinding = &bound.Binding
-			}
-			authorization.UpstreamByokSecret, err = s.byok.decrypt(
-				ciphertext,
-				upstreamByok,
-				organizationID,
-				workspaceID,
-				providerKey,
-			)
-			if err != nil {
+			} else if row.UpstreamByokBinding != nil {
 				return authorization, ErrByok
 			}
-		} else if validCredentialHash(upstreamByok) {
-			if passthrough == nil || !hmac.Equal([]byte(upstreamByok), []byte(passthrough.Hash)) {
-				return authorization, ErrByok
+			authorization.UpstreamByokSecret = prepared.Secret
+		} else if selection.Mode == "encrypted" {
+			credential := selection.Credential
+			if credential == nil || credential.ID != upstreamByok || row.UpstreamByokBinding != nil || !encryptionKeys.Matches(credential.EncryptionKeyID) {
+				return authorization, customerkey.ErrKey
 			}
-			authorization.UpstreamByokSecret = passthrough.Secret
-		} else if upstreamByok != ManagedUpstreamByok {
+			authorization.UpstreamByokSecret = prepared.Secret
+
+		} else if upstreamByok != ManagedUpstreamByok || row.UpstreamByokBinding != nil {
 			return authorization, ErrByok
 		}
-		s.rejections.clear(rejectionCacheKey)
+		authorization.admissionStartedAt = started
+		if dashboard != nil {
+			authorization.dashboardAdmissionIdentity = dashboardAdmissionKey(dashboard)
+		}
 		return authorization, nil
 	default:
 		return nil, fmt.Errorf("unknown hold authorization result: %s", row.Result)
@@ -647,6 +693,9 @@ func (s *Service) authorizeResolvedRequest(
 }
 
 func authorizationResultError(result string) error {
+	if err := policyResultErrors[result]; err != nil {
+		return err
+	}
 	switch result {
 	case "invalid_key", "hold_missing":
 		return ErrInvalidAPIKey
@@ -660,48 +709,22 @@ func authorizationResultError(result string) error {
 		return ErrRequestAlreadyUsed
 	case "insufficient_balance":
 		return ErrInsufficientBalance
-	case "key_disabled":
-		return ErrAPIKeyDisabled
-	case "grant_disabled":
-		return ErrGrantDisabled
 	case "byok_disabled":
 		return ErrByok
+	case "encryption_key_required":
+		return customerkey.ErrKey
 	case "byok_required":
 		return ErrByokRequired
 	case "byok_target_unavailable":
 		return ErrByokTarget
 	case "byok_not_allowed":
 		return errByokNotAllowed
-	case "key_expired":
-		return ErrAPIKeyExpired
 	case "dashboard_forbidden":
 		return ErrDashboardKeyDenied
-	case "key_spend_limit":
-		return ErrAPIKeySpendLimit
-	case "organization_spend_limit":
-		return errOrganizationSpendLimit
-	case "grant_spend_limit":
-		return errGrantSpendLimit
-	case "key_rate_limited":
-		return ErrAPIKeyRateLimit
-	case "organization_rate_limited":
-		return errOrganizationRateLimit
-	case "grant_rate_limited":
-		return errGrantRateLimit
-	case "key_token_limit":
-		return errKeyTokenLimit
-	case "organization_token_limit":
-		return errOrganizationTokenLimit
-	case "grant_token_limit":
-		return errGrantTokenLimit
-	case "key_concurrency_limit":
-		return errKeyConcurrencyLimit
-	case "organization_concurrency_limit":
-		return errOrganizationConcurrencyLimit
-	case "grant_concurrency_limit":
-		return errGrantConcurrencyLimit
 	case "config_stale":
 		return ErrAPIKeyConfigStale
+	case "key_configuration_too_large":
+		return ErrAPIKeyConfigSize
 	case "api_key_limit":
 		return ErrAPIKeyLimit
 	case "invalid_amount":
@@ -723,25 +746,25 @@ func dashboardAdmissionKey(credential *DashboardCredential) string {
 	return "dashboard:" + credential.ActorUserID + ":" + credential.SessionID
 }
 
-func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorization, event RequestEvent) error {
+func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorization, event RequestEvent, retain RetainMemory) error {
 	if authorization == nil {
 		return nil
 	}
+	s.recordRequestOutcome(authorization, event)
 
 	holdParamsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON)
 	event.holdParamsHash = holdParamsHash
-	upstreamCostRaw := event.UpstreamCostUSDAtoms
+	upstreamCostRaw := event.UpstreamCostUSD
 	if upstreamCostRaw == "" {
-		upstreamCostRaw = ZeroChargeUSDAtoms
+		upstreamCostRaw = ZeroChargeUSD
 	}
-	upstreamCostUSDAtoms, err := ParseUSDAtoms(upstreamCostRaw)
+	upstreamCostUSD, err := ParseUSD(upstreamCostRaw)
 	if err != nil {
 		return fmt.Errorf("invalid upstream cost: %w", err)
 	}
-	event.UpstreamCostUSDAtoms = upstreamCostUSDAtoms.String()
-	billedCostUSDAtoms := calculateBilledCostUSDAtoms(authorization, upstreamCostUSDAtoms)
-	event.BilledCostUSDAtoms = billedCostUSDAtoms.String()
-	event.StogasBillingStatus = calculateSettlementStatus(authorization.AuthorizedBilledCostUSDAtoms, authorization.AvailableBalanceUSDAtoms, billedCostUSDAtoms)
+	event.UpstreamCostUSD = upstreamCostUSD.String()
+	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
+	event.BilledCostUSD = billedCostUSD.String()
 	requestEventPayload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		return err
@@ -752,11 +775,11 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
 	}
 
-	if err := s.settleOnce(ctx, authorization, holdParamsHash, upstreamCostUSDAtoms.String(), requestEventPayload, writeOutbox); err != nil {
+	if err := s.settleOnce(ctx, authorization, holdParamsHash, upstreamCostUSD.String(), requestEventPayload, writeOutbox); err != nil {
 		if isPermanentSettleError(err) {
 			return nil
 		}
-		if !s.startSettleRetry(authorization, holdParamsHash, upstreamCostUSDAtoms.String(), requestEventPayload, writeOutbox) && writeOutbox {
+		if !s.startSettleRetry(authorization, holdParamsHash, upstreamCostUSD.String(), requestEventPayload, writeOutbox, retain) && writeOutbox {
 			s.publishUncommittedFallback(authorization, event)
 		}
 		return nil
@@ -768,9 +791,10 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 func (s *Service) startSettleRetry(
 	authorization *Authorization,
 	holdParamsHash string,
-	upstreamCostUSDAtoms string,
+	upstreamCostUSD string,
 	requestEventPayload string,
 	writeOutbox bool,
+	retain RetainMemory,
 ) bool {
 	if authorization == nil {
 		return false
@@ -782,12 +806,28 @@ func (s *Service) startSettleRetry(
 			ProviderKey: authorization.ProviderKey,
 			RequestID:   authorization.RequestID,
 		},
-		holdParamsHash:       holdParamsHash,
-		upstreamCostUSDAtoms: upstreamCostUSDAtoms,
-		requestEventPayload:  requestEventPayload,
-		writeOutbox:          writeOutbox,
-		deadline:             time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
+		holdParamsHash:      holdParamsHash,
+		upstreamCostUSD:     upstreamCostUSD,
+		requestEventPayload: requestEventPayload,
+		writeOutbox:         writeOutbox,
+		deadline:            time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
 	}
+	if retain != nil {
+		bytes := int(unsafe.Sizeof(task)) + len(task.requestEventPayload) + len(task.holdParamsHash) + len(task.upstreamCostUSD) +
+			len(task.authorization.KeyID) + len(task.authorization.ProductKey) + len(task.authorization.ProviderKey) + len(task.authorization.RequestID)
+		var ok bool
+		task.releaseMemory, ok = retain(bytes)
+		if !ok {
+			s.recordSettleRetryDeferral()
+			return false
+		}
+	}
+	queued := false
+	defer func() {
+		if !queued && task.releaseMemory != nil {
+			task.releaseMemory()
+		}
+	}()
 
 	s.retryMu.Lock()
 	defer s.retryMu.Unlock()
@@ -801,6 +841,7 @@ func (s *Service) startSettleRetry(
 	s.startRetryWorkersLocked()
 	select {
 	case s.retryQueue <- task:
+		queued = true
 		return true
 	default:
 		s.recordSettleRetryDeferral()
@@ -838,9 +879,9 @@ func (s *Service) startRetryWorkersLocked() {
 
 // settleOnce sends the upstream cost basis. PostgreSQL derives billed cost from
 // the hold's frozen credential source and verifies the request-event payload.
-func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, holdParamsHash string, upstreamCostUSDAtoms string, requestEventPayload string, writeOutbox bool) error {
+func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, holdParamsHash string, upstreamCostUSD string, requestEventPayload string, writeOutbox bool) error {
 	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, holdParamsHash, upstreamCostUSDAtoms, requestEventPayload, writeOutbox)
+		return s.settleFunc(ctx, authorization, holdParamsHash, upstreamCostUSD, requestEventPayload, writeOutbox)
 	}
 
 	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
@@ -859,15 +900,21 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 		authorization.ProviderKey,
 		authorization.ProductKey,
 		holdParamsHash,
-		upstreamCostUSDAtoms,
+		upstreamCostUSD,
 		requestEventPayload,
-	).Scan(&row.Result, &row.BilledCostUSDAtoms, &row.BalanceAdjustmentUSDAtoms, &row.AvailableBalanceUSDAtoms)
+	).Scan(&row.Result, &row.BilledCostUSD, &row.BalanceAdjustmentUSD, &row.AvailableBalanceUSD)
 	if err != nil {
 		return fmt.Errorf("settle gateway hold: %w", err)
 	}
 
 	switch row.Result {
-	case "complete", "under_reserved", "negative_balance", "already_settled":
+	case "complete", "already_settled":
+		return nil
+	case "under_reserved":
+		s.underReservedSettlements.Add(1)
+		return nil
+	case "negative_balance":
+		s.negativeBalanceSettlements.Add(1)
 		return nil
 	case "hold_not_found":
 		return &settleResultError{err: ErrAuthorizationAbsent, result: row.Result, statusCode: 404}
@@ -880,21 +927,24 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	}
 }
 
-func (s *Service) retrySettle(authorization *Authorization, holdParamsHash string, upstreamCostUSDAtoms string, requestEventPayload string, writeOutbox bool) {
+func (s *Service) retrySettle(authorization *Authorization, holdParamsHash string, upstreamCostUSD string, requestEventPayload string, writeOutbox bool) {
 	if authorization == nil {
 		return
 	}
 	s.retrySettleTask(settlementRetryTask{
-		authorization:        *authorization,
-		holdParamsHash:       holdParamsHash,
-		upstreamCostUSDAtoms: upstreamCostUSDAtoms,
-		requestEventPayload:  requestEventPayload,
-		writeOutbox:          writeOutbox,
-		deadline:             time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
+		authorization:       *authorization,
+		holdParamsHash:      holdParamsHash,
+		upstreamCostUSD:     upstreamCostUSD,
+		requestEventPayload: requestEventPayload,
+		writeOutbox:         writeOutbox,
+		deadline:            time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
 	})
 }
 
 func (s *Service) retrySettleTask(task settlementRetryTask) {
+	if task.releaseMemory != nil {
+		defer task.releaseMemory()
+	}
 	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
 	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
 	retryCtx, cancel := context.WithDeadline(context.Background(), task.deadline)
@@ -916,7 +966,7 @@ func (s *Service) retrySettleTask(task settlementRetryTask) {
 		if retryCtx.Err() != nil {
 			break
 		}
-		err := s.settleOnce(retryCtx, &task.authorization, task.holdParamsHash, task.upstreamCostUSDAtoms, task.requestEventPayload, task.writeOutbox)
+		err := s.settleOnce(retryCtx, &task.authorization, task.holdParamsHash, task.upstreamCostUSD, task.requestEventPayload, task.writeOutbox)
 		if err == nil {
 			return
 		}
@@ -967,8 +1017,8 @@ func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
 	if event.SchemaVersion != RequestLogSchemaVersion {
 		return "", fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
-	if event.Pricing == nil {
-		event.Pricing = EventPricing{}
+	if event.Meters == nil {
+		event.Meters = EventMeters{}
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
@@ -988,21 +1038,21 @@ func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
 	if event.SchemaVersion != RequestLogSchemaVersion {
 		return RequestEvent{}, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
-	pricing, analyticsQuantities, err := validateEventPricing(event.Pricing)
+	pricing, analyticsQuantities, err := ValidateMeters(event.Meters)
 	if err != nil {
 		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
 	}
-	event.Pricing = pricing
+	event.Meters = pricing
 	event.analyticsQuantities = analyticsQuantities
-	event.CacheReadSavingsUSDAtoms, err = requestOptionalUSDAtoms(
-		event.CacheReadSavingsUSDAtoms,
+	event.CacheReadSavingsUSD, err = requestOptionalUSD(
+		event.CacheReadSavingsUSD,
 		"cache read savings",
 	)
 	if err != nil {
 		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
 	}
-	event.CacheWriteOverheadUSDAtoms, err = requestOptionalUSDAtoms(
-		event.CacheWriteOverheadUSDAtoms,
+	event.CacheWriteOverheadUSD, err = requestOptionalUSD(
+		event.CacheWriteOverheadUSD,
 		"cache write overhead",
 	)
 	if err != nil {
@@ -1066,18 +1116,6 @@ func nullableString(value string) *string {
 	return &value
 }
 
-func validCredentialHash(value string) bool {
-	if len(value) != sha256.Size*2 {
-		return false
-	}
-	for index := range len(value) {
-		if (value[index] < '0' || value[index] > '9') && (value[index] < 'a' || value[index] > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
 func equalOptionalString(left *string, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
@@ -1085,11 +1123,11 @@ func equalOptionalString(left *string, right *string) bool {
 	return *left == *right
 }
 
-func parseDatabaseMoney(value *string, field string) (*big.Int, error) {
+func parseDatabaseMoney(value *string, field string) (*money.USD, error) {
 	if value == nil {
 		return nil, fmt.Errorf("database returned no %s", field)
 	}
-	parsed, err := ParseUSDAtoms(*value)
+	parsed, err := ParseUSD(*value)
 	if err != nil {
 		return nil, fmt.Errorf("database returned an invalid %s: %w", field, err)
 	}

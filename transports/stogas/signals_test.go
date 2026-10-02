@@ -292,7 +292,7 @@ func TestDefaultAdapterKeepsLargestUsableCumulativeStreamUsage(t *testing.T) {
 	}
 }
 
-func TestUsageAboveHoldIsCappedWithoutDiscardingEarlierUsage(t *testing.T) {
+func TestUsageAboveHoldRetainsActualCumulativeUsage(t *testing.T) {
 	state := &State{Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
 		{MeterKey: billing.MeterInputTokens, Quantity: "10", HoldRequired: true},
 		{MeterKey: billing.MeterOutputTokens, Quantity: "5", HoldRequired: true},
@@ -309,12 +309,12 @@ func TestUsageAboveHoldIsCappedWithoutDiscardingEarlierUsage(t *testing.T) {
 	if err := (DefaultAdapter{}).IngestChunk(state, excess); err != nil {
 		t.Fatalf("usage above the hold was rejected: %v", err)
 	}
-	if signals, ok := state.Signals.(*StandardSignals); !ok || signals.Prompt != 10 || signals.Completion != 5 {
-		t.Fatalf("usage was not capped to the authorized dimensions: %#v", state.Signals)
+	if signals, ok := state.Signals.(*StandardSignals); !ok || signals.Prompt != 11 || signals.Completion != 5 {
+		t.Fatalf("actual usage above the hold was lost: %#v", state.Signals)
 	}
 }
 
-func TestProviderUsageCannotExceedAuthorizedTokenMeters(t *testing.T) {
+func TestProviderUsageIsIndependentOfHeldTokenEstimates(t *testing.T) {
 	holdMeters := []catalog.MeterEstimate{
 		{MeterKey: billing.MeterCacheWrite1hInputTokens, Quantity: "10", HoldRequired: true},
 		{MeterKey: billing.MeterInputTokens, Quantity: "3", HoldRequired: true},
@@ -338,13 +338,13 @@ func TestProviderUsageCannotExceedAuthorizedTokenMeters(t *testing.T) {
 			name:       "input above limit",
 			meters:     holdMeters,
 			usage:      &schemas.BifrostLLMUsage{PromptTokens: 14, CompletionTokens: 4, TotalTokens: 18},
-			wantPrompt: 13, wantCompletion: 4,
+			wantPrompt: 14, wantCompletion: 4,
 		},
 		{
 			name:       "output above limit",
 			meters:     holdMeters,
 			usage:      &schemas.BifrostLLMUsage{PromptTokens: 13, CompletionTokens: 5, TotalTokens: 18},
-			wantPrompt: 13, wantCompletion: 4,
+			wantPrompt: 13, wantCompletion: 5,
 		},
 		{
 			name: "malformed authorized quantity",
@@ -353,7 +353,7 @@ func TestProviderUsageCannotExceedAuthorizedTokenMeters(t *testing.T) {
 				{MeterKey: billing.MeterOutputTokens, Quantity: "4", HoldRequired: true},
 			},
 			usage:      &schemas.BifrostLLMUsage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
-			wantPrompt: 0, wantCompletion: 1,
+			wantPrompt: 1, wantCompletion: 1,
 		},
 	}
 
@@ -378,7 +378,7 @@ func TestOpenAIExplicitCacheWriteUsageIsOnePromptPartition(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"},"max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
@@ -495,10 +495,10 @@ func TestAnthropicWireCacheWriteTTLReconciliation(t *testing.T) {
 				if meterQuantity(findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)) != "60" ||
 					meterQuantity(findMeterEstimate(state.FinalMeters, billing.MeterCacheWrite5mInputTokens)) != want5mMeter ||
 					meterQuantity(findMeterEstimate(state.FinalMeters, billing.MeterCacheWrite1hInputTokens)) != want1hMeter ||
-					state.UpstreamCostUSDAtoms != tc.wantCost {
-					t.Fatalf("Anthropic-wire cache billing = cost %s meters %#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+					state.UpstreamCostUSD != tc.wantCost {
+					t.Fatalf("Anthropic-wire cache billing = cost %s meters %#v", state.UpstreamCostUSD, state.FinalMeters)
 				}
-				overhead, err := cacheWriteOverheadUSDAtoms(state)
+				overhead, err := cacheWriteOverheadUSD(state)
 				if err != nil || overhead == nil || *overhead != tc.wantOverhead {
 					t.Fatalf("Anthropic-wire cache overhead = %#v, %v; want %s", overhead, err, tc.wantOverhead)
 				}
@@ -1028,8 +1028,8 @@ func TestProviderErrorBilledUsageIsValidatedAndSettledExactly(t *testing.T) {
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
-	if state.UpstreamCostUSDAtoms == billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 4 {
-		t.Fatalf("partial provider usage was not settled exactly: cost=%s meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+	if state.UpstreamCostUSD == billing.ZeroChargeUSD || len(state.FinalMeters) != 4 {
+		t.Fatalf("partial provider usage was not settled exactly: cost=%s meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
 	}
 }
 

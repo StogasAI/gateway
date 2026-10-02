@@ -33,10 +33,10 @@ func TestRedactionWorkExhaustionRejectsBothRequestSurfaces(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolutions, err := ResolveRequests(RequestInput{Method: "POST", Path: path, Body: body, RedactionPolicy: redactionPolicy})
+		resolutions, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: body, RedactionPolicy: redactionPolicy})
 		var apiError APIError
-		if !errors.As(err, &apiError) || apiError.StatusCode != 413 || len(resolutions) != 0 {
-			t.Fatalf("%s: resolutions=%d error=%v", path, len(resolutions), err)
+		if !errors.As(err, &apiError) || apiError.StatusCode != 413 || resolutions != nil {
+			t.Fatalf("%s: resolution=%v error=%v", path, resolutions, err)
 		}
 	}
 }
@@ -52,11 +52,12 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 	denied := policyConfig(1)
 	denied.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Models: []string{}}
 	filtered := policyConfig(1)
-	filtered.Routing.Query = &policy.Query{Where: &policy.Expression{
-		Kind: "compare", Left: &policy.Field{Path: "provider.id", Type: "string"},
-		Operator: "==", Right: json.RawMessage(`{"type":"string","value":"not-a-provider"}`),
-	}}
+	filtered.Routing.Query = mustRouting(t, `provider.id == 'not-a-provider'`, nil)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		outputField := "max_completion_tokens"
+		if path == "/v1/responses" {
+			outputField = "max_output_tokens"
+		}
 		for _, test := range []struct {
 			name, model string
 			extra       map[string]any
@@ -68,6 +69,9 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 			{name: "unsupported tier", model: "gpt-5.5", extra: map[string]any{"service_tier": "not-a-tier"}, want: ErrUnsupportedServiceTier},
 			{name: "scope exclusion", model: "gpt-5.5", config: denied, want: ErrModelUnavailable},
 			{name: "query exclusion", model: "gpt-5.5", config: filtered, want: ErrModelUnavailable},
+			{name: "invalid output type", model: "gpt-5.5", extra: map[string]any{outputField: "100"}, want: ErrInvalidJSON},
+			{name: "negative output", model: "gpt-5.5", extra: map[string]any{outputField: -1}, want: ErrParameterTooLarge},
+			{name: "excessive output", model: "gpt-5.5", extra: map[string]any{outputField: 100000000}, want: ErrParameterTooLarge},
 			{name: "valid route still redacts", model: "gpt-5.5", want: APIError{StatusCode: 413}},
 		} {
 			t.Run(path+"/"+test.name, func(t *testing.T) {
@@ -85,7 +89,7 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				_, err = ResolveRequests(RequestInput{Method: "POST", Path: path, Body: body, Policy: test.config, RedactionPolicy: redactionPolicy})
+				_, err = ResolveRequest(RequestInput{Method: "POST", Path: path, Body: body, Policy: test.config, RedactionPolicy: redactionPolicy})
 				var apiErr APIError
 				if !errors.As(err, &apiErr) || apiErr.StatusCode != test.want.StatusCode || apiErr.Code != test.want.Code {
 					t.Fatalf("got %v, want status=%d code=%s", err, test.want.StatusCode, test.want.Code)
@@ -95,11 +99,70 @@ func TestRoutingRejectionsPrecedeRedactionWorkForBothSurfaces(t *testing.T) {
 	}
 }
 
+func TestColdRedactionBuildFollowsCheapChecksAndFailsClosed(t *testing.T) {
+	loadTestCatalog(t)
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		for _, model := range []string{"not-a-model", "openai-gpt-5.6-sol"} {
+			called := 0
+			body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hello"}],"input":"hello"}`)
+			_, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: body, Policy: policyConfig(2), LoadRedactionPolicy: func() (*redaction.Policy, error) {
+				called++
+				return nil, errors.New("cold compiler unavailable")
+			}})
+			if model == "not-a-model" {
+				if called != 0 || !errors.Is(err, ErrModelUnavailable) {
+					t.Fatalf("compiled denied route: %d %v", called, err)
+				}
+			} else if called != 1 || PublicError(err).StatusCode != 503 {
+				t.Fatalf("compiler failure must not dispatch or use default redaction: %d %v", called, err)
+			}
+		}
+	}
+}
+
+func TestOmittedRedactionPreservesTextThroughProviderConversion(t *testing.T) {
+	loadTestCatalog(t)
+	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
+		t.Run(path, func(t *testing.T) {
+			body := map[string]any{"model": "gpt-5.5"}
+			const input = "Contact alice@corp.io at 212-555-1234"
+			if path == "/v1/responses" {
+				body["input"] = input
+			} else {
+				body["messages"] = []map[string]string{{"role": "user", "content": input}}
+			}
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: raw})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolution.StructuredPIIRedactionSummary() != nil {
+				t.Fatal("omitted redaction emitted metrics")
+			}
+			request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(provider, []byte(input)) {
+				t.Fatalf("provider input was changed: %s", provider)
+			}
+		})
+	}
+}
+
 func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T) {
 	loadTestCatalog(t)
 	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
+		RedactionPolicy: testEmailRedactionPolicy(t),
+		Method:          "POST",
+		Path:            "/v1/chat/completions",
 		Body: []byte(`{
 			"model":"gpt-5.5",
 			"messages":[{"role":"user","content":"Contact alice@corp.io"}],
@@ -119,10 +182,9 @@ func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T)
 	}
 	assertRedactedProviderData(t, rawBody)
 	expectedHold := inputTokenHoldEstimate(
-		rawBody,
+		t,
 		resolution.RawBody(),
-		resolution.Provider,
-		resolution.Model,
+		resolution.Deployment.snapshot.graph.Models[resolution.Deployment.ModelID].TokenizerFamily,
 		resolution.Route,
 		resolution.Deployment.ContextWindowTokens,
 	)
@@ -144,8 +206,9 @@ func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T)
 func TestResolveResponsesPreservesEncryptedReasoning(t *testing.T) {
 	loadTestCatalog(t)
 	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
+		RedactionPolicy: testEmailRedactionPolicy(t),
+		Method:          "POST",
+		Path:            "/v1/responses",
 		Body: []byte(`{
 			"model":"gpt-5.5",
 			"input":[
@@ -156,6 +219,9 @@ func TestResolveResponsesPreservesEncryptedReasoning(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if estimate, known := resolution.EstimatedInputTokens(); !known || estimate != resolution.InputTokenLimit() || estimate >= resolution.Deployment.ContextWindowTokens/2 {
+		t.Fatal("opaque reasoning did not use the shared bounded input estimate")
 	}
 	if summary := resolution.StructuredPIIRedactionSummary(); summary.ItemsRedacted != 1 {
 		t.Fatalf("redaction summary = %#v, want 1 item", summary)
@@ -169,10 +235,11 @@ func TestResolveResponsesPreservesEncryptedReasoning(t *testing.T) {
 func TestResolveChatPreservesSignedReasoning(t *testing.T) {
 	loadTestCatalog(t)
 	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
+		RedactionPolicy: testEmailRedactionPolicy(t),
+		Method:          "POST",
+		Path:            "/v1/chat/completions",
 		Body: []byte(`{
-			"model":"anthropic/claude-sonnet-4-6",
+			"model":"anthropic-claude-sonnet-4-6",
 			"messages":[
 				{"role":"user","content":"Question"},
 				{"role":"assistant","content":"Answer","reasoning":"Keep signed@corp.io","reasoning_details":[{"index":0,"type":"reasoning.text","text":"Keep signed@corp.io","signature":"opaque-signature"}]},
@@ -207,10 +274,11 @@ func TestResolveChatPreservesSignedReasoning(t *testing.T) {
 func TestResolveChatRedactsStopSequencesInRawRequest(t *testing.T) {
 	loadTestCatalog(t)
 	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
+		RedactionPolicy: testEmailRedactionPolicy(t),
+		Method:          "POST",
+		Path:            "/v1/chat/completions",
 		Body: []byte(`{
-			"model":"anthropic/claude-sonnet-4-6",
+			"model":"anthropic-claude-sonnet-4-6",
 			"messages":[{"role":"user","content":"Continue"}],
 			"stop_sequences":["alice@corp.io"]
 		}`),
@@ -233,4 +301,13 @@ func assertRedactedProviderData(t *testing.T, data []byte) {
 	if bytes.Count(data, []byte("EMAIL_ADDRESS")) < 2 {
 		t.Fatalf("typed placeholders missing from provider data: %s", data)
 	}
+}
+
+func testEmailRedactionPolicy(t *testing.T) *redaction.Policy {
+	t.Helper()
+	policy, err := redaction.CompilePolicy(redaction.Options{Patterns: []redaction.Pattern{redaction.PatternEmailAddress}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
 }

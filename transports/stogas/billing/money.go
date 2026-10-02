@@ -5,12 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+
+	"github.com/maximhq/bifrost/transports/stogas/money"
 )
 
 const (
-	ZeroChargeUSDAtoms    = "0"
-	maximumUSDAtoms       = "1000000000000000000000000000000"
-	maximumUSDAtomsDigits = len(maximumUSDAtoms)
+	ZeroChargeUSD = "0"
+	maximumUSD    = "1000000000000"
 )
 
 func createHoldParamsHash(providerKey string, productKey string, upstreamTargetJSON ...string) string {
@@ -25,24 +26,11 @@ func createHoldParamsHash(providerKey string, productKey string, upstreamTargetJ
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-func calculateSettlementStatus(authorizedBilledCostUSDAtoms *big.Int, availableBalanceUSDAtoms *big.Int, billedCostUSDAtoms *big.Int) string {
-	balanceAdjustmentUSDAtoms := new(big.Int).Sub(cloneOrZero(authorizedBilledCostUSDAtoms), billedCostUSDAtoms)
-	switch {
-	case balanceAdjustmentUSDAtoms.Sign() >= 0:
-		return "complete"
-	default:
-		if new(big.Int).Add(cloneOrZero(availableBalanceUSDAtoms), balanceAdjustmentUSDAtoms).Sign() < 0 {
-			return "negative_balance"
-		}
-		return "under_reserved"
-	}
-}
-
-func cloneOrZero(value *big.Int) *big.Int {
+func cloneOrZero(value *money.USD) *money.USD {
 	if value == nil {
-		return big.NewInt(0)
+		return new(money.USD)
 	}
-	return new(big.Int).Set(value)
+	return new(money.USD).Set(value)
 }
 
 // ParseNonnegativeInteger accepts only the canonical base-10 form used by
@@ -66,12 +54,16 @@ func ParseNonnegativeInteger(value string) (*big.Int, error) {
 	return parsed, nil
 }
 
-// ParseUSDAtoms validates the canonical amount range accepted by the database
+// ParseUSD validates the canonical amount range accepted by the database
 // settlement functions.
-func ParseUSDAtoms(value string) (*big.Int, error) {
-	if len(value) > maximumUSDAtomsDigits ||
-		(len(value) == maximumUSDAtomsDigits && value > maximumUSDAtoms) {
-		return nil, fmt.Errorf("USD atom amount exceeds the settlement limit")
+func ParseUSD(value string) (*money.USD, error) {
+	parsed, err := money.Parse(value)
+	if err != nil {
+		return nil, err
 	}
-	return ParseNonnegativeInteger(value)
+	maximum, _ := money.Parse(maximumUSD)
+	if parsed.Sign() < 0 || parsed.Cmp(maximum) > 0 || parsed.String() != value {
+		return nil, fmt.Errorf("USD amount exceeds settlement contract")
+	}
+	return parsed, nil
 }

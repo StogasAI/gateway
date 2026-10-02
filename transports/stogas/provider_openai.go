@@ -1,9 +1,11 @@
 package stogas
 
 import (
+	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
-	"math/big"
+	"io"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -11,6 +13,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
@@ -174,7 +177,7 @@ func rawPromptContent(route catalog.Route, raw map[string]json.RawMessage) json.
 
 func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (int, error) {
 	count := 0
-	err := openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
+	err := openAIWalkRawJSON(raw, "prompt_cache_breakpoint", func(object map[string]json.RawMessage) error {
 		breakpointRaw, exists := object["prompt_cache_breakpoint"]
 		if !exists {
 			return nil
@@ -386,7 +389,7 @@ func validateOpenAIChatWebSearchUserLocation(raw json.RawMessage) error {
 
 func rawStringValue(raw json.RawMessage) (string, bool) {
 	var value string
-	if err := sonic.Unmarshal(raw, &value); err != nil {
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return "", false
 	}
 	return value, true
@@ -422,7 +425,7 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 		return err
 	}
 	state.Hold.Meters = meters
-	state.Hold.EstimatedUpstreamCostUSDAtoms = total
+	state.Hold.EstimatedUpstreamCostUSD = total
 	return nil
 }
 
@@ -446,11 +449,11 @@ func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, openAIFinalMeters(openAIAdapterContextForUpstreamCost(state)))
+	upstreamCostUSD, err := calculateBaseUpstreamCost(state, openAIFinalMeters(openAIAdapterContextForUpstreamCost(state)))
 	if err != nil {
 		return err
 	}
-	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
+	state.UpstreamCostUSD = upstreamCostUSD
 	return nil
 }
 
@@ -769,7 +772,7 @@ func openAIChatSearchModelFinalMeters(req openAIAdapterContext) []billing.MeterE
 }
 
 func validateChatInput(raw json.RawMessage) error {
-	return openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
+	return openAIWalkRawJSON(raw, "type", func(object map[string]json.RawMessage) error {
 		switch rawjson.NormalizedStringField(object, "type") {
 		case "file", "image_url", "input_audio":
 			return errOpenAIUnsupportedInput
@@ -780,7 +783,7 @@ func validateChatInput(raw json.RawMessage) error {
 }
 
 func validateResponsesInput(raw json.RawMessage) error {
-	return openAIWalkRawJSON(raw, func(object map[string]json.RawMessage) error {
+	return openAIWalkRawJSON(raw, "type", func(object map[string]json.RawMessage) error {
 		switch rawjson.NormalizedStringField(object, "type") {
 		case "input_image", "input_audio":
 			return errOpenAIUnsupportedInput
@@ -791,37 +794,62 @@ func validateResponsesInput(raw json.RawMessage) error {
 	})
 }
 
-func openAIWalkRawJSON(raw json.RawMessage, visit func(map[string]json.RawMessage) error) error {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
+// Only materialize objects containing the inspected member. Most conversation
+// messages contain neither media types nor cache breakpoints; walking them must
+// not create another complete tree of maps and copied message bodies.
+func openAIWalkRawJSON(raw json.RawMessage, member string, visit func(map[string]json.RawMessage) error) error {
+	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}
-	switch trimmed[0] {
-	case '{':
-		var object map[string]json.RawMessage
-		if err := sonic.Unmarshal(raw, &object); err != nil {
-			return errOpenAIUnsupportedInput
-		}
-		if err := visit(object); err != nil {
-			return err
-		}
-		for _, child := range object {
-			if err := openAIWalkRawJSON(child, visit); err != nil {
-				return err
+	type inspectedObject struct {
+		start   int
+		matched bool
+	}
+	var objects []inspectedObject
+	decoder := jsontext.NewDecoder(bytes.NewBuffer(raw))
+	for {
+		container, index := decoder.StackIndex(decoder.StackDepth())
+		kind := decoder.PeekKind()
+		isName := container == '{' && index%2 == 0
+		if !isName && kind != '{' && kind != '[' && kind != '}' && kind != ']' {
+			// Only member names affect this inspection. Validate scalar values
+			// without allocating decoded prompt strings.
+			if err := decoder.SkipValue(); err != nil {
+				return errOpenAIUnsupportedInput
+			}
+		} else {
+			token, err := decoder.ReadToken()
+			if err != nil {
+				return errOpenAIUnsupportedInput
+			}
+			switch token.Kind() {
+			case '{':
+				objects = append(objects, inspectedObject{start: int(decoder.InputOffset()) - 1})
+			case '"':
+				if isName && token.String() == member {
+					objects[len(objects)-1].matched = true
+				}
+			case '}':
+				current := objects[len(objects)-1]
+				objects = objects[:len(objects)-1]
+				if current.matched {
+					object, err := rawjson.Object(raw[current.start:decoder.InputOffset()])
+					if err != nil {
+						return errOpenAIUnsupportedInput
+					}
+					if err := visit(object); err != nil {
+						return err
+					}
+				}
 			}
 		}
-	case '[':
-		var array []json.RawMessage
-		if err := sonic.Unmarshal(raw, &array); err != nil {
-			return errOpenAIUnsupportedInput
-		}
-		for _, child := range array {
-			if err := openAIWalkRawJSON(child, visit); err != nil {
-				return err
+		if decoder.StackDepth() == 0 {
+			if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
+				return errOpenAIUnsupportedInput
 			}
+			return nil
 		}
 	}
-	return nil
 }
 
 func validateTool(route openAIAdapterRoute, tool map[string]json.RawMessage) error {
@@ -982,7 +1010,7 @@ func higherCostSearchKind(ctx openAIAdapterContext) string {
 	return ""
 }
 
-func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string) *big.Int {
+func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string) *money.USD {
 	meterKey := responsesSearchMeterForKind(ctx, kind)
 	if meterKey == "" {
 		return nil
@@ -994,7 +1022,7 @@ func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string) *big.In
 	total := billing.CostPerThousand(searchCallQuantity, call)
 	if fixedContentTokens := webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind); fixedContentTokens > 0 {
 		if _, inputRate, ok := billing.PricingRate(ctx.Deployment.Pricing, billing.MeterInputTokens, billing.TokenRateHighest); ok {
-			total = new(big.Int).Add(total, billing.CostPerMillion(fixedContentTokens, inputRate))
+			total = new(money.USD).Add(total, billing.CostPerMillion(fixedContentTokens, inputRate))
 		}
 	}
 	return total
@@ -1031,7 +1059,7 @@ func searchContextRateKey(pricing billing.Pricing, meterKey string, searchContex
 	return RatePerThousandSearchContextLowCalls
 }
 
-func callRate(pricing billing.Pricing, meterKey string) *big.Int {
+func callRate(pricing billing.Pricing, meterKey string) *money.USD {
 	meter, ok := pricing[meterKey]
 	if !ok {
 		return nil

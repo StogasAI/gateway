@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"slices"
 	"sort"
@@ -491,8 +492,8 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"web_search_options":         `{}`,
 	}
 	for field := range catalog.KnownFields(catalog.RouteChat) {
-		// Catalog resolution consumes request policy before provider validation.
-		if chutesAllowedChatFields[field] || field == "policy" {
+		// Gateway-only metadata is consumed before provider validation.
+		if chutesAllowedChatFields[field] || field == "policy" || field == "encryption_keys" {
 			continue
 		}
 		value, covered := unsupportedValues[field]
@@ -516,26 +517,33 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 	}
 }
 
-func TestChutesRequestPolicyIsConsumedBeforeProviderValidation(t *testing.T) {
+func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
+	source, err := policy.CompileSource([]byte(`{"version":1,"delegation":{"request":["routing.filter"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty, err := policy.CompileSource([]byte(`{"version":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}, {Scope: policy.KeyScope, Value: empty}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"policy":{"version":1,"routing":{"query":"where provider.id == 'chutes'"}}}`),
-		Policy: &policy.Config{
-			CompilerVersion: policy.CompilerVersion,
-			Schema:          "stogas.key-config.compiled.v1",
-			Routing: policy.Routing{
-				MaxPreDispatchCandidates: 1,
-				RequestPolicy:            "filter",
-			},
-		},
+		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"version":1,"routing":{"filter": "provider.id == \"chutes\""}}}`),
+		Policy: config,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	if _, exists := state.Resolution.RawBody()["policy"]; exists {
-		t.Fatal("request policy reached the provider body")
+	for _, field := range []string{"policy", "encryption_keys"} {
+		if _, exists := state.Resolution.RawBody()[field]; exists {
+			t.Fatalf("request %s reached the provider body", field)
+		}
 	}
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("valid request policy blocked Chutes: %v", err)
@@ -552,9 +560,9 @@ func TestChutesModelCapabilitiesGateStructuredOutput(t *testing.T) {
 		t.Fatalf("deployment without structured output was accepted: %v", err)
 	}
 
-	state = resolveChutesState(t, `{"model":"mistral-nemo-instruct-2407","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`)
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("Mistral function tool was rejected: %v", err)
+	_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"chutes/mistral-nemo-instruct-2407","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`)})
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("Mistral deployment without function calling was not rejected during catalog selection: %v", err)
 	}
 }
 
@@ -592,8 +600,8 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 				if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 					t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 				}
-				if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms) < 0 {
-					t.Fatalf("hold under-reserved Chutes usage: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSDAtoms, state.UpstreamCostUSDAtoms, state.Hold.Meters, state.FinalMeters)
+				if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
+					t.Fatalf("hold under-reserved Chutes usage: hold=%s final=%s holdMeters=%#v finalMeters=%#v", state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD, state.Hold.Meters, state.FinalMeters)
 				}
 			})
 		}
@@ -618,7 +626,7 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 			}
 
 			pricing := billing.WithReasoningTokenFallback(deployment.Pricing)
-			wantTotal := new(big.Int)
+			wantTotal := new(money.USD)
 			for _, meterKey := range []string{
 				billing.MeterInputTokens,
 				billing.MeterCachedInputTokens,
@@ -634,18 +642,18 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 					t.Fatalf("final pricing omitted %s meter: %#v", meterKey, state.FinalMeters)
 				}
 				if meter.Quantity != fmt.Sprint(billing.MillionTokens) || meter.RateKey != rateKey ||
-					meter.RateUSDAtoms != rate.String() || meter.AmountUSDAtoms != rate.String() {
+					meter.RateUSD != rate.String() || meter.AmountUSD != rate.String() {
 					t.Fatalf("%s meter = %#v, want one million tokens at %s/%s", meterKey, meter, rateKey, rate)
 				}
 				wantTotal.Add(wantTotal, rate)
 			}
-			if state.UpstreamCostUSDAtoms != wantTotal.String() {
-				t.Fatalf("upstream cost = %s, want exact meter sum %s", state.UpstreamCostUSDAtoms, wantTotal)
+			if state.UpstreamCostUSD != wantTotal.String() {
+				t.Fatalf("upstream cost = %s, want exact meter sum %s", state.UpstreamCostUSD, wantTotal)
 			}
 
 			_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateLongContext)
 			_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateLongContext)
-			if new(big.Int).Mul(new(big.Int).Set(cachedRate), big.NewInt(10)).Cmp(inputRate) != 0 {
+			if new(money.USD).MulRatioCeil(cachedRate, big.NewInt(10), 1).Cmp(inputRate) != 0 {
 				t.Fatalf("cached input rate %s is not 10%% of input rate %s", cachedRate, inputRate)
 			}
 		})
@@ -659,8 +667,8 @@ func TestChutesMissingUsageProducesNoCharge(t *testing.T) {
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
-			if state.UpstreamCostUSDAtoms != billing.ZeroChargeUSDAtoms || len(state.FinalMeters) != 0 {
-				t.Fatalf("missing usage was charged: cost=%s meters=%#v", state.UpstreamCostUSDAtoms, state.FinalMeters)
+			if state.UpstreamCostUSD != billing.ZeroChargeUSD || len(state.FinalMeters) != 0 {
+				t.Fatalf("missing usage was charged: cost=%s meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
 			}
 		})
 	}

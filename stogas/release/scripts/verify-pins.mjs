@@ -109,6 +109,12 @@ function verifyLock() {
 	}
 
 	const go = pins.releaseSources.go;
+	assert(
+		read(resolve(repoRoot, 'transports/go.mod')).includes(
+			`-${pins.releaseSources.stogasVerifier.commit.slice(0, 12)}`
+		),
+		'The Go verifier binding and Rust source must use the same revision.'
+	);
 	assertBase32(go.guixSourceBase32, 'Go Guix source hash');
 	assert(sha256HexToGuixBase32(go.sha256) === go.guixSourceBase32, 'Go source hashes differ.');
 	assert(
@@ -297,13 +303,16 @@ function verifyReleaseGraph() {
 		sources.virtFirmwareRs.cargoVendorSha256,
 		sources.svsmIgvmMeasure.url,
 		sources.svsmIgvmMeasure.guixBase32,
-		sources.svsmIgvmMeasure.cargoVendorSha256
+		sources.svsmIgvmMeasure.cargoVendorSha256,
+		sources.stogasVerifier.url,
+		sources.stogasVerifier.guixBase32,
+		sources.stogasVerifier.cargoVendorSha256
 	]) {
 		assertContains(graph, value, `The Guix graph is missing pinned value: ${value}`);
 	}
 	assert(
-		(graph.match(/\(invoke "cargo" "test"/g) ?? []).length === 2,
-		'Both patched Rust tools must test inside Guix.'
+		(graph.match(/\(invoke "cargo" "test"/g) ?? []).length === 3,
+		'The patched Rust tools and offline verifier must test inside Guix.'
 	);
 	for (const value of [
 		'(setenv "GOENV" "off")',
@@ -312,6 +321,9 @@ function verifyReleaseGraph() {
 		'(setenv "GOTOOLCHAIN" "local")',
 		'(setenv "GOWORK" "off")',
 		'(setenv "CGO_ENABLED" "0")',
+		'(setenv "CGO_ENABLED" "1")',
+		'"-tags=stogas_offline,netgo,osusergo"',
+		'libstogas_verifier_ffi.a',
 		'"-mod=vendor"',
 		'Go vendor tree hash mismatch',
 		'(setenv "LC_ALL" "C")',
@@ -397,7 +409,7 @@ function verifyReleaseGraph() {
 		'sum.golang.org',
 		'gateway_source_root="${STOGAS_GATEWAY_SOURCE_ROOT:-$repo_root}"',
 		'export GOENV=off',
-		'Go hydration changed a committed go.mod or go.sum ledger',
+		'Go hydration changed a go.mod or go.sum ledger',
 		'"$STOGAS_GUIX" shell'
 	]) {
 		assertContains(goHydrate, value, `Go hydration is missing: ${value}`);
@@ -442,6 +454,11 @@ function verifyReleaseGraph() {
 			resolve(releaseRoot, 'locks/igvmmeasure.Cargo.lock'),
 			sources.svsmIgvmMeasure.cargoLockSha256,
 			'igvmmeasure Cargo.lock'
+		],
+		[
+			resolve(releaseRoot, 'locks/stogas-verifier.Cargo.lock'),
+			sources.stogasVerifier.cargoLockSha256,
+			'Stogas verifier Cargo.lock'
 		]
 	]) {
 		assert(fileSha256(path) === expected, `${label} hash mismatch.`);

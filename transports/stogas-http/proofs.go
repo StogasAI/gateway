@@ -2,23 +2,24 @@ package stogashttp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
-	"github.com/valyala/fasthttp"
+	"net/http"
 )
 
 const responseProofErrorCode = "stogas_response_proof_failed"
 
 func responseProofFailure() *schemas.BifrostError {
-	statusCode := fasthttp.StatusInternalServerError
+	statusCode := http.StatusInternalServerError
 	errorType := "internal_error"
 	allowFallbacks := false
 	return &schemas.BifrostError{
@@ -35,7 +36,7 @@ func responseProofFailure() *schemas.BifrostError {
 }
 
 func responseEncodingFailure() *schemas.BifrostError {
-	statusCode := fasthttp.StatusInternalServerError
+	statusCode := http.StatusInternalServerError
 	errorType := "internal_error"
 	allowFallbacks := false
 	return &schemas.BifrostError{
@@ -47,8 +48,8 @@ func responseEncodingFailure() *schemas.BifrostError {
 	}
 }
 
-// PrepareFinalState must run before a response proof so the proof can bind
-// final pricing and timing. If encoding or proof generation then fails,
+// PrepareFinalState runs before response metadata captures final pricing and
+// timing. If encoding or receipt generation then fails,
 // discard that event so settlement records failed Stogas processing while
 // retaining the provider's independently observed outcome.
 func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
@@ -59,14 +60,17 @@ func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
 	state.FinalEvent = nil
 }
 
-func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schemas.BifrostContext, state *stogas.State, statusCode int, payload any) {
+func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.BifrostContext, state *stogas.State, statusCode int, payload any) {
 	data, err := marshalPayload(payload)
 	if err != nil {
 		retainResponseFailure(state, responseEncodingFailure())
-		s.writeError(ctx, fasthttp.StatusInternalServerError, map[string]any{
+		s.writeError(ctx, http.StatusInternalServerError, map[string]any{
 			"error": map[string]any{"message": "Failed to encode response", "type": "internal_error"},
 		})
 		return
+	}
+	if _, borrowed := payload.([]byte); !borrowed {
+		defer clear(data)
 	}
 	if wantsReceipt(bifrostCtx) {
 		if s.proofs == nil {
@@ -74,7 +78,7 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 			s.writeProofError(ctx)
 			return
 		}
-		input, err := s.proofInput(ctx, state, data)
+		input, err := s.proofInput(ctx, bifrostCtx, state, data)
 		if err != nil {
 			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
@@ -87,88 +91,66 @@ func (s *Server) writeInferenceJSON(ctx *fasthttp.RequestCtx, bifrostCtx *schema
 			return
 		}
 		data, err = appendStogasReceipt(data, output.JSON)
+		defer clear(data)
 		if err != nil {
 			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
 			return
 		}
 	}
-	ctx.SetStatusCode(statusCode)
-	ctx.SetContentType("application/json")
-	_, _ = ctx.Write(data)
+	s.writeResponse(ctx, statusCode, "application/json", data)
 }
 
-func (s *Server) newStreamProof(requestCtx *fasthttp.RequestCtx, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
+func (s *Server) newStreamProof(requestCtx *requestContext, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
 	if !wantsReceipt(ctx) {
 		return nil, nil
 	}
 	if s.proofs == nil {
 		return nil, errors.New("confidential response proof is unavailable")
 	}
-	input, err := s.proofInput(requestCtx, state, nil)
+	input, err := s.proofInput(requestCtx, ctx, state, nil)
 	if err != nil {
 		return nil, err
 	}
 	return s.proofs.NewStream(ctx, input)
 }
 
-func (s *Server) proofInput(ctx *fasthttp.RequestCtx, state *stogas.State, responseJSON []byte) (proofhttp.Input, error) {
+func (s *Server) proofInput(ctx *requestContext, bifrostCtx context.Context, state *stogas.State, responseJSON []byte) (proofhttp.Input, error) {
 	if state == nil || state.Resolution == nil {
 		return proofhttp.Input{}, catalog.ErrUnsupportedRequest
 	}
-	var transcriptSHA256 string
-	if session := encryptedSession(ctx); session != nil {
-		transcriptSHA256 = session.TranscriptSHA256()
-	}
 	return proofhttp.Input{
-		RequestBody:  append([]byte(nil), ctx.Request.Body()...),
-		ResponseBody: append([]byte(nil), responseJSON...),
-		Metadata:     proofMetadata(state, transcriptSHA256),
+		RequestBody:  ctx.body,
+		ResponseBody: responseJSON,
+		Metadata:     proofMetadata(bifrostCtx, state),
 	}, nil
 }
 
-func proofMetadata(state *stogas.State, transcriptSHA256 string) proof.Metadata {
+func proofMetadata(ctx context.Context, state *stogas.State) proof.Metadata {
 	if state == nil || state.Resolution == nil {
 		return proof.Metadata{}
 	}
 	catalogIdentity := state.Resolution.CatalogIdentity()
 	executionDeployment := stogas.ExecutionDeployment(state)
-	return proof.Metadata{
+	metadata := proof.Metadata{
 		RequestID: state.RequestID,
 		CreatedAt: proofCreatedAt(state.FinalEvent),
-		NodeID:    state.NodeID,
 		Catalog: proof.Catalog{
-			Digest:       catalogIdentity.Digest,
-			Sequence:     catalogIdentity.Sequence,
+			Version:      catalogIdentity.Sequence,
+			ChainHash:    executionDeployment.ChainHash,
 			SelectionIDs: state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
 		},
-		Pricing:              proofPricing(state.FinalEvent),
-		Timing:               proofTiming(state.FinalEvent),
-		E2EETranscriptSHA256: transcriptSHA256,
-	}
-}
 
-func proofPricing(event *billing.RequestEvent) proof.Pricing {
-	result := proof.Pricing{Meters: map[string]proof.Meter{}, TotalCostUSDAtoms: "0"}
-	if event == nil {
-		return result
+		Timing:   proofTiming(state.FinalEvent),
+		Provider: chutese2ee.InvocationMetadata(ctx),
+		Meters:   billing.EventMeters{}, UpstreamCostUSD: "0", BilledCostUSD: "0",
 	}
-	result.TotalCostUSDAtoms = event.BilledCostUSDAtoms
-	if finalAttempt, ok := event.FinalProviderAttempt(); ok {
-		byok := strings.TrimSpace(finalAttempt.UpstreamByok)
-		if byok != "" && byok != "stogas" {
-			result.BYOKCostUSDAtoms = event.UpstreamCostUSDAtoms
-		}
+	if event := state.FinalEvent; event != nil {
+		metadata.Meters = event.Meters
+		metadata.UpstreamCostUSD, metadata.BilledCostUSD = event.UpstreamCostUSD, event.BilledCostUSD
+		metadata.CacheReadSavingsUSD, metadata.CacheWriteOverheadUSD = event.CacheReadSavingsUSD, event.CacheWriteOverheadUSD
 	}
-	for key, entry := range event.Pricing {
-		result.Meters[key] = proof.Meter{
-			Quantity:     entry.Quantity,
-			RateKey:      entry.RateKey,
-			RateUSDAtoms: entry.RateUSDAtoms,
-			USDAtoms:     entry.USDAtoms,
-		}
-	}
-	return result
+	return metadata
 }
 
 func proofTiming(event *billing.RequestEvent) proof.Timing {
@@ -176,9 +158,9 @@ func proofTiming(event *billing.RequestEvent) proof.Timing {
 		return proof.Timing{}
 	}
 	result := proof.Timing{
-		TotalMS:    event.TotalTimeMS,
-		ProviderMS: event.ProviderDurationMS(),
-		TTFTMS:     event.TTFTMS,
+		TotalMS:    event.Performance.TotalMS,
+		ProviderMS: event.Performance.ProviderMS,
+		TTFTMS:     event.Performance.TTFTMS,
 	}
 	return result
 }
@@ -206,6 +188,6 @@ func appendStogasReceipt(responseJSON, receiptJSON []byte) ([]byte, error) {
 	return append(result, '}'), nil
 }
 
-func (s *Server) writeProofError(ctx *fasthttp.RequestCtx) {
+func (s *Server) writeProofError(ctx *requestContext) {
 	s.writeBifrostError(ctx, responseProofFailure())
 }

@@ -884,19 +884,24 @@ func compactAlphanumericEnd(text []byte, start, count int, allowSpaces bool) (in
 
 func detectNINOAt(text []byte, start int, matches []match) ([]match, error) {
 	var compact [9]byte
-	end, ok := compactPattern(text, start, compact[:], true)
+	end, ok := compactNINO(text, start, &compact)
 	if !ok || !ninoValid(compact[:]) || !wordBoundaryAfter(text, end) || !hasNearbyContext(text, start, end, "nino", "national insurance") {
 		return matches, nil
 	}
 	return appendMatch(matches, start, end, EntityUKNINO, 78)
 }
 
-func compactPattern(text []byte, start int, output []byte, allowSpaces bool) (int, bool) {
+func compactNINO(text []byte, start int, output *[9]byte) (int, bool) {
 	index := start
 	written := 0
 	for index < len(text) && written < len(output) {
 		character := text[index]
 		if isASCIIAlphanumeric(character) {
+			// Reject a non-digit as soon as it reaches a numeric position.
+			// Most ordinary words fail here without scanning their neighbors.
+			if (written >= 2 && written < 8) != isASCIIDigit(character) {
+				return index, false
+			}
 			if character >= 'a' && character <= 'z' {
 				character -= 'a' - 'A'
 			}
@@ -905,7 +910,7 @@ func compactPattern(text []byte, start int, output []byte, allowSpaces bool) (in
 			index++
 			continue
 		}
-		if allowSpaces && character == ' ' && written > 0 {
+		if character == ' ' && written > 0 {
 			index++
 			continue
 		}

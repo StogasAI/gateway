@@ -6,8 +6,8 @@ import (
 	"sync"
 )
 
-// sseStreamReader feeds pre-framed SSE events directly to fasthttp SetBodyStream
-// without routing through a writer-to-reader pipe bridge.
+// One producer hands bounded frames to one response consumer. Closing the
+// consumer does not release bytes still held by a producer that is stopping.
 type sseStreamEvent struct {
 	data     []byte
 	reserved int
@@ -19,6 +19,9 @@ type sseStreamReader struct {
 	closeOnce      sync.Once
 	doneOnce       sync.Once
 	deliveryMemory *requestMemoryLease
+	readMu         sync.Mutex
+	consumerDone   bool
+	producerDone   bool
 	current        sseStreamEvent
 }
 
@@ -31,10 +34,15 @@ func newSSEStreamReader(deliveryMemory *requestMemoryLease) *sseStreamReader {
 }
 
 func (r *sseStreamReader) Read(p []byte) (int, error) {
+	r.readMu.Lock()
+	defer r.readMu.Unlock()
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if len(r.current.data) == 0 {
 		select {
 		case <-r.closeCh:
-			r.markConsumerDone()
+			r.finishConsumer()
 			return 0, io.EOF
 		default:
 		}
@@ -45,16 +53,17 @@ func (r *sseStreamReader) Read(p []byte) (int, error) {
 		select {
 		case event, ok = <-r.eventCh:
 		case <-r.closeCh:
-			r.markConsumerDone()
+			r.finishConsumer()
 			return 0, io.EOF
 		}
 		if !ok {
-			r.markConsumerDone()
+			r.finishConsumer()
 			return 0, io.EOF
 		}
 		r.current = event
 	}
 	n := copy(p, r.current.data)
+	clear(r.current.data[:n])
 	r.current.data = r.current.data[n:]
 	if len(r.current.data) == 0 {
 		r.releaseEvent(r.current)
@@ -67,7 +76,9 @@ func (r *sseStreamReader) Close() error {
 	r.closeOnce.Do(func() {
 		close(r.closeCh)
 	})
-	r.markConsumerDone()
+	r.readMu.Lock()
+	defer r.readMu.Unlock()
+	r.finishConsumer()
 	return nil
 }
 
@@ -126,11 +137,15 @@ func frameSSEDone() []byte {
 	return []byte("data: [DONE]\n\n")
 }
 
+// Send operations transfer ownership of the frame, or clear it on rejection.
+// Capacity rejection alone leaves ownership with the caller for error fallback.
 func (r *sseStreamReader) send(ctx context.Context, event []byte) (sent, capacityExceeded bool) {
 	select {
 	case <-r.closeCh:
+		clear(event)
 		return false, false
 	case <-ctx.Done():
+		clear(event)
 		return false, false
 	default:
 	}
@@ -153,6 +168,7 @@ func (r *sseStreamReader) send(ctx context.Context, event []byte) (sent, capacit
 func (r *sseStreamReader) trySend(event []byte) (sent, capacityExceeded bool) {
 	select {
 	case <-r.closeCh:
+		clear(event)
 		return false, false
 	default:
 	}
@@ -177,8 +193,10 @@ func (r *sseStreamReader) sendUnreserved(ctx context.Context, data []byte) bool 
 	case r.eventCh <- sseStreamEvent{data: data}:
 		return true
 	case <-r.closeCh:
+		clear(data)
 		return false
 	case <-ctx.Done():
+		clear(data)
 		return false
 	}
 }
@@ -188,8 +206,10 @@ func (r *sseStreamReader) trySendUnreserved(data []byte) bool {
 	case r.eventCh <- sseStreamEvent{data: data}:
 		return true
 	case <-r.closeCh:
+		clear(data)
 		return false
 	default:
+		clear(data)
 		return false
 	}
 }
@@ -207,6 +227,7 @@ func (r *sseStreamReader) reserveEvent(data []byte) (sseStreamEvent, bool) {
 }
 
 func (r *sseStreamReader) releaseEvent(event sseStreamEvent) {
+	clear(event.data)
 	if r.deliveryMemory != nil {
 		r.deliveryMemory.shrink(event.reserved)
 	}
@@ -215,11 +236,66 @@ func (r *sseStreamReader) releaseEvent(event sseStreamEvent) {
 func (r *sseStreamReader) done() {
 	r.doneOnce.Do(func() {
 		close(r.eventCh)
+		r.readMu.Lock()
+		defer r.readMu.Unlock()
+		r.producerDone = true
+		if r.consumerDone {
+			r.finishConsumer()
+		}
 	})
 }
 
-func (r *sseStreamReader) markConsumerDone() {
-	if r.deliveryMemory != nil {
+// Called with readMu held. A sender racing Close can still enqueue a frame;
+// done repeats this cleanup after the last sender has returned.
+func (r *sseStreamReader) finishConsumer() {
+	r.consumerDone = true
+	r.releaseEvent(r.current)
+	r.current = sseStreamEvent{}
+	for {
+		select {
+		case event, ok := <-r.eventCh:
+			if ok {
+				r.releaseEvent(event)
+				continue
+			}
+		default:
+		}
+		break
+	}
+	if r.producerDone && r.deliveryMemory != nil {
 		r.deliveryMemory.release()
+	}
+}
+
+// Keep the frame's lease until Write (including its flush) has returned.
+// io.Copy uses this method without allocating another copy buffer.
+func (r *sseStreamReader) WriteTo(writer io.Writer) (int64, error) {
+	r.readMu.Lock()
+	defer r.readMu.Unlock()
+	defer r.finishConsumer()
+	var total int64
+	for {
+		if len(r.current.data) == 0 {
+			select {
+			case <-r.closeCh:
+				return total, nil
+			case event, ok := <-r.eventCh:
+				if !ok {
+					return total, nil
+				}
+				r.current = event
+			}
+		}
+		event := r.current
+		n, err := writer.Write(event.data)
+		total += int64(n)
+		r.releaseEvent(event)
+		r.current = sseStreamEvent{}
+		if err != nil {
+			return total, err
+		}
+		if n != len(event.data) {
+			return total, io.ErrShortWrite
+		}
 	}
 }

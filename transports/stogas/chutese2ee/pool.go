@@ -18,7 +18,7 @@ import (
 
 var ticketPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{32}$`)
 
-const maximumSynchronousRefills = 2
+const maximumSynchronousRefillFailures = 2
 const maximumTrackedTicketTakes = 512
 const maximumPoolTargets = 4096
 const maximumPooledTicketsPerTarget = 512
@@ -66,6 +66,8 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, attestationTimeout)
+	defer cancel()
 	if !validModelTarget(target) {
 		return reservedTicket{}, ErrMeasurementPolicy
 	}
@@ -73,7 +75,8 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 		return reservedTicket{}, err
 	}
 	chuteID := target.ChuteID
-	for attempt := 0; attempt < maximumSynchronousRefills; attempt++ {
+	failures := 0
+	for {
 		if err := ctx.Err(); err != nil {
 			return reservedTicket{}, err
 		}
@@ -96,7 +99,8 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 			return reservedTicket{}, ctx.Err()
 		}
 		if err != nil {
-			if attempt+1 < maximumSynchronousRefills && retryableChutesRead(err, true) {
+			failures++
+			if failures < maximumSynchronousRefillFailures && retryableChutesRead(err, true) {
 				if delay, ok := s.shortRefillBackoff(chuteID, time.Now()); ok &&
 					waitForChutesRetry(ctx, delay) {
 					continue
@@ -105,20 +109,9 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 			s.diagnostics.recordTicketStarvation(chuteID)
 			return reservedTicket{}, errors.Join(ErrNoUsableTicket, err)
 		}
-		if err := ctx.Err(); err != nil {
-			return reservedTicket{}, err
-		}
+		// Other admitted callers may consume a successful refill first. Contention
+		// is not an upstream failure; keep sharing refills within this deadline.
 	}
-	if err := ctx.Err(); err != nil {
-		return reservedTicket{}, err
-	}
-	if ticket, ok := s.take(target, time.Now()); ok {
-		s.diagnostics.recordTicketAvailable(chuteID)
-		s.maybeWarm(target)
-		return ticket, nil
-	}
-	s.diagnostics.recordTicketStarvation(chuteID)
-	return reservedTicket{}, ErrNoUsableTicket
 }
 
 func (s *poolState) rememberTarget(target ModelTarget) error {
@@ -360,10 +353,12 @@ func (s *poolState) take(target ModelTarget, now time.Time) (reservedTicket, boo
 		pool.Cursor = (index + 1) % len(pool.Order)
 		s.recordDemandLocked(target, now)
 		return reservedTicket{
-			ChuteID:    chuteID,
-			InstanceID: instanceID,
-			PublicKey:  instanceTickets.PublicKey,
-			Value:      value.Value,
+			ChuteID:            chuteID,
+			InstanceID:         instanceID,
+			PublicKey:          instanceTickets.PublicKey,
+			Value:              value.Value,
+			MeasurementName:    verification.MeasurementName,
+			MeasurementVersion: verification.MeasurementVersion,
 		}, true
 	}
 	return reservedTicket{}, false
@@ -447,7 +442,9 @@ func (s *poolState) refill(target ModelTarget) (resultErr error) {
 			}
 		}
 	}
-	s.install(target, discovered, expiresAt)
+	if !s.install(target, discovered, expiresAt) {
+		return ErrNoUsableTicket
+	}
 	return nil
 }
 
@@ -479,7 +476,7 @@ func (s *poolState) recordRefillResult(chuteID string, err error) {
 	if errors.As(err, &statusErr) {
 		switch {
 		case statusErr.StatusCode == http.StatusTooManyRequests && statusErr.RetryAfter > delay:
-			delay = min(statusErr.RetryAfter, time.Minute)
+			delay = statusErr.RetryAfter
 		case statusErr.StatusCode >= 400 && statusErr.StatusCode < 500 &&
 			statusErr.StatusCode != http.StatusRequestTimeout && statusErr.StatusCode != http.StatusTooEarly:
 			delay = ticketRefillRetryMaximum
@@ -656,9 +653,9 @@ func (s *poolState) storeVerifiedLocked(chuteID, instanceID string, verification
 	verified[instanceID] = verification
 }
 
-func (s *poolState) install(target ModelTarget, discovered []discoveredInstance, expiresAt time.Time) {
+func (s *poolState) install(target ModelTarget, discovered []discoveredInstance, expiresAt time.Time) bool {
 	if err := s.rememberTarget(target); err != nil {
-		return
+		return false
 	}
 	chuteID := target.ChuteID
 	now := time.Now()
@@ -704,6 +701,10 @@ func (s *poolState) install(target ModelTarget, discovered []discoveredInstance,
 	}
 	activity.Target = target
 	activity.LastRefillAt = now
+	// Check before releasing ownership: consumers may immediately take these
+	// tickets. A batch with no eligible tickets must not trigger a refill loop.
+	usable, _ := s.usablePoolStateLocked(target, now)
+	return usable > 0
 }
 
 func (s *poolState) observeInvoke(ticket reservedTicket, status int, retryAfter time.Duration, err error) {
@@ -741,9 +742,6 @@ func (s *poolState) observeInvoke(ticket reservedTicket, status int, retryAfter 
 	case status == 429 || status == 500 || status == 502 || status == 503 || status == 504:
 		if retryAfter <= 0 {
 			retryAfter = instanceCooldown
-		}
-		if retryAfter > 30*time.Second {
-			retryAfter = 30 * time.Second
 		}
 		s.cooldowns[ticket.ChuteID][ticket.InstanceID] = now.Add(retryAfter)
 	}

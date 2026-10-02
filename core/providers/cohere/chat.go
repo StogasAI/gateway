@@ -134,7 +134,7 @@ func ToCohereChatCompletionRequest(bifrostReq *schemas.BifrostChatRequest) (*Coh
 				cohereReq.Thinking = thinking
 			} else if bifrostReq.Params.Reasoning.Effort != nil {
 				if *bifrostReq.Params.Reasoning.Effort != "none" {
-					maxCompletionTokens := providerUtils.GetMaxOutputTokensOrDefault(bifrostReq.Model, DefaultCompletionMaxTokens)
+					maxCompletionTokens := providerUtils.GetMaxOutputTokensOrDefault(bifrostReq.Provider, bifrostReq.Model, DefaultCompletionMaxTokens)
 					if bifrostReq.Params.MaxCompletionTokens != nil {
 						maxCompletionTokens = *bifrostReq.Params.MaxCompletionTokens
 					}
@@ -292,8 +292,15 @@ func (req *CohereChatRequest) ToBifrostChatRequest(ctx *schemas.BifrostContext) 
 				Effort: schemas.Ptr("none"),
 			}
 		} else {
+			// Enabled is how "think, effort unspecified" is expressed. Effort was previously set
+			// to "auto", which is not a value that field accepts ("none" | "minimal" | "low" |
+			// "medium" | "high" | "xhigh"), so it reached providers verbatim and they rejected it:
+			//   openai:  Invalid value: 'auto'. Supported values are: 'low', 'medium', 'high'...
+			//   bedrock: unknown variant `auto`, expected one of `low`, `medium`, `high`...
+			// Cohere states no effort, so none is invented here; the budget carries the intent and
+			// the downstream model-aware mapping derives an effort where it needs one.
 			bifrostReq.Params.Reasoning = &schemas.ChatReasoning{
-				Effort: schemas.Ptr("auto"),
+				Enabled: schemas.Ptr(true),
 			}
 			if req.Thinking.TokenBudget != nil {
 				bifrostReq.Params.Reasoning.MaxTokens = req.Thinking.TokenBudget
@@ -420,6 +427,130 @@ func (response *CohereChatResponse) ToBifrostChatResponse(model string) *schemas
 	}
 
 	return bifrostResponse
+}
+
+// ToCohereChatResponse converts a normalized Bifrost response to Cohere's v2
+// response shape. This is used by the Cohere-compatible HTTP route when the raw
+// provider response is unavailable or when a fallback was served by another
+// provider.
+func ToCohereChatResponse(bifrostResp *schemas.BifrostChatResponse) *CohereChatResponse {
+	if bifrostResp == nil {
+		return nil
+	}
+
+	finishReason := FinishReasonComplete
+	cohereResp := &CohereChatResponse{
+		ID:           bifrostResp.ID,
+		FinishReason: &finishReason,
+		Message: &CohereMessage{
+			Role: string(schemas.ChatMessageRoleAssistant),
+		},
+	}
+
+	if len(bifrostResp.Choices) > 0 {
+		choice := bifrostResp.Choices[0]
+		if choice.FinishReason != nil {
+			converted := ConvertBifrostFinishReasonToCohere(*choice.FinishReason)
+			cohereResp.FinishReason = &converted
+		}
+		if choice.ChatNonStreamResponseChoice != nil && choice.Message != nil {
+			cohereResp.Message = toCohereResponseMessage(choice.Message)
+		}
+	}
+
+	if bifrostResp.Usage != nil {
+		inputTokens := bifrostResp.Usage.PromptTokens
+		outputTokens := bifrostResp.Usage.CompletionTokens
+		// billed_units is omitted: Bifrost keeps only processed token counts, which Cohere bills differently
+		cohereResp.Usage = &CohereUsage{
+			Tokens: &CohereTokenUsage{
+				InputTokens:  &inputTokens,
+				OutputTokens: &outputTokens,
+			},
+		}
+		if bifrostResp.Usage.PromptTokensDetails != nil {
+			cachedTokens := bifrostResp.Usage.PromptTokensDetails.CachedReadTokens
+			cohereResp.Usage.CachedTokens = &cachedTokens
+		}
+	}
+
+	return cohereResp
+}
+
+func toCohereResponseMessage(message *schemas.ChatMessage) *CohereMessage {
+	cohereMessage := &CohereMessage{Role: string(schemas.ChatMessageRoleAssistant)}
+	contentBlocks := make([]CohereContentBlock, 0)
+
+	if message.ChatAssistantMessage != nil {
+		reasoningAdded := false
+		for _, detail := range message.ChatAssistantMessage.ReasoningDetails {
+			if detail.Type == schemas.BifrostReasoningDetailsTypeText && detail.Text != nil {
+				contentBlocks = append(contentBlocks, CohereContentBlock{
+					Type:     CohereContentBlockTypeThinking,
+					Thinking: detail.Text,
+				})
+				reasoningAdded = true
+			}
+		}
+		if !reasoningAdded && message.ChatAssistantMessage.Reasoning != nil {
+			contentBlocks = append(contentBlocks, CohereContentBlock{
+				Type:     CohereContentBlockTypeThinking,
+				Thinking: message.ChatAssistantMessage.Reasoning,
+			})
+		}
+	}
+
+	if message.Content != nil {
+		if message.Content.ContentStr != nil {
+			contentBlocks = append(contentBlocks, CohereContentBlock{
+				Type: CohereContentBlockTypeText,
+				Text: message.Content.ContentStr,
+			})
+		} else {
+			for _, block := range message.Content.ContentBlocks {
+				switch {
+				case block.Text != nil:
+					contentBlocks = append(contentBlocks, CohereContentBlock{
+						Type: CohereContentBlockTypeText,
+						Text: block.Text,
+					})
+				case block.Refusal != nil:
+					contentBlocks = append(contentBlocks, CohereContentBlock{
+						Type: CohereContentBlockTypeText,
+						Text: block.Refusal,
+					})
+				}
+			}
+		}
+	}
+	if len(contentBlocks) == 0 && message.ChatAssistantMessage != nil && message.ChatAssistantMessage.Refusal != nil {
+		contentBlocks = append(contentBlocks, CohereContentBlock{
+			Type: CohereContentBlockTypeText,
+			Text: message.ChatAssistantMessage.Refusal,
+		})
+	}
+	if len(contentBlocks) > 0 {
+		cohereMessage.Content = NewBlocksContent(contentBlocks)
+	}
+
+	if message.ChatAssistantMessage != nil {
+		for _, toolCall := range message.ChatAssistantMessage.ToolCalls {
+			toolCallID := toolCall.ID
+			if toolCallID == nil {
+				toolCallID = schemas.Ptr("")
+			}
+			cohereMessage.ToolCalls = append(cohereMessage.ToolCalls, CohereToolCall{
+				ID:   toolCallID,
+				Type: string(schemas.ChatToolTypeFunction),
+				Function: &CohereFunction{
+					Name:      toolCall.Function.Name,
+					Arguments: toolCall.Function.Arguments,
+				},
+			})
+		}
+	}
+
+	return cohereMessage
 }
 
 func (chunk *CohereStreamEvent) ToBifrostChatCompletionStream() (*schemas.BifrostChatResponse, *schemas.BifrostError, bool) {

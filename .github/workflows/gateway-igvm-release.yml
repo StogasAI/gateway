@@ -36,6 +36,8 @@ jobs:
 
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
+      - name: Test source snapshots
+        run: node --test stogas/release/scripts/snapshot-source.test.mjs
 
       - name: Restore Stogas release vendor cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

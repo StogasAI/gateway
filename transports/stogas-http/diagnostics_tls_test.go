@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestDiagnosticsTLSRejectsUnauthorizedClientsBeforeHTTP(t *testing.T) {
 	now := time.Now()
 	valid := diagnosticsTestCertificate(t, nil, now.Add(-time.Hour), now.Add(time.Hour), x509.ExtKeyUsageClientAuth)
 	pin := sha256.Sum256(valid.Leaf.RawSubjectPublicKeyInfo)
-	server := &Server{config: stogas.Config{DiagnosticsClientSPKISHA256: hex.EncodeToString(pin[:])}}
+	server := &Server{config: stogas.Config{DiagnosticsClientSPKISHA256: hex.EncodeToString(pin[:]), DrainClientSPKISHA256: strings.Repeat("e", 64)}}
 	config, err := server.diagnosticsTLSConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -74,11 +75,13 @@ func TestDiagnosticsTLSRejectsUnauthorizedClientsBeforeHTTP(t *testing.T) {
 		name        string
 		certificate *tls.Certificate
 		maxVersion  uint16
+		classical   bool
 		allowed     bool
 	}{
 		{name: "missing"},
 		{name: "valid", certificate: &valid, allowed: true},
 		{name: "TLS 1.2", certificate: &valid, maxVersion: tls.VersionTLS12},
+		{name: "classical TLS 1.3", certificate: &valid, classical: true},
 		{name: "other key", certificate: ptrDiagnosticsCertificate(diagnosticsTestCertificate(t, nil, now.Add(-time.Hour), now.Add(time.Hour), x509.ExtKeyUsageClientAuth))},
 		{name: "expired", certificate: ptrDiagnosticsCertificate(diagnosticsTestCertificate(t, key, now.Add(-2*time.Hour), now.Add(-time.Hour), x509.ExtKeyUsageClientAuth))},
 		{name: "future", certificate: ptrDiagnosticsCertificate(diagnosticsTestCertificate(t, key, now.Add(time.Hour), now.Add(2*time.Hour), x509.ExtKeyUsageClientAuth))},
@@ -87,6 +90,9 @@ func TestDiagnosticsTLSRejectsUnauthorizedClientsBeforeHTTP(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			clientTLS := &tls.Config{RootCAs: roots, ServerName: "example.com", MaxVersion: test.maxVersion}
+			if test.classical {
+				clientTLS.CurvePreferences = []tls.CurveID{tls.X25519}
+			}
 			if test.certificate != nil {
 				clientTLS.Certificates = []tls.Certificate{*test.certificate}
 			}

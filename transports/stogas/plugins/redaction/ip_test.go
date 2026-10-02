@@ -79,7 +79,7 @@ func TestInvalidAndEmbeddedIPLikeValuesRemainVisible(t *testing.T) {
 func TestIPAddressesAreOptInAndExactlyCounted(t *testing.T) {
 	t.Parallel()
 	source := []byte("alice@corp.io 10.0.0.1 [2001:db8::1]")
-	defaultRedactor := New()
+	defaultRedactor := newTestRedactor()
 	defaultOut, changed, err := defaultRedactor.redactBytes(source)
 	if err != nil || !changed || string(defaultOut) != "<EMAIL_ADDRESS> 10.0.0.1 [2001:db8::1]" || defaultRedactor.Summary().ItemsRedacted != 1 {
 		t.Fatalf("default IP behavior output=%q changed=%t summary=%#v err=%v", defaultOut, changed, defaultRedactor.Summary(), err)

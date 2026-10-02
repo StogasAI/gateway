@@ -1,36 +1,18 @@
 package secrets
 
 import (
-	"crypto/hpke"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
-
-	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"
+	"sync"
 )
 
-const (
-	hpkeInfo              = "stogas.secret-release.v1"
-	hpkeEncapsulationSize = 1_120
-	hpkeTagSize           = 16
-)
-
-var (
-	ErrInvalidReleaseContents = errors.New("confidential secret release contents are invalid")
-	ErrInvalidReleaseEncoding = errors.New("confidential secret release encoding is invalid")
-	ErrInvalidReleaseIdentity = errors.New("confidential secret release identity is invalid")
-	ErrReleaseAuthentication  = errors.New("confidential secret release authentication failed")
-	ErrReleaseBindingMismatch = errors.New("confidential secret release binding mismatch")
-)
+var ErrInvalidReleaseContents = errors.New("confidential secret release contents are invalid")
 
 type Store struct {
 	mu      sync.RWMutex
 	secrets map[string]Secret
+	closed  bool
 }
 
 type Secret struct {
@@ -38,11 +20,6 @@ type Secret struct {
 	Name    string
 	Value   []byte
 	Version string
-}
-
-type InstallInput struct {
-	Bundle   *provision.SecretBundle
-	Identity *identity.Material
 }
 
 var requiredSecretNames = []string{
@@ -58,16 +35,33 @@ func NewStore() *Store {
 	return &Store{secrets: map[string]Secret{}}
 }
 
-func (s *Store) Install(input InstallInput) error {
+// InstallBoot consumes authenticated provisioning contents exactly once.
+// Renewal never calls this method; changing runtime secrets requires a new boot.
+func (s *Store) InstallBoot(values []provision.BootSecretValue) error {
+	secrets := make([]Secret, 0, len(values))
+	for _, value := range values {
+		secrets = append(secrets, Secret{KeyID: value.KeyID, Name: value.Name, Value: []byte(value.Plaintext), Version: value.Version})
+	}
+	return s.install(secrets)
+}
+
+func (s *Store) install(secrets []Secret) error {
+	installed := false
+	defer func() {
+		if !installed {
+			for _, secret := range secrets {
+				clear(secret.Value)
+			}
+		}
+	}()
 	if s == nil {
 		return fmt.Errorf("%w: secret store is nil", ErrInvalidReleaseContents)
 	}
-	secrets, err := DecryptRelease(input)
-	if err != nil {
-		return err
-	}
 	next := make(map[string]Secret, len(secrets))
 	for _, secret := range secrets {
+		if secret.Name == "" || secret.KeyID == "" || secret.Version == "" || len(secret.Value) == 0 {
+			return ErrInvalidReleaseContents
+		}
 		if _, exists := next[secret.Name]; exists {
 			return fmt.Errorf("%w: secret release contains duplicate secret %s", ErrInvalidReleaseContents, secret.Name)
 		}
@@ -80,11 +74,26 @@ func (s *Store) Install(input InstallInput) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.secrets) > 0 {
+	if s.closed || len(s.secrets) > 0 {
 		return fmt.Errorf("%w: runtime configuration is already installed; replace the guest to apply changes", ErrInvalidReleaseContents)
 	}
 	s.secrets = next
+	installed = true
 	return nil
+}
+
+// Close erases owned plaintext after request processing and finalization finish.
+func (s *Store) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, secret := range s.secrets {
+		clear(secret.Value)
+	}
+	s.secrets = nil
+	s.closed = true
 }
 
 func (s *Store) Ready() bool {
@@ -126,93 +135,4 @@ func (s *Store) Get(name string) (Secret, bool) {
 	}
 	secret.Value = append([]byte(nil), secret.Value...)
 	return secret, true
-}
-
-func DecryptRelease(input InstallInput) ([]Secret, error) {
-	if input.Identity == nil || input.Identity.HPKEPrivateKey == nil {
-		return nil, fmt.Errorf("%w: identity HPKE private key is required", ErrInvalidReleaseIdentity)
-	}
-	if input.Bundle == nil {
-		return nil, fmt.Errorf("%w: secret release is required", ErrInvalidReleaseContents)
-	}
-	out := make([]Secret, 0, len(input.Bundle.Secrets))
-	for _, encrypted := range input.Bundle.Secrets {
-		aad, err := secretReleaseAAD(input.Bundle, encrypted)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrReleaseBindingMismatch, err)
-		}
-		sum := sha256.Sum256(aad)
-		if hex.EncodeToString(sum[:]) != encrypted.AADSHA256 {
-			return nil, fmt.Errorf("%w: secret %s AAD hash mismatch", ErrReleaseBindingMismatch, encrypted.Name)
-		}
-		plaintext, err := decryptSecret(input.Identity.HPKEPrivateKey, encrypted, aad)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt secret %s: %w", encrypted.Name, err)
-		}
-		out = append(out, Secret{
-			KeyID:   encrypted.KeyID,
-			Name:    encrypted.Name,
-			Value:   plaintext,
-			Version: encrypted.Version,
-		})
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("%w: secret release contained no secrets", ErrInvalidReleaseContents)
-	}
-	return out, nil
-}
-
-func decryptSecret(privateKey hpke.PrivateKey, encrypted provision.SecretCiphertext, aad []byte) ([]byte, error) {
-	encapsulated, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.EncapsulatedKey)
-	if err != nil {
-		return nil, fmt.Errorf("%w: decode encapsulated key: %w", ErrInvalidReleaseEncoding, err)
-	}
-	if len(encapsulated) != hpkeEncapsulationSize {
-		return nil, fmt.Errorf("%w: encapsulated key has an invalid length", ErrInvalidReleaseEncoding)
-	}
-	ciphertext, err := base64.RawURLEncoding.Strict().DecodeString(encrypted.Ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("%w: decode ciphertext: %w", ErrInvalidReleaseEncoding, err)
-	}
-	if len(ciphertext) < hpkeTagSize {
-		return nil, fmt.Errorf("%w: ciphertext is too short", ErrInvalidReleaseEncoding)
-	}
-	recipient, err := hpke.NewRecipient(
-		encapsulated,
-		privateKey,
-		hpke.HKDFSHA256(),
-		hpke.AES256GCM(),
-		[]byte(hpkeInfo),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("%w: initialize HPKE recipient: %w", ErrInvalidReleaseEncoding, err)
-	}
-	plaintext, err := recipient.Open(aad, ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("%w: HPKE ciphertext authentication failed", ErrReleaseAuthentication)
-	}
-	return plaintext, nil
-}
-
-func secretReleaseAAD(bundle *provision.SecretBundle, secret provision.SecretCiphertext) ([]byte, error) {
-	payload := struct {
-		NodeID           string `json:"node_id"`
-		ReportDataSHA512 string `json:"report_data_sha512"`
-		Schema           string `json:"schema"`
-		SecretKeyID      string `json:"secret_key_id"`
-		SecretName       string `json:"secret_name"`
-		SecretVersion    string `json:"secret_version"`
-	}{
-		NodeID:           bundle.NodeID,
-		ReportDataSHA512: bundle.ReportDataSHA512,
-		Schema:           provision.SecretReleaseSchemaV1,
-		SecretKeyID:      secret.KeyID,
-		SecretName:       secret.Name,
-		SecretVersion:    secret.Version,
-	}
-	bytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
 }

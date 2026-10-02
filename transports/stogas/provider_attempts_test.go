@@ -3,7 +3,7 @@ package stogas
 import (
 	"context"
 	"fmt"
-	"math/big"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -70,14 +70,14 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 			Model:       "gpt-5",
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
-			AvailableBalanceUSDAtoms:     big.NewInt(0),
-			ProviderKey:                  "openai",
-			RequestID:                    "request-real-retry",
+			AuthorizedBilledCostUSD: new(money.USD),
+			AvailableBalanceUSD:     new(money.USD),
+			ProviderKey:             "openai",
+			RequestID:               "request-real-retry",
 		},
-		StartedAt:            time.Now().UTC(),
-		RequestType:          string(schemas.ChatCompletionRequest),
-		UpstreamCostUSDAtoms: "0",
+		StartedAt:       time.Now().UTC(),
+		RequestType:     string(schemas.ChatCompletionRequest),
+		UpstreamCostUSD: "0",
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
 	SetState(ctx, state)
@@ -116,8 +116,8 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 		t.Fatalf("provider attempt timing was not captured: %#v", event.ProviderAttempts)
 	}
 	wantProviderMS := event.ProviderAttempts[0].LatencyMS + event.ProviderAttempts[1].LatencyMS
-	if providerMS := event.ProviderDurationMS(); providerMS != wantProviderMS {
-		t.Fatalf("canonical provider duration = %d, want %d", providerMS, wantProviderMS)
+	if providerMS := event.Performance.ProviderMS; providerMS < wantProviderMS {
+		t.Fatalf("provider stage = %d, want at least %d", providerMS, wantProviderMS)
 	}
 }
 
@@ -154,17 +154,17 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 			Model:       "gpt-5",
 		},
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSDAtoms: big.NewInt(0),
-			AvailableBalanceUSDAtoms:     big.NewInt(0),
-			ProviderKey:                  "openai",
-			RequestID:                    "request-1",
+			AuthorizedBilledCostUSD: new(money.USD),
+			AvailableBalanceUSD:     new(money.USD),
+			ProviderKey:             "openai",
+			RequestID:               "request-1",
 		},
-		StartedAt:            base,
-		RequestType:          string(schemas.ChatCompletionRequest),
-		ProviderStartedAt:    base.Add(5 * time.Millisecond),
-		ProviderCompletedAt:  base.Add(150 * time.Millisecond),
-		Response:             finalResponse,
-		UpstreamCostUSDAtoms: "0",
+		StartedAt:           base,
+		RequestType:         string(schemas.ChatCompletionRequest),
+		ProviderStartedAt:   base.Add(5 * time.Millisecond),
+		ProviderCompletedAt: base.Add(150 * time.Millisecond),
+		Response:            finalResponse,
+		UpstreamCostUSD:     "0",
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	SetState(ctx, state)
@@ -199,8 +199,8 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 	if retryAttempt.ProviderRequestID != "provider-request" {
 		t.Fatalf("final provider request ID = %q", retryAttempt.ProviderRequestID)
 	}
-	if providerMS := event.ProviderDurationMS(); providerMS != 120 {
-		t.Fatalf("provider duration = %d, want 120", providerMS)
+	if providerMS := event.Performance.ProviderMS; providerMS != 145 {
+		t.Fatalf("provider stage = %d, want 145", providerMS)
 	}
 }
 
@@ -233,8 +233,11 @@ func TestProviderAttemptTracerRetainsDeferredStreamingAttempt(t *testing.T) {
 	tracer.PopulateLLMResponseAttributes(ctx, first, nil, firstError)
 	tracer.EndSpan(first, schemas.SpanStatusError, "request failed")
 
-	_, streamingRetry := tracer.StartSpan(ctx, "retry.attempt.1", schemas.SpanKindRetry)
-	tracer.SetAttribute(streamingRetry, schemas.AttrBifrostProviderName, "openai")
+	_, streamingRetry := tracer.StartSpanID(ctx, "retry.attempt.1", schemas.SpanKindRetry)
+	tracer.PopulateLLMRequestAttributes(streamingRetry, &schemas.BifrostRequest{
+		RequestType:      schemas.ResponsesStreamRequest,
+		ResponsesRequest: &schemas.BifrostResponsesRequest{Provider: schemas.Anthropic, Model: "claude-opus-5"},
+	})
 	tracer.StoreDeferredSpan("trace-1", streamingRetry)
 	deferred := tracer.GetDeferredSpanHandle("trace-1")
 	if deferred != streamingRetry {
@@ -248,6 +251,9 @@ func TestProviderAttemptTracerRetainsDeferredStreamingAttempt(t *testing.T) {
 	attempts := state.providerAttemptInputs()
 	if len(attempts) != 2 {
 		t.Fatalf("deferred provider attempts = %#v, want two attempts", attempts)
+	}
+	if attempts[0].Provider != "openai" || attempts[1].Provider != "anthropic" {
+		t.Fatalf("deferred attempt lost typed request identity: %#v", attempts)
 	}
 	if attempts[1].CompletedAt.Sub(attempts[1].StartedAt) != 60*time.Millisecond || attempts[1].Response != response || attempts[1].Error != nil {
 		t.Fatalf("final deferred attempt was not retained: %#v", attempts[1])

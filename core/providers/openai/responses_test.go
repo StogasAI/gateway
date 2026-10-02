@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"context"
 	"encoding/json"
 	"net/url"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/stretchr/testify/require"
 )
 
 func TestToOpenAIResponsesRequest_ReasoningOnlyMessageSkip(t *testing.T) {
@@ -270,9 +272,32 @@ func TestToOpenAIResponsesRequest_ReasoningStringContent(t *testing.T) {
 		}
 	})
 
-	t.Run("non-empty string content becomes a reasoning_text block", func(t *testing.T) {
+	t.Run("non-empty string content is dropped for a non-gpt-oss model", func(t *testing.T) {
 		bifrostReq := &schemas.BifrostResponsesRequest{
 			Model: "gpt-5.5",
+			Input: []schemas.ResponsesMessage{{
+				Type:               schemas.Ptr(schemas.ResponsesMessageTypeReasoning),
+				ResponsesReasoning: &schemas.ResponsesReasoning{EncryptedContent: schemas.Ptr("enc1")},
+				Content:            &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("thinking")},
+			}},
+		}
+
+		result := ToOpenAIResponsesRequest(nil, bifrostReq)
+		original := bifrostReq.Input[0].Content
+		if original == nil || original.ContentStr == nil || *original.ContentStr != "thinking" {
+			t.Fatalf("expected input reasoning content string to remain unchanged, got %#v", original)
+		}
+		if result == nil || len(result.Input.OpenAIResponsesRequestInputArray) != 1 {
+			t.Fatalf("expected one converted message, got %#v", result)
+		}
+		if c := result.Input.OpenAIResponsesRequestInputArray[0].Content; c != nil {
+			t.Errorf("expected reasoning Content to be dropped for gpt-5.5, got %#v", c)
+		}
+	})
+
+	t.Run("non-empty string content becomes a reasoning_text block for gpt-oss", func(t *testing.T) {
+		bifrostReq := &schemas.BifrostResponsesRequest{
+			Model: "gpt-oss-120b",
 			Input: []schemas.ResponsesMessage{{
 				Type:               schemas.Ptr(schemas.ResponsesMessageTypeReasoning),
 				ResponsesReasoning: &schemas.ResponsesReasoning{EncryptedContent: schemas.Ptr("enc1")},
@@ -299,6 +324,107 @@ func TestToOpenAIResponsesRequest_ReasoningStringContent(t *testing.T) {
 		if block.Type != schemas.ResponsesOutputMessageContentTypeReasoning ||
 			block.Text == nil || *block.Text != "thinking" {
 			t.Errorf("expected reasoning_text block with text %q, got %#v", "thinking", block)
+		}
+	})
+}
+
+// TestToOpenAIResponsesRequest_ReasoningContentBlocksDropped guards the Anthropic
+// replay path: Claude thinking blocks translate into a reasoning item whose content
+// carries reasoning_text blocks (with Anthropic signatures). Replaying that item to a
+// non-gpt-oss OpenAI/Azure reasoning model fails with
+// "Invalid 'input[N].content': array too long. Expected an array with maximum length 0",
+// because those models keep their reasoning state in summary + encrypted_content only.
+// The outbound conversion must therefore drop content while preserving both.
+func TestToOpenAIResponsesRequest_ReasoningContentBlocksDropped(t *testing.T) {
+	newReasoningItem := func() schemas.ResponsesMessage {
+		return schemas.ResponsesMessage{
+			ID:   schemas.Ptr("rs_abc"),
+			Type: schemas.Ptr(schemas.ResponsesMessageTypeReasoning),
+			ResponsesReasoning: &schemas.ResponsesReasoning{
+				Summary: []schemas.ResponsesReasoningSummary{{
+					Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
+					Text: "summary text",
+				}},
+				EncryptedContent: schemas.Ptr("gAAAAAB-encrypted"),
+			},
+			Content: &schemas.ResponsesMessageContent{
+				ContentBlocks: []schemas.ResponsesMessageContentBlock{
+					{
+						Type:      schemas.ResponsesOutputMessageContentTypeReasoning,
+						Text:      schemas.Ptr("first thinking block"),
+						Signature: schemas.Ptr("anthropic-signature-1"),
+					},
+					{
+						Type:      schemas.ResponsesOutputMessageContentTypeReasoning,
+						Text:      schemas.Ptr("second thinking block"),
+						Signature: schemas.Ptr("anthropic-signature-2"),
+					},
+				},
+			},
+		}
+	}
+
+	// gpt-4o is not a reasoning model, so it additionally has cross-provider
+	// encrypted_content stripped (it could never decrypt it).
+	models := map[string]bool{"gpt-5.6-sol": true, "gpt-5.5": true, "o3": true, "gpt-4o": false}
+	for model, keepsEncrypted := range models {
+		t.Run(model, func(t *testing.T) {
+			input := newReasoningItem()
+			bifrostReq := &schemas.BifrostResponsesRequest{
+				Model: model,
+				Input: []schemas.ResponsesMessage{input},
+			}
+
+			result := ToOpenAIResponsesRequest(nil, bifrostReq)
+			if result == nil || len(result.Input.OpenAIResponsesRequestInputArray) != 1 {
+				t.Fatalf("expected the reasoning item to be preserved, got %#v", result)
+			}
+			msg := result.Input.OpenAIResponsesRequestInputArray[0]
+			if msg.Content != nil {
+				t.Errorf("expected reasoning content to be dropped, got %#v", msg.Content)
+			}
+			if msg.ResponsesReasoning == nil || len(msg.ResponsesReasoning.Summary) != 1 {
+				t.Fatalf("expected summary to be preserved, got %#v", msg.ResponsesReasoning)
+			}
+			if keepsEncrypted {
+				if msg.ResponsesReasoning.EncryptedContent == nil ||
+					*msg.ResponsesReasoning.EncryptedContent != "gAAAAAB-encrypted" {
+					t.Errorf("expected encrypted_content to be preserved, got %#v", msg.ResponsesReasoning.EncryptedContent)
+				}
+			} else if msg.ResponsesReasoning.EncryptedContent != nil {
+				t.Errorf("expected encrypted_content to be stripped for a non-reasoning model, got %q", *msg.ResponsesReasoning.EncryptedContent)
+			}
+
+			// The caller's input must not be mutated.
+			if bifrostReq.Input[0].Content == nil || len(bifrostReq.Input[0].Content.ContentBlocks) != 2 {
+				t.Errorf("expected caller input to keep its two reasoning blocks, got %#v", bifrostReq.Input[0].Content)
+			}
+
+			// End-to-end: nothing reasoning_text-shaped may reach the wire.
+			out, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if strings.Contains(string(out), "reasoning_text") ||
+				strings.Contains(string(out), "anthropic-signature-1") {
+				t.Errorf("reasoning item serialized with content blocks: %s", string(out))
+			}
+		})
+	}
+
+	t.Run("gpt-oss keeps reasoning content blocks", func(t *testing.T) {
+		bifrostReq := &schemas.BifrostResponsesRequest{
+			Model: "gpt-oss-120b",
+			Input: []schemas.ResponsesMessage{newReasoningItem()},
+		}
+
+		result := ToOpenAIResponsesRequest(nil, bifrostReq)
+		if result == nil || len(result.Input.OpenAIResponsesRequestInputArray) != 1 {
+			t.Fatalf("expected the reasoning item to be preserved, got %#v", result)
+		}
+		c := result.Input.OpenAIResponsesRequestInputArray[0].Content
+		if c == nil || len(c.ContentBlocks) != 2 {
+			t.Fatalf("expected gpt-oss to keep both reasoning blocks, got %#v", c)
 		}
 	})
 }
@@ -379,7 +505,7 @@ func TestToOpenAIResponsesRequest_NormalizesReasoningEffort(t *testing.T) {
 			expected: "high",
 		},
 		{
-			name:     "maps minimal to low",
+			name:     "maps minimal to low for gpt-5.4",
 			model:    "gpt-5.4",
 			effort:   "minimal",
 			expected: "low",
@@ -389,6 +515,54 @@ func TestToOpenAIResponsesRequest_NormalizesReasoningEffort(t *testing.T) {
 			model:    "gpt-5-nano-2025-08-07",
 			effort:   "minimal",
 			expected: "minimal",
+		},
+		{
+			name:     "preserves minimal for gpt-5-mini",
+			model:    "gpt-5-mini",
+			effort:   "minimal",
+			expected: "minimal",
+		},
+		{
+			name:     "preserves minimal for gpt-5-nano",
+			model:    "gpt-5-nano",
+			effort:   "minimal",
+			expected: "minimal",
+		},
+		{
+			name:     "maps minimal to low for gpt-5.2",
+			model:    "gpt-5.2",
+			effort:   "minimal",
+			expected: "low",
+		},
+		{
+			name:     "maps minimal to low for gpt-5.6",
+			model:    "gpt-5.6",
+			effort:   "minimal",
+			expected: "low",
+		},
+		{
+			name:     "maps minimal to low for o3",
+			model:    "o3",
+			effort:   "minimal",
+			expected: "low",
+		},
+		{
+			name:     "maps minimal to low for o1",
+			model:    "o1",
+			effort:   "minimal",
+			expected: "low",
+		},
+		{
+			name:     "maps minimal to low for o4",
+			model:    "o4",
+			effort:   "minimal",
+			expected: "low",
+		},
+		{
+			name:     "maps minimal to low for gpt-oss",
+			model:    "gpt-oss",
+			effort:   "minimal",
+			expected: "low",
 		},
 		{
 			name:     "maps max to xhigh for xhigh-capable model",
@@ -475,6 +649,131 @@ func TestToOpenAIResponsesRequest_NormalizesReasoningEffort(t *testing.T) {
 			if req.Reasoning.MaxTokens != nil {
 				t.Fatalf("expected reasoning max_tokens to be cleared, got %d", *req.Reasoning.MaxTokens)
 			}
+		})
+	}
+}
+
+// TestToOpenAIResponsesRequest_ReasoningContextAllTurns pins the
+// reasoning.context gate: "all_turns" is a hard 400 on models that only accept
+// "auto"/"current_turn" (gpt-5-pro, gpt-5, o-series), so it is dropped there and
+// kept on the families that accept it. A datasheet row wins over the name
+// default in both directions; "auto"/"current_turn" and non-OpenAI providers are
+// never touched, and the caller's params are not mutated.
+func TestToOpenAIResponsesRequest_ReasoningContextAllTurns(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		// baseProvider is the built-in provider a custom provider key resolves to,
+		// carried on the context exactly as the router sets it.
+		baseProvider schemas.ModelProvider
+		model        string
+		context      string
+		record       *schemas.ModelCapabilities
+		want         *string // nil means the field must be dropped
+	}{
+		{name: "drops all_turns for gpt-5-pro", model: "gpt-5-pro", context: schemas.ReasoningContextAllTurns},
+		{name: "drops all_turns for gpt-5", model: "gpt-5", context: schemas.ReasoningContextAllTurns},
+		{name: "drops all_turns for gpt-5.2", model: "gpt-5.2", context: schemas.ReasoningContextAllTurns},
+		{name: "drops all_turns for o3", model: "o3", context: schemas.ReasoningContextAllTurns},
+		{name: "drops all_turns for azure gpt-5-pro", provider: schemas.Azure, model: "gpt-5-pro", context: schemas.ReasoningContextAllTurns},
+		{name: "keeps all_turns for gpt-5.4", model: "gpt-5.4", context: schemas.ReasoningContextAllTurns, want: new(schemas.ReasoningContextAllTurns)},
+		{name: "keeps all_turns for gpt-5.5-pro", model: "gpt-5.5-pro", context: schemas.ReasoningContextAllTurns, want: new(schemas.ReasoningContextAllTurns)},
+		{name: "keeps all_turns for gpt-5.6-sol", model: "gpt-5.6-sol", context: schemas.ReasoningContextAllTurns, want: new(schemas.ReasoningContextAllTurns)},
+		{name: "keeps all_turns for azure gpt-5.6", provider: schemas.Azure, model: "gpt-5.6", context: schemas.ReasoningContextAllTurns, want: new(schemas.ReasoningContextAllTurns)},
+		{
+			name:    "row listing all_turns beats the name default",
+			model:   "gpt-5-pro",
+			context: schemas.ReasoningContextAllTurns,
+			record: &schemas.ModelCapabilities{SupportedReasoningContexts: []string{
+				schemas.ReasoningContextAuto, schemas.ReasoningContextCurrentTurn, schemas.ReasoningContextAllTurns,
+			}},
+			want: new(schemas.ReasoningContextAllTurns),
+		},
+		{
+			name:    "row omitting all_turns beats the name default",
+			model:   "gpt-5.6",
+			context: schemas.ReasoningContextAllTurns,
+			record: &schemas.ModelCapabilities{SupportedReasoningContexts: []string{
+				schemas.ReasoningContextAuto, schemas.ReasoningContextCurrentTurn,
+			}},
+		},
+		{
+			name:    "row omitting auto drops auto too",
+			model:   "gpt-5.4",
+			context: schemas.ReasoningContextAuto,
+			record: &schemas.ModelCapabilities{SupportedReasoningContexts: []string{
+				schemas.ReasoningContextCurrentTurn, schemas.ReasoningContextAllTurns,
+			}},
+		},
+		{name: "keeps current_turn for gpt-5-pro", model: "gpt-5-pro", context: schemas.ReasoningContextCurrentTurn, want: new(schemas.ReasoningContextCurrentTurn)},
+		{name: "keeps auto for gpt-5-pro", model: "gpt-5-pro", context: schemas.ReasoningContextAuto, want: new(schemas.ReasoningContextAuto)},
+		{name: "leaves other OpenAI-compatible providers alone", provider: schemas.Groq, model: "gpt-5-pro", context: schemas.ReasoningContextAllTurns, want: new(schemas.ReasoningContextAllTurns)},
+		{
+			// A custom provider reports its own key, so the gate has to resolve the
+			// base provider from the context or the value reaches OpenAI as a 400.
+			name:         "drops all_turns for a custom provider on an openai base",
+			provider:     schemas.ModelProvider("my-openai"),
+			baseProvider: schemas.OpenAI,
+			model:        "gpt-5-pro",
+			context:      schemas.ReasoningContextAllTurns,
+		},
+		{
+			name:         "drops all_turns for a custom provider on an azure base",
+			provider:     schemas.ModelProvider("my-azure"),
+			baseProvider: schemas.Azure,
+			model:        "gpt-5-pro",
+			context:      schemas.ReasoningContextAllTurns,
+		},
+		{
+			name:         "keeps all_turns for a custom provider on a non-OpenAI base",
+			provider:     schemas.ModelProvider("my-anthropic"),
+			baseProvider: schemas.Anthropic,
+			model:        "gpt-5-pro",
+			context:      schemas.ReasoningContextAllTurns,
+			want:         new(schemas.ReasoningContextAllTurns),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := tt.provider
+			if provider == "" {
+				provider = schemas.OpenAI
+			}
+			if tt.record != nil {
+				installCapabilityRecord(t, tt.model, tt.record)
+			}
+			params := &schemas.ResponsesParameters{
+				Reasoning: &schemas.ResponsesParametersReasoning{
+					Effort:  new("medium"),
+					Context: new(tt.context),
+				},
+			}
+			var ctx *schemas.BifrostContext
+			if tt.baseProvider != "" {
+				ctx = schemas.NewBifrostContextWithValue(context.Background(), schemas.NoDeadline,
+					schemas.BifrostContextKeyBaseProviderType, tt.baseProvider)
+			}
+			req := ToOpenAIResponsesRequest(ctx, &schemas.BifrostResponsesRequest{
+				Provider: provider,
+				Model:    tt.model,
+				Input: []schemas.ResponsesMessage{{
+					Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+					Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hello")},
+				}},
+				Params: params,
+			})
+
+			require.NotNil(t, req)
+			require.NotNil(t, req.Reasoning, "effort must survive; only context is gated")
+			if tt.want == nil {
+				require.Nil(t, req.Reasoning.Context, "reasoning.context must be dropped")
+			} else {
+				require.NotNil(t, req.Reasoning.Context, "reasoning.context must be kept")
+				require.Equal(t, *tt.want, *req.Reasoning.Context)
+			}
+			require.NotNil(t, params.Reasoning.Context, "caller's params must not be mutated")
+			require.Equal(t, tt.context, *params.Reasoning.Context)
 		})
 	}
 }
@@ -1949,6 +2248,108 @@ func TestToOpenAIResponsesRequest_PreservesNamespaceAndWebSearchFields(t *testin
 	}
 }
 
+func TestToOpenAIResponsesRequest_WebSearchContentTypesProviderGating(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     schemas.ModelProvider
+		baseProvider schemas.ModelProvider
+		unsupported  *bool
+		want         []string
+	}{
+		{
+			name:     "openai preserves search content types",
+			provider: schemas.OpenAI,
+			want:     []string{"text", "image"},
+		},
+		{
+			name:        "openai datasheet can strip search content types",
+			provider:    schemas.OpenAI,
+			unsupported: schemas.Ptr(true),
+		},
+		{
+			name:     "bedrock runtime fallback strips search content types",
+			provider: schemas.Bedrock,
+		},
+		{
+			name:     "bedrock mantle fallback strips search content types",
+			provider: schemas.BedrockMantle,
+		},
+		{
+			name:        "bedrock mantle datasheet can preserve search content types",
+			provider:    schemas.BedrockMantle,
+			unsupported: schemas.Ptr(false),
+			want:        []string{"text", "image"},
+		},
+		{
+			name:         "custom mantle provider uses base provider fallback",
+			provider:     schemas.ModelProvider("my-mantle"),
+			baseProvider: schemas.BedrockMantle,
+		},
+		{
+			name:         "custom mantle provider reads base provider datasheet",
+			provider:     schemas.ModelProvider("my-mantle"),
+			baseProvider: schemas.BedrockMantle,
+			unsupported:  schemas.Ptr(false),
+			want:         []string{"text", "image"},
+		},
+		{
+			name:     "unlisted provider preserves search content types",
+			provider: schemas.ModelProvider("openai-compatible"),
+			want:     []string{"text", "image"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unsupported != nil {
+				capabilityProvider := tc.provider
+				if tc.baseProvider != "" {
+					capabilityProvider = tc.baseProvider
+				}
+				schemas.SetCapabilityResolver(func(provider schemas.ModelProvider, model string) *schemas.ModelCapabilities {
+					if provider != capabilityProvider || model != "openai.gpt-5.6-luna" {
+						return nil
+					}
+					return &schemas.ModelCapabilities{UnsupportedFields: map[string]bool{
+						schemas.FieldSearchContentTypes: *tc.unsupported,
+					}}
+				})
+				t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+			}
+
+			searchContentTypes := []string{"text", "image"}
+			request := &schemas.BifrostResponsesRequest{
+				Provider: tc.provider,
+				Model:    "openai.gpt-5.6-luna",
+				Input: []schemas.ResponsesMessage{{
+					Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+					Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hello")},
+				}},
+				Params: &schemas.ResponsesParameters{Tools: []schemas.ResponsesTool{{
+					Type: schemas.ResponsesToolTypeWebSearch,
+					ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{
+						SearchContentTypes: searchContentTypes,
+					},
+				}}},
+			}
+
+			var ctx *schemas.BifrostContext
+			if tc.baseProvider != "" {
+				ctx = schemas.NewBifrostContextWithValue(context.Background(), schemas.NoDeadline,
+					schemas.BifrostContextKeyBaseProviderType, tc.baseProvider)
+			}
+
+			result := ToOpenAIResponsesRequest(ctx, request)
+			require.NotNil(t, result)
+			require.Len(t, result.Tools, 1)
+			require.NotNil(t, result.Tools[0].ResponsesToolWebSearch)
+			require.Equal(t, tc.want, result.Tools[0].ResponsesToolWebSearch.SearchContentTypes)
+			require.Equal(t, searchContentTypes, request.Params.Tools[0].ResponsesToolWebSearch.SearchContentTypes,
+				"conversion must not mutate the caller's tool")
+		})
+	}
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -2384,6 +2785,63 @@ func TestToOpenAIResponsesRequest_FallbackBlockDropped(t *testing.T) {
 	})
 }
 
+// TestToOpenAIResponsesRequest_ContextManagement_ProviderGating covers a real
+// regression: bedrock/openai.gpt-5.4 through /v1/responses forwarded a
+// context_management array straight through to Bedrock Mantle's OpenAI-compatible
+// endpoint, which 400s with "Unknown parameter: 'context_management'" since it
+// doesn't accept the field at all. OpenAI and Azure OpenAI must keep receiving it
+// (default-open, like every other unlisted-provider field here); Bedrock and
+// Bedrock Mantle are the explicit exceptions.
+func TestToOpenAIResponsesRequest_ContextManagement_ProviderGating(t *testing.T) {
+	cm := []byte(`[{"type":"compaction","compact_threshold":2000}]`)
+
+	cases := []struct {
+		name          string
+		provider      schemas.ModelProvider
+		wantForwarded bool
+	}{
+		{"openai forwards it", schemas.OpenAI, true},
+		{"azure forwards it", schemas.Azure, true},
+		{"bedrock drops it", schemas.Bedrock, false},
+		{"bedrock mantle drops it", schemas.BedrockMantle, false},
+		{"unlisted provider forwards it", schemas.ModelProvider("test-unlisted-provider"), true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &schemas.BifrostResponsesRequest{
+				Provider: tc.provider,
+				Model:    "gpt-5.4",
+				Input: []schemas.ResponsesMessage{{
+					Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+					Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("Hello")},
+				}},
+				Params: &schemas.ResponsesParameters{
+					ContextManagement: cm,
+					ExtraParams: map[string]interface{}{
+						"context_management": cm,
+					},
+				},
+			}
+
+			result := ToOpenAIResponsesRequest(nil, req)
+			if result == nil {
+				t.Fatal("ToOpenAIResponsesRequest returned nil")
+			}
+
+			gotNeutral := len(result.ContextManagement) > 0
+			_, gotExtra := result.ExtraParams["context_management"]
+
+			if gotNeutral != tc.wantForwarded {
+				t.Errorf("neutral ContextManagement field: got present=%v, want present=%v", gotNeutral, tc.wantForwarded)
+			}
+			if gotExtra != tc.wantForwarded {
+				t.Errorf("ExtraParams[\"context_management\"]: got present=%v, want present=%v", gotExtra, tc.wantForwarded)
+			}
+		})
+	}
+}
+
 func TestBuildResponsesRetrieveQuery_Stream(t *testing.T) {
 	t.Run("emits stream=true and other params when set", func(t *testing.T) {
 		req := &schemas.BifrostResponsesRetrieveRequest{
@@ -2435,6 +2893,445 @@ func TestBifrostResponsesRetrieveRequest_IsStreamingRequested(t *testing.T) {
 			if got := tc.req.IsStreamingRequested(); got != tc.want {
 				t.Fatalf("IsStreamingRequested() = %v, want %v", got, tc.want)
 			}
+		})
+	}
+}
+
+// TestTopPGateReadsDatasheet covers the datasheet side of the top_p strip.
+// top_p is the field the schema deliberately leaves untyped because its verdict
+// can be conditional, so both unsupported_fields and
+// conditionally_unsupported_fields have to drive it.
+func TestTopPGateReadsDatasheet(t *testing.T) {
+	t.Run("name_fallback_strips_for_reasoning_model", func(t *testing.T) {
+		caps := schemas.ResolveModelCaps(schemas.OpenAI, "o3")
+		require.True(t, topPUnsupported(caps, "o3", "high"))
+		require.False(t, topPUnsupported(caps, "gpt-4o", ""))
+	})
+
+	t.Run("name_fallback_keeps_gpt5x_while_effort_none", func(t *testing.T) {
+		caps := schemas.ResolveModelCaps(schemas.OpenAI, "gpt-5.4")
+		require.False(t, topPUnsupported(caps, "gpt-5.4", ""))
+		require.True(t, topPUnsupported(caps, "gpt-5.4", "high"))
+		require.True(t, topPUnsupported(caps, "gpt-5.4-pro", ""), "-pro always reasons")
+	})
+
+	t.Run("conditional_label_drives_both_directions", func(t *testing.T) {
+		const model = "some-conditional-reasoner"
+		installCapabilityRecord(t, model, &schemas.ModelCapabilities{
+			ConditionallyUnsupportedFields: map[string]string{
+				schemas.FieldTopP: schemas.ConditionWhenEffortNone,
+			},
+		})
+
+		caps := schemas.ResolveModelCaps(schemas.OpenAI, model)
+		require.False(t, topPUnsupported(caps, model, ""), "allowed while reasoning is off")
+		require.False(t, topPUnsupported(caps, model, "none"))
+		require.True(t, topPUnsupported(caps, model, "low"), "rejected once reasoning is on")
+	})
+
+	t.Run("outright_entry_beats_name_fallback", func(t *testing.T) {
+		const model = "o3-with-top-p"
+		installCapabilityRecord(t, model, &schemas.ModelCapabilities{
+			UnsupportedFields: map[string]bool{schemas.FieldTopP: false},
+		})
+		require.False(t, topPUnsupported(schemas.ResolveModelCaps(schemas.OpenAI, model), model, "high"),
+			"an explicit false must beat the reasoning-model name check")
+	})
+}
+
+// TestReasoningContentBlocksGateReadsDatasheet covers the datasheet side of the
+// reasoning-shape gate. The gpt-oss name fallback is covered by
+// TestToOpenAIResponsesRequest_ReasoningOnlyMessageSkip and the Summary→blocks
+// conversion test; these pin that a record drives it on a model whose name says
+// otherwise, in both directions.
+func TestReasoningContentBlocksGateReadsDatasheet(t *testing.T) {
+	reasoningOnly := schemas.ResponsesMessage{
+		Role: schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
+		ResponsesReasoning: &schemas.ResponsesReasoning{
+			Summary: []schemas.ResponsesReasoningSummary{},
+		},
+		Content: &schemas.ResponsesMessageContent{
+			ContentBlocks: []schemas.ResponsesMessageContentBlock{{
+				Type: schemas.ResponsesOutputMessageContentTypeReasoning,
+				Text: schemas.Ptr("reasoning text"),
+			}},
+		},
+	}
+	summaryOnly := schemas.ResponsesMessage{
+		ID:     schemas.Ptr("msg-1"),
+		Type:   schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+		Role:   schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
+		Status: schemas.Ptr("completed"),
+		ResponsesReasoning: &schemas.ResponsesReasoning{
+			Summary: []schemas.ResponsesReasoningSummary{{
+				Type: schemas.ResponsesReasoningContentBlockTypeSummaryText,
+				Text: "a summary",
+			}},
+		},
+	}
+
+	convert := func(t *testing.T, model string, msg schemas.ResponsesMessage) []schemas.ResponsesMessage {
+		t.Helper()
+		result := ToOpenAIResponsesRequest(nil, &schemas.BifrostResponsesRequest{
+			Model: model,
+			Input: []schemas.ResponsesMessage{msg},
+		})
+		require.NotNil(t, result)
+		return result.Input.OpenAIResponsesRequestInputArray
+	}
+
+	t.Run("record_opts_a_non_oss_name_into_content_blocks", func(t *testing.T) {
+		const model = "some-content-block-reasoner"
+		installCapabilityRecord(t, model, &schemas.ModelCapabilities{
+			SupportsReasoningContentBlocks: new(true),
+		})
+
+		require.Len(t, convert(t, model, reasoningOnly), 1,
+			"a content-block model must keep reasoning-only messages")
+
+		out := convert(t, model, summaryOnly)
+		require.Len(t, out, 1)
+		require.NotNil(t, out[0].Content)
+		require.Len(t, out[0].Content.ContentBlocks, 1, "summaries must be rewritten as content blocks")
+	})
+
+	t.Run("record_opts_an_oss_name_out_of_content_blocks", func(t *testing.T) {
+		const model = "gpt-oss-summary-variant"
+		installCapabilityRecord(t, model, &schemas.ModelCapabilities{
+			SupportsReasoningContentBlocks: new(false),
+		})
+
+		require.Empty(t, convert(t, model, reasoningOnly),
+			"a summary model must skip reasoning-only content-block messages despite the gpt-oss name")
+
+		out := convert(t, model, summaryOnly)
+		require.Len(t, out, 1)
+		require.Nil(t, out[0].Content, "summaries must stay as summaries")
+	})
+}
+
+// Bedrock (mantle and runtime) rejects a user-defined namespace tool whose name
+// it reserves for its own server-side tools with HTTP 400 "User-defined
+// namespace 'web' collides with an existing tool namespace". Codex sends such a
+// "web" namespace (web.run) whenever it believes the provider is OpenAI, so the
+// serializer must drop it, and on Mantle replace it with the hosted web_search
+// tool AWS documents for Codex.
+func TestToOpenAIResponsesRequest_DropsReservedNamespaceForBedrock(t *testing.T) {
+	webNS := schemas.ResponsesTool{
+		Type: schemas.ResponsesToolTypeNamespace,
+		Name: schemas.Ptr("web"),
+		ResponsesToolNamespace: &schemas.ResponsesToolNamespace{Tools: []schemas.ResponsesTool{{
+			Type:                  schemas.ResponsesToolTypeFunction,
+			Name:                  schemas.Ptr("run"),
+			ResponsesToolFunction: &schemas.ResponsesToolFunction{},
+		}}},
+	}
+	keepNS := webNS
+	keepNS.Name = schemas.Ptr("multi_agent_v1")
+	hostedWebSearch := schemas.ResponsesTool{
+		Type:                   schemas.ResponsesToolTypeWebSearch,
+		ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{ExternalWebAccess: schemas.Ptr(true)},
+	}
+
+	tests := []struct {
+		name     string
+		provider schemas.ModelProvider
+		// baseProvider, when set, is stamped on the context the way core does for
+		// a custom provider, so provider reads as a user-defined key.
+		baseProvider schemas.ModelProvider
+		tools        []schemas.ResponsesTool
+		wantTypes    []schemas.ResponsesToolType
+		wantNames    []string
+		// wantExternalWebAccess asserts the external_web_access flag on the
+		// resulting web_search tool when non-nil.
+		wantExternalWebAccess *bool
+	}{
+		{
+			name:                  "mantle drops web namespace and substitutes hosted web_search",
+			provider:              schemas.BedrockMantle,
+			tools:                 []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes:             []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace, schemas.ResponsesToolTypeWebSearch},
+			wantNames:             []string{"multi_agent_v1", ""},
+			wantExternalWebAccess: schemas.Ptr(false),
+		},
+		{
+			name:                  "mantle keeps a caller-supplied web_search untouched",
+			provider:              schemas.BedrockMantle,
+			tools:                 []schemas.ResponsesTool{webNS, hostedWebSearch},
+			wantTypes:             []schemas.ResponsesToolType{schemas.ResponsesToolTypeWebSearch},
+			wantNames:             []string{""},
+			wantExternalWebAccess: schemas.Ptr(true),
+		},
+		{
+			name:      "bedrock runtime drops web namespace without substitution",
+			provider:  schemas.Bedrock,
+			tools:     []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes: []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace},
+			wantNames: []string{"multi_agent_v1"},
+		},
+		{
+			name:      "openai keeps the web namespace",
+			provider:  schemas.OpenAI,
+			tools:     []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes: []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace, schemas.ResponsesToolTypeNamespace},
+			wantNames: []string{"multi_agent_v1", "web"},
+		},
+		{
+			name:                  "custom provider on a mantle base drops web namespace and substitutes",
+			provider:              schemas.ModelProvider("my-mantle"),
+			baseProvider:          schemas.BedrockMantle,
+			tools:                 []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes:             []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace, schemas.ResponsesToolTypeWebSearch},
+			wantNames:             []string{"multi_agent_v1", ""},
+			wantExternalWebAccess: schemas.Ptr(false),
+		},
+		{
+			name:         "custom provider on a bedrock base drops web namespace without substitution",
+			provider:     schemas.ModelProvider("my-bedrock"),
+			baseProvider: schemas.Bedrock,
+			tools:        []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes:    []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace},
+			wantNames:    []string{"multi_agent_v1"},
+		},
+		{
+			name:         "custom provider on an openai base keeps the web namespace",
+			provider:     schemas.ModelProvider("my-openai"),
+			baseProvider: schemas.OpenAI,
+			tools:        []schemas.ResponsesTool{keepNS, webNS},
+			wantTypes:    []schemas.ResponsesToolType{schemas.ResponsesToolTypeNamespace, schemas.ResponsesToolTypeNamespace},
+			wantNames:    []string{"multi_agent_v1", "web"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bifrostReq := &schemas.BifrostResponsesRequest{
+				Provider: tc.provider,
+				Model:    "openai.gpt-5.6-luna",
+				Input: []schemas.ResponsesMessage{{
+					Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+					Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hi")},
+				}},
+				Params: &schemas.ResponsesParameters{Tools: tc.tools},
+			}
+			var ctx *schemas.BifrostContext
+			if tc.baseProvider != "" {
+				ctx = schemas.NewBifrostContextWithValue(context.Background(), schemas.NoDeadline,
+					schemas.BifrostContextKeyBaseProviderType, tc.baseProvider)
+			}
+			result := ToOpenAIResponsesRequest(ctx, bifrostReq)
+			require.NotNil(t, result)
+
+			gotTypes := make([]schemas.ResponsesToolType, 0, len(result.Tools))
+			gotNames := make([]string, 0, len(result.Tools))
+			for _, tool := range result.Tools {
+				gotTypes = append(gotTypes, tool.Type)
+				name := ""
+				if tool.Name != nil {
+					name = *tool.Name
+				}
+				gotNames = append(gotNames, name)
+			}
+			require.Equal(t, tc.wantTypes, gotTypes)
+			require.Equal(t, tc.wantNames, gotNames)
+
+			if tc.wantExternalWebAccess != nil {
+				var ws *schemas.ResponsesToolWebSearch
+				for _, tool := range result.Tools {
+					if tool.Type == schemas.ResponsesToolTypeWebSearch {
+						ws = tool.ResponsesToolWebSearch
+					}
+				}
+				require.NotNil(t, ws)
+				require.NotNil(t, ws.ExternalWebAccess)
+				require.Equal(t, *tc.wantExternalWebAccess, *ws.ExternalWebAccess)
+			}
+
+			// The caller's slice must not be mutated.
+			require.Len(t, bifrostReq.Params.Tools, len(tc.tools))
+		})
+	}
+}
+
+// The reserved-namespace list is datasheet-first: a row's reserved_tool_namespaces
+// replaces the hardcoded per-provider fallback for that (provider, model), and a
+// provider with no fallback at all can still reserve names through a row. The row
+// is looked up on the BASE provider so a custom provider wrapping Mantle reads
+// the bedrock_mantle row.
+func TestToOpenAIResponsesRequest_ReservedNamespacesFromDatasheet(t *testing.T) {
+	rows := map[schemas.ModelProvider]map[string][]string{
+		schemas.BedrockMantle: {"openai.gpt-5.6-luna": {"only_this"}},
+		schemas.XAI:           {"grok-4.6": {"x_tools"}},
+	}
+	schemas.SetCapabilityResolver(func(provider schemas.ModelProvider, model string) *schemas.ModelCapabilities {
+		reserved, ok := rows[provider][model]
+		if !ok {
+			return nil
+		}
+		return &schemas.ModelCapabilities{ReservedToolNamespaces: reserved}
+	})
+	t.Cleanup(func() { schemas.SetCapabilityResolver(nil) })
+
+	namespace := func(name string) schemas.ResponsesTool {
+		return schemas.ResponsesTool{
+			Type: schemas.ResponsesToolTypeNamespace,
+			Name: schemas.Ptr(name),
+			ResponsesToolNamespace: &schemas.ResponsesToolNamespace{Tools: []schemas.ResponsesTool{{
+				Type:                  schemas.ResponsesToolTypeFunction,
+				Name:                  schemas.Ptr("run"),
+				ResponsesToolFunction: &schemas.ResponsesToolFunction{},
+			}}},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		provider     schemas.ModelProvider
+		baseProvider schemas.ModelProvider
+		model        string
+		tools        []schemas.ResponsesTool
+		wantNames    []string
+	}{
+		{
+			name:      "mantle row replaces the hardcoded list, so web survives and only_this is dropped",
+			provider:  schemas.BedrockMantle,
+			model:     "openai.gpt-5.6-luna",
+			tools:     []schemas.ResponsesTool{namespace("web"), namespace("only_this"), namespace("keep")},
+			wantNames: []string{"web", "keep"},
+		},
+		{
+			name:      "mantle model without a row keeps the hardcoded fallback",
+			provider:  schemas.BedrockMantle,
+			model:     "openai.gpt-5.6-terra",
+			tools:     []schemas.ResponsesTool{namespace("web"), namespace("only_this"), namespace("keep")},
+			wantNames: []string{"only_this", "keep", ""},
+		},
+		{
+			name:      "a provider with no hardcoded entry reserves names through its row",
+			provider:  schemas.XAI,
+			model:     "grok-4.6",
+			tools:     []schemas.ResponsesTool{namespace("x_tools"), namespace("keep")},
+			wantNames: []string{"keep"},
+		},
+		{
+			name:         "custom provider on a mantle base reads the bedrock_mantle row",
+			provider:     schemas.ModelProvider("my-mantle"),
+			baseProvider: schemas.BedrockMantle,
+			model:        "openai.gpt-5.6-luna",
+			tools:        []schemas.ResponsesTool{namespace("web"), namespace("only_this")},
+			wantNames:    []string{"web"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bifrostReq := &schemas.BifrostResponsesRequest{
+				Provider: tc.provider,
+				Model:    tc.model,
+				Input: []schemas.ResponsesMessage{{
+					Role:    schemas.Ptr(schemas.ResponsesInputMessageRoleUser),
+					Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hi")},
+				}},
+				Params: &schemas.ResponsesParameters{Tools: tc.tools},
+			}
+			var ctx *schemas.BifrostContext
+			if tc.baseProvider != "" {
+				ctx = schemas.NewBifrostContextWithValue(context.Background(), schemas.NoDeadline,
+					schemas.BifrostContextKeyBaseProviderType, tc.baseProvider)
+			}
+			result := ToOpenAIResponsesRequest(ctx, bifrostReq)
+			require.NotNil(t, result)
+
+			gotNames := make([]string, 0, len(result.Tools))
+			for _, tool := range result.Tools {
+				name := ""
+				if tool.Name != nil {
+					name = *tool.Name
+				}
+				gotNames = append(gotNames, name)
+			}
+			require.Equal(t, tc.wantNames, gotNames)
+		})
+	}
+}
+
+// Bedrock Mantle's /v1 Responses backend (gpt-oss) strips id, status and annotations from
+// replayed assistant items before validating, so output_text history fails with
+// status "failed" / invalid_prompt; only input_text (or a string) validates (#7074). gpt-5.x
+// on /openai/v1 and OpenAI itself reject input_text on assistant items, so the retag must
+// stay scoped to gpt-oss on Mantle.
+func TestToOpenAIResponsesRequest_MantleGPTOSSReplaysAssistantTextAsInput(t *testing.T) {
+	tests := []struct {
+		name         string
+		provider     schemas.ModelProvider
+		baseProvider schemas.ModelProvider
+		model        string
+		wantType     string
+	}{
+		{name: "bedrock gpt-oss-120b", provider: schemas.Bedrock, model: "openai.gpt-oss-120b", wantType: "input_text"},
+		{name: "bedrock_mantle gpt-oss-20b", provider: schemas.BedrockMantle, model: "openai.gpt-oss-20b", wantType: "input_text"},
+		{name: "custom provider on a bedrock base", provider: schemas.ModelProvider("my-bedrock"), baseProvider: schemas.Bedrock, model: "openai.gpt-oss-120b", wantType: "input_text"},
+		{name: "bedrock gpt-5.6 on /openai/v1 keeps output_text", provider: schemas.Bedrock, model: "openai.gpt-5.6-sol", wantType: "output_text"},
+		{name: "bedrock_mantle gpt-5.6 keeps output_text", provider: schemas.BedrockMantle, model: "openai.gpt-5.6-sol", wantType: "output_text"},
+		{name: "gpt-oss outside Mantle keeps output_text", provider: schemas.Groq, model: "openai/gpt-oss-120b", wantType: "output_text"},
+		{name: "openai keeps output_text", provider: schemas.OpenAI, model: "gpt-5-mini", wantType: "output_text"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assistant := schemas.ResponsesMessage{
+				Type:   schemas.Ptr(schemas.ResponsesMessageTypeMessage),
+				Role:   schemas.Ptr(schemas.ResponsesInputMessageRoleAssistant),
+				Status: schemas.Ptr("completed"),
+				Content: &schemas.ResponsesMessageContent{ContentBlocks: []schemas.ResponsesMessageContentBlock{{
+					Type:                              schemas.ResponsesOutputMessageContentTypeText,
+					Text:                              schemas.Ptr("Hello! How can I help you today?"),
+					ResponsesOutputMessageContentText: &schemas.ResponsesOutputMessageContentText{},
+				}}},
+			}
+			bifrostReq := &schemas.BifrostResponsesRequest{
+				Provider: tc.provider,
+				Model:    tc.model,
+				Input: []schemas.ResponsesMessage{
+					{Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser), Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("hello")}},
+					assistant,
+					{Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser), Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("Reply with OK.")}},
+				},
+			}
+			var ctx *schemas.BifrostContext
+			if tc.baseProvider != "" {
+				ctx = schemas.NewBifrostContextWithValue(context.Background(), schemas.NoDeadline,
+					schemas.BifrostContextKeyBaseProviderType, tc.baseProvider)
+			}
+			result := ToOpenAIResponsesRequest(ctx, bifrostReq)
+			require.NotNil(t, result)
+
+			body, err := sonic.Marshal(result)
+			require.NoError(t, err)
+			var wire struct {
+				Input []json.RawMessage `json:"input"`
+			}
+			require.NoError(t, json.Unmarshal(body, &wire))
+			require.Len(t, wire.Input, 3, "body: %s", body)
+			var replayed struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type        string          `json:"type"`
+					Text        string          `json:"text"`
+					Annotations json.RawMessage `json:"annotations"`
+				} `json:"content"`
+			}
+			require.NoError(t, json.Unmarshal(wire.Input[1], &replayed), "input[1]: %s", wire.Input[1])
+			require.Equal(t, "assistant", replayed.Role)
+			require.Len(t, replayed.Content, 1)
+			require.Equal(t, tc.wantType, replayed.Content[0].Type, "input[1]: %s", wire.Input[1])
+			require.Equal(t, "Hello! How can I help you today?", replayed.Content[0].Text)
+			if tc.wantType == "input_text" {
+				require.Nil(t, replayed.Content[0].Annotations, "input_text carries no annotations: %s", wire.Input[1])
+			}
+
+			require.Equal(t, schemas.ResponsesOutputMessageContentTypeText, bifrostReq.Input[1].Content.ContentBlocks[0].Type,
+				"the caller's input must not be mutated")
 		})
 	}
 }

@@ -1,60 +1,351 @@
 [
-	{
-		"source": "where provider.id == 'openai'",
-		"compiled": {
-			"where": {
-				"kind": "compare",
-				"left": { "path": "provider.id", "type": "string" },
-				"operator": "==",
-				"right": { "type": "string", "value": "openai" }
-			},
-			"orderBy": []
-		}
-	},
-	{
-		"source": "order by provider.id desc",
-		"compiled": {
-			"where": null,
-			"orderBy": [{ "path": "provider.id", "type": "string", "direction": "desc" }]
-		}
-	},
-	{
-		"source": "WHERE deployment.data.capabilities.streaming == TRUE AND NOT exists(deployment.data.dataHandling.retentionDays)",
-		"valid": true
-	},
-	{
-		"source": "where provider.id in ['openai', 'anthropic'] order by deployment.id asc",
-		"valid": true
-	},
-	{ "source": "where request.model == 'a\\'b\\\\c'", "valid": true },
-	{ "source": "where request.model == '🌍'", "valid": true },
-	{
-		"source": "where (provider.id == 'a' or provider.id == 'b') and provider.id != 'c'",
-		"valid": true
-	},
-	{ "source": "where provider.id == \"a\\\"b\"", "valid": true },
-	{ "source": "where not not exists(provider.id)", "valid": true },
-	{ "source": "", "valid": false },
-	{ "source": "where provider.id = 'openai'", "valid": false },
-	{ "source": "where provider.id == null", "valid": false },
-	{ "source": "where provider.id == true", "valid": false },
-	{ "source": "where provider.id in []", "valid": false },
-	{ "source": "where provider.id in ['a', 'a']", "valid": false },
-	{ "source": "where provider.id in ['a',]", "valid": false },
-	{ "source": "where provider.unknown == 'a'", "valid": false },
-	{ "source": "where request.model == 'a\\nb'", "valid": false },
-	{ "source": "where request.model == 'a\u0001b'", "valid": false },
-	{ "source": "where request.model == 'unclosed", "valid": false },
-	{ "source": "order by deployment.id desc", "valid": false },
-	{ "source": "order by deployment.id, provider.id", "valid": false },
-	{ "source": "order by provider.id, provider.id", "valid": false },
-	{
-		"source": "order by provider.id, model.id, route.id, author.id, request.model",
-		"valid": false
-	},
-	{ "source": "where exists(provider.id); drop table api_key", "valid": false },
-	{ "source": "where (exists(provider.id)", "valid": false },
-	{ "source": "where exists(provider.id))", "valid": false },
-	{ "source": "where exists(provider.id) and", "valid": false },
-	{ "source": "\u0085where exists(provider.id)", "valid": false }
+  {
+    "filter": "provider.id == \"openai\"",
+    "valid": true
+  },
+  {
+    "sort": [
+      {
+        "by": "provider.id",
+        "direction": "desc"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "filter": "(deployment.capabilities.streaming == true) && (!(has(deployment.dataHandling.retentionDays)))",
+    "valid": true
+  },
+  {
+    "filter": "provider.id in [\"openai\", \"anthropic\"]",
+    "sort": [
+      {
+        "by": "deployment.id",
+        "direction": "asc"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "filter": "request.model == \"a'b\\\\c\"",
+    "valid": true
+  },
+  {
+    "filter": "request.model == \"\ud83c\udf0d\"",
+    "valid": true
+  },
+  {
+    "filter": "((provider.id == \"a\") || (provider.id == \"b\")) && (provider.id != \"c\")",
+    "valid": true
+  },
+  {
+    "filter": "provider.id == \"a\\\"b\"",
+    "valid": true
+  },
+  {
+    "filter": "!(!(has(provider.id)))",
+    "valid": true
+  },
+  {
+    "filter": "",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id = 'openai'",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id == null",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id == true",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id in []",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id in ['a', 'a']",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id in ['a',]",
+    "valid": false
+  },
+  {
+    "filter": "where provider.unknown == 'a'",
+    "valid": false
+  },
+  {
+    "filter": "where request.model == 'a\\nb'",
+    "valid": false
+  },
+  {
+    "filter": "where request.model == 'a\u0001b'",
+    "valid": false
+  },
+  {
+    "filter": "where request.model == 'unclosed",
+    "valid": false
+  },
+  {
+    "filter": "order by deployment.id desc",
+    "valid": false
+  },
+  {
+    "filter": "order by deployment.id, provider.id",
+    "valid": false
+  },
+  {
+    "filter": "order by provider.id, provider.id",
+    "valid": false
+  },
+  {
+    "filter": "order by provider.id, model.id, route.id, author.id, request.model",
+    "valid": false
+  },
+  {
+    "filter": "where exists(provider.id); drop table api_key",
+    "valid": false
+  },
+  {
+    "filter": "where (exists(provider.id)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(provider.id))",
+    "valid": false
+  },
+  {
+    "filter": "where exists(provider.id) and",
+    "valid": false
+  },
+  {
+    "filter": "\u0085where exists(provider.id)",
+    "valid": false
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"0\")",
+    "valid": true
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"0.001\")",
+    "valid": true
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"0.042\")",
+    "valid": true
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"9007199254740993.000000000000000001\")",
+    "valid": true
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"0.000000000000000000000000000000000001\")",
+    "valid": true
+  },
+  {
+    "filter": "deployment.pricing.output_tokens.per_mill_tokens <= decimal(\"9999999999999999999999999999999999999999.999999999999999999999999999999999999\")",
+    "valid": true
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= 0.0000000000000000000000000000000000001",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= 10000000000000000000000000000000000000000",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= 1e-36",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= .001",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= 1.",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= 01",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= NaN",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= Infinity",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens <= '0.001'",
+    "valid": false
+  },
+  {
+    "filter": "where deployment.pricing.output_tokens.per_mill_tokens in [1, 1.0]",
+    "valid": false
+  },
+  {
+    "filter": "where request.estimatedInputTokens < 1.5",
+    "valid": false
+  },
+  {
+    "sort": [
+      {
+        "by": "deployment.pricing.output_tokens.per_mill_tokens",
+        "direction": "asc"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "filter": "blended_price(3, 1, 'per_mill_tokens') < decimal(\"5\")",
+    "valid": true
+  },
+  {
+    "filter": "(has(deployment.pricing.output_tokens.per_mill_context_gt_272k))",
+    "valid": true
+  },
+  {
+    "sort": [
+      {
+        "by": "blended_price(3, 1, 'per_mill_tokens')",
+        "direction": "desc"
+      }
+    ],
+    "valid": true
+  },
+  {
+    "filter": "!(blended_price(1, 2, 'per_mill_context_lte_272k') in [decimal(\"0\"), decimal(\"0.5\")])",
+    "valid": true
+  },
+  {
+    "filter": "blended_price(9007199254740991, 1, 'per_mill_tokens') > decimal(\"0\")",
+    "valid": true
+  },
+  {
+    "filter": "where blended_price(3, 1) < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(0, 0, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(-1, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1.5, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1.0, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(-0, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(9007199254740992, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, per_mill_tokens) < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, 'per_1k_calls') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, 'per_mill_tokens', 1) < 5",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, 'per_mill_tokens') < '5'",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, 'per_mill_tokens') contains '5'",
+    "valid": false
+  },
+  {
+    "filter": "where provider.id == blended_price(1, 1, 'per_mill_tokens')",
+    "valid": false
+  },
+  {
+    "filter": "order by blended_price(3, 1, 'per_mill_tokens'), blended_price(6, 2, 'per_mill_tokens')",
+    "valid": false
+  },
+  {
+    "filter": "where blended_price(1, 1, 'per_mill_tokens') < 5 + 1",
+    "valid": false
+  },
+  {
+    "filter": "where BLENDED_PRICE(1, 1, 'per_mill_tokens') < 5",
+    "valid": false
+  },
+  {
+    "filter": "where exists(author.data.name)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(model.data.name)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.data.contextWindowTokens)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(route.data.providerId)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(provider.data.name)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.data.pricing.input_tokens.per_mill_tokens)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.anthropic_web_search_calls.per_1k_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_chat_completion_search_model_calls.per_1k_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_responses_web_search_calls.per_1k_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_responses_web_search_preview_calls.per_1k_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_responses_web_search_preview_non_reasoning_calls.per_1k_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_chat_completion_search_preview_model_calls.per_1k_search_context_low_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_chat_completion_search_preview_model_calls.per_1k_search_context_medium_calls)",
+    "valid": false
+  },
+  {
+    "filter": "where exists(deployment.pricing.openai_chat_completion_search_preview_model_calls.per_1k_search_context_high_calls)",
+    "valid": false
+  }
 ]

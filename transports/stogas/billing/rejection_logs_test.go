@@ -16,8 +16,7 @@ import (
 
 func rejectionFixture() RejectionInput {
 	return RejectionInput{
-		Claims: &APIKeyClaims{KeyID: uuid.Must(uuid.NewV7()).String(), OrganizationID: uuid.Must(uuid.NewV7()).String(),
-			WorkspaceID: uuid.Must(uuid.NewV7()).String(), ResponsibleID: uuid.Must(uuid.NewV7()).String()},
+		Claims:    &APIKeyClaims{KeyID: uuid.Must(uuid.NewV7()).String(), OrganizationID: uuid.Must(uuid.NewV7()).String(), ResponsibleID: uuid.Must(uuid.NewV7()).String()},
 		RequestID: uuid.Must(uuid.NewV7()).String(), RequestType: "chat_completion_request",
 		Code: "insufficient_balance", StatusCode: 402, CreatedAt: time.Now().UTC().Truncate(time.Second), GatewayVersion: "dev",
 	}
@@ -51,7 +50,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 				t.Error(err)
 				continue
 			}
-			for _, field := range []string{"provider_attempts", "pricing", "plugins", "timings", "catalog_node_ids", "cancelled", "stogas_processing_success"} {
+			for _, field := range []string{"provider_attempts", "meters", "plugins", "performance", "cancelled", "error", "policy_versions"} {
 				delete(fields, field)
 			}
 			encoded, _ := json.Marshal(fields)
@@ -98,7 +97,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 				t.Fatalf("incorrect first/last timestamps: %s %s", row.CreatedAt, row.LastRequestAt)
 			}
 		}
-		if row.StogasBillingStatus != "rejected" || row.BilledCostUSDAtoms != "0" {
+		if len(row.ProviderAttempts) != 0 || row.BilledCostUSD != "0" {
 			t.Fatalf("rejection became billable: %+v", row)
 		}
 	}
@@ -244,7 +243,7 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.rejectionLogs.mu.Lock()
 	for _, row := range service.rejectionLogs.groups {
 		encoded, _ := json.Marshal(row)
-		if strings.Contains(string(encoded), "secret") || row.RequestType != "unknown" || row.StogasErrorCode != "insufficient_balance" {
+		if strings.Contains(string(encoded), "secret") || row.RequestType != "unknown" || row.Error == nil || row.Error.Code != "insufficient_balance" {
 			t.Errorf("untrusted labels escaped: %s", encoded)
 		}
 	}
@@ -271,5 +270,19 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.RecordRejection(input)
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.RecordedRequests != got.DroppedRequests {
 		t.Fatalf("shutdown loss accounting: %+v", got)
+	}
+}
+
+func TestRejectionGroupsKeepDifferentPolicyVersionsSeparate(t *testing.T) {
+	s := &Service{}
+	defer s.closeRejectionLogs()
+	at := time.Now()
+	for i := 1; i <= 2; i++ {
+		s.RecordRejection(RejectionInput{Claims: &APIKeyClaims{KeyID: "key"}, RequestID: fmt.Sprint(i), Code: "policy_denied", StatusCode: 403, CreatedAt: at, PolicyVersions: &PolicyVersions{{Scope: "organization", ID: "org", Revision: i}, {Scope: "key", ID: "key", Revision: i}}})
+	}
+	s.rejectionLogs.mu.Lock()
+	defer s.rejectionLogs.mu.Unlock()
+	if len(s.rejectionLogs.groups) != 2 {
+		t.Fatal("different saved policies were counted as one rejection group")
 	}
 }

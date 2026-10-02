@@ -71,10 +71,12 @@ type discoveryResponse struct {
 }
 
 type reservedTicket struct {
-	ChuteID    string
-	InstanceID string
-	PublicKey  string
-	Value      string
+	ChuteID            string
+	InstanceID         string
+	PublicKey          string
+	Value              string
+	MeasurementName    string
+	MeasurementVersion string
 }
 
 type verifiedInstance struct {

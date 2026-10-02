@@ -139,27 +139,11 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 	}
 
 	var rejections authorizationRejectionCache
-	rejections.record(firstAdmissionKey, "dashboard_forbidden", now)
-	if _, _, ok := rejections.get(secondAdmissionKey, now); !ok {
+	rejections.record(firstAdmissionKey, now)
+	if rejections.get(secondAdmissionKey, now) == 0 {
 		t.Fatal("rotated key prefix bypassed the rejection cache")
 	}
 
-	authorizations := newLocalAuthorizationLimiter(6)
-	limit := int(authorizations.limit)
-	releases := make([]func(), 0, limit)
-	for index := 0; index < limit; index++ {
-		release, ok := authorizations.acquire(firstAdmissionKey)
-		if !ok {
-			t.Fatalf("authorization %d was rejected", index+1)
-		}
-		releases = append(releases, release)
-	}
-	if release, ok := authorizations.acquire(secondAdmissionKey); ok || release != nil {
-		t.Fatal("rotated key prefix received fresh authorization capacity")
-	}
-	for _, release := range releases {
-		release()
-	}
 }
 
 func signDashboardToken(t *testing.T, privateKey ed25519.PrivateKey, claims dashboardTokenClaims) string {

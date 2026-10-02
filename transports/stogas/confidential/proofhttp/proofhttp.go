@@ -1,197 +1,139 @@
 package proofhttp
 
 import (
+	"bytes"
 	"context"
-	"crypto/ed25519"
+	"crypto/mldsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"hash"
 
+	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/quote"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/reportdata"
 )
 
-const (
-	SSECommentPrefix = "stogas "
-)
-
-type SnapshotProvider interface {
-	Current(ctx context.Context) (*quote.Snapshot, error)
-}
+const SSECommentPrefix = "stogas "
 
 type Service struct {
-	Quotes SnapshotProvider
-	Signer ed25519.PrivateKey
+	signer *mldsa.PrivateKey
+	boot   [32]byte
+	nodeID string
 }
 
 type Input = proof.Input
-
 type Output struct {
 	JSON   []byte
 	Object proof.Object
 }
 
-// ValidateCatalog checks that the receipt signer still matches current attested report data.
-// The catalog identity is signed in the receipt and verified against its independent approval.
-func (s *Service) ValidateCatalog(ctx context.Context, catalogDigest string, _ uint64) error {
-	if s == nil {
-		return nil
+// New binds the signer to the immutable boot already appraised by the runtime.
+// This local consistency check does not replace hardware or log verification.
+func New(document []byte, signer *mldsa.PrivateKey) (*Service, error) {
+	if len(document) > attest.MaxSessionEvidenceBytes || signer == nil || signer.PublicKey().Parameters() != mldsa.MLDSA65() {
+		return nil, errors.New("invalid receipt identity")
 	}
-	if catalogDigest == "" {
-		return errors.New("catalog identity is required")
+	var record attest.BootRecord
+	if err := json.Unmarshal(document, &record); err != nil {
+		return nil, err
 	}
-	_, err := s.currentValidatedSnapshot(ctx)
-	return err
+	canonical, err := record.Document()
+	if err != nil || !bytes.Equal(canonical, document) {
+		return nil, errors.New("receipt boot is not canonical")
+	}
+	public, err := base64.RawURLEncoding.DecodeString(record.ReportData.SigningPublicKey)
+	if err != nil || !bytes.Equal(public, signer.PublicKey().Bytes()) {
+		return nil, errors.New("receipt signer differs from boot")
+	}
+	report, err := base64.RawURLEncoding.DecodeString(record.Report)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{signer: signer, boot: sha256.Sum256(document), nodeID: attest.SNPNodeID([32]byte(report[0x140:0x160]))}, nil
 }
 
 func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
 	if s == nil {
 		return nil, nil
 	}
-	if err := s.validate(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(input.RequestBody) == 0 {
-		return nil, errors.New("request body is required")
+	if len(input.RequestBody) == 0 || len(input.ResponseBody) == 0 {
+		return nil, errors.New("receipt content is empty")
 	}
-	if len(input.ResponseBody) == 0 {
-		return nil, errors.New("response body is required")
-	}
-	if !proof.ValidMetadata(input.Metadata) {
-		return nil, errors.New("response proof metadata is invalid")
-	}
-	if err := s.ValidateCatalog(ctx, input.Metadata.Catalog.Digest, input.Metadata.Catalog.Sequence); err != nil {
-		return nil, err
-	}
-	proofInput := input
-	proofInput.RequestBody = append([]byte(nil), input.RequestBody...)
-	proofInput.ResponseBody = append([]byte(nil), input.ResponseBody...)
-	return s.outputForPayload(proof.PayloadFor(proofInput))
+	return s.output(input.Metadata, sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody))
 }
 
-func (s *Service) currentValidatedSnapshot(ctx context.Context) (*quote.Snapshot, error) {
-	if err := s.validate(); err != nil {
-		return nil, err
+func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*Output, error) {
+	if s.nodeID == "" || !proof.ValidMetadata(metadata) {
+		return nil, errors.New("receipt metadata or identity is invalid")
 	}
-	snapshot, err := s.Quotes.Current(ctx)
+	object := proof.Object{Metadata: metadata, NodeID: s.nodeID}
+	receipt, err := proof.SignReceipt(s.signer, s.boot, request, response, object)
 	if err != nil {
 		return nil, err
 	}
-	if snapshot == nil || len(snapshot.Quote) == 0 {
-		return nil, errors.New("current quote snapshot is empty")
-	}
-	reportDataHex, err := reportdata.HashHex(snapshot.Payload)
-	if err != nil {
-		return nil, err
-	}
-	if snapshot.ReportDataHex == "" || snapshot.ReportDataHex != reportDataHex {
-		return nil, errors.New("current quote snapshot report-data hash mismatch")
-	}
-	publicKey, ok := s.Signer.Public().(ed25519.PublicKey)
-	if !ok || snapshot.Payload.Ed25519PublicKey != base64.RawURLEncoding.EncodeToString(publicKey) {
-		return nil, errors.New("confidential proof signer does not match report-data ed25519 key")
-	}
-	return snapshot, nil
-}
-
-func (s *Service) outputForPayload(payload proof.Payload) (*Output, error) {
-	signature, err := proof.Sign(s.Signer, payload)
-	if err != nil {
-		return nil, err
-	}
-	object := proof.ObjectFor(payload, signature)
+	object.Receipt = receipt
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
 	}
 	if len(encoded) > proof.MaxObjectBytes {
-		return nil, errors.New("response proof exceeds its encoded size limit")
+		return nil, errors.New("response metadata exceeds its encoded size limit")
 	}
-	return &Output{
-		JSON:   encoded,
-		Object: object,
-	}, nil
+	return &Output{JSON: encoded, Object: object}, nil
 }
 
-func (s *Service) validate() error {
-	if s == nil {
-		return nil
-	}
-	if s.Quotes == nil {
-		return errors.New("confidential proof quote provider is required")
-	}
-	if len(s.Signer) != ed25519.PrivateKeySize {
-		return errors.New("confidential proof signer is required")
-	}
-	return nil
-}
-
+// Stream belongs to one response writer. It retains digests, never request bodies.
 type Stream struct {
-	hasher *proof.StreamHasher
+	request  [32]byte
+	response hash.Hash
+	metadata proof.Metadata
+	finished bool
 }
 
 func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if s == nil {
 		return nil, nil
 	}
-	if err := s.ValidateCatalog(ctx, input.Metadata.Catalog.Digest, input.Metadata.Catalog.Sequence); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return newStream(input)
-}
-
-func newStream(input Input) (*Stream, error) {
-	if len(input.RequestBody) == 0 {
-		return nil, errors.New("request proof context is incomplete")
+	if s.nodeID == "" || s.signer == nil || len(input.RequestBody) == 0 || !proof.ValidCatalog(input.Metadata.Catalog) {
+		return nil, errors.New("receipt context is incomplete")
 	}
-	if input.Metadata.Catalog.Digest == "" {
-		return nil, errors.New("catalog digest is required")
-	}
-	if !proof.ValidCatalogSelectionIDs(input.Metadata.Catalog.SelectionIDs) {
-		return nil, errors.New("all five resolved catalog nodes are required")
-	}
-	streamingInput := proof.StreamingInput{
-		RequestBody: append([]byte(nil), input.RequestBody...),
-		Metadata:    input.Metadata,
-	}
-	return &Stream{
-		hasher: proof.NewStreamHasher(streamingInput),
-	}, nil
+	return &Stream{request: sha256.Sum256(input.RequestBody), response: sha256.New(), metadata: input.Metadata}, nil
 }
 
 func (s *Stream) WriteSentChunk(chunk []byte) {
-	if s == nil || s.hasher == nil || len(chunk) == 0 {
-		return
+	if s != nil && !s.finished {
+		_, _ = s.response.Write(chunk)
 	}
-	s.hasher.WriteChunk(chunk)
 }
-
 func (s *Stream) SetMetadata(metadata proof.Metadata) {
-	if s == nil || s.hasher == nil {
-		return
+	if s != nil && !s.finished {
+		s.metadata = metadata
 	}
-	s.hasher.SetMetadata(metadata)
 }
-
-func (svc *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, error) {
-	if svc == nil || stream == nil {
+func (s *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, error) {
+	if s == nil || stream == nil {
 		return nil, nil
 	}
-	payload := stream.hasher.FinalPayload()
-	if !proof.ValidMetadata(proof.Metadata{
-		RequestID:            payload.RequestID,
-		CreatedAt:            payload.CreatedAt,
-		NodeID:               payload.NodeID,
-		Catalog:              payload.Catalog,
-		Pricing:              payload.Pricing,
-		Timing:               payload.Timing,
-		E2EETranscriptSHA256: payload.Proof.E2EETranscriptSHA256,
-	}) {
-		return nil, errors.New("response proof metadata is invalid")
-	}
-	if err := svc.ValidateCatalog(ctx, payload.Catalog.Digest, payload.Catalog.Sequence); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return svc.outputForPayload(payload)
+	if stream.finished {
+		return nil, errors.New("receipt stream is already finished")
+	}
+	stream.finished = true
+	return s.output(stream.metadata, stream.request, [32]byte(stream.response.Sum(nil)))
+}
+
+// Close is called after all admitted requests finish.
+func (s *Service) Close() {
+	if s != nil {
+		s.signer = nil
+	}
 }

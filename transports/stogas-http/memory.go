@@ -4,6 +4,10 @@ import (
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
+	"unsafe"
+
+	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 const (
@@ -12,6 +16,16 @@ const (
 	// normalization. It does not allocate or prove five in-memory copies.
 	requestBodyReservationFactor = int64(5)
 	minimumRequestWeightBytes    = int64(1 * 1024 * 1024)
+	// Wire bytes alone miss dense arrays of empty or short values. Charge each
+	// JSON value at the largest fixed input-item size before typed decoding.
+	// This is admission accounting, not a bound on every Go allocation or RSS.
+	requestJSONValueBytes = int64(max(
+		unsafe.Sizeof(openaiprovider.OpenAIMessage{}),
+		unsafe.Sizeof(schemas.ChatMessage{}),
+		unsafe.Sizeof(schemas.ResponsesMessage{}),
+		unsafe.Sizeof(schemas.ChatContentBlock{}),
+		unsafe.Sizeof(schemas.ResponsesMessageContentBlock{}),
+	))
 	// Four GiB out of the ten-GiB default Go limit reduces to two fifths.
 	// These small values keep lower-limit scaling within int64.
 	lowerGoLimitBudgetNumerator   = int64(2)
@@ -28,6 +42,9 @@ const (
 
 type requestMemoryAdmission struct {
 	budget int64
+	// Installed before serving. It only releases independently owned idle state.
+	reclaim   func(needed int64) bool
+	reclaimMu sync.Mutex
 
 	reserved     atomic.Int64
 	peakReserved atomic.Int64
@@ -48,6 +65,9 @@ type requestMemoryLease struct {
 	released    atomic.Bool
 	transferred bool
 	weight      int64
+	retained    int64
+	bodyBytes   int
+	structure   int64
 }
 
 type requestMemoryDiagnostics struct {
@@ -57,6 +77,7 @@ type requestMemoryDiagnostics struct {
 	MinimumRequestReservationBytes int64  `json:"minimumRequestReservationBytes"`
 	PeakReservedBytes              int64  `json:"peakReservedBytes"`
 	RequestBodyReservationFactor   int64  `json:"requestBodyReservationFactor"`
+	JSONValueReservationBytes      int64  `json:"jsonValueReservationBytes"`
 	RequestBodyReservationFailures uint64 `json:"requestBodyReservationFailures"`
 	RequestBodyReservedBytes       int64  `json:"requestBodyReservedBytes"`
 	ReservedBytes                  int64  `json:"reservedBytes"`
@@ -65,14 +86,14 @@ type requestMemoryDiagnostics struct {
 	StreamStateReservedBytes       int64  `json:"streamStateReservedBytes"`
 }
 
-func requestMemoryWeight(bodyBytes int) int64 {
+func requestMemoryWeight(bodyBytes int, structure int64) int64 {
 	if bodyBytes <= 0 {
-		return minimumRequestWeightBytes
+		bodyBytes = 0
 	}
-	if int64(bodyBytes) > requestMemoryBudgetBytes/requestBodyReservationFactor {
+	if int64(bodyBytes) > requestMemoryBudgetBytes/requestBodyReservationFactor || structure > requestMemoryBudgetBytes-int64(bodyBytes)*requestBodyReservationFactor {
 		return requestMemoryBudgetBytes + 1
 	}
-	weight := int64(bodyBytes) * requestBodyReservationFactor
+	weight := int64(bodyBytes)*requestBodyReservationFactor + structure
 	if weight < minimumRequestWeightBytes {
 		return minimumRequestWeightBytes
 	}
@@ -106,11 +127,11 @@ func (a *requestMemoryAdmission) budgetBytes() int64 {
 }
 
 func (a *requestMemoryAdmission) acquire(bodyBytes int) (*requestMemoryLease, bool) {
-	weight := requestMemoryWeight(bodyBytes)
+	weight := requestMemoryWeight(bodyBytes, 0)
 	if !a.reserve(requestBodyMemory, weight) {
 		return nil, false
 	}
-	return &requestMemoryLease{admission: a, class: requestBodyMemory, weight: weight}, true
+	return &requestMemoryLease{admission: a, class: requestBodyMemory, weight: weight, bodyBytes: bodyBytes}, true
 }
 
 func (a *requestMemoryAdmission) newLease(class memoryReservationClass) *requestMemoryLease {
@@ -128,9 +149,23 @@ func (a *requestMemoryAdmission) reserve(class memoryReservationClass, bytes int
 		return true
 	}
 	budget := a.budgetBytes()
+	reclaimed := false
 	for {
 		current := a.reserved.Load()
 		if bytes > budget || current > budget-bytes {
+			if bytes <= budget && !reclaimed && a.reclaim != nil {
+				reclaimed = true
+				if a.reclaimMu.TryLock() {
+					// Recheck after winning reclamation: another caller may have
+					// already released enough idle state for this reservation.
+					needed := a.reserved.Load() - (budget - bytes)
+					freed := needed <= 0 || a.reclaim(needed)
+					a.reclaimMu.Unlock()
+					if freed {
+						continue
+					}
+				}
+			}
 			a.failureCounter(class).Add(1)
 			return false
 		}
@@ -194,9 +229,10 @@ func (l *requestMemoryLease) resize(bodyBytes int) bool {
 	if l.released.Load() {
 		return false
 	}
-	weight := requestMemoryWeight(bodyBytes)
+	weight := max(requestMemoryWeight(bodyBytes, l.structure), l.retained)
 	delta := weight - l.weight
 	if delta == 0 {
+		l.bodyBytes = bodyBytes
 		return true
 	}
 	if delta > 0 {
@@ -207,7 +243,32 @@ func (l *requestMemoryLease) resize(bodyBytes int) bool {
 		l.admission.release(l.class, -delta)
 	}
 	l.weight = weight
+	l.bodyBytes = bodyBytes
 	return true
+}
+
+// The structure charge follows the original request lease through inference,
+// including cancellation and provider draining; body resizing cannot release it.
+func (l *requestMemoryLease) admitJSON(values int) error {
+	if l == nil || l.admission == nil || values < 0 {
+		return errRequestMemoryCapacity
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released.Load() {
+		return errRequestMemoryCapacity
+	}
+	structure := requestMemoryBudgetBytes + 1
+	if int64(values) <= requestMemoryBudgetBytes/requestJSONValueBytes {
+		structure = int64(values) * requestJSONValueBytes
+	}
+	structure = max(l.structure, structure)
+	weight := max(requestMemoryWeight(l.bodyBytes, structure), l.retained)
+	if !l.admission.reserve(l.class, weight-l.weight) {
+		return errRequestMemoryCapacity
+	}
+	l.structure, l.weight = structure, weight
+	return nil
 }
 
 // grow reserves one byte for each retained or queued stream payload byte.
@@ -245,8 +306,8 @@ func (l *requestMemoryLease) shrink(bytes int) {
 		return
 	}
 	delta := int64(bytes)
-	if delta > l.weight {
-		delta = l.weight
+	if delta > l.weight-l.retained {
+		delta = l.weight - l.retained
 	}
 	l.weight -= delta
 	l.admission.release(l.class, delta)
@@ -259,8 +320,38 @@ func (l *requestMemoryLease) release() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.released.CompareAndSwap(false, true) {
-		l.admission.release(l.class, l.weight)
+		l.admission.release(l.class, l.weight-l.retained)
+		l.weight = l.retained
 	}
+}
+
+// retain transfers ownership of part of an existing reservation. The live
+// request keeps its full charge until release; afterward only retained bytes
+// remain. No admission/reacquisition race can discard a settlement under load.
+// The returned closure retains this small lease, never the request or body.
+func (l *requestMemoryLease) retain(bytes int) (func(), bool) {
+	if l == nil || l.admission == nil || bytes <= 0 {
+		return nil, false
+	}
+	l.mu.Lock()
+	if l.released.Load() || int64(bytes) > l.weight-l.retained {
+		l.mu.Unlock()
+		return nil, false
+	}
+	l.retained += int64(bytes)
+	l.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			l.retained -= int64(bytes)
+			if l.released.Load() {
+				l.weight -= int64(bytes)
+				l.admission.release(l.class, int64(bytes))
+			}
+		})
+	}, true
 }
 
 // saturated reports only when the admission budget cannot fit the smallest
@@ -278,6 +369,7 @@ func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
 			BudgetBytes:                    requestMemoryBudgetBytes,
 			MinimumRequestReservationBytes: minimumRequestWeightBytes,
 			RequestBodyReservationFactor:   requestBodyReservationFactor,
+			JSONValueReservationBytes:      requestJSONValueBytes,
 		}
 	}
 	return requestMemoryDiagnostics{
@@ -287,6 +379,7 @@ func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
 		MinimumRequestReservationBytes: minimumRequestWeightBytes,
 		PeakReservedBytes:              a.peakReserved.Load(),
 		RequestBodyReservationFactor:   requestBodyReservationFactor,
+		JSONValueReservationBytes:      requestJSONValueBytes,
 		RequestBodyReservationFailures: a.requestBodyFailures.Load(),
 		RequestBodyReservedBytes:       a.requestBodyReserved.Load(),
 		ReservedBytes:                  a.reserved.Load(),

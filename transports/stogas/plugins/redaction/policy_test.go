@@ -13,11 +13,29 @@ import (
 	"unicode/utf8"
 )
 
-func TestExplicitPatternSelectionAndFixedDefault(t *testing.T) {
+var testDetectorPolicy = func() *Policy {
+	patterns := make([]Pattern, 0, len(supportedPatterns))
+	for _, pattern := range supportedPatterns {
+		if pattern != PatternIPAddress {
+			patterns = append(patterns, pattern)
+		}
+	}
+	policy, err := CompilePolicy(Options{Patterns: patterns})
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}()
+
+func newTestRedactor() *Redactor {
+	return NewWithPolicy(testDetectorPolicy)
+}
+
+func TestExplicitPatternSelection(t *testing.T) {
 	t.Parallel()
 	source := []byte("email alice@corp.io phone +44 (20) 7123 4567 SSN 856-45-6789 card 4532015112830366 IP 198.51.100.24 SERVICE_SECRET=AbCdEf0123456789GhIjKlMn")
 
-	defaultOut, changed, err := New().redactBytes(source)
+	defaultOut, changed, err := newTestRedactor().redactBytes(source)
 	if err != nil || !changed || !bytes.Contains(defaultOut, []byte("198.51.100.24")) || bytes.Contains(defaultOut, []byte("alice@corp.io")) {
 		t.Fatalf("default policy output=%q changed=%t err=%v", defaultOut, changed, err)
 	}
@@ -52,7 +70,7 @@ func TestEmptyPolicyUsesTheOriginalCleanBytes(t *testing.T) {
 	source := []byte("alice@corp.io 192.168.1.1 SERVICE_SECRET=AbCdEf0123456789GhIjKlMn")
 	redactor := NewWithPolicy(policy)
 	out, changed, err := redactor.redactBytes(source)
-	if err != nil || changed || !bytes.Equal(out, source) || redactor.Summary().ItemsRedacted != 0 {
+	if err != nil || changed || !bytes.Equal(out, source) || redactor.Summary() != nil {
 		t.Fatalf("empty policy output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
 	}
 	if &out[0] != &source[0] {
@@ -95,11 +113,16 @@ func TestPatternsCoverEveryBuiltInEntityOnce(t *testing.T) {
 	if covered != allBuiltInEntityMask {
 		t.Fatalf("pattern coverage=%#x, want %#x", covered, allBuiltInEntityMask)
 	}
-	if defaultEntityMask != allBuiltInEntityMask.without(EntityIPAddress) {
-		t.Fatalf("default mask=%#x", defaultEntityMask)
-	}
-	if redactor := NewWithPolicy(nil); redactor == nil || redactor.policy != defaultPolicy {
-		t.Fatal("nil policy did not select the secure default")
+}
+
+func TestAbsentPolicyLeavesTextUnchanged(t *testing.T) {
+	t.Parallel()
+	source := []byte("alice@corp.io 192.168.1.1 SERVICE_SECRET=AbCdEf0123456789GhIjKlMn")
+	for _, redactor := range []*Redactor{NewWithPolicy(nil), {}, nil} {
+		out, changed, err := redactor.redactBytes(source)
+		if err != nil || changed || !bytes.Equal(out, source) || redactor.Summary() != nil {
+			t.Fatalf("absent policy output=%q changed=%t err=%v", out, changed, err)
+		}
 	}
 }
 
@@ -311,7 +334,7 @@ func TestCustomPatternsComposeWithBuiltInsAndJSON(t *testing.T) {
 		]`),
 	}
 	redactor := NewWithPolicy(policy)
-	if err := redactor.RedactRequestFields(raw, SurfaceChat); err != nil {
+	if err := redactor.RedactRequestFields(raw, SurfaceChat, nil); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(raw["messages"], []byte("EMP-123456 at")) ||
@@ -416,7 +439,11 @@ func FuzzConfiguredRedaction(f *testing.F) {
 		if errors.Is(err, ErrMatchLimit) || errors.Is(err, ErrWorkLimit) {
 			return
 		}
-		if err != nil || changed != !bytes.Equal(source, out) || changed != (redactor.Summary().ItemsRedacted > 0) {
+		summary := redactor.Summary()
+		if (summary != nil) != (len(patterns) > 0) {
+			t.Fatalf("redaction metrics do not match selected rules: %#v", summary)
+		}
+		if err != nil || changed != !bytes.Equal(source, out) || changed != (summary != nil && summary.ItemsRedacted > 0) {
 			t.Fatalf("configured result output=%q changed=%t summary=%#v err=%v", out, changed, redactor.Summary(), err)
 		}
 		if utf8.Valid(source) && !utf8.Valid(out) {
@@ -471,7 +498,7 @@ func TestCustomRequirementsCannotWeakenOtherMatches(t *testing.T) {
 
 func TestStogasTokenDetectionIsBounded(t *testing.T) {
 	t.Parallel()
-	body := strings.Repeat("Ab3_", 41) + "AA"
+	body := strings.Repeat("Ab3_", 36)
 	for _, test := range []struct {
 		input           string
 		enabled, hidden bool
@@ -479,7 +506,7 @@ func TestStogasTokenDetectionIsBounded(t *testing.T) {
 		{"sk_stogas_v1_" + body, true, true},
 		{"(sk_stogas_v1_" + body + ")", true, true},
 		{"sk_stogas_v1_" + body, false, false},
-		{"sk_stogas_v1_" + body[:165], true, false},
+		{"sk_stogas_v1_" + body[:143], true, false},
 		{"sk_stogas_v1_" + body + "A", true, false},
 		{"sk_stogas_v1_...1234", true, false},
 		{"xsk_stogas_v1_" + body, true, false},
@@ -538,4 +565,60 @@ func mustCompilePolicy(t *testing.T, options Options) *Policy {
 		t.Fatal(err)
 	}
 	return policy
+}
+
+func TestSharedPolicyCompositionScansOriginalTextAndPrunesCoveredLiterals(t *testing.T) {
+	word := true
+	parentOptions := Options{Patterns: []Pattern{PatternEmailAddress}, CustomPatterns: []CustomPattern{{Expression: "ABCD"}}, Literals: []Literal{{Text: "SECRETABC", IgnoreCase: true, WholeWord: &word}}}
+	childOptions := Options{CustomPatterns: []CustomPattern{{Expression: "BCDE"}, {Expression: "ABCD"}}, Literals: []Literal{{Text: "secretabc", IgnoreCase: true, WholeWord: &word}, {Text: "SECRETABC", Fuzzy: true, WholeWord: &word}, {Text: "NEXTSECRET"}}}
+	parent := mustCompilePolicy(t, parentOptions)
+	child := mustCompilePolicy(t, childOptions)
+	combined, err := CombinePolicies([]*Policy{parent, child})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined.literals[0].matcher != parent.literals[0].matcher || combined.literals[1].matcher != child.literals[0].matcher {
+		t.Fatal("composition copied matchers")
+	}
+	if len(combined.custom) != 2 {
+		t.Fatal("duplicate custom expression retained")
+	}
+	literals := NormalizeLiterals(append(append([]Literal{}, parentOptions.Literals...), childOptions.Literals...))
+	flat := mustCompilePolicy(t, Options{Patterns: parentOptions.Patterns, CustomPatterns: append(append([]CustomPattern{}, parentOptions.CustomPatterns...), childOptions.CustomPatterns...), Literals: literals})
+	for _, input := range []string{"ABCDE", "secretabc SECRETABC SECERTABC NextSecret NEXTSECRET", "ABCDE secretabc alice@example.com", strings.Repeat("secretabc ", 500)} {
+		actual, changed, err := NewWithPolicy(combined).redactBytes([]byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected, wantChanged, err := NewWithPolicy(flat).redactBytes([]byte(input))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(actual) != string(expected) || changed != wantChanged {
+			t.Fatalf("input=%q actual=%q expected=%q", input, actual, expected)
+		}
+	}
+	// A request-local combination cannot change either cached parent matcher.
+	if parent.literals[0].enabled != nil || len(parent.custom) != 1 {
+		t.Fatal("composition mutated a parent")
+	}
+}
+
+func TestSharedCaseInsensitiveLiteralIdentityRetainsOneCoveringMatcher(t *testing.T) {
+	parent := mustCompilePolicy(t, Options{Literals: []Literal{{Text: "PRIVATEWORD", IgnoreCase: true}}})
+	child := mustCompilePolicy(t, Options{Patterns: []Pattern{PatternEmailAddress}})
+	duplicate := mustCompilePolicy(t, Options{Literals: []Literal{{Text: "privateword", IgnoreCase: true}}})
+	for _, parts := range [][]*Policy{{parent, child}, {parent, duplicate, child}} {
+		combined, err := CombinePolicies(parts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(combined.literals) != 1 || combined.literals[0].matcher != parent.literals[0].matcher {
+			t.Fatal("equivalent dictionaries retained another scan or lost their shared matcher")
+		}
+		out, changed, err := NewWithPolicy(combined).redactBytes([]byte("privateWORD and alice@corp.io"))
+		if err != nil || !changed || string(out) != "<CUSTOM_PII> and <EMAIL_ADDRESS>" {
+			t.Fatalf("case-insensitive parent was lost: %s changed=%t error=%v", out, changed, err)
+		}
+	}
 }

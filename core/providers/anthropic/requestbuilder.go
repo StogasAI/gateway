@@ -89,6 +89,13 @@ type AnthropicProviderRequestDefaults struct {
 	// InjectBetaHeadersIntoBody serialises filtered beta headers into the JSON
 	// body as "anthropic_beta" (Vertex only — embeds in body, others use HTTP).
 	InjectBetaHeadersIntoBody bool
+
+	// InlineURLSources fetches URL-sourced images and documents and rewrites them
+	// as inline base64/text sources. Set for hosts that reject remote sources —
+	// Bedrock Mantle answers them with "URL content sources are not yet supported
+	// for this model". Native Anthropic accepts URLs and fetches them itself, so
+	// it leaves this off and avoids a redundant download.
+	InlineURLSources bool
 }
 
 // AnthropicProviderRequestDefaultsMap maps each Anthropic-family provider to
@@ -97,21 +104,37 @@ type AnthropicProviderRequestDefaults struct {
 var AnthropicProviderRequestDefaultsMap = map[schemas.ModelProvider]AnthropicProviderRequestDefaults{
 	schemas.Anthropic: {},
 	schemas.Azure:     {},
-	// Bedrock Mantle native-Anthropic endpoint (/anthropic/v1/messages): the
-	// request is the native Anthropic Messages body, so model stays in the body
-	// (set to the bare Bedrock model id), the version is sent as an
-	// "anthropic-version" HTTP header rather than a body field, and stream is a
-	// body field. Tool type versions are still remapped to the canonical pair
-	// the hosted Claude generation expects.
+	// Classic Bedrock InvokeModel / InvokeModelWithResponseStream, used by the
+	// Bedrock provider for Claude requests that need a feature Converse cannot
+	// deliver (today: compaction, see the InvokeModel section of bedrock/bedrock.go and #6825).
+	// Per the AWS Messages API reference
+	// (https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html):
+	// the model is in the URL (no body field), streaming is selected by the URL
+	// (no stream field), anthropic_version must be "bedrock-2023-05-31", and beta
+	// features are opted into through the anthropic_beta body array. Tool type
+	// versions are remapped to the pair the hosted Claude generation expects, and
+	// URL image/document sources are inlined because AWS-hosted Claude has no URL
+	// fetcher (the Converse path already does the same).
 	schemas.Bedrock: {
-		RemapToolVersions: true,
+		DeleteModelField:          true,
+		DeleteStreamField:         true,
+		AddAnthropicVersion:       true,
+		AnthropicVersion:          "bedrock-2023-05-31",
+		RemapToolVersions:         true,
+		InjectBetaHeadersIntoBody: true,
+		InlineURLSources:          true,
 	},
-	// Bedrock Mantle shares the Bedrock native-Anthropic request shape (model in
-	// body, anthropic-version HTTP header, tool versions remapped). It has its own
-	// entry so its feature surface in ProviderFeatures can diverge from Bedrock's
-	// Converse path without coupling the two.
+	// Bedrock Mantle native-Anthropic endpoint (/anthropic/v1/messages): the
+	// request is the plain Anthropic Messages body (model in body, version as the
+	// anthropic-version HTTP header, stream as a body field), unlike classic
+	// Bedrock's InvokeModel shape above. Tool type versions are remapped.
 	schemas.BedrockMantle: {
 		RemapToolVersions: true,
+		// AWS-hosted Claude has no URL fetcher: a {"type":"url"} image or document
+		// source comes back as 400 "URL content sources are not yet supported for
+		// this model". Bedrock's Converse path already inlines these; this keeps
+		// the native-Anthropic surface at parity.
+		InlineURLSources: true,
 	},
 	schemas.DeepSeek: {},
 	// Vertex publisher endpoint: model + region in URL, anthropic_version
@@ -149,9 +172,13 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 	defaults := AnthropicProviderRequestDefaultsMap[cfg.Provider]
 
 	newErr := func(msg string, err error, reqBody []byte) *schemas.BifrostError {
+		bifrostErr := providerUtils.NewBifrostOperationError(msg, err)
+		if badRequest, ok := providerUtils.AsBifrostBadRequestError(err); ok {
+			bifrostErr = badRequest
+		}
 		return providerUtils.EnrichError(
 			ctx,
-			providerUtils.NewBifrostOperationError(msg, err),
+			bifrostErr,
 			reqBody,
 			nil,
 			cfg.ShouldSendBackRawRequest,
@@ -164,6 +191,18 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 
 	if useRawBody, ok := ctx.Value(schemas.BifrostContextKeyUseRawRequestBody).(bool); ok && useRawBody {
 		jsonBody = request.GetRawRequestBody()
+
+		// Server-side thread state is bound to the account that created it, and
+		// Bifrost's per-request key selection, retries, and fallbacks cannot keep
+		// a continuation on that account, so the field never goes upstream. The
+		// integration refuses thread continuations outright; a create request
+		// carries the full conversation and serves fine without the field.
+		if providerUtils.JSONFieldExists(jsonBody, "thread") {
+			jsonBody, err = providerUtils.DeleteJSONField(jsonBody, "thread")
+			if err != nil {
+				return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
+			}
+		}
 
 		if cfg.IsCountTokens {
 			// Token-counting mode: strip max_tokens / temperature and set model.
@@ -283,7 +322,7 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 			// than failing the whole request. Mirrors ValidateChatToolsForProvider
 			// and the Bedrock Responses path. Use a shallow copy so the shared
 			// (possibly pooled) request and its Params are never mutated.
-			if keep, dropped := ValidateResponsesToolsForProvider(request.Params.Tools, cfg.Provider); len(dropped) > 0 {
+			if keep, dropped := ValidateResponsesToolsForProvider(request.Params.Tools, schemas.ResolveModelCaps(cfg.Provider, capModel)); len(dropped) > 0 {
 				reqCopy := *request
 				paramsCopy := *request.Params
 				paramsCopy.Tools = keep
@@ -292,8 +331,12 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 			}
 		}
 
+		ct, ch := providerUtils.StartPhaseSpan(ctx, "convertor")
 		reqBody, convErr := ToAnthropicResponsesRequest(ctx, request)
 		if convErr != nil {
+			if ct != nil {
+				ct.EndSpan(ch, schemas.SpanStatusError, convErr.Error())
+			}
 			if errors.Is(convErr, ErrReasoningMaxTokensTooLow) {
 				return nil, providerUtils.EnrichError(
 					ctx,
@@ -307,7 +350,13 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 			return nil, newErr(schemas.ErrRequestBodyConversion, convErr, jsonBody)
 		}
 		if reqBody == nil {
+			if ct != nil {
+				ct.EndSpan(ch, schemas.SpanStatusError, "request body is not provided")
+			}
 			return nil, newErr("request body is not provided", nil, jsonBody)
+		}
+		if ct != nil {
+			ct.EndSpan(ch, schemas.SpanStatusOk, "")
 		}
 
 		if cfg.Model != "" {
@@ -326,12 +375,23 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 		// support. ToAnthropicResponsesRequest doesn't do this internally
 		// (unlike ToAnthropicChatRequest), so the builder must — keeping
 		// behaviour symmetric across raw and typed paths and across both
-		// chat/responses APIs.
-		stripUnsupportedAnthropicFields(reqBody, cfg.Provider, request.Model)
+		// chat/responses APIs. Gate on capModel, not request.Model: the
+		// model-capability predicates match on canonical Anthropic model names,
+		// so a Bifrost alias would otherwise match none of them and skip every
+		// model-level strip. The raw path above already uses capModel.
+		stripUnsupportedAnthropicFields(reqBody, cfg.Provider, capModel)
 
 		AddMissingBetaHeadersToContext(ctx, reqBody, cfg.Provider)
 
-		jsonBody, err = providerUtils.MarshalSorted(reqBody)
+		mt, mh := providerUtils.StartPhaseSpan(ctx, "request-marshal")
+		jsonBody, err = providerUtils.MarshalProviderRequest(reqBody)
+		if mt != nil {
+			if err != nil {
+				mt.EndSpan(mh, schemas.SpanStatusError, err.Error())
+			} else {
+				mt.EndSpan(mh, schemas.SpanStatusOk, "")
+			}
+		}
 		if err != nil {
 			return nil, newErr(schemas.ErrProviderRequestMarshal, fmt.Errorf("failed to marshal request body: %w", err), jsonBody)
 		}
@@ -412,6 +472,18 @@ func BuildAnthropicResponsesRequestBody(ctx *schemas.BifrostContext, request *sc
 		}
 	}
 
+	jsonBody, err = normalizeBase64TextSources(jsonBody)
+	if err != nil {
+		return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
+	}
+
+	if defaults.InlineURLSources {
+		jsonBody, err = InlineURLContentSources(ctx, jsonBody)
+		if err != nil {
+			return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
+		}
+	}
+
 	if defaults.InjectBetaHeadersIntoBody {
 		if betaHeaders := FilterBetaHeadersForProvider(MergeBetaHeaders(ctx, cfg.ProviderExtraHeaders), cfg.Provider, cfg.BetaHeaderOverrides); len(betaHeaders) > 0 {
 			jsonBody, err = providerUtils.SetJSONField(jsonBody, "anthropic_beta", betaHeaders)
@@ -446,9 +518,13 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 	defaults := AnthropicProviderRequestDefaultsMap[cfg.Provider]
 
 	newErr := func(msg string, err error, reqBody []byte) *schemas.BifrostError {
+		bifrostErr := providerUtils.NewBifrostOperationError(msg, err)
+		if badRequest, ok := providerUtils.AsBifrostBadRequestError(err); ok {
+			bifrostErr = badRequest
+		}
 		return providerUtils.EnrichError(
 			ctx,
-			providerUtils.NewBifrostOperationError(msg, err),
+			bifrostErr,
 			reqBody,
 			nil,
 			cfg.ShouldSendBackRawRequest,
@@ -546,8 +622,12 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 			}
 		}
 	} else {
+		ct, ch := providerUtils.StartPhaseSpan(ctx, "convertor")
 		reqBody, convErr := ToAnthropicChatRequest(ctx, request)
 		if convErr != nil {
+			if ct != nil {
+				ct.EndSpan(ch, schemas.SpanStatusError, convErr.Error())
+			}
 			if errors.Is(convErr, ErrReasoningMaxTokensTooLow) {
 				return nil, providerUtils.EnrichError(
 					ctx,
@@ -561,7 +641,13 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 			return nil, newErr(schemas.ErrRequestBodyConversion, convErr, jsonBody)
 		}
 		if reqBody == nil {
+			if ct != nil {
+				ct.EndSpan(ch, schemas.SpanStatusError, "request body is not provided")
+			}
 			return nil, newErr("request body is not provided", nil, jsonBody)
+		}
+		if ct != nil {
+			ct.EndSpan(ch, schemas.SpanStatusOk, "")
 		}
 
 		if cfg.Model != "" {
@@ -580,12 +666,22 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 		// routed through a custom-provider alias whose name doesn't match
 		// the ProviderFeatures map entry. Idempotent — ToAnthropicChatRequest
 		// already strips using bifrostReq.Provider, so this only changes
-		// behaviour when the two diverge.
-		stripUnsupportedAnthropicFields(reqBody, cfg.Provider, request.Model)
+		// behaviour when the two diverge. Gate on capModel for the same reason
+		// as the responses builder: the model predicates match canonical
+		// Anthropic model names, not Bifrost aliases.
+		stripUnsupportedAnthropicFields(reqBody, cfg.Provider, capModel)
 
 		AddMissingBetaHeadersToContext(ctx, reqBody, cfg.Provider)
 
-		jsonBody, err = providerUtils.MarshalSorted(reqBody)
+		mt, mh := providerUtils.StartPhaseSpan(ctx, "request-marshal")
+		jsonBody, err = providerUtils.MarshalProviderRequest(reqBody)
+		if mt != nil {
+			if err != nil {
+				mt.EndSpan(mh, schemas.SpanStatusError, err.Error())
+			} else {
+				mt.EndSpan(mh, schemas.SpanStatusOk, "")
+			}
+		}
 		if err != nil {
 			return nil, newErr(schemas.ErrProviderRequestMarshal, fmt.Errorf("failed to marshal request body: %w", err), jsonBody)
 		}
@@ -643,6 +739,18 @@ func BuildAnthropicChatRequestBody(ctx *schemas.BifrostContext, request *schemas
 
 	if defaults.DeleteStreamField {
 		jsonBody, err = providerUtils.DeleteJSONField(jsonBody, "stream")
+		if err != nil {
+			return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
+		}
+	}
+
+	jsonBody, err = normalizeBase64TextSources(jsonBody)
+	if err != nil {
+		return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
+	}
+
+	if defaults.InlineURLSources {
+		jsonBody, err = InlineURLContentSources(ctx, jsonBody)
 		if err != nil {
 			return nil, newErr(schemas.ErrProviderRequestMarshal, err, jsonBody)
 		}

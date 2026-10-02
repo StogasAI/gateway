@@ -126,6 +126,12 @@ func OperationalLogDiagnostics() []OperationalLogSeries {
 	return operationalLogs.snapshot()
 }
 
+// RecordHTTP2Error accepts the fixed reason labels supplied by net/http's
+// HTTP2Config.CountError callback. Peer data and error strings never enter it.
+func RecordHTTP2Error(reason string) {
+	writeOperationalLog(operationalLogEvent{Event: "http2_error", ReasonCode: reason, Severity: "warn"})
+}
+
 func writeOperationalLog(event operationalLogEvent) {
 	now := time.Now()
 	event, emit := operationalLogs.record(event, now)
@@ -156,23 +162,4 @@ func safeOperationalErrorType(err error) string {
 		return "NetworkError"
 	}
 	return "Error"
-}
-
-func infisicalSecretFailureReason(secretName string) string {
-	switch secretName {
-	case "API_KEY_PEPPER":
-		return "api_key_pepper_unavailable"
-	case "BYOK_ENCRYPTION_SECRET":
-		return "byok_encryption_secret_unavailable"
-	case "CHUTES_API_KEY":
-		return "chutes_api_key_unavailable"
-	case "DATABASE_SCHEMA":
-		return "database_schema_unavailable"
-	case "DATABASE_URL":
-		return "database_url_unavailable"
-	case "INFERENCE_TOKEN_PUBLIC_KEY":
-		return "inference_token_public_key_unavailable"
-	default:
-		return "required_secret_unavailable"
-	}
 }

@@ -132,6 +132,23 @@ func normalizeChatReasoning(reasoning *schemas.ChatReasoning, deployment Deploym
 	return nil
 }
 
+func normalizeResponsesReasoning(reasoning *schemas.ResponsesParametersReasoning, deployment Deployment, outputTokenLimit int) error {
+	if reasoning == nil {
+		return nil
+	}
+	if reasoning.Effort != nil {
+		normalized, err := normalizeReasoningEffort(*reasoning.Effort, deployment)
+		if err != nil {
+			return err
+		}
+		if normalized.Enabled != nil {
+			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "the selected Responses deployment exposes only a reasoning on/off control"}
+		}
+		reasoning.Effort = normalized.Effort
+	}
+	return validateReasoningMaxTokens(reasoning.Effort, nil, reasoning.MaxTokens, deployment, outputTokenLimit)
+}
+
 func nearestReasoningEffort(requested string, supported []string) string {
 	requestedIndex := reasoningEffortIndex(requested)
 	best := supported[0]
@@ -205,6 +222,58 @@ var (
 		"summary":          true,
 	}
 )
+
+// Decode only the small reasoning controls with the same codecs used for the
+// final request. Candidate filtering must not materialize messages or tools.
+func requestReasoningValidation(raw map[string]json.RawMessage, route Route) (func(Deployment, int) error, error) {
+	fields := make(map[string]json.RawMessage)
+	for _, name := range []string{"reasoning", "reasoning_effort", "reasoning_max_tokens", "reasoning_display", "reasoning.effort"} {
+		if value, ok := raw[name]; ok {
+			fields[name] = value
+		}
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	data, err := sonic.Marshal(fields)
+	if err != nil {
+		return nil, ErrInvalidJSON
+	}
+	if route == RouteChat {
+		var parameters schemas.ChatParameters
+		if err := sonic.Unmarshal(data, &parameters); err != nil {
+			return nil, ErrInvalidJSON
+		}
+		return func(deployment Deployment, outputLimit int) error {
+			if parameters.Reasoning == nil {
+				return nil
+			}
+			reasoning := *parameters.Reasoning
+			return normalizeChatReasoning(&reasoning, deployment, outputLimit)
+		}, nil
+	}
+	var parameters schemas.ResponsesParameters
+	if err := sonic.Unmarshal(data, &parameters); err != nil {
+		return nil, ErrInvalidJSON
+	}
+	if value, ok := fields["reasoning.effort"]; ok {
+		var effort string
+		if err := sonic.Unmarshal(value, &effort); err != nil {
+			return nil, ErrInvalidJSON
+		}
+		if parameters.Reasoning == nil {
+			parameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+		}
+		parameters.Reasoning.Effort = &effort
+	}
+	return func(deployment Deployment, outputLimit int) error {
+		if parameters.Reasoning == nil {
+			return nil
+		}
+		reasoning := *parameters.Reasoning
+		return normalizeResponsesReasoning(&reasoning, deployment, outputLimit)
+	}, nil
+}
 
 func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedFields map[string]bool, allowAliases bool, allowDottedEffort bool) error {
 	reasoning, hasReasoning, err := rawReasoningObject(rawData["reasoning"])

@@ -145,17 +145,17 @@ func TestOpenAIAdapterNormalizesOutputCapsBelowProviderMinimum(t *testing.T) {
 		{
 			name: "chat max_completion_tokens",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`,
 		},
 		{
 			name: "chat max_tokens alias",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5-nano","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`,
+			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`,
 		},
 		{
 			name: "responses max_output_tokens",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","max_output_tokens":15}`,
+			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":15}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -196,7 +196,7 @@ func TestOpenAIAdapterNormalizesOutputCapsBelowProviderMinimum(t *testing.T) {
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
-			if state.Hold.EstimatedUpstreamCostUSDAtoms == "" || state.Hold.EstimatedUpstreamCostUSDAtoms == "0" {
+			if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
 				t.Fatalf("expected normalized output limit to contribute to hold, got %#v", state.Hold)
 			}
 		})
@@ -217,7 +217,7 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 		{
 			name: "responses max_output_tokens",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5-nano","input":"hi","max_output_tokens":0}`,
+			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":0}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -414,7 +414,7 @@ func TestWebSearchPricingRules(t *testing.T) {
 
 	ambiguousSearchWithExpensiveFixedTokens := ambiguousSearch
 	ambiguousSearchWithExpensiveFixedTokens.Deployment.Model = "gpt-4o-mini"
-	ambiguousSearchWithExpensiveFixedTokens.Deployment.Pricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "10000000000000000000000000"}
+	ambiguousSearchWithExpensiveFixedTokens.Deployment.Pricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "10000000"}
 	if got := responsesSearchMeter(ambiguousSearchWithExpensiveFixedTokens); got != MeterOpenAIResponsesWebSearchCalls {
 		t.Fatalf("expected fixed 8000 content tokens to make non-preview web_search costlier, got %q", got)
 	}
@@ -487,8 +487,8 @@ func TestResponsesPreviewSearchNonReasoningUses25DollarMeterWithoutContentTokens
 			ContextWindowTokens: 200000,
 			Pricing: billing.Pricing{
 				billing.MeterInputTokens:                              {billing.RatePerMillionTokens: "1000000"},
-				MeterOpenAIResponsesWebSearchPreviewCalls:             {billing.RatePerThousandCalls: "10000000000000000000"},
-				MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls: {billing.RatePerThousandCalls: "25000000000000000000"},
+				MeterOpenAIResponsesWebSearchPreviewCalls:             {billing.RatePerThousandCalls: "10"},
+				MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls: {billing.RatePerThousandCalls: "25"},
 			},
 		},
 		RawBody:              rawJSON(t, `{"max_tool_calls":2}`),
@@ -508,7 +508,7 @@ func TestResponsesPreviewSearchNonReasoningUses25DollarMeterWithoutContentTokens
 	if len(finalMeters) != 1 {
 		t.Fatalf("expected only non-reasoning preview call final meter, got %#v", finalMeters)
 	}
-	if finalMeters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls || finalMeters[0].Quantity != "1" || finalMeters[0].AmountUSDAtoms != "25000000000000000" {
+	if finalMeters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls || finalMeters[0].Quantity != "1" || finalMeters[0].AmountUSD != "0.025" {
 		t.Fatalf("expected non-reasoning preview final meter at $25/1k calls, got %#v", finalMeters[0])
 	}
 }
@@ -562,7 +562,7 @@ func TestResponsesWebSearchSettlementUsesActualCalls(t *testing.T) {
 	if len(meters) != 1 {
 		t.Fatalf("expected one web search settlement meter, got %#v", meters)
 	}
-	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "2" || meters[0].AmountUSDAtoms != "2" || meters[0].HoldRequired {
+	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "2" || meters[0].AmountUSD != "2" || meters[0].HoldRequired {
 		t.Fatalf("expected settlement quantity 2 charged at call rate, got %#v", meters[0])
 	}
 
@@ -579,9 +579,9 @@ func TestResponsesAmbiguousWebSearchUsesOneCostlierTool(t *testing.T) {
 		Deployment: openAIAdapterDeployment{
 			Model: "gpt-4o-mini",
 			Pricing: billing.Pricing{
-				billing.MeterInputTokens:                              {billing.RatePerMillionTokens: "1000000"},
-				MeterOpenAIResponsesWebSearchCalls:                    {billing.RatePerThousandCalls: "10000000000000000000"},
-				MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls: {billing.RatePerThousandCalls: "25000000000000000000"},
+				billing.MeterInputTokens:                              {billing.RatePerMillionTokens: "0.000000000001"},
+				MeterOpenAIResponsesWebSearchCalls:                    {billing.RatePerThousandCalls: "10"},
+				MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls: {billing.RatePerThousandCalls: "25"},
 			},
 		},
 		ToolTypes: []string{"web_search", "web_search_preview"},
@@ -638,7 +638,7 @@ func TestResponsesNonPreviewWebSearchAddsFixedContentTokensOnlyWhenSelected(t *t
 			Model: "gpt-4o-mini",
 			Pricing: billing.Pricing{
 				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
-				MeterOpenAIResponsesWebSearchCalls: {billing.RatePerThousandCalls: "10000000000000000000"},
+				MeterOpenAIResponsesWebSearchCalls: {billing.RatePerThousandCalls: "10"},
 			},
 		},
 		ToolTypes:            []string{"web_search"},
@@ -676,9 +676,9 @@ func TestChatSearchModelPricingRules(t *testing.T) {
 
 	pricing := billing.Pricing{
 		MeterOpenAIChatCompletionSearchPreviewModelCalls: {
-			RatePerThousandSearchContextLowCalls:    "25000000000000000000",
-			RatePerThousandSearchContextMediumCalls: "27000000000000000000",
-			RatePerThousandSearchContextHighCalls:   "30000000000000000000",
+			RatePerThousandSearchContextLowCalls:    "25",
+			RatePerThousandSearchContextMediumCalls: "27",
+			RatePerThousandSearchContextHighCalls:   "30",
 		},
 	}
 	if got := searchContextRateKey(pricing, MeterOpenAIChatCompletionSearchPreviewModelCalls, "low"); got != RatePerThousandSearchContextLowCalls {

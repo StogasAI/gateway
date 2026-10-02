@@ -2,6 +2,7 @@ package policy
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,19 +11,17 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata"
+
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
 const (
 	CompilerVersion          = 1
-	MaxCompiledBytes         = 64 << 10
-	MaxExpressions           = 4*64 + 1
-	MaxDepth                 = 14
-	MaxListItems             = 32
-	MaxSorts                 = 4 * 4
-	MaxAllowedCatalogNodes   = 4 * 64
-	MaxDenyWindows           = 3 * 16
+	MaxCompiledBytes         = 512 << 10
+	MaxSorts                 = 3
 	MaxPreDispatchCandidates = 3
 	MaxCustomPatterns        = 3
 	MaxCustomPatternBytes    = 512
@@ -45,18 +44,33 @@ var (
 )
 
 type Config struct {
-	Access          *Access  `json:"access"`
-	CompilerVersion int      `json:"compilerVersion"`
-	Plugins         *Plugins `json:"plugins"`
-	Routing         Routing  `json:"routing"`
-	Schema          string   `json:"schema"`
+	ActiveRules            []RuleMatch       `json:"-"`
+	ActiveEncryptedPlugins []*SourceDocument `json:"-"`
+	sources                []ScopedSource
+	hasRules               bool
+	activated              bool
+	requiredSettings       Permission
+	EncryptionKeys         map[string]string `json:"-"`
+	RequiredEncryptionKeys []string          `json:"-"`
+	RedactionSources       []*Plugins        `json:"-"`
+	Access                 *Access           `json:"access"`
+	Input                  *Input            `json:"input,omitempty"`
+	CompilerVersion        int               `json:"compilerVersion"`
+	Plugins                *Plugins          `json:"plugins"`
+	Routing                Routing           `json:"routing"`
+	RequestPermission      RequestPermission `json:"requestPermission"`
+	Schema                 string            `json:"schema"`
+}
+
+type Input struct {
+	ASCIIOnly bool `json:"asciiOnly"`
 }
 
 type Routing struct {
 	AllowedCatalogNodes      *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 	MaxPreDispatchCandidates int                  `json:"maxPreDispatchCandidates"`
 	Query                    *Query               `json:"query"`
-	RequestPolicy            string               `json:"requestPolicy"`
+	SortDefault              bool                 `json:"sortDefault"`
 }
 
 type AllowedCatalogNodes struct {
@@ -65,37 +79,6 @@ type AllowedCatalogNodes struct {
 	Models      []string `json:"models,omitzero"`
 	Providers   []string `json:"providers,omitzero"`
 	Routes      []string `json:"routes,omitzero"`
-}
-
-type Query struct {
-	OrderBy []Sort      `json:"orderBy"`
-	Where   *Expression `json:"where"`
-}
-
-type Sort struct {
-	Direction string `json:"direction"`
-	Path      string `json:"path"`
-	Type      string `json:"type"`
-}
-
-type Field struct {
-	Path string `json:"path"`
-	Type string `json:"type"`
-}
-
-type Literal struct {
-	Type  string          `json:"type"`
-	Value json.RawMessage `json:"value"`
-}
-
-type Expression struct {
-	Kind     string          `json:"kind"`
-	Left     *Field          `json:"left,omitempty"`
-	Operand  *Expression     `json:"operand,omitempty"`
-	Operands []*Expression   `json:"operands,omitempty"`
-	Operator string          `json:"operator,omitempty"`
-	Path     string          `json:"path,omitempty"`
-	Right    json.RawMessage `json:"right,omitempty"`
 }
 
 type Access struct {
@@ -115,31 +98,15 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
+	digestOnce      sync.Once
+	digest          [32]byte
 	StogasRedaction *Redaction `json:"stogasRedaction,omitempty"`
 }
 
 type Redaction struct {
-	CustomPatterns []string `json:"customPatterns,omitempty"`
-	Presets        []string `json:"presets"`
-}
-
-func Parse(raw []byte) (*Config, error) {
-	if len(raw) == 0 || len(raw) > MaxCompiledBytes {
-		return nil, configError("compiled configuration size is invalid")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var config Config
-	if err := decoder.Decode(&config); err != nil {
-		return nil, configError("decode compiled configuration: %v", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, configError("compiled configuration has trailing JSON")
-	}
-	if err := config.validate(); err != nil {
-		return nil, err
-	}
-	return &config, nil
+	CustomPatterns []string            `json:"customPatterns,omitempty"`
+	Presets        []string            `json:"presets"`
+	Literals       []redaction.Literal `json:"literals,omitempty"`
 }
 
 func (c *Config) validate() error {
@@ -149,17 +116,13 @@ func (c *Config) validate() error {
 	if c.Routing.MaxPreDispatchCandidates < 1 || c.Routing.MaxPreDispatchCandidates > MaxPreDispatchCandidates {
 		return configError("pre-dispatch candidate count is invalid")
 	}
-	switch c.Routing.RequestPolicy {
-	case "", "deny", "filter", "filter_and_sort":
-	default:
-		return configError("request policy permission is invalid")
-	}
 	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
 		return err
 	}
 	if err := c.Routing.Query.validate(); err != nil {
 		return err
 	}
+
 	if err := c.Access.validate(); err != nil {
 		return err
 	}
@@ -174,7 +137,6 @@ func (a *AllowedCatalogNodes) validate() error {
 		return nil
 	}
 	lists := [][]string{a.Authors, a.Deployments, a.Models, a.Providers, a.Routes}
-	total := 0
 	for _, values := range lists {
 		if len(values) == 0 {
 			continue
@@ -189,206 +151,28 @@ func (a *AllowedCatalogNodes) validate() error {
 			}
 			seen[value] = struct{}{}
 		}
-		total += len(values)
-	}
-	if (a.Authors == nil && a.Models == nil && a.Deployments == nil && a.Routes == nil && a.Providers == nil) || total > MaxAllowedCatalogNodes {
-		return configError("allowed catalog node count is invalid")
 	}
 	return nil
-}
-
-func (q *Query) validate() error {
-	if q == nil {
-		return nil
-	}
-	if q.Where == nil && len(q.OrderBy) == 0 {
-		return configError("routing query is empty")
-	}
-	if len(q.OrderBy) > MaxSorts {
-		return configError("routing sort count exceeds the limit")
-	}
-	seenSort := map[string]bool{}
-	for _, item := range q.OrderBy {
-		fieldType, ok := FieldType(item.Path)
-		if !ok || fieldType != item.Type || fieldType == "string_list" {
-			return configError("routing sort field is invalid")
-		}
-		if item.Direction != "asc" && item.Direction != "desc" {
-			return configError("routing sort direction is invalid")
-		}
-		if seenSort[item.Path] {
-			return configError("routing sort fields are not unique")
-		}
-		seenSort[item.Path] = true
-	}
-	for index, order := range q.OrderBy {
-		if order.Path == "deployment.id" && (index != len(q.OrderBy)-1 || order.Direction != "asc") {
-			return configError("deployment.id must be the final ascending sort")
-		}
-	}
-	count := 0
-	return validateExpression(q.Where, 0, &count)
-}
-
-func validateExpression(expression *Expression, depth int, count *int) error {
-	if expression == nil {
-		return nil
-	}
-	if depth > MaxDepth {
-		return configError("routing expression nesting exceeds the limit")
-	}
-	*count++
-	if *count > MaxExpressions {
-		return configError("routing expression count exceeds the limit")
-	}
-	switch expression.Kind {
-	case "exists":
-		if expression.Path == "" || hasExpressionExtras(expression, "path") {
-			return configError("exists expression is malformed")
-		}
-		if _, ok := FieldType(expression.Path); !ok {
-			return configError("exists expression has an unknown field")
-		}
-	case "not":
-		if expression.Operand == nil || hasExpressionExtras(expression, "operand") {
-			return configError("not expression is malformed")
-		}
-		return validateExpression(expression.Operand, depth+1, count)
-	case "and", "or":
-		if len(expression.Operands) < 2 || hasExpressionExtras(expression, "operands") {
-			return configError("logical expression is malformed")
-		}
-		for _, operand := range expression.Operands {
-			if operand == nil {
-				return configError("logical expression contains an empty operand")
-			}
-			if err := validateExpression(operand, depth+1, count); err != nil {
-				return err
-			}
-		}
-	case "compare":
-		if expression.Left == nil || expression.Operator == "" || len(expression.Right) == 0 || hasExpressionExtras(expression, "compare") {
-			return configError("comparison expression is malformed")
-		}
-		fieldType, ok := FieldType(expression.Left.Path)
-		if !ok || fieldType != expression.Left.Type {
-			return configError("comparison expression has an invalid field")
-		}
-		return validateComparison(expression, fieldType)
-	default:
-		return configError("routing expression kind is invalid")
-	}
-	return nil
-}
-
-func hasExpressionExtras(expression *Expression, expected string) bool {
-	switch expected {
-	case "path":
-		return expression.Left != nil || expression.Operand != nil || len(expression.Operands) != 0 || expression.Operator != "" || len(expression.Right) != 0
-	case "operand":
-		return expression.Left != nil || len(expression.Operands) != 0 || expression.Operator != "" || expression.Path != "" || len(expression.Right) != 0
-	case "operands":
-		return expression.Left != nil || expression.Operand != nil || expression.Operator != "" || expression.Path != "" || len(expression.Right) != 0
-	case "compare":
-		return expression.Operand != nil || len(expression.Operands) != 0 || expression.Path != ""
-	default:
-		return true
-	}
-}
-
-func validateComparison(expression *Expression, fieldType string) error {
-	operator := expression.Operator
-	if fieldType == "string_list" && operator != "contains" {
-		return configError("list comparison operator is invalid")
-	}
-	if fieldType == "boolean" && operator != "==" && operator != "!=" && operator != "in" {
-		return configError("boolean comparison operator is invalid")
-	}
-	if operator == "contains" && fieldType != "string" && fieldType != "string_list" {
-		return configError("contains field type is invalid")
-	}
-	if operator == "in" {
-		if fieldType == "string_list" {
-			return configError("in field type is invalid")
-		}
-		var literals []Literal
-		if err := decodeStrict(expression.Right, &literals); err != nil || len(literals) == 0 || len(literals) > MaxListItems {
-			return configError("comparison list is invalid")
-		}
-		seen := map[string]bool{}
-		for _, literal := range literals {
-			key, err := validateLiteral(literal, fieldType)
-			if err != nil || seen[key] {
-				return configError("comparison list value is invalid")
-			}
-			seen[key] = true
-		}
-		return nil
-	}
-	if operator != "==" && operator != "!=" && operator != "<" && operator != "<=" && operator != ">" && operator != ">=" && operator != "contains" {
-		return configError("comparison operator is invalid")
-	}
-	var literal Literal
-	if err := decodeStrict(expression.Right, &literal); err != nil {
-		return configError("comparison value is invalid")
-	}
-	expected := fieldType
-	if expected == "string_list" {
-		expected = "string"
-	}
-	_, err := validateLiteral(literal, expected)
-	return err
-}
-
-func validateLiteral(literal Literal, expected string) (string, error) {
-	if literal.Type != expected {
-		return "", configError("comparison value type is invalid")
-	}
-	switch expected {
-	case "boolean":
-		var value bool
-		if err := decodeStrict(literal.Value, &value); err != nil {
-			return "", configError("boolean comparison value is invalid")
-		}
-		return fmt.Sprintf("boolean:%t", value), nil
-	case "integer":
-		var value string
-		if err := decodeStrict(literal.Value, &value); err != nil {
-			return "", configError("integer comparison value is invalid")
-		}
-		integer, ok := new(big.Int).SetString(value, 10)
-		if !ok || integer.String() != value {
-			return "", configError("integer comparison value is not canonical")
-		}
-		return "integer:" + value, nil
-	case "string":
-		var value string
-		if err := decodeStrict(literal.Value, &value); err != nil || len(value) > 1024 {
-			return "", configError("string comparison value is invalid")
-		}
-		return "string:" + value, nil
-	default:
-		return "", configError("comparison value type is unknown")
-	}
 }
 
 func (a *Access) validate() error {
 	if a == nil {
 		return nil
 	}
-	if len(a.Deny) == 0 || len(a.Deny) > MaxDenyWindows {
-		return configError("deny window count is invalid")
+	if a.Deny == nil {
+		return configError("deny windows require an array")
 	}
+	locations := make(map[string]*time.Location)
 	for index := range a.Deny {
 		window := &a.Deny[index]
-		if err := window.validate(); err != nil {
+		if err := window.validate(locations); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (w *DenyWindow) validate() error {
+func (w *DenyWindow) validate(locations map[string]*time.Location) error {
 	if w == nil || len(w.Days) == 0 || len(w.Days) > 7 {
 		return configError("deny window days are invalid")
 	}
@@ -400,9 +184,17 @@ func (w *DenyWindow) validate() error {
 	if !ok || start >= end {
 		return configError("deny window end is invalid")
 	}
-	location, err := time.LoadLocation(w.TimeZone)
-	if err != nil || len(w.TimeZone) > 64 {
+	if len(w.TimeZone) > 64 {
 		return configError("deny window time zone is invalid")
+	}
+	location := locations[w.TimeZone]
+	if location == nil {
+		var err error
+		location, err = time.LoadLocation(w.TimeZone)
+		if err != nil {
+			return configError("deny window time zone is invalid")
+		}
+		locations[w.TimeZone] = location
 	}
 	weekdays := make(map[time.Weekday]bool, len(w.Days))
 	for _, day := range w.Days {
@@ -426,22 +218,25 @@ func (p *Plugins) validate() error {
 		}
 		return configError("redaction plugin is missing")
 	}
-	redaction := p.StogasRedaction
-	if redaction.Presets == nil {
+	selected := p.StogasRedaction
+	if err := redaction.ValidateLiterals(selected.Literals); err != nil {
+		return configError("invalid redaction literals")
+	}
+	if selected.Presets == nil {
 		return configError("redaction presets are missing")
 	}
-	if len(redaction.CustomPatterns) > MaxCustomPatterns {
+	if len(selected.CustomPatterns) > MaxCustomPatterns {
 		return configError("redaction custom pattern count is invalid")
 	}
 	seen := map[string]bool{}
-	for _, pattern := range redaction.Presets {
+	for _, pattern := range selected.Presets {
 		if !redactionPresets[pattern] || seen[pattern] {
 			return configError("redaction preset is invalid")
 		}
 		seen[pattern] = true
 	}
 	seen = map[string]bool{}
-	for _, pattern := range redaction.CustomPatterns {
+	for _, pattern := range selected.CustomPatterns {
 		if pattern == "" || len(pattern) > MaxCustomPatternBytes || seen[pattern] {
 			return configError("custom redaction pattern is invalid")
 		}
@@ -492,190 +287,13 @@ type Value struct {
 	Type    string
 	Boolean bool
 	Integer *big.Int
+	Decimal *Decimal
 	String  string
 	Strings []string
 }
 
 type Values interface {
 	PolicyValue(path string) (Value, bool)
-}
-
-type truth uint8
-
-const (
-	truthUnknown truth = iota
-	truthFalse
-	truthTrue
-)
-
-func (q *Query) Matches(values Values) bool {
-	if q == nil || q.Where == nil {
-		return true
-	}
-	return evaluate(q.Where, values) == truthTrue
-}
-
-func evaluate(expression *Expression, values Values) truth {
-	if expression == nil {
-		return truthUnknown
-	}
-	switch expression.Kind {
-	case "exists":
-		_, ok := values.PolicyValue(expression.Path)
-		if ok {
-			return truthTrue
-		}
-		return truthFalse
-	case "not":
-		value := evaluate(expression.Operand, values)
-		if value == truthTrue {
-			return truthFalse
-		}
-		if value == truthFalse {
-			return truthTrue
-		}
-		return truthUnknown
-	case "and":
-		result := truthTrue
-		for _, operand := range expression.Operands {
-			value := evaluate(operand, values)
-			if value == truthFalse {
-				return truthFalse
-			}
-			if value == truthUnknown {
-				result = truthUnknown
-			}
-		}
-		return result
-	case "or":
-		result := truthFalse
-		for _, operand := range expression.Operands {
-			value := evaluate(operand, values)
-			if value == truthTrue {
-				return truthTrue
-			}
-			if value == truthUnknown {
-				result = truthUnknown
-			}
-		}
-		return result
-	case "compare":
-		left, ok := values.PolicyValue(expression.Left.Path)
-		if !ok || left.Type != expression.Left.Type {
-			return truthUnknown
-		}
-		matched, ok := compareExpression(left, expression.Operator, expression.Right)
-		if !ok {
-			return truthUnknown
-		}
-		if matched {
-			return truthTrue
-		}
-		return truthFalse
-	default:
-		return truthUnknown
-	}
-}
-
-func compareExpression(left Value, operator string, raw json.RawMessage) (bool, bool) {
-	if operator == "in" {
-		var literals []Literal
-		if err := decodeStrict(raw, &literals); err != nil {
-			return false, false
-		}
-		for _, literal := range literals {
-			matched, ok := compareLiteral(left, "==", literal)
-			if !ok {
-				return false, false
-			}
-			if matched {
-				return true, true
-			}
-		}
-		return false, true
-	}
-	var literal Literal
-	if err := decodeStrict(raw, &literal); err != nil {
-		return false, false
-	}
-	return compareLiteral(left, operator, literal)
-}
-
-func compareLiteral(left Value, operator string, literal Literal) (bool, bool) {
-	switch left.Type {
-	case "boolean":
-		var right bool
-		if literal.Type != "boolean" || decodeStrict(literal.Value, &right) != nil {
-			return false, false
-		}
-		return applyComparison(boolCompare(left.Boolean, right), operator), true
-	case "integer":
-		var raw string
-		if literal.Type != "integer" || decodeStrict(literal.Value, &raw) != nil || left.Integer == nil {
-			return false, false
-		}
-		right, ok := new(big.Int).SetString(raw, 10)
-		if !ok {
-			return false, false
-		}
-		return applyComparison(left.Integer.Cmp(right), operator), true
-	case "string":
-		var right string
-		if literal.Type != "string" || decodeStrict(literal.Value, &right) != nil {
-			return false, false
-		}
-		if operator == "contains" {
-			return strings.Contains(left.String, right), true
-		}
-		return applyComparison(strings.Compare(left.String, right), operator), true
-	case "string_list":
-		var right string
-		if operator != "contains" || literal.Type != "string" || decodeStrict(literal.Value, &right) != nil {
-			return false, false
-		}
-		for _, item := range left.Strings {
-			if item == right {
-				return true, true
-			}
-		}
-		return false, true
-	default:
-		return false, false
-	}
-}
-
-func (q *Query) Less(left, right Values) bool {
-	if q == nil {
-		return false
-	}
-	for _, order := range q.OrderBy {
-		leftValue, leftOK := left.PolicyValue(order.Path)
-		rightValue, rightOK := right.PolicyValue(order.Path)
-		if !leftOK || !rightOK {
-			if leftOK != rightOK {
-				return leftOK // Missing values always sort last.
-			}
-			continue
-		}
-		comparison := compareValues(leftValue, rightValue)
-		if comparison == 0 {
-			continue
-		}
-		if order.Direction == "desc" {
-			return comparison > 0
-		}
-		return comparison < 0
-	}
-	// Add the stable tie-break only after every parent and child sort. Inserting
-	// it into each scope would prevent child sorts from ever taking effect.
-	if len(q.OrderBy) > 0 {
-		leftID, leftOK := left.PolicyValue("deployment.id")
-		rightID, rightOK := right.PolicyValue("deployment.id")
-		if leftOK && rightOK {
-			return compareValues(leftID, rightID) < 0
-		}
-	}
-	return false
 }
 
 func compareValues(left, right Value) int {
@@ -685,6 +303,11 @@ func compareValues(left, right Value) int {
 	switch left.Type {
 	case "boolean":
 		return boolCompare(left.Boolean, right.Boolean)
+	case "decimal":
+		if left.Decimal == nil || right.Decimal == nil {
+			return 0
+		}
+		return left.Decimal.Cmp(right.Decimal)
 	case "integer":
 		if left.Integer == nil || right.Integer == nil {
 			return 0
@@ -694,25 +317,6 @@ func compareValues(left, right Value) int {
 		return strings.Compare(left.String, right.String)
 	default:
 		return 0
-	}
-}
-
-func applyComparison(comparison int, operator string) bool {
-	switch operator {
-	case "==":
-		return comparison == 0
-	case "!=":
-		return comparison != 0
-	case "<":
-		return comparison < 0
-	case "<=":
-		return comparison <= 0
-	case ">":
-		return comparison > 0
-	case ">=":
-		return comparison >= 0
-	default:
-		return false
 	}
 }
 
@@ -779,32 +383,32 @@ func configError(format string, arguments ...any) error {
 }
 
 var exactFieldTypes = map[string]string{
-	"author.data.aliases": "string_list", "author.data.name": "string", "author.id": "string",
-	"deployment.data.aliases": "string_list", "deployment.data.contextWindowTokens": "integer",
-	"deployment.data.dataHandling.endToEndEncrypted": "boolean", "deployment.data.dataHandling.processingLocation": "string",
-	"deployment.data.dataHandling.retentionDays": "integer", "deployment.data.dataHandling.storageLocation": "string",
-	"deployment.data.dataHandling.tee": "boolean", "deployment.data.dataHandling.teeVerified": "boolean",
-	"deployment.data.dataHandling.trainingUse":       "boolean",
-	"deployment.data.dataHandling.zeroDataRetention": "boolean", "deployment.data.deprecationDate": "string",
-	"deployment.data.inputModalities": "string_list", "deployment.data.maxOutputTokens": "integer",
-	"deployment.data.modelId": "string", "deployment.data.outputModalities": "string_list",
-	"deployment.data.reasoning": "string", "deployment.data.reasoningEfforts": "string_list",
-	"deployment.data.reasoningMaxTokens.maximum": "integer", "deployment.data.reasoningMaxTokens.minimum": "integer",
-	"deployment.data.routeIds": "string_list", "deployment.data.upstream.chuteId": "string",
-	"deployment.data.upstream.deploymentType": "string", "deployment.data.upstream.gpuCount": "integer",
-	"deployment.data.upstream.hosting": "string", "deployment.data.upstream.inferenceGeo": "string",
-	"deployment.data.upstream.model": "string", "deployment.data.upstream.modelFormat": "string",
-	"deployment.data.upstream.modelVersion": "string", "deployment.data.upstream.reasoningMode": "string",
-	"deployment.data.upstream.serviceTier": "string", "deployment.data.upstream.speed": "string",
-	"deployment.data.weightPrecision": "string",
-	"deployment.id":                   "string", "model.data.aliases": "string_list", "model.data.authorId": "string",
-	"model.data.maxOutputTokens": "integer", "model.data.name": "string", "model.data.reasoning": "string",
-	"model.data.reasoningEfforts": "string_list", "model.data.reasoningMaxTokens.maximum": "integer",
-	"model.data.reasoningMaxTokens.minimum": "integer", "model.data.releaseDate": "string", "model.id": "string",
-	"provider.data.aliases": "string_list", "provider.data.credentialModes": "string_list",
-	"provider.data.name": "string", "provider.id": "string", "request.estimatedInputTokens": "integer",
-	"request.maximumOutputTokens": "integer", "request.model": "string", "request.route": "string",
-	"route.data.interfaces": "string_list", "route.data.providerId": "string", "route.id": "string",
+	"author.aliases": "string_list", "author.name": "string", "author.id": "string",
+	"deployment.aliases": "string_list", "deployment.contextWindowTokens": "integer",
+	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
+	"deployment.dataHandling.retentionDays": "integer", "deployment.dataHandling.storageLocation": "string",
+	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
+	"deployment.dataHandling.trainingUse":       "boolean",
+	"deployment.dataHandling.zeroDataRetention": "boolean", "deployment.deprecationDate": "string",
+	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
+	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
+	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",
+	"deployment.reasoningMaxTokens.maximum": "integer", "deployment.reasoningMaxTokens.minimum": "integer",
+	"deployment.routeIds": "string_list", "deployment.upstream.chuteId": "string",
+	"deployment.upstream.deploymentType": "string", "deployment.upstream.gpuCount": "integer",
+	"deployment.upstream.hosting": "string", "deployment.upstream.inferenceGeo": "string",
+	"deployment.upstream.model": "string", "deployment.upstream.modelFormat": "string",
+	"deployment.upstream.modelVersion": "string", "deployment.upstream.reasoningMode": "string",
+	"deployment.upstream.serviceTier": "string", "deployment.upstream.speed": "string",
+	"deployment.weightPrecision": "string",
+	"deployment.id":              "string", "model.aliases": "string_list", "model.authorId": "string",
+	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
+	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
+	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.tokenizerFamily": "string", "model.id": "string",
+	"provider.aliases": "string_list", "provider.credentialModes": "string_list",
+	"provider.name": "string", "provider.id": "string",
+	"request.bodyBytes": "integer", "request.model": "string", "request.route": "string", "request.time": "timestamp",
+	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
 }
 
 func init() {
@@ -813,7 +417,7 @@ func init() {
 		"parallelFunctionCalling", "pdfInput", "streaming", "structuredOutputs", "systemMessages",
 		"toolChoice", "urlContext",
 	} {
-		exactFieldTypes["deployment.data.capabilities."+capability] = "boolean"
+		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}
 }
 
@@ -822,19 +426,8 @@ var tokenPricingMeters = stringSet(
 	"cached_input_tokens", "input_tokens", "output_tokens", "reasoning_tokens",
 )
 
-var callPricingMeters = stringSet(
-	"anthropic_web_search_calls", "openai_chat_completion_search_model_calls",
-	"openai_responses_web_search_calls", "openai_responses_web_search_preview_calls",
-	"openai_responses_web_search_preview_non_reasoning_calls",
-)
-
 var tokenPricingRates = stringSet(
 	"per_mill_context_gt_272k", "per_mill_context_lte_272k", "per_mill_tokens",
-)
-
-var searchContextPricingRates = stringSet(
-	"per_1k_search_context_high_calls", "per_1k_search_context_low_calls",
-	"per_1k_search_context_medium_calls",
 )
 
 func FieldType(path string) (string, bool) {
@@ -842,14 +435,12 @@ func FieldType(path string) (string, bool) {
 		return fieldType, true
 	}
 	parts := strings.Split(path, ".")
-	if len(parts) != 5 || parts[0] != "deployment" || parts[1] != "data" || parts[2] != "pricing" {
+	if len(parts) != 4 || parts[0] != "deployment" || parts[1] != "pricing" {
 		return "", false
 	}
-	meter, rate := parts[3], parts[4]
-	if (tokenPricingMeters[meter] && tokenPricingRates[rate]) ||
-		(callPricingMeters[meter] && rate == "per_1k_calls") ||
-		(meter == "openai_chat_completion_search_preview_model_calls" && searchContextPricingRates[rate]) {
-		return "integer", true
+	meter, rate := parts[2], parts[3]
+	if tokenPricingMeters[meter] && tokenPricingRates[rate] {
+		return "decimal", true
 	}
 	return "", false
 }
@@ -870,3 +461,20 @@ func stringSet(values ...string) map[string]bool {
 	}
 	return result
 }
+
+// CacheDigest hashes immutable plugin settings once across requests.
+func (p *Plugins) CacheDigest() [32]byte {
+	if p == nil {
+		return sha256.Sum256(nil)
+	}
+	p.digestOnce.Do(func() {
+		raw, _ := json.Marshal(struct {
+			Version int
+			Plugins *Plugins
+		}{CompilerVersion, p})
+		p.digest = sha256.Sum256(raw)
+	})
+	return p.digest
+}
+
+func (c *Config) Activated() bool { return c != nil && c.activated }

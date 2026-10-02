@@ -8,7 +8,7 @@ import (
 
 func TestTypedMarkersDoNotInventIdentifierContext(t *testing.T) {
 	for _, input := range []string{"001010001 001-01-0001", "001010001 <US_SSN>", "001010001 <PAYMENT_CARD>"} {
-		out, _, err := New().redactBytes([]byte(input))
+		out, _, err := newTestRedactor().redactBytes([]byte(input))
 		if err != nil || !bytes.HasPrefix(out, []byte("001010001 ")) {
 			t.Fatalf("%q => %q, %v", input, out, err)
 		}
@@ -17,12 +17,12 @@ func TestTypedMarkersDoNotInventIdentifierContext(t *testing.T) {
 	// not supply context either. Real labels outside it still apply.
 	for padding := 60; padding < 75; padding++ {
 		input := "<US_SSN>" + strings.Repeat(" ", padding) + "001010001"
-		out, changed, err := New().redactBytes([]byte(input))
+		out, changed, err := newTestRedactor().redactBytes([]byte(input))
 		if err != nil || changed || string(out) != input {
 			t.Fatalf("%q => %q, %v", input, out, err)
 		}
 	}
-	out, _, err := New().redactBytes([]byte("SSN: 001010001 <US_SSN>"))
+	out, _, err := newTestRedactor().redactBytes([]byte("SSN: 001010001 <US_SSN>"))
 	if err != nil || string(out) != "SSN: <US_SSN> <US_SSN>" {
 		t.Fatalf("real context: %q, %v", out, err)
 	}
@@ -39,7 +39,7 @@ func TestInternationalEmailPresentations(t *testing.T) {
 		{strings.Repeat("é", 33) + "@stogas.ai", strings.Repeat("é", 33) + "@stogas.ai"},
 	} {
 		t.Run(test.source, func(t *testing.T) {
-			out, _, err := New().redactBytes([]byte(test.source))
+			out, _, err := newTestRedactor().redactBytes([]byte(test.source))
 			if err != nil || string(out) != test.want {
 				t.Fatalf("got %q, %v; want %q", out, err, test.want)
 			}
@@ -62,7 +62,7 @@ func TestUnicodeNumberPresentations(t *testing.T) {
 		{"Call +９９９ １２ ３４５ ６７８９.", "Call +９９９ １２ ３４５ ６７８９."},
 	} {
 		t.Run(test.source, func(t *testing.T) {
-			out, _, err := New().redactBytes([]byte(test.source))
+			out, _, err := newTestRedactor().redactBytes([]byte(test.source))
 			if err != nil || string(out) != test.want {
 				t.Fatalf("got %q, %v; want %q", out, err, test.want)
 			}
@@ -73,14 +73,14 @@ func TestUnicodeNumberPresentations(t *testing.T) {
 func TestPhoneExtensions(t *testing.T) {
 	for _, suffix := range []string{" ext. 123", " EXT: 123", " extension 123", " extn 123", "x123", " #123", ";ext=123", " ext. １２３"} {
 		input := "Call +44 20 7123 4567" + suffix + "."
-		out, _, err := New().redactBytes([]byte(input))
+		out, _, err := newTestRedactor().redactBytes([]byte(input))
 		if err != nil || string(out) != "Call <PHONE_NUMBER>." {
 			t.Fatalf("%q => %q, %v", input, out, err)
 		}
 	}
 	for _, suffix := range []string{" next 123", " extra 123", " ext", " ext. 12345678901", " extension\n123"} {
 		input := "Call +44 20 7123 4567" + suffix
-		out, _, err := New().redactBytes([]byte(input))
+		out, _, err := newTestRedactor().redactBytes([]byte(input))
 		if err != nil || string(out) != "Call <PHONE_NUMBER>"+suffix {
 			t.Fatalf("%q => %q, %v", input, out, err)
 		}
@@ -114,7 +114,7 @@ func TestInternationalPhonePresentations(t *testing.T) {
 		source := source
 		t.Run(source, func(t *testing.T) {
 			t.Parallel()
-			out, changed, err := New().redactBytes([]byte(source))
+			out, changed, err := newTestRedactor().redactBytes([]byte(source))
 			if err != nil || !changed || strings.Count(string(out), "<PHONE_NUMBER>") != 1 {
 				t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
 			}
@@ -137,7 +137,7 @@ func TestInvalidInternationalPhonesRemainVisible(t *testing.T) {
 		"Bad NANP +1 112-555-2671.",
 		"Unassigned +379 12 345 6789 calling code.",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("false positive for %q: output=%q changed=%t err=%v", source, out, changed, err)
 		}
@@ -147,7 +147,7 @@ func TestInvalidInternationalPhonesRemainVisible(t *testing.T) {
 func TestNumericScannerKeepsAdjacentValuesIndependent(t *testing.T) {
 	t.Parallel()
 	source := []byte("2026-08-27 415-555-2671 212-555-2672")
-	redactor := New()
+	redactor := newTestRedactor()
 	out, changed, err := redactor.redactBytes(source)
 	if err != nil || !changed || string(out) != "2026-08-27 <PHONE_NUMBER> <PHONE_NUMBER>" {
 		t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
@@ -160,7 +160,7 @@ func TestNumericScannerKeepsAdjacentValuesIndependent(t *testing.T) {
 func TestSignedDateDoesNotConsumeFollowingPhone(t *testing.T) {
 	t.Parallel()
 	source := []byte("+2026-08-27 415-555-2671")
-	out, changed, err := New().redactBytes(source)
+	out, changed, err := newTestRedactor().redactBytes(source)
 	if err != nil || !changed || string(out) != "+2026-08-27 <PHONE_NUMBER>" {
 		t.Fatalf("redaction = %q, changed=%t, err=%v", out, changed, err)
 	}
@@ -181,7 +181,7 @@ func TestCanonicalStructuredPresentations(t *testing.T) {
 		{source: "NIE Y8063915-Z", placeholder: "<ES_NATIONAL_ID>"},
 	}
 	for _, test := range positives {
-		out, changed, err := New().redactBytes([]byte(test.source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(test.source))
 		if err != nil || !changed || !bytes.Contains(out, []byte(test.placeholder)) {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", test.source, out, changed, err)
 		}
@@ -197,7 +197,7 @@ func TestCanonicalStructuredPresentations(t *testing.T) {
 		"DNI 55555555-A",
 		"NIE Y8063915-A",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("invalid value %q was redacted as %q (changed=%t err=%v)", source, out, changed, err)
 		}
@@ -218,7 +218,7 @@ func TestAmbiguousChecksumValuesRequireSpecificContext(t *testing.T) {
 		"Opaque value A123456780",
 		"Opaque value 15070649C103",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("unlabeled value %q was redacted as %q (changed=%t err=%v)", source, out, changed, err)
 		}
@@ -237,7 +237,7 @@ func TestContextPhrasesAcceptCodeSeparators(t *testing.T) {
 		{source: `tax_file_number="123456782"`, placeholder: "<AU_TAX_FILE_NUMBER>"},
 		{source: `national-provider-identifier="1234567893"`, placeholder: "<US_NPI>"},
 	} {
-		out, changed, err := New().redactBytes([]byte(test.source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(test.source))
 		if err != nil || !changed || !bytes.Contains(out, []byte(test.placeholder)) {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", test.source, out, changed, err)
 		}
@@ -257,7 +257,7 @@ func TestHighConfidenceHealthIdentifiers(t *testing.T) {
 		{source: "Sozialversicherungsnummer 65070803A019", placeholder: "<DE_SOCIAL_SECURITY_NUMBER>"},
 		{source: "RVNR 38551285K051", placeholder: "<DE_SOCIAL_SECURITY_NUMBER>"},
 	} {
-		out, changed, err := New().redactBytes([]byte(test.source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(test.source))
 		if err != nil || !changed || !bytes.Contains(out, []byte(test.placeholder)) {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", test.source, out, changed, err)
 		}
@@ -270,7 +270,7 @@ func TestThirteenDigitTimestampsAreNotPaymentCards(t *testing.T) {
 		"Timestamp 1748503543012",
 		"Card event timestamp 1748503543012",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("timestamp %q was redacted as %q (changed=%t err=%v)", source, out, changed, err)
 		}
@@ -288,7 +288,7 @@ func TestStructuredNumbersDoNotJoinSeparateValues(t *testing.T) {
 		{source: "ABA audit 2026-08-27: 021000021", want: "ABA audit 2026-08-27: <US_ROUTING_NUMBER>"},
 	}
 	for _, test := range tests {
-		out, changed, err := New().redactBytes([]byte(test.source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(test.source))
 		if err != nil || !changed || string(out) != test.want {
 			t.Fatalf("redaction of %q = %q, changed=%t, err=%v", test.source, out, changed, err)
 		}
@@ -308,7 +308,7 @@ func TestInvalidStructuredNumberGroupingRemainsVisible(t *testing.T) {
 		"Partita IVA 01333-550323",
 		"Card 4532/0151/1283/0366",
 	} {
-		out, changed, err := New().redactBytes([]byte(source))
+		out, changed, err := newTestRedactor().redactBytes([]byte(source))
 		if err != nil || changed || !bytes.Equal(out, []byte(source)) {
 			t.Fatalf("invalid grouping %q was redacted as %q (changed=%t err=%v)", source, out, changed, err)
 		}

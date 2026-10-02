@@ -23,9 +23,6 @@ func validateCommonResponsesPolicy(state *State) error {
 	if len(raw) == 0 {
 		return invalidRequest("Invalid responses request")
 	}
-	if _, ok := raw["model"]; !ok {
-		return invalidRequest("model is required")
-	}
 	if _, ok := raw["input"]; !ok {
 		return invalidRequest("input is required")
 	}
@@ -543,7 +540,7 @@ func validateResponsesUserLocation(raw json.RawMessage, path string, allowRegion
 	}
 	for _, key := range []string{"city", "region", "timezone"} {
 		if value, exists := location[key]; exists {
-			if text, ok := rawStringValue(value); !ok || strings.TrimSpace(text) == "" {
+			if text, ok := rawStringValue(value); !ok || !hasNonWhitespace(text) {
 				return invalidRequest(path + "." + key + " must be a non-empty string")
 			}
 		}
@@ -1008,7 +1005,7 @@ func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 		if err := sonic.Unmarshal(raw, &input); err != nil {
 			return invalidRequest("input must be a string or array")
 		}
-		if strings.TrimSpace(input) == "" {
+		if !hasNonWhitespace(input) {
 			return invalidRequest("input must contain non-empty text")
 		}
 		return nil
@@ -1038,7 +1035,7 @@ func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 		isSystemMessage := (itemType == "" || itemType == "message") && (role == "system" || role == "developer")
 		if rawType, exists := item["type"]; exists {
 			value, ok := rawStringValue(rawType)
-			if !ok || strings.TrimSpace(value) == "" {
+			if !ok || !hasNonWhitespace(value) {
 				return invalidRequest(path + ".type must be a string")
 			}
 		}
@@ -1158,7 +1155,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 		if err := sonic.Unmarshal(raw, &text); err != nil {
 			return false, invalidRequest(path + " must be text or an array of text blocks")
 		}
-		if strings.TrimSpace(text) == "" {
+		if !hasNonWhitespace(text) {
 			return false, invalidRequest(path + " must contain non-empty text")
 		}
 		return true, nil
@@ -1182,7 +1179,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			if !ok {
 				return false, invalidRequest(blockPath + ".text must be a string")
 			}
-			meaningful = meaningful || strings.TrimSpace(text) != ""
+			meaningful = meaningful || hasNonWhitespace(text)
 		case "output_text":
 			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "annotations", "logprobs", "cache_control"); err != nil {
 				return false, err
@@ -1200,7 +1197,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			if err := validateResponsesOutputLogProbs(state, block["logprobs"], blockPath+".logprobs"); err != nil {
 				return false, err
 			}
-			meaningful = meaningful || strings.TrimSpace(text) != ""
+			meaningful = meaningful || hasNonWhitespace(text)
 		case "refusal":
 			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "refusal"); err != nil {
 				return false, err
@@ -1215,7 +1212,7 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 			if !ok {
 				return false, invalidRequest(blockPath + ".refusal must be a string")
 			}
-			meaningful = meaningful || strings.TrimSpace(text) != ""
+			meaningful = meaningful || hasNonWhitespace(text)
 		case "input_file":
 			return false, invalidRequest("file inputs are not supported")
 		default:

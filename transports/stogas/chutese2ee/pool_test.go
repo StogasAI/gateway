@@ -126,7 +126,7 @@ func TestTicketReservationIsAtomicAndNeverReusesTicket(t *testing.T) {
 	}
 }
 
-func TestColdBurstCanUseTwoDiscoveryBatches(t *testing.T) {
+func TestColdBurstReservesEveryTicketAcrossSharedRefills(t *testing.T) {
 	instanceKey, err := mlkem.GenerateKey768()
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +178,7 @@ func TestColdBurstCanUseTwoDiscoveryBatches(t *testing.T) {
 	// start the normal low-water background refill.
 	state.warming[testChuteID] = true
 
-	const requests = 15
+	const requests = 120
 	start := make(chan struct{})
 	results := make(chan reservedTicket, requests)
 	errorsFound := make(chan error, requests)
@@ -213,8 +213,8 @@ func TestColdBurstCanUseTwoDiscoveryBatches(t *testing.T) {
 	if len(seen) != requests {
 		t.Fatalf("reserved %d burst tickets, want %d", len(seen), requests)
 	}
-	if got := discoveryCalls.Load(); got != 2 {
-		t.Fatalf("discovery calls = %d, want 2", got)
+	if got := discoveryCalls.Load(); got != requests/10 {
+		t.Fatalf("discovery calls = %d, want %d", got, requests/10)
 	}
 }
 
@@ -242,6 +242,42 @@ func TestTicketReservationStopsWaitingAtRequestDeadline(t *testing.T) {
 	}
 	close(release)
 	<-flight
+}
+
+func TestSuccessfulDiscoveryWithoutEligibleTicketsDoesNotLoop(t *testing.T) {
+	discovered := validDiscoveryForTest(t, time.Now())
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if err := json.NewEncoder(w).Encode(discovered); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	api, err := newAPIClient("managed-key", server.URL, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer api.close()
+	state := newPoolState(api, nil, &diagnostics{})
+	defer state.close()
+	state.verified[testChuteID] = map[string]verifiedInstance{
+		testInstanceID: {
+			InstanceID: testInstanceID,
+			PublicKey:  discovered.Instances[0].PublicKey,
+			GPUCount:   testGPUCount,
+			ValidUntil: time.Now().Add(time.Minute),
+		},
+	}
+	state.cooldowns[testChuteID] = map[string]time.Time{testInstanceID: time.Now().Add(time.Minute)}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := state.reserve(ctx, testModelTarget); !errors.Is(err, ErrNoUsableTicket) {
+		t.Fatalf("reservation error = %v, want no eligible ticket", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("discovery calls = %d, want 1", got)
+	}
 }
 
 func TestTicketReservationUsesRoundRobinAcrossVerifiedInstances(t *testing.T) {
@@ -272,6 +308,7 @@ func TestInvokeOutcomeInvalidatesOnlyUnsafeState(t *testing.T) {
 	tests := []struct {
 		name                string
 		status              int
+		retryAfter          time.Duration
 		err                 error
 		wantTickets         bool
 		wantVerification    bool
@@ -284,6 +321,7 @@ func TestInvokeOutcomeInvalidatesOnlyUnsafeState(t *testing.T) {
 		{name: "not found invalidates instance", status: http.StatusNotFound, wantCooldown: true, wantCooldownAtLeast: 25 * time.Second},
 		{name: "gone invalidates instance", status: http.StatusGone, wantCooldown: true, wantCooldownAtLeast: 25 * time.Second},
 		{name: "rate limited keeps tickets", status: http.StatusTooManyRequests, wantTickets: true, wantVerification: true, wantCooldown: true},
+		{name: "rate limit honors long provider delay", status: http.StatusTooManyRequests, retryAfter: 2 * time.Minute, wantTickets: true, wantVerification: true, wantCooldown: true, wantCooldownAtLeast: 119 * time.Second},
 		{name: "upstream unavailable keeps tickets", status: http.StatusServiceUnavailable, wantTickets: true, wantVerification: true, wantCooldown: true},
 		{name: "ambiguous transport failure invalidates tickets", err: errors.New("connection reset"), wantVerification: true, wantCooldown: true},
 	}
@@ -307,7 +345,7 @@ func TestInvokeOutcomeInvalidatesOnlyUnsafeState(t *testing.T) {
 			state.observeInvoke(
 				reservedTicket{ChuteID: testChuteID, InstanceID: testInstanceID},
 				test.status,
-				0,
+				test.retryAfter,
 				test.err,
 			)
 			state.mu.Lock()
@@ -512,7 +550,7 @@ func TestTicketRefillBackoffStopsRetryStorms(t *testing.T) {
 	rateLimit := &httpStatusError{
 		Operation:  "GET discovery",
 		StatusCode: http.StatusTooManyRequests,
-		RetryAfter: 5 * time.Second,
+		RetryAfter: 2 * time.Minute,
 	}
 	state.recordRefillResult(testChuteID, rateLimit)
 
@@ -520,7 +558,7 @@ func TestTicketRefillBackoffStopsRetryStorms(t *testing.T) {
 	refill := state.refillState[testChuteID]
 	allowed := state.canRefillLocked(testChuteID, time.Now())
 	state.mu.Unlock()
-	if refill == nil || allowed || time.Until(refill.NotBefore) < 4*time.Second {
+	if refill == nil || allowed || time.Until(refill.NotBefore) < 119*time.Second {
 		t.Fatalf("refill backoff = %#v allowed=%t", refill, allowed)
 	}
 
@@ -532,8 +570,15 @@ func TestTicketRefillBackoffStopsRetryStorms(t *testing.T) {
 		t.Fatalf("backoff error = %v", err)
 	}
 	health := state.health()[testChuteID]
-	if health.RefillBackoffSeconds < 1 || health.RefillBackoffSeconds > 5 {
+	if health.RefillBackoffSeconds < 119 || health.RefillBackoffSeconds > 120 {
 		t.Fatalf("reported refill backoff = %d", health.RefillBackoffSeconds)
+	}
+	// An empty, rate-limited pool rejects instead of retaining requests for the
+	// provider's full delay. A nil API also makes any attempted network refill fail.
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := state.reserve(ctx, testModelTarget); !errors.As(err, &backoff) {
+		t.Fatalf("rate-limited reservation must fail immediately: %v", err)
 	}
 
 	state.recordRefillResult(testChuteID, nil)

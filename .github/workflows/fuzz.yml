@@ -20,6 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - module: core
+            package: ./schemas
+            target: FuzzOrderedMapMarshal
           - module: transports
             package: ./stogas/catalog
             target: FuzzValidateRequestJSONNeverPanics
@@ -29,6 +32,9 @@ jobs:
           - module: transports
             package: ./stogas/confidential/e2ee
             target: FuzzDecodeResponseNeverPanics
+          - module: transports
+            package: ./stogas/confidential/channel
+            target: FuzzRecordDecoding
           - module: transports
             package: ./stogas/billing
             target: FuzzNormalizeUpstreamStatus
@@ -40,16 +46,25 @@ jobs:
             target: FuzzProviderUsageNormalization
           - module: transports
             package: ./stogas/policy
-            target: FuzzParseCompiledConfigNeverPanics
+            target: FuzzCompileSourceNeverPanics
+          - module: transports
+            package: ./stogas/policy
+            target: FuzzSourceCanonicalIdentity
           - module: transports
             package: ./stogas/policy
             target: FuzzSourceQuery
+          - module: transports
+            package: ./stogas/policy
+            target: FuzzBlendedPriceExactArithmetic
           - module: transports
             package: ./stogas/plugins/redaction
             target: FuzzRedactBytes
           - module: transports
             package: ./stogas/plugins/redaction
             target: FuzzRedactJSON
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzJSONWithoutRedactionPreservesDecodedValues
           - module: transports
             package: ./stogas/plugins/redaction
             target: FuzzConfiguredRedaction
@@ -59,6 +74,24 @@ jobs:
           - module: transports
             package: ./stogas/plugins/redaction
             target: FuzzIPAddressRedaction
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzLiteralSeedCompleteness
+          - module: transports
+            package: ./stogas/plugins/redaction
+            target: FuzzCredentialClassifier
+          - module: transports
+            package: ./stogas/tokenizer
+            target: FuzzCount
+          - module: transports
+            package: ./stogas/tokenizer
+            target: FuzzClaudeBoundedCount
+          - module: transports
+            package: ./stogas/tokenizer
+            target: FuzzPublishedCounters
+          - module: transports
+            package: ./stogas/rawjson
+            target: FuzzBorrowedContainersPreserveValues
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:

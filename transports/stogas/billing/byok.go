@@ -3,10 +3,8 @@ package billing
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -20,15 +18,11 @@ const (
 	byokHKDFSalt          = "stogas:byok:encryption:salt:v1"
 	byokHKDFInfo          = "stogas:byok:encryption:key:v1"
 	byokAADPrefix         = "stogas:byok:key:v1"
-	byokHashHKDFSalt      = "stogas:byok:credential-hash:salt:v1"
-	byokHashHKDFInfo      = "stogas:byok:credential-hash:key:v1"
-	byokHashPrefix        = "stogas:byok:credential-hash:v1"
 	byokMinimumSecretSize = 32
 )
 
 type byokDecryptor struct {
-	aead    cipher.AEAD
-	hashKey [32]byte
+	aead cipher.AEAD
 }
 
 func newByokDecryptor(masterSecret string) (*byokDecryptor, error) {
@@ -48,14 +42,7 @@ func newByokDecryptor(masterSecret string) (*byokDecryptor, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize BYOK authenticated encryption: %w", err)
 	}
-	hashKey, err := deriveByokKey(masterSecret, byokHashHKDFSalt, byokHashHKDFInfo)
-	if err != nil {
-		return nil, fmt.Errorf("derive BYOK credential hash key: %w", err)
-	}
-	decryptor := &byokDecryptor{aead: aead}
-	copy(decryptor.hashKey[:], hashKey)
-	clear(hashKey)
-	return decryptor, nil
+	return &byokDecryptor{aead: aead}, nil
 }
 
 func deriveByokKey(masterSecret string, salt string, info string) ([]byte, error) {
@@ -68,37 +55,10 @@ func deriveByokKey(masterSecret string, salt string, info string) ([]byte, error
 	return key, nil
 }
 
-// credentialHash returns the stable organization, workspace, and provider-scoped
-// identifier used by holds, policies, and analytics. The plaintext never leaves
-// the gateway process.
-func (d *byokDecryptor) credentialHash(
-	plaintext string,
-	organizationID string,
-	workspaceID string,
-	provider string,
-) (string, error) {
-	if d == nil || d.hashKey == [32]byte{} || plaintext == "" || organizationID == "" || workspaceID == "" || provider == "" {
-		return "", errors.New("BYOK credential hash is unavailable")
-	}
-	message := strings.Join([]string{
-		byokHashPrefix,
-		organizationID,
-		workspaceID,
-		provider,
-		plaintext,
-	}, "\x00")
-	mac := hmac.New(sha256.New, d.hashKey[:])
-	_, _ = mac.Write([]byte(message))
-	digest := mac.Sum(nil)
-	defer clear(digest)
-	return hex.EncodeToString(digest), nil
-}
-
 func (d *byokDecryptor) decrypt(
 	ciphertext string,
 	byokID string,
 	organizationID string,
-	workspaceID string,
 	provider string,
 ) (string, error) {
 	if d == nil || d.aead == nil {
@@ -121,7 +81,6 @@ func (d *byokDecryptor) decrypt(
 			byokAADPrefix,
 			byokID,
 			organizationID,
-			workspaceID,
 			provider,
 		},
 		"\x00",

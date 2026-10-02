@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"bytes"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"sync"
 	"time"
 
@@ -22,15 +23,19 @@ var GatewayVersion = "dev"
 type State struct {
 	Resolution              *catalog.ResolvedRequest
 	Adapter                 Adapter
+	observedUsage           *StandardSignals
 	Signals                 Signals
 	Hold                    HoldEstimate
-	ConfigGeneration        int
+	KeyConfig               *billing.KeyConfigSnapshot
+	PreparedCredential      *billing.PreparedCredential
+	PolicyVersions          *billing.PolicyVersions
 	RawAPIKey               string
 	APIKeyClaims            *billing.APIKeyClaims
 	DashboardCredential     *billing.DashboardCredential
-	PassthroughByokSecret   string
+	EncryptionKeys           customerkey.Keys
 	Authorization           *billing.Authorization
 	BillingFinalized        bool
+	RetainMemory            billing.RetainMemory
 	SingleUseRequestID      bool
 	RequestLifetime         time.Duration
 	RequestID               string
@@ -41,7 +46,7 @@ type State struct {
 	BifrostError            *schemas.BifrostError
 	ProcessingError         *schemas.BifrostError
 	FinalEvent              *billing.RequestEvent
-	UpstreamCostUSDAtoms    string
+	UpstreamCostUSD         string
 	FinalMeters             []catalog.MeterEstimate
 	PluginMetrics           plugins.Metrics
 	ProviderStartedAt       time.Time
@@ -136,20 +141,21 @@ type providerResponsesAnnotation struct {
 }
 
 type providerAttemptObservation struct {
-	Provider       string
-	StartedAt      time.Time
-	CompletedAt    time.Time
-	OutputObserved bool
-	Response       *schemas.BifrostResponse
-	Error          *schemas.BifrostError
+	CatalogChainHash string
+	Provider         string
+	StartedAt        time.Time
+	CompletedAt      time.Time
+	OutputObserved   bool
+	Response         *schemas.BifrostResponse
+	Error            *schemas.BifrostError
 }
 
 type HoldEstimate struct {
-	EstimatedUpstreamCostUSDAtoms string
-	ReservedTokens                int64
-	ProductKey                    string
-	ProviderKey                   string
-	Meters                        []catalog.MeterEstimate
+	EstimatedUpstreamCostUSD string
+	ReservedTokens           int64
+	ProductKey               string
+	ProviderKey              string
+	Meters                   []catalog.MeterEstimate
 }
 
 func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *billing.APIKeyClaims, adapter Adapter) *State {
@@ -160,8 +166,7 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 		APIKeyClaims:   claims,
 		GatewayVersion: GatewayVersion,
 	}
-	if resolution != nil {
-		summary := resolution.StructuredPIIRedactionSummary()
+	if summary := resolution.StructuredPIIRedactionSummary(); summary != nil {
 		state.PluginMetrics.StogasStructuredPIIRedaction = &plugins.StogasStructuredPIIRedactionMetrics{
 			ItemsRedacted: summary.ItemsRedacted,
 			DurationUS:    summary.DurationUS,
@@ -260,7 +265,11 @@ func (s *State) beginProviderAttempt(startedAt time.Time) int {
 			previous.CompletedAt = maxProviderAttemptTime(startedAt, previous.StartedAt)
 		}
 	}
-	s.providerAttempts = append(s.providerAttempts, providerAttemptObservation{StartedAt: startedAt})
+	chainHash := ""
+	if s.Resolution != nil {
+		chainHash = s.Resolution.Deployment.ChainHash
+	}
+	s.providerAttempts = append(s.providerAttempts, providerAttemptObservation{StartedAt: startedAt, CatalogChainHash: chainHash})
 	return len(s.providerAttempts) - 1
 }
 
@@ -317,15 +326,17 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	attempts := make([]billing.ProviderAttemptInput, len(s.providerAttempts))
 	for index, attempt := range s.providerAttempts {
 		attempts[index] = billing.ProviderAttemptInput{
-			Provider:       attempt.Provider,
-			StartedAt:      attempt.StartedAt,
-			CompletedAt:    attempt.CompletedAt,
-			OutputObserved: attempt.OutputObserved,
-			Response:       attempt.Response,
-			Error:          attempt.Error,
+			Provider:         attempt.Provider,
+			CatalogChainHash: attempt.CatalogChainHash,
+			StartedAt:        attempt.StartedAt,
+			CompletedAt:      attempt.CompletedAt,
+			OutputObserved:   attempt.OutputObserved,
+			Response:         attempt.Response,
+			Error:            attempt.Error,
 		}
 	}
 	finalAttempt := &attempts[len(attempts)-1]
+	finalAttempt.CatalogChainHash = ExecutionDeployment(s).ChainHash
 	if finalAttempt.CompletedAt.IsZero() {
 		finalAttempt.CompletedAt = maxProviderAttemptTime(s.ProviderCompletedAt, finalAttempt.StartedAt)
 	}

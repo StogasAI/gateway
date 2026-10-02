@@ -310,11 +310,11 @@ func (DefaultAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	upstreamCostUSDAtoms, err := calculateBaseUpstreamCost(state, nil)
+	upstreamCostUSD, err := calculateBaseUpstreamCost(state, nil)
 	if err != nil {
 		return err
 	}
-	state.UpstreamCostUSDAtoms = upstreamCostUSDAtoms
+	state.UpstreamCostUSD = upstreamCostUSD
 	return nil
 }
 
