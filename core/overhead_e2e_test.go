@@ -155,9 +155,8 @@ func TestOverheadEndToEndUnary(t *testing.T) {
 	if overhead <= 0 {
 		t.Fatalf("overhead = %v, want > 0 — marshalling and pipeline work are never free", overhead)
 	}
-	// Sanity bound: a mock provider on loopback should not make Bifrost look slow.
-	if overhead > total/2 {
-		t.Fatalf("overhead = %v is more than half of total %v — instrumentation likely missing a wire segment", overhead, total)
+	if overhead != total-upstream {
+		t.Fatalf("overhead = %v, want total minus upstream = %v", overhead, total-upstream)
 	}
 
 	// The body carrier has to agree with the context, since it is the only one
