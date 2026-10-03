@@ -47,7 +47,7 @@ func credentialPolicySnapshot(t testing.TB, cache *keyConfigCache, organization 
 func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 	var cache keyConfigCache
 	literal := func(text string) json.RawMessage {
-		raw, _ := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{text}}}}}})
+		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{text}}}}}})
 		return raw
 	}
 	snapshot := credentialPolicySnapshot(t, &cache, "org", literal("ROOT_PRIVATE"), map[string][]json.RawMessage{"openai": {literal("OPENAI_PRIVATE")}, "azure": {literal("AZURE_PRIVATE")}})
@@ -106,7 +106,7 @@ func TestUnusedEncryptedCredentialPolicyDoesNotRequireItsRoot(t *testing.T) {
 	}
 	delete(source, "encryption")
 	encrypted, _ := json.Marshal(source)
-	org, _ := json.Marshal(map[string]any{"version": 1, "encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}})
+	org, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}})
 	var cache keyConfigCache
 	snapshot := credentialPolicySnapshot(t, &cache, organization, org, map[string][]json.RawMessage{"openai": {encrypted}, "azure": {json.RawMessage(`null`)}})
 	defer cache.close()
@@ -146,8 +146,8 @@ func TestSameProviderCredentialPolicyIsolationAndSharing(t *testing.T) {
 	var cache keyConfigCache
 	snapshot := credentialPolicySnapshot(t, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{
 		"openai": {
-			json.RawMessage(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["FIRST_SECRET"]}]}}}`),
-			json.RawMessage(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["SECOND_SECRET"]}]}}}`),
+			json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["FIRST_SECRET"]}]}}}`),
+			json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["SECOND_SECRET"]}]}}}`),
 		},
 	})
 	defer cache.close()
@@ -199,7 +199,7 @@ func TestSameProviderCredentialPolicyIsolationAndSharing(t *testing.T) {
 }
 
 func TestCredentialSourcePoolRestoresOnlyValidReferences(t *testing.T) {
-	source := json.RawMessage(`{"version":1,"input":{"asciiOnly":true}}`)
+	source := json.RawMessage(`{"input":{"asciiOnly":true}}`)
 	index := func(value int) *int { return &value }
 	for _, test := range []struct {
 		name  string
@@ -237,7 +237,7 @@ func TestDifferentCredentialIdentitiesShareOnePolicyDocument(t *testing.T) {
 	const count = 128
 	policies := make([]json.RawMessage, count)
 	for index := range policies {
-		policies[index] = json.RawMessage(`{"version":1,"input":{"asciiOnly":true}}`)
+		policies[index] = json.RawMessage(`{"input":{"asciiOnly":true}}`)
 	}
 	snapshot := credentialPolicySnapshot(t, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{"openai": policies})
 	first := snapshot.Credentials["openai"][0].Credential
@@ -278,7 +278,7 @@ func TestCredentialAlternativesShareOneCompilationBudget(t *testing.T) {
 		for index := range models {
 			models[index] = fmt.Sprintf("model-%d-%08d-abcdefghij", choice, index)
 		}
-		raw, err := json.Marshal(map[string]any{"version": 1, "routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": models}}})
+		raw, err := json.Marshal(map[string]any{"routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": models}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -149,7 +149,6 @@ type sourceBody struct {
 	Encryption *struct {
 		Keys map[string]string `json:"keys"`
 	} `json:"encryption"`
-	Version    int             `json:"version"`
 	Rules      json.RawMessage `json:"rules"`
 	Limits     json.RawMessage `json:"limits"`
 	Delegation *Delegation     `json:"delegation"`
@@ -355,7 +354,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	if err := decoder.Decode(&doc); err != nil {
 		return nil, configError("invalid source configuration: %v", err)
 	}
-	if doc.Version != 1 || doc.Schema != nil && *doc.Schema != "https://stogas.ai/schemas/key-config-v1.json" {
+	if doc.Schema != nil && *doc.Schema != "https://stogas.ai/schemas/key-config-v1.json" {
 		return nil, configError("unsupported source schema")
 	}
 	if doc.Encryption != nil && customerkey.ValidateRegistry(doc.Encryption.Keys) != nil {

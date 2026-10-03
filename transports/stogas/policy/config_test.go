@@ -13,7 +13,7 @@ func TestDenyPeriodsUseTheSourceBudgetAndShareTimeZones(t *testing.T) {
 		windows[i] = DenyWindow{Days: []string{"mon"}, TimeZone: "America/New_York",
 			Start: fmt.Sprintf("%02d:%02d", i/60, i%60), End: fmt.Sprintf("%02d:%02d", (i+1)/60, (i+1)%60)}
 	}
-	raw := mustRawJSON(map[string]any{"version": 1, "access": &Access{Deny: windows}})
+	raw := mustRawJSON(map[string]any{"access": &Access{Deny: windows}})
 	source, err := CompileSource(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +141,7 @@ func TestPolicyFieldRegistryIsClosed(t *testing.T) {
 }
 
 func FuzzCompileSourceNeverPanics(f *testing.F) {
-	for _, seed := range [][]byte{nil, []byte(`{}`), []byte(`null`), []byte(`{"version":1}`), []byte(`{"version":1,"routing":{"filter":"model.id == 'model-a'"}}`), {0xff}} {
+	for _, seed := range [][]byte{nil, []byte(`{}`), []byte(`null`), []byte(`{}`), []byte(`{"routing":{"filter":"model.id == 'model-a'"}}`), {0xff}} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) { _, _ = CompileSource(raw) })

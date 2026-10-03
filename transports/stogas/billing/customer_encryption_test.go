@@ -37,8 +37,8 @@ func encryptedPolicyFixture(t testing.TB) ([]json.RawMessage, string, customerke
 		t.Fatal(err)
 	}
 	t.Cleanup(key.Clear)
-	source, _ := json.Marshal(map[string]any{"version": 1, "encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": fixture.Envelope}})
-	return []json.RawMessage{source, json.RawMessage(`null`), json.RawMessage(`{"version":1}`)}, fixture.OrganizationID, key
+	source, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": fixture.Envelope}})
+	return []json.RawMessage{source, json.RawMessage(`null`), json.RawMessage(`{}`)}, fixture.OrganizationID, key
 }
 
 func TestEncryptedPolicyWarmCacheRequiresKeyAndRefreshKeepsPlan(t *testing.T) {
@@ -173,11 +173,11 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 		}
 	}
 	bad := append([]json.RawMessage(nil), raw...)
-	bad[2] = json.RawMessage(`{"version":1,"plugins":{"stogasRedaction":{"customPattern":"("}}}`)
+	bad[2] = json.RawMessage(`{"plugins":{"stogasRedaction":{"customPattern":"("}}}`)
 	if _, err := s.ValidatePolicySources(validationSources(bad), org, key); err == nil {
 		t.Fatal("malformed regex accepted")
 	}
-	bad[2] = json.RawMessage(`{"version":1,"encryption":{"keys":{"default":"` + key["default"].ID() + `"}}}`)
+	bad[2] = json.RawMessage(`{"encryption":{"keys":{"default":"` + key["default"].ID() + `"}}}`)
 	if _, err := s.ValidatePolicySources(validationSources(bad), org, key); err == nil {
 		t.Fatal("child root accepted")
 	}
@@ -241,7 +241,7 @@ func BenchmarkEncryptedPolicyFullDictionary(b *testing.B) {
 	block, _ := aes.NewCipher(derived)
 	aead, _ := cipher.NewGCM(block)
 	envelope := customerkey.Envelope{Version: 1, KeyID: key["default"].ID(), Salt: base64.RawURLEncoding.EncodeToString(salt), Nonce: base64.RawURLEncoding.EncodeToString(nonce), Blob: base64.RawURLEncoding.EncodeToString(aead.Seal(nil, nonce, plaintext, []byte(context)))}
-	raw[0], _ = json.Marshal(map[string]any{"version": 1, "encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": envelope}})
+	raw[0], _ = json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": envelope}})
 	s := &Service{}
 	b.SetBytes(int64(len(plaintext)))
 	for b.Loop() {

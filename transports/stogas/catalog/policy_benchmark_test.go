@@ -62,7 +62,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	empty, err := policy.CompileSource([]byte(`{"version":1}`))
+	empty, err := policy.CompileSource([]byte(`{}`))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 	indexes := make([]int, len(configs))
 	for index := range configs {
 		indexes[index] = index
-		source, err := policy.CompileSource([]byte(fmt.Sprintf(`{"version":1,"limits":{"spend":{"lifetimeUsd":"%d"}},"routing":{"filter":"true"}}`, index+1)))
+		source, err := policy.CompileSource([]byte(fmt.Sprintf(`{"limits":{"spend":{"lifetimeUsd":"%d"}},"routing":{"filter":"true"}}`, index+1)))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -111,11 +111,11 @@ func BenchmarkRoutingSingleBlend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	source, err := policy.CompileSource([]byte(`{"version":1,"routing":{"filter": "blended_price(1, 3, 'per_mill_tokens') < decimal(\"100\")", "sort": [{"by":"blended_price(1, 3, 'per_mill_tokens')","direction":"asc"}]}}`))
+	source, err := policy.CompileSource([]byte(`{"routing":{"filter": "blended_price(1, 3, 'per_mill_tokens') < decimal(\"100\")", "sort": [{"by":"blended_price(1, 3, 'per_mill_tokens')","direction":"asc"}]}}`))
 	if err != nil {
 		b.Fatal(err)
 	}
-	empty, err := policy.CompileSource([]byte(`{"version":1}`))
+	empty, err := policy.CompileSource([]byte(`{}`))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func BenchmarkRoutingBlendedPrices(b *testing.B) {
 						predicates[i] = fmt.Sprintf("blended_price(%d, 9007199254740990, 'per_mill_tokens') < decimal('1000000000000')", weight)
 					}
 					filter := strings.Join(predicates, " && ")
-					raw, err := json.Marshal(map[string]any{"version": 1, "routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3, 'per_mill_tokens')", Direction: "asc"}}, "fallbacks": map[string]int{"maxPreDispatchCandidates": 3}}})
+					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3, 'per_mill_tokens')", Direction: "asc"}}, "fallbacks": map[string]int{"maxPreDispatchCandidates": 3}}})
 					if err != nil {
 						b.Fatal(err)
 					}

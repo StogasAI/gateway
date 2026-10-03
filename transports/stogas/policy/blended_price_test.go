@@ -163,8 +163,8 @@ func TestBlendedPriceSortingAndIntersection(t *testing.T) {
 	expensive, _ := DecimalValue("9")
 	left := testValues{"deployment.pricing.input_tokens.per_mill_tokens": cheap, "deployment.pricing.output_tokens.per_mill_tokens": expensive}
 	right := testValues{"deployment.pricing.input_tokens.per_mill_tokens": expensive, "deployment.pricing.output_tokens.per_mill_tokens": cheap}
-	parent := requestParent(t, `{"version":1,"delegation":{"request":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blended_price(3, 1, 'per_mill_tokens')","direction":"asc"}]}}}}`)
-	child, err := applyRequestJSON(parent, []byte(`{"version":1,"routing":{"sort":[{"by":"blended_price(6, 2, 'per_mill_tokens')","direction":"desc"},{"by":"blended_price(1, 3, 'per_mill_tokens')","direction":"desc"}]}}`))
+	parent := requestParent(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"blended_price(3, 1, 'per_mill_tokens')","direction":"asc"}]}}}}`)
+	child, err := applyRequestJSON(parent, []byte(`{"routing":{"sort":[{"by":"blended_price(6, 2, 'per_mill_tokens')","direction":"desc"},{"by":"blended_price(1, 3, 'per_mill_tokens')","direction":"desc"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

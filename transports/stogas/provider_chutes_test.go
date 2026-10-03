@@ -518,11 +518,11 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 }
 
 func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
-	source, err := policy.CompileSource([]byte(`{"version":1,"delegation":{"request":["routing.filter"]}}`))
+	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	empty, err := policy.CompileSource([]byte(`{"version":1}`))
+	empty, err := policy.CompileSource([]byte(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +533,7 @@ func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"version":1,"routing":{"filter": "provider.id == \"chutes\""}}}`),
+		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"routing":{"filter": "provider.id == \"chutes\""}}}`),
 		Policy: config,
 	})
 	if err != nil {

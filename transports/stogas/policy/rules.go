@@ -64,7 +64,6 @@ func parseRuleDocuments(raw json.RawMessage, envelopes map[[32]byte]encryptedPlu
 		if len(settings) == 0 {
 			return nil, configError("rule %q requires at least one setting", name)
 		}
-		settings["version"] = json.RawMessage(`1`)
 		document, err := sourceDocument(canonicalSourceFields(settings), settings, envelopes)
 		if err != nil {
 			return nil, err

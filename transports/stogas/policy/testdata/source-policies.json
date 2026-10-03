@@ -2,15 +2,11 @@
   {
     "name": "service defaults",
     "sources": [
-      {
-        "version": 1
-      },
+      {},
       null,
-      {
-        "version": 1
-      }
+      {}
     ],
-    "digest": "1f3d9ed58883bd86001ff06730aa6f32aa6622b01b47966eb7f77743481413a5",
+    "digest": "aa179a331c7094328e3b951d795afc9c2a2613a6c43f3208c666dfa0729cb723",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -28,17 +24,11 @@
   {
     "name": "member defaults",
     "sources": [
-      {
-        "version": 1
-      },
-      {
-        "version": 1
-      },
-      {
-        "version": 1
-      }
+      {},
+      {},
+      {}
     ],
-    "digest": "cbf40f06802df603cf35edd9773fca3d47e5535c4a0d8aa391523ba9795eb28e",
+    "digest": "ad3021edeac58af11fd9913a384fa131509fc93acc8a476d79cc21ed5dcf9d12",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -57,7 +47,6 @@
     "name": "request and missing fields",
     "sources": [
       {
-        "version": 1,
         "delegation": {
           "request": [
             "routing.allowedCatalogNodes",
@@ -66,7 +55,6 @@
         }
       },
       {
-        "version": 1,
         "delegation": {
           "request": [
             "routing"
@@ -74,13 +62,12 @@
         }
       },
       {
-        "version": 1,
         "routing": {
           "filter": "(!(has(deployment.contextWindowTokens))) || (deployment.contextWindowTokens < 1000)"
         }
       }
     ],
-    "digest": "3aeb39c8abcc35a502ac16d4be94ed9526806caccf9b649ecdf13d336657d2d0",
+    "digest": "6bbfc648f519fe01f0e23541f495c4f3557ec134be4bd57b3a676287f69f0574",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -107,7 +94,6 @@
     "name": "allowed nodes intersection",
     "sources": [
       {
-        "version": 1,
         "routing": {
           "allowedCatalogNodes": {
             "providers": [
@@ -119,7 +105,6 @@
       },
       null,
       {
-        "version": 1,
         "routing": {
           "allowedCatalogNodes": {
             "providers": [
@@ -129,7 +114,7 @@
         }
       }
     ],
-    "digest": "3f33e1e856a2a86bad2e4ab4358bdd722e7c75ebdd7ac7df1681c00461046310",
+    "digest": "16d1380f83e66855af833323258a833c5b9603e8b181d2e468ccb204cd57464f",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -150,14 +135,12 @@
     "name": "exact prices and Unicode",
     "sources": [
       {
-        "version": 1,
         "routing": {
           "filter": "blended_price(3, 1, 'per_mill_tokens') <= decimal(\"5\")"
         }
       },
       null,
       {
-        "version": 1,
         "plugins": {
           "stogasRedaction": {
             "literals": [
@@ -172,7 +155,7 @@
         }
       }
     ],
-    "digest": "50fef01ac48acbc95040835561e8e4dd9ae8628d399c6b11ff60ebbfb709b848",
+    "digest": "6f410ddb4a1d05340260666683ace4dec032ff06def297005b2e9640dec23a4f",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -208,7 +191,6 @@
     "name": "explicit fallback and ascii inheritance",
     "sources": [
       {
-        "version": 1,
         "input": {
           "asciiOnly": true
         },
@@ -220,7 +202,6 @@
       },
       null,
       {
-        "version": 1,
         "input": {
           "asciiOnly": false
         },
@@ -231,7 +212,7 @@
         }
       }
     ],
-    "digest": "e0e941be4a74baf0acd0ff98af160975f7dd326cf4a15a02a9fda1b4131a91e6",
+    "digest": "ca59eb2fe942107462cb081bf8b10dc9e4616a705343979a2ce8622ef54eefbe",
     "compiled": {
       "access": null,
       "input": {
@@ -253,7 +234,6 @@
     "name": "redaction union and safe literal coverage",
     "sources": [
       {
-        "version": 1,
         "plugins": {
           "stogasRedaction": {
             "email_address": true,
@@ -275,7 +255,6 @@
         }
       },
       {
-        "version": 1,
         "plugins": {
           "stogasRedaction": {
             "email_address": false,
@@ -304,7 +283,6 @@
         }
       },
       {
-        "version": 1,
         "plugins": {
           "stogasRedaction": {
             "customPattern": "CDEF",
@@ -319,7 +297,7 @@
         }
       }
     ],
-    "digest": "722c5a77a12ebd792f3dc07cb18e8b6807aabf198ed1ca851955999e54a6e5e0",
+    "digest": "329188c967f021b4c159c7d87824cfcf5c9721dbf24dd7d366ab6ab3e8c40002",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -369,7 +347,6 @@
     "name": "limits stay in database",
     "sources": [
       {
-        "version": 1,
         "limits": {
           "spend": {
             "lifetimeUsd": "10"
@@ -377,7 +354,6 @@
         }
       },
       {
-        "version": 1,
         "limits": {
           "requests": {
             "rate": {
@@ -391,7 +367,6 @@
         }
       },
       {
-        "version": 1,
         "limits": {
           "tokens": {
             "day": {
@@ -405,7 +380,7 @@
         }
       }
     ],
-    "digest": "390694f0a86370444582e50c73d1df07abf2461cd232734eebe6af7c95033aec",
+    "digest": "69e362843927e44447540834e80cbaab133ad5c6e872862ed198d1f4d1768113",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -424,7 +399,6 @@
     "name": "access windows merge",
     "sources": [
       {
-        "version": 1,
         "access": {
           "deny": [
             {
@@ -440,7 +414,6 @@
       },
       null,
       {
-        "version": 1,
         "access": {
           "deny": [
             {
@@ -455,7 +428,7 @@
         }
       }
     ],
-    "digest": "3800ea82664f2d6ca1fc8b8913a20f9d4caf89791a404cd78966c8109ec8b06e",
+    "digest": "95a42af1b679d059ca6fec90c50c6c758a0605230539096c88da8195a45be5d8",
     "compiled": {
       "access": {
         "deny": [
@@ -493,7 +466,6 @@
     "name": "required complete orders agree",
     "sources": [
       {
-        "version": 1,
         "routing": {
           "sort": [
             {
@@ -508,7 +480,6 @@
         }
       },
       {
-        "version": 1,
         "routing": {
           "sort": [
             {
@@ -523,7 +494,6 @@
         }
       },
       {
-        "version": 1,
         "routing": {
           "sort": [
             {
@@ -538,7 +508,7 @@
         }
       }
     ],
-    "digest": "4c7f095cf1b94bd68659b7628f60b501c248b1df01ad159d831e03a584f1fc11",
+    "digest": "00a86cfc2a777b2356a109a7538f791ea60548bafa984d619b9ac0b68665c3ba",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -568,7 +538,6 @@
     "name": "default order waits for request facts",
     "sources": [
       {
-        "version": 1,
         "rules": {
           "baseline": {
             "mode": "default",
@@ -588,11 +557,9 @@
         }
       },
       null,
-      {
-        "version": 1
-      }
+      {}
     ],
-    "digest": "ad1158fee63f2c2b7aa958ed6c44a07da9ce6741ad29138a6f9c1157908f58c1",
+    "digest": "1bbfb5b533c0c2cf7d4b9442faf3570149719ae47faf4702805d7bb04f846ac2",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -611,7 +578,6 @@
     "name": "required order and deferred defaults",
     "sources": [
       {
-        "version": 1,
         "rules": {
           "baseline": {
             "mode": "default",
@@ -631,7 +597,6 @@
         }
       },
       {
-        "version": 1,
         "rules": {
           "baseline": {
             "mode": "default",
@@ -647,7 +612,6 @@
         }
       },
       {
-        "version": 1,
         "routing": {
           "sort": [
             {
@@ -658,7 +622,7 @@
         }
       }
     ],
-    "digest": "d582b7da7b991fd9adc2e7093ee61a8704cfd4a44eb2903899bf025cd1189ef1",
+    "digest": "b3d6d14297d450334e2066bc765659b946b27c339edfb3ba5b7681087481d761",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -684,7 +648,6 @@
     "name": "flat conditional policy preview",
     "sources": [
       {
-        "version": 1,
         "rules": {
           "private": {
             "when": "provider.id == 'openai'",
@@ -703,11 +666,9 @@
         }
       },
       null,
-      {
-        "version": 1
-      }
+      {}
     ],
-    "digest": "dfac3b47be3b22e640b4a9c8cfbdcee0c623117e82d86fbb7d7b718cec39a818",
+    "digest": "f9803fd66da0c025deecace55fb0020a8adb2da29d432a12165ac86d28b91345",
     "compiled": {
       "access": null,
       "compilerVersion": 1,

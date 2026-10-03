@@ -16,7 +16,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			source, err := policy.CompileSource([]byte(`{"version":1,"delegation":{"request":["routing.filter"]},"routing":{"fallbacks":{"maxPreDispatchCandidates":2}}}`))
+			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"fallbacks":{"maxPreDispatchCandidates":2}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -28,7 +28,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 			if path == "/v1/responses" {
 				content = `"input":"hello"`
 			}
-			body := []byte(`{"model":"gpt-5.6-sol",` + content + `,"policy":{"version":1,"routing":{"filter": "deployment.id == \"azure-gpt-5.6-sol\""}}}`)
+			body := []byte(`{"model":"gpt-5.6-sol",` + content + `,"policy":{"routing":{"filter": "deployment.id == \"azure-gpt-5.6-sol\""}}}`)
 			resolved, err := ResolveRequest(RequestInput{Body: body, Method: "POST", Path: path, Policy: config})
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +58,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 			}
 			for _, invalid := range []string{
 				`{"version":1,"version":1,"routing":{"filter": "has(provider.id)"}}`,
-				`{"version":1,"routing":{"filter": "request.model == \"�\""}}`,
+				`{"routing":{"filter": "request.model == \"�\""}}`,
 			} {
 				body := []byte(`{"model":"gpt-5.6-sol",` + content + `,"policy":` + invalid + `}`)
 				if _, err := ResolveRequest(RequestInput{Body: body, Method: "POST", Path: path, Policy: config}); err == nil {

@@ -5,7 +5,6 @@ import { inspectPolicy } from './node.mjs';
 test('the JavaScript binding preserves Unicode and recovers after a rejected document', () => {
 	assert.equal(inspectPolicy({ source: { version: 2 } }).error.status, 400);
 	const source = {
-		version: 1,
 		plugins: { stogasRedaction: { literals: [{ values: ['Žmogus', '日本語', '🛰️'] }] } }
 	};
 	const first = inspectPolicy({ source });
@@ -31,17 +30,16 @@ test('opaque sections survive the memory bridge in their original order', () => 
 	const sources = [
 		{
 			scope: 'organization',
-			config: { version: 1, encryption: { keys: { default: 'a'.repeat(64) } } }
+			config: { encryption: { keys: { default: 'a'.repeat(64) } } }
 		},
 		...[1, 2, 1].map((byte, index) => ({
 			scope: 'role',
 			config: {
-				version: 1,
 				routing: { filter: `model.id != 'blocked-${index}'` },
 				plugins: { encrypted: envelope(byte) }
 			}
 		})),
-		{ scope: 'key', config: { version: 1 } }
+		{ scope: 'key', config: {} }
 	];
 	for (let repeat = 0; repeat < 3; repeat++) {
 		const result = inspectPolicy({ sources });
@@ -57,15 +55,14 @@ test('opaque sections survive the memory bridge in their original order', () => 
 
 test('the JavaScript binding returns combined policies and typed edit failures', () => {
 	const sources = [
-		{ scope: 'organization', config: { version: 1, delegation: { keys: false } } },
-		{ scope: 'key', id: 'key', config: { version: 1, input: { asciiOnly: true } } }
+		{ scope: 'organization', config: { delegation: { keys: false } } },
+		{ scope: 'key', id: 'key', config: { input: { asciiOnly: true } } }
 	];
 	const result = inspectPolicy({ sources });
 	assert.equal(result.effective.input.asciiOnly, true);
 	assert.equal(result.effective.delegation.keys, false);
 	assert.equal(
-		inspectPolicy({ sources, edit: { scope: 'key', id: 'key', previous: { version: 1 } } }).error
-			.status,
+		inspectPolicy({ sources, edit: { scope: 'key', id: 'key', previous: {} } }).error.status,
 		403
 	);
 });
@@ -81,20 +78,19 @@ test('conditional opaque rules preserve their source identity without retaining 
 	const sources = [
 		{
 			scope: 'organization',
-			config: { version: 1, encryption: { keys: { rules: 'b'.repeat(64) } } }
+			config: { encryption: { keys: { rules: 'b'.repeat(64) } } }
 		},
 		...[1, 2].map((byte) => ({
 			scope: 'role',
 			id: String(byte),
 			config: {
-				version: 1,
 				rules: {
 					z_opaque: { when: "provider.id == 'openai'", plugins: { encrypted: envelope(byte) } },
 					a_plain: { input: { asciiOnly: true } }
 				}
 			}
 		})),
-		{ scope: 'key', config: { version: 1 } }
+		{ scope: 'key', config: {} }
 	];
 	const first = inspectPolicy({ sources });
 	assert.ok(!first.error);

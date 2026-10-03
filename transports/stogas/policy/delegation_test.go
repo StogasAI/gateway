@@ -11,31 +11,31 @@ func TestDelegationChecksSectionsAndExactResourceIDs(t *testing.T) {
 	const other = "019a0100-0000-7000-8000-000000000002"
 	for _, scope := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
 		t.Run(string(scope), func(t *testing.T) {
-			parent, _ := json.Marshal(map[string]any{"version": 1, "delegation": map[string]any{delegationTarget(scope): map[string]any{"default": false, "exceptions": map[string]any{id: []string{"routing.filter"}}}}})
+			parent, _ := json.Marshal(map[string]any{"delegation": map[string]any{delegationTarget(scope): map[string]any{"default": false, "exceptions": map[string]any{id: []string{"routing.filter"}}}}})
 			entries := []InspectionSource{{Scope: OrganizationScope, Config: parent}}
 			// A second role must not cause the first role's exception to be ignored.
-			entries = append(entries, InspectionSource{Scope: scope, ID: id, Config: json.RawMessage(`{"version":1,"routing":{"filter":"provider.id == 'openai'"}}`)})
+			entries = append(entries, InspectionSource{Scope: scope, ID: id, Config: json.RawMessage(`{"routing":{"filter":"provider.id == 'openai'"}}`)})
 			if scope == RoleScope {
-				entries = append(entries, InspectionSource{Scope: RoleScope, ID: other, Config: json.RawMessage(`{"version":1}`)})
+				entries = append(entries, InspectionSource{Scope: RoleScope, ID: other, Config: json.RawMessage(`{}`)})
 			}
 			if scope != KeyScope {
-				entries = append(entries, InspectionSource{Scope: KeyScope, Config: json.RawMessage(`{"version":1}`)})
+				entries = append(entries, InspectionSource{Scope: KeyScope, Config: json.RawMessage(`{}`)})
 			}
-			edit := &InspectionEdit{Scope: scope, ID: id, Previous: json.RawMessage(`{"version":1}`)}
+			edit := &InspectionEdit{Scope: scope, ID: id, Previous: json.RawMessage(`{}`)}
 			if _, err := InspectSources(entries, edit); err != nil {
 				t.Fatalf("allowed filter: %v", err)
 			}
-			entries[1].Config = json.RawMessage(`{"version":1,"routing":{"filter":"provider.id == 'openai'"},"input":{"asciiOnly":true}}`)
+			entries[1].Config = json.RawMessage(`{"routing":{"filter":"provider.id == 'openai'"},"input":{"asciiOnly":true}}`)
 			if _, err := InspectSources(entries, edit); !errors.Is(err, ErrPolicyEditForbidden) {
 				t.Fatalf("disallowed input setting: %v", err)
 			}
-			entries[1].Config = json.RawMessage(`{"version":1}`)
+			entries[1].Config = json.RawMessage(`{}`)
 			if _, err := InspectSources(entries, edit); err != nil {
 				t.Fatalf("clear under restriction: %v", err)
 			}
 			entries[1].ID = other
 			edit.ID = other
-			entries[1].Config = json.RawMessage(`{"version":1,"routing":{"filter":"provider.id == 'openai'"}}`)
+			entries[1].Config = json.RawMessage(`{"routing":{"filter":"provider.id == 'openai'"}}`)
 			if _, err := InspectSources(entries, edit); !errors.Is(err, ErrPolicyEditForbidden) {
 				t.Fatalf("exception leaked to another ID: %v", err)
 			}
@@ -46,12 +46,12 @@ func TestDelegationChecksSectionsAndExactResourceIDs(t *testing.T) {
 func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *testing.T) {
 	for _, owner := range []Scope{OrganizationScope, FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
 		for _, target := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
-			raw, _ := json.Marshal(map[string]any{"version": 1, "delegation": map[string]any{delegationTarget(target): false, "request": []string{"routing.filter"}}})
+			raw, _ := json.Marshal(map[string]any{"delegation": map[string]any{delegationTarget(target): false, "request": []string{"routing.filter"}}})
 			source, err := CompileSource(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
-			empty, err := CompileSource([]byte(`{"version":1,"delegation":{"request":true}}`))
+			empty, err := CompileSource([]byte(`{"delegation":{"request":true}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,14 +77,14 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 		}
 	}
 	for _, raw := range []string{
-		`{"version":1,"delegation":{"request":["limits"]}}`,
-		`{"version":1,"delegation":{"request":["delegation"]}}`,
-		`{"version":1,"delegation":{"request":["encryption"]}}`,
-		`{"version":1,"delegation":{"keys":["unknown"]}}`,
-		`{"version":1,"delegation":{"keys":["input","input"]}}`,
-		`{"version":1,"delegation":{"keys":{"default":true,"exceptions":{}}}}`,
-		`{"version":1,"delegation":{"keys":{"default":true,"exceptions":{"not-an-id":false}}}}`,
-		`{"version":1,"delegation":{"keys":null}}`,
+		`{"delegation":{"request":["limits"]}}`,
+		`{"delegation":{"request":["delegation"]}}`,
+		`{"delegation":{"request":["encryption"]}}`,
+		`{"delegation":{"keys":["unknown"]}}`,
+		`{"delegation":{"keys":["input","input"]}}`,
+		`{"delegation":{"keys":{"default":true,"exceptions":{}}}}`,
+		`{"delegation":{"keys":{"default":true,"exceptions":{"not-an-id":false}}}}`,
+		`{"delegation":{"keys":null}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil {
 			t.Fatalf("accepted invalid permission: %s", raw)

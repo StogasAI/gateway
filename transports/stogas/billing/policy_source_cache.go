@@ -152,7 +152,7 @@ func (c *keyConfigCache) acquireSourceDelta(records []policySourceRecord, organi
 			continue
 		}
 		if bytes.Equal(bytes.TrimSpace(document), []byte("null")) {
-			document = json.RawMessage(`{"version":1}`)
+			document = json.RawMessage(`{}`)
 		}
 		parsed, err := policy.ParseSourceDocument(document)
 		if err == nil {
