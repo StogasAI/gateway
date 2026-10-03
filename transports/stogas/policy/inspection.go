@@ -187,7 +187,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 		return nil, err
 	}
 	delegation["request"] = compiled.RequestPermission
-	effective := map[string]any{"version": 1, "delegation": delegation}
+	effective := map[string]any{"delegation": delegation}
 	if len(compiled.EncryptionKeys) > 0 {
 		effective["encryption"] = map[string]any{"keys": compiled.EncryptionKeys}
 	}

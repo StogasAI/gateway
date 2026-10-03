@@ -56,8 +56,8 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 			predicates[n] = fmt.Sprintf("provider.id != 'blocked_%d_%d'", i, n)
 		}
 		document := map[string]any{
-			"version": 1, "delegation": map[string]any{"request": true},
-			"routing": map[string]any{"filter": strings.Join(predicates, " && "), "sort": []map[string]any{{"by": "deployment.id", "direction": "asc"}}},
+			"delegation": map[string]any{"request": true},
+			"routing":    map[string]any{"filter": strings.Join(predicates, " && "), "sort": []map[string]any{{"by": "deployment.id", "direction": "asc"}}},
 			"limits": map[string]any{
 				"spend": map[string]any{"lifetimeUsd": "1000000", "recurring": map[string]any{
 					"daily":   map[string]any{"maxUsd": "100000", "timeZone": "UTC", "window": map[string]any{"count": 1, "unit": "day"}},
@@ -149,7 +149,7 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 			}
 			document := map[string]any{
 				"model": "openai-gpt-5.6-sol", "max_completion_tokens": 16, "messages": messages,
-				"policy": map[string]any{"version": 1, "routing": map[string]any{"filter": "provider.id == 'openai'"}},
+				"policy": map[string]any{"routing": map[string]any{"filter": "provider.id == 'openai'"}},
 			}
 			if tools != nil {
 				document["tools"] = tools

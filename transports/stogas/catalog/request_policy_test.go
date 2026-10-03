@@ -148,7 +148,7 @@ func TestReasoningAliasesUseTheSameEarlyCatalogConstraints(t *testing.T) {
 
 func TestConditionalPolicyRedactsOnlyTheSelectedBranch(t *testing.T) {
 	loadTestCatalog(t)
-	source, err := policy.CompileSource([]byte(`{"version":1,"rules":{"openai":{"when":"provider.id == 'openai'","plugins":{"stogasRedaction":{"literals":[{"values":["OPENAI_PRIVATE"]}]}}},"other":{"when":"provider.id == 'anthropic'","plugins":{"stogasRedaction":{"literals":[{"values":["OTHER_PRIVATE"]}]}}}}}`))
+	source, err := policy.CompileSource([]byte(`{"rules":{"openai":{"when":"provider.id == 'openai'","plugins":{"stogasRedaction":{"literals":[{"values":["OPENAI_PRIVATE"]}]}}},"other":{"when":"provider.id == 'anthropic'","plugins":{"stogasRedaction":{"literals":[{"values":["OTHER_PRIVATE"]}]}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,15 +287,15 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"version":1,"routing":{"fallbacks":{"maxPreDispatchCandidates":2}},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks":{"maxPreDispatchCandidates":2}},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
-			key, err := policy.CompileSource([]byte(`{"version":1}`))
+			key, err := policy.CompileSource([]byte(`{}`))
 			if err != nil {
 				t.Fatal(err)
 			}
-			credential, err := policy.CompileSource([]byte(`{"version":1,"delegation":{"request":["plugins","input"]}}`))
+			credential, err := policy.CompileSource([]byte(`{"delegation":{"request":["plugins","input"]}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -312,7 +312,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 				t.Fatal(err)
 			}
 			original, _ := json.Marshal(selected)
-			raw := map[string]any{"model": "gpt-5.6-sol", "provider": map[string]any{"only": []string{"openai", "azure"}, "order": []string{"openai", "azure"}}, "policy": map[string]any{"version": 1, "input": map[string]any{"asciiOnly": true}, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{"REQUEST_PRIVATE"}}}}}}}
+			raw := map[string]any{"model": "gpt-5.6-sol", "provider": map[string]any{"only": []string{"openai", "azure"}, "order": []string{"openai", "azure"}}, "policy": map[string]any{"input": map[string]any{"asciiOnly": true}, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{"REQUEST_PRIVATE"}}}}}}}
 			if path == "/v1/responses" {
 				raw["input"] = "SAVED_PRIVATE REQUEST_PRIVATE"
 			} else {
@@ -476,7 +476,7 @@ func TestRequestCompositionBudgetCannotSkipAnEarlierCredential(t *testing.T) {
 				"when": strings.Join(conditions, " && "), "input": map[string]bool{"asciiOnly": true},
 			}
 		}
-		document := map[string]any{"version": 1, "rules": definitions}
+		document := map[string]any{"rules": definitions}
 		if !request {
 			document["delegation"] = map[string]bool{"request": true}
 		}

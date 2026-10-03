@@ -39,9 +39,9 @@ func requestParent(t *testing.T, raw string) *Config {
 }
 
 func TestRequestPolicyIntersectionAndIsolation(t *testing.T) {
-	parent := requestParent(t, `{"version":1,"delegation":{"request":true},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"deployment.capabilities.streaming == false"},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}}}`)
+	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"deployment.capabilities.streaming == false"},"rules":{"baseline":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}}}`)
 	before, _ := json.Marshal(parent)
-	child, err := applyRequestJSON(parent, []byte(`{"version":1,"routing":{"filter": "provider.id == \"anthropic\"", "sort": [{"by":"provider.id","direction":"asc"},{"by":"model.id","direction":"asc"}],"allowedCatalogNodes":{"providers":["anthropic"]}}}`))
+	child, err := applyRequestJSON(parent, []byte(`{"routing":{"filter": "provider.id == \"anthropic\"", "sort": [{"by":"provider.id","direction":"asc"},{"by":"model.id","direction":"asc"}],"allowedCatalogNodes":{"providers":["anthropic"]}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,22 +62,22 @@ func TestRequestPolicyIntersectionAndIsolation(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatal("request changed cached parent")
 	}
-	next, err := applyRequestJSON(parent, []byte(`{"version":1,"routing":{"allowedCatalogNodes":{"models":["gpt"]}}}`))
+	next, err := applyRequestJSON(parent, []byte(`{"routing":{"allowedCatalogNodes":{"models":["gpt"]}}}`))
 	if err != nil || !next.Routing.AllowedCatalogNodes.Allows("a", "gpt", "d", "r", "openai") {
 		t.Fatalf("request restriction leaked: %v", err)
 	}
 }
 
 func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
-	parent := requestParent(t, `{"version":1,"delegation":{"request":true}}`)
-	filter := []byte(`{"version":1,"routing":{"filter": "has(provider.id)"}}`)
+	parent := requestParent(t, `{"delegation":{"request":true}}`)
+	filter := []byte(`{"routing":{"filter": "has(provider.id)"}}`)
 	for _, allowed := range []Permission{0, permissionFilter, permissionFilter | permissionSort} {
 		parent.RequestPermission = RequestPermission(allowed)
 		_, err := applyRequestJSON(parent, filter)
 		if (err == nil) != (allowed&permissionFilter != 0) {
 			t.Fatalf("filter permission %d: %v", allowed, err)
 		}
-		_, err = applyRequestJSON(parent, []byte(`{"version":1,"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`))
+		_, err = applyRequestJSON(parent, []byte(`{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`))
 		if (err == nil) != (allowed&permissionSort != 0) {
 			t.Fatalf("sort permission %d: %v", allowed, err)
 		}
@@ -88,36 +88,36 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 	}
 	parent.RequestPermission = RequestPermission(requestPermissions)
 	for _, raw := range []string{
-		`null`, `{}`, `{"version":2,"routing":{"filter": "has(provider.id)"}}`,
-		`{"version":1,"routing":{"filter":null}}`,
-		`{"version":1,"routing":{"filter":""}}`, `{"version":1,"routing":{"allowedCatalogNodes":{"unknown":[]}}}`,
-		`{"version":1,"routing":{"allowedCatalogNodes":{"providers":null}}}`,
-		`{"version":1,"routing":{"allowedCatalogNodes":{"Providers":["openai"]}}}`,
+		`null`, `{"version":1}`, `{"version":2,"routing":{"filter": "has(provider.id)"}}`,
+		`{"routing":{"filter":null}}`,
+		`{"routing":{"filter":""}}`, `{"routing":{"allowedCatalogNodes":{"unknown":[]}}}`,
+		`{"routing":{"allowedCatalogNodes":{"providers":null}}}`,
+		`{"routing":{"allowedCatalogNodes":{"Providers":["openai"]}}}`,
 		`{"Version":1,"routing":{"filter": "has(provider.id)"}}`,
-		`{"version":1,"routing":{"Query":"where exists(provider.id)"}}`,
-		`{"version":1,"routing":{"filter": "has(provider.id)"},"plugins":{}}`,
-		`{"version":1,"routing":{"filter": "has(provider.id)"},"limits":{}}`,
-		`{"version":1,"routing":{"query":{"where":null}}}`, string(filter) + ` {}`, strings.Repeat(" ", (16<<10)+1),
+		`{"routing":{"Query":"where exists(provider.id)"}}`,
+		`{"routing":{"filter": "has(provider.id)"},"plugins":{}}`,
+		`{"routing":{"filter": "has(provider.id)"},"limits":{}}`,
+		`{"routing":{"query":{"where":null}}}`, string(filter) + ` {}`, strings.Repeat(" ", (16<<10)+1),
 	} {
 		if _, err := applyRequestJSON(parent, []byte(raw)); err == nil {
 			t.Fatalf("accepted invalid request: %s", raw)
 		}
 	}
-	if _, err := applyRequestJSON(parent, []byte(`{"version":1,"routing":{"allowedCatalogNodes":{"providers":[]}}}`)); err != nil {
+	if _, err := applyRequestJSON(parent, []byte(`{"routing":{"allowedCatalogNodes":{"providers":[]}}}`)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRequiredSortingAllowsFiltersAndRejectsDifferentRequestSorts(t *testing.T) {
-	parent := requestParent(t, `{"version":1,"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
+	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
 	before, _ := json.Marshal(parent)
 	for _, sortBy := range []string{"model.id", "blended_price(3, 1, 'per_mill_tokens')"} {
-		raw, _ := json.Marshal(map[string]any{"version": 1, "routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
+		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
 		if _, err := applyRequestJSON(parent, raw); err == nil {
 			t.Fatal("accepted conflicting required sort")
 		}
 	}
-	child, err := applyRequestJSON(parent, []byte(`{"version":1,"routing":{"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"desc"}]}}`))
+	child, err := applyRequestJSON(parent, []byte(`{"routing":{"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"desc"}]}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

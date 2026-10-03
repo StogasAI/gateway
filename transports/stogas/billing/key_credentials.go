@@ -154,7 +154,7 @@ func (s *sharedCredentialPolicy) parse() (*policy.SourceDocument, error) {
 	s.once.Do(func() {
 		raw := s.raw
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			raw = []byte(`{"version":1}`)
+			raw = []byte(`{}`)
 		}
 		s.document, s.err = policy.ParseSourceDocument(raw)
 	})

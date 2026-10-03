@@ -105,7 +105,7 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 	for _, entry := range prepared {
 		source := entry.Config
 		if bytes.Equal(bytes.TrimSpace(source), []byte("null")) {
-			source = json.RawMessage(`{"version":1}`)
+			source = json.RawMessage(`{}`)
 		}
 		var doc map[string]json.RawMessage
 		if json.Unmarshal(source, &doc) != nil {

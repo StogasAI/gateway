@@ -28,7 +28,7 @@ func TestCELCompilationBudgetSharesRepeatedExpressionsAndBoundsDistinctWork(t *t
 			}
 			rules[fmt.Sprintf("rule_%d", i)] = map[string]any{"when": when, "input": map[string]bool{"asciiOnly": true}}
 		}
-		raw, _ := json.Marshal(map[string]any{"version": 1, "rules": rules})
+		raw, _ := json.Marshal(map[string]any{"rules": rules})
 		return raw
 	}
 	shared, err := CompileSource(makeSource(30, 0, true))
@@ -77,7 +77,7 @@ func TestCELCompilationBudgetSharesRepeatedExpressionsAndBoundsDistinctWork(t *t
 		}
 	}
 	// Reusing a sort program must not make a non-boolean condition valid.
-	if _, err := CompileSource([]byte(`{"version":1,"routing":{"sort":[{"by":"1","direction":"asc"}]},"rules":{"invalid":{"when":"1","input":{"asciiOnly":true}}}}`)); err == nil {
+	if _, err := CompileSource([]byte(`{"routing":{"sort":[{"by":"1","direction":"asc"}]},"rules":{"invalid":{"when":"1","input":{"asciiOnly":true}}}}`)); err == nil {
 		t.Fatal("shared compilation bypassed the required condition type")
 	}
 }
@@ -90,14 +90,13 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(settings), &fields); err != nil {
 		t.Fatal(err)
 	}
-	fields["version"] = json.RawMessage(`1`)
 	expectedRaw, _ := json.Marshal(fields)
 	expected, err := jsoncanonicalizer.Transform(expectedRaw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	expected = append(expected, '\n')
-	parent, err := ParseSourceDocument([]byte(`{"version":1,"rules":{"selected":` + settings + `}}`))
+	parent, err := ParseSourceDocument([]byte(`{"rules":{"selected":` + settings + `}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,14 +106,14 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 		t.Fatal("rule fragment changed canonical bytes or identity")
 	}
 	for _, raw := range []string{
-		`{"version":1,"rules":{"selected":{"Input":{"asciiOnly":true}}}}`,
-		`{"version":1,"rules":{"selected":{"input":{"ASCIIOnly":true}}}}`,
-		`{"version":1,"rules":{"selected":{"input":{"asciiOnly":null}}}}`,
-		`{"version":1,"rules":{"selected":{"plugins":{"stogasRedaction":{"email_address":null}}}}}`,
-		`{"version":1,"rules":{"selected":{"limits":{"lifetime":{"usd":null}}}}}`,
-		`{"version":1,"rules":{"selected":{"rules":{"nested":{"input":{"asciiOnly":true}}}}}}`,
-		`{"version":1,"rules":null}`,
-		`{"version":1,"rules":{}}`,
+		`{"rules":{"selected":{"Input":{"asciiOnly":true}}}}`,
+		`{"rules":{"selected":{"input":{"ASCIIOnly":true}}}}`,
+		`{"rules":{"selected":{"input":{"asciiOnly":null}}}}`,
+		`{"rules":{"selected":{"plugins":{"stogasRedaction":{"email_address":null}}}}}`,
+		`{"rules":{"selected":{"limits":{"lifetime":{"usd":null}}}}}`,
+		`{"rules":{"selected":{"rules":{"nested":{"input":{"asciiOnly":true}}}}}}`,
+		`{"rules":null}`,
+		`{"rules":{}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil {
 			t.Fatalf("accepted invalid fields: %s", raw)
@@ -135,7 +134,7 @@ func (v budgetRuleValues) PolicyCELBudget() *CELBudget { return v.budget }
 
 func TestConstantRulesConsumeTheSharedRequestBudget(t *testing.T) {
 	for _, condition := range []string{"", `"when":"true",`} {
-		source := ruleSource(t, `{"version":1,"rules":{"first":{`+condition+`"input":{"asciiOnly":true}},"second":{`+condition+`"input":{"asciiOnly":true}}}}`)
+		source := ruleSource(t, `{"rules":{"first":{`+condition+`"input":{"asciiOnly":true}},"second":{`+condition+`"input":{"asciiOnly":true}}}}`)
 		config, err := ComposeSources([]ScopedSource{{OrganizationScope, source}})
 		if err != nil {
 			t.Fatal(err)
@@ -161,9 +160,9 @@ func ruleSource(t *testing.T, raw string) *Source {
 }
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
-	org := ruleSource(t, `{"version":1,"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"version":1,"rules":{"openai":{"when":"provider.id == 'openai'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}},"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}}}`)
-	other := ruleSource(t, `{"version":1,"routing":{"filter":"provider.id != 'blocked'"}}`)
+	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	role := ruleSource(t, `{"rules":{"openai":{"when":"provider.id == 'openai'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}},"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}}}`)
+	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{OrganizationScope, org}, {RoleScope, role}, {RoleScope, other}},
 		{{OrganizationScope, org}, {RoleScope, other}, {RoleScope, role}},
@@ -201,12 +200,12 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 }
 
 func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
-	org := ruleSource(t, `{"version":1,"delegation":{"request":["routing.sort"]},"routing":{"filter":"provider.id == 'openai'"},"rules":{"default_sort":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	org := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"filter":"provider.id == 'openai'"},"rules":{"default_sort":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
 	base, err := ComposeSources([]ScopedSource{{OrganizationScope, org}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := CompileRequest([]byte(`{"version":1,"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}`), "org", nil)
+	request, err := CompileRequest([]byte(`{"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +217,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 	if err != nil || active.Routing.Query.OrderBy[0].By != "deployment.id" || len(active.Routing.Query.Filters) != 1 {
 		t.Fatalf("request composition failed: %+v, %v", active, err)
 	}
-	denied, err := CompileRequest([]byte(`{"version":1,"rules":{"nested":{"routing":{"filter":"true"}}}}`), "org", nil)
+	denied, err := CompileRequest([]byte(`{"rules":{"nested":{"routing":{"filter":"true"}}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,9 +228,9 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
 	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"fallbacks":{"maxPreDispatchCandidates":2}}`
-	org := ruleSource(t, `{"version":1,"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"version":1,"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"fallbacks":{"maxPreDispatchCandidates":1}}}`)
-	required := ruleSource(t, `{"version":1,`+settings+`}`)
+	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
+	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"fallbacks":{"maxPreDispatchCandidates":1}}}`)
+	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
 			sources := []ScopedSource{{OrganizationScope, org}, {RoleScope, empty}}
@@ -274,12 +273,12 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 }
 
 func TestRulesRequiredSortsMustAgree(t *testing.T) {
-	org := ruleSource(t, `{"version":1,"routing":{"sort":[{"by":" provider.id ","direction":"asc"}]}}`)
-	same := ruleSource(t, `{"version":1,"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`)
+	org := ruleSource(t, `{"routing":{"sort":[{"by":" provider.id ","direction":"asc"}]}}`)
+	same := ruleSource(t, `{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`)
 	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {RoleScope, same}}); err != nil {
 		t.Fatalf("equivalent sorts conflict: %v", err)
 	}
-	conflict := ruleSource(t, `{"version":1,"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
+	conflict := ruleSource(t, `{"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
 	for _, values := range [][]ScopedSource{
 		{{OrganizationScope, org}, {RoleScope, conflict}, {RoleScope, same}},
 		{{OrganizationScope, org}, {RoleScope, same}, {RoleScope, conflict}},
@@ -292,12 +291,12 @@ func TestRulesRequiredSortsMustAgree(t *testing.T) {
 
 func TestRuleConditionsAreTypedAndNeverTreatUnknownAsFalse(t *testing.T) {
 	for _, condition := range []string{"request.estimatedInputTokens > 2", "estimated_cost('base') > decimal('1')", "provider.id"} {
-		_, err := CompileSource([]byte(`{"version":1,"rules":{"restricted":{"when":` + quoted(condition) + `,"input":{"asciiOnly":true}}}}`))
+		_, err := CompileSource([]byte(`{"rules":{"restricted":{"when":` + quoted(condition) + `,"input":{"asciiOnly":true}}}}`))
 		if err == nil {
 			t.Fatalf("invalid condition accepted: %s", condition)
 		}
 	}
-	source := ruleSource(t, `{"version":1,"rules":{"restricted":{"when":"deployment.weightPrecision == 'fp8'","input":{"asciiOnly":true}}}}`)
+	source := ruleSource(t, `{"rules":{"restricted":{"when":"deployment.weightPrecision == 'fp8'","input":{"asciiOnly":true}}}}`)
 	config, err := ComposeSources([]ScopedSource{{OrganizationScope, source}})
 	if err != nil {
 		t.Fatal(err)
@@ -308,9 +307,9 @@ func TestRuleConditionsAreTypedAndNeverTreatUnknownAsFalse(t *testing.T) {
 }
 
 func TestRuleCounterIdentityIgnoresFormatting(t *testing.T) {
-	first := ruleSource(t, `{"version":1,"rules":{"paid":{"when":"provider.id=='openai'","limits":{"spend":{"lifetimeUsd":"10"}}}}}`)
-	formatted := ruleSource(t, `{"version":1,"rules":{"paid":{"when":"( provider.id == \"openai\" )","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
-	different := ruleSource(t, `{"version":1,"rules":{"paid":{"when":"provider.id=='anthropic'","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
+	first := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='openai'","limits":{"spend":{"lifetimeUsd":"10"}}}}}`)
+	formatted := ruleSource(t, `{"rules":{"paid":{"when":"( provider.id == \"openai\" )","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
+	different := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='anthropic'","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
 	if first.Rules[0].ConditionDigest() != formatted.Rules[0].ConditionDigest() || first.Rules[0].ConditionDigest() == different.Rules[0].ConditionDigest() {
 		t.Fatal("counter condition identity changed incorrectly")
 	}
@@ -331,7 +330,7 @@ func TestRuleShapeRejectsNestedAuthorityAndReplaceableBudgets(t *testing.T) {
 		`{"delegation":{"request":true}}`, `{"rules":{"again":{"input":{"asciiOnly":true}}}}`,
 		`{"when":"true","encryption":{"keys":{}}}`, `{"version":1,"input":{"asciiOnly":true}}`,
 	} {
-		if _, err := CompileSource([]byte(`{"version":1,"rules":{"test":` + body + `}}`)); err == nil {
+		if _, err := CompileSource([]byte(`{"rules":{"test":` + body + `}}`)); err == nil {
 			t.Fatalf("invalid rule accepted: %s", body)
 		}
 	}

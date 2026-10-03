@@ -31,7 +31,7 @@
     "valid": true
   },
   {
-    "filter": "request.model == \"\ud83c\udf0d\"",
+    "filter": "request.model == \"🌍\"",
     "valid": true
   },
   {
@@ -123,7 +123,7 @@
     "valid": false
   },
   {
-    "filter": "\u0085where exists(provider.id)",
+    "filter": "where exists(provider.id)",
     "valid": false
   },
   {

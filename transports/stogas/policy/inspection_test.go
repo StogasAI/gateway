@@ -62,12 +62,12 @@ func TestInspectionMatchesExecutionCorpus(t *testing.T) {
 }
 
 func TestInspectionAtSavedResourceScopes(t *testing.T) {
-	root := InspectionSource{Scope: OrganizationScope, ID: "org", Config: json.RawMessage(`{"version":1,"input":{"asciiOnly":true}}`)}
+	root := InspectionSource{Scope: OrganizationScope, ID: "org", Config: json.RawMessage(`{"input":{"asciiOnly":true}}`)}
 	for _, scope := range []Scope{OrganizationScope, FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope} {
 		t.Run(string(scope), func(t *testing.T) {
 			entries := []InspectionSource{root}
 			if scope != OrganizationScope {
-				entries = append(entries, InspectionSource{Scope: scope, ID: "resource", Config: json.RawMessage(`{"version":1,"limits":{"lifetimeTokens":50}}`)})
+				entries = append(entries, InspectionSource{Scope: scope, ID: "resource", Config: json.RawMessage(`{"limits":{"lifetimeTokens":50}}`)})
 			}
 			result, err := InspectSources(entries, nil)
 			if err != nil {
@@ -98,12 +98,12 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 		Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 		Blob:  base64.RawURLEncoding.EncodeToString(make([]byte, MaxSourceBytes-1024)),
 	}
-	encoded, _ := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"encrypted": envelope}})
+	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": envelope}})
 	entries := []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"version":1,"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"stogasRedaction":{"email_address":true}}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"stogasRedaction":{"email_address":true}}}`)},
 		{Scope: RoleScope, ID: "first", Config: encoded},
 		{Scope: RoleScope, ID: "second", Config: encoded},
-		{Scope: KeyScope, Config: json.RawMessage(`{"version":1}`)},
+		{Scope: KeyScope, Config: json.RawMessage(`{}`)},
 	}
 	before, _ := json.Marshal(entries)
 	result, err := InspectSources(entries, nil)
@@ -142,7 +142,7 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 					Salt: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 					Blob: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{byte(index)}, 250_000))}
 				plugins := map[string]any{"encrypted": envelope}
-				doc := map[string]any{"version": 1}
+				doc := map[string]any{}
 				if conditional {
 					doc["rules"] = map[string]any{"selected": map[string]any{"plugins": plugins}}
 				} else {
@@ -196,7 +196,7 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer key.Clear()
-	raw, _ = json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"encrypted": fixture.Envelope}})
+	raw, _ = json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": fixture.Envelope}})
 	document, err := ParseSourceDocument(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -212,21 +212,21 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 
 func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T) {
 	for _, expression := range []string{`^`, `(?=foo)`, `(a)\1`} {
-		raw, _ := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"stogasRedaction": map[string]any{"customPattern": expression}}})
+		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"customPattern": expression}}})
 		if _, err := InspectSource(raw); err == nil {
 			t.Errorf("accepted an unsafe or unsupported expression %q", expression)
 		}
 	}
 	entries := []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"version":1,"delegation":{"keys":false}}`)},
-		{Scope: KeyScope, ID: "key", Config: json.RawMessage(`{"version":1,"input":{"asciiOnly":true}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"delegation":{"keys":false}}`)},
+		{Scope: KeyScope, ID: "key", Config: json.RawMessage(`{"input":{"asciiOnly":true}}`)},
 	}
-	_, err := InspectSources(entries, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(`{"version":1}`)})
+	_, err := InspectSources(entries, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(`{}`)})
 	if !errors.Is(err, ErrPolicyEditForbidden) {
 		t.Fatalf("blocked child edit must keep its typed error: %v", err)
 	}
 	previous := entries[1].Config
-	entries[1].Config = json.RawMessage(`{"version":1}`)
+	entries[1].Config = json.RawMessage(`{}`)
 	if _, err := InspectSources(entries, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: previous}); err != nil {
 		t.Fatalf("a parent denial must still allow clearing a policy: %v", err)
 	}
@@ -235,8 +235,8 @@ func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T
 func TestInspectionSharesEqualPluginSectionsAcrossDifferentSources(t *testing.T) {
 	inspector := NewInspector(nil, false)
 	for _, entry := range []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"first\""}}`)},
-		{Scope: KeyScope, Config: json.RawMessage(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"second\""}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"first\""}}`)},
+		{Scope: KeyScope, Config: json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"second\""}}`)},
 	} {
 		if err := inspector.Add(entry); err != nil {
 			t.Fatal(err)
@@ -262,7 +262,7 @@ func TestInspectionRejectsRuleOverflowBeforeRetainingAnotherSource(t *testing.T)
 	for i := range 30 {
 		rules[fmt.Sprintf("rule_%d", i)] = map[string]any{"when": "model.id != '" + strings.Repeat("a", 7<<10) + "'", "input": map[string]bool{"asciiOnly": true}}
 	}
-	raw, _ := json.Marshal(map[string]any{"version": 1, "rules": rules})
+	raw, _ := json.Marshal(map[string]any{"rules": rules})
 	source, err := CompileSource(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +292,7 @@ func BenchmarkInspectionSharedPolicies(b *testing.B) {
 	for i := range values {
 		values[i] = strings.Repeat("x", 40) + string(rune('一'+i))
 	}
-	raw, _ := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
+	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
 	entries := make([]InspectionSource, 36)
 	for i := range entries {
 		entries[i] = InspectionSource{Scope: RoleScope, Config: raw}
@@ -315,7 +315,7 @@ func TestInspectionBudgetsDistinctSettingsBeforeCompilation(t *testing.T) {
 		for j := range ids {
 			ids[j] = fmt.Sprintf("model-%d-%05d", index, j)
 		}
-		raw, _ := json.Marshal(map[string]any{"version": 1, "routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": ids}}})
+		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"allowedCatalogNodes": map[string]any{"models": ids}}})
 		source, err := CompileSource(raw)
 		if err != nil {
 			t.Fatal(err)
@@ -350,8 +350,7 @@ func TestInspectionSharesDictionaryBudgetAcrossDistinctSources(t *testing.T) {
 		} else if i == 35 {
 			scope = KeyScope
 		}
-		raw, _ := json.Marshal(map[string]any{"version": 1,
-			"routing": map[string]any{"filter": fmt.Sprintf(`model.id != "blocked-%d"`, i)},
+		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": fmt.Sprintf(`model.id != "blocked-%d"`, i)},
 			"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
 		if err := inspector.Add(InspectionSource{Scope: scope, Config: raw}); err != nil {
 			t.Fatal(err)
@@ -373,7 +372,7 @@ func BenchmarkInspectionOpaqueRules(b *testing.B) {
 		envelope := customerkey.Envelope{Version: 1, KeyID: keyID,
 			Salt: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 			Blob: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{byte(i)}, 14_000))}
-		doc := map[string]any{"version": 1, "rules": map[string]any{"selected": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"encrypted": envelope}}}}
+		doc := map[string]any{"rules": map[string]any{"selected": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"encrypted": envelope}}}}
 		entries[i].Scope = RoleScope
 		if i == 0 {
 			entries[i].Scope = OrganizationScope

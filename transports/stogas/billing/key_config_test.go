@@ -249,7 +249,7 @@ func TestEveryPolicyDetectorReachesChatAndResponsesRedaction(t *testing.T) {
 	for _, fixture := range fixtures {
 		t.Run(fixture.pattern, func(t *testing.T) {
 			for _, enabled := range []bool{true, false} {
-				encoded, err := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"stogasRedaction": map[string]bool{fixture.pattern: enabled}}})
+				encoded, err := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]bool{fixture.pattern: enabled}}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -368,10 +368,10 @@ func TestOnDemandSourcesAndPIIMatchersShareAcrossDistinctKeys(t *testing.T) {
 	for i := range literals {
 		literals[i] = fmt.Sprintf("ORGANIZATION_SECRET_%04d", i)
 	}
-	parent, _ := json.Marshal(map[string]any{"version": 1, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}})
+	parent, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}})
 	var first *KeyConfigSnapshot
 	for i := range 1000 {
-		key, _ := json.Marshal(map[string]any{"version": 1, "routing": map[string]any{"filter": fmt.Sprintf("deployment.contextWindowTokens >= %d", i)}})
+		key, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": fmt.Sprintf("deployment.contextWindowTokens >= %d", i)}})
 		sources, err := cache.acquireSources([]json.RawMessage{parent, json.RawMessage("null"), key}, "org", nil)
 		if err != nil {
 			t.Fatal(err)
@@ -415,11 +415,11 @@ func TestOnDemandSourcesAndPIIMatchersShareAcrossDistinctKeys(t *testing.T) {
 func TestPlaintextSourcesShareAcrossOrganizationsWithoutSharingAuthority(t *testing.T) {
 	var cache keyConfigCache
 	defer cache.close()
-	first, err := cache.acquireSource([]byte(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["SharedDictionary"]}]}}}`), "first-org", nil)
+	first, err := cache.acquireSource([]byte(`{"plugins":{"stogasRedaction":{"literals":[{"values":["SharedDictionary"]}]}}}`), "first-org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := cache.acquireSource([]byte(`{ "plugins": { "stogasRedaction": { "literals": [{ "values": ["SharedDictionary"] }] } }, "version": 1 }`), "second-org", nil)
+	second, err := cache.acquireSource([]byte(`{ "plugins": { "stogasRedaction": { "literals": [{ "values": ["SharedDictionary"] }] } } }`), "second-org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +442,7 @@ func TestSiblingKeyPinsReuseConfirmedSourcesAcrossEviction(t *testing.T) {
 	claims := &APIKeyClaims{OrganizationID: "org", KeyID: "first", ResponsibleID: "user"}
 	versions := &PolicyVersions{{Scope: policy.OrganizationScope, ID: "org", Revision: 7}, {Scope: policy.KeyScope, ID: "first", Revision: 1}}
 	sources, err := cache.acquireSources([]json.RawMessage{
-		json.RawMessage(`{"version":1,"input":{"asciiOnly":true}}`), json.RawMessage(`null`), json.RawMessage(`{"version":1}`),
+		json.RawMessage(`{"input":{"asciiOnly":true}}`), json.RawMessage(`null`), json.RawMessage(`{}`),
 	}, "org", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -489,7 +489,7 @@ func TestSourceDeltaRequiresPinnedIdentityAndRevision(t *testing.T) {
 			t.Fatal("unresolved cached source became an empty policy")
 		}
 	}
-	source, err := cache.acquireSource([]byte(`{"version":1,"input":{"asciiOnly":true}}`), "org", nil)
+	source, err := cache.acquireSource([]byte(`{"input":{"asciiOnly":true}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestDelayedSourceRefreshCannotReplaceNewerParentSnapshot(t *testing.T) {
 
 func TestConcurrentSourceMissesInternOnceAndCleanUpPins(t *testing.T) {
 	var cache keyConfigCache
-	raw := []byte(`{"version":1,"plugins":{"stogasRedaction":{"email_address":true}}}`)
+	raw := []byte(`{"plugins":{"stogasRedaction":{"email_address":true}}}`)
 	refs := make(chan *sharedPolicySource, 32)
 	errs := make(chan error, 32)
 	var workers sync.WaitGroup
@@ -574,11 +574,11 @@ func TestConcurrentSourceMissesInternOnceAndCleanUpPins(t *testing.T) {
 
 func TestSourceRevisionSharesPIIAndKeepsInFlightSnapshotAfterClose(t *testing.T) {
 	var cache keyConfigCache
-	original, err := cache.acquireSource([]byte(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
+	original, err := cache.acquireSource([]byte(`{"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := cache.acquireSource([]byte(`{"version":1,"limits":{"spend":{"lifetimeUsd":"10"}},"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
+	changed, err := cache.acquireSource([]byte(`{"limits":{"spend":{"lifetimeUsd":"10"}},"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -590,7 +590,7 @@ func TestSourceRevisionSharesPIIAndKeepsInFlightSnapshotAfterClose(t *testing.T)
 		t.Fatal(err)
 	}
 	cache.close()
-	if _, err := cache.acquireSource([]byte(`{"version":1,"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil); err == nil {
+	if _, err := cache.acquireSource([]byte(`{"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil); err == nil {
 		t.Fatal("a closed cache accepted an existing pinned source")
 	}
 	cache.releaseSources([]*sharedPolicySource{original, changed})
