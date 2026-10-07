@@ -57,6 +57,9 @@ func (DefaultAdapter) ValidateRequest(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
+	if state.Resolution.InputFiles().IDs > 0 && !state.PreparedCredential.UsesBYOK() {
+		return invalidRequest("Provider file IDs require BYOK")
+	}
 	if err := validateCommonChatCompletionPolicy(state); err != nil {
 		return err
 	}
@@ -136,6 +139,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		observeActualExecution(state, response.ServiceTier, response.Speed, response.InferenceGeo)
 		observeActualResponseModel(state, response.Model)
 		state.observeChatProviderOutputEmitted(response)
+		state.observeChatTextMaterial(response)
 		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
@@ -165,6 +169,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 			observeActualResponseModel(state, streamResp.Response.Model)
 		}
 		state.observeResponsesProviderOutputEmitted(streamResp)
+		state.observeResponsesStreamTextMaterial(streamResp)
 		state.Response = &schemas.BifrostResponse{ResponsesStreamResponse: streamResp}
 	}
 	return nil
@@ -192,6 +197,10 @@ func (DefaultAdapter) IngestResponse(state *State, resp *schemas.BifrostResponse
 	observeBifrostActualExecution(state, resp)
 	if bifrostErr == nil {
 		state.observeProviderResponseOutputEmitted(resp)
+		if resp != nil {
+			state.observeChatTextMaterial(resp.ChatResponse)
+			state.observeResponsesTextMaterial(resp.ResponsesResponse)
+		}
 	}
 	if bifrostErr != nil {
 		if billedUsage := bifrostErr.ExtraFields.BilledUsage; billedUsage != nil {
@@ -477,19 +486,13 @@ func actualWebSearchCalls(state *State) int {
 	return signals.WebSearchCalls()
 }
 
-func responsesTopLevelMaxToolCallsOrDefault(state *State) int {
+// An execution limit exists only when the caller supplied one. Financial
+// defaults must not reject valid provider output or alter the upstream request.
+func responsesExplicitMaxToolCalls(state *State) (int, bool) {
 	if state == nil || state.Resolution == nil {
-		return defaultResponsesHostedToolCalls
+		return 0, false
 	}
-	raw, ok := state.Resolution.RawBody()["max_tool_calls"]
-	if !ok {
-		return defaultResponsesHostedToolCalls
-	}
-	quantity, _, err := rawInteger(raw, "max_tool_calls")
-	if err != nil || quantity < 1 {
-		return defaultResponsesHostedToolCalls
-	}
-	return quantity
+	return rawIntegerValue(state.Resolution.RawBody()["max_tool_calls"])
 }
 
 func resolutionUsesToolType(state *State, toolType schemas.ResponsesToolType) bool {

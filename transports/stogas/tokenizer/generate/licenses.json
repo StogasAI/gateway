@@ -1,7 +1,0 @@
-[
-  {"name":"DeepSeek vocabulary","url":"https://huggingface.co/deepseek-ai/DeepSeek-V3.2/resolve/a7e62ac04ecb2c0a54d736dc46601c5606cf10a6/LICENSE","sha256":"f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040"},
-  {"name":"Qwen (Alibaba), Gemma (Google), Tekken (Mistral AI) vocabularies","url":"https://www.apache.org/licenses/LICENSE-2.0.txt","sha256":"cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"},
-  {"name":"MiniMax M2 vocabulary","url":"https://raw.githubusercontent.com/MiniMax-AI/MiniMax-M2/2e575efec12773cdc5d811341089512452bfb468/LICENSE","sha256":"1a75fb68199afb1fcf3896b070b20ea05fe628945b946489d97d50b6a72eb10e"},
-  {"name":"Kimi K2.6 vocabulary","url":"https://huggingface.co/moonshotai/Kimi-K2.6/resolve/7eb5002f6aadc958aed6a9177b7ed26bb94011bb/LICENSE","sha256":"1d4ab2d8404287de44429024a78b58d3aabc4df9d0c490e73fec9ff1fd842529"},
-  {"name":"GLM vocabulary","url":"https://huggingface.co/zai-org/GLM-5.1/resolve/26e1bd6e011feb778d25ae34b09b07074139d92d/LICENSE","sha256":"f4a18c6ae40b0a8e7d2b7667f52f6e1994e54a46430d2e172b73cb8c9b5eb0d7"}
-]

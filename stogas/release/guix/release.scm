@@ -225,51 +225,49 @@
               (call-with-output-file manifest
                 (lambda (port)
                   (display "{\"artifacts\":{\"gateway.igvm\":{" port)
-                  (format port "\"sha256\":~a,\"sizeBytes\":~a}},"
+                  (format port "\"sha256\":~a,\"size_bytes\":~a}},"
                           (json-string (sha256 igvm))
                           (stat:size (stat igvm)))
                   (display "\"build\":{" port)
-                  (display "\"environment\":{\"lcAll\":\"C\",\"sourceDateEpoch\":\"1\",\"tz\":\"UTC\",\"umask\":\"022\"}," port)
-                  (format port "\"goVendorTreeSha256\":~a,"
+                  (display "\"environment\":{\"lc_all\":\"C\",\"source_date_epoch\":\"1\",\"tz\":\"UTC\",\"umask\":\"022\"}," port)
+                  (format port "\"go_vendor_tree_sha256\":~a,"
                           (json-string expected-go-vendor-tree-sha256))
-                  (format port "\"goVersion\":~a,"
+                  (format port "\"go_version\":~a,"
                           (json-string (string-trim-right (command-output "go" "version"))))
-                  (display "\"guestCaBundlePath\":\"/etc/ssl/certs/ca-certificates.crt\"," port)
-                  (display "\"guixChannelCommit\":\"058701d7ad329cfa7292998699baa3dfb8955752\"," port)
-                  (display "\"inputSha256\":{" port)
+                  (display "\"guest_ca_bundle_path\":\"/etc/ssl/certs/ca-certificates.crt\"," port)
+                  (display "\"guix_channel_commit\":\"058701d7ad329cfa7292998699baa3dfb8955752\"," port)
+                  (display "\"input_sha256\":{" port)
                   (write-json-hash-map port build-inputs)
                   (display "}," port)
-                  (format port "\"kernelConfigSha256\":~a,"
+                  (format port "\"kernel_config_sha256\":~a,"
                           (json-string
                            (sha256 (string-append #$stogas-linux-6-18 "/.config"))))
-                  (display "\"kernelVersion\":\"6.18.38\"," port)
-                  (format port "\"linuxBzImageSha256\":~a," (json-string (sha256 kernel)))
-                  (format port "\"ovmfSha256\":~a," (json-string (sha256 ovmf)))
-                  (format port "\"systemdStubSha256\":~a," (json-string (sha256 stub)))
-                  (format port "\"ukiSha256\":~a}," (json-string (sha256 efi)))
-                  (display "\"git\":{" port)
-                  (format port "\"commit\":~a," (json-string #$%release-commit))
-                  (format port "\"ref\":~a,"
-                          (json-string (string-append "refs/tags/" #$%release-tag)))
-                  (display "\"repository\":\"https://github.com/StogasAI/gateway\"," port)
-                  (format port "\"tag\":~a," (json-string #$%release-tag))
-                  (format port "\"tree\":~a}," (json-string #$%release-tree))
+                  (display "\"kernel_version\":\"6.18.38\"," port)
+                  (format port "\"linux_bz_image_sha256\":~a," (json-string (sha256 kernel)))
+                  (format port "\"ovmf_sha256\":~a," (json-string (sha256 ovmf)))
+                  (format port "\"systemd_stub_sha256\":~a," (json-string (sha256 stub)))
+                  (format port "\"uki_sha256\":~a}," (json-string (sha256 efi)))
                   (display "\"schema\":\"stogas.gateway.release.v1\"," port)
                   (format port "\"sequence\":~a," #$(release-sequence %release-tag))
-                  (display "\"sevSnp\":{\"checkKvm\":true," port)
-                  (format port "\"launchMeasurement\":~a,"
+                  (display "\"sev_snp\":{\"check_kvm\":true," port)
+                  (format port "\"launch_measurement\":~a,"
                           (json-string (string-trim-both measurement)))
-                  (format port "\"launchPolicies\":~a,"
+                  (format port "\"launch_policies\":~a,"
                           (string-trim-right
                            (call-with-input-file launch-policies get-string-all)))
-                  (display "\"measurementCommand\":\"igvmmeasure --check-kvm gateway.igvm measure\"," port)
-                  (display "\"measurementTool\":\"igvmmeasure\"," port)
-                  (format port "\"measurementToolSha256\":~a,"
+                  (display "\"measurement_command\":\"igvmmeasure --check-kvm gateway.igvm measure\"," port)
+                  (display "\"measurement_tool\":\"igvmmeasure\"," port)
+                  (format port "\"measurement_tool_sha256\":~a,"
                           (json-string (sha256 igvmmeasure)))
-                  (format port "\"measurementToolVersion\":~a,"
+                  (format port "\"measurement_tool_version\":~a,"
                           (json-string #$(package-version stogas-igvmmeasure)))
-                  (display "\"platform\":\"SEV_SNP\",\"vcpuCount\":4,\"vmm\":\"qemu-kvm\"}}\n"
-                           port)))))
+                  (display "\"platform\":\"SEV_SNP\",\"vcpu_count\":4,\"vmm\":\"qemu-kvm\"}," port)
+                  (display "\"source\":{" port)
+                  (format port "\"commit\":~a," (json-string #$%release-commit))
+                  (display "\"repository\":\"https://github.com/StogasAI/gateway\"," port)
+                  (format port "\"tag\":~a," (json-string #$%release-tag))
+                  (format port "\"tree\":~a}" (json-string #$%release-tree))
+                  (display "}\n" port)))))
 
           (define out #$output)
           (define source #$source)

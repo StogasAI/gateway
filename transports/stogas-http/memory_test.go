@@ -55,9 +55,9 @@ func TestJSONStructureRejectionFitsAlreadyAdmittedScanMemory(t *testing.T) {
 }
 
 func TestJSONStructureReservationSurvivesBodyResizeAndTransfersOnlyRetainedWork(t *testing.T) {
-	admission := &requestMemoryAdmission{budget: 4 * minimumRequestWeightBytes}
-	lease, _ := admission.acquire(1024)
 	const values = 10000
+	admission := &requestMemoryAdmission{budget: 2 * int64(values) * requestJSONValueBytes}
+	lease, _ := admission.acquire(1024)
 	if err := lease.admitJSON(values); err != nil {
 		t.Fatal(err)
 	}
@@ -140,16 +140,16 @@ func TestMemoryPressureReclaimsOnceAndRechecksTheSharedBudget(t *testing.T) {
 			}
 			return true
 		}
-		if admission.reserve(requestBodyMemory, 101) || calls != 0 {
+		if admission.reserve(requestLifetimeMemory, 101) || calls != 0 {
 			t.Fatal("impossible reservation must not evict")
 		}
-		if got := admission.reserve(requestBodyMemory, 50); got != release || calls != 1 {
+		if got := admission.reserve(requestLifetimeMemory, 50); got != release || calls != 1 {
 			t.Fatalf("reclamation must recheck actual free space once: admitted=%t calls=%d", got, calls)
 		}
 		if admission.reserved.Load() > 100 {
 			t.Fatal("reclamation overcommitted the budget")
 		}
-		if release && (admission.streamStateReserved.Load() != 50 || admission.requestBodyReserved.Load() != 50) {
+		if release && (admission.streamStateReserved.Load() != 50 || admission.requestReserved.Load() != 50) {
 			t.Fatal("reclamation changed an unrelated reservation class")
 		}
 	}
@@ -167,9 +167,9 @@ func TestMemoryPressureNeverQueuesCompetingReclamation(t *testing.T) {
 		admission.release(streamStateMemory, needed)
 		return true
 	}
-	go func() { done <- admission.reserve(requestBodyMemory, 50) }()
+	go func() { done <- admission.reserve(requestLifetimeMemory, 50) }()
 	<-entered
-	if admission.reserve(requestBodyMemory, 50) {
+	if admission.reserve(requestLifetimeMemory, 50) {
 		t.Fatal("competing pressure overcommitted memory")
 	}
 	close(finish)
@@ -247,7 +247,7 @@ func TestRequestMemoryAdmissionUsesBoundedWeightedCapacity(t *testing.T) {
 	if got, want := admission.reserved.Load(), int64(80*1024*1024); got != want {
 		t.Fatalf("reserved bytes = %d, want %d", got, want)
 	}
-	if got, want := admission.requestBodyReserved.Load(), admission.reserved.Load(); got != want {
+	if got, want := admission.requestReserved.Load(), admission.reserved.Load(); got != want {
 		t.Fatalf("request reservation = %d, want %d", got, want)
 	}
 	lease.release()
@@ -259,7 +259,7 @@ func TestRequestMemoryAdmissionUsesBoundedWeightedCapacity(t *testing.T) {
 	if lease, ok := admission.acquire(int(requestMemoryBudgetBytes)); ok || lease != nil {
 		t.Fatal("expected an individually oversized weighted request to be rejected")
 	}
-	if got := admission.requestBodyFailures.Load(); got != 1 {
+	if got := admission.requestFailures.Load(); got != 1 {
 		t.Fatalf("request reservation failures = %d, want 1", got)
 	}
 }
@@ -304,26 +304,11 @@ func TestRequestMemoryLeaseAccountsStreamPayloadOnce(t *testing.T) {
 	}
 }
 
-func TestDefaultResourceProfileMatchesMeasuredGuest(t *testing.T) {
-	if got, want := DefaultGuestMemoryBytes, int64(16*1024*1024*1024); got != want {
-		t.Fatalf("guest memory = %d, want %d", got, want)
-	}
-	if got, want := DefaultGoMemoryLimitBytes, int64(10*1024*1024*1024); got != want {
-		t.Fatalf("Go memory limit = %d, want %d", got, want)
-	}
-	if got, want := requestMemoryBudgetBytes, int64(4*1024*1024*1024); got != want {
-		t.Fatalf("payload budget = %d, want %d", got, want)
-	}
-	if DefaultGuestVCPUCount != 4 || serverConcurrency != 2048 || readinessConcurrency != 64 {
-		t.Fatalf("resource profile = %d vCPUs, %d public connections, and %d readiness connections; want 4, 2048, and 64", DefaultGuestVCPUCount, serverConcurrency, readinessConcurrency)
-	}
-}
-
 func TestRequestMemoryBudgetScalesDownWithGoLimit(t *testing.T) {
 	if got := requestMemoryBudgetForGoLimit(0); got != 1 {
 		t.Fatalf("zero-limit payload budget = %d, want 1", got)
 	}
-	if got, want := requestMemoryBudgetForGoLimit(5*1024*1024*1024), int64(2*1024*1024*1024); got != want {
+	if got, want := requestMemoryBudgetForGoLimit(5*1024*1024*1024), int64(5*1024*1024*1024); got != want {
 		t.Fatalf("reduced payload budget = %d, want %d", got, want)
 	}
 	if got, want := requestMemoryBudgetForGoLimit(DefaultGoMemoryLimitBytes-1), requestMemoryBudgetBytes-1; got != want {
@@ -362,14 +347,14 @@ func TestRequestMemoryDiagnosticsSeparateReservationClasses(t *testing.T) {
 	}
 
 	diagnostics := admission.diagnostics()
-	if diagnostics.RequestBodyReservedBytes != minimumRequestWeightBytes ||
+	if diagnostics.RequestReservedBytes != minimumRequestWeightBytes ||
 		diagnostics.StreamStateReservedBytes != 10 ||
 		diagnostics.DownstreamReservedBytes != 20 ||
 		diagnostics.ReservedBytes != minimumRequestWeightBytes+30 {
 		t.Fatalf("unexpected memory diagnostics: %#v", diagnostics)
 	}
 	if diagnostics.PeakReservedBytes != diagnostics.ReservedBytes ||
-		diagnostics.RequestBodyReservationFailures != 1 ||
+		diagnostics.RequestReservationFailures != 1 ||
 		!diagnostics.Saturated {
 		t.Fatalf("unexpected capacity diagnostics: %#v", diagnostics)
 	}

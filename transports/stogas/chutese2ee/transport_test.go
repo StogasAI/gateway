@@ -132,7 +132,8 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	if invokeCalls.Load() != 1 {
 		t.Fatalf("invoke calls = %d", invokeCalls.Load())
 	}
-	if snapshot := transport.Diagnostics(); len(snapshot.Chutes) != 1 || snapshot.Chutes[0].UsableTickets != 4 {
+	if snapshot := transport.Diagnostics(); len(snapshot.Chutes) != 1 || snapshot.Chutes[0].UsableTickets != 4 ||
+		snapshot.Chutes[0].Tickets.Reserved != 1 || snapshot.Chutes[0].ManagedTicketsReserved != 1 {
 		t.Fatalf("unexpected diagnostics: %#v", snapshot)
 	}
 }
@@ -369,7 +370,8 @@ func TestTransportUsesCredentialScopedBYOKPool(t *testing.T) {
 	snapshot := transport.Diagnostics()
 	if snapshot.CredentialPools != 2 || snapshot.BYOKCredentialPools != 1 ||
 		len(snapshot.Chutes) != 1 || snapshot.Chutes[0].CredentialPools != 2 ||
-		snapshot.Chutes[0].VerifiedInstances != 1 {
+		snapshot.Chutes[0].VerifiedInstances != 1 || snapshot.Chutes[0].Tickets.Reserved != 2 ||
+		snapshot.Chutes[0].ManagedTicketsReserved != 1 {
 		t.Fatalf("customer pool health was not safely aggregated: %#v", snapshot)
 	}
 }

@@ -391,7 +391,7 @@ func TestOnDemandSourcesAndPIIMatchersShareAcrossDistinctKeys(t *testing.T) {
 		cache.releaseSources(sources)
 		if first == nil {
 			first = snapshot
-		} else if first.sourceRefs[0] != snapshot.sourceRefs[0] || first.matchers[0] != snapshot.matchers[0] || first.Config.RedactionSources[0] != snapshot.Config.RedactionSources[0] {
+		} else if first.sourceRefs[0] != snapshot.sourceRefs[0] || first.matchers[0] != snapshot.matchers[0] || first.Config.PluginSources[0] != snapshot.Config.PluginSources[0] {
 			t.Fatal("large parent was duplicated")
 		}
 	}

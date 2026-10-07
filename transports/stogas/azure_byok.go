@@ -39,14 +39,26 @@ type azureByokCredential struct {
 // still checks the selected credential and chooses its live binding atomically.
 func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Time) func(schemas.ModelProvider, int, catalog.Deployment) bool {
 	selections := snapshot.Credentials["azure"]
+	lookups := make([]func(billing.UpstreamTarget) []*billing.AzureCredentialBinding, len(selections))
+	for index, selection := range selections {
+		if selection.Credential != nil {
+			lookups[index] = selection.Credential.AzureBindingLookup()
+		}
+	}
 	return func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) bool {
 		if provider != schemas.Azure {
 			return true
 		}
-		if index < 0 || index >= len(selections) || selections[index].Credential == nil {
+		if index < 0 || index >= len(lookups) || lookups[index] == nil {
 			return false
 		}
-		for _, item := range selections[index].Credential.Bindings {
+		for _, item := range lookups[index](billing.UpstreamTarget{
+			ModelFormat:    deployment.Upstream.ModelFormat,
+			Model:          deployment.Upstream.Model,
+			ModelVersion:   deployment.Upstream.ModelVersion,
+			Hosting:        deployment.Upstream.Hosting,
+			DeploymentType: deployment.Upstream.DeploymentType,
+		}) {
 			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) {
 				continue
 			}

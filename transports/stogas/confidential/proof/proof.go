@@ -40,9 +40,9 @@ type Metadata struct {
 }
 
 type Input struct {
-	RequestBody  []byte
-	ResponseBody []byte
-	Metadata     Metadata
+	RequestDigest *[32]byte
+	ResponseBody  []byte
+	Metadata      Metadata
 }
 
 // Object is the opt-in metadata covered by the receipt, excluding Receipt itself.

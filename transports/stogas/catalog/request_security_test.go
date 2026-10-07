@@ -69,7 +69,7 @@ func TestRequestStructureLimitsRejectBeforeAdmission(t *testing.T) {
 		}
 	}
 	// Root object and array are two values; keys and string contents are not.
-	values := `{"schema":[` + strings.Repeat(`null,`, maxRequestJSONValues-3) + `null`
+	values := `{"schema":[` + strings.Repeat(`null,`, MaxRequestJSONValues-3) + `null`
 	if _, err := DecodeRequestBody([]byte(values+`]}`), nil); err != nil {
 		t.Fatalf("JSON value boundary rejected: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRequestStructureLimitsRejectBeforeAdmission(t *testing.T) {
 		t.Fatalf("JSON structure overflow = %v", err)
 	}
 	// A single large text value may contain arbitrary JSON-looking prompt text.
-	large, _ := json.Marshal(map[string]string{"input": strings.Repeat("{},[]", maxRequestJSONValues)})
+	large, _ := json.Marshal(map[string]string{"input": strings.Repeat("{},[]", MaxRequestJSONValues)})
 	if _, err := DecodeRequestBody(large, nil); err != nil {
 		t.Fatalf("text size became structural complexity: %v", err)
 	}

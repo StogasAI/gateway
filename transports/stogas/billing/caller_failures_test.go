@@ -28,9 +28,9 @@ func TestTerminalBackoffUsesFinalOutcomeAndKeepsEventFacts(t *testing.T) {
 			s := &Service{}
 			started := time.Now().Add(-time.Second)
 			a := &Authorization{KeyID: "key", OrganizationID: "org", dashboardAdmissionIdentity: "dashboard:actor:session", admissionStartedAt: started}
-			identities := []string{"key:key", "org:org", "dashboard:actor:session"}
+			identities := []string{"key:key", "dashboard:actor:session"}
 			for _, key := range identities {
-				s.rejections.record(key, started.Add(-time.Second))
+				s.callerFailures.record(key, started.Add(-time.Second))
 			}
 			before := tc.event
 			before.ProviderAttempts = append([]ProviderAttempt(nil), tc.event.ProviderAttempts...)
@@ -39,7 +39,7 @@ func TestTerminalBackoffUsesFinalOutcomeAndKeepsEventFacts(t *testing.T) {
 				t.Fatal("backoff changed logged outcome")
 			}
 			for _, key := range identities {
-				shard := &s.rejections.shards[localAdmissionShard(key)]
+				shard := &s.callerFailures.shards[localAdmissionShard(key)]
 				entry, exists := shard.entries[key]
 				if tc.clears && exists || !tc.clears && !exists {
 					t.Fatalf("%s: unexpected cache state", key)
@@ -56,14 +56,14 @@ func TestTerminalBackoffUsesFinalOutcomeAndKeepsEventFacts(t *testing.T) {
 	for _, status := range []string{"authentication_error", "permission_error", "over_budget", "rate_limited", "timeout", "connection_error", "provider_unavailable", "provider_overloaded", "provider_error", "invalid_response", "invalid_request", "model_unavailable", "context_length_exceeded", "request_too_large", "invalid_image", "content_filter", "unknown"} {
 		s := &Service{}
 		s.recordRequestOutcome(&Authorization{KeyID: "key", OrganizationID: "org"}, RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: status}}})
-		if len(s.rejections.shards[localAdmissionShard("org:org")].entries) != 1 {
+		if len(s.callerFailures.shards[localAdmissionShard("key:key")].entries) != 1 {
 			t.Fatalf("%s did not back off", status)
 		}
 	}
 }
 
 func TestFailureBackoffConcurrentAndOutOfOrderCompletions(t *testing.T) {
-	var c authorizationRejectionCache
+	var c callerFailureCache
 	now := time.Unix(1700000000, 0)
 	var workers sync.WaitGroup
 	for i := range 200 {
@@ -100,7 +100,7 @@ func TestFailureBackoffConcurrentAndOutOfOrderCompletions(t *testing.T) {
 }
 
 func TestFailureCooldownBoundaryAndBoundedState(t *testing.T) {
-	var c authorizationRejectionCache
+	var c callerFailureCache
 	now := time.Unix(1700000000, 0)
 	c.record("key", now)
 	c.record("key", now.Add(25*time.Millisecond-time.Nanosecond))
@@ -153,7 +153,7 @@ func TestFailureCooldownUnderContinuousTraffic(t *testing.T) {
 		{"runaway failed requests", 10000, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var failures authorizationRejectionCache
+			var failures callerFailureCache
 			var rate localRequestLimiter
 			start := time.Unix(1700000000, 0)
 			admitted := 0
@@ -196,7 +196,7 @@ func TestRejectedRetryFloodCannotExtendCooldown(t *testing.T) {
 			t.Fatal("rejected retries prolonged cooldown")
 		}
 		s.RecordCallerFailure(claims, nil, 503, "provider_unavailable")
-		if delay := s.rejections.get("org:org", time.Now()); delay != 25*time.Millisecond {
+		if delay := s.callerFailures.get("key:key", time.Now()); delay != 25*time.Millisecond {
 			t.Fatalf("retry after cooldown retained penalty: %s", delay)
 		}
 	})

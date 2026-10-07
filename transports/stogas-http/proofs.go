@@ -3,6 +3,7 @@ package stogashttp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 
@@ -119,10 +120,14 @@ func (s *Server) proofInput(ctx *requestContext, bifrostCtx context.Context, sta
 	if state == nil || state.Resolution == nil {
 		return proofhttp.Input{}, catalog.ErrUnsupportedRequest
 	}
+	digest, err := ctx.receiptRequestDigest()
+	if err != nil {
+		return proofhttp.Input{}, err
+	}
 	return proofhttp.Input{
-		RequestBody:  ctx.body,
-		ResponseBody: responseJSON,
-		Metadata:     proofMetadata(bifrostCtx, state),
+		RequestDigest: digest,
+		ResponseBody:  responseJSON,
+		Metadata:      proofMetadata(bifrostCtx, state),
 	}, nil
 }
 
@@ -190,4 +195,16 @@ func appendStogasReceipt(responseJSON, receiptJSON []byte) ([]byte, error) {
 
 func (s *Server) writeProofError(ctx *requestContext) {
 	s.writeBifrostError(ctx, responseProofFailure())
+}
+
+// receiptRequestDigest commits to the original received bytes once. Keeping the
+// digest lets the handler discard its input body before waiting on the provider.
+func (ctx *requestContext) receiptRequestDigest() (*[32]byte, error) {
+	if ctx.requestDigest == nil {
+		if len(ctx.body) == 0 {
+			return nil, errors.New("receipt request content is empty")
+		}
+		ctx.requestDigest = new(sha256.Sum256(ctx.body))
+	}
+	return ctx.requestDigest, nil
 }

@@ -342,6 +342,17 @@ func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	if payload.Node.Process.CPUTimeMicros == nil || payload.Node.Process.AllocatedBytes < payload.Node.Process.HeapAllocBytes || payload.Node.Process.Allocations == 0 {
 		t.Fatalf("process cost diagnostics are incomplete: %#v", payload.Node.Process)
 	}
+	process := payload.Node.Process
+	if process.GCPercent == nil || process.HeapLiveBytes == nil || process.HeapGoalBytes == nil || *process.HeapGoalBytes < *process.HeapLiveBytes {
+		t.Fatalf("GC tuning diagnostics are incomplete: %#v", process)
+	}
+	if process.GoManagedBytes != process.HeapAllocBytes+process.HeapUnusedBytes+process.HeapFreeBytes+process.StackSystemBytes+process.RuntimeMetadataBytes {
+		t.Fatalf("Go memory breakdown does not reconcile: %#v", process)
+	}
+	if process.GoCPUCapacitySeconds == nil || process.GoGCCPUSeconds == nil || process.GoGCIdleCPUSeconds == nil || process.GCLimiterLastEnabledCycle == nil ||
+		*process.GoCPUCapacitySeconds <= 0 || *process.GoGCCPUSeconds < *process.GoGCIdleCPUSeconds || *process.GoCPUCapacitySeconds < *process.GoGCCPUSeconds {
+		t.Fatalf("interval GC diagnostics are incomplete or inconsistent: %#v", process)
+	}
 	if payload.Node.Listeners.Public.MaximumConnections != serverConcurrency ||
 		payload.Node.Listeners.Private.MaximumConnections != readinessConcurrency {
 		t.Fatalf("listener diagnostics are incomplete: %#v", payload.Node.Listeners)
@@ -647,6 +658,11 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	}
 	state.FinalEvent.UpstreamCostUSD, state.FinalEvent.BilledCostUSD = "0.002", "0.00004"
 	state.FinalEvent.CacheReadSavingsUSD, state.FinalEvent.CacheWriteOverheadUSD = schemas.Ptr("0.0006"), schemas.Ptr("0")
+	requestDigest := sha256.Sum256(ctx.body)
+	if _, err := ctx.receiptRequestDigest(); err != nil {
+		t.Fatal(err)
+	}
+	ctx.body = nil
 	server.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, map[string]any{"ok": true})
 	var response struct {
 		OK     bool         `json:"ok"`
@@ -665,14 +681,14 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 		response.Stogas.CacheWriteOverheadUSD == nil || *response.Stogas.CacheWriteOverheadUSD != "0" {
 		t.Fatal("response metadata differs from final request history")
 	}
-	if !proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+	if !proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
 		t.Fatal("receipt does not bind exact request and response")
 	}
 	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256([]byte(`{}`)), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
 		t.Fatal("receipt accepted another request")
 	}
 	response.Stogas.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
-	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
 		t.Fatal("receipt accepted a changed informational meter")
 	}
 }
@@ -1900,59 +1916,69 @@ func TestInferenceStreamResponseLimitIsExactAndOverflowSafe(t *testing.T) {
 	}
 }
 
-func TestWriteSSEStreamRejectsAggregateMemoryGrowthWithoutLeakingReservation(t *testing.T) {
-	admission := &requestMemoryAdmission{}
-	seeded := requestMemoryBudgetBytes - 1
-	admission.reserved.Store(seeded)
+func TestWriteSSEStreamUsesExistingReservationAtSaturation(t *testing.T) {
+	admission := &requestMemoryAdmission{budget: minimumRequestWeightBytes}
+	lease, ok := admission.acquire(32 << 10)
+	if !ok || !lease.ReserveResponse(4096, 20) {
+		t.Fatal("admit request and provider response")
+	}
+	if _, ok := admission.acquire(0); ok {
+		t.Fatal("expected saturated admission")
+	}
 	server := &Server{memory: admission}
 	ctx := newTestRequest(t)
+	ctx.memory = lease
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 1)
 	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
 		ID: "chatcmpl_capacity", Object: "chat.completion.chunk", Choices: []schemas.BifrostResponseChoice{},
 	}}
 	close(stream)
-	state := &stogas.State{}
-
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
-	body := readResponseBodyStream(t, streamBodyReader)
-	payload := requireSSEErrorPayload(t, body)
-	if payload["code"] != "gateway_capacity_exceeded" || payload["message"] != "Gateway capacity is temporarily exhausted" {
-		t.Fatalf("unexpected capacity error: %#v", payload)
+	complete := make(chan struct{})
+	reader := server.startSSEStream(ctx, bifrostCtx, &stogas.State{}, stream, true, false, cancel, func() { lease.release(); close(complete) })
+	body := readResponseBodyStream(t, reader)
+	<-complete
+	if !strings.Contains(body, "chatcmpl_capacity") || !strings.Contains(body, "[DONE]") || strings.Contains(body, "gateway_capacity_exceeded") {
+		t.Fatalf("reserved stream failed under saturation: %q", body)
 	}
-	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil || state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != "gateway_capacity_exceeded" {
-		t.Fatalf("capacity failure was not retained separately from provider errors: %#v", state.ProcessingError)
-	}
-	if got := admission.reserved.Load(); got != seeded {
-		t.Fatalf("stream memory reservation leaked: used = %d, want %d", got, seeded)
+	if admission.reserved.Load() != 0 {
+		t.Fatal("response leaked reservation")
 	}
 }
 
 func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
-	admission := &requestMemoryAdmission{}
+	admission := &requestMemoryAdmission{budget: minimumRequestWeightBytes}
+	lease, ok := admission.acquire(0)
+	if !ok {
+		t.Fatal("admit")
+	}
 	server := &Server{memory: admission}
 	ctx := newTestRequest(t)
+	ctx.memory = lease
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 1)
 	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
 		ID: "chatcmpl_memory", Object: "chat.completion.chunk", Choices: []schemas.BifrostResponseChoice{},
 	}}
 	close(stream)
-
 	completed := make(chan struct{})
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel, func() { close(completed) })
-	deadline := time.Now().Add(time.Second)
-	for admission.reserved.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if admission.reserved.Load() == 0 {
-		t.Fatal("stream frame did not reserve memory")
-	}
-	body := readResponseBodyStream(t, streamBodyReader)
-	if !strings.Contains(body, "chatcmpl_memory") {
-		t.Fatalf("stream frame missing: %q", body)
+	reader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel, func() { lease.release(); close(completed) })
+	defer reader.Close()
+	// Consume the model frame so the producer can queue its terminal frame and
+	// finish. The final delivery must keep its own pin after request completion.
+	first := make([]byte, 4096)
+	n, err := reader.Read(first)
+	if err != nil || !strings.Contains(string(first[:n]), "chatcmpl_memory") {
+		t.Fatalf("first frame: %q, %v", first[:n], err)
 	}
 	<-completed
+	if got := admission.reserved.Load(); got == 0 || got >= minimumRequestWeightBytes {
+		t.Fatalf("delivery tail reservation=%d", got)
+	}
+	rest := readResponseBodyStream(t, reader)
+	if rest != "data: [DONE]\n\n" {
+		t.Fatalf("terminal frame=%q", rest)
+	}
 	if got := admission.reserved.Load(); got != 0 {
 		t.Fatalf("body drain left %d reserved bytes", got)
 	}
@@ -2857,7 +2883,7 @@ func TestIncrementalUploadAccountsGrowthAndFailsWithoutWaiting(t *testing.T) {
 		t.Fatal("initial admission")
 	}
 	// The next capacity growth needs both old and new storage at once.
-	_, err := readAdmittedBody(strings.NewReader(strings.Repeat("s", 1<<20)), 1<<20, lease, 0)
+	_, err := readAdmittedBody(strings.NewReader(strings.Repeat("s", 1<<20)), 1<<20, lease, 0, -1)
 	if !errors.Is(err, errRequestMemoryCapacity) {
 		t.Fatalf("growth = %v", err)
 	}
@@ -2876,7 +2902,7 @@ func TestIncrementalUploadAccountsGrowthAndFailsWithoutWaiting(t *testing.T) {
 	if !ok {
 		t.Fatal("next admission")
 	}
-	body, err := readAdmittedBody(strings.NewReader("{}"), 128<<20, lease, 0)
+	body, err := readAdmittedBody(strings.NewReader("{}"), 128<<20, lease, 0, -1)
 	if err != nil || string(body) != "{}" || admission.reserved.Load() != minimumRequestWeightBytes {
 		t.Fatalf("small upload = %q, %v, %d", body, err, admission.reserved.Load())
 	}
@@ -2895,6 +2921,7 @@ func TestHTTP2DisconnectRetainsInferenceAdmissionUntilProviderEnds(t *testing.T)
 			t.Error("admission failed")
 			return
 		}
+		ctx.memory = lease
 		request, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), time.Minute)
 		reader := server.startSSEStream(ctx, request, &stogas.State{}, provider, true, false, cancel, func() { lease.release(); server.requests.end(); close(providerDone) })
 		server.writeStream(ctx, reader)
@@ -2949,7 +2976,7 @@ func TestKeepaliveWhileProviderStartupIsSilent(t *testing.T) {
 		provider := make(chan *schemas.BifrostStreamChunk)
 		prepared := make(chan chan *schemas.BifrostStreamChunk, 1)
 		go func() {
-			stream, failure := awaitProviderStream(ctx, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) { <-open; return provider, nil })
+			stream, failure := awaitProviderStream(ctx, cancel, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) { <-open; return provider, nil })
 			if failure != nil {
 				t.Error("unexpected startup failure")
 			}

@@ -3,6 +3,8 @@ package chutese2ee
 import (
 	"context"
 	"errors"
+	"math/bits"
+	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -16,7 +18,77 @@ type OperationDiagnostic struct {
 	Error     string    `json:"error,omitempty"`
 }
 
+// Bucket 0 is below 1 ms; bucket i is [2^(i-1), 2^i) ms.
+// The last bucket is >=65,536 ms, beyond the 55-second ticket-wait deadline.
+const operationLatencyBucketCount = 18
+
+// OperationTotals count upstream attempts (including retries), or callers that
+// waited for a ticket. Durations include failures and caller cancellation.
+type OperationTotals struct {
+	LatencyMSBuckets [operationLatencyBucketCount]uint64 `json:"latencyMsBuckets"`
+	Calls            uint64                              `json:"calls"`
+	Failures         uint64                              `json:"failures"`
+	RateLimited      uint64                              `json:"rateLimited"`
+	TotalLatencyMS   int64                               `json:"totalLatencyMs"`
+	MaxLatencyMS     int64                               `json:"maxLatencyMs"`
+}
+
+type TicketTotals struct {
+	Received  uint64 `json:"received"`
+	Installed uint64 `json:"installed"`
+	Reserved  uint64 `json:"reserved"`
+	Expired   uint64 `json:"expired"`
+	Discarded uint64 `json:"discarded"`
+}
+
+type operationTotals struct {
+	latencyBuckets [operationLatencyBucketCount]atomic.Uint64
+	calls          atomic.Uint64
+	failures       atomic.Uint64
+	rateLimited    atomic.Uint64
+	totalLatency   atomic.Int64
+	maxLatency     atomic.Int64
+}
+
+func (s *operationTotals) record(status int, latency time.Duration, err error) {
+	s.calls.Add(1)
+	if err != nil || status >= http.StatusBadRequest {
+		s.failures.Add(1)
+	}
+	if status == http.StatusTooManyRequests {
+		s.rateLimited.Add(1)
+	}
+	s.totalLatency.Add(int64(latency))
+	bucket := min(bits.Len64(uint64(max(0, latency.Milliseconds()))), operationLatencyBucketCount-1)
+	s.latencyBuckets[bucket].Add(1)
+	for previous := s.maxLatency.Load(); int64(latency) > previous; previous = s.maxLatency.Load() {
+		if s.maxLatency.CompareAndSwap(previous, int64(latency)) {
+			break
+		}
+	}
+}
+
+func (s *operationTotals) snapshot() OperationTotals {
+	result := OperationTotals{
+		Calls: s.calls.Load(), Failures: s.failures.Load(), RateLimited: s.rateLimited.Load(),
+		TotalLatencyMS: time.Duration(s.totalLatency.Load()).Milliseconds(),
+		MaxLatencyMS:   time.Duration(s.maxLatency.Load()).Milliseconds(),
+	}
+	for index := range result.LatencyMSBuckets {
+		result.LatencyMSBuckets[index] = s.latencyBuckets[index].Load()
+	}
+	return result
+}
+
 type ChuteDiagnostic struct {
+	ManagedDiscoveryCalls          uint64              `json:"managedDiscoveryCalls"`
+	ManagedTicketsReserved         uint64              `json:"managedTicketsReserved"`
+	CountersSince                  time.Time           `json:"countersSince"`
+	Discovery                      OperationTotals     `json:"discovery"`
+	Evidence                       OperationTotals     `json:"evidence"`
+	TicketWait                     OperationTotals     `json:"ticketWait"`
+	Tickets                        TicketTotals        `json:"tickets"`
+	PooledTickets                  int                 `json:"pooledTickets"`
 	ChuteID                        string              `json:"chuteId"`
 	UpstreamModels                 []string            `json:"upstreamModels"`
 	CredentialPools                int                 `json:"credentialPools"`
@@ -88,23 +160,34 @@ func (s *operationState) get() OperationDiagnostic {
 }
 
 type chuteMetrics struct {
-	lastUsed              atomic.Int64
-	modelsMu              sync.RWMutex
-	models                map[string]struct{}
-	discovery             operationState
-	evidence              operationState
-	coldPath              operationState
-	invoke                operationState
-	protocolFailure       operationState
-	starvation            operationState
-	failures              sync.Map
-	ticketStarvation      atomic.Uint64
-	coldPaths             atomic.Uint64
-	invokeRateLimited     atomic.Uint64
-	invokeUnavailable     atomic.Uint64
-	invokeNotFound        atomic.Uint64
-	invokeTransportErrors atomic.Uint64
-	protocolFailures      atomic.Uint64
+	managedDiscoveryCalls  atomic.Uint64
+	managedTicketsReserved atomic.Uint64
+	countersSince          time.Time
+	discoveryTotals        operationTotals
+	evidenceTotals         operationTotals
+	ticketWait             operationTotals
+	ticketsReceived        atomic.Uint64
+	ticketsInstalled       atomic.Uint64
+	ticketsReserved        atomic.Uint64
+	ticketsExpired         atomic.Uint64
+	ticketsDiscarded       atomic.Uint64
+	lastUsed               atomic.Int64
+	modelsMu               sync.RWMutex
+	models                 map[string]struct{}
+	discovery              operationState
+	evidence               operationState
+	coldPath               operationState
+	invoke                 operationState
+	protocolFailure        operationState
+	starvation             operationState
+	failures               sync.Map
+	ticketStarvation       atomic.Uint64
+	coldPaths              atomic.Uint64
+	invokeRateLimited      atomic.Uint64
+	invokeUnavailable      atomic.Uint64
+	invokeNotFound         atomic.Uint64
+	invokeTransportErrors  atomic.Uint64
+	protocolFailures       atomic.Uint64
 }
 
 type diagnostics struct {
@@ -123,6 +206,7 @@ type diagnostics struct {
 }
 
 type poolHealth struct {
+	PooledTickets                  int
 	CredentialPools                int
 	CredentialPoolsInRefillBackoff int
 	VerifiedInstances              int
@@ -161,7 +245,7 @@ func (d *diagnostics) chute(chuteID string) *chuteMetrics {
 			d.registrySize--
 		}
 	}
-	created := &chuteMetrics{models: make(map[string]struct{})}
+	created := &chuteMetrics{models: make(map[string]struct{}), countersSince: time.Now().UTC()}
 	created.lastUsed.Store(time.Now().UnixNano())
 	value, _ := d.chutes.LoadOrStore(chuteID, created)
 	d.registrySize++
@@ -181,11 +265,15 @@ const maximumDiagnosticChutes = 512
 const maximumDiagnosticModels = 64
 
 func (d *diagnostics) recordDiscovery(chuteID string, status int, latency time.Duration, err error) {
-	d.chute(chuteID).discovery.set(status, latency, err)
+	metrics := d.chute(chuteID)
+	metrics.discovery.set(status, latency, err)
+	metrics.discoveryTotals.record(status, latency, err)
 }
 
 func (d *diagnostics) recordEvidence(chuteID string, status int, latency time.Duration, err error) {
-	d.chute(chuteID).evidence.set(status, latency, err)
+	metrics := d.chute(chuteID)
+	metrics.evidence.set(status, latency, err)
+	metrics.evidenceTotals.record(status, latency, err)
 }
 
 func (d *diagnostics) recordColdPath(chuteID string, latency time.Duration, err error) {
@@ -252,6 +340,18 @@ func (d *diagnostics) snapshot(health map[string]poolHealth) DiagnosticsSnapshot
 		})
 		state := health[chuteID]
 		result.Chutes = append(result.Chutes, ChuteDiagnostic{
+			ManagedDiscoveryCalls:  metrics.managedDiscoveryCalls.Load(),
+			ManagedTicketsReserved: metrics.managedTicketsReserved.Load(),
+			CountersSince:          metrics.countersSince,
+			Discovery:              metrics.discoveryTotals.snapshot(),
+			Evidence:               metrics.evidenceTotals.snapshot(),
+			TicketWait:             metrics.ticketWait.snapshot(),
+			Tickets: TicketTotals{
+				Received: metrics.ticketsReceived.Load(), Installed: metrics.ticketsInstalled.Load(),
+				Reserved: metrics.ticketsReserved.Load(), Expired: metrics.ticketsExpired.Load(),
+				Discarded: metrics.ticketsDiscarded.Load(),
+			},
+			PooledTickets:                  state.PooledTickets,
 			ChuteID:                        chuteID,
 			UpstreamModels:                 models,
 			CredentialPools:                state.CredentialPools,

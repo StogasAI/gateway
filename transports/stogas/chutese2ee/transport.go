@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/maximhq/bifrost/core/providers/utils"
+	"github.com/maximhq/bifrost/transports/stogas/providerio"
 	"github.com/valyala/fasthttp"
 )
 
@@ -107,6 +109,7 @@ func New(options Options) (*Transport, error) {
 		attestor:     attestor,
 	}
 	transport.pools = newPoolState(api, attestor, diagnostics)
+	transport.pools.managed = true
 	transport.managedCredential = &credentialState{
 		api:         api,
 		pools:       transport.pools,
@@ -140,6 +143,7 @@ func newInvokeClient(requirePostQuantumTLS, streaming bool, requestTimeout time.
 		MaxIdemponentCallAttempts: 1,
 		NoDefaultUserAgentHeader:  true,
 		StreamResponseBody:        streaming,
+		Transport:                 providerio.NewTransport(maxDecryptedResponse+(2<<20), true),
 		ConnPoolStrategy:          fasthttp.FIFO,
 		RetryIfErr: func(_ *fasthttp.Request, _ int, _ error) (bool, bool) {
 			return false, false
@@ -425,12 +429,7 @@ func safeInvokeFallbackResponse(response *fasthttp.Response) bool {
 }
 
 func (t *Transport) roundTripUnary(ctx context.Context, credential *credentialState, request *fasthttp.Request, response *fasthttp.Response, ticket reservedTicket, encrypted *encryptedRequest) error {
-	var err error
-	if deadline, ok := ctx.Deadline(); ok {
-		err = t.unaryClient.DoDeadline(request, response, deadline)
-	} else {
-		err = t.unaryClient.Do(request, response)
-	}
+	err := utils.DoRequestWithContext(ctx, t.unaryClient, request, response)
 	err = requestContextError(ctx, err)
 	status := response.StatusCode()
 	credential.pools.observeInvoke(ticket, status, parseRetryAfter(string(response.Header.Peek("Retry-After")), time.Now()), err)
@@ -445,6 +444,10 @@ func (t *Transport) roundTripUnary(ctx context.Context, credential *credentialSt
 		credential.diagnostics.recordProtocolFailure(ticket.ChuteID)
 		setSyntheticError(response, http.StatusBadGateway, "upstream_protocol_error", "Invalid encrypted response from Chutes", 0)
 		return nil
+	}
+	if err := providerio.AdmitDecrypted(ctx, plaintext); err != nil {
+		clear(plaintext)
+		return err
 	}
 	response.SetBodyRaw(plaintext)
 	response.Header.SetContentType("application/json")
@@ -463,12 +466,7 @@ func (t *Transport) roundTripStream(
 	releaseCredential func(),
 ) (bool, error) {
 	upstream := fasthttp.AcquireResponse()
-	var err error
-	if deadline, ok := ctx.Deadline(); ok {
-		err = t.streamClient.DoDeadline(request, upstream, deadline)
-	} else {
-		err = t.streamClient.Do(request, upstream)
-	}
+	err := utils.DoRequestWithContext(ctx, t.streamClient, request, upstream)
 	err = requestContextError(ctx, err)
 	if err != nil {
 		fasthttp.ReleaseResponse(upstream)
@@ -494,6 +492,7 @@ func (t *Transport) roundTripStream(
 	decrypted := newStreamReader(owned, encrypted.ResponseKey, func() {
 		credential.diagnostics.recordProtocolFailure(ticket.ChuteID)
 	})
+	decrypted.admit = func(data []byte) error { return providerio.AdmitDecrypted(ctx, data) }
 	response.SetBodyStream(decrypted, -1)
 	return true, nil
 }

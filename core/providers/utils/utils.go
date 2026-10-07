@@ -465,13 +465,8 @@ func MakeRequestWithContext(ctx context.Context, client *fasthttp.Client, req *f
 	// Bound to the goroutine that runs client.Do: the binding must outlive a
 	// ctx-cancelled return of makeRequestWithDoFunc and be gone before the
 	// caller's wait() returns, since req is pooled.
-	unbind := bindRequestContext(req, ctx)
 	latency, bifrostErr, wait := makeRequestWithDoFunc(ctx, func() error {
-		defer unbind()
-		if transport, ok := client.Transport.(contextRoundTripper); ok {
-			return transport.DoRequestWithContext(ctx, req, resp)
-		}
-		return client.Do(req, resp)
+		return DoRequestWithContext(ctx, client, req, resp)
 	})
 	return latency, bifrostErr, wait
 }
@@ -507,17 +502,21 @@ func MakeRequestWithContextFollowRedirects(ctx context.Context, client *fasthttp
 // Returns client.Do's error untouched so callers keep their own error
 // classification and latency bookkeeping.
 func DoStreamingRequest(ctx context.Context, client *fasthttp.Client, req *fasthttp.Request, resp *fasthttp.Response) error {
-	unbind := bindRequestContext(req, ctx)
 	startTime := time.Now()
-	defer unbind()
-	var err error
-	if transport, ok := client.Transport.(contextRoundTripper); ok {
-		err = transport.DoRequestWithContext(ctx, req, resp)
-	} else {
-		err = client.Do(req, resp)
-	}
+	err := DoRequestWithContext(ctx, client, req, resp)
 	schemas.AddUpstreamLatency(ctx, time.Since(startTime))
 	return err
+}
+
+// DoRequestWithContext binds cancellation for one synchronous transport call.
+// It does not record timing; nested transports use their outer call's timing.
+func DoRequestWithContext(ctx context.Context, client *fasthttp.Client, req *fasthttp.Request, resp *fasthttp.Response) error {
+	unbind := bindRequestContext(req, ctx)
+	defer unbind()
+	if transport, ok := client.Transport.(contextRoundTripper); ok {
+		return transport.DoRequestWithContext(ctx, req, resp)
+	}
+	return client.Do(req, resp)
 }
 
 // upstreamTimingBody wraps a response body so time blocked reading it counts as

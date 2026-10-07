@@ -1,16 +1,15 @@
 package channel
 
-// Independent Go test peer for epoch-zero carriage and store tests. It sends no
-// ML-KEM updates. Full recovery, erasure, grammar and key ownership tests live
-// with the Rust implementation; this peer tests the embedding boundary.
+// Independent CIRCL/Go first-turn peer for the Rust embedding boundary.
+// The verifier's own conformance suite covers later alternating turns.
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/ecdh"
 	"crypto/hkdf"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
+	ref "github.com/StogasAI/verifier/go/testutil/channeltest"
 	"testing"
 )
 
@@ -20,115 +19,53 @@ const (
 	requestDirection  direction = 1
 	responseDirection direction = 2
 )
-const referenceProtocol = "stogas.e2ee.spqr.v3_MLKEM768_HKDFSHA256"
-const referenceTriple = "stogas.e2ee.triple.v3_X25519_MLKEM768_HKDFSHA256"
-const referenceDouble = "stogas.e2ee.double.v3_X25519_HKDFSHA256:Root"
+const referencePublicBytes = ref.PublicBytes
 
-func referencePrivate(value byte) [32]byte {
-	var key [32]byte
-	for i := range key {
-		key[i] = value
-	}
-	return key
-}
-func referencePublic(private [32]byte) [32]byte {
-	key, err := ecdh.X25519().NewPrivateKey(private[:])
-	if err != nil {
-		panic(err)
-	}
-	return [32]byte(key.PublicKey().Bytes())
-}
-func referenceDH(public [32]byte) []byte {
-	private := referencePrivate(7)
-	key, err := ecdh.X25519().NewPrivateKey(private[:])
-	if err != nil {
-		panic(err)
-	}
-	peer, err := ecdh.X25519().NewPublicKey(public[:])
-	if err != nil {
-		panic(err)
-	}
-	shared, err := key.ECDH(peer)
-	if err != nil {
-		panic(err)
-	}
-	return shared
-}
-func referenceHKDF(secret, salt []byte, info string, count int) []byte {
-	material, err := hkdf.Key(sha256.New, secret, salt, info, count)
-	if err != nil {
-		panic(err)
-	}
-	return material
-}
-func referenceInitial(root, initialPublic [32]byte) (classicalRoot, classicalChain [32]byte, quantum []byte) {
-	split := referenceHKDF(root[:], nil, referenceTriple+":Initialization", 64)
-	classical := referenceHKDF(referenceDH(initialPublic), split[:32], referenceDouble, 64)
-	return [32]byte(classical[:32]), [32]byte(classical[32:]), referenceHKDF(split[32:], nil, referenceProtocol+":Chain Start", 96)
-}
-func referenceClassicalStep(chain *[32]byte) [32]byte {
-	mac := hmac.New(sha256.New, chain[:])
-	mac.Write([]byte{1})
-	message := [32]byte(mac.Sum(nil))
-	mac.Reset()
-	mac.Write([]byte{2})
-	copy(chain[:], mac.Sum(nil))
-	return message
-}
-func referenceQuantumStep(chain *[32]byte, number uint64) [32]byte {
-	info := binary.BigEndian.AppendUint64([]byte(referenceProtocol+":Chain Step"), number)
-	material := referenceHKDF(chain[:], nil, string(info), 64)
-	copy(chain[:], material[:32])
-	return [32]byte(material[32:])
-}
-func referenceCombine(classical, quantum [32]byte) [32]byte {
-	return [32]byte(referenceHKDF(classical[:], quantum[:], referenceTriple, 32))
-}
+func referencePrivate(value byte) [32]byte                     { return [32]byte(bytes.Repeat([]byte{value}, 32)) }
+func referencePublic(seed [32]byte) [referencePublicBytes]byte { return ref.KeyPair(seed[:]).Public }
 
-type referenceChainState struct{ classical, quantum [32]byte }
+type referenceMessage struct {
+	secret [32]byte
+	header []byte
+}
+type referenceChainState = ref.Peer
 
-func referenceChainFor(root, initialPublic [32]byte) referenceChainState {
-	_, classical, quantum := referenceInitial(root, initialPublic)
-	return referenceChainState{classical: classical, quantum: [32]byte(quantum[32:64])}
+func referenceChainFor(root [32]byte, public [referencePublicBytes]byte) referenceChainState {
+	return *ref.New(root[:], &ref.Keys{Public: public}, true)
 }
 func referenceChain(root [32]byte, direction direction) referenceChainState {
 	if direction != requestDirection {
-		panic("reference sending chain is client-only")
+		panic("client sends requests only")
 	}
 	return referenceChainFor(root, referencePublic(referencePrivate(3)))
 }
-func referenceStep(chain *referenceChainState, number uint64) (message [32]byte, next referenceChainState) {
-	next = *chain
-	message = referenceCombine(referenceClassicalStep(&next.classical), referenceQuantumStep(&next.quantum, number))
-	return
+func referenceStep(chain *referenceChainState, number uint64) (referenceMessage, referenceChainState) {
+	if number != chain.Sent+1 {
+		panic("unordered reference send")
+	}
+	next := *chain
+	seed, coins := referencePrivate(7), referencePrivate(9)
+	message := next.Send(seed[:], coins[:])
+	return referenceMessage{[32]byte(message.Secret), message.Header}, next
 }
-func requestSecretFor(root [32]byte, number uint64, initialPublic [32]byte) [32]byte {
-	chain := referenceChainFor(root, initialPublic)
-	var secret [32]byte
+func requestMessageFor(root [32]byte, number uint64, public [referencePublicBytes]byte) referenceMessage {
+	chain := referenceChainFor(root, public)
+	var message referenceMessage
 	for i := uint64(0); i <= number; i++ {
-		secret, chain = referenceStep(&chain, i+1)
+		message, chain = referenceStep(&chain, i+1)
 	}
-	return secret
+	return message
 }
-func requestSecret(root [32]byte, number uint64) [32]byte {
-	return requestSecretFor(root, number, referencePublic(referencePrivate(3)))
+func requestMessage(root [32]byte, number uint64) referenceMessage {
+	return requestMessageFor(root, number, referencePublic(referencePrivate(3)))
 }
-func referenceResponseSecret(root, initialPublic [32]byte, header []byte) [32]byte {
-	classicalRoot, _, quantum := referenceInitial(root, initialPublic)
-	material := referenceHKDF(referenceDH([32]byte(header[:32])), classicalRoot[:], referenceDouble, 64)
-	classicalChain := [32]byte(material[32:])
-	quantumChain := [32]byte(quantum[64:])
-	var classicalKey, quantumKey [32]byte
-	for i := uint64(0); i <= binary.BigEndian.Uint64(header[40:48]); i++ {
-		classicalKey = referenceClassicalStep(&classicalChain)
-	}
-	for i := uint64(1); i <= binary.BigEndian.Uint64(header[56:64]); i++ {
-		quantumKey = referenceQuantumStep(&quantumChain, i)
-	}
-	return referenceCombine(classicalKey, quantumKey)
+func referenceResponseSecret(root [32]byte, public [referencePublicBytes]byte, header []byte) [32]byte {
+	chain := referenceChainFor(root, public)
+	_, chain = referenceStep(&chain, 1)
+	return [32]byte(chain.Receive(ref.Message{Header: header}))
 }
 func testServerSession(root, id [32]byte) *ServerSession {
-	session, err := newServerSession(root, id, referencePrivate(3), 1152)
+	session, err := newServerSession(root, id, referencePrivate(3))
 	if err != nil {
 		panic(err)
 	}
@@ -141,7 +78,7 @@ type records struct {
 	sequence      uint64
 	header        []byte
 	root          *[32]byte
-	initialPublic [32]byte
+	initialPublic [referencePublicBytes]byte
 	id            [32]byte
 	number        uint64
 	direction     direction
@@ -149,7 +86,7 @@ type records struct {
 }
 
 func (r *records) install(secret [32]byte) error {
-	info := append([]byte("stogas.e2ee.record.v3\x00"), r.id[:]...)
+	info := append([]byte("stogas.e2ee.record.v1\x00"), r.id[:]...)
 	info = binary.BigEndian.AppendUint64(info, r.number)
 	info = append(info, byte(r.direction))
 	m, err := hkdf.Expand(sha256.New, secret[:], string(info), 44)
@@ -164,23 +101,15 @@ func (r *records) install(secret [32]byte) error {
 	copy(r.nonce[:], m[32:])
 	return err
 }
-func newRecords(secret, id [32]byte, number uint64, direction direction) (*records, error) {
-	public := referencePublic(referencePrivate(7))
-	header := append([]byte(nil), public[:]...)
-	header = binary.BigEndian.AppendUint64(header, 0)
-	header = binary.BigEndian.AppendUint64(header, number)
-	header = binary.BigEndian.AppendUint64(header, 0)
-	header = binary.BigEndian.AppendUint64(header, number+1)
-	header = binary.BigEndian.AppendUint64(header, 1)
-	header = append(header, 0)
-	r := &records{id: id, number: number, direction: direction, header: header}
-	return r, r.install(secret)
+func newRecords(message referenceMessage, id [32]byte, number uint64, direction direction) (*records, error) {
+	r := &records{id: id, number: number, direction: direction, header: message.header}
+	return r, r.install(message.secret)
 }
 func responseRecords(root, id [32]byte, number uint64) (*records, error) {
 	return responseRecordsFor(root, id, referencePublic(referencePrivate(3)), number)
 }
-func responseRecordsFor(root, id, initialPublic [32]byte, number uint64) (*records, error) {
-	r, err := newRecords([32]byte{}, id, number, responseDirection)
+func responseRecordsFor(root, id [32]byte, initialPublic [referencePublicBytes]byte, number uint64) (*records, error) {
+	r, err := newRecords(referenceMessage{}, id, number, responseDirection)
 	r.root, r.initialPublic = &root, initialPublic
 	return r, err
 }
@@ -209,7 +138,7 @@ func (r *records) open(encoded []byte) (Kind, []byte, error) {
 	}
 	offset := 4
 	if r.sequence == 0 {
-		if len(encoded) < 96 {
+		if len(encoded) < 6+ref.HeaderBytes+17 {
 			return 0, nil, ErrRecord
 		}
 		offset = 6 + int(binary.BigEndian.Uint16(encoded[4:6]))
@@ -217,10 +146,6 @@ func (r *records) open(encoded []byte) (Kind, []byte, error) {
 			return 0, nil, ErrRecord
 		}
 		if r.root != nil {
-			n := binary.BigEndian.Uint64(encoded[62:70])
-			if n == 0 || n > 1<<20 || binary.BigEndian.Uint64(encoded[46:54]) > 1<<20 || binary.BigEndian.Uint64(encoded[70:78]) != 1 {
-				return 0, nil, ErrRecord
-			}
 			if err := r.install(referenceResponseSecret(*r.root, r.initialPublic, encoded[6:offset])); err != nil {
 				return 0, nil, err
 			}

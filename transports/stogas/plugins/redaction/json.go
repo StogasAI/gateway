@@ -46,6 +46,9 @@ const (
 	jsonContextChatMessage
 	jsonContextResponsesInput
 	jsonContextResponsesInputItem
+	jsonContextContent
+	jsonContextContentBlock
+	jsonContextFile
 )
 
 // RedactRequestFields changes only provider-bound text containers. Routing,
@@ -240,6 +243,20 @@ func (r *Redactor) walkJSONObject(source []byte, position int, allow bool, repla
 		}
 		valueAllowed := allow
 		valueContext := jsonContextGeneral
+		if (context == jsonContextChatMessage || context == jsonContextResponsesInputItem) && key == jsonKeyContent {
+			valueContext = jsonContextContent
+		}
+		if context == jsonContextContentBlock {
+			switch key {
+			case jsonKeyFile:
+				valueContext = jsonContextFile
+			case jsonKeyOpaqueMedia:
+				valueAllowed = false
+			}
+		}
+		if context == jsonContextFile && key == jsonKeyOpaqueMedia {
+			valueAllowed = false
+		}
 		if context == jsonContextResponsesInputItem && key == jsonKeyEncryptedContent && source[position] == '"' {
 			// The request policy permits encrypted_content here only on a valid
 			// top-level reasoning replay item. Do not scan a large opaque ciphertext;
@@ -314,6 +331,8 @@ func (r *Redactor) walkJSONArray(source []byte, position int, allow bool, replac
 			childContext = jsonContextChatMessage
 		case jsonContextResponsesInput:
 			childContext = jsonContextResponsesInputItem
+		case jsonContextContent:
+			childContext = jsonContextContentBlock
 		}
 		position, err = r.walkJSONValue(source, position, allow, replacements, depth, childContext)
 		if err != nil {
@@ -538,6 +557,9 @@ const (
 	jsonKeyType
 	jsonKeyReasoning
 	jsonKeyReasoningDetails
+	jsonKeyContent
+	jsonKeyFile
+	jsonKeyOpaqueMedia
 )
 
 func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
@@ -552,6 +574,12 @@ func classifyJSONKey(encoded []byte, escaped bool) (jsonKeyKind, error) {
 		key = string(encoded[1 : len(encoded)-1])
 	}
 	switch key {
+	case "content":
+		return jsonKeyContent, nil
+	case "file":
+		return jsonKeyFile, nil
+	case "file_data", "file_url", "image_url", "input_audio":
+		return jsonKeyOpaqueMedia, nil
 	case "encrypted_content":
 		return jsonKeyEncryptedContent, nil
 	case "type":

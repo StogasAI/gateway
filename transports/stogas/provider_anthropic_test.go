@@ -2,11 +2,50 @@ package stogas
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
+
+func TestAnthropicCumulativeInputAndRequestWideOutput(t *testing.T) {
+	base := anthropicAdapterContext{
+		Route:           anthropicAdapterRouteResponses,
+		Deployment:      anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000},
+		InputTokenLimit: 900, OutputTokenLimit: 100, ToolChoiceAllowsCalls: true,
+		ToolTypes: []string{"web_fetch"},
+		RawBody:   mustObject(t, `{"max_tool_calls":2}`),
+		RawTools:  []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`)},
+	}
+	for _, tc := range []struct {
+		name          string
+		change        func(*anthropicAdapterContext)
+		input, output int
+	}{
+		{"bounded fetch includes generated history on later iterations", func(*anthropicAdapterContext) {}, 28390, 100},
+		{"search can fill each later input window", func(r *anthropicAdapterContext) { r.ToolTypes = []string{"web_search"} }, 46489, 100},
+		{"disabled tools have no repeated input", func(r *anthropicAdapterContext) { r.ToolChoiceAllowsCalls = false }, 1489, 100},
+		{"input overhead stays within the input ceiling", func(r *anthropicAdapterContext) { r.InputTokenLimit = 4999 }, 50000, 100},
+		{"compaction has separate summary capacity", func(r *anthropicAdapterContext) {
+			r.RawBody = mustObject(t, `{"context_management":{"edits":[{"type":"compact_20260112"}]}}`)
+		}, 100000, 20100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := base
+			tc.change(&req)
+			input, output, err := anthropicTokenHoldQuantities(req)
+			if err != nil || input != tc.input || output != tc.output {
+				t.Fatalf("input/output = %d/%d, want %d/%d: %v", input, output, tc.input, tc.output, err)
+			}
+		})
+	}
+	base.Deployment.MaxInputTokens = math.MaxInt
+	base.InputTokenLimit = math.MaxInt
+	if _, _, err := anthropicTokenHoldQuantities(base); err == nil {
+		t.Fatal("overflow must fail before reservation")
+	}
+}
 
 func TestHostedToolHoldQuantity(t *testing.T) {
 	cases := []struct {
@@ -19,7 +58,7 @@ func TestHostedToolHoldQuantity(t *testing.T) {
 			name: "default omitted cap",
 			body: `{}`,
 			tool: `{"type":"web_search_20260209"}`,
-			want: 50,
+			want: 10,
 		},
 		{
 			name: "top level cap",
@@ -102,12 +141,12 @@ func TestAnthropicHoldMeters(t *testing.T) {
 		RawTools:              []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20250305"}`)},
 	}
 
-	meters := anthropicHoldMeters(req)
+	meters := anthropicHoldMeters(req, 1000)
 	if findMeter(meters, billing.MeterCacheWrite5mInputTokens, "1000") != nil || findMeter(meters, billing.MeterCacheWrite1hInputTokens, "1000") != nil {
 		t.Fatalf("expected no cache write hold meter without cache_control, got %#v", meters)
 	}
-	if findMeter(meters, billing.MeterInputTokens, "410") == nil {
-		t.Fatalf("expected Opus 4.8 tool prompt overhead input meter, got %#v", meters)
+	if findMeter(meters, billing.MeterInputTokens, "1000") == nil {
+		t.Fatalf("expected combined input meter, got %#v", meters)
 	}
 	if findMeter(meters, meterAnthropicWebSearchCalls, "4") == nil {
 		t.Fatalf("expected web search call hold meter, got %#v", meters)
@@ -148,13 +187,13 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 			name: "omitted cap defaults then caps to remaining context",
 			body: `{}`,
 			tool: `{"type":"web_fetch_20260309","max_content_tokens":1000}`,
-			want: 4000,
+			want: 3511,
 		},
 		{
 			name: "omitted content limit reserves remaining context",
 			body: `{"max_tool_calls":2}`,
 			tool: `{"type":"web_fetch_20260309"}`,
-			want: 4000,
+			want: 3511,
 		},
 	}
 
@@ -162,7 +201,7 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := anthropicAdapterContext{
 				Route:                 anthropicAdapterRouteResponses,
-				Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
+				Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000, Pricing: testPricing()},
 				InputTokenLimit:       900,
 				OutputTokenLimit:      100,
 				ToolChoiceAllowsCalls: true,
@@ -180,7 +219,7 @@ func TestAnthropicWebFetchContentHoldTokens(t *testing.T) {
 func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 	req := anthropicAdapterContext{
 		Route:                 anthropicAdapterRouteResponses,
-		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
+		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000, Pricing: testPricing()},
 		InputTokenLimit:       900,
 		OutputTokenLimit:      100,
 		ToolChoiceAllowsCalls: true,
@@ -188,29 +227,87 @@ func TestAnthropicHostedContentHoldMetersIncludeCacheWrite(t *testing.T) {
 		RawBody:               mustObject(t, `{"cache_control":{"type":"ephemeral","ttl":"1h"},"max_tool_calls":2}`),
 		RawTools:              []map[string]json.RawMessage{mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`)},
 	}
-	meters := anthropicHoldMeters(req)
-	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "1400") == nil {
-		t.Fatalf("expected web_fetch fetched-content cache-write hold meter, got %#v", meters)
+	req.Deployment.Pricing[billing.MeterCachedInputTokens] = map[string]string{billing.RatePerMillionTokens: "100000"}
+	input, _, err := anthropicTokenHoldQuantities(req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if findMeter(meters, billing.MeterInputTokens, "1400") != nil {
+	meters := anthropicHoldMeters(req, input)
+	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "2989") == nil ||
+		findMeter(meters, billing.MeterCachedInputTokens, "25401") == nil {
+		t.Fatalf("expected distinct fetched material once and repeated material at the cache-read rate, got %#v", meters)
+	}
+	if findMeter(meters, billing.MeterInputTokens, "28390") != nil {
 		t.Fatalf("fetched content must use one worst-case input category, got %#v", meters)
 	}
 
 	req.ToolTypes = []string{"web_search"}
 	req.RawTools = []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20260318"}`)}
-	meters = anthropicHoldMeters(req)
-	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "4000") == nil {
-		t.Fatalf("expected web_search result-content cache-write hold meter, got %#v", meters)
+	input, _, err = anthropicTokenHoldQuantities(req)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if findMeter(meters, billing.MeterInputTokens, "4000") != nil {
+	meters = anthropicHoldMeters(req, input)
+	if findMeter(meters, billing.MeterCacheWrite1hInputTokens, "5000") == nil ||
+		findMeter(meters, billing.MeterCachedInputTokens, "41489") == nil {
+		t.Fatalf("expected one full write allowance and repeated cached search context, got %#v", meters)
+	}
+	if findMeter(meters, billing.MeterInputTokens, "46489") != nil {
 		t.Fatalf("search content must use one worst-case input category, got %#v", meters)
+	}
+}
+
+func TestAnthropicInternalLoopCacheReuseRequiresEnabledUneditedContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, body   string
+		omitReadRate bool
+		write, read  string
+	}{
+		{"enabled with a caller tool cap", `{"cache_control":{"type":"ephemeral"},"max_tool_calls":1}`, false, "5000", "45000"},
+		{"cache pricing alone does not enable reuse", `{"max_tool_calls":1}`, false, "50000", ""},
+		{"missing cache price retains the full hold", `{"cache_control":{"type":"ephemeral"}}`, true, "50000", ""},
+		{"compaction does not preserve the growing prefix", `{"cache_control":{"type":"ephemeral"},"context_management":{"edits":[{"type":"compact_20260112"}]}}`, false, "100000", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pricing := testPricing()
+			if !tc.omitReadRate {
+				pricing[billing.MeterCachedInputTokens] = map[string]string{billing.RatePerMillionTokens: "100000"}
+			}
+			req := anthropicAdapterContext{
+				Route:           anthropicAdapterRouteResponses,
+				Deployment:      anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000, Pricing: pricing},
+				InputTokenLimit: 5000, OutputTokenLimit: 100, ToolChoiceAllowsCalls: true,
+				ToolTypes: []string{"web_search"}, RawBody: mustObject(t, tc.body),
+				RawTools: []map[string]json.RawMessage{mustObject(t, `{"type":"web_search_20260318"}`)},
+			}
+			input, _, err := anthropicTokenHoldQuantities(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			meters := anthropicHoldMeters(req, input)
+			inputMeter := billing.MeterCacheWrite5mInputTokens
+			if tc.name == "cache pricing alone does not enable reuse" {
+				inputMeter = billing.MeterInputTokens
+			}
+			if findMeter(meters, inputMeter, tc.write) == nil {
+				t.Fatalf("missing new-input allowance %s: %#v", tc.write, meters)
+			}
+			for _, meter := range meters {
+				if meter.MeterKey == billing.MeterCachedInputTokens && (tc.read == "" || meter.Quantity != tc.read) {
+					t.Fatalf("unexpected cached input: %#v", meters)
+				}
+			}
+			if tc.read != "" && findMeter(meters, billing.MeterCachedInputTokens, tc.read) == nil {
+				t.Fatalf("missing repeated-input allowance %s: %#v", tc.read, meters)
+			}
+		})
 	}
 }
 
 func TestAnthropicHostedContentHoldDoesNotDoubleCountSearchAndFetch(t *testing.T) {
 	req := anthropicAdapterContext{
 		Route:                 anthropicAdapterRouteResponses,
-		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", ContextWindowTokens: 5000, Pricing: testPricing()},
+		Deployment:            anthropicAdapterDeployment{Model: "claude-sonnet-4-6", MaxInputTokens: 5000, MaxOutputTokens: 2000, Pricing: testPricing()},
 		InputTokenLimit:       900,
 		OutputTokenLimit:      100,
 		ToolChoiceAllowsCalls: true,
@@ -221,7 +318,7 @@ func TestAnthropicHostedContentHoldDoesNotDoubleCountSearchAndFetch(t *testing.T
 			mustObject(t, `{"type":"web_fetch_20260309","max_content_tokens":700}`),
 		},
 	}
-	if got := anthropicHostedContentHoldTokens(req); got != 4000 {
+	if got := anthropicHostedContentHoldTokens(req); got != 3511 {
 		t.Fatalf("anthropicHostedContentHoldTokens() = %d, want remaining context once", got)
 	}
 }
@@ -280,7 +377,7 @@ func TestAnthropicCacheWriteHoldMetersFollowRequestedTTL(t *testing.T) {
 				RawBody:         mustObject(t, tt.body),
 				RawTools:        rawTools,
 			}
-			meters := anthropicHoldMeters(req)
+			meters := anthropicHoldMeters(req, 1000)
 			if findMeter(meters, tt.wantMeter, "1000") == nil {
 				t.Fatalf("expected %s cache write hold meter, got %#v", tt.wantMeter, meters)
 			}

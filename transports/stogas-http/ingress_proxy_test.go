@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"testing"
 	"time"
 
@@ -73,6 +74,96 @@ func TestProxyIngressPreservesClientAddressThroughTLSAndHTTP2(t *testing.T) {
 				if err != nil || response.ProtoMajor != 2 || string(body) != source.String() {
 					t.Fatalf("forwarded address %q over %s: %v", body, response.Proto, err)
 				}
+			}
+		})
+	}
+}
+
+// Exercise connection-derived identity and the actual HTTP admission wrapper
+// together, including an exhausted source reconnecting through the same proxy.
+func TestProxyIngressAdmissionIsolatesSourcesAcrossReuseAndReconnect(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		name := "http1"
+		if h2 {
+			name = "http2"
+		}
+		t.Run(name, func(t *testing.T) {
+			gateway := &Server{
+				config:      stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+				secure:      &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+				ipAdmission: newIPAdmission(),
+			}
+			if err := gateway.routes(); err != nil {
+				t.Fatal(err)
+			}
+			gateway.server.Handler = gateway.ipRequestAdmission(func(ctx *requestContext) {
+				_, _ = io.WriteString(ctx.writer, ctx.request.RemoteAddr)
+			})
+			listener := testListener(t)
+			t.Cleanup(func() { _ = gateway.server.Close() })
+			go func() { _ = gateway.server.Serve(gateway.wrapListener(listener)) }()
+			clients := make([]*http.Client, 2)
+			transports := make([]*http.Transport, 2)
+			sources := []string{"192.0.2.10:12345", "192.0.2.11:12345"}
+			for i, source := range sources {
+				address, _ := net.ResolveTCPAddr("tcp", source)
+				transport := &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: h2,
+					DialContext: func(ctx context.Context, network, target string) (net.Conn, error) {
+						conn, err := (&net.Dialer{}).DialContext(ctx, network, target)
+						if err != nil {
+							return nil, err
+						}
+						if _, err := proxyproto.HeaderProxyFromAddrs(2, address, listener.Addr()).WriteTo(conn); err != nil {
+							_ = conn.Close()
+							return nil, err
+						}
+						return conn, nil
+					},
+				}
+				transports[i] = transport
+				clients[i] = &http.Client{Transport: transport, Timeout: 5 * time.Second}
+				t.Cleanup(transport.CloseIdleConnections)
+			}
+			request := func(source, status int, reused bool) {
+				t.Helper()
+				var connection httptrace.GotConnInfo
+				ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { connection = info }})
+				req, _ := http.NewRequestWithContext(ctx, "GET", "https://"+listener.Addr().String(), nil)
+				req.Header.Set("X-Forwarded-For", "192.0.2.11")
+				req.Header.Set("Forwarded", "for=192.0.2.11")
+				response, err := clients[source].Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				protocol := 1
+				if h2 {
+					protocol = 2
+				}
+				if err != nil || response.StatusCode != status || response.ProtoMajor != protocol || connection.Reused != reused {
+					t.Fatalf("source %s: status %d / %s, reused %v: %v", sources[source], response.StatusCode, response.Proto, connection.Reused, err)
+				}
+				if status == http.StatusOK && string(body) != sources[source] {
+					t.Fatalf("source changed: %s", body)
+				}
+			}
+			request(0, http.StatusOK, false)
+			request(1, http.StatusOK, false)
+			// Move this bucket's clock forward to keep its depletion deterministic
+			// during real network I/O; no production clock hook or traffic flood.
+			exhaustedAt := time.Now().Add(time.Hour)
+			for range ipRequestBurst {
+				_, _ = gateway.ipAdmission.allow(sources[0], false, exhaustedAt)
+			}
+			request(0, http.StatusTooManyRequests, true)
+			request(1, http.StatusOK, true)
+			transports[0].CloseIdleConnections()
+			request(0, http.StatusTooManyRequests, false)
+			request(1, http.StatusOK, true)
+			if got := gateway.ipAdmission.diagnostics(); got.Entries != 2 || got.Request.Rejected != 2 {
+				t.Fatalf("source buckets merged or reset: %+v", got)
 			}
 		})
 	}

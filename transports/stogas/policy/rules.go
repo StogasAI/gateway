@@ -193,7 +193,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 	return out, nil
 }
 
-const pluginPermissions = permissionPlugins | permissionEncryptedPlugins
+const pluginPermissions = permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport
 
 // HasRequiredSort includes an explicit empty ordering, which suppresses
 // defaults without removing any other applicable required ordering.

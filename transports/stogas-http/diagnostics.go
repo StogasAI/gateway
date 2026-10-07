@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"runtime/metrics"
 	"strconv"
 	"strings"
 	"syscall"
@@ -14,12 +15,14 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter"
 	"net"
 	"net/http"
 	"sync/atomic"
 )
 
 type privateNodeDiagnostics struct {
+	Exports                exporter.Diagnostics           `json:"exports"`
 	OmittedOperationalLogs int                            `json:"omittedOperationalLogs"`
 	OmittedChutes          int                            `json:"omittedChutes"`
 	DetailsUnavailable     bool                           `json:"detailsUnavailable"`
@@ -50,31 +53,39 @@ type serverListenerDiagnostics struct {
 }
 
 type processDiagnostics struct {
-	CPUTimeMicros            *uint64 `json:"cpuTimeMicros,omitempty"`
-	AllocatedBytes           uint64  `json:"allocatedBytes"`
-	Allocations              uint64  `json:"allocations"`
-	GCCount                  uint32  `json:"gcCount"`
-	GCCPUFraction            float64 `json:"gcCpuFraction"`
-	GCPauseTotalMS           uint64  `json:"gcPauseTotalMs"`
-	GoManagedBytes           uint64  `json:"goManagedBytes"`
-	GoMemoryLimitBytes       int64   `json:"goMemoryLimitBytes"`
-	GOMAXPROCS               int     `json:"gomaxprocs"`
-	Goroutines               int     `json:"goroutines"`
-	HeapAllocBytes           uint64  `json:"heapAllocBytes"`
-	HeapInUseBytes           uint64  `json:"heapInUseBytes"`
-	HeapReleasedBytes        uint64  `json:"heapReleasedBytes"`
-	HeapSystemBytes          uint64  `json:"heapSystemBytes"`
-	HostMemoryAvailableBytes uint64  `json:"hostMemoryAvailableBytes,omitempty"`
-	HostMemoryTotalBytes     uint64  `json:"hostMemoryTotalBytes,omitempty"`
-	Load1                    float64 `json:"load1,omitempty"`
-	Load5                    float64 `json:"load5,omitempty"`
-	Load15                   float64 `json:"load15,omitempty"`
-	NumCPU                   int     `json:"numCpu"`
-	OpenFileDescriptors      int     `json:"openFileDescriptors,omitempty"`
-	ResidentBytes            uint64  `json:"residentBytes,omitempty"`
-	StackInUseBytes          uint64  `json:"stackInUseBytes"`
-	SystemBytes              uint64  `json:"systemBytes"`
-	UptimeSeconds            int64   `json:"uptimeSeconds,omitempty"`
+	CPUTimeMicros             *uint64  `json:"cpuTimeMicros,omitempty"`
+	AllocatedBytes            uint64   `json:"allocatedBytes"`
+	Allocations               uint64   `json:"allocations"`
+	GCCount                   uint32   `json:"gcCount"`
+	GoCPUCapacitySeconds      *float64 `json:"goCPUCapacitySeconds,omitempty"`
+	GoGCCPUSeconds            *float64 `json:"goGCCPUSeconds,omitempty"`
+	GoGCIdleCPUSeconds        *float64 `json:"goGCIdleCPUSeconds,omitempty"`
+	GCLimiterLastEnabledCycle *uint64  `json:"gcLimiterLastEnabledCycle,omitempty"`
+	GCPercent                 *int64   `json:"gcPercent,omitempty"`
+	HeapLiveBytes             *uint64  `json:"heapLiveBytes,omitempty"`
+	HeapGoalBytes             *uint64  `json:"heapGoalBytes,omitempty"`
+	HostMemorySomeStallMicros *uint64  `json:"hostMemorySomeStallMicros,omitempty"`
+	HostMemoryFullStallMicros *uint64  `json:"hostMemoryFullStallMicros,omitempty"`
+	GCPauseTotalMS            uint64   `json:"gcPauseTotalMs"`
+	GoManagedBytes            uint64   `json:"goManagedBytes"`
+	GoMemoryLimitBytes        int64    `json:"goMemoryLimitBytes"`
+	GOMAXPROCS                int      `json:"gomaxprocs"`
+	Goroutines                int      `json:"goroutines"`
+	HeapAllocBytes            uint64   `json:"heapAllocBytes"`
+	HeapUnusedBytes           uint64   `json:"heapUnusedBytes"`
+	HeapFreeBytes             uint64   `json:"heapFreeBytes"`
+	HeapReleasedBytes         uint64   `json:"heapReleasedBytes"`
+	HostMemoryAvailableBytes  uint64   `json:"hostMemoryAvailableBytes,omitempty"`
+	HostMemoryTotalBytes      uint64   `json:"hostMemoryTotalBytes,omitempty"`
+	Load1                     float64  `json:"load1,omitempty"`
+	Load5                     float64  `json:"load5,omitempty"`
+	Load15                    float64  `json:"load15,omitempty"`
+	NumCPU                    int      `json:"numCpu"`
+	OpenFileDescriptors       int      `json:"openFileDescriptors,omitempty"`
+	ResidentBytes             uint64   `json:"residentBytes,omitempty"`
+	StackSystemBytes          uint64   `json:"stackSystemBytes"`
+	RuntimeMetadataBytes      uint64   `json:"runtimeMetadataBytes"`
+	UptimeSeconds             int64    `json:"uptimeSeconds,omitempty"`
 }
 
 type requestDiagnostics struct {
@@ -100,6 +111,7 @@ func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics
 		return boundPrivateDiagnostics(result)
 	}
 	result.Process = currentProcessDiagnostics(s.startedAt)
+	result.Exports = s.exports.Diagnostics()
 	if s.httpErrors != nil {
 		result.HTTPServerErrors = s.httpErrors.errors.Load()
 	}
@@ -174,21 +186,20 @@ func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
 	} else {
 		goManagedBytes = 0
 	}
-	return processDiagnostics{
+	result := processDiagnostics{
 		CPUTimeMicros:            processCPUTimeMicros(),
 		AllocatedBytes:           memory.TotalAlloc,
 		Allocations:              memory.Mallocs,
 		GCCount:                  memory.NumGC,
-		GCCPUFraction:            memory.GCCPUFraction,
 		GCPauseTotalMS:           memory.PauseTotalNs / uint64(time.Millisecond),
 		GoManagedBytes:           goManagedBytes,
 		GoMemoryLimitBytes:       debug.SetMemoryLimit(-1),
 		GOMAXPROCS:               runtime.GOMAXPROCS(0),
 		Goroutines:               runtime.NumGoroutine(),
 		HeapAllocBytes:           memory.HeapAlloc,
-		HeapInUseBytes:           memory.HeapInuse,
+		HeapUnusedBytes:          memory.HeapInuse - memory.HeapAlloc,
+		HeapFreeBytes:            memory.HeapIdle - memory.HeapReleased,
 		HeapReleasedBytes:        memory.HeapReleased,
-		HeapSystemBytes:          memory.HeapSys,
 		HostMemoryAvailableBytes: availableMemory,
 		HostMemoryTotalBytes:     totalMemory,
 		Load1:                    load1,
@@ -197,10 +208,77 @@ func currentProcessDiagnostics(startedAt time.Time) processDiagnostics {
 		NumCPU:                   runtime.NumCPU(),
 		OpenFileDescriptors:      linuxOpenFileDescriptors(),
 		ResidentBytes:            linuxResidentBytes(),
-		StackInUseBytes:          memory.StackInuse,
-		SystemBytes:              memory.Sys,
+		StackSystemBytes:         memory.StackSys,
+		RuntimeMetadataBytes:     memory.MSpanSys + memory.MCacheSys + memory.BuckHashSys + memory.GCSys + memory.OtherSys,
 		UptimeSeconds:            uptime,
 	}
+	// Runtime CPU classes are estimates of Go processor capacity, not OS CPU
+	// time. Preserve their common denominator for interval GC fractions. A
+	// missing metric is omitted; zero means supported but no activity.
+	samples := []metrics.Sample{
+		{Name: "/cpu/classes/total:cpu-seconds"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/gc/mark/idle:cpu-seconds"},
+		{Name: "/gc/limiter/last-enabled:gc-cycle"},
+		{Name: "/gc/gogc:percent"},
+		{Name: "/gc/heap/live:bytes"},
+		{Name: "/gc/heap/goal:bytes"},
+	}
+	metrics.Read(samples)
+	for index, target := range []**float64{&result.GoCPUCapacitySeconds, &result.GoGCCPUSeconds, &result.GoGCIdleCPUSeconds} {
+		if value := samples[index].Value; value.Kind() == metrics.KindFloat64 {
+			seconds := value.Float64()
+			*target = &seconds
+		}
+	}
+	if value := samples[3].Value; value.Kind() == metrics.KindUint64 {
+		cycle := value.Uint64()
+		result.GCLimiterLastEnabledCycle = &cycle
+	}
+	if value := samples[4].Value; value.Kind() == metrics.KindUint64 {
+		// The runtime represents GOGC=off as MaxUint64. Preserve the
+		// conventional -1 without emitting an unsafe JavaScript integer.
+		percent := int64(value.Uint64())
+		result.GCPercent = &percent
+	}
+	for index, target := range []**uint64{&result.HeapLiveBytes, &result.HeapGoalBytes} {
+		if value := samples[index+5].Value; value.Kind() == metrics.KindUint64 {
+			bytes := value.Uint64()
+			*target = &bytes
+		}
+	}
+	if raw, err := os.ReadFile("/proc/pressure/memory"); err == nil {
+		result.HostMemorySomeStallMicros, result.HostMemoryFullStallMicros = parseMemoryPressure(string(raw))
+	}
+	return result
+}
+
+// Cumulative PSI totals allow consumers to choose their observation interval.
+// /proc reports the whole guest, not a container or this process alone.
+// Missing or malformed measurements remain absent, including on non-Linux.
+func parseMemoryPressure(raw string) (some, full *uint64) {
+	for _, line := range strings.Split(raw, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || (fields[0] != "some" && fields[0] != "full") {
+			continue
+		}
+		for _, field := range fields[1:] {
+			text, ok := strings.CutPrefix(field, "total=")
+			if !ok {
+				continue
+			}
+			value, err := strconv.ParseUint(text, 10, 64)
+			if err == nil {
+				if fields[0] == "some" {
+					some = &value
+				} else {
+					full = &value
+				}
+			}
+			break
+		}
+	}
+	return
 }
 
 // RUSAGE_SELF includes user and kernel CPU time across every process thread.

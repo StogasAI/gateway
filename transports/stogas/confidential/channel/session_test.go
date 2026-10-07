@@ -12,7 +12,7 @@ func TestSessionOnlyAuthenticatedFirstClaimantOwnsResponse(t *testing.T) {
 	root, id := [32]byte{1, 2, 3}, [32]byte{4, 5, 6}
 	session := testServerSession(root, id)
 	defer session.Close()
-	encoder, _ := newRecords(requestSecret(root, 42), id, 42, requestDirection)
+	encoder, _ := newRecords(requestMessage(root, 42), id, 42, requestDirection)
 	response, err := responseRecords(root, id, 42)
 	if err != nil {
 		t.Fatal(err)
@@ -87,8 +87,8 @@ func TestSessionOutOfOrderAndRetiredStarts(t *testing.T) {
 	root, id := [32]byte{1}, [32]byte{2}
 	session := testServerSession(root, id)
 	defer session.Close()
-	for _, number := range []uint64{100, 98, 99, 4196} {
-		encoder, err := newRecords(requestSecret(root, number), id, number, requestDirection)
+	for _, number := range []uint64{100, 98, 99, 100 + ReplayWindow} {
+		encoder, err := newRecords(requestMessage(root, number), id, number, requestDirection)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,8 +99,8 @@ func TestSessionOutOfOrderAndRetiredStarts(t *testing.T) {
 		}
 		request.Close()
 	}
-	for _, number := range []uint64{98, 99, 100, 4196} {
-		encoder, err := newRecords(requestSecret(root, number), id, number, requestDirection)
+	for _, number := range []uint64{98, 99, 100, 100 + ReplayWindow} {
+		encoder, err := newRecords(requestMessage(root, number), id, number, requestDirection)
 		if err != nil {
 			t.Fatal(err)
 		}

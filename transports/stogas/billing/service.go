@@ -11,11 +11,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
-	"math/rand/v2"
-	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/singleflight"
@@ -23,13 +20,7 @@ import (
 
 const (
 	authorizeTimeout           = 1500 * time.Millisecond
-	settleTimeout              = 2 * time.Second
-	settleRetryWindow          = 90 * time.Second
-	settleRetryInitialDelay    = 250 * time.Millisecond
-	settleRetryMaxDelay        = 5 * time.Second
-	settleRetryWorkerCount     = 6
-	settleRetryQueueCapacity   = 8192
-	holdSettlementExpiryBuffer = 10 * time.Minute
+	holdSettlementExpiryBuffer = 20 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference so reconciliation never races a live request.
 	GatewayRequestLifetime = 60 * time.Minute
@@ -97,6 +88,7 @@ type settleRow struct {
 }
 
 type Authorization struct {
+	releaseFinalization        func()
 	admissionStartedAt         time.Time
 	dashboardAdmissionIdentity string
 	AuthorizedBilledCostUSD    *money.USD
@@ -180,69 +172,32 @@ type Service struct {
 	authorizations             authorizationActivity
 	localRequests              localRequestLimiter
 	apiKeys                    verifiedAPIKeyCache
-	rejections                 authorizationRejectionCache
+	callerFailures             callerFailureCache
 	rejectionLogs              rejectionLogBuffer
-	rejectionOutboxQuery       string
-	retryInitialDelay          time.Duration
-	retryMaxDelay              time.Duration
-	retryWindow                time.Duration
-	retryActive                atomic.Int64
-	retryDeferred              atomic.Int64
-	retryLastDeferredAt        atomic.Int64
+	finalizations              finalizationState
 	underReservedSettlements   atomic.Uint64
 	negativeBalanceSettlements atomic.Uint64
-	retryMu                    sync.Mutex
-	retryQueue                 chan settlementRetryTask
-	retryWorkerCount           int
-	retryWorkersStarted        bool
-	retryWorkersWG             sync.WaitGroup
-	retryClosed                bool
-	settleFunc                 settleHoldFunc
-	tinybird                   *TinybirdClient
+	requestLogs                *RequestLogClient
 	settleHoldQuery            string
-	settleHoldWithOutboxQuery  string
 	apiKeyPepper               string
 	inferenceTokenPublicKey    ed25519.PublicKey
 	byok                       *byokDecryptor
 }
 
-type settlementRetryTask struct {
-	authorization       Authorization
-	holdParamsHash      string
-	upstreamCostUSD     string
-	requestEventPayload string
-	writeOutbox         bool
-	deadline            time.Time
-	releaseMemory       func()
-}
-
-// RetainMemory transfers existing request admission to a smaller retained
-// owner. A nil function is used by callers without an aggregate byte budget.
-type RetainMemory func(bytes int) (release func(), ok bool)
-
-type settleHoldFunc func(
-	ctx context.Context,
-	authorization *Authorization,
-	holdParamsHash string,
-	upstreamCostUSD string,
-	requestEventPayload string,
-	writeOutbox bool,
-) error
-
 type DiagnosticsSnapshot struct {
-	KeyConfigCache                PolicyCacheDiagnostics    `json:"keyConfigCache"`
-	RedactionCache                PolicyCacheDiagnostics    `json:"redactionCache"`
-	RejectionLogs                 RejectionLogDiagnostics   `json:"rejectionLogs"`
-	Database                      *DatabaseDiagnostics      `json:"database,omitempty"`
-	LocalAdmission                LocalAdmissionDiagnostics `json:"localAdmission"`
-	SettlementRetries             int64                     `json:"settlementRetries"`
-	UnderReservedSettlements      uint64                    `json:"underReservedSettlements"`
-	NegativeBalanceSettlements    uint64                    `json:"negativeBalanceSettlements"`
-	SettlementRetryDeferrals      int64                     `json:"settlementRetryDeferrals"`
-	SettlementRetryLastDeferredAt *time.Time                `json:"settlementRetryLastDeferredAt,omitempty"`
-	SettlementRetryQueueCapacity  int                       `json:"settlementRetryQueueCapacity"`
-	SettlementRetryQueueDepth     int                       `json:"settlementRetryQueueDepth"`
-	Tinybird                      *TinybirdDiagnostics      `json:"tinybird,omitempty"`
+	KeyConfigCache                 PolicyCacheDiagnostics    `json:"keyConfigCache"`
+	RedactionCache                 PolicyCacheDiagnostics    `json:"redactionCache"`
+	RejectionLogs                  RejectionLogDiagnostics   `json:"rejectionLogs"`
+	Database                       *DatabaseDiagnostics      `json:"database,omitempty"`
+	LocalAdmission                 LocalAdmissionDiagnostics `json:"localAdmission"`
+	FinalizationRetries            int64                     `json:"finalizationRetries"`
+	UnderReservedSettlements       uint64                    `json:"underReservedSettlements"`
+	NegativeBalanceSettlements     uint64                    `json:"negativeBalanceSettlements"`
+	FinalizationAbandoned          int64                     `json:"finalizationAbandoned"`
+	FinalizationEncodingFailed     bool                      `json:"finalizationEncodingFailed"`
+	FinalizationRetryQueueCapacity int                       `json:"finalizationRetryQueueCapacity"`
+	FinalizationRetryQueueDepth    int                       `json:"finalizationRetryQueueDepth"`
+	RequestLogs                    *RequestLogDiagnostics    `json:"requestLogs,omitempty"`
 }
 
 type settleResultError struct {
@@ -265,7 +220,7 @@ func NewService(
 	byokEncryptionSecret string,
 	inferenceTokenPublicKey string,
 	databasePool DatabasePoolConfig,
-	tinybird *TinybirdClient,
+	requestLogs *RequestLogClient,
 ) (*Service, error) {
 	publicKey, err := parseInferenceTokenPublicKey(inferenceTokenPublicKey)
 	if err != nil {
@@ -281,16 +236,14 @@ func NewService(
 	}
 
 	service := &Service{
-		db:                        db,
-		authorizeHoldQuery:        db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
-		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigArguments),
-		rejectionOutboxQuery:      db.functionQuery("enqueue_gateway_rejections", "$1::json"),
-		inferenceTokenPublicKey:   publicKey,
-		tinybird:                  tinybird,
-		settleHoldQuery:           db.functionQuery("settle_gateway_hold", settleHoldArguments),
-		settleHoldWithOutboxQuery: db.functionQuery("settle_gateway_hold_with_outbox", settleHoldArguments),
-		apiKeyPepper:              apiKeyPepper,
-		byok:                      byok,
+		db:                      db,
+		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
+		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigArguments),
+		inferenceTokenPublicKey: publicKey,
+		requestLogs:             requestLogs,
+		settleHoldQuery:         db.functionQuery("settle_gateway_hold", settleHoldArguments),
+		apiKeyPepper:            apiKeyPepper,
+		byok:                    byok,
 	}
 	return service, nil
 }
@@ -298,17 +251,9 @@ func NewService(
 func (s *Service) Close() {
 	s.keyConfigs.close()
 	s.closeRejectionLogs()
-	s.retryMu.Lock()
-	if !s.retryClosed {
-		s.retryClosed = true
-		if s.retryQueue != nil {
-			close(s.retryQueue)
-		}
-	}
-	s.retryMu.Unlock()
-	s.retryWorkersWG.Wait()
-	if s.tinybird != nil {
-		s.tinybird.Close()
+	s.closeFinalizations()
+	if s.requestLogs != nil {
+		s.requestLogs.Close()
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -319,36 +264,22 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 	if s == nil {
 		return DiagnosticsSnapshot{}
 	}
-	retryQueueDepth, retryQueueCapacity := s.retryQueueDiagnostics()
-	var retryLastDeferredAt *time.Time
-	if unixMilliseconds := s.retryLastDeferredAt.Load(); unixMilliseconds > 0 {
-		value := time.UnixMilli(unixMilliseconds).UTC()
-		retryLastDeferredAt = &value
-	}
+	retryQueueDepth := s.finalizationQueueDepth()
 	return DiagnosticsSnapshot{
-		KeyConfigCache:                s.keyConfigs.diagnostics(),
-		RedactionCache:                s.keyConfigs.redactionDiagnostics(),
-		RejectionLogs:                 s.rejectionLogs.snapshot(),
-		Database:                      s.db.Diagnostics(),
-		LocalAdmission:                localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.rejections, &s.apiKeys),
-		SettlementRetries:             s.retryActive.Load(),
-		UnderReservedSettlements:      s.underReservedSettlements.Load(),
-		NegativeBalanceSettlements:    s.negativeBalanceSettlements.Load(),
-		SettlementRetryDeferrals:      s.retryDeferred.Load(),
-		SettlementRetryLastDeferredAt: retryLastDeferredAt,
-		SettlementRetryQueueCapacity:  retryQueueCapacity,
-		SettlementRetryQueueDepth:     retryQueueDepth,
-		Tinybird:                      s.tinybird.Diagnostics(),
+		KeyConfigCache:                 s.keyConfigs.diagnostics(),
+		RedactionCache:                 s.keyConfigs.redactionDiagnostics(),
+		RejectionLogs:                  s.rejectionLogs.snapshot(),
+		Database:                       s.db.Diagnostics(),
+		LocalAdmission:                 localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.callerFailures, &s.apiKeys),
+		FinalizationRetries:            s.finalizations.pending.Load(),
+		UnderReservedSettlements:       s.underReservedSettlements.Load(),
+		NegativeBalanceSettlements:     s.negativeBalanceSettlements.Load(),
+		FinalizationAbandoned:          s.finalizations.abandoned.Load(),
+		FinalizationEncodingFailed:     s.finalizations.encodingFailed.Load(),
+		FinalizationRetryQueueCapacity: finalizationCapacity,
+		FinalizationRetryQueueDepth:    retryQueueDepth,
+		RequestLogs:                    s.requestLogs.Diagnostics(),
 	}
-}
-
-func (s *Service) retryQueueDiagnostics() (int, int) {
-	s.retryMu.Lock()
-	defer s.retryMu.Unlock()
-	if s.retryQueue == nil {
-		return 0, settleRetryQueueCapacity
-	}
-	return len(s.retryQueue), cap(s.retryQueue)
 }
 
 func (s *Service) parseVerifiedAPIKey(rawAPIKey string) (*APIKeyClaims, string, string, error) {
@@ -517,6 +448,15 @@ func (s *Service) authorizeResolvedRequest(
 	requestLifetime time.Duration,
 	singleUse bool,
 ) (*Authorization, error) {
+	releaseFinalization, err := s.reserveFinalization()
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if releaseFinalization != nil {
+			releaseFinalization()
+		}
+	}()
 	if snapshot == nil || snapshot.Config == nil || snapshot.Claims == nil || snapshot.Generation < 1 || snapshot.CredentialsGeneration < 1 || snapshot.Versions == nil {
 		return nil, ErrGatewayUnavailable
 	}
@@ -651,7 +591,8 @@ func (s *Service) authorizeResolvedRequest(
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		authorization := &Authorization{AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		releaseFinalization = nil // Ownership follows the accepted request through durable finalization.
 		if upstreamByok == "" {
 			return authorization, ErrByok
 		}
@@ -699,8 +640,6 @@ func authorizationResultError(result string) error {
 	switch result {
 	case "invalid_key", "hold_missing":
 		return ErrInvalidAPIKey
-	case "usage_exists":
-		return ErrRequestAlreadyUsed
 	case "params_mismatch":
 		return ErrParamsMismatch
 	case "authorization_closed":
@@ -746,262 +685,6 @@ func dashboardAdmissionKey(credential *DashboardCredential) string {
 	return "dashboard:" + credential.ActorUserID + ":" + credential.SessionID
 }
 
-func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorization, event RequestEvent, retain RetainMemory) error {
-	if authorization == nil {
-		return nil
-	}
-	s.recordRequestOutcome(authorization, event)
-
-	holdParamsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON)
-	event.holdParamsHash = holdParamsHash
-	upstreamCostRaw := event.UpstreamCostUSD
-	if upstreamCostRaw == "" {
-		upstreamCostRaw = ZeroChargeUSD
-	}
-	upstreamCostUSD, err := ParseUSD(upstreamCostRaw)
-	if err != nil {
-		return fmt.Errorf("invalid upstream cost: %w", err)
-	}
-	event.UpstreamCostUSD = upstreamCostUSD.String()
-	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
-	event.BilledCostUSD = billedCostUSD.String()
-	requestEventPayload, err := encodeGatewayRequestEvent(event)
-	if err != nil {
-		return err
-	}
-
-	writeOutbox := true
-	if s.tinybird != nil {
-		writeOutbox = s.tinybird.AppendGatewayRequest(ctx, event) != nil
-	}
-
-	if err := s.settleOnce(ctx, authorization, holdParamsHash, upstreamCostUSD.String(), requestEventPayload, writeOutbox); err != nil {
-		if isPermanentSettleError(err) {
-			return nil
-		}
-		if !s.startSettleRetry(authorization, holdParamsHash, upstreamCostUSD.String(), requestEventPayload, writeOutbox, retain) && writeOutbox {
-			s.publishUncommittedFallback(authorization, event)
-		}
-		return nil
-	}
-
-	return nil
-}
-
-func (s *Service) startSettleRetry(
-	authorization *Authorization,
-	holdParamsHash string,
-	upstreamCostUSD string,
-	requestEventPayload string,
-	writeOutbox bool,
-	retain RetainMemory,
-) bool {
-	if authorization == nil {
-		return false
-	}
-	task := settlementRetryTask{
-		authorization: Authorization{
-			KeyID:       authorization.KeyID,
-			ProductKey:  authorization.ProductKey,
-			ProviderKey: authorization.ProviderKey,
-			RequestID:   authorization.RequestID,
-		},
-		holdParamsHash:      holdParamsHash,
-		upstreamCostUSD:     upstreamCostUSD,
-		requestEventPayload: requestEventPayload,
-		writeOutbox:         writeOutbox,
-		deadline:            time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
-	}
-	if retain != nil {
-		bytes := int(unsafe.Sizeof(task)) + len(task.requestEventPayload) + len(task.holdParamsHash) + len(task.upstreamCostUSD) +
-			len(task.authorization.KeyID) + len(task.authorization.ProductKey) + len(task.authorization.ProviderKey) + len(task.authorization.RequestID)
-		var ok bool
-		task.releaseMemory, ok = retain(bytes)
-		if !ok {
-			s.recordSettleRetryDeferral()
-			return false
-		}
-	}
-	queued := false
-	defer func() {
-		if !queued && task.releaseMemory != nil {
-			task.releaseMemory()
-		}
-	}()
-
-	s.retryMu.Lock()
-	defer s.retryMu.Unlock()
-	if s.retryClosed {
-		s.recordSettleRetryDeferral()
-		return false
-	}
-	if s.retryQueue == nil {
-		s.retryQueue = make(chan settlementRetryTask, settleRetryQueueCapacity)
-	}
-	s.startRetryWorkersLocked()
-	select {
-	case s.retryQueue <- task:
-		queued = true
-		return true
-	default:
-		s.recordSettleRetryDeferral()
-		return false
-	}
-}
-
-func (s *Service) recordSettleRetryDeferral() {
-	s.retryDeferred.Add(1)
-	s.retryLastDeferredAt.Store(time.Now().UTC().UnixMilli())
-}
-
-func (s *Service) startRetryWorkersLocked() {
-	if s.retryWorkersStarted {
-		return
-	}
-	s.retryWorkersStarted = true
-	workers := s.retryWorkerCount
-	if workers <= 0 {
-		workers = settleRetryWorkerCount
-	}
-	queue := s.retryQueue
-	s.retryWorkersWG.Add(workers)
-	for range workers {
-		go func() {
-			defer s.retryWorkersWG.Done()
-			for task := range queue {
-				s.retryActive.Add(1)
-				s.retrySettleTask(task)
-				s.retryActive.Add(-1)
-			}
-		}()
-	}
-}
-
-// settleOnce sends the upstream cost basis. PostgreSQL derives billed cost from
-// the hold's frozen credential source and verifies the request-event payload.
-func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, holdParamsHash string, upstreamCostUSD string, requestEventPayload string, writeOutbox bool) error {
-	if s.settleFunc != nil {
-		return s.settleFunc(ctx, authorization, holdParamsHash, upstreamCostUSD, requestEventPayload, writeOutbox)
-	}
-
-	queryCtx, cancel := context.WithTimeout(ctx, settleTimeout)
-	defer cancel()
-
-	row := settleRow{}
-	query := s.settleHoldQuery
-	if writeOutbox {
-		query = s.settleHoldWithOutboxQuery
-	}
-	err := s.db.pool.QueryRow(
-		queryCtx,
-		query,
-		authorization.RequestID,
-		authorization.KeyID,
-		authorization.ProviderKey,
-		authorization.ProductKey,
-		holdParamsHash,
-		upstreamCostUSD,
-		requestEventPayload,
-	).Scan(&row.Result, &row.BilledCostUSD, &row.BalanceAdjustmentUSD, &row.AvailableBalanceUSD)
-	if err != nil {
-		return fmt.Errorf("settle gateway hold: %w", err)
-	}
-
-	switch row.Result {
-	case "complete", "already_settled":
-		return nil
-	case "under_reserved":
-		s.underReservedSettlements.Add(1)
-		return nil
-	case "negative_balance":
-		s.negativeBalanceSettlements.Add(1)
-		return nil
-	case "hold_not_found":
-		return &settleResultError{err: ErrAuthorizationAbsent, result: row.Result, statusCode: 404}
-	case "params_mismatch":
-		return &settleResultError{err: ErrAuthorizationClosed, result: row.Result, statusCode: 409}
-	case "invalid_amount", "invalid_payload", "payload_mismatch":
-		return &settleResultError{err: errors.New("invalid settlement payload"), result: row.Result, statusCode: 400}
-	default:
-		return fmt.Errorf("unknown settlement result: %s", row.Result)
-	}
-}
-
-func (s *Service) retrySettle(authorization *Authorization, holdParamsHash string, upstreamCostUSD string, requestEventPayload string, writeOutbox bool) {
-	if authorization == nil {
-		return
-	}
-	s.retrySettleTask(settlementRetryTask{
-		authorization:       *authorization,
-		holdParamsHash:      holdParamsHash,
-		upstreamCostUSD:     upstreamCostUSD,
-		requestEventPayload: requestEventPayload,
-		writeOutbox:         writeOutbox,
-		deadline:            time.Now().Add(durationOrDefault(s.retryWindow, settleRetryWindow)),
-	})
-}
-
-func (s *Service) retrySettleTask(task settlementRetryTask) {
-	if task.releaseMemory != nil {
-		defer task.releaseMemory()
-	}
-	delay := durationOrDefault(s.retryInitialDelay, settleRetryInitialDelay)
-	maxDelay := durationOrDefault(s.retryMaxDelay, settleRetryMaxDelay)
-	retryCtx, cancel := context.WithDeadline(context.Background(), task.deadline)
-	defer cancel()
-	for retryCtx.Err() == nil {
-		wait := jitteredSettleRetryDelay(delay)
-		timer := time.NewTimer(wait)
-		select {
-		case <-timer.C:
-		case <-retryCtx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			break
-		}
-		if retryCtx.Err() != nil {
-			break
-		}
-		err := s.settleOnce(retryCtx, &task.authorization, task.holdParamsHash, task.upstreamCostUSD, task.requestEventPayload, task.writeOutbox)
-		if err == nil {
-			return
-		}
-		if isPermanentSettleError(err) {
-			return
-		}
-		if delay < maxDelay {
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
-		}
-	}
-
-	if task.writeOutbox {
-		event, err := decodeGatewayRequestEvent(task.requestEventPayload)
-		if err == nil {
-			s.publishUncommittedFallbackAfterRetry(&task.authorization, task.holdParamsHash, event)
-		}
-	}
-}
-
-func jitteredSettleRetryDelay(delay time.Duration) time.Duration {
-	if delay <= time.Nanosecond {
-		return delay
-	}
-	half := delay / 2
-	return half + time.Duration(rand.Int64N(int64(delay-half)+1))
-}
-
-func isPermanentSettleError(err error) bool {
-	var typed *settleResultError
-	return errors.As(err, &typed)
-}
-
 func durationOrDefault(value time.Duration, fallback time.Duration) time.Duration {
 	if value > 0 {
 		return value
@@ -1011,79 +694,6 @@ func durationOrDefault(value time.Duration, fallback time.Duration) time.Duratio
 
 func requestHoldExpiresAt(now time.Time, requestLifetime time.Duration) time.Time {
 	return now.Add(durationOrDefault(requestLifetime, GatewayRequestLifetime) + holdSettlementExpiryBuffer)
-}
-
-func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
-	if event.SchemaVersion != RequestLogSchemaVersion {
-		return "", fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
-	}
-	if event.Meters == nil {
-		event.Meters = EventMeters{}
-	}
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
-	}
-	if len(encoded)+1 > tinybirdMaxEventBytes {
-		return "", fmt.Errorf("gateway request log payload is %d bytes, limit is %d", len(encoded), tinybirdMaxEventBytes-1)
-	}
-	return string(encoded), nil
-}
-
-func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
-	event := RequestEvent{}
-	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return RequestEvent{}, fmt.Errorf("unmarshal gateway request log payload: %w", err)
-	}
-	if event.SchemaVersion != RequestLogSchemaVersion {
-		return RequestEvent{}, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
-	}
-	pricing, analyticsQuantities, err := ValidateMeters(event.Meters)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	event.Meters = pricing
-	event.analyticsQuantities = analyticsQuantities
-	event.CacheReadSavingsUSD, err = requestOptionalUSD(
-		event.CacheReadSavingsUSD,
-		"cache read savings",
-	)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	event.CacheWriteOverheadUSD, err = requestOptionalUSD(
-		event.CacheWriteOverheadUSD,
-		"cache write overhead",
-	)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	return event, nil
-}
-
-func (s *Service) publishUncommittedFallback(authorization *Authorization, event RequestEvent) {
-	s.publishUncommittedFallbackWithMode(authorization, event, false)
-}
-
-func (s *Service) publishUncommittedFallbackAfterRetry(authorization *Authorization, holdParamsHash string, event RequestEvent) {
-	event.holdParamsHash = holdParamsHash
-	s.publishUncommittedFallbackWithMode(authorization, event, true)
-}
-
-func (s *Service) publishUncommittedFallbackWithMode(authorization *Authorization, event RequestEvent, joinProbe bool) {
-	if authorization == nil {
-		return
-	}
-	if s.tinybird == nil {
-		return
-	}
-	appendCtx, cancel := context.WithTimeout(context.Background(), tinybirdAppendTimeout)
-	defer cancel()
-	if joinProbe {
-		_ = s.tinybird.appendGatewayRequestAfterRetry(appendCtx, event)
-		return
-	}
-	_ = s.tinybird.AppendGatewayRequest(appendCtx, event)
 }
 
 func ErrorStatus(err error) int {

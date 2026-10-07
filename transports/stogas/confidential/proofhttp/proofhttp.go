@@ -60,10 +60,10 @@ func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if len(input.RequestBody) == 0 || len(input.ResponseBody) == 0 {
+	if input.RequestDigest == nil || len(input.ResponseBody) == 0 {
 		return nil, errors.New("receipt content is empty")
 	}
-	return s.output(input.Metadata, sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody))
+	return s.output(input.Metadata, *input.RequestDigest, sha256.Sum256(input.ResponseBody))
 }
 
 func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*Output, error) {
@@ -101,10 +101,10 @@ func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.nodeID == "" || s.signer == nil || len(input.RequestBody) == 0 || !proof.ValidCatalog(input.Metadata.Catalog) {
+	if s.nodeID == "" || s.signer == nil || input.RequestDigest == nil || !proof.ValidCatalog(input.Metadata.Catalog) {
 		return nil, errors.New("receipt context is incomplete")
 	}
-	return &Stream{request: sha256.Sum256(input.RequestBody), response: sha256.New(), metadata: input.Metadata}, nil
+	return &Stream{request: *input.RequestDigest, response: sha256.New(), metadata: input.Metadata}, nil
 }
 
 func (s *Stream) WriteSentChunk(chunk []byte) {

@@ -76,10 +76,10 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 			}
 			// Materialize only in the test to compare the old flat execution contract.
 			// Runtime retains references to these sections and their individual matchers.
-			if len(got.RedactionSources) > 0 {
+			if len(got.PluginSources) > 0 {
 				p := &Redaction{Presets: []string{}}
 				presets, patterns := map[string]bool{}, map[string]bool{}
-				for _, part := range got.RedactionSources {
+				for _, part := range got.PluginSources {
 					r := part.StogasRedaction
 					for _, s := range r.Presets {
 						presets[s] = true
@@ -153,7 +153,7 @@ func TestCompositionKeepsParentsImmutableAndChecksCombinedLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if combined.RedactionSources[0] != org.Config.Plugins || combined.Routing.Query.Filters[0] != org.Config.Routing.Query.Filters[0] {
+	if combined.PluginSources[0] != org.Config.Plugins || combined.Routing.Query.Filters[0] != org.Config.Routing.Query.Filters[0] {
 		t.Fatal("parent data was copied")
 	}
 	_, err = applyRequestJSON(combined, []byte(`{"routing":{"filter": "deployment.contextWindowTokens < 1000"}}`))

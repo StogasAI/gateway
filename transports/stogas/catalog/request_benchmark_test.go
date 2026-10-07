@@ -15,10 +15,10 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/tokenizer"
 )
 
-// The local reservation includes text, its buffer and message framing. This is
+// The local reservation includes text estimation and message framing. This is
 // a synthetic three-million-token deployment, not a provider acceptance claim.
-// Adversarial shapes stay within that estimate and the 128-MiB wire limit; some
-// deliberately maximize bytes or structure instead of filling the token budget.
+// Adversarial shapes stay within the 128-MiB wire limit; some maximize bytes or
+// structure and exceed the uncapped estimate. Holds clip to the input ceiling.
 func BenchmarkRequestThreeMillionContext(b *testing.B) {
 	const contextTokens = 3_000_000
 	snap, err := loadSnapshot()
@@ -27,13 +27,10 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 	}
 	deployment := snap.graph.Deployments["openai-gpt-5.6-sol"]
 	deployment.ContextWindowTokens = contextTokens
+	deployment.MaxInputTokens = contextTokens
 	snap.graph.Deployments["openai-gpt-5.6-sol"] = deployment
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
-	codec, err := tokenizer.Get(tokenizer.O200kBase)
-	if err != nil {
-		b.Fatal(err)
-	}
 	scopes := []policy.Scope{policy.OrganizationScope, policy.FolderScope, policy.GrantScope, policy.RoleScope, policy.MemberScope, policy.CredentialScope, policy.KeyScope}
 	sources := make([]policy.ScopedSource, len(scopes))
 	for i, scope := range scopes {
@@ -102,9 +99,9 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 			var messages any
 			var tools json.RawMessage
 			if shape == "messages" {
-				// One text token and the existing per-message/block framing.
-				const perMessageBps = openAIInputHoldTextBufferBps + 10000*(openAIInputHoldMessageTokens+openAIInputHoldBlockTokens)
-				count := (contextTokens - openAIInputHoldBaseTokens - 100) * 10000 / perMessageBps
+				// "a" has an eight-token estimate, plus message/block framing.
+				const perMessageTokens = 8 + openAIInputHoldMessageTokens + openAIInputHoldBlockTokens
+				count := (contextTokens - openAIInputHoldBaseTokens - 100) / perMessageTokens
 				messages = json.RawMessage(`[` + strings.Repeat(`{"role":"user","content":"a"},`, int(count)-1) + `{"role":"user","content":"a"}]`)
 			} else if shape == "tool_schema" {
 				messages = []map[string]string{{"role": "user", "content": "Select one allowed value."}}
@@ -128,11 +125,11 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 				case "dense_matches":
 					seed = "person@corp.io "
 				}
-				seedTokens, err := codec.Count(seed)
+				seedTokens, err := tokenizer.Estimate(seed)
 				if err != nil {
 					b.Fatal(err)
 				}
-				count := (contextTokens - openAIInputHoldBaseTokens - 100) * 10000 / (seedTokens * openAIInputHoldTextBufferBps)
+				count := (contextTokens - openAIInputHoldBaseTokens - 100) / seedTokens
 				if shape == "whitespace_max" {
 					// Leave room for the small JSON wrapper, checked below.
 					count = ((128 << 20) - 1024) / len(seed)
@@ -171,7 +168,7 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 				b.Fatal(err)
 			}
 			stats := requestInputHoldStats(fields, RouteChat)
-			estimate, err := estimateInputHold(stats, tokenizationOpenAI, 0)
+			estimate, err := estimateInputContent(stats, contextTokens)
 			if err != nil || estimate > contextTokens {
 				b.Fatalf("fixture estimate=%d: %v", estimate, err)
 			}
@@ -227,7 +224,7 @@ func BenchmarkRequestMessageShape(b *testing.B) {
 			b.SetBytes(int64(len(body)))
 			for b.Loop() {
 				_, err := validateRequestJSON(body)
-				if count > maxRequestJSONValues/3 && errors.Is(err, errRequestJSONValueLimit) {
+				if count > MaxRequestJSONValues/3 && errors.Is(err, errRequestJSONValueLimit) {
 					continue
 				}
 				if err != nil {
@@ -316,7 +313,7 @@ func BenchmarkRequestJSONAdmission(b *testing.B) {
 		name string
 		body string
 	}{
-		{"dense_values", `{"schema":[` + strings.Repeat("0,", maxRequestJSONValues-3) + "0]}"},
+		{"dense_values", `{"schema":[` + strings.Repeat("0,", MaxRequestJSONValues-3) + "0]}"},
 		{"top_level_names", names.String()},
 		{"escaped_names", escapedNames.String()},
 		{"long_escaped_string", `{"input":"` + strings.Repeat(`\u0061`, 1_000_000) + `"}`},

@@ -216,6 +216,24 @@ func TestColdBurstReservesEveryTicketAcrossSharedRefills(t *testing.T) {
 	if got := discoveryCalls.Load(); got != requests/10 {
 		t.Fatalf("discovery calls = %d, want %d", got, requests/10)
 	}
+
+	snapshot := state.diagnostics.snapshot(state.health()).Chutes[0]
+	var discoveries, waits uint64
+	for _, count := range snapshot.Discovery.LatencyMSBuckets {
+		discoveries += count
+	}
+	for _, count := range snapshot.TicketWait.LatencyMSBuckets {
+		waits += count
+	}
+	if discoveries != snapshot.Discovery.Calls || waits != snapshot.TicketWait.Calls {
+		t.Fatal("latency observations were lost")
+	}
+	if snapshot.Discovery.Calls != requests/10 || snapshot.Discovery.Failures != 0 ||
+		snapshot.Tickets.Received != requests || snapshot.Tickets.Installed != requests || snapshot.Tickets.Reserved != requests ||
+		snapshot.Tickets.Expired != 0 || snapshot.Tickets.Discarded != 0 || snapshot.PooledTickets != 0 ||
+		snapshot.TicketWait.Calls == 0 || snapshot.TicketWait.Calls > requests || snapshot.TicketWait.Failures != 0 {
+		t.Fatalf("cold burst accounting: %+v", snapshot)
+	}
 }
 
 func TestTicketReservationStopsWaitingAtRequestDeadline(t *testing.T) {
@@ -676,4 +694,30 @@ func pooledTicketsForTest(expiresAt time.Time, values ...string) []pooledTicket 
 		tickets = append(tickets, pooledTicket{Value: value, ExpiresAt: expiresAt})
 	}
 	return tickets
+}
+
+func TestTicketLifecycleDiagnostics(t *testing.T) {
+	now := time.Now()
+	state := newPoolState(nil, nil, &diagnostics{})
+	defer state.close()
+	state.verified[testChuteID] = map[string]verifiedInstance{testInstanceID: {
+		InstanceID: testInstanceID, PublicKey: "first", GPUCount: testGPUCount, ValidUntil: now.Add(time.Minute),
+	}}
+	state.install(testModelTarget, []discoveredInstance{{ID: testInstanceID, PublicKey: "first", Tickets: []string{"used", "expired"}}}, now.Add(time.Second))
+	if _, ok := state.take(testModelTarget, now); !ok {
+		t.Fatal("missing first ticket")
+	}
+	state.mu.Lock()
+	state.pruneLocked(testChuteID, now.Add(2*time.Second))
+	state.mu.Unlock()
+	state.install(testModelTarget, []discoveredInstance{{ID: testInstanceID, PublicKey: "first", Tickets: []string{"rekeyed"}}}, now.Add(time.Minute))
+	state.install(testModelTarget, []discoveredInstance{{ID: testInstanceID, PublicKey: "second", Tickets: []string{"rejected", "rejected2"}}}, now.Add(time.Minute))
+	state.observeInvoke(reservedTicket{ChuteID: testChuteID, InstanceID: testInstanceID}, 403, 0, nil)
+	state.install(testModelTarget, []discoveredInstance{{ID: testInstanceID, PublicKey: "second", Tickets: []string{"closed"}}}, now.Add(time.Minute))
+	state.close()
+	got := state.diagnostics.snapshot(state.health()).Chutes[0]
+	want := TicketTotals{Installed: 6, Reserved: 1, Expired: 1, Discarded: 4}
+	if got.Tickets != want || got.PooledTickets != 0 {
+		t.Fatalf("ticket lifecycle = %+v, pooled=%d; want %+v", got.Tickets, got.PooledTickets, want)
+	}
 }

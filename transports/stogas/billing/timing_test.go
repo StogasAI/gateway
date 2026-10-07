@@ -16,11 +16,11 @@ func TestProviderDurationWithinEveryClockOrdering(t *testing.T) {
 			for _, providerStart := range times {
 				for _, providerFinish := range times {
 					total := uint32Duration(finish.Sub(start))
-					duration := requestProviderDuration(EventInput{ProviderStartedAt: providerStart, ProviderCompletedAt: providerFinish}, start, finish, total)
-					if duration > total {
+					offset, duration := requestProviderTiming(EventInput{ProviderStartedAt: providerStart, ProviderCompletedAt: providerFinish}, start, finish, total)
+					if duration > total || (offset != nil && uint64(*offset)+uint64(duration) > uint64(total)) {
 						t.Fatalf("provider exceeds request: %d total %d", duration, total)
 					}
-					if (providerStart.IsZero() || providerStart.Before(start)) && duration != 0 {
+					if (providerStart.IsZero() || providerStart.Before(start)) && (duration != 0 || offset != nil) {
 						t.Fatal("missing/invalid dispatch invented provider work")
 					}
 				}
@@ -35,10 +35,23 @@ func TestProviderDurationWithinEveryClockOrdering(t *testing.T) {
 		provider := time.Duration(rng.IntN(100000)) * time.Microsecond
 		response := time.Duration(rng.IntN(100000)) * time.Microsecond
 		end := base.Add(admission + provider + response)
-		a := requestProviderDuration(EventInput{ProviderStartedAt: base.Add(admission), ProviderCompletedAt: base.Add(admission + provider)}, base, end, uint32Duration(end.Sub(base)))
-		b := requestProviderDuration(EventInput{ProviderStartedAt: base.Add(admission), ProviderCompletedAt: end}, base, end, uint32Duration(end.Sub(base)))
+		_, a := requestProviderTiming(EventInput{ProviderStartedAt: base.Add(admission), ProviderCompletedAt: base.Add(admission + provider)}, base, end, uint32Duration(end.Sub(base)))
+		_, b := requestProviderTiming(EventInput{ProviderStartedAt: base.Add(admission), ProviderCompletedAt: end}, base, end, uint32Duration(end.Sub(base)))
 		if a > b || b > uint32Duration(end.Sub(base)) {
 			t.Fatalf("nonmonotonic provider duration: %+v => %+v", a, b)
 		}
+	}
+}
+
+func TestProviderIntervalSharesRequestOrigin(t *testing.T) {
+	start := time.Unix(1700000000, 0)
+	// A first token at 35ms can precede the combined 85ms of gateway work:
+	// preparation occupies [0,20), provider [20,335), finalization [335,400).
+	offset, duration := requestProviderTiming(EventInput{
+		ProviderStartedAt:   start.Add(20 * time.Millisecond),
+		ProviderCompletedAt: start.Add(335 * time.Millisecond),
+	}, start, start.Add(400*time.Millisecond), 400)
+	if offset == nil || *offset != 20 || duration != 315 {
+		t.Fatalf("provider interval = %v + %d, want 20 + 315", offset, duration)
 	}
 }

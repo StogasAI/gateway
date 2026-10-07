@@ -240,30 +240,6 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 	}
 }
 
-func TestValidateRequestRejectsUnsupportedInputShapes(t *testing.T) {
-	for _, item := range []struct {
-		name  string
-		route openAIAdapterRoute
-		body  string
-	}{
-		{"chat file", openAIAdapterRouteChat, `{"messages":[{"role":"user","content":[{"type":"file","file":{"file_data":"abc"}}]}]}`},
-		{"chat image", openAIAdapterRouteChat, `{"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}]}`},
-		{"chat audio", openAIAdapterRouteChat, `{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}]}`},
-		{"responses file id", openAIAdapterRouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`},
-		{"responses file url", openAIAdapterRouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/file.pdf"}]}]}`},
-		{"responses inline file", openAIAdapterRouteResponses, `{"input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`},
-		{"responses image", openAIAdapterRouteResponses, `{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`},
-		{"responses audio", openAIAdapterRouteResponses, `{"input":[{"type":"input_audio","input_audio":{"data":"abc","format":"mp3"}}]}`},
-	} {
-		t.Run(item.name, func(t *testing.T) {
-			err := validateOpenAIGuardrails(rawAdapterContext(t, item.route, item.body))
-			if !errors.Is(err, errOpenAIUnsupportedInput) {
-				t.Fatalf("expected unsupported input rejection, got %v", err)
-			}
-		})
-	}
-}
-
 func TestValidateRequestAllowsTextResponsesInput(t *testing.T) {
 	for _, item := range []struct {
 		name  string
@@ -445,7 +421,7 @@ func TestResponsesWebSearchHoldUsesMaxToolCalls(t *testing.T) {
 		RawBody:   rawJSON(t, `{"max_tool_calls":4}`),
 		ToolTypes: []string{"web_search"},
 	}
-	meters := openAIResponsesHostedToolHoldMeters(req, 0, 0)
+	meters := openAIResponsesHostedToolHoldMeters(req)
 	if len(meters) != 1 {
 		t.Fatalf("expected one web search call meter, got %#v", meters)
 	}
@@ -454,13 +430,13 @@ func TestResponsesWebSearchHoldUsesMaxToolCalls(t *testing.T) {
 	}
 }
 
-func TestResponsesPreviewSearchHoldDoesNotEmitNegativeRemainingContextMeter(t *testing.T) {
+func TestResponsesPreviewSearchHoldReservesContentPerCall(t *testing.T) {
 	req := openAIAdapterContext{
 		Route: openAIAdapterRouteResponses,
 		Deployment: openAIAdapterDeployment{
-			Model:               "gpt-5.5",
-			ContextWindowTokens: 100,
-			ReasoningSupported:  true,
+			Model:              "gpt-5.5",
+			MaxInputTokens:     100,
+			ReasoningSupported: true,
 			Pricing: billing.Pricing{
 				billing.MeterInputTokens:                  {billing.RatePerMillionTokens: "1000000"},
 				MeterOpenAIResponsesWebSearchPreviewCalls: {billing.RatePerThousandCalls: "1000"},
@@ -470,12 +446,12 @@ func TestResponsesPreviewSearchHoldDoesNotEmitNegativeRemainingContextMeter(t *t
 		ToolTypes: []string{"web_search_preview"},
 	}
 
-	meters := openAIResponsesHostedToolHoldMeters(req, 20, 90)
-	if len(meters) != 1 {
-		t.Fatalf("expected only the web-search call meter when context is saturated, got %#v", meters)
+	meters := openAIResponsesHostedToolHoldMeters(req)
+	if len(meters) != 2 || meters[0].MeterKey != billing.MeterInputTokens || meters[0].Quantity != "400" {
+		t.Fatalf("expected four input windows of retrieved content, got %#v", meters)
 	}
-	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewCalls || meters[0].Quantity != "4" || !meters[0].HoldRequired {
-		t.Fatalf("expected preview call hold meter quantity 4, got %#v", meters[0])
+	if meters[1].MeterKey != MeterOpenAIResponsesWebSearchPreviewCalls || meters[1].Quantity != "4" || !meters[1].HoldRequired {
+		t.Fatalf("expected preview call hold meter quantity 4, got %#v", meters[1])
 	}
 }
 
@@ -483,8 +459,8 @@ func TestResponsesPreviewSearchNonReasoningUses25DollarMeterWithoutContentTokens
 	req := openAIAdapterContext{
 		Route: openAIAdapterRouteResponses,
 		Deployment: openAIAdapterDeployment{
-			Model:               "gpt-4.1",
-			ContextWindowTokens: 200000,
+			Model:          "gpt-4.1",
+			MaxInputTokens: 200000,
 			Pricing: billing.Pricing{
 				billing.MeterInputTokens:                              {billing.RatePerMillionTokens: "1000000"},
 				MeterOpenAIResponsesWebSearchPreviewCalls:             {billing.RatePerThousandCalls: "10"},
@@ -496,7 +472,7 @@ func TestResponsesPreviewSearchNonReasoningUses25DollarMeterWithoutContentTokens
 		ActualWebSearchCalls: 1,
 	}
 
-	holdMeters := openAIResponsesHostedToolHoldMeters(req, 16, 100)
+	holdMeters := openAIResponsesHostedToolHoldMeters(req)
 	if len(holdMeters) != 1 {
 		t.Fatalf("expected only non-reasoning preview call hold meter, got %#v", holdMeters)
 	}
@@ -513,7 +489,55 @@ func TestResponsesPreviewSearchNonReasoningUses25DollarMeterWithoutContentTokens
 	}
 }
 
-func TestResponsesWebSearchHoldDefaultsOmittedMaxToolCallsToEffectiveCap(t *testing.T) {
+func TestResponsesSearchHoldIncludesVariableContentWhenChoosingTool(t *testing.T) {
+	req := openAIAdapterContext{
+		Route: openAIAdapterRouteResponses,
+		Deployment: openAIAdapterDeployment{
+			Model: "gpt-4.1", MaxInputTokens: 1000000,
+			Pricing: billing.Pricing{
+				billing.MeterInputTokens:                              {billing.RatePerMillionTokens: "2"},
+				MeterOpenAIResponsesWebSearchCalls:                    {billing.RatePerThousandCalls: "10"},
+				MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls: {billing.RatePerThousandCalls: "25"},
+			},
+		},
+		ToolTypes: []string{"web_search", "web_search_preview"},
+	}
+	for _, test := range []struct {
+		name, body, tokens, calls string
+		inputLimit                int
+	}{
+		{"default allowance", `{}`, "1280000", "10", 1000000},
+		{"explicit lower cap", `{"max_tool_calls":2}`, "256000", "2", 1000000},
+		{"narrow input limit", `{"max_tool_calls":2}`, "100000", "2", 50000},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req.RawBody = rawJSON(t, test.body)
+			req.Deployment.MaxInputTokens = test.inputLimit
+			meters := openAIResponsesHostedToolHoldMeters(req)
+			if len(meters) != 2 || meters[0].MeterKey != billing.MeterInputTokens || meters[0].Quantity != test.tokens ||
+				meters[1].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[1].Quantity != test.calls {
+				t.Fatalf("expected costlier total hold with cumulative retrieved content, got %#v", meters)
+			}
+			// A reservation estimate must not change the existing ambiguous-call
+			// settlement rule or turn estimated search content into a final charge.
+			req.ActualWebSearchCalls = 1
+			final := openAIResponsesHostedToolFinalMeters(req)
+			if len(final) != 1 || final[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls || final[0].Quantity != "1" {
+				t.Fatalf("hold selection changed actual settlement: %#v", final)
+			}
+		})
+	}
+	req.RawBody = rawJSON(t, `{"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]}}`)
+	if meters := openAIResponsesHostedToolHoldMeters(req); len(meters) != 1 || meters[0].MeterKey != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls {
+		t.Fatalf("allowed_tools must exclude unselected content charges: %#v", meters)
+	}
+	req.RawBody = rawJSON(t, `{"tool_choice":"none"}`)
+	if meters := openAIResponsesHostedToolHoldMeters(req); len(meters) != 0 {
+		t.Fatalf("disabled hosted tools must not reserve content or calls: %#v", meters)
+	}
+}
+
+func TestResponsesWebSearchHoldDefaultsOmittedMaxToolCallsToAllowance(t *testing.T) {
 	req := openAIAdapterContext{
 		Route: openAIAdapterRouteResponses,
 		Deployment: openAIAdapterDeployment{Pricing: billing.Pricing{
@@ -522,12 +546,12 @@ func TestResponsesWebSearchHoldDefaultsOmittedMaxToolCallsToEffectiveCap(t *test
 		RawBody:   rawJSON(t, `{}`),
 		ToolTypes: []string{"web_search"},
 	}
-	meters := openAIResponsesHostedToolHoldMeters(req, 0, 0)
+	meters := openAIResponsesHostedToolHoldMeters(req)
 	if len(meters) != 1 {
 		t.Fatalf("expected one web search call meter, got %#v", meters)
 	}
-	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "50" || !meters[0].HoldRequired {
-		t.Fatalf("expected omitted max_tool_calls to reserve effective cap 50, got %#v", meters[0])
+	if meters[0].MeterKey != MeterOpenAIResponsesWebSearchCalls || meters[0].Quantity != "10" || !meters[0].HoldRequired {
+		t.Fatalf("expected omitted max_tool_calls to reserve allowance 10, got %#v", meters[0])
 	}
 }
 
@@ -540,7 +564,7 @@ func TestResponsesWebSearchHoldSkipsCallMeterWhenToolChoiceNone(t *testing.T) {
 		RawBody:   rawJSON(t, `{"tool_choice":"none"}`),
 		ToolTypes: []string{"web_search"},
 	}
-	if meters := openAIResponsesHostedToolHoldMeters(req, 0, 0); len(meters) != 0 {
+	if meters := openAIResponsesHostedToolHoldMeters(req); len(meters) != 0 {
 		t.Fatalf("expected no hosted-tool hold meters when tool_choice is none, got %#v", meters)
 	}
 }
@@ -590,7 +614,7 @@ func TestResponsesAmbiguousWebSearchUsesOneCostlierTool(t *testing.T) {
 	if got := responsesSearchMeter(req); got != MeterOpenAIResponsesWebSearchPreviewNonReasoningCalls {
 		t.Fatalf("expected ambiguous tools to choose preview call meter, got %q", got)
 	}
-	holdMeters := openAIResponsesHostedToolHoldMeters(req, 0, 0)
+	holdMeters := openAIResponsesHostedToolHoldMeters(req)
 	if len(holdMeters) != 1 {
 		t.Fatalf("expected exactly one hold meter for costlier ambiguous tool, got %#v", holdMeters)
 	}
@@ -609,7 +633,7 @@ func TestResponsesAmbiguousWebSearchUsesOneCostlierTool(t *testing.T) {
 
 	req.RawBody = rawJSON(t, `{"max_tool_calls":2,"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]}}`)
 	req.ActualWebSearchCalls = 1
-	holdMeters = openAIResponsesHostedToolHoldMeters(req, 0, 0)
+	holdMeters = openAIResponsesHostedToolHoldMeters(req)
 	if len(holdMeters) != 2 {
 		t.Fatalf("expected non-preview fixed content token meter plus call hold meter, got %#v", holdMeters)
 	}

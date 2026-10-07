@@ -80,13 +80,7 @@ jobs:
             target: FuzzCredentialClassifier
           - module: transports
             package: ./stogas/tokenizer
-            target: FuzzCount
-          - module: transports
-            package: ./stogas/tokenizer
-            target: FuzzClaudeBoundedCount
-          - module: transports
-            package: ./stogas/tokenizer
-            target: FuzzPublishedCounters
+            target: FuzzEstimateAtMost
           - module: transports
             package: ./stogas/rawjson
             target: FuzzBorrowedContainersPreserveValues

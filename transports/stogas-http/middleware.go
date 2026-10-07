@@ -128,7 +128,7 @@ func (s *Server) requestBodyAdmission(next requestHandler) requestHandler {
 				lease.release()
 			}
 		}()
-		body, err := readAdmittedBody(ctx.request.Body, maxBytes, lease, 0)
+		body, err := readAdmittedBody(ctx.request.Body, maxBytes, lease, 0, ctx.request.ContentLength)
 		_ = ctx.request.Body.Close()
 		if err != nil {
 			closeUnreadRequest(ctx)
@@ -151,7 +151,7 @@ func (s *Server) publicAdmission(next requestHandler) requestHandler {
 
 // Reserve before allocating. Growth includes the old and new allocations until
 // copying ends. An upload never waits for memory while retaining a partial body.
-func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease, retained int) ([]byte, error) {
+func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease, retained int, sizeHint int64) ([]byte, error) {
 	var body []byte
 	keep := false
 	defer func() {
@@ -159,6 +159,22 @@ func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease,
 			clear(body)
 		}
 	}()
+	finish := func() ([]byte, error) {
+		// Unknown-length uploads can end partway through a doubled buffer. Copy
+		// only when it reduces the lifetime reservation, and only if both copies
+		// fit now. Compaction must never reject an otherwise valid upload.
+		if requestMemoryWeight(len(body), 0) < requestMemoryWeight(cap(body), 0) && lease.resize(retained+cap(body)+len(body)) {
+			compact := make([]byte, len(body))
+			copy(compact, body)
+			clear(body)
+			body = compact
+			if !lease.resize(retained + cap(body)) {
+				panic("shrinking a live body lease failed")
+			}
+		}
+		keep = true
+		return body, nil
+	}
 	for {
 		if len(body) == maxBytes {
 			var extra [1]byte
@@ -167,13 +183,27 @@ func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease,
 				return nil, errRequestBodyTooLarge
 			}
 			if errors.Is(err, io.EOF) {
-				keep = true
-				return body, nil
+				return finish()
 			}
 			return nil, err
 		}
 		if len(body) == cap(body) {
+			var extra [1]byte
+			var read int
+			if len(body) > 0 {
+				var err error
+				read, err = io.ReadFull(reader, extra[:])
+				if errors.Is(err, io.EOF) {
+					return finish()
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
 			capacity := min(maxBytes, max(32<<10, cap(body)*2))
+			if sizeHint > int64(cap(body)) && sizeHint < int64(capacity) {
+				capacity = int(sizeHint)
+			}
 			if !lease.resize(retained + cap(body) + capacity) {
 				return nil, errRequestMemoryCapacity
 			}
@@ -184,12 +214,12 @@ func readAdmittedBody(reader io.Reader, maxBytes int, lease *requestMemoryLease,
 			if !lease.resize(retained + cap(body)) {
 				panic("shrinking a live body lease failed")
 			}
+			body = append(body, extra[:read]...)
 		}
 		n, err := reader.Read(body[len(body):cap(body)])
 		body = body[:len(body)+n]
 		if errors.Is(err, io.EOF) {
-			keep = true
-			return body, nil
+			return finish()
 		}
 		if err != nil {
 			clear(body)

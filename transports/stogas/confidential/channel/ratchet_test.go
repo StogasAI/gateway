@@ -13,7 +13,7 @@ import (
 
 func firstRecord(t *testing.T, root, id [32]byte, number uint64) []byte {
 	t.Helper()
-	encoder, err := newRecords(requestSecret(root, number), id, number, requestDirection)
+	encoder, err := newRecords(requestMessage(root, number), id, number, requestDirection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestRatchetSkippedExpiryDoesNotExpireAdmittedWork(t *testing.T) {
 			t.Fatal("maintenance retained expired key", err)
 		}
 		// Neither a delayed upload nor a long response inherits the missing-start TTL.
-		encoder, _ := newRecords(requestSecret(root, 3), id, 3, requestDirection)
+		encoder, _ := newRecords(requestMessage(root, 3), id, 3, requestDirection)
 		_ = sealRecord(t, encoder, Metadata, []byte("credentials"))
 		if _, _, err = request.Open(sealRecord(t, encoder, Data, []byte("late upload"))); err != nil {
 			t.Fatal(err)
@@ -199,7 +199,7 @@ func BenchmarkRatchetMaximumUnauthenticatedGap(b *testing.B) {
 func benchmarkUnauthenticatedStart(b *testing.B, gap uint64, size int) {
 	session := testServerSession([32]byte{1}, [32]byte{2})
 	defer session.Close()
-	encoder, err := newRecords(requestSecret([32]byte{1}, gap), [32]byte{2}, gap, requestDirection)
+	encoder, err := newRecords(requestMessage([32]byte{1}, gap), [32]byte{2}, gap, requestDirection)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -223,13 +223,13 @@ func BenchmarkRecordAdmissionBaseline(b *testing.B) {
 	key, id := [32]byte{1}, [32]byte{2}
 	b.ReportAllocs()
 	for number := 0; number < b.N; number++ {
-		client, _ := newRecords(key, id, uint64(number), requestDirection)
+		client, _ := newRecords(referenceMessage{secret: key, header: make([]byte, MaxRatchetHeaderBytes)}, id, uint64(number), requestDirection)
 		encoded, _ := client.seal(Metadata, []byte("m"))
-		incoming, _ := newRecords(key, id, uint64(number), requestDirection)
+		incoming, _ := newRecords(referenceMessage{secret: key, header: make([]byte, MaxRatchetHeaderBytes)}, id, uint64(number), requestDirection)
 		if _, _, err := incoming.open(encoded); err != nil {
 			b.Fatal(err)
 		}
-		outgoing, _ := newRecords(key, id, uint64(number), responseDirection)
+		outgoing, _ := newRecords(referenceMessage{secret: key, header: make([]byte, MaxRatchetHeaderBytes)}, id, uint64(number), responseDirection)
 		incoming.fail(ErrClosed)
 		outgoing.fail(ErrClosed)
 	}

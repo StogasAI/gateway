@@ -23,6 +23,9 @@ func (s *Server) admissionReady() bool {
 	if s == nil || s.requests.diagnostics().Draining {
 		return false
 	}
+	if s.runtime != nil && !s.runtime.Billing().FinalizationReady() {
+		return false
+	}
 	if s.secure != nil && !s.secure.Readiness().Ready {
 		return false
 	}
@@ -41,15 +44,22 @@ func (s *Server) requireAdmission(ctx *requestContext) bool {
 	if s.admissionReady() {
 		return true
 	}
+	s.rejectAdmission(ctx)
+	return false
+}
+
+func (s *Server) rejectAdmission(ctx *requestContext) {
 	closeUnreadRequest(ctx)
 	code, message := "gateway_unavailable", "Gateway is temporarily unavailable"
 	if s.requests.diagnostics().Draining {
 		code, message = "gateway_draining", "Gateway is draining"
+		if response, ok := ctx.writer.(*sessionResponse); ok {
+			response.closing = true
+		}
 	}
 	s.writeError(ctx, http.StatusServiceUnavailable, map[string]any{
 		"error": map[string]any{"message": message, "type": "service_unavailable", "code": code},
 	})
-	return false
 }
 
 func writeNotReady(ctx *requestContext) {
@@ -79,6 +89,10 @@ func (s *Server) diagnostics(ctx *requestContext) {
 		result := s.secure.Readiness()
 		ready = ready && result.Ready
 		reasons = append(reasons, result.Reasons...)
+	}
+	if s != nil && s.runtime != nil && !s.runtime.Billing().FinalizationReady() {
+		ready = false
+		reasons = append(reasons, "request_finalization_pending")
 	}
 	identity, _ := catalog.ActiveIdentity()
 	var maintenanceStatus any
@@ -153,9 +167,7 @@ func (s *Server) inference(ctx *requestContext) {
 		s.requests = newRequestDrain()
 	}
 	if !s.requests.begin() {
-		s.writeError(ctx, http.StatusServiceUnavailable, map[string]any{
-			"error": map[string]any{"message": "Gateway is draining", "type": "service_unavailable", "code": "gateway_draining"},
-		})
+		s.rejectAdmission(ctx)
 		return
 	}
 	defer func() {
@@ -174,11 +186,24 @@ func (s *Server) inference(ctx *requestContext) {
 	bifrostReq := prepared.bifrostReq
 	cancel := prepared.cancel
 	state := prepared.state
+	// Receipt hashing must precede release of the received body. The provider's
+	// converted request can still borrow input storage, so do not overwrite it or
+	// reduce the memory lease before the provider releases its own references.
+	if wantsReceipt(bifrostCtx) {
+		if _, err := ctx.receiptRequestDigest(); err != nil {
+			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
+			cancel()
+			s.writeProofError(ctx)
+			return
+		}
+	}
+	resolution.ReleaseInput()
+	ctx.body = nil
 	state.MarkProviderStarted()
 
 	switch resolution.RequestType {
 	case schemas.ChatCompletionStreamRequest:
-		stream, bifrostErr := awaitProviderStream(ctx, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+		stream, bifrostErr := awaitProviderStream(ctx, cancel, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 			return s.runtime.Client().ChatCompletionStreamRequest(bifrostCtx, bifrostReq.ChatRequest)
 		})
 		if bifrostErr != nil {
@@ -186,9 +211,7 @@ func (s *Server) inference(ctx *requestContext) {
 			return
 		}
 		requestComplete = false
-		requestBody := ctx.body
 		reader := s.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel, func() {
-			clear(requestBody)
 			s.requests.end()
 			lease.release()
 		})
@@ -198,7 +221,7 @@ func (s *Server) inference(ctx *requestContext) {
 		}
 		return
 	case schemas.ResponsesStreamRequest:
-		stream, bifrostErr := awaitProviderStream(ctx, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+		stream, bifrostErr := awaitProviderStream(ctx, cancel, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
 			return s.runtime.Client().ResponsesStreamRequest(bifrostCtx, bifrostReq.ResponsesRequest)
 		})
 		if bifrostErr != nil {
@@ -206,9 +229,7 @@ func (s *Server) inference(ctx *requestContext) {
 			return
 		}
 		requestComplete = false
-		requestBody := ctx.body
 		reader := s.startSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel, func() {
-			clear(requestBody)
 			s.requests.end()
 			lease.release()
 		})
@@ -219,7 +240,9 @@ func (s *Server) inference(ctx *requestContext) {
 		return
 	case schemas.ChatCompletionRequest:
 		defer cancel()
-		response, bifrostErr := s.runtime.Client().ChatCompletionRequest(bifrostCtx, bifrostReq.ChatRequest)
+		response, bifrostErr := awaitProviderResult(ctx, cancel, func() (*schemas.BifrostChatResponse, *schemas.BifrostError) {
+			return s.runtime.Client().ChatCompletionRequest(bifrostCtx, bifrostReq.ChatRequest)
+		})
 		stateResponse := &schemas.BifrostResponse{ChatResponse: response}
 		if !s.completeUnaryResponse(ctx, bifrostCtx, state, adapter, stateResponse, bifrostErr) {
 			return
@@ -229,7 +252,9 @@ func (s *Server) inference(ctx *requestContext) {
 		s.writeInferenceJSON(ctx, bifrostCtx, state, http.StatusOK, publicResponsePayload(bifrostCtx, response, response.ExtraFields))
 	case schemas.ResponsesRequest:
 		defer cancel()
-		response, bifrostErr := s.runtime.Client().ResponsesRequest(bifrostCtx, bifrostReq.ResponsesRequest)
+		response, bifrostErr := awaitProviderResult(ctx, cancel, func() (*schemas.BifrostResponsesResponse, *schemas.BifrostError) {
+			return s.runtime.Client().ResponsesRequest(bifrostCtx, bifrostReq.ResponsesRequest)
+		})
 		stateResponse := &schemas.BifrostResponse{ResponsesResponse: response}
 		if !s.completeUnaryResponse(ctx, bifrostCtx, state, adapter, stateResponse, bifrostErr) {
 			return
@@ -252,6 +277,7 @@ func (s *Server) failStreamStart(ctx *requestContext, bifrostCtx *schemas.Bifros
 		bifrostErr = stogas.UpstreamProtocolError(err)
 		state.BifrostError = bifrostErr
 	}
+	bifrostErr = providerResponseMemoryError(ctx, state, bifrostErr)
 	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
 	cancel()
 	s.writeBifrostError(ctx, bifrostErr)
@@ -269,11 +295,13 @@ func (s *Server) completeUnaryResponse(ctx *requestContext, bifrostCtx *schemas.
 		}
 	}
 	adapter.SanitizeResponse(state)
+	bifrostErr = providerResponseMemoryError(ctx, state, bifrostErr)
 	stogas.PrepareFinalState(state)
 	if bifrostErr == nil {
 		bifrostErr = state.ResponseError()
 	}
 	if bifrostErr == nil {
+		state.Export.Response(state.Response)
 		return true
 	}
 	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
@@ -299,8 +327,8 @@ func (s *Server) startSSEStream(ctx *requestContext, bifrostCtx *schemas.Bifrost
 		s.writeProofError(ctx)
 		return nil
 	}
-	responseMemory := s.memory.newLease(streamStateMemory)
-	deliveryMemory := s.memory.newLease(downstreamDeliveryMemory)
+	responseMemory := ctx.memory.newRetainedLease(streamStateMemory)
+	deliveryMemory := ctx.memory.newRetainedLease(downstreamDeliveryMemory)
 	reader := newSSEStreamReader(deliveryMemory)
 	includeChatUsage := clientRequestedChatStreamUsage(state)
 	completedAsync = true
@@ -328,6 +356,7 @@ func (s *Server) startSSEStream(ctx *requestContext, bifrostCtx *schemas.Bifrost
 		clientClosed := reader.closed()
 		responseBytes := 0
 		sendStreamError := func(bifrostErr *schemas.BifrostError) {
+			bifrostErr = providerResponseMemoryError(ctx, state, bifrostErr)
 			if !clientConnected {
 				return
 			}
@@ -467,6 +496,9 @@ func (s *Server) startSSEStream(ctx *requestContext, bifrostCtx *schemas.Bifrost
 						return
 					}
 				}
+			}
+			if clientConnected && state != nil {
+				state.Export.Chunk(chunk)
 			}
 			terminal := stogas.ProviderStreamTerminal(state)
 
@@ -652,6 +684,20 @@ func streamMemoryCapacityError() *schemas.BifrostError {
 	}
 }
 
+func providerResponseMemoryError(ctx *requestContext, state *stogas.State, failure *schemas.BifrostError) *schemas.BifrostError {
+	if ctx.memory == nil || !ctx.memory.responseFailed.Load() {
+		return failure
+	}
+	failure = streamMemoryCapacityError()
+	// The transport stopped reading for local capacity, so core's resulting
+	// network/decode error is not evidence of an upstream service failure.
+	if state != nil {
+		state.BifrostError = nil
+		retainResponseFailure(state, failure)
+	}
+	return failure
+}
+
 func streamTimeoutError(code string) *schemas.BifrostError {
 	statusCode := http.StatusGatewayTimeout
 	errorType := schemas.RequestTimedOut
@@ -741,9 +787,15 @@ func (s *Server) shutdownWithContext(ctx context.Context) {
 			return
 		}
 	}
+	if s.exports != nil {
+		s.exports.Close()
+	}
 	if s.runtime != nil {
 		runtimeClosed := make(chan struct{})
 		go func() {
+			if err := s.runtime.Billing().DrainFinalizations(ctx); err != nil && s.logger != nil {
+				s.logger.Warn("gateway finalization drain incomplete: %s", err)
+			}
 			s.runtime.Close()
 			close(runtimeClosed)
 		}()

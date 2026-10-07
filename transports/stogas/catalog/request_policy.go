@@ -10,11 +10,14 @@ import (
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 type requestBodyVariant struct {
+	exports   *exportconfig.Config
 	body      []byte
 	fields    map[string]json.RawMessage
 	chat      *openaiprovider.OpenAIChatRequest
@@ -22,6 +25,7 @@ type requestBodyVariant struct {
 	estimate  func(Deployment) (int, error)
 	summary   *redaction.Summary
 	textBytes int
+	files     inputfiles.Stats
 }
 
 type requestPolicyResult struct {
@@ -231,19 +235,25 @@ func (v *requestVariants) bodyFor(value RequestPolicy) (*requestBodyVariant, err
 	if v.route == RouteResponses {
 		surface = redaction.SurfaceResponses
 	}
-	if value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly {
-		if err := redaction.ValidateASCII(v.fields, surface); err != nil {
-			return nil, piiRedactionError(err)
-		}
-	}
 	return v.prepareBody(value, surface)
 }
 
 func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Surface) (*requestBodyVariant, error) {
+	exports, err := value.Config.ExportConfig()
+	if err != nil {
+		return nil, requestPolicyError(err)
+	}
 	compiled := value.RedactionPolicy
-	if value.LoadActiveRedactionPolicy != nil {
+	extract := value.Config.TextExtractionEnabled()
+	if value.LoadActivePlugins != nil {
 		var err error
-		compiled, err = value.LoadActiveRedactionPolicy(value.Config)
+		var active *policy.ActivePlugins
+		active, err = value.LoadActivePlugins(value.Config)
+		if err == nil {
+			compiled = active.Redaction
+			extract = active.TextExtraction
+			exports = active.Export
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -262,8 +272,14 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 		if err != nil || compiled == nil {
 			return nil, APIError{Code: "gateway_capacity_exceeded", StatusCode: http.StatusServiceUnavailable, Type: "service_unavailable", Message: "Redaction policy is temporarily unavailable"}
 		}
+	} else if compiled == nil && value.Config != nil {
+		var err error
+		compiled, err = policy.CompileRedaction(value.Config)
+		if err != nil {
+			return nil, requestPolicyError(err)
+		}
 	}
-	if v.requestPolicy != nil && value.LoadActiveRedactionPolicy == nil && !value.Config.Activated() {
+	if v.requestPolicy != nil && value.LoadActivePlugins == nil && !value.Config.Activated() {
 		requestRedaction, err := v.requestPolicy.CompileRedaction()
 		if err != nil {
 			return nil, requestPolicyError(err)
@@ -279,6 +295,19 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 	if v.reserveBody != nil {
 		reserveExpansion = func(bytes int) error { return v.reserveBody(v.inputBytes + bytes) }
 	}
+	files, err := inputfiles.Process(fields, v.route == RouteResponses, extract, reserveExpansion)
+	if err != nil {
+		return nil, errors.Join(err, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: err.Error()})
+	}
+	asciiOnly := value.Config != nil && value.Config.Input != nil && value.Config.Input.ASCIIOnly
+	if files.Opaque && (asciiOnly || compiled.Enabled()) {
+		return nil, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Opaque attachments cannot satisfy the active input inspection policy; submit text or enable text extraction for inline UTF-8 text files"}
+	}
+	if asciiOnly {
+		if err := redaction.ValidateASCII(fields, surface); err != nil {
+			return nil, piiRedactionError(err)
+		}
+	}
 	if err := redactor.RedactRequestFields(fields, surface, reserveExpansion); err != nil {
 		return nil, piiRedactionError(err)
 	}
@@ -291,7 +320,13 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 			return nil, err
 		}
 	}
-	variant := &requestBodyVariant{body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes(), estimate: requestTokenEstimator(fields, v.route, v.selections)}
+	variant := &requestBodyVariant{exports: exports, body: body, fields: fields, summary: redactor.Summary(), textBytes: redactor.InputTextBytes()}
+	variant.files = files
+	if files.Opaque {
+		variant.estimate = func(deployment Deployment) (int, error) { return deployment.MaxInputTokens, nil }
+	} else {
+		variant.estimate = requestTokenEstimator(fields, v.route, v.selections)
+	}
 	if v.route == RouteChat {
 		variant.chat = &openaiprovider.OpenAIChatRequest{}
 		err = sonic.Unmarshal(body, variant.chat)

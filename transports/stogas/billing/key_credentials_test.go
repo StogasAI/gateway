@@ -180,8 +180,11 @@ func TestPrepareCredentialDecryptsLocallyAndBindsTheSnapshot(t *testing.T) {
 	if prepared.snapshot != snapshot || prepared.provider != "openai" || prepared.selection.ID != id || prepared.Secret != "sk-upstream-test-secret" {
 		t.Fatal("prepared credential lost its secret or authority binding")
 	}
+	if !prepared.UsesBYOK() {
+		t.Fatal("prepared customer credential cannot use provider file IDs")
+	}
 	prepared.Clear()
-	if prepared.Secret != "" || prepared.snapshot != nil {
+	if prepared.Secret != "" || prepared.snapshot != nil || prepared.UsesBYOK() {
 		t.Fatal("request cleanup retained credential")
 	}
 	snapshot.Credentials["chutes"] = []CredentialSelection{{Mode: "managed"}}
@@ -205,7 +208,7 @@ func TestPrepareCredentialDecryptsLocallyAndBindsTheSnapshot(t *testing.T) {
 		delete(snapshot.Credentials, "openai")
 		prepared, err := service.PrepareCredential(snapshot, provider, 0, nil)
 		if provider == "chutes" {
-			if err != nil || prepared.Secret != "" {
+			if err != nil || prepared.Secret != "" || prepared.UsesBYOK() {
 				t.Fatal("managed credential preparation failed")
 			}
 		} else if !errors.Is(err, ErrByokRequired) {

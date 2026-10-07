@@ -274,15 +274,14 @@ func appendInputTokenHoldCost(
 	return billing.AppendTokenMeterCost(meters, pricing, meterKey, quantity, true, billing.TokenRateHighest)
 }
 
-func highestInputHoldMeter(pricing catalog.Pricing, alternativeMeterKey string) string {
+func highestInputHoldMeter(pricing catalog.Pricing, alternatives ...string) string {
 	meterKey := billing.MeterInputTokens
-	if alternativeMeterKey == "" || alternativeMeterKey == meterKey {
-		return meterKey
-	}
-	_, inputRate, hasInputRate := billing.PricingRate(pricing, meterKey, billing.TokenRateHighest)
-	_, alternativeRate, hasAlternativeRate := billing.PricingRate(pricing, alternativeMeterKey, billing.TokenRateHighest)
-	if hasAlternativeRate && (!hasInputRate || alternativeRate.Cmp(inputRate) > 0) {
-		return alternativeMeterKey
+	_, highestRate, hasRate := billing.PricingRate(pricing, meterKey, billing.TokenRateHighest)
+	for _, alternative := range alternatives {
+		_, rate, available := billing.PricingRate(pricing, alternative, billing.TokenRateHighest)
+		if available && (!hasRate || rate.Cmp(highestRate) > 0) {
+			meterKey, highestRate, hasRate = alternative, rate, true
+		}
 	}
 	return meterKey
 }

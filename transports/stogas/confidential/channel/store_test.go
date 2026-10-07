@@ -27,7 +27,7 @@ func storeFixture(t *testing.T, reporter *setupReporter) (*Store, *atomic.Int64)
 	return store, retained
 }
 
-func openStoredSession(t *testing.T, store *Store) ([32]byte, [32]byte, [32]byte) {
+func openStoredSession(t *testing.T, store *Store) ([32]byte, [32]byte, [referencePublicBytes]byte) {
 	t.Helper()
 	vector, hello := setupVector(t)
 	id, response, err := store.Open(context.Background(), hello)
@@ -41,12 +41,12 @@ func openStoredSession(t *testing.T, store *Store) ([32]byte, [32]byte, [32]byte
 		t.Fatal(err)
 	}
 	defer clear(root)
-	return id, [32]byte(root), [32]byte(response[serverSetupPrefixBytes-32 : serverSetupPrefixBytes])
+	return id, [32]byte(root), [referencePublicBytes]byte(response[serverSetupPrefixBytes-referencePublicBytes : serverSetupPrefixBytes])
 }
 
-func storedStart(t *testing.T, root, id, initialPublic [32]byte, number uint64) []byte {
+func storedStart(t *testing.T, root, id [32]byte, initialPublic [referencePublicBytes]byte, number uint64) []byte {
 	t.Helper()
-	encoder, err := newRecords(requestSecretFor(root, number, initialPublic), id, number, requestDirection)
+	encoder, err := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
 	if err != nil {
 		t.Fatal(err)
 	}

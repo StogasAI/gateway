@@ -17,15 +17,15 @@ import (
 
 const (
 	// ClientSetupHeader pins setup dispatch and its complete cryptographic profile.
-	ClientSetupHeader      = "STGS\x03\x01"
-	setupResponseHeader    = "STGS\x03\x02"
-	ClientSetupBytes       = len(ClientSetupHeader) + 1 + 2 + 32 + 1216
-	serverSetupPrefixBytes = len(setupResponseHeader) + 32 + 4 + 1120 + 32
+	ClientSetupHeader      = "STGS\x01\x01"
+	setupResponseHeader    = "STGS\x01\x02"
+	ClientSetupBytes       = len(ClientSetupHeader) + 1 + 32 + 1216
+	serverSetupPrefixBytes = len(setupResponseHeader) + 32 + 4 + 1120 + verifier.ChannelPublicKeyBytes
 	MaxServerSetupBytes    = serverSetupPrefixBytes + 32 + 4 + attest.MaxSessionEvidenceBytes
-	setupInfoDomain        = "stogas.e2ee.setup.v3\x00"
-	transcriptDomain       = "stogas.e2ee.transcript.v3\x00"
-	rootDomain             = "stogas.e2ee.root.v3\x00"
-	confirmationDomain     = "stogas.e2ee.confirmation.v3\x00"
+	setupInfoDomain        = "stogas.e2ee.setup.v1\x00"
+	transcriptDomain       = "stogas.e2ee.transcript.v1\x00"
+	rootDomain             = "stogas.e2ee.root.v1\x00"
+	confirmationDomain     = "stogas.e2ee.confirmation.v1\x00"
 )
 
 // ServerSetup retains verified immutable boot evidence, not session secrets.
@@ -62,11 +62,7 @@ func (s *ServerSetup) Accept(ctx context.Context, hello []byte) (*ServerSession,
 	if len(hello) != ClientSetupBytes || string(hello[:len(ClientSetupHeader)]) != ClientSetupHeader || hello[len(ClientSetupHeader)] != byte(s.environment) {
 		return nil, nil, ErrRecord
 	}
-	chunkBytes := binary.BigEndian.Uint16(hello[len(ClientSetupHeader)+1 : len(ClientSetupHeader)+3])
-	if chunkBytes < 32 || chunkBytes > 1152 || chunkBytes%2 != 0 {
-		return nil, nil, ErrRecord
-	}
-	key, err := hpke.MLKEM768X25519().NewPublicKey(hello[len(ClientSetupHeader)+1+2+32:])
+	key, err := hpke.MLKEM768X25519().NewPublicKey(hello[len(ClientSetupHeader)+1+32:])
 	if err != nil {
 		return nil, nil, ErrRecord
 	}
@@ -125,7 +121,7 @@ func (s *ServerSetup) Accept(ctx context.Context, hello []byte) (*ServerSession,
 	response = append(response, confirmation...)
 	response = binary.BigEndian.AppendUint32(response, uint32(len(evidence)))
 	response = append(response, evidence...)
-	session, err := newServerSession([32]byte(root), id, initialPrivate, chunkBytes)
+	session, err := newServerSession([32]byte(root), id, initialPrivate)
 	if err != nil {
 		return nil, nil, err
 	}

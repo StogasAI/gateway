@@ -33,7 +33,7 @@ func redactionSourcesDigest(config *policy.Config) [32]byte {
 	if config == nil {
 		return sha256.Sum256(nil)
 	}
-	sections := config.RedactionSources
+	sections := config.PluginSources
 	if len(sections) == 0 && config.Plugins != nil {
 		sections = []*policy.Plugins{config.Plugins}
 	}
@@ -151,10 +151,10 @@ func (snapshot *PolicySnapshot) RedactionPolicy() (*redaction.Policy, error) {
 	return shared.redaction, shared.redactionErr
 }
 
-// ActiveRedactionPolicy opens only the settings selected by this request.
+// ActivePlugins opens only the settings selected by this request.
 // Matchers remain interned with their source, and every encrypted open checks
 // its matching root even when an earlier caller warmed the compiled source.
-func (snapshot *KeyConfigSnapshot) ActiveRedactionPolicy(config *policy.Config, keys customerkey.Keys) (*redaction.Policy, error) {
+func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys customerkey.Keys) (*policy.ActivePlugins, error) {
 	if snapshot == nil || snapshot.owner == nil || snapshot.Claims == nil || config == nil {
 		return nil, ErrGatewayUnavailable
 	}
@@ -162,7 +162,7 @@ func (snapshot *KeyConfigSnapshot) ActiveRedactionPolicy(config *policy.Config, 
 		return nil, err
 	}
 	c := snapshot.owner
-	sections := append([]*policy.Plugins{}, config.RedactionSources...)
+	sections := append([]*policy.Plugins{}, config.PluginSources...)
 	if len(sections) == 0 && config.Plugins != nil {
 		sections = append(sections, config.Plugins)
 	}
@@ -192,8 +192,8 @@ func (snapshot *KeyConfigSnapshot) ActiveRedactionPolicy(config *policy.Config, 
 	}
 	// Decrypted sections must pass the same aggregate bounds before any scan.
 	active := *config
-	active.RedactionSources = sections
-	if err := active.ValidateRedaction(); err != nil {
+	active.PluginSources = sections
+	if err := active.ValidatePlugins(); err != nil {
 		return nil, err
 	}
 	parts := make([]*redaction.Policy, 0, len(sections))
@@ -226,7 +226,15 @@ func (snapshot *KeyConfigSnapshot) ActiveRedactionPolicy(config *policy.Config, 
 		}
 		parts = append(parts, compiled)
 	}
-	return redaction.CombinePolicies(parts)
+	combined, err := redaction.CombinePolicies(parts)
+	if err != nil {
+		return nil, err
+	}
+	exports, err := active.ExportConfig()
+	if err != nil {
+		return nil, err
+	}
+	return &policy.ActivePlugins{Redaction: combined, TextExtraction: active.TextExtractionEnabled(), Export: exports}, nil
 }
 
 func conditionalReferenceBytes(source *sharedPolicySource) int64 {

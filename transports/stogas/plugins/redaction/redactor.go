@@ -105,7 +105,7 @@ func NewWithPolicy(policy *Policy) *Redactor {
 // Summary is absent when no redaction rules were applied. A configured scan
 // retains its metrics even when it finds no matches.
 func (r *Redactor) Summary() *Summary {
-	if r == nil || r.policy == nil || (r.policy.entities == 0 && len(r.policy.custom) == 0 && len(r.policy.literals) == 0) {
+	if r == nil || !r.policy.Enabled() {
 		return nil
 	}
 	return &Summary{ItemsRedacted: r.items, DurationUS: boundedDurationMicroseconds(r.duration)}

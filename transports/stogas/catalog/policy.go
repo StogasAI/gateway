@@ -21,7 +21,9 @@ type routingSelection struct {
 type policyDeploymentData struct {
 	Aliases             []string            `json:"aliases"`
 	Capabilities        Capabilities        `json:"capabilities"`
+	FileInputs          FileInputs          `json:"fileInputs"`
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
+	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        DataHandling        `json:"dataHandling"`
 	DeprecationDate     *string             `json:"deprecationDate"`
 	InputModalities     []string            `json:"inputModalities"`
@@ -557,7 +559,9 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 			fields: policyDeploymentData{
 				Aliases:             compiledDeployment.Aliases,
 				Capabilities:        deployment.Capabilities,
+				FileInputs:          deployment.FileInputs,
 				ContextWindowTokens: deployment.ContextWindowTokens,
+				MaxInputTokens:      deployment.MaxInputTokens,
 				DataHandling:        deployment.DataHandling,
 				DeprecationDate:     compiledDeployment.DeprecationDate,
 				InputModalities:     deployment.Capabilities.InputModalities,

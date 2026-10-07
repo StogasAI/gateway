@@ -27,9 +27,10 @@ const (
 type anthropicAdapterRoute string
 
 type anthropicAdapterDeployment struct {
-	Model               string
-	ContextWindowTokens int
-	Pricing             billing.Pricing
+	Model           string
+	MaxInputTokens  int
+	MaxOutputTokens int
+	Pricing         billing.Pricing
 }
 
 type anthropicAdapterContext struct {
@@ -42,7 +43,6 @@ type anthropicAdapterContext struct {
 	RawBody               map[string]json.RawMessage
 	RawTools              []map[string]json.RawMessage
 	ActualWebSearchCalls  int
-	SamplingIterations    int
 }
 
 func anthropicWireSupportsMidConversationSystem(state *State) bool {
@@ -691,13 +691,9 @@ func estimateAnthropicWireHold(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	req := anthropicAdapterContextForState(state)
-	req.SamplingIterations = anthropicSamplingIterationLimit(req)
-	if req.SamplingIterations < 1 {
-		return catalog.ErrParameterTooLarge
-	}
-	scaledOutputTokens, ok := multiplyAnthropicTokenLimit(req.OutputTokenLimit, req.SamplingIterations)
-	if !ok {
-		return catalog.ErrParameterTooLarge
+	inputTokens, outputTokens, err := anthropicTokenHoldQuantities(req)
+	if err != nil {
+		return err
 	}
 	tokenFreeMeters := make([]catalog.MeterEstimate, 0, len(state.Hold.Meters))
 	for _, meter := range state.Hold.Meters {
@@ -706,25 +702,15 @@ func estimateAnthropicWireHold(state *State) error {
 		}
 	}
 	pricing := effectivePricingForState(state)
-	state.Hold.Meters = appendOutputTokenHoldCost(tokenFreeMeters, pricing, scaledOutputTokens)
-	state.Hold.Meters = append(state.Hold.Meters, anthropicHoldMeters(req)...)
+	state.Hold.Meters = appendOutputTokenHoldCost(tokenFreeMeters, pricing, outputTokens)
+	state.Hold.Meters = append(state.Hold.Meters, anthropicHoldMeters(req, inputTokens)...)
 	meters, total, err := canonicalizeMeters(state.Hold.Meters, pricing)
 	if err != nil {
 		return err
 	}
 	state.Hold.Meters = meters
 	state.Hold.EstimatedUpstreamCostUSD = total
-	inputTokens, inputKnown := tokenHoldCapacity(state, true)
-	if !inputKnown {
-		for _, quantity := range []int{req.InputTokenLimit, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes), anthropicHostedContentHoldTokens(req)} {
-			scaled, valid := multiplyAnthropicTokenLimit(quantity, req.SamplingIterations)
-			if !valid || inputTokens > math.MaxInt-scaled {
-				return catalog.ErrParameterTooLarge
-			}
-			inputTokens += scaled
-		}
-	}
-	state.Hold.ReservedTokens = int64(inputTokens) + int64(scaledOutputTokens)
+	state.Hold.ReservedTokens = int64(inputTokens) + int64(outputTokens)
 	return nil
 }
 
@@ -827,12 +813,16 @@ func ensureAnthropicResponsesHostedToolCap(state *State) {
 	if !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
 		return
 	}
+	cap, supplied := responsesExplicitMaxToolCalls(state)
+	if !supplied {
+		return
+	}
 	toolTypes := effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes())
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebSearch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(responsesTopLevelMaxToolCallsOrDefault(state), schemas.ResponsesToolTypeWebSearch)
+		state.Resolution.EnsureResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebSearch)
 	}
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebFetch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(responsesTopLevelMaxToolCallsOrDefault(state), schemas.ResponsesToolTypeWebFetch)
+		state.Resolution.EnsureResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebFetch)
 	}
 }
 
@@ -853,7 +843,7 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 	pricing := clonePricing(deployment.Pricing)
 	return anthropicAdapterContext{
 		Route:                 anthropicAdapterRoute(state.Resolution.Route),
-		Deployment:            anthropicAdapterDeployment{Model: deployment.Upstream.Model, ContextWindowTokens: deployment.ContextWindowTokens, Pricing: pricing},
+		Deployment:            anthropicAdapterDeployment{Model: deployment.Upstream.Model, MaxInputTokens: deployment.MaxInputTokens, MaxOutputTokens: deployment.MaxOutputTokens, Pricing: pricing},
 		InputTokenLimit:       state.Resolution.InputTokenLimit(),
 		OutputTokenLimit:      state.Resolution.OutputTokenLimit(),
 		ToolChoiceAllowsCalls: responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()),
@@ -864,62 +854,89 @@ func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deplo
 	}
 }
 
-func anthropicHoldMeters(req anthropicAdapterContext) []billing.MeterEstimate {
-	meters := []billing.MeterEstimate{}
+// A synchronous server-tool request has at most ten normal sampling
+// iterations. A tool-use cap bounds successful calls, not failed attempts or
+// iterations: max_uses_exceeded is itself a tool result.
+func anthropicSamplingIterationLimit(req anthropicAdapterContext) int {
+	if req.Route == anthropicAdapterRouteResponses && req.ToolChoiceAllowsCalls &&
+		(usesToolType(req.ToolTypes, "web_search") || usesToolType(req.ToolTypes, "web_fetch")) {
+		return 10
+	}
+	return 1
+}
+
+func anthropicTokenHoldQuantities(req anthropicAdapterContext) (int, int, error) {
+	limit := req.Deployment.MaxInputTokens
+	if limit <= 0 || req.InputTokenLimit < 0 || req.OutputTokenLimit < 0 {
+		return 0, 0, catalog.ErrParameterTooLarge
+	}
+	first, repeated := anthropicInputPassHold(req)
+	iterations := anthropicSamplingIterationLimit(req)
+	input := first
+	if iterations > 1 {
+		extra, ok := multiplyAnthropicTokenLimit(repeated, iterations-1)
+		if !ok || input > math.MaxInt-extra {
+			return 0, 0, catalog.ErrParameterTooLarge
+		}
+		input += extra
+	}
+	output := req.OutputTokenLimit
+	if anthropicContextManagementUsesCompaction(req.RawBody["context_management"]) {
+		// Summaries are separately billed and excluded from top-level output usage.
+		// Reserve one extra input pass and a model-sized summary per possible
+		// iteration; the caller's ordinary output cap is not a summary-size bound.
+		var ok bool
+		input, ok = multiplyAnthropicTokenLimit(limit, 2*iterations)
+		if !ok || req.Deployment.MaxOutputTokens <= 0 {
+			return 0, 0, catalog.ErrParameterTooLarge
+		}
+		summaries, ok := multiplyAnthropicTokenLimit(req.Deployment.MaxOutputTokens, iterations)
+		if !ok || output > math.MaxInt-summaries {
+			return 0, 0, catalog.ErrParameterTooLarge
+		}
+		output += summaries
+	}
+	if input > math.MaxInt-output {
+		return 0, 0, catalog.ErrParameterTooLarge
+	}
+	return input, output, nil
+}
+
+func anthropicInputPassHold(req anthropicAdapterContext) (first, repeated int) {
+	limit := req.Deployment.MaxInputTokens
+	first = min(limit, req.InputTokenLimit)
+	first += min(limit-first, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes))
+	repeated = first
+	repeated += min(limit-repeated, req.OutputTokenLimit)
+	repeated += min(limit-repeated, anthropicHostedContentHoldTokens(req))
+	return first, repeated
+}
+
+func anthropicHoldMeters(req anthropicAdapterContext, inputTokens int) []billing.MeterEstimate {
 	cacheWriteMeter := anthropicCacheWriteHoldMeter(req)
 	inputMeter := highestInputHoldMeter(req.Deployment.Pricing, cacheWriteMeter)
-	iterations := req.SamplingIterations
-	if iterations < 1 {
-		iterations = 1
+	cacheReads := 0
+	_, _, hasCacheReadRate := billing.PricingRate(req.Deployment.Pricing, billing.MeterCachedInputTokens, billing.TokenRateHighest)
+	if cacheWriteMeter != "" && anthropicSamplingIterationLimit(req) > 1 {
+		// Server-tool breakpoints always write with the five-minute TTL.
+		inputMeter = highestInputHoldMeter(req.Deployment.Pricing, cacheWriteMeter, billing.MeterCacheWrite5mInputTokens)
 	}
-	if quantity, ok := multiplyAnthropicTokenLimit(req.InputTokenLimit, iterations); ok && quantity > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, quantity, true, billing.TokenRateHighest)
+	if cacheWriteMeter != "" && anthropicSamplingIterationLimit(req) > 1 && hasCacheReadRate &&
+		!rawJSONValueSet(req.RawBody["context_management"]) {
+		// Enabled server-tool caching writes the growing prefix before each
+		// iteration. Reserve all distinct material once at the write/input rate
+		// and repeated material at the read rate. This deliberately estimates
+		// cache reuse; expiry or a miss can exceed the monetary hold. Context
+		// editing cannot use this append-only assumption.
+		_, repeated := anthropicInputPassHold(req)
+		cacheReads = max(0, inputTokens-repeated)
 	}
-	if overhead := anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes); overhead > 0 {
-		if quantity, ok := multiplyAnthropicTokenLimit(overhead, iterations); ok {
-			meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, quantity, true, billing.TokenRateHighest)
-		}
-	}
+	meters := billing.AppendTokenMeterCost(nil, req.Deployment.Pricing, inputMeter, inputTokens-cacheReads, true, billing.TokenRateHighest)
+	meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterCachedInputTokens, cacheReads, true, billing.TokenRateHighest)
 	if req.Route == anthropicAdapterRouteResponses && req.ToolChoiceAllowsCalls && usesToolType(req.ToolTypes, "web_search") {
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterAnthropicWebSearchCalls, anthropicHostedToolHoldQuantity(req), true)
 	}
-	if hostedContentTokens := anthropicHostedContentHoldTokens(req); hostedContentTokens > 0 {
-		if quantity, ok := multiplyAnthropicTokenLimit(hostedContentTokens, iterations); ok {
-			meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, inputMeter, quantity, true, billing.TokenRateHighest)
-		}
-	}
 	return meters
-}
-
-func anthropicSamplingIterationLimit(req anthropicAdapterContext) int {
-	iterations := 1
-	if req.Route == anthropicAdapterRouteResponses && req.ToolChoiceAllowsCalls {
-		for _, tool := range req.RawTools {
-			rawType := strings.TrimSpace(rawString(tool["type"]))
-			if !anthropicResponsesWebSearchToolType(rawType) && !anthropicResponsesWebFetchToolType(rawType) {
-				continue
-			}
-			if anthropicResponsesWebSearchToolType(rawType) && !usesToolType(req.ToolTypes, "web_search") ||
-				anthropicResponsesWebFetchToolType(rawType) && !usesToolType(req.ToolTypes, "web_fetch") {
-				continue
-			}
-			uses, ok := rawIntegerValue(tool["max_uses"])
-			if !ok || uses < 1 {
-				uses = anthropicResponsesTopLevelMaxToolCallsOrDefaultRaw(req.RawBody)
-			}
-			if uses > math.MaxInt-iterations {
-				return 0
-			}
-			iterations += uses
-		}
-	}
-	if anthropicContextManagementUsesCompaction(req.RawBody["context_management"]) {
-		if iterations > math.MaxInt/2 {
-			return 0
-		}
-		iterations *= 2
-	}
-	return iterations
 }
 
 func anthropicContextManagementUsesCompaction(raw json.RawMessage) bool {
@@ -950,7 +967,8 @@ func anthropicHostedContentHoldTokens(req anthropicAdapterContext) int {
 	if req.Route != anthropicAdapterRouteResponses || !req.ToolChoiceAllowsCalls {
 		return 0
 	}
-	headroom := req.Deployment.ContextWindowTokens - req.OutputTokenLimit - req.InputTokenLimit
+	headroom := req.Deployment.MaxInputTokens - min(req.Deployment.MaxInputTokens, req.InputTokenLimit)
+	headroom -= min(headroom, anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes))
 	if headroom <= 0 {
 		return 0
 	}

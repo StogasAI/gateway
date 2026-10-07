@@ -175,18 +175,17 @@ jobs:
           };
           const igvm = {
             sha256: createHash('sha256').update(readFileSync(igvmPath)).digest('hex'),
-            sizeBytes: statSync(igvmPath).size
+            size_bytes: statSync(igvmPath).size
           };
           if (
             manifestBytes.toString('utf8') !== `${canonical(manifest)}\n` ||
             manifest.schema !== 'stogas.gateway.release.v1' ||
-            manifest.git?.repository !== `https://github.com/${process.env.GITHUB_REPOSITORY}` ||
-            manifest.git?.tag !== tag ||
-            manifest.git?.ref !== `refs/tags/${tag}` ||
-            manifest.git?.commit !== commit ||
-            manifest.git?.tree !== tree ||
+            manifest.source?.repository !== `https://github.com/${process.env.GITHUB_REPOSITORY}` ||
+            manifest.source?.tag !== tag ||
+            manifest.source?.commit !== commit ||
+            manifest.source?.tree !== tree ||
             manifest.artifacts?.['gateway.igvm']?.sha256 !== igvm.sha256 ||
-            manifest.artifacts?.['gateway.igvm']?.sizeBytes !== igvm.sizeBytes
+            manifest.artifacts?.['gateway.igvm']?.size_bytes !== igvm.size_bytes
           ) {
             throw new Error('Downloaded release payload does not match its attested manifest.');
           }

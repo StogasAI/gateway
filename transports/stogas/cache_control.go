@@ -1,21 +1,25 @@
 package stogas
 
 import (
+	"bytes"
 	"encoding/json"
-	"strings"
 
-	"github.com/bytedance/sonic"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 func rawChatCacheControlExists(raw json.RawMessage, includeMessage bool) bool {
 	if len(raw) == 0 {
 		return false
 	}
-	var messages []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &messages); err != nil {
+	messages, err := rawjson.Array(raw)
+	if err != nil {
 		return false
 	}
-	for _, message := range messages {
+	for _, messageRaw := range messages {
+		message, err := rawjson.Object(messageRaw)
+		if err != nil {
+			continue
+		}
 		if _, ok := message["cache_control"]; includeMessage && ok {
 			return true
 		}
@@ -30,13 +34,19 @@ func rawChatCacheControlExists(raw json.RawMessage, includeMessage bool) bool {
 
 func rawChatMessageContentBlocks(message map[string]json.RawMessage) []map[string]json.RawMessage {
 	contentRaw := message["content"]
-	trimmed := strings.TrimSpace(string(contentRaw))
-	if len(contentRaw) == 0 || trimmed == "" || trimmed == "null" || trimmed[0] != '[' {
+	trimmed := bytes.TrimSpace(contentRaw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
 		return nil
 	}
-	var blocks []map[string]json.RawMessage
-	if err := sonic.Unmarshal(contentRaw, &blocks); err != nil {
+	items, err := rawjson.Array(contentRaw)
+	if err != nil {
 		return nil
+	}
+	blocks := make([]map[string]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		if block, err := rawjson.Object(item); err == nil {
+			blocks = append(blocks, block)
+		}
 	}
 	return blocks
 }
@@ -49,8 +59,8 @@ func rawResponsesCacheControlMatches(raw json.RawMessage, matches func(json.RawM
 	if len(raw) == 0 {
 		return false
 	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" || trimmed[0] == '"' {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || trimmed[0] == '"' {
 		return false
 	}
 	switch trimmed[0] {
@@ -64,8 +74,8 @@ func rawResponsesCacheControlMatches(raw json.RawMessage, matches func(json.RawM
 		}
 		return rawResponsesCacheControlMatches(object["content"], matches)
 	case '[':
-		var array []json.RawMessage
-		if err := sonic.Unmarshal(raw, &array); err != nil {
+		array, err := rawjson.Array(raw)
+		if err != nil {
 			return false
 		}
 		for _, child := range array {

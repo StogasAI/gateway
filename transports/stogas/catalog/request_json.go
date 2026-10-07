@@ -13,9 +13,9 @@ const (
 	maxRequestJSONDepth = 128
 	// The largest explicit per-request message ceiling in the provider survey.
 	maxRequestMessages = 100_000
-	// Separate structural work from text size. This admits 100,000 ordinary
+	// MaxRequestJSONValues separates structural work from text size. It admits 100,000 ordinary
 	// messages with typed content blocks while bounding dense schemas and arrays.
-	maxRequestJSONValues = 1_000_000
+	MaxRequestJSONValues = 1_000_000
 )
 
 var (
@@ -130,7 +130,7 @@ func scanRequestJSON(body []byte, mode requestJSONScanMode) (int, []requestJSONF
 		}
 		if kind := token.Kind(); kind != '}' && kind != ']' && !(kind == '"' && container == '{' && index%2 == 0) {
 			values++
-			if values > maxRequestJSONValues {
+			if values > MaxRequestJSONValues {
 				return 0, nil, errRequestJSONValueLimit
 			}
 		}

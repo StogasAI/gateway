@@ -47,7 +47,7 @@ type setupFixture struct {
 func setupVector(t *testing.T) (setupFixture, []byte) {
 	t.Helper()
 	var vector setupFixture
-	encoded, err := os.ReadFile("testdata/setup-v3.json")
+	encoded, err := os.ReadFile("testdata/setup.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func setupRecipient(t *testing.T, seed, hello, response, boot []byte) (*hpke.Rec
 	}
 	infoHash := sha256.Sum256(hello)
 	info := append([]byte(setupInfoDomain), infoHash[:]...)
-	recipient, err := hpke.NewRecipient(response[42:serverSetupPrefixBytes-32], key, hpke.HKDFSHA256(), hpke.ExportOnly(), info)
+	recipient, err := hpke.NewRecipient(response[42:serverSetupPrefixBytes-referencePublicBytes], key, hpke.HKDFSHA256(), hpke.ExportOnly(), info)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSetupEstablishesReusableUniqueSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, number := range []uint64{0, 2, 1} {
-			encoder, err := newRecords(requestSecretFor([32]byte(root), number, [32]byte(response[serverSetupPrefixBytes-32:serverSetupPrefixBytes])), session.ID(), number, requestDirection)
+			encoder, err := newRecords(requestMessageFor([32]byte(root), number, [referencePublicBytes]byte(response[serverSetupPrefixBytes-referencePublicBytes:serverSetupPrefixBytes])), session.ID(), number, requestDirection)
 			if err != nil {
 				t.Fatal(err)
 			}

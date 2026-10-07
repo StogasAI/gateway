@@ -10,6 +10,7 @@ const PublicCatalogVersion = "stogas.gateway.catalog.v1"
 
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`
+	Archive       json.RawMessage            `json:"archive"`
 	Sequence      uint64                     `json:"sequence"`
 	RuntimeDigest string                     `json:"runtimeDigest"`
 	PublicDigest  string                     `json:"publicDigest"`
@@ -17,8 +18,9 @@ type PublicCatalog struct {
 }
 
 type publicBundle struct {
-	Schema string                     `json:"schema"`
-	Graph  map[string]json.RawMessage `json:"graph"`
+	Schema  string                     `json:"schema"`
+	Archive json.RawMessage            `json:"archive"`
+	Graph   map[string]json.RawMessage `json:"graph"`
 }
 
 type PublicModelsResponse struct {
@@ -44,6 +46,7 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 	}
 	return PublicCatalog{
 		Schema:        PublicCatalogVersion,
+		Archive:       bundle.Archive,
 		Sequence:      snap.identity.Sequence,
 		RuntimeDigest: snap.identity.Digest,
 		PublicDigest:  snap.publicDigest,

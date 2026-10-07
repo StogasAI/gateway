@@ -23,6 +23,7 @@ const (
 	maxPromptCacheBreakpoints                      = 4
 
 	webSearchFixedContentInputTokens = 8000
+	webSearchContextWindowTokens     = 128000
 	searchCallQuantity               = 1
 
 	MeterOpenAIChatCompletionSearchModelCalls             = "openai_chat_completion_search_model_calls"
@@ -39,10 +40,10 @@ const (
 type openAIAdapterRoute string
 
 type openAIAdapterDeployment struct {
-	Model               string
-	ContextWindowTokens int
-	Pricing             billing.Pricing
-	ReasoningSupported  bool
+	Model              string
+	MaxInputTokens     int
+	Pricing            billing.Pricing
+	ReasoningSupported bool
 }
 
 type openAIAdapterContext struct {
@@ -65,17 +66,6 @@ var (
 	errOpenAIOutputTokenLimitTooLow  = errors.New("output token limit below provider minimum")
 	errOpenAIInvalidProviderToolSpec = errors.New("invalid provider tool specification")
 )
-
-func (a OpenAIAdapter) SanitizeRequest(state *State) error {
-	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
-		return err
-	}
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	ensureOpenAIResponsesHostedToolCap(state)
-	return nil
-}
 
 func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
@@ -304,7 +294,7 @@ func validateOpenAIResponsesInclude(raw json.RawMessage) error {
 			"message.output_text.logprobs",
 			"reasoning.encrypted_content",
 		) {
-			return invalidRequest("include contains a value that is not supported by the text-only Stogas API")
+			return invalidRequest("include contains a value that is not supported by the current response contract")
 		}
 	}
 	return nil
@@ -419,7 +409,7 @@ func (a OpenAIAdapter) EstimateHold(state *State) error {
 	if state == nil || state.Resolution == nil {
 		return catalog.ErrUnsupportedRequest
 	}
-	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForHold(state), state.Resolution.OutputTokenLimit(), state.Resolution.InputTokenLimit())...)
+	state.Hold.Meters = append(state.Hold.Meters, openAIHoldMeters(openAIAdapterContextForHold(state))...)
 	meters, total, err := canonicalizeMeters(state.Hold.Meters, holdPricingForState(state))
 	if err != nil {
 		return err
@@ -483,18 +473,6 @@ func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]
 	return invalidRequest(openAIUnsupportedResponsesToolMessage(rawType))
 }
 
-func ensureOpenAIResponsesHostedToolCap(state *State) {
-	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
-		return
-	}
-	if !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
-		return
-	}
-	if resolutionUsesToolType(state, schemas.ResponsesToolTypeWebSearch) || resolutionUsesToolType(state, schemas.ResponsesToolTypeWebSearchPreview) {
-		state.Resolution.EnsureResponsesMaxToolCalls(responsesTopLevelMaxToolCallsOrDefault(state))
-	}
-}
-
 func openAIAdapterContextForState(state *State) openAIAdapterContext {
 	return openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
 }
@@ -523,10 +501,10 @@ func openAIAdapterContextForDeployment(state *State, deployment catalog.Deployme
 	return openAIAdapterContext{
 		Route: openAIAdapterRoute(resolution.Route),
 		Deployment: openAIAdapterDeployment{
-			Model:               deployment.Upstream.Model,
-			ContextWindowTokens: deployment.ContextWindowTokens,
-			Pricing:             pricing,
-			ReasoningSupported:  deployment.ReasoningSupported,
+			Model:              deployment.Upstream.Model,
+			MaxInputTokens:     deployment.MaxInputTokens,
+			Pricing:            pricing,
+			ReasoningSupported: deployment.ReasoningSupported,
 		},
 		OutputTokenLimit:     resolution.OutputTokenLimit(),
 		HasWebSearchOptions:  resolution.HasWebSearchOptions(),
@@ -565,9 +543,6 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 	}
 	switch req.Route {
 	case openAIAdapterRouteChat:
-		if err := validateChatTextOnlyMVP(req); err != nil {
-			return err
-		}
 		if err := validateChatNoHostedTools(req); err != nil {
 			return err
 		}
@@ -575,9 +550,6 @@ func validateOpenAIGuardrails(req openAIAdapterContext) error {
 			return err
 		}
 	case openAIAdapterRouteResponses:
-		if err := validateResponsesTextOnlyMVP(req); err != nil {
-			return err
-		}
 		if err := validateResponsesNoUnbilledHostedTools(req); err != nil {
 			return err
 		}
@@ -611,9 +583,9 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case normalized == "local_shell" || normalized == "apply_patch":
 		return rawType + " is not supported because local execution requires provider-state continuation"
 	case strings.HasPrefix(normalized, "computer"):
-		return "computer tools are not supported by the text-only Stogas API"
+		return "computer tools are not supported by the current tool execution contract"
 	case normalized == "image_generation":
-		return "image_generation is not supported by the text-only Stogas API"
+		return "image_generation output and its pricing are not supported"
 	case normalized == "tool_search" || normalized == "namespace" || normalized == "memory":
 		return rawType + " is not supported until Stogas exposes the required tool-loading or provider-state lifecycle"
 	default:
@@ -642,13 +614,13 @@ func validateReasoningSupport(req openAIAdapterContext) error {
 	return nil
 }
 
-func openAIHoldMeters(req openAIAdapterContext, outputTokenLimit int, inputTokenLimit int) []billing.MeterEstimate {
+func openAIHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
 	if req.Route == openAIAdapterRouteResponses {
-		meters = append(meters, openAIResponsesHostedToolHoldMeters(req, outputTokenLimit, inputTokenLimit)...)
+		meters = append(meters, openAIResponsesHostedToolHoldMeters(req)...)
 	}
 	if req.Route == openAIAdapterRouteChat {
-		meters = append(meters, openAIChatSearchModelHoldMeters(req, outputTokenLimit, inputTokenLimit)...)
+		meters = append(meters, openAIChatSearchModelHoldMeters(req)...)
 	}
 	return meters
 }
@@ -669,20 +641,6 @@ func validateOutputTokensMin16(req openAIAdapterContext) error {
 		return errOpenAIOutputTokenLimitTooLow
 	}
 	return nil
-}
-
-func validateChatTextOnlyMVP(req openAIAdapterContext) error {
-	if req.Route != openAIAdapterRouteChat {
-		return nil
-	}
-	return validateChatInput(req.RawBody["messages"])
-}
-
-func validateResponsesTextOnlyMVP(req openAIAdapterContext) error {
-	if req.Route != openAIAdapterRouteResponses {
-		return nil
-	}
-	return validateResponsesInput(req.RawBody["input"])
 }
 
 func validateChatNoHostedTools(req openAIAdapterContext) error {
@@ -721,19 +679,15 @@ func validateChatSearchModelWebSearchOptions(req openAIAdapterContext) error {
 	return nil
 }
 
-func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext, outputTokenLimit int, inputTokenLimit int) []billing.MeterEstimate {
+func openAIResponsesHostedToolHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	meters := []billing.MeterEstimate{}
 	if !responsesHostedToolChoiceAllowsCalls(req.RawBody) {
 		return meters
 	}
 	quantity := responsesHostedToolHoldQuantity(req)
-	searchKind := responsesSearchKind(req)
-	if fixedContentTokens := webSearchFixedContentTokensForKind(req.Deployment.Model, searchKind); fixedContentTokens > 0 {
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, fixedContentTokens*quantity, true, billing.TokenRateHighest)
-	}
-	if webSearchContentTokensBilledAtModelRatesForKind(req, searchKind) && req.Deployment.ContextWindowTokens > 0 {
-		remainingInputTokens := req.Deployment.ContextWindowTokens - outputTokenLimit - inputTokenLimit
-		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, remainingInputTokens, true, billing.TokenRateHighest)
+	searchKind := responsesSearchHoldKind(req)
+	if contentTokens := webSearchContentHoldTokensForKind(req, searchKind); contentTokens > 0 {
+		meters = billing.AppendTokenMeterCost(meters, req.Deployment.Pricing, billing.MeterInputTokens, contentTokens*quantity, true, billing.TokenRateHighest)
 	}
 	if meterKey := responsesSearchMeterForKind(req, searchKind); meterKey != "" {
 		meters = billing.AppendCallMeterCost(meters, req.Deployment.Pricing, meterKey, quantity, true)
@@ -757,7 +711,7 @@ func openAIResponsesHostedToolFinalMeters(req openAIAdapterContext) []billing.Me
 	return meters
 }
 
-func openAIChatSearchModelHoldMeters(req openAIAdapterContext, _ int, _ int) []billing.MeterEstimate {
+func openAIChatSearchModelHoldMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	if meterKey, rateKey := chatSearchMeter(req); meterKey != "" {
 		return billing.AppendCallMeterCostWithRate(nil, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, true)
 	}
@@ -769,29 +723,6 @@ func openAIChatSearchModelFinalMeters(req openAIAdapterContext) []billing.MeterE
 		return billing.AppendCallMeterCostWithRate(nil, req.Deployment.Pricing, meterKey, rateKey, searchCallQuantity, false)
 	}
 	return nil
-}
-
-func validateChatInput(raw json.RawMessage) error {
-	return openAIWalkRawJSON(raw, "type", func(object map[string]json.RawMessage) error {
-		switch rawjson.NormalizedStringField(object, "type") {
-		case "file", "image_url", "input_audio":
-			return errOpenAIUnsupportedInput
-		default:
-			return nil
-		}
-	})
-}
-
-func validateResponsesInput(raw json.RawMessage) error {
-	return openAIWalkRawJSON(raw, "type", func(object map[string]json.RawMessage) error {
-		switch rawjson.NormalizedStringField(object, "type") {
-		case "input_image", "input_audio":
-			return errOpenAIUnsupportedInput
-		case "input_file":
-			return errOpenAIUnsupportedInput
-		}
-		return nil
-	})
 }
 
 // Only materialize objects containing the inspected member. Most conversation
@@ -965,6 +896,37 @@ func responsesSearchKind(ctx openAIAdapterContext) string {
 	}
 }
 
+func responsesSearchHoldKind(ctx openAIAdapterContext) string {
+	if ctx.Route != openAIAdapterRouteResponses {
+		return ""
+	}
+	toolTypes := effectiveResponsesToolTypes(ctx.RawBody, ctx.ToolTypes)
+	selected := ""
+	var highest *money.USD
+	for _, kind := range []string{"web_search", "web_search_preview"} {
+		if !usesWebSearchKind(toolTypes, kind) {
+			continue
+		}
+		cost := searchKindEstimatedExtraCost(ctx, kind, webSearchContentHoldTokensForKind(ctx, kind))
+		if cost != nil && (highest == nil || cost.Cmp(highest) > 0) {
+			selected, highest = kind, cost
+		}
+	}
+	return selected
+}
+
+func webSearchContentHoldTokensForKind(ctx openAIAdapterContext, kind string) int {
+	if fixed := webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind); fixed > 0 {
+		return fixed
+	}
+	if webSearchContentTokensBilledAtModelRatesForKind(ctx, kind) {
+		// Each budgeted call gets one search window of retrieved content. This
+		// financial allowance does not bound internal passes or total billed usage.
+		return min(webSearchContextWindowTokens, ctx.Deployment.MaxInputTokens)
+	}
+	return 0
+}
+
 func webSearchContentTokensBilledAtModelRatesForKind(ctx openAIAdapterContext, kind string) bool {
 	if ctx.Route != openAIAdapterRouteResponses {
 		return false
@@ -999,8 +961,8 @@ func usesWebSearchKind(toolTypes []string, kind string) bool {
 }
 
 func higherCostSearchKind(ctx openAIAdapterContext) string {
-	webSearchCost := searchKindEstimatedExtraCost(ctx, "web_search")
-	previewCost := searchKindEstimatedExtraCost(ctx, "web_search_preview")
+	webSearchCost := searchKindEstimatedExtraCost(ctx, "web_search", webSearchFixedContentTokensForKind(ctx.Deployment.Model, "web_search"))
+	previewCost := searchKindEstimatedExtraCost(ctx, "web_search_preview", 0)
 	if previewCost != nil && (webSearchCost == nil || previewCost.Cmp(webSearchCost) >= 0) {
 		return "web_search_preview"
 	}
@@ -1010,7 +972,7 @@ func higherCostSearchKind(ctx openAIAdapterContext) string {
 	return ""
 }
 
-func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string) *money.USD {
+func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string, contentTokens int) *money.USD {
 	meterKey := responsesSearchMeterForKind(ctx, kind)
 	if meterKey == "" {
 		return nil
@@ -1020,9 +982,9 @@ func searchKindEstimatedExtraCost(ctx openAIAdapterContext, kind string) *money.
 		return nil
 	}
 	total := billing.CostPerThousand(searchCallQuantity, call)
-	if fixedContentTokens := webSearchFixedContentTokensForKind(ctx.Deployment.Model, kind); fixedContentTokens > 0 {
+	if contentTokens > 0 {
 		if _, inputRate, ok := billing.PricingRate(ctx.Deployment.Pricing, billing.MeterInputTokens, billing.TokenRateHighest); ok {
-			total = new(money.USD).Add(total, billing.CostPerMillion(fixedContentTokens, inputRate))
+			total = new(money.USD).Add(total, billing.CostPerMillion(contentTokens, inputRate))
 		}
 	}
 	return total

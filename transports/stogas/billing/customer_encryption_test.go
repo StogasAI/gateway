@@ -137,10 +137,10 @@ func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := snapshot.ActiveRedactionPolicy(active, nil); provider == "openai" && !errors.Is(err, customerkey.ErrKey) || provider == "anthropic" && err != nil {
+		if _, err := snapshot.ActivePlugins(active, nil); provider == "openai" && !errors.Is(err, customerkey.ErrKey) || provider == "anthropic" && err != nil {
 			t.Fatalf("wrong root requirement for %s: %v", provider, err)
 		}
-		if _, err := snapshot.ActiveRedactionPolicy(active, keys); err != nil {
+		if _, err := snapshot.ActivePlugins(active, keys); err != nil {
 			t.Fatal(err)
 		}
 	}

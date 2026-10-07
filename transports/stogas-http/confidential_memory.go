@@ -1,9 +1,27 @@
 package stogashttp
 
 import (
+	"errors"
 	"net"
 	"sync"
+
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
+
+// Keep cold, retained state from consuming the space needed to admit a maximum
+// configured request plus a byte-weighted maximum response. Additional response
+// structure and codec scratch still require admission. Request work can use the
+// full shared budget; this is a watermark, not a separate memory pool.
+func (a *requestMemoryAdmission) protectRequestMemory(maxBodyBytes int) error {
+	headroom := requestMemoryWeight(maxBodyBytes, catalog.MaxRequestJSONValues*requestJSONValueBytes) + maxInferenceStreamResponseBytes*requestBodyReservationFactor
+	// Fail at startup if even one complete session cannot coexist with this
+	// request. Silently clamping would remove the protection on smaller guests.
+	if headroom+encryptedSessionRetainedBytes+sessionRetainedBytes+quoteRetainedBytes > a.budgetBytes() {
+		return errors.New("confidential memory budget cannot fit the maximum request, response and session setup; increase GOMEMLIMIT or reduce max-request-body-mib")
+	}
+	a.confidentialHeadroom = headroom
+	return nil
+}
 
 // Conservative retained-byte charges cover bounded evidence copies and local
 // crypto state. They share the application memory budget and remain charged
@@ -11,18 +29,27 @@ import (
 const (
 	quoteRetainedBytes   = 64 * 1024
 	sessionRetainedBytes = 256 * 1024
-	// Covers the shared Rust ratchet's 4096 delayed keys per component and transactional
-	// replacement peak; allocator qualification lives with the C embedding.
-	encryptedSessionRetainedBytes = 3 * 1024 * 1024
+	// The C allocator test bounds 256 retained header groups and transactional
+	// replacement below 512 KiB; the other half covers setup evidence and Go state.
+	encryptedSessionRetainedBytes = 1024 * 1024
 )
+
+func (s *Server) reclaimIdleMemory(needed int64) bool {
+	count := (needed + encryptedSessionRetainedBytes - 1) / encryptedSessionRetainedBytes
+	remaining := needed - int64(s.sessions.ReclaimIdle(int(count)))*encryptedSessionRetainedBytes
+	for remaining > 0 && s.idleConnections.reclaim() {
+		remaining -= sessionRetainedBytes
+	}
+	return remaining < needed
+}
 
 func (a *requestMemoryAdmission) confidentialReservation(bytes int) func() (func(), bool) {
 	return func() (func(), bool) {
 		if a == nil {
 			return nil, false
 		}
-		lease := a.newLease(streamStateMemory)
-		if !lease.grow(bytes) {
+		lease := a.newLease(confidentialStateMemory)
+		if !lease.growWithin(bytes, a.budgetBytes()-a.confidentialHeadroom) {
 			return nil, false
 		}
 		return lease.release, true

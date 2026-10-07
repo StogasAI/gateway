@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"container/list"
+	"context"
 	"net"
 	"net/http"
 	"sync"
@@ -18,14 +19,46 @@ type idleConnection struct {
 type idleConnections struct {
 	mu       sync.Mutex
 	entries  map[net.Conn]*list.Element
+	retiring map[net.Conn]struct{}
 	oldest   list.List
 	evicted  uint64
 	rejected uint64
 }
 
+type httpConnectionKey struct{}
+
+func withHTTPConnection(ctx context.Context, conn net.Conn) context.Context {
+	return context.WithValue(ctx, httpConnectionKey{}, conn)
+}
+
+// An aborted HTTP/1 upload cannot serve another request. Let net/http finish
+// the response framing before closing its socket at the idle transition.
+func (c *idleConnections) retireAfterReply(ctx context.Context) {
+	conn, ok := ctx.Value(httpConnectionKey{}).(net.Conn)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.retiring == nil {
+		c.retiring = make(map[net.Conn]struct{})
+	}
+	c.retiring[conn] = struct{}{}
+}
+
 func (c *idleConnections) observe(conn net.Conn, state http.ConnState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, retiring := c.retiring[conn]; retiring && (state == http.StateIdle || state == http.StateClosed || state == http.StateHijacked) {
+		delete(c.retiring, conn)
+		if state == http.StateIdle {
+			if secured, ok := conn.(interface{ NetConn() net.Conn }); ok {
+				conn = secured.NetConn()
+			}
+			_ = conn.Close()
+			return
+		}
+	}
 	if item := c.entries[conn]; item != nil {
 		if state == http.StateIdle {
 			return

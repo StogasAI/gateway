@@ -175,6 +175,7 @@ func (c *keyConfigCache) put(key string, snapshot *KeyConfigSnapshot, now time.T
 			shared := c.credentials[content.digest]
 			if shared == nil {
 				value := *selection.Credential
+				value.azureBindings = indexAzureBindings(value.Bindings)
 				if c.credentialSources == nil {
 					c.credentialSources = make(map[[32]byte]*sharedCredentialPolicy)
 				}
@@ -242,7 +243,7 @@ func (c *keyConfigCache) retainPolicyLocked(snapshot *PolicySnapshot) {
 		}
 		shared.refs++
 		snapshot.shared, snapshot.Config = shared, shared.config
-		sections := snapshot.Config.RedactionSources
+		sections := snapshot.Config.PluginSources
 		if len(sections) == 0 {
 			sections = []*policy.Plugins{snapshot.Config.Plugins}
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter"
 	proxyproto "github.com/pires/go-proxyproto"
 	"golang.org/x/net/netutil"
 )
@@ -54,6 +55,7 @@ var (
 )
 
 type Server struct {
+	exports               *exporter.Engine
 	config                stogas.Config
 	logger                schemas.Logger
 	runtime               *stogas.Runtime
@@ -88,6 +90,11 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 	}
 
 	memory := newRequestMemoryAdmission()
+	if config.Confidential.ControlConfigured() {
+		if err := memory.protectRequestMemory(config.MaxRequestBodyMiB * 1024 * 1024); err != nil {
+			return nil, err
+		}
+	}
 	secure, err := confidentialruntime.Start(ctx, config.Confidential, confidentialruntime.Resources{
 		Quote:   memory.confidentialReservation(quoteRetainedBytes),
 		Session: memory.confidentialReservation(encryptedSessionRetainedBytes),
@@ -122,20 +129,15 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		runtime:   runtime,
 		secure:    secure,
 	}
+	s.exports = exporter.New(context.Background(), exporter.Options{Local: config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork, NewLease: s.exportLease})
 	if secure != nil {
 		s.proofs = secure.Proofs
 		s.sessions = secure.Sessions
-		memory.reclaim = func(needed int64) bool {
-			count := (needed + encryptedSessionRetainedBytes - 1) / encryptedSessionRetainedBytes
-			remaining := needed - int64(secure.Sessions.ReclaimIdle(int(count)))*encryptedSessionRetainedBytes
-			for remaining > 0 && s.idleConnections.reclaim() {
-				remaining -= sessionRetainedBytes
-			}
-			return remaining < needed
-		}
+		memory.reclaim = s.reclaimIdleMemory
 		s.sessionNodeID = secure.NodeID()
 	}
 	if err := s.routes(); err != nil {
+		s.exports.Close()
 		if secure != nil {
 			secure.Close()
 		}
@@ -197,7 +199,7 @@ func (s *Server) routes() error {
 				if secured, ok := conn.(*ingressTLSConn); ok {
 					deadline = secured.deadline
 				}
-				return attest.WithSetupDeadline(ctx, deadline)
+				return attest.WithSetupDeadline(withHTTPConnection(ctx, conn), deadline)
 			},
 			Protocols: protocols, ReadHeaderTimeout: readinessReadTimeout,
 			ReadTimeout: readTimeout, IdleTimeout: serverIdleTimeout, MaxHeaderBytes: headerBytes,

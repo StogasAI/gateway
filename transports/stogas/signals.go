@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -78,33 +77,6 @@ func validateReportedUsageMetadata(state *State, usage *schemas.BifrostLLMUsage)
 		return ErrProviderExecutionMismatch
 	}
 	return nil
-}
-
-func tokenHoldCapacity(state *State, input bool) (int, bool) {
-	if state == nil || len(state.Hold.Meters) == 0 {
-		return 0, false
-	}
-	total := 0
-	found := false
-	for _, meter := range state.Hold.Meters {
-		if !meter.HoldRequired || input != isInputTokenMeter(meter.MeterKey) {
-			continue
-		}
-		if !input && !isOutputTokenMeter(meter.MeterKey) {
-			continue
-		}
-		quantity, err := strconv.Atoi(meter.Quantity)
-		if err != nil || quantity < 0 {
-			return 0, true
-		}
-		var ok bool
-		total, ok = addTokenCounts(total, quantity)
-		if !ok {
-			return 0, true
-		}
-		found = true
-	}
-	return total, found
 }
 
 func isOutputTokenMeter(meterKey string) bool {

@@ -739,6 +739,10 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 	if !exists {
 		return Deployment{}, false
 	}
+	fileInputs, exists := deployment.FileInputsByRoute[route.ID]
+	if !exists {
+		return Deployment{}, false
+	}
 	var reasoningMaxTokens *ReasoningMaxTokens
 	if deployment.ReasoningMaxTokens != nil {
 		value := *deployment.ReasoningMaxTokens
@@ -766,7 +770,9 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 			DeploymentType: deployment.Upstream.DeploymentType,
 		},
 		Capabilities:        capabilities,
+		FileInputs:          FileInputs{MediaTypes: append([]string{}, fileInputs.MediaTypes...), Extensions: append([]string{}, fileInputs.Extensions...)},
 		ContextWindowTokens: deployment.ContextWindowTokens,
+		MaxInputTokens:      deployment.MaxInputTokens,
 		ImpliedServiceTier:  impliedServiceTierForDeployment(schemas.ModelProvider(route.ProviderID), deployment),
 		MaxOutputTokens:     deployment.MaxOutputTokens,
 		Pricing:             deployment.Pricing,

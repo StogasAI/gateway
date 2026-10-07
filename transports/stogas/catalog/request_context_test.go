@@ -33,7 +33,7 @@ func TestProviderOwnsContextAcceptanceAfterRedaction(t *testing.T) {
 				}
 				encoded, _ := json.Marshal(body)
 				raw, _ := DecodeRequestBody(encoded, nil)
-				before := inputTokenHoldEstimate(t, raw, tokenizationOpenAI, route, 0)
+				before := inputTokenHoldEstimate(t, raw, "openai", route, 0)
 				contextWindow := before / 3
 				var matcher *redaction.Policy
 				if transform {
@@ -45,7 +45,7 @@ func TestProviderOwnsContextAcceptanceAfterRedaction(t *testing.T) {
 					contextWindow = before + 1
 				}
 				deployment := snap.graph.Deployments["openai-gpt-5.6-sol"]
-				deployment.ContextWindowTokens, deployment.MaxOutputTokens = contextWindow, 128
+				deployment.ContextWindowTokens, deployment.MaxInputTokens, deployment.MaxOutputTokens = contextWindow, contextWindow, 128
 				snap.graph.Deployments["openai-gpt-5.6-sol"] = deployment
 				reservedBody, checked := 0, 0
 				resolved, err := ResolveRequest(RequestInput{
@@ -56,7 +56,7 @@ func TestProviderOwnsContextAcceptanceAfterRedaction(t *testing.T) {
 				if err != nil || resolved == nil || checked != 1 {
 					t.Fatalf("context estimate must not reject or reroute: %v, checks=%d", err, checked)
 				}
-				after := inputTokenHoldEstimate(t, resolved.RawBody(), tokenizationOpenAI, route, 0)
+				after := inputTokenHoldEstimate(t, resolved.RawBody(), "openai", route, 0)
 				if after <= 2*contextWindow {
 					t.Fatalf("fixture did not exceed twice the context: estimate=%d context=%d", after, contextWindow)
 				}
@@ -126,5 +126,28 @@ func TestExpandedBodyMemoryDenialDoesNotRestartSelection(t *testing.T) {
 				t.Fatalf("memory rejection must be final: %v, checks=%d reservations=%d", err, checks, reservations)
 			}
 		})
+	}
+}
+
+func TestReleaseInputPreservesIndependentResponseParameters(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}],"instructions":"Keep answers short","parallel_tool_calls":false,"tools":[{"type":"function","name":"check","parameters":{"type":"object","properties":{}}}]}`)
+	resolved, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimate, _ := resolved.EstimatedInputTokens()
+	resolved.ReleaseInput()
+	clear(body)
+	if resolved.chat != nil || resolved.responses != nil || len(resolved.RawBody()["input"]) != 0 {
+		t.Fatal("input retained after preparation")
+	}
+	if string(resolved.RawBody()["instructions"]) != `"Keep answers short"` || string(resolved.RawBody()["parallel_tool_calls"]) != "false" || string(resolved.RawTools()[0]["name"]) != `"check"` {
+		t.Fatal("response parameters borrowed discarded input")
+	}
+	if after, _ := resolved.EstimatedInputTokens(); after != estimate || resolved.InputFiles().InlineBytes != 5 {
+		t.Fatal("release lost accounting")
+	}
+	if _, err := resolved.ToBifrost(nil); err == nil {
+		t.Fatal("released request could be dispatched again")
 	}
 }

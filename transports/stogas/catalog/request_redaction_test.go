@@ -184,9 +184,9 @@ func TestResolveRequestRedactsBeforeTokenHoldAndProviderConversion(t *testing.T)
 	expectedHold := inputTokenHoldEstimate(
 		t,
 		resolution.RawBody(),
-		resolution.Deployment.snapshot.graph.Models[resolution.Deployment.ModelID].TokenizerFamily,
+		resolution.Deployment.snapshot.graph.Models[resolution.Deployment.ModelID].AuthorID,
 		resolution.Route,
-		resolution.Deployment.ContextWindowTokens,
+		resolution.Deployment.MaxInputTokens,
 	)
 	if resolution.InputTokenLimit() != expectedHold {
 		t.Fatalf("input hold = %d, want redacted hold %d", resolution.InputTokenLimit(), expectedHold)

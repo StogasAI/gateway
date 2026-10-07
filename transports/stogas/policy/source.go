@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
@@ -424,7 +425,9 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 
 func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
-		Redaction map[string]json.RawMessage `json:"stogasRedaction"`
+		Export         *exportconfig.Config       `json:"stogasExport"`
+		Redaction      map[string]json.RawMessage `json:"stogasRedaction"`
+		TextExtraction *bool                      `json:"stogasTextExtraction"`
 	}
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, configError("invalid plugins: %v", err)
@@ -432,11 +435,23 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	if err := validateSourceMembers(raw, reflect.TypeOf(doc)); err != nil {
 		return nil, err
 	}
-	if doc.Redaction == nil {
-		return nil, configError("redaction requires explicit configuration")
+	if doc.Redaction == nil && doc.TextExtraction == nil && doc.Export == nil {
+		return nil, configError("plugins require explicit configuration")
+	}
+	selected, err := compileSourceRedaction(doc.Redaction)
+	if err != nil {
+		return nil, err
+	}
+	result := &Plugins{StogasRedaction: selected, StogasTextExtraction: doc.TextExtraction, StogasExport: doc.Export}
+	return result, result.validate()
+}
+
+func compileSourceRedaction(values map[string]json.RawMessage) (*Redaction, error) {
+	if values == nil {
+		return nil, nil
 	}
 	selected := &Redaction{Presets: []string{}}
-	for name, value := range doc.Redaction {
+	for name, value := range values {
 		switch name {
 		case "customPattern":
 			var pattern string
@@ -487,7 +502,7 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	if err := compiled.validate(); err != nil {
 		return nil, err
 	}
-	return compiled, nil
+	return selected, nil
 }
 
 // OpenSource compiles the complete plaintext policy inside the gateway. Source
@@ -767,7 +782,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			}
 		}
 		if allowed&pluginPermissions != 0 && config.Plugins != nil && !seenPlugins[config.Plugins] {
-			out.RedactionSources = append(out.RedactionSources, config.Plugins)
+			out.PluginSources = append(out.PluginSources, config.Plugins)
 			seenPlugins[config.Plugins] = true
 		}
 	}
@@ -786,13 +801,19 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	return out, nil
 }
 
-func (c *Config) ValidateRedaction() error {
+func (c *Config) ValidatePlugins() error {
+	if _, err := c.ExportConfig(); err != nil {
+		return err
+	}
 	// Validate aggregate redaction limits without retaining a copied dictionary.
-	if len(c.RedactionSources) > 1 {
+	if len(c.PluginSources) > 1 {
 		var literals []redaction.Literal
 		patterns := map[string]bool{}
-		for _, plugins := range c.RedactionSources {
+		for _, plugins := range c.PluginSources {
 			p := plugins.StogasRedaction
+			if p == nil {
+				continue
+			}
 			literals = append(literals, p.Literals...)
 			for _, pattern := range p.CustomPatterns {
 				patterns[pattern] = true
@@ -810,7 +831,7 @@ func (c *Config) ValidateRedaction() error {
 }
 
 func (c *Config) validateCombined() error {
-	if err := c.ValidateRedaction(); err != nil {
+	if err := c.ValidatePlugins(); err != nil {
 		return err
 	}
 	// Access windows have already been initialized once in their source. Calling

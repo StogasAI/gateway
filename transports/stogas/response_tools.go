@@ -60,7 +60,8 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		}
 	}
 	if response.MaxToolCalls != nil {
-		if *response.MaxToolCalls < 1 || *response.MaxToolCalls > responsesTopLevelMaxToolCallsOrDefault(state) {
+		cap, supplied := responsesExplicitMaxToolCalls(state)
+		if *response.MaxToolCalls < 1 || supplied && *response.MaxToolCalls > cap {
 			return ErrProviderResponseMalformed
 		}
 	}
@@ -486,8 +487,9 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	prior, exists := state.responsesItems[index]
 	if response.Type == schemas.ResponsesStreamResponseTypeOutputItemAdded {
 		if exists || index != len(state.responsesItems) || providerResponsesInitialToolValue(response.Item) != "" ||
-			response.Item.Status == nil || *response.Item.Status != "in_progress" ||
-			!providerResponsesInitialPayloadAllowed(response.Item, item.atomicPayload) {
+			(response.Item.Status == nil && item.itemType != schemas.ResponsesMessageTypeReasoning ||
+				response.Item.Status != nil && *response.Item.Status != "in_progress") ||
+			!providerResponsesInitialPayloadAllowed(response.Item, item.compactionPayload) {
 			return ErrProviderResponseMalformed
 		}
 		state.responsesItems[index] = item
@@ -513,18 +515,18 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	return nil
 }
 
-func providerResponsesInitialPayloadAllowed(item *schemas.ResponsesMessage, atomicPayload string) bool {
+func providerResponsesInitialPayloadAllowed(item *schemas.ResponsesMessage, compactionPayload string) bool {
 	if item == nil || item.Type == nil {
 		return false
 	}
 	switch *item.Type {
 	case schemas.ResponsesMessageTypeMessage:
-		return item.Content != nil && (len(item.Content.ContentBlocks) == 0 || atomicPayload != "")
+		return item.Content != nil && (len(item.Content.ContentBlocks) == 0 || compactionPayload != "")
 	case schemas.ResponsesMessageTypeReasoning:
-		contentEmpty := item.Content == nil || len(item.Content.ContentBlocks) == 0
-		reasoningEmpty := item.ResponsesReasoning == nil ||
-			(len(item.ResponsesReasoning.Summary) == 0 && item.ResponsesReasoning.EncryptedContent == nil)
-		return contentEmpty && reasoningEmpty || atomicPayload != ""
+		// OpenAI's initial encrypted content may be provisional. Visible content
+		// still belongs to its own part events; output_item.done owns the final blob.
+		return (item.Content == nil || len(item.Content.ContentBlocks) == 0) &&
+			(item.ResponsesReasoning == nil || len(item.ResponsesReasoning.Summary) == 0)
 	default:
 		return true
 	}
@@ -556,16 +558,22 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 }
 
 func validateProviderResponsesTerminalItem(state *State, item *schemas.ResponsesMessage, allowPendingContainer bool) error {
-	if item == nil || item.Type == nil || item.Status == nil {
+	if item == nil || item.Type == nil {
+		return ErrProviderResponseMalformed
+	}
+	// Reasoning status is optional in OpenAI's Responses wire contract.
+	if *item.Type == schemas.ResponsesMessageTypeReasoning {
+		if item.Status != nil && !stringInSet(*item.Status, "completed", "incomplete") {
+			return ErrProviderResponseMalformed
+		}
+		return nil
+	}
+	if item.Status == nil {
 		return ErrProviderResponseMalformed
 	}
 	switch *item.Type {
 	case schemas.ResponsesMessageTypeMessage:
 		if !stringInSet(*item.Status, "completed", "incomplete") || item.Content == nil || len(item.Content.ContentBlocks) == 0 {
-			return ErrProviderResponseMalformed
-		}
-	case schemas.ResponsesMessageTypeReasoning:
-		if !stringInSet(*item.Status, "completed", "incomplete") {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeFunctionCall:
@@ -651,12 +659,14 @@ func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesIt
 	}
 	switch streamItem.itemType {
 	case schemas.ResponsesMessageTypeMessage:
-		if len(streamItem.parts) == 0 && !providerResponsesAtomicPayloadMatches(streamItem.atomicPayload, finalItem) {
+		if len(streamItem.parts) == 0 && !providerResponsesCompactionPayloadMatches(streamItem.compactionPayload, finalItem) {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeReasoning:
-		if len(streamItem.parts) == 0 && len(streamItem.reasoningParts) == 0 &&
-			!providerResponsesAtomicPayloadMatches(streamItem.atomicPayload, finalItem) {
+		// The encrypted blob can first arrive or change at item completion.
+		// Visible parts cannot appear without their corresponding stream events.
+		if len(streamItem.parts) == 0 && finalItem.Content != nil && len(finalItem.Content.ContentBlocks) != 0 ||
+			len(streamItem.reasoningParts) == 0 && finalItem.ResponsesReasoning != nil && len(finalItem.ResponsesReasoning.Summary) != 0 {
 			return ErrProviderResponseMalformed
 		}
 	}
@@ -696,6 +706,13 @@ func providerResponsesCompletedItemFingerprint(item *schemas.ResponsesMessage) (
 		return "", ErrProviderResponseMalformed
 	}
 	copyItem := *item
+	if item.ResponsesReasoning != nil && item.ResponsesReasoning.EncryptedContent != nil {
+		// OpenAI can re-encode the opaque reasoning blob in response.completed.
+		// Bind its presence, identity and visible content, not ciphertext equality.
+		reasoning := *item.ResponsesReasoning
+		reasoning.EncryptedContent = schemas.Ptr("present")
+		copyItem.ResponsesReasoning = &reasoning
+	}
 	if item.ResponsesToolMessage != nil {
 		tool := *item.ResponsesToolMessage
 		copyItem.ResponsesToolMessage = &tool
@@ -938,11 +955,18 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 			return providerResponsesItem{}, ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeReasoning:
-		if item.Phase != nil || item.ResponsesToolMessage != nil || (item.Content == nil) == (item.ResponsesReasoning == nil) {
+		if item.Phase != nil || item.ResponsesToolMessage != nil || (item.Content == nil && item.ResponsesReasoning == nil) {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
 		}
 		if item.Content != nil && validateProviderResponsesContent(state, item.Content) != nil {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
+		}
+		if item.Content != nil {
+			for _, block := range item.Content.ContentBlocks {
+				if block.Type != schemas.ResponsesOutputMessageContentTypeReasoning {
+					return providerResponsesItem{}, ErrProviderResponseMalformed
+				}
+			}
 		}
 		if item.ResponsesReasoning != nil && validateProviderResponsesReasoning(item.ResponsesReasoning) != nil {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
@@ -1003,7 +1027,7 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		observed.toolActionPayload = actionPayload
 		observed.toolKind = toolKind
 	}
-	observed.atomicPayload = providerResponsesAtomicPayload(item)
+	observed.compactionPayload = providerResponsesCompactionPayload(item)
 	return observed, nil
 }
 
@@ -1058,7 +1082,7 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 	return string(callerPayload), actionPayload, toolKind, nil
 }
 
-func providerResponsesAtomicPayload(item *schemas.ResponsesMessage) string {
+func providerResponsesCompactionPayload(item *schemas.ResponsesMessage) string {
 	if item == nil || item.Type == nil {
 		return ""
 	}
@@ -1070,12 +1094,6 @@ func providerResponsesAtomicPayload(item *schemas.ResponsesMessage) string {
 			return ""
 		}
 		value = item.Content
-	case schemas.ResponsesMessageTypeReasoning:
-		if item.ResponsesReasoning == nil || item.ResponsesReasoning.EncryptedContent == nil ||
-			len(item.ResponsesReasoning.Summary) != 0 || item.Content != nil {
-			return ""
-		}
-		value = item.ResponsesReasoning
 	default:
 		return ""
 	}
@@ -1086,8 +1104,8 @@ func providerResponsesAtomicPayload(item *schemas.ResponsesMessage) string {
 	return string(encoded)
 }
 
-func providerResponsesAtomicPayloadMatches(expected string, item *schemas.ResponsesMessage) bool {
-	return expected != "" && providerResponsesAtomicPayload(item) == expected
+func providerResponsesCompactionPayloadMatches(expected string, item *schemas.ResponsesMessage) bool {
+	return expected != "" && providerResponsesCompactionPayload(item) == expected
 }
 
 func validateProviderResponsesReasoning(reasoning *schemas.ResponsesReasoning) error {
@@ -1651,9 +1669,6 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 	}
 	if newCall {
 		state.responsesToolCalls++
-		if state.responsesToolCalls > maxResponsesToolCalls {
-			return ErrProviderResponseMalformed
-		}
 		switch *item.Type {
 		case schemas.ResponsesMessageTypeFunctionCall, schemas.ResponsesMessageTypeCustomToolCall:
 			state.responsesDeclaredCalls++
@@ -1661,7 +1676,8 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
-			if state.responsesHostedCalls > responsesTopLevelMaxToolCallsOrDefault(state) {
+			cap, supplied := responsesExplicitMaxToolCalls(state)
+			if supplied && !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > cap {
 				return ErrProviderResponseMalformed
 			}
 		}

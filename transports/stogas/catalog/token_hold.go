@@ -2,81 +2,28 @@ package catalog
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 	"github.com/maximhq/bifrost/transports/stogas/tokenizer"
 )
 
+// Framing allowances are separate from universal text estimation. They retain
+// the existing measured template allowances using the model's canonical author;
+// the hosting provider never chooses the text estimator.
 const (
-	openAIInputHoldTextBufferBps = 10300
-
 	openAIInputHoldBaseTokens      = 64
 	openAIInputHoldMessageTokens   = 12
 	openAIInputHoldBlockTokens     = 8
 	openAIInputHoldToolTokens      = 32
 	openAIInputHoldToolEventTokens = 16
 
-	anthropicInputHoldTextBufferBps = 11500
-
-	anthropicInputHoldBaseTokens         = 128
-	anthropicInputHoldMessageTokens      = 20
-	anthropicInputHoldBlockTokens        = 12
-	anthropicInputHoldToolTokens         = 48
-	anthropicInputHoldToolEventTokens    = 24
-	anthropicInputHoldToolPreambleTokens = 512
+	extendedInputHoldBaseTokens         = 128
+	extendedInputHoldMessageTokens      = 20
+	extendedInputHoldBlockTokens        = 12
+	extendedInputHoldToolTokens         = 48
+	extendedInputHoldToolEventTokens    = 24
+	extendedInputHoldToolPreambleTokens = 512
 )
-
-// The catalog selects one supported local estimator explicitly. Decode its
-// family once with the model; request handling never infers it from names,
-// authors, or hosting providers.
-type tokenizationStrategy string
-
-const (
-	tokenizationOpenAI    tokenizationStrategy = "openai"
-	tokenizationAnthropic tokenizationStrategy = "anthropic"
-	tokenizationDeepSeek  tokenizationStrategy = "deepseek"
-	tokenizationQwen3     tokenizationStrategy = "qwen3"
-	tokenizationQwen35    tokenizationStrategy = "qwen35"
-	tokenizationGemma     tokenizationStrategy = "gemma"
-	tokenizationMiniMax   tokenizationStrategy = "minimax"
-	tokenizationTekken    tokenizationStrategy = "tekken"
-	tokenizationKimi      tokenizationStrategy = "kimi"
-	tokenizationGLM       tokenizationStrategy = "glm"
-)
-
-func (strategy tokenizationStrategy) valid() bool {
-	if strategy == tokenizationOpenAI || strategy == tokenizationAnthropic {
-		return true
-	}
-	encoding, _ := publishedTokenization(strategy)
-	return encoding != ""
-}
-
-func publishedTokenization(strategy tokenizationStrategy) (string, int) {
-	switch strategy {
-	case tokenizationDeepSeek:
-		return "deepseek", 10300
-	case tokenizationQwen3:
-		return "qwen3", 10300
-	case tokenizationQwen35:
-		return "qwen35", 10300
-	case tokenizationGemma:
-		return "gemma", 10300
-	case tokenizationMiniMax:
-		return "minimax", 10300
-	case tokenizationTekken:
-		return "mistral", 10300
-	case tokenizationKimi:
-		return "kimi", 10300
-	// GLM's 16-KiB artificial boundaries missed up to 2 of 35 whitespace
-	// tokens in the calibration search. Seven percent covers that observation.
-	case tokenizationGLM:
-		return "glm", 10700
-	default:
-		return "", 0
-	}
-}
 
 type inputHoldStats struct {
 	TextFields           []string
@@ -88,68 +35,51 @@ type inputHoldStats struct {
 	ToolEvents      int
 }
 
-// estimateInputHold reserves funds; it is not a request-admission token
-// limit. The selected provider remains authoritative for its tokenizer and
-// context window, including future one- and two-million-token deployments.
-func estimateInputHold(stats inputHoldStats, strategy tokenizationStrategy, maxInputTokens int) (int, error) {
-	if maxInputTokens < 0 {
-		maxInputTokens = 0
-	}
-	// Provider reasoning envelopes are opaque, not text for the model tokenizer.
-	// Reserve one token per encoded byte, in addition to visible text and framing.
-	// This is a deliberately conservative empirical estimate, not a token bound
+// estimateInputContent counts visible text once, independent of the candidate
+// model, and adds opaque reasoning separately. The limit only clips the hold;
+// it never rejects, truncates or modifies the submitted content.
+func estimateInputContent(stats inputHoldStats, limit int) (int, error) {
+	// Provider reasoning envelopes are not text for the model tokenizer.
+	// One token per encoded byte remains an empirical allowance, not a bound
 	// guaranteed by the provider's undocumented encrypted representation.
-	visibleLimit := maxInputTokens
-	if maxInputTokens > 0 {
-		if stats.OpaqueReasoningBytes >= maxInputTokens {
-			return maxInputTokens, nil
-		}
-		visibleLimit -= stats.OpaqueReasoningBytes
+	estimate := stats.OpaqueReasoningBytes
+	if limit > 0 && estimate >= limit {
+		return limit, nil
 	}
-	var estimate int
-	var err error
-	switch strategy {
-	case tokenizationOpenAI:
-		estimate, err = openAIInputTokenHold(stats, visibleLimit)
-	case tokenizationAnthropic:
-		estimate, err = anthropicInputTokenHold(stats, visibleLimit)
-	default:
-		encoding, buffer := publishedTokenization(strategy)
-		if encoding == "" {
-			return 0, fmt.Errorf("unsupported catalog tokenization strategy")
+	for _, text := range stats.TextFields {
+		remaining := 0
+		if limit > 0 {
+			remaining = limit - estimate
 		}
-		estimate, err = vocabularyInputTokenHold(stats, visibleLimit, encoding, buffer, true)
-		if strategy == tokenizationMiniMax {
-			// The pinned M3 template has a 176-token empty-user prompt,
-			// exceeding the shared 148-token base/message allowance by 28.
-			estimate += 28
+		count, err := tokenizer.EstimateAtMost(text, remaining)
+		if err != nil {
+			return 0, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Message: "Input text cannot be estimated: " + err.Error()}
 		}
-	}
-	if err != nil {
-		return 0, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Message: "Input text cannot be tokenized: " + err.Error()}
-	}
-	estimate += stats.OpaqueReasoningBytes
-	if maxInputTokens > 0 && estimate > maxInputTokens {
-		return maxInputTokens, nil
+		estimate += count
+		if limit > 0 && estimate >= limit {
+			return limit, nil
+		}
 	}
 	return estimate, nil
 }
 
-// One request can have several deployments, but its input text is immutable
-// during selection. Parse it once and tokenize once per strategy. Context
-// caps are applied separately so deployment variants cannot multiply scanning.
+// Each immutable post-redaction body shares one content estimate across all
+// routing candidates. Candidate-specific framing and input ceilings are cheap
+// additions; a small candidate's ceiling must not cap a later larger candidate.
 func requestTokenEstimator(rawData map[string]json.RawMessage, route Route, selections []routingSelection) func(Deployment) (int, error) {
 	stats := requestInputHoldStats(rawData, route)
-	maxContext := 0
+	maxInput := 0
 	for _, selection := range selections {
-		context := selection.deployment.ContextWindowTokens
-		if context <= 0 {
-			maxContext = 0
+		limit := selection.deployment.MaxInputTokens
+		if limit <= 0 {
+			maxInput = 0
 			break
 		}
-		maxContext = max(maxContext, context)
+		maxInput = max(maxInput, limit)
 	}
-	estimates := make(map[tokenizationStrategy]int)
+	var content int
+	var contentErr error
+	counted := false
 	return func(deployment Deployment) (int, error) {
 		if deployment.snapshot == nil {
 			return 0, ErrModelUnavailable
@@ -158,18 +88,16 @@ func requestTokenEstimator(rawData map[string]json.RawMessage, route Route, sele
 		if !ok {
 			return 0, ErrModelUnavailable
 		}
-		strategy := model.TokenizerFamily
-		estimate, ok := estimates[strategy]
-		if !ok {
-			var err error
-			estimate, err = estimateInputHold(stats, strategy, maxContext)
-			if err != nil {
-				return 0, err
-			}
-			estimates[strategy] = estimate
+		if !counted {
+			content, contentErr = estimateInputContent(stats, maxInput)
+			counted = true
 		}
-		if context := deployment.ContextWindowTokens; context > 0 && estimate > context {
-			return context, nil
+		if contentErr != nil {
+			return 0, contentErr
+		}
+		estimate := content + inputHoldFraming(stats, model.AuthorID)
+		if limit := deployment.MaxInputTokens; limit > 0 {
+			estimate = min(estimate, limit)
 		}
 		return estimate, nil
 	}
@@ -192,65 +120,26 @@ func requestInputHoldStats(rawData map[string]json.RawMessage, route Route) inpu
 	return stats
 }
 
-func openAIInputTokenHold(stats inputHoldStats, maxTokens int) (int, error) {
-	return vocabularyInputTokenHold(stats, maxTokens, tokenizer.O200kBase, openAIInputHoldTextBufferBps, false)
-}
-
-func vocabularyInputTokenHold(stats inputHoldStats, maxTokens int, encoding string, buffer int, extendedFraming bool) (int, error) {
-	codec, err := tokenizer.Get(encoding)
-	if err != nil {
-		return 0, err
-	}
-	textTokens := 0
-	for _, text := range stats.TextFields {
-		if text == "" {
-			continue
-		}
-		count, err := codec.CountAtMost(text, maxTokens-textTokens)
-		if err != nil {
-			return 0, err
-		}
-		textTokens += count
-		if maxTokens > 0 && textTokens >= maxTokens {
-			return maxTokens, nil
-		}
-	}
-	return ceilMulDiv(textTokens, buffer, 10000) + inputHoldFraming(stats, extendedFraming), nil
-}
-
-func anthropicInputTokenHold(stats inputHoldStats, maxTokens int) (int, error) {
-	textHold := 0
-	for _, text := range stats.TextFields {
-		if text == "" {
-			continue
-		}
-		count, err := tokenizer.Claude().CountAtMost(text, maxTokens-textHold)
-		if err != nil {
-			return 0, err
-		}
-		textHold += ceilMulDiv(count, anthropicInputHoldTextBufferBps, 10000) + 8
-		if maxTokens > 0 && textHold >= maxTokens {
-			return maxTokens, nil
-		}
-	}
-	return textHold + inputHoldFraming(stats, true), nil
-}
-
-func inputHoldFraming(stats inputHoldStats, anthropic bool) int {
-	if !anthropic {
+func inputHoldFraming(stats inputHoldStats, author string) int {
+	if author == "openai" {
 		return openAIInputHoldBaseTokens +
 			openAIInputHoldMessageTokens*stats.Messages +
 			openAIInputHoldBlockTokens*stats.ContentBlocks +
 			openAIInputHoldToolTokens*stats.ToolDefinitions +
 			openAIInputHoldToolEventTokens*stats.ToolEvents
 	}
-	tokens := anthropicInputHoldBaseTokens +
-		anthropicInputHoldMessageTokens*stats.Messages +
-		anthropicInputHoldBlockTokens*stats.ContentBlocks +
-		anthropicInputHoldToolTokens*stats.ToolDefinitions +
-		anthropicInputHoldToolEventTokens*stats.ToolEvents
+	tokens := extendedInputHoldBaseTokens +
+		extendedInputHoldMessageTokens*stats.Messages +
+		extendedInputHoldBlockTokens*stats.ContentBlocks +
+		extendedInputHoldToolTokens*stats.ToolDefinitions +
+		extendedInputHoldToolEventTokens*stats.ToolEvents
 	if stats.ToolDefinitions > 0 {
-		tokens += anthropicInputHoldToolPreambleTokens
+		tokens += extendedInputHoldToolPreambleTokens
+	}
+	if author == "minimax" {
+		// The pinned M3 template has a 176-token empty-user prompt,
+		// exceeding the shared 148-token base/message allowance by 28.
+		tokens += 28
 	}
 	return tokens
 }
@@ -495,18 +384,4 @@ func rawArrayLen(raw json.RawMessage) int {
 		return 0
 	}
 	return len(array)
-}
-
-func ceilMulDiv(value int, multiplier int, divisor int) int {
-	if value <= 0 {
-		return 0
-	}
-	return (value*multiplier + divisor - 1) / divisor
-}
-
-func maxInt(left int, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }

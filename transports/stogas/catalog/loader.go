@@ -19,7 +19,7 @@ const (
 	runtimeSchema     = "stogas.catalog.runtime.v3"
 	publicSchema      = "stogas.catalog.public.v3"
 	runtimeSizeLimit  = 16 * 1024 * 1024
-	publicSizeLimit   = 64 * 1024 * 1024
+	publicSizeLimit   = 8 * 1024 * 1024
 	maxAliasesPerNode = 8
 )
 
@@ -126,8 +126,8 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 	if len(runtimeData) == 0 || len(runtimeData) > runtimeSizeLimit {
 		return nil, fmt.Errorf("runtime catalog size is outside the accepted range")
 	}
-	catalog := compiledCatalog{}
-	if err := json.Unmarshal(runtimeData, &catalog); err != nil {
+	catalog, err := decodeCompiledCatalog(runtimeData)
+	if err != nil {
 		return nil, fmt.Errorf("decode runtime catalog: %w", err)
 	}
 	if catalog.Schema != runtimeSchema {
@@ -299,9 +299,6 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 		if _, ok := graph.Authors[model.AuthorID]; !ok {
 			return fmt.Errorf("model %s references unknown author %s", modelID, model.AuthorID)
 		}
-		if !model.TokenizerFamily.valid() {
-			return fmt.Errorf("model %s has unsupported tokenizerFamily %q", modelID, model.TokenizerFamily)
-		}
 		if err := validateModelReasoning(modelID, model); err != nil {
 			return err
 		}
@@ -354,6 +351,8 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	}
 	if deployment.Upstream.Model == "" ||
 		deployment.ContextWindowTokens <= 0 ||
+		deployment.MaxInputTokens <= 0 ||
+		deployment.MaxInputTokens > deployment.ContextWindowTokens ||
 		deployment.MaxOutputTokens <= 0 ||
 		deployment.MaxOutputTokens > deployment.ContextWindowTokens ||
 		len(deployment.InputModalities) == 0 ||
@@ -441,6 +440,18 @@ func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployme
 		if _, attached := routeIDs[routeID]; !attached {
 			return "", fmt.Errorf("deployment %s defines data handling for unattached route %s", deploymentID, routeID)
 		}
+	}
+	if len(deployment.FileInputsByRoute) != len(routeIDs) {
+		return "", fmt.Errorf("deployment %s does not define exact native file support", deploymentID)
+	}
+	for routeID, fileInputs := range deployment.FileInputsByRoute {
+		if _, attached := routeIDs[routeID]; !attached {
+			return "", fmt.Errorf("deployment %s defines native file support for unattached route %s", deploymentID, routeID)
+		}
+		if err := validateFileInputs(fileInputs); err != nil {
+			return "", fmt.Errorf("deployment %s route %s: %w", deploymentID, routeID, err)
+		}
+
 	}
 	return providerID, nil
 }

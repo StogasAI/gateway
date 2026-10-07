@@ -563,11 +563,11 @@ func rawObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
-	var object map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &object); err != nil {
-		return nil, false
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, true
 	}
-	return object, true
+	object, err := rawjson.Object(raw)
+	return object, err == nil
 }
 
 type chatMessageInputValidation struct {
@@ -629,7 +629,7 @@ func validateChatMessagesTextOnly(state *State, raw json.RawMessage) error {
 			if !ok {
 				return invalidRequest(path + ".content is required")
 			}
-			meaningful, err := validateChatMessageTextContent(content, path+".content", true)
+			meaningful, err := validateChatMessageContent(state, content, path+".content", true, role == string(schemas.ChatMessageRoleUser))
 			if err != nil {
 				return err
 			}
@@ -699,7 +699,7 @@ func validateChatAssistantInput(state *State, message map[string]json.RawMessage
 	}
 	hasPayload := false
 	if content, ok := message["content"]; ok && strings.TrimSpace(string(content)) != "null" {
-		meaningful, err := validateChatMessageTextContent(content, path+".content", false)
+		meaningful, err := validateChatMessageContent(state, content, path+".content", false, false)
 		if err != nil {
 			return err
 		}
@@ -788,7 +788,7 @@ func validateChatToolResultInput(state *State, message map[string]json.RawMessag
 	if !ok {
 		return invalidRequest(path + ".content is required")
 	}
-	if _, err := validateChatMessageTextContent(content, path+".content", false); err != nil {
+	if _, err := validateChatMessageContent(state, content, path+".content", false, false); err != nil {
 		return err
 	}
 	delete(validation.pending, callID)
@@ -879,7 +879,7 @@ func hasNonWhitespace(text string) bool {
 	return strings.TrimLeftFunc(strings.TrimLeft(text, " \t\n\r\v\f"), unicode.IsSpace) != ""
 }
 
-func validateChatMessageTextContent(raw json.RawMessage, path string, requireNonEmpty bool) (bool, error) {
+func validateChatMessageContent(state *State, raw json.RawMessage, path string, requireNonEmpty, allowMedia bool) (bool, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		if requireNonEmpty {
@@ -908,6 +908,16 @@ func validateChatMessageTextContent(raw json.RawMessage, path string, requireNon
 		block, err := rawjson.Object(blockRaw)
 		if err != nil {
 			return false, invalidRequest(blockPath + " must be an object")
+		}
+		if kind := rawString(block["type"]); kind == "file" || kind == "image_url" || kind == "input_audio" {
+			if !allowMedia {
+				return false, invalidRequest(blockPath + " attachments require a user message")
+			}
+			if err := validateNativeAttachment(state, block, blockPath, false); err != nil {
+				return false, err
+			}
+			meaningful = true
+			continue
 		}
 		if err := validateTextOnlyMediaFields(block, "Only text message content is supported"); err != nil {
 			return false, err

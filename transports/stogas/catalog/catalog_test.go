@@ -1231,6 +1231,30 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	}
 }
 
+func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
+	for _, limit := range []any{nil, 0, -1, 1050001} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			var runtime map[string]any
+			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.6-sol"].(map[string]any)
+			if limit == nil {
+				delete(deployment, "maxInputTokens")
+			} else {
+				deployment["maxInputTokens"] = limit
+			}
+			data, err := json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := snapshotFromCatalogBytes(data); err == nil {
+				t.Fatalf("accepted invalid input ceiling %v", limit)
+			}
+		})
+	}
+}
+
 func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
 	for _, hashes := range []map[string]string{nil, {"openai-responses": "invalid"}, {"other-route": "sha256:" + strings.Repeat("a", 64)}} {
 		var runtime compiledCatalog
@@ -1556,4 +1580,63 @@ func loadTestCatalog(t *testing.T) *snapshot {
 	}
 	active.Store(snap)
 	return snap
+}
+
+func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		apply func(map[string]any)
+	}{
+		{"missing route", func(d map[string]any) { delete(d["fileInputsByRoute"].(map[string]any), "openai-responses") }},
+		{"unattached route", func(d map[string]any) {
+			d["fileInputsByRoute"].(map[string]any)["unattached"] = map[string]any{"extensions": []any{}, "mediaTypes": []any{}}
+		}},
+		{"missing array", func(d map[string]any) {
+			delete(d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any), "mediaTypes")
+		}},
+		{"wildcard MIME", func(d map[string]any) {
+			d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["mediaTypes"] = []any{"text/*"}
+		}},
+		{"duplicate extension", func(d map[string]any) {
+			d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["extensions"] = []any{".pdf", ".pdf"}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var runtime map[string]any
+			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			d := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.6-luna"].(map[string]any)
+			tc.apply(d)
+			raw, err := json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := snapshotFromCatalogBytes(raw); err == nil {
+				t.Fatal("invalid native file contract accepted")
+			}
+		})
+	}
+}
+
+func TestSnapshotAcceptsProviderProcessedPDFForTextModel(t *testing.T) {
+	var catalog map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	const id = "openai-gpt-5.6-luna"
+	deployment := catalog["graph"].(map[string]any)["deployments"].(map[string]any)[id].(map[string]any)
+	deployment["inputModalities"] = []any{"text"}
+	raw, err := json.Marshal(catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := snapshotFromCatalogBytes(raw)
+	if err != nil {
+		t.Fatalf("provider-processed document support rejected: %v", err)
+	}
+	formats := snap.graph.Deployments[id].FileInputsByRoute["openai-responses"]
+	if !stringIn(formats.Extensions, ".pdf") || !stringIn(formats.MediaTypes, "application/pdf") {
+		t.Fatal("provider-processed PDF support was lost")
+	}
 }

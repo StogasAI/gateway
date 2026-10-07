@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
@@ -247,7 +248,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if len(rules) > 0 {
 		effective["rules"] = rules
 	}
-	plugins, err := inspectionPlugins(compiled.RedactionSources)
+	plugins, err := inspectionPlugins(compiled.PluginSources)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +295,20 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	}
 	presets, patterns := map[string]bool{}, map[string]bool{}
 	selected := &Redaction{Presets: []string{}}
+	plugins := &Plugins{}
+	var exports []*exportconfig.Config
 	for _, part := range parts {
+		if part.StogasExport != nil {
+			exports = append(exports, part.StogasExport)
+		}
+		if part.StogasTextExtraction != nil {
+			enabled := *part.StogasTextExtraction || plugins.StogasTextExtraction != nil && *plugins.StogasTextExtraction
+			plugins.StogasTextExtraction = &enabled
+		}
+		if part.StogasRedaction == nil {
+			continue
+		}
+		plugins.StogasRedaction = selected
 		for _, preset := range part.StogasRedaction.Presets {
 			presets[preset] = true
 		}
@@ -302,6 +316,13 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 			patterns[pattern] = true
 		}
 		selected.Literals = append(selected.Literals, part.StogasRedaction.Literals...)
+	}
+	if len(exports) > 0 {
+		var err error
+		plugins.StogasExport, err = exportconfig.Combine(exports...)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for preset := range presets {
 		selected.Presets = append(selected.Presets, preset)
@@ -312,7 +333,6 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	sort.Strings(selected.Presets)
 	sort.Strings(selected.CustomPatterns)
 	selected.Literals = redaction.NormalizeLiterals(selected.Literals)
-	plugins := &Plugins{StogasRedaction: selected}
 	if err := plugins.validate(); err != nil {
 		return nil, err
 	}

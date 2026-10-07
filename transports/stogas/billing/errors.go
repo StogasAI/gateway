@@ -23,7 +23,7 @@ var (
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
 	ErrAbuseRateLimit      = &RequestError{"abuse_rate_limited", "Too many requests. Wait before retrying.", 429}
-	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. Retry the request.", 503}
+	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
 	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
 	ErrAPIKeyLimit         = &RequestError{"key_limit_exceeded", "API key limit reached or disabled/expired", 402}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
@@ -77,7 +77,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_limit_exceeded", "policy_work_limit_exceeded",
 		"method_not_allowed",
 		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
-		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded", "reconciliation_released",
+		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
 		"request_already_used", "request_preparation_failed", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",
 		"unsupported_media_type", "unsupported_request", "unsupported_service_tier", "unsupported_tool":

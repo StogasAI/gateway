@@ -201,3 +201,31 @@ func BenchmarkBuildBatch(b *testing.B) {
 		})
 	}
 }
+
+// Include every caller's encoded inclusion proof, not just the shared tree.
+// Hardware report generation and channel setup are outside this measurement.
+func BenchmarkBuildBatchProofs(b *testing.B) {
+	for _, count := range []int{1, 64, 1024} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			bindings := testBindings(count)
+			b.ReportAllocs()
+			for b.Loop() {
+				tree, err := BuildBatch(bindings)
+				if err != nil {
+					b.Fatal(err)
+				}
+				_ = tree.ReportData()
+				for index := range count {
+					proof, err := tree.Proof(index)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := proof.MarshalBinary(); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N)/float64(count), "ns/leaf")
+		})
+	}
+}
