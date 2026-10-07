@@ -22,15 +22,19 @@ const (
 	permissionNodes
 	permissionFallbacks
 	permissionDelegation
+	permissionTextExtraction
 	permissionEncryption
-	allPermissions     = (permissionEncryption << 1) - 1
+	permissionExport
+	allPermissions     = (permissionExport << 1) - 1
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation | permissionEncryption)
 )
 
 var permissionSections = map[string]Permission{
 	"access": permissionAccess, "input": permissionInput, "limits": permissionLimits,
-	"plugins":                 permissionPlugins | permissionEncryptedPlugins,
-	"plugins.stogasRedaction": permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
+	"plugins":                      permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport,
+	"plugins.stogasExport":         permissionExport,
+	"plugins.stogasTextExtraction": permissionTextExtraction,
+	"plugins.stogasRedaction":      permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
 	"routing":        permissionFilter | permissionSort | permissionNodes | permissionFallbacks,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.fallbacks": permissionFallbacks,

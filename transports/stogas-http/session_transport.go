@@ -1,6 +1,7 @@
 package stogashttp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,7 +21,7 @@ const sessionNodeHeader = "Stogas-Node-ID"
 const sessionSetupBudget = 15 * time.Second
 
 // Part of the existing request reservation, retained through the final encrypted write.
-const sessionAdapterRetainedBytes = 2*channel.MaxRecordBytes + 2*int(requestBodyReservationFactor)*serverReadBufferSize
+const sessionAdapterRetainedBytes = 2*channel.MaxRecordBytes + (2*int(requestBodyReservationFactor)+1)*serverReadBufferSize
 
 type sessionRequestMetadata struct {
 	Method  string            `json:"method"`
@@ -31,6 +32,7 @@ type sessionRequestMetadata struct {
 type sessionResponseMetadata struct {
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
+	Closing bool              `json:"closing,omitempty"`
 }
 
 // The ordinary request pipeline owns authorization, buffering and provider work.
@@ -107,15 +109,25 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 			ctx.writer.WriteHeader(http.StatusMisdirectedRequest)
 			return
 		}
-		incoming, encoded, err := channel.Accept(s.sessions, input)
+		// Bound read-ahead while amortizing HTTP/2 body bookkeeping across small
+		// records. Only ciphertext is buffered; authentication still precedes use.
+		incoming, encoded, err := channel.Accept(s.sessions, bufio.NewReaderSize(input, serverReadBufferSize))
 		if err != nil {
 			closeUnreadRequest(ctx)
+			if errors.Is(err, channel.ErrSessionCapacity) {
+				ctx.writer.Header().Set("Retry-After", "1")
+				ctx.writer.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			ctx.writer.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		defer incoming.Close()
 		writer := newSessionResponse(ctx.writer, incoming, ctx.request.ProtoMajor < 2)
 		ctx.writer = writer
+		if err := writer.acknowledge(); err != nil {
+			panic(http.ErrAbortHandler)
+		}
 		metadata, err := parseSessionMetadata(encoded)
 		if err != nil {
 			writer.WriteHeader(http.StatusBadRequest)
@@ -128,7 +140,7 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 				writer.WriteHeader(http.StatusNoContent)
 			}
 		} else if !s.admissionReady() {
-			writer.WriteHeader(http.StatusServiceUnavailable)
+			s.requireAdmission(ctx)
 		} else {
 			inner := ctx.request.Clone(ctx.request.Context())
 			inner.Method, inner.URL, inner.RequestURI = metadata.Method, &url.URL{Path: metadata.Path}, metadata.Path
@@ -141,24 +153,22 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 			ctx.request = inner
 			next(ctx)
 		}
-		control = http.NewResponseController(writer)
-		if err := control.SetWriteDeadline(time.Now().Add(downstreamWriteIdleTimeout)); err != nil {
-			panic(http.ErrAbortHandler)
+		if ctx.request.ProtoMajor < 2 && !incoming.Consumed() {
+			s.idleConnections.retireAfterReply(ctx.request.Context())
 		}
 		if err := writer.finish(); err != nil {
 			panic(http.ErrAbortHandler)
 		}
-		if err := control.Flush(); err != nil {
-			panic(http.ErrAbortHandler)
-		}
-		_ = control.SetWriteDeadline(time.Time{})
 	}
 }
 
 func (s *Server) openSession(ctx *requestContext, input io.Reader, deadline time.Time) {
-	if len(ctx.request.Header.Values(sessionNodeHeader)) != 0 || !s.admissionReady() {
+	if len(ctx.request.Header.Values(sessionNodeHeader)) != 0 {
 		closeUnreadRequest(ctx)
 		ctx.writer.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	if !s.requireAdmission(ctx) {
 		return
 	}
 	setupContext, cancel := context.WithDeadline(ctx.request.Context(), deadline)
@@ -235,6 +245,7 @@ type sessionResponse struct {
 	header  http.Header
 	status  int
 	started bool
+	closing bool
 	err     error
 	input   *channel.Incoming
 	http1   bool
@@ -250,6 +261,20 @@ func (w *sessionResponse) WriteHeader(status int) {
 		w.status = status
 	}
 }
+
+// A receipt authenticates the request start without committing its inner HTTP
+// status. HTTP/1 must allow the client to finish uploading after this flush.
+func (w *sessionResponse) acknowledge() error {
+	if w.http1 {
+		if err := http.NewResponseController(w.outer).EnableFullDuplex(); err != nil {
+			return err
+		}
+	}
+	w.outer.Header().Set("Content-Type", sessionContentType)
+	w.outer.Header().Set("Cache-Control", "no-store")
+	return w.flushRecord(w.stream.Keepalive)
+}
+
 func (w *sessionResponse) start() error {
 	if w.err != nil || w.started {
 		return w.err
@@ -264,17 +289,11 @@ func (w *sessionResponse) start() error {
 			headers[name] = value
 		}
 	}
-	encoded, err := json.Marshal(sessionResponseMetadata{Status: w.status, Headers: headers})
+	encoded, err := json.Marshal(sessionResponseMetadata{Status: w.status, Headers: headers, Closing: w.closing})
 	if err != nil || len(encoded) > serverReadBufferSize {
 		w.err = channel.ErrRecord
 		return w.err
 	}
-	if w.header.Get("Connection") == "close" || (w.http1 && !w.input.Consumed()) {
-		w.outer.Header().Set("Connection", "close")
-	}
-	w.outer.Header().Set("Content-Type", sessionContentType)
-	w.outer.Header().Set("Cache-Control", "no-store")
-	w.outer.WriteHeader(http.StatusOK)
 	w.err = w.stream.Metadata(encoded)
 	return w.err
 }
@@ -292,8 +311,37 @@ func (w *sessionResponse) FlushError() error {
 	return w.err
 }
 func (w *sessionResponse) finish() error {
-	if err := w.start(); err != nil {
-		return err
+	if w.http1 && !w.input.Consumed() {
+		// Full-duplex HTTP/1 otherwise drains the unfinished body after this
+		// handler returns. Stop abandoned uploads without delaying the error
+		// response. The connection owner retires this socket after net/http
+		// flushes the response; an expired read can cancel its shared context.
+		if err := http.NewResponseController(w.outer).SetReadDeadline(time.Now()); err != nil {
+			return err
+		}
 	}
-	return w.stream.Finish()
+	return w.flushRecord(func() error {
+		if err := w.start(); err != nil {
+			return err
+		}
+		return w.stream.Finish()
+	})
+}
+
+func (w *sessionResponse) flushRecord(write func() error) error {
+	if w.err != nil {
+		return w.err
+	}
+	control := http.NewResponseController(w.outer)
+	if w.err = control.SetWriteDeadline(time.Now().Add(downstreamWriteIdleTimeout)); w.err != nil {
+		return w.err
+	}
+	w.err = write()
+	if w.err == nil {
+		w.err = control.Flush()
+	}
+	if w.err == nil {
+		w.err = control.SetWriteDeadline(time.Time{})
+	}
+	return w.err
 }

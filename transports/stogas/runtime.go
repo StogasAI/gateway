@@ -12,6 +12,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/maximhq/bifrost/transports/stogas/providerio"
 	"github.com/valyala/fasthttp"
 )
 
@@ -41,15 +42,23 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		cancel()
 		return nil, err
 	}
-	tinybird, err := billing.NewTinybirdClient(
-		config.TinybirdHost,
-		config.TinybirdToken,
-		config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
-	)
+	queueURL := ""
+	if config.RequestLogQueueToken != "" {
+		queueURL = strings.TrimRight(config.Confidential.ControlURL, "/") + "/request-logs"
+	}
+	requestLogs, err := billing.NewRequestLogClient(billing.RequestLogConfig{
+		QueueURL:                    queueURL,
+		QueueToken:                  config.RequestLogQueueToken,
+		AccessClientID:              config.Confidential.AccessClientID,
+		AccessClientSecret:          config.Confidential.AccessClientSecret,
+		TinybirdHost:                config.TinybirdHost,
+		TinybirdToken:               config.TinybirdToken,
+		AllowInsecurePrivateNetwork: config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
+	})
 	if err != nil {
 		chutesTransport.Close()
 		cancel()
-		return nil, fmt.Errorf("configure Tinybird: %w", err)
+		return nil, fmt.Errorf("configure request log delivery: %w", err)
 	}
 	billingService, err := billing.NewService(
 		runtimeCtx,
@@ -59,7 +68,7 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		config.BYOKEncryptionSecret,
 		config.InferenceTokenPublicKey,
 		config.DatabasePool,
-		tinybird,
+		requestLogs,
 	)
 	if err != nil {
 		chutesTransport.Close()
@@ -274,6 +283,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 	config.NetworkConfig.AllowPrivateNetwork = allowPrivateNetwork
 	config.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 	config.NetworkConfig.MaxResponseBodySize = maxProviderResponseBodySize
+	config.NetworkConfig.Transport = providerio.NewTransport(maxProviderResponseBodySize, false)
 	config.CheckAndSetDefaults()
 	return config
 }

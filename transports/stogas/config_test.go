@@ -305,6 +305,7 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":                "public_0001_initial_schema",
 		"DATABASE_URL":                   "postgres://released:pass@localhost:5432/postgres",
+		"REQUEST_LOG_QUEUE_TOKEN":        "released-request-log-producer-token",
 		"TB_GATEWAY_REQUESTS_TOKEN":      "tinybird-token",
 		"TB_HOST_URL":                    "https://tinybird.example",
 	})
@@ -378,6 +379,9 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 		"DRAIN_CLIENT_SPKI_SHA256":       strings.Repeat("e", 64),
 		"API_KEY_PEPPER":                 "released-api-key-pepper-0123456789",
 		"BYOK_ENCRYPTION_SECRET":         "released-byok-encryption-secret-at-least-32-characters",
+		"REQUEST_LOG_QUEUE_TOKEN":        "released-queue-token",
+		"TB_HOST_URL":                    "https://tinybird.example",
+		"TB_GATEWAY_REQUESTS_TOKEN":      "released-tinybird-token",
 		"CHUTES_API_KEY":                 "released-chutes",
 		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":                "public_0001_initial_schema",

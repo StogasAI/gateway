@@ -32,7 +32,7 @@ func (c *Config) CompositionBytes() int64 {
 		return 0
 	}
 	total := int64(unsafe.Sizeof(*c)) + int64(cap(c.sources))*int64(unsafe.Sizeof(ScopedSource{}))
-	total += int64(cap(c.RedactionSources)+cap(c.ActiveEncryptedPlugins))*8 + int64(cap(c.RequiredEncryptionKeys))*16
+	total += int64(cap(c.PluginSources)+cap(c.ActiveEncryptedPlugins))*8 + int64(cap(c.RequiredEncryptionKeys))*16
 	total += int64(cap(c.ActiveRules)) * int64(unsafe.Sizeof(RuleMatch{}))
 	if c.Access != nil {
 		total += int64(unsafe.Sizeof(*c.Access)) + int64(cap(c.Access.Deny))*int64(unsafe.Sizeof(DenyWindow{}))

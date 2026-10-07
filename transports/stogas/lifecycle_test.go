@@ -531,7 +531,9 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 }
 
 func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
-	longText := strings.Repeat("a", (billing.LongContextThresholdTokens+1)*4)
+	// Keep the universal estimate below the pricing threshold, then report
+	// actual usage above it. Settlement must change tiers and charge above hold.
+	longText := strings.Repeat("a", billing.LongContextThresholdTokens+1)
 	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
@@ -1065,56 +1067,73 @@ func TestCalculateUpstreamCostUsesActualOpenAIServiceTierWhenExplicitTierReturne
 }
 
 func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing.T) {
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
-	})
-	if err != nil {
-		t.Fatalf("ResolveRequest returned error: %v", err)
-	}
-	actualTier := schemas.BifrostServiceTierDefault
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	if err := state.Adapter.EstimateHold(state); err != nil {
-		t.Fatalf("EstimateHold returned error: %v", err)
-	}
-	inputTokens, hasInputHold := tokenHoldCapacity(state, true)
-	if !hasInputHold || inputTokens <= 0 {
-		t.Fatalf("missing input-token authorization: %#v", state.Hold.Meters)
-	}
-	state.Signals = &StandardSignals{Prompt: inputTokens, ActualServiceTier: &actualTier}
-	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
-		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
-	}
-	input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-	if input == nil || input.RateUSD != "5" || input.Quantity != strconv.Itoa(inputTokens) {
-		t.Fatalf("expected downgraded standard input pricing, got %#v", state.FinalMeters)
-	}
-	actual := ExecutionDeployment(state)
-	if actual.ID != "openai-gpt-5.5-2026-04-23" {
-		t.Fatalf("actual deployment = %q, want standard", actual.ID)
-	}
+	for _, attemptCount := range []int{1, 2} {
+		t.Run(strconv.Itoa(attemptCount), func(t *testing.T) {
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST",
+				Path:   "/v1/chat/completions",
+				Body:   []byte(`{"model":"openai-gpt-5.5-2026-04-23-fast","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`),
+			})
+			if err != nil {
+				t.Fatalf("ResolveRequest returned error: %v", err)
+			}
+			actualTier := schemas.BifrostServiceTierDefault
+			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+			if err := state.Adapter.EstimateHold(state); err != nil {
+				t.Fatalf("EstimateHold returned error: %v", err)
+			}
+			inputTokens, hasInputHold := tokenHoldCapacity(state, true)
+			if !hasInputHold || inputTokens <= 0 {
+				t.Fatalf("missing input-token authorization: %#v", state.Hold.Meters)
+			}
+			state.Signals = &StandardSignals{Prompt: inputTokens, ActualServiceTier: &actualTier}
+			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+			}
+			input := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
+			if input == nil || input.RateUSD != "5" || input.Quantity != strconv.Itoa(inputTokens) {
+				t.Fatalf("expected downgraded standard input pricing, got %#v", state.FinalMeters)
+			}
+			actual := ExecutionDeployment(state)
+			if actual.ID != "openai-gpt-5.5-2026-04-23" {
+				t.Fatalf("actual deployment = %q, want standard", actual.ID)
+			}
 
-	authorizer := &fakeBillingAuthorizer{}
-	authorizedBilledCostUSD, err := billing.ParseUSD(state.Hold.EstimatedUpstreamCostUSD)
-	if err != nil {
-		t.Fatalf("invalid hold amount %q", state.Hold.EstimatedUpstreamCostUSD)
-	}
-	state.Authorization = &billing.Authorization{
-		AuthorizedBilledCostUSD: authorizedBilledCostUSD,
-		CreatedAt:               time.Now().UTC(),
-		ProviderKey:             "openai",
-		ProductKey:              resolution.Deployment.ID,
-		RequestID:               "fast-downgrade",
-	}
-	state.RequestType = string(schemas.ChatCompletionRequest)
-	state.StartedAt = time.Now().UTC()
-	FinalizeState(context.Background(), authorizer, state)
-	if len(authorizer.finalEvents) != 1 {
-		t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
-	}
-	if got := authorizer.finalEvents[0].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
-		t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
+			authorizer := &fakeBillingAuthorizer{}
+			authorizedBilledCostUSD, err := billing.ParseUSD(state.Hold.EstimatedUpstreamCostUSD)
+			if err != nil {
+				t.Fatalf("invalid hold amount %q", state.Hold.EstimatedUpstreamCostUSD)
+			}
+			state.Authorization = &billing.Authorization{
+				AuthorizedBilledCostUSD: authorizedBilledCostUSD,
+				CreatedAt:               time.Now().UTC(),
+				ProviderKey:             "openai",
+				ProductKey:              resolution.Deployment.ID,
+				RequestID:               "fast-downgrade",
+			}
+			state.RequestType = string(schemas.ChatCompletionRequest)
+			state.StartedAt = time.Now().UTC()
+			state.ProviderStartedAt = state.StartedAt
+			if attemptCount == 2 {
+				first := state.beginProviderAttempt(state.StartedAt)
+				state.finishProviderAttempt(first, state.StartedAt.Add(time.Millisecond), nil, &schemas.BifrostError{Error: &schemas.ErrorField{Message: "retry"}})
+				state.beginProviderAttempt(state.StartedAt.Add(2 * time.Millisecond))
+			}
+			FinalizeState(context.Background(), authorizer, state)
+			if len(authorizer.finalEvents) != 1 {
+				t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
+			}
+			if got := authorizer.finalEvents[0].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
+				t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
+			}
+			attempts := authorizer.finalEvents[0].ProviderAttempts
+			if len(attempts) != attemptCount || attempts[attemptCount-1].SelectedCatalogChainHash == nil || *attempts[attemptCount-1].SelectedCatalogChainHash != resolution.Deployment.ChainHash {
+				t.Fatalf("original Fast selection was lost: %#v", attempts)
+			}
+			if attemptCount == 2 && attempts[0].SelectedCatalogChainHash != nil {
+				t.Fatal("unchanged attempt repeated its selected chain")
+			}
+		})
 	}
 }
 
@@ -4074,4 +4093,31 @@ func mustMoney(value string) *money.USD {
 		panic(err)
 	}
 	return result
+}
+
+func tokenHoldCapacity(state *State, input bool) (int, bool) {
+	if state == nil || len(state.Hold.Meters) == 0 {
+		return 0, false
+	}
+	total := 0
+	found := false
+	for _, meter := range state.Hold.Meters {
+		if !meter.HoldRequired || input != isInputTokenMeter(meter.MeterKey) {
+			continue
+		}
+		if !input && !isOutputTokenMeter(meter.MeterKey) {
+			continue
+		}
+		quantity, err := strconv.Atoi(meter.Quantity)
+		if err != nil || quantity < 0 {
+			return 0, true
+		}
+		var ok bool
+		total, ok = addTokenCounts(total, quantity)
+		if !ok {
+			return 0, true
+		}
+		found = true
+	}
+	return total, found
 }

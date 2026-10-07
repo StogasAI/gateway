@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -33,18 +32,18 @@ func TestTinybirdRequiresAuthenticatedHybridTLS(t *testing.T) {
 			}
 			server.StartTLS()
 			defer server.Close()
-			client, err := NewTinybirdClient(server.URL, "fixture", false)
+			client, err := NewRequestLogClient(RequestLogConfig{TinybirdHost: server.URL, TinybirdToken: "fixture", AllowInsecurePrivateNetwork: false})
 			if err != nil {
 				t.Fatal(err)
 			}
-			transport := client.client.Transport.(*http.Transport)
+			transport := client.fallback.client.Transport.(*http.Transport)
 			defer transport.CloseIdleConnections()
 			if mode != "untrusted" {
 				roots := x509.NewCertPool()
 				roots.AddCert(server.Certificate())
 				transport.TLSClientConfig.RootCAs = roots
 			}
-			response, err := client.client.Get(server.URL)
+			response, err := client.fallback.client.Get(server.URL)
 			if response != nil {
 				response.Body.Close()
 			}
@@ -78,7 +77,7 @@ func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
 	}
 }
 
-func TestTokenUsageSurvivesOutboxAndAnalyticsProjection(t *testing.T) {
+func TestTokenUsageSurvivesSerializationAndAnalyticsProjection(t *testing.T) {
 	for _, quantity := range []*uint64{nil, new(uint64), func() *uint64 { n := uint64(1_000_000_000_000); return &n }()} {
 		event := testGatewayRequestEvent()
 		event.Meters = EventMeters{}
@@ -153,7 +152,7 @@ func TestNormalizeTinybirdHost(t *testing.T) {
 	}
 }
 
-func TestTinybirdClientRefusesRedirects(t *testing.T) {
+func TestRequestLogClientRefusesRedirects(t *testing.T) {
 	var redirectedRequests atomic.Int32
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		redirectedRequests.Add(1)
@@ -167,7 +166,7 @@ func TestTinybirdClientRefusesRedirects(t *testing.T) {
 	}))
 	defer server.Close()
 
-	err := newTestTinybirdClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
+	_, err := newTestRequestLogClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
 	if err == nil || !strings.Contains(err.Error(), "status 307") {
 		t.Fatalf("AppendGatewayRequest error = %v, want redirect status rejection", err)
 	}
@@ -183,8 +182,8 @@ func TestTinybirdAppendMicrobatchesConcurrentEvents(t *testing.T) {
 	var rows atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		if got := r.URL.Query().Get("name"); got != tinybirdGatewayRequestsDatasource {
-			t.Errorf("datasource = %q, want %q", got, tinybirdGatewayRequestsDatasource)
+		if got := r.URL.Query().Get("name"); got != "gateway_requests" {
+			t.Errorf("datasource = %q, want %q", got, "gateway_requests")
 		}
 		if got := r.URL.Query().Get("wait"); got != "true" {
 			t.Errorf("wait query = %q, want true", got)
@@ -217,7 +216,7 @@ func TestTinybirdAppendMicrobatchesConcurrentEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestTinybirdClient(t, server.URL)
+	client := newTestRequestLogClient(t, server.URL)
 	client.batchWindow = 100 * time.Millisecond
 
 	start := make(chan struct{})
@@ -230,7 +229,8 @@ func TestTinybirdAppendMicrobatchesConcurrentEvents(t *testing.T) {
 			<-start
 			event := testGatewayRequestEvent()
 			event.RequestID = fmt.Sprintf("request-%d", index)
-			errs <- client.AppendGatewayRequest(context.Background(), event)
+			_, err := client.AppendGatewayRequest(context.Background(), event)
+			errs <- err
 		}(i)
 	}
 	close(start)
@@ -258,7 +258,7 @@ func TestTinybirdBatchRequiresExactCommittedRowCount(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestTinybirdClient(t, server.URL)
+	client := newTestRequestLogClient(t, server.URL)
 	client.batchWindow = 100 * time.Millisecond
 
 	start := make(chan struct{})
@@ -271,7 +271,8 @@ func TestTinybirdBatchRequiresExactCommittedRowCount(t *testing.T) {
 			<-start
 			event := testGatewayRequestEvent()
 			event.RequestID = fmt.Sprintf("request-%d", index)
-			errs <- client.AppendGatewayRequest(context.Background(), event)
+			_, err := client.AppendGatewayRequest(context.Background(), event)
+			errs <- err
 		}(i)
 	}
 	close(start)
@@ -279,7 +280,7 @@ func TestTinybirdBatchRequiresExactCommittedRowCount(t *testing.T) {
 	close(errs)
 
 	for err := range errs {
-		if err == nil || !strings.Contains(err.Error(), "expected_rows=3 successful_rows=2") {
+		if err == nil || !strings.Contains(err.Error(), "did not commit every request log row") {
 			t.Fatalf("AppendGatewayRequest error = %v, want exact batch acknowledgement failure", err)
 		}
 	}
@@ -299,111 +300,32 @@ func TestTinybirdCircuitSkipsRequestsUntilTheProbeWindow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestTinybirdClient(t, server.URL)
-	client.circuitOpenDuration = time.Hour
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
+	client := newTestRequestLogClient(t, server.URL)
+	client.fallback.circuitOpenDuration = time.Hour
+	if _, err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
 		t.Fatal("first Tinybird failure did not open the circuit")
 	}
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil ||
+	if _, err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil ||
 		!strings.Contains(err.Error(), "circuit is open") {
 		t.Fatalf("second Tinybird append error = %v, want open circuit", err)
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("Tinybird requests while circuit open = %d, want 1 initial request", got)
 	}
-	if diagnostics := client.Diagnostics(); !diagnostics.CircuitOpen || diagnostics.ShortCircuits != 1 {
+	if diagnostics := client.Diagnostics(); !diagnostics.Fallback.CircuitOpen || diagnostics.Fallback.ShortCircuits != 1 {
 		t.Fatalf("Tinybird circuit diagnostics = %#v", diagnostics)
 	}
 
-	client.circuitOpenUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	client.fallback.circuitOpenUntil.Store(time.Now().Add(-time.Second).UnixNano())
 	fail.Store(false)
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err != nil {
+	if _, err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err != nil {
 		t.Fatalf("Tinybird recovery probe returned error: %v", err)
 	}
 	if got := requests.Load(); got != 2 {
 		t.Fatalf("Tinybird requests after recovery probe = %d, want 2", got)
 	}
-	if diagnostics := client.Diagnostics(); diagnostics.CircuitOpen {
+	if diagnostics := client.Diagnostics(); diagnostics.Fallback.CircuitOpen {
 		t.Fatalf("Tinybird circuit remained open after recovery: %#v", diagnostics)
-	}
-}
-
-func TestTinybirdCircuitAllowsOneRecoveryProbe(t *testing.T) {
-	var requests atomic.Int32
-	probeStarted := make(chan struct{})
-	releaseProbe := make(chan struct{})
-	var releaseOnce sync.Once
-	release := func() {
-		releaseOnce.Do(func() { close(releaseProbe) })
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		switch requests.Add(1) {
-		case 1:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		case 2:
-			close(probeStarted)
-			<-releaseProbe
-			_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-		default:
-			_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-		}
-	}))
-	defer server.Close()
-	defer release()
-
-	client := newTestTinybirdClient(t, server.URL)
-	client.circuitOpenDuration = time.Hour
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
-		t.Fatal("first Tinybird failure did not open the circuit")
-	}
-	client.circuitOpenUntil.Store(time.Now().Add(-time.Second).UnixNano())
-
-	probeResult := make(chan error, 1)
-	go func() {
-		probeResult <- client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
-	}()
-	select {
-	case <-probeStarted:
-	case <-time.After(time.Second):
-		t.Fatal("Tinybird recovery probe did not start")
-	}
-	retryResult := make(chan error, 1)
-	go func() {
-		event := testGatewayRequestEvent()
-		event.RequestID = "retry-rescue"
-		retryResult <- client.appendGatewayRequestAfterRetry(context.Background(), event)
-	}()
-	deadline := time.Now().Add(time.Second)
-	for client.Diagnostics().QueueDepth != 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if client.Diagnostics().QueueDepth != 1 {
-		t.Fatal("retry rescue did not join the active recovery probe")
-	}
-
-	const followers = 31
-	for range followers {
-		if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); !errors.Is(err, errTinybirdCircuitOpen) {
-			t.Fatalf("concurrent recovery request error = %v, want open circuit", err)
-		}
-	}
-	if diagnostics := client.Diagnostics(); !diagnostics.CircuitOpen || !diagnostics.CircuitProbe {
-		t.Fatalf("Tinybird probe diagnostics = %#v", diagnostics)
-	}
-
-	release()
-	if err := <-probeResult; err != nil {
-		t.Fatalf("Tinybird recovery probe returned error: %v", err)
-	}
-	if err := <-retryResult; err != nil {
-		t.Fatalf("Tinybird retry rescue after recovery returned error: %v", err)
-	}
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err != nil {
-		t.Fatalf("Tinybird append after recovery returned error: %v", err)
-	}
-	if got := requests.Load(); got != 4 {
-		t.Fatalf("Tinybird requests = %d, want initial failure, one probe, one retry rescue, and one recovered append", got)
 	}
 }
 
@@ -430,7 +352,7 @@ func TestTinybirdCallerCancellationDoesNotCancelSharedBatch(t *testing.T) {
 	defer server.Close()
 	defer release()
 
-	client := newTestTinybirdClient(t, server.URL)
+	client := newTestRequestLogClient(t, server.URL)
 	client.batchWindow = 100 * time.Millisecond
 
 	cancelledCtx, cancel := context.WithCancel(context.Background())
@@ -440,13 +362,15 @@ func TestTinybirdCallerCancellationDoesNotCancelSharedBatch(t *testing.T) {
 	start := make(chan struct{})
 	go func() {
 		<-start
-		cancelledResult <- client.AppendGatewayRequest(cancelledCtx, testGatewayRequestEvent())
+		_, err := client.AppendGatewayRequest(cancelledCtx, testGatewayRequestEvent())
+		cancelledResult <- err
 	}()
 	go func() {
 		<-start
 		event := testGatewayRequestEvent()
 		event.RequestID = "request-2"
-		committedResult <- client.AppendGatewayRequest(context.Background(), event)
+		_, err := client.AppendGatewayRequest(context.Background(), event)
+		committedResult <- err
 	}()
 	close(start)
 
@@ -471,7 +395,7 @@ func TestTinybirdBatchDispatchDoesNotExceedFleetRequestBudget(t *testing.T) {
 		fleetNodes             = 8
 		datasourceRequestLimit = 100
 	)
-	perNodeRollingSecond := int(time.Second/tinybirdMinRequestInterval) + 1
+	perNodeRollingSecond := int(time.Second/requestLogMinRequestInterval) + 1
 	if requestsPerSecond := perNodeRollingSecond * fleetNodes; requestsPerSecond >= datasourceRequestLimit {
 		t.Fatalf(
 			"fleet request budget = %d requests/second, want below %d",
@@ -490,7 +414,7 @@ func TestTinybirdBatchDispatchDoesNotExceedFleetRequestBudget(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestTinybirdClient(t, server.URL)
+	client := newTestRequestLogClient(t, server.URL)
 	client.batchWindow = time.Millisecond
 	client.minRequestInterval = 30 * time.Millisecond
 	client.maxBatchRows = 1
@@ -505,7 +429,8 @@ func TestTinybirdBatchDispatchDoesNotExceedFleetRequestBudget(t *testing.T) {
 			<-start
 			event := testGatewayRequestEvent()
 			event.RequestID = fmt.Sprintf("request-%d", index)
-			errs <- client.AppendGatewayRequest(context.Background(), event)
+			_, err := client.AppendGatewayRequest(context.Background(), event)
+			errs <- err
 		}(i)
 	}
 	close(start)
@@ -538,12 +463,12 @@ func TestTinybirdAppendRejectsOversizedEventBeforeAdmission(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestTinybirdClient(t, server.URL)
+	client := newTestRequestLogClient(t, server.URL)
 	event := testGatewayRequestEvent()
-	event.Meters = EventMeters{"oversized": PricedMeter("1", strings.Repeat("x", tinybirdMaxEventBytes), "1", "1")}
+	event.Meters = EventMeters{"oversized": PricedMeter("1", strings.Repeat("x", requestLogMaxEventBytes), "1", "1")}
 
-	err := client.AppendGatewayRequest(context.Background(), event)
-	if err == nil || !strings.Contains(err.Error(), "encoded event") {
+	_, err := client.AppendGatewayRequest(context.Background(), event)
+	if err == nil || !strings.Contains(err.Error(), "request log is") {
 		t.Fatalf("AppendGatewayRequest error = %v, want encoded event size rejection", err)
 	}
 	if got := requests.Load(); got != 0 {
@@ -559,19 +484,19 @@ func TestTinybirdCloseFlushesPendingBatchAndRejectsNewEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewTinybirdClient(server.URL, "gateway-requests-token", false)
+	client, err := NewRequestLogClient(RequestLogConfig{TinybirdHost: server.URL, TinybirdToken: "gateway-requests-token", AllowInsecurePrivateNetwork: false})
 	if err != nil {
-		t.Fatalf("NewTinybirdClient returned error: %v", err)
+		t.Fatalf("NewRequestLogClient returned error: %v", err)
 	}
 	client.batchWindow = time.Hour
 
-	line, err := json.Marshal(tinybirdGatewayRequestEvent(testGatewayRequestEvent()))
+	line, err := json.Marshal(testGatewayRequestEvent())
 	if err != nil {
 		t.Fatalf("marshal Tinybird event: %v", err)
 	}
-	appendRequest := tinybirdAppendRequest{
+	appendRequest := requestLogAppendRequest{
 		line:   append(line, '\n'),
-		result: make(chan error, 1),
+		result: make(chan logDelivery, 1),
 	}
 	client.startOnce.Do(func() {
 		client.workerWG.Add(1)
@@ -585,20 +510,20 @@ func TestTinybirdCloseFlushesPendingBatchAndRejectsNewEvents(t *testing.T) {
 	default:
 		t.Fatal("Close did not flush the pending Tinybird batch")
 	}
-	if err := <-appendRequest.result; err != nil {
-		t.Fatalf("pending AppendGatewayRequest returned error: %v", err)
+	if result := <-appendRequest.result; result.err != nil {
+		t.Fatalf("pending AppendGatewayRequest returned error: %v", result.err)
 	}
-	if err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil ||
+	if _, err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil ||
 		!strings.Contains(err.Error(), "client is closed") {
 		t.Fatalf("AppendGatewayRequest after Close error = %v, want closed client error", err)
 	}
 }
 
-func newTestTinybirdClient(t *testing.T, host string) *TinybirdClient {
+func newTestRequestLogClient(t *testing.T, host string) *RequestLogClient {
 	t.Helper()
-	client, err := NewTinybirdClient(host, "gateway-requests-token", false)
+	client, err := NewRequestLogClient(RequestLogConfig{TinybirdHost: host, TinybirdToken: "gateway-requests-token", AllowInsecurePrivateNetwork: false})
 	if err != nil {
-		t.Fatalf("NewTinybirdClient returned error: %v", err)
+		t.Fatalf("NewRequestLogClient returned error: %v", err)
 	}
 	client.batchWindow = time.Millisecond
 	client.minRequestInterval = time.Millisecond
@@ -606,7 +531,7 @@ func newTestTinybirdClient(t *testing.T, host string) *TinybirdClient {
 	return client
 }
 
-func TestPolicyVersionsSurviveOutboxAndTinybirdEncoding(t *testing.T) {
+func TestPolicyVersionsSurviveSerializationAndTinybirdEncoding(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.PolicyVersions = &PolicyVersions{{Scope: "organization", ID: "org", Revision: 3}, {Scope: "grant", ID: "grant", Revision: 4}, {Scope: "key", ID: "key", Revision: 8}}
 	encoded, err := json.Marshal(event)

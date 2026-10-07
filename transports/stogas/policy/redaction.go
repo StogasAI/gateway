@@ -3,9 +3,9 @@ package policy
 import "github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 
 func CompileRedaction(config *Config) (*redaction.Policy, error) {
-	if config != nil && len(config.RedactionSources) > 0 {
-		parts := make([]*redaction.Policy, 0, len(config.RedactionSources))
-		for _, plugins := range config.RedactionSources {
+	if config != nil && len(config.PluginSources) > 0 {
+		parts := make([]*redaction.Policy, 0, len(config.PluginSources))
+		for _, plugins := range config.PluginSources {
 			part, err := CompileRedaction(&Config{Plugins: plugins})
 			if err != nil {
 				return nil, err

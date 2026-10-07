@@ -31,24 +31,36 @@ func TestCatalogArtifactRecoveryValidatesBytesAndFixedPaths(t *testing.T) {
 	}))
 	defer replica.Close()
 	e := fixtureEvidence(t, fixture, primary.URL, replica.URL)
-	got, err := e.artifact(t.Context(), digest, int64(len(payload)))
+	got, err := e.artifact(t.Context(), digest, int64(len(payload)), 100)
 	if err != nil || string(got) != string(payload) || primaryReads.Load() != 1 || replicaReads.Load() != 1 {
 		t.Fatalf("replica recovery: %s %v", got, err)
 	}
 	for _, bad := range []string{"https://other.test", "sha256:../secret", "sha256:" + strings.ToUpper(digest[7:]), digest + "0"} {
-		if _, err := e.artifact(t.Context(), bad, 100); err == nil {
+		if _, err := e.artifact(t.Context(), bad, int64(len(payload)), 100); err == nil {
 			t.Fatalf("accepted digest %q", bad)
 		}
 	}
 	if primaryReads.Load() != 1 || replicaReads.Load() != 1 {
 		t.Fatal("invalid digest caused network work")
 	}
-	if _, err := e.artifact(t.Context(), digest, int64(len(payload)-1)); err == nil {
+	if _, err := e.artifact(t.Context(), digest, int64(len(payload)-1), 100); err == nil {
 		t.Fatal("accepted oversized decoded artifact")
+	}
+	if _, err := e.artifact(t.Context(), digest, int64(len(payload)+1), 100); err == nil {
+		t.Fatal("accepted artifact shorter than its signed size")
+	}
+	reads := primaryReads.Load() + replicaReads.Load()
+	for _, size := range []int64{0, -1, 101} {
+		if _, err := e.artifact(t.Context(), digest, size, 100); err == nil {
+			t.Fatal("accepted invalid approved size")
+		}
+	}
+	if reads != primaryReads.Load()+replicaReads.Load() {
+		t.Fatal("invalid approved size caused network work")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := e.artifact(ctx, digest, 100); err == nil {
+	if _, err := e.artifact(ctx, digest, int64(len(payload)), 100); err == nil {
 		t.Fatal("ignored cancellation")
 	}
 }

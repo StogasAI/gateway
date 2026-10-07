@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,7 +15,7 @@ const (
 	rejectionLogCapacity        = 4096
 	rejectionLogPerKeyCapacity  = 32
 	rejectionLogBatchSize       = 256
-	rejectionLogDeliveryTimeout = 15 * time.Second
+	rejectionLogDeliveryTimeout = requestLogAppendWaitTimeout
 )
 
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
@@ -61,16 +61,17 @@ type rejectionLogGroup struct {
 }
 
 type rejectionLogBuffer struct {
-	mu            sync.Mutex
-	groups        map[rejectionLogKey]*rejectionLogGroup
-	perKey        map[string]int
-	pending       []RequestEvent
-	pendingAt     time.Time
-	pendingGroups int
-	diagnostics   RejectionLogDiagnostics
-	stop          chan struct{}
-	done          chan struct{}
-	closed        bool
+	deliveryBlocked atomic.Bool
+	mu              sync.Mutex
+	groups          map[rejectionLogKey]*rejectionLogGroup
+	perKey          map[string]int
+	pending         []RequestEvent
+	pendingAt       time.Time
+	pendingGroups   int
+	diagnostics     RejectionLogDiagnostics
+	stop            chan struct{}
+	done            chan struct{}
+	closed          bool
 }
 
 func (s *Service) RecordRejection(input RejectionInput) {
@@ -236,6 +237,11 @@ func (s *Service) runRejectionLogs() {
 		for {
 			batch := b.nextBatch(time.Now(), closing)
 			if len(batch) == 0 {
+				b.mu.Lock()
+				if len(b.groups) == 0 && len(b.pending) == 0 {
+					b.deliveryBlocked.Store(false)
+				}
+				b.mu.Unlock()
 				break
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), rejectionLogDeliveryTimeout)
@@ -250,6 +256,7 @@ func (s *Service) runRejectionLogs() {
 				b.pendingAt, b.pendingGroups = time.Time{}, 0
 			} else {
 				b.diagnostics.DeliveryFailures++
+				b.deliveryBlocked.Store(true)
 			}
 			b.mu.Unlock()
 			if err != nil {
@@ -289,16 +296,5 @@ func (s *Service) closeRejectionLogs() {
 }
 
 func (s *Service) deliverRejectionLogs(ctx context.Context, events []RequestEvent) error {
-	if s.tinybird != nil && s.tinybird.appendGatewayRequests(ctx, events) == nil {
-		return nil
-	}
-	if s.db == nil || s.rejectionOutboxQuery == "" {
-		return errors.New("request rejection delivery is unavailable")
-	}
-	payload, err := json.Marshal(events)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.pool.Exec(ctx, s.rejectionOutboxQuery, string(payload))
-	return err
+	return s.requestLogs.appendGatewayRequests(ctx, events)
 }

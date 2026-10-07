@@ -29,7 +29,7 @@ func BenchmarkAPIKeyAdmission(b *testing.B) {
 			case "invalid-mac":
 				s.apiKeyPepper = "different-pepper"
 			case "blocked-caller":
-				s.rejections.record("org:"+claims.OrganizationID, time.Now().Add(time.Hour))
+				s.callerFailures.record("key:"+claims.KeyID, time.Now().Add(time.Hour))
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -236,7 +236,7 @@ func TestAuthorizationActivityTracksBurstAndReleasesOnce(t *testing.T) {
 }
 
 func TestCallerFailuresBackOffDecayAndDoNotExtendOnLookup(t *testing.T) {
-	var cache authorizationRejectionCache
+	var cache callerFailureCache
 	now := time.Unix(1_700_000_000, 0)
 	for i := range 16 {
 		cache.record("key", now)
@@ -284,31 +284,31 @@ func TestRequestSuccessEndsOnlyEarlierFailureStreaks(t *testing.T) {
 	service := &Service{}
 	dashboard := &DashboardCredential{ActorUserID: "actor", SessionID: "session"}
 	now := time.Unix(1_700_000_000, 0)
-	identities := []string{"key:key", "org:org", dashboardAdmissionKey(dashboard)}
+	identities := []string{"key:key", dashboardAdmissionKey(dashboard)}
 	for _, identity := range identities {
 		for range 8 {
-			service.rejections.record(identity, now)
+			service.callerFailures.record(identity, now)
 		}
 	}
-	service.recordRequestSuccess("key", "org", dashboardAdmissionKey(dashboard), now.Add(-time.Second))
+	service.recordRequestSuccess("key", dashboardAdmissionKey(dashboard), now.Add(-time.Second))
 	for _, identity := range identities {
-		if service.rejections.get(identity, now) != 2*time.Second {
+		if service.callerFailures.get(identity, now) != 2*time.Second {
 			t.Fatal("an older in-flight success erased a newer failure")
 		}
 	}
-	service.recordRequestSuccess("key", "org", dashboardAdmissionKey(dashboard), now.Add(3*time.Second))
+	service.recordRequestSuccess("key", dashboardAdmissionKey(dashboard), now.Add(3*time.Second))
 	for _, identity := range identities {
-		if service.rejections.get(identity, now) != 0 {
+		if service.callerFailures.get(identity, now) != 0 {
 			t.Fatal("success retained an earlier cooldown")
 		}
-		service.rejections.record(identity, now.Add(4*time.Second))
-		if service.rejections.get(identity, now.Add(4*time.Second)) != 25*time.Millisecond {
+		service.callerFailures.record(identity, now.Add(4*time.Second))
+		if service.callerFailures.get(identity, now.Add(4*time.Second)) != 25*time.Millisecond {
 			t.Fatal("isolated failures accumulated across a success")
 		}
 	}
 }
 
-func TestCallerFailuresAreIndependentByKeyOrganizationAndDashboard(t *testing.T) {
+func TestCallerFailuresIsolateSiblingKeysAndDashboardActors(t *testing.T) {
 	service := &Service{}
 	claims := &APIKeyClaims{KeyID: "key-a", OrganizationID: "org-a"}
 	service.RecordCallerFailure(claims, nil, 402, "insufficient_balance")
@@ -318,7 +318,7 @@ func TestCallerFailuresAreIndependentByKeyOrganizationAndDashboard(t *testing.T)
 		blocked bool
 	}{
 		{claims, true},
-		{&APIKeyClaims{KeyID: "key-b", OrganizationID: "org-a"}, true},
+		{&APIKeyClaims{KeyID: "key-b", OrganizationID: "org-a"}, false},
 		{&APIKeyClaims{KeyID: "key-a", OrganizationID: "org-b"}, true},
 		{&APIKeyClaims{KeyID: "key-b", OrganizationID: "org-b"}, false},
 	} {
@@ -358,7 +358,7 @@ func TestTerminalProviderFailuresBackOffWithoutRelabelingTheEvent(t *testing.T) 
 	}
 	a.admissionStartedAt = time.Now().Add(time.Second)
 	s.recordRequestOutcome(a, success)
-	if s.callerBackoff(claims, nil, time.Now()) != nil || s.rejections.get("dashboard:test", time.Now()) != 0 {
+	if s.callerBackoff(claims, nil, time.Now()) != nil || s.callerFailures.get("dashboard:test", time.Now()) != 0 {
 		t.Fatal("successful probe did not restore admission")
 	}
 	event.Cancelled = true

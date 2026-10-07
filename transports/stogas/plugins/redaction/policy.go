@@ -56,6 +56,11 @@ type Policy struct {
 	literals     []literalSelection
 }
 
+// Enabled reports whether this policy inspects provider-bound text.
+func (p *Policy) Enabled() bool {
+	return p != nil && (p.entities != 0 || len(p.custom) != 0 || len(p.literals) != 0)
+}
+
 type entityMask uint64
 
 var (

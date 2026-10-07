@@ -18,38 +18,40 @@ const (
 )
 
 type EventInput struct {
-	PolicyVersions         *PolicyVersions
-	UpstreamCostUSD        string
-	Authorization          *Authorization
-	Cancelled              bool
-	ClientStoppedAt        time.Time
-	CatalogVersion         uint64
-	CatalogChainHash       string
-	Error                  *schemas.BifrostError
-	Meters                 EventMeters
-	Plugins                plugins.Metrics
-	ProviderAttempts       []ProviderAttemptInput
-	ProviderCompletedAt    time.Time
-	ProviderStartedAt      time.Time
-	TTFTMS                 *uint32
-	ProviderOutputObserved bool
-	CacheReadSavingsUSD    *string
-	CacheWriteOverheadUSD  *string
-	NodeID                 string
-	GatewayVersion         string
-	RequestType            string
-	Response               *schemas.BifrostResponse
-	StartedAt              time.Time
+	PolicyVersions           *PolicyVersions
+	UpstreamCostUSD          string
+	Authorization            *Authorization
+	Cancelled                bool
+	ClientStoppedAt          time.Time
+	CatalogVersion           uint64
+	CatalogChainHash         string
+	SelectedCatalogChainHash string
+	Error                    *schemas.BifrostError
+	Meters                   EventMeters
+	Plugins                  plugins.Metrics
+	ProviderAttempts         []ProviderAttemptInput
+	ProviderCompletedAt      time.Time
+	ProviderStartedAt        time.Time
+	TTFTMS                   *uint32
+	ProviderOutputObserved   bool
+	CacheReadSavingsUSD      *string
+	CacheWriteOverheadUSD    *string
+	NodeID                   string
+	GatewayVersion           string
+	RequestType              string
+	Response                 *schemas.BifrostResponse
+	StartedAt                time.Time
 }
 
 type ProviderAttemptInput struct {
-	CatalogChainHash string
-	Provider         string
-	StartedAt        time.Time
-	CompletedAt      time.Time
-	OutputObserved   bool
-	Response         *schemas.BifrostResponse
-	Error            *schemas.BifrostError
+	CatalogChainHash         string
+	SelectedCatalogChainHash string
+	Provider                 string
+	StartedAt                time.Time
+	CompletedAt              time.Time
+	OutputObserved           bool
+	Response                 *schemas.BifrostResponse
+	Error                    *schemas.BifrostError
 }
 
 func NewRequestEvent(input EventInput) (RequestEvent, error) {
@@ -124,6 +126,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		return RequestEvent{}, err
 	}
 	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
+	providerStartMS, providerMS := requestProviderTiming(input, startedAt, finishedAt, totalTimeMS)
 
 	return RequestEvent{
 		SchemaVersion:        RequestLogSchemaVersion,
@@ -144,9 +147,10 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		ProviderAttempts:     providerAttempts,
 		NodeID:               strings.ToLower(strings.TrimSpace(input.NodeID)),
 		Performance: RequestPerformance{
-			TotalMS:    totalTimeMS,
-			ProviderMS: requestProviderDuration(input, startedAt, finishedAt, totalTimeMS),
-			TTFTMS:     ttftMS,
+			TotalMS:         totalTimeMS,
+			ProviderMS:      providerMS,
+			ProviderStartMS: providerStartMS,
+			TTFTMS:          ttftMS,
 		},
 		UpstreamCostUSD:       upstreamCostUSD.String(),
 		BilledCostUSD:         billedCostUSD.String(),
@@ -173,9 +177,9 @@ func optionalString(value string) *string {
 	return &value
 }
 
-func requestProviderDuration(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) uint32 {
+func requestProviderTiming(input EventInput, startedAt time.Time, finishedAt time.Time, totalTimeMS uint32) (*uint32, uint32) {
 	if input.ProviderStartedAt.IsZero() || input.ProviderStartedAt.Before(startedAt) {
-		return 0
+		return nil, 0
 	}
 
 	admissionMS := min(uint32Duration(input.ProviderStartedAt.Sub(startedAt)), totalTimeMS)
@@ -183,7 +187,7 @@ func requestProviderDuration(input EventInput, startedAt time.Time, finishedAt t
 	if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
 		providerCompletedAt = finishedAt
 	}
-	return min(
+	return &admissionMS, min(
 		uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt)),
 		totalTimeMS-admissionMS,
 	)
@@ -195,15 +199,16 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 			return []ProviderAttempt{}
 		}
 		return []ProviderAttempt{{
-			Provider:          authorization.ProviderKey,
-			CatalogChainHash:  optionalString(input.CatalogChainHash),
-			Status:            providerAttemptStatus(input.Error, input.Response),
-			StatusCode:        providerStatusCode(input.Error),
-			LatencyMS:         fallbackLatencyMS,
-			OutputObserved:    input.ProviderOutputObserved,
-			ProviderRequestID: upstreamRequestID(input.Response),
-			FinishReason:      finishReason(input.Response),
-			UpstreamByok:      loggedCredentialID(authorization),
+			Provider:                 authorization.ProviderKey,
+			CatalogChainHash:         optionalString(input.CatalogChainHash),
+			SelectedCatalogChainHash: changedCatalogSelection(input.SelectedCatalogChainHash, input.CatalogChainHash),
+			Status:                   providerAttemptStatus(input.Error, input.Response),
+			StatusCode:               providerStatusCode(input.Error),
+			LatencyMS:                fallbackLatencyMS,
+			OutputObserved:           input.ProviderOutputObserved,
+			ProviderRequestID:        upstreamRequestID(input.Response),
+			FinishReason:             finishReason(input.Response),
+			UpstreamByok:             loggedCredentialID(authorization),
 		}}
 	}
 
@@ -214,18 +219,26 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 			provider = authorization.ProviderKey
 		}
 		attempts[index] = ProviderAttempt{
-			Provider:          provider,
-			CatalogChainHash:  optionalString(observed.CatalogChainHash),
-			Status:            providerAttemptStatus(observed.Error, observed.Response),
-			StatusCode:        providerStatusCode(observed.Error),
-			LatencyMS:         uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
-			OutputObserved:    observed.OutputObserved,
-			ProviderRequestID: upstreamRequestID(observed.Response),
-			FinishReason:      finishReason(observed.Response),
-			UpstreamByok:      loggedCredentialID(authorization),
+			Provider:                 provider,
+			CatalogChainHash:         optionalString(observed.CatalogChainHash),
+			SelectedCatalogChainHash: changedCatalogSelection(observed.SelectedCatalogChainHash, observed.CatalogChainHash),
+			Status:                   providerAttemptStatus(observed.Error, observed.Response),
+			StatusCode:               providerStatusCode(observed.Error),
+			LatencyMS:                uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
+			OutputObserved:           observed.OutputObserved,
+			ProviderRequestID:        upstreamRequestID(observed.Response),
+			FinishReason:             finishReason(observed.Response),
+			UpstreamByok:             loggedCredentialID(authorization),
 		}
 	}
 	return attempts
+}
+
+func changedCatalogSelection(selected, settled string) *string {
+	if selected == settled {
+		return nil
+	}
+	return optionalString(selected)
 }
 
 func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse) string {
@@ -509,7 +522,7 @@ func PricedMeter(quantity, rateKey, rateUSD, usd string) EventMeter {
 // IsInformationalMeter identifies quantities that never carry prices.
 func IsInformationalMeter(key string) bool {
 	switch key {
-	case MeterInputTextBytes, MeterEstimatedInputTokens, MeterTotalInputTokens, MeterTotalOutputTokens, MeterTotalTokens, MeterTotalCacheWriteTokens, MeterHostedToolCalls, MeterClientToolCalls:
+	case MeterInputTextBytes, MeterInputFileCount, MeterInputFileURLCount, MeterInputInlineFileBytes, MeterOutputTextBytes, MeterReasoningTextBytes, MeterEstimatedInputTokens, MeterTotalInputTokens, MeterTotalOutputTokens, MeterTotalTokens, MeterTotalCacheWriteTokens, MeterHostedToolCalls, MeterClientToolCalls:
 		return true
 	default:
 		return false

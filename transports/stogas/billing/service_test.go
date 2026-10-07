@@ -7,14 +7,10 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -208,8 +204,8 @@ func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 		if _, err := encodeGatewayRequestEvent(event); err == nil {
 			t.Fatalf("encoded unsupported version %d", version)
 		}
-		client := &TinybirdClient{}
-		if _, err := client.enqueueGatewayRequest(event, false); err == nil {
+		client := &RequestLogClient{}
+		if _, err := client.enqueueGatewayRequest(event); err == nil {
 			t.Fatalf("enqueued unsupported version %d", version)
 		}
 	}
@@ -241,7 +237,7 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 	}
 	projected := tinybirdGatewayRequestEvent(decoded)
 	if projected.CatalogVersion == nil || *projected.CatalogVersion != 39 || projected.CatalogChainHash == nil || *projected.CatalogChainHash != *event.CatalogChainHash {
-		t.Fatalf("outbox projection lost the historical catalog identity: %#v", projected)
+		t.Fatalf("request log projection lost the historical catalog identity: %#v", projected)
 	}
 	if projected.SchemaVersion != RequestLogSchemaVersion || projected.RequestID != event.RequestID ||
 		projected.AnalyticsInputTokens == nil || *projected.AnalyticsInputTokens != 317 ||
@@ -475,6 +471,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.Performance.TotalMS < 90 {
 		t.Fatalf("total time should begin at request admission, got %dms", event.Performance.TotalMS)
 	}
+	if event.Performance.ProviderStartMS == nil || *event.Performance.ProviderStartMS != 40 {
+		t.Fatalf("provider start must share the request clock: %#v", event.Performance)
+	}
 	providerTime := event.ProviderAttempts[0].LatencyMS
 	if providerTime < 35 || providerTime > 45 {
 		t.Fatalf("provider time should end at observed provider completion, got %dms", providerTime)
@@ -515,6 +514,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	}
 	if event.Performance.ProviderMS != 0 {
 		t.Fatalf("a request never dispatched must not record provider time: %#v", event.Performance)
+	}
+	if event.Performance.ProviderStartMS != nil {
+		t.Fatalf("a request never dispatched must not have a provider start: %#v", event.Performance)
 	}
 	if payload := tinybirdGatewayRequestEvent(event); payload.ProviderAttempts != "[]" || len(payload.AnalyticsProviders) != 0 || payload.AnalyticsProviderStatus != "" {
 		t.Fatalf("pre-provider analytics projection is not empty: %#v", payload)
@@ -705,94 +707,9 @@ func mustNewRequestEvent(t testing.TB, input EventInput) RequestEvent {
 	return event
 }
 
-func TestPublishUncommittedFallbackSendsFinalRequestLog(t *testing.T) {
-	var captured tinybirdGatewayRequestEventPayload
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("wait"); got != "true" {
-			t.Fatalf("wait query = %q, want true", got)
-		}
-		if got := r.Header.Get("authorization"); got != "Bearer gateway-requests-token" {
-			t.Fatalf("authorization header = %q", got)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
-			t.Fatalf("failed to decode Tinybird payload: %v", err)
-		}
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	service := &Service{tinybird: newTestTinybirdClient(t, server.URL)}
-	service.publishUncommittedFallback(
-		&Authorization{RequestID: "request-1"},
-		RequestEvent{
-			SchemaVersion:   RequestLogSchemaVersion,
-			RequestID:       "request-1",
-			UpstreamCostUSD: ZeroChargeUSD,
-			BilledCostUSD:   ZeroChargeUSD,
-		},
-	)
-
-	if captured.RequestID != "request-1" {
-		t.Fatalf("request_id = %q, want request-1", captured.RequestID)
-	}
-	if captured.Error != "null" || captured.AnalyticsErrorCode != "" || captured.AnalyticsErrorStatus != nil {
-		t.Fatalf("unexpected error: %#v", captured)
-	}
-}
-
-func TestRetrySettleExhaustionPublishesFinalTinybirdFallback(t *testing.T) {
-	var captured tinybirdGatewayRequestEventPayload
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
-			t.Fatalf("failed to decode Tinybird payload: %v", err)
-		}
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	attempts := 0
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			attempts++
-			return errors.New("simulated postgres outage")
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	event := RequestEvent{
-		SchemaVersion:   RequestLogSchemaVersion,
-		RequestID:       "request-1",
-		UpstreamCostUSD: ZeroChargeUSD,
-		BilledCostUSD:   ZeroChargeUSD,
-	}
-	payload, err := encodeGatewayRequestEvent(event)
-	if err != nil {
-		t.Fatalf("encode fallback event: %v", err)
-	}
-	service.retrySettle(
-		&Authorization{RequestID: "request-1"},
-		"params",
-		ZeroChargeUSD,
-		payload,
-		true,
-	)
-
-	if attempts == 0 {
-		t.Fatal("expected settlement retry attempts")
-	}
-	if captured.RequestID != "request-1" {
-		t.Fatalf("fallback request_id = %q, want request-1", captured.RequestID)
-	}
-	if captured.HoldParamsHash != "params" {
-		t.Fatalf("fallback hold_params_hash = %q, want params", captured.HoldParamsHash)
-	}
-}
-
 func TestEncodeGatewayRequestEventRejectsOversizedPayload(t *testing.T) {
 	event := testGatewayRequestEvent()
-	event.GatewayVersion = strings.Repeat("v", tinybirdMaxEventBytes)
+	event.GatewayVersion = strings.Repeat("v", requestLogMaxEventBytes)
 	if _, err := encodeGatewayRequestEvent(event); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("oversized gateway request event error = %v, want bounded-payload rejection", err)
 	}
@@ -808,16 +725,16 @@ func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {
 		{
 			name:            "Chat Completions",
 			requestLifetime: GatewayRequestLifetime,
-			want:            now.Add(70 * time.Minute),
+			want:            now.Add(80 * time.Minute),
 		},
 		{
 			name:            "Responses",
 			requestLifetime: GatewayRequestLifetime,
-			want:            now.Add(70 * time.Minute),
+			want:            now.Add(80 * time.Minute),
 		},
 		{
 			name: "unspecified route uses the maximum",
-			want: now.Add(70 * time.Minute),
+			want: now.Add(80 * time.Minute),
 		},
 	}
 
@@ -827,195 +744,6 @@ func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {
 				t.Fatalf("request hold expiry = %s, want %s", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestFinalizeRequestSelectsTinybirdFirstSettlementMode(t *testing.T) {
-	tests := []struct {
-		name             string
-		handler          http.HandlerFunc
-		tinybird         func(*httptest.Server) *TinybirdClient
-		wantOutbox       bool
-		wantRequests     int
-		skipRequestCount bool
-	}{
-		{
-			name: "committed row skips outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-			},
-			wantOutbox:   false,
-			wantRequests: 1,
-		},
-		{
-			name: "async acceptance falls back to outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusAccepted)
-			},
-			wantOutbox:   true,
-			wantRequests: 1,
-		},
-		{
-			name: "rate limit falls back to outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusTooManyRequests)
-			},
-			wantOutbox:   true,
-			wantRequests: 1,
-		},
-		{
-			name: "unprocessable row falls back to outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusUnprocessableEntity)
-			},
-			wantOutbox:   true,
-			wantRequests: 1,
-		},
-		{
-			name: "quarantine falls back to outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(`{"successful_rows":0,"quarantined_rows":1}`))
-			},
-			wantOutbox:   true,
-			wantRequests: 1,
-		},
-		{
-			name: "network failure falls back to outbox",
-			tinybird: func(*httptest.Server) *TinybirdClient {
-				return newTestTinybirdClient(t, "http://127.0.0.1:1")
-			},
-			wantOutbox: true,
-		},
-		{
-			name: "timeout falls back to outbox",
-			handler: func(w http.ResponseWriter, _ *http.Request) {
-				time.Sleep(20 * time.Millisecond)
-				_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-			},
-			tinybird: func(server *httptest.Server) *TinybirdClient {
-				client := newTestTinybirdClient(t, server.URL)
-				client.client.Timeout = time.Millisecond
-				return client
-			},
-			wantOutbox:       true,
-			skipRequestCount: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			requests := 0
-			handler := tt.handler
-			if handler == nil {
-				handler = func(w http.ResponseWriter, _ *http.Request) {
-					w.WriteHeader(http.StatusInternalServerError)
-				}
-			}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				if got := r.URL.Query().Get("wait"); got != "true" {
-					t.Fatalf("wait query = %q, want true", got)
-				}
-				handler(w, r)
-			}))
-			defer server.Close()
-
-			tinybird := newTestTinybirdClient(t, server.URL)
-			if tt.tinybird != nil {
-				tinybird = tt.tinybird(server)
-			}
-			var writeOutbox *bool
-			service := &Service{
-				settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, _ string, fallback bool) error {
-					writeOutbox = &fallback
-					return nil
-				},
-				tinybird: tinybird,
-			}
-			if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-				t.Fatalf("FinalizeRequest returned error: %v", err)
-			}
-			if writeOutbox == nil || *writeOutbox != tt.wantOutbox {
-				t.Fatalf("writeOutbox = %v, want %t", writeOutbox, tt.wantOutbox)
-			}
-			if !tt.skipRequestCount && requests != tt.wantRequests {
-				t.Fatalf("Tinybird requests = %d, want %d", requests, tt.wantRequests)
-			}
-		})
-	}
-}
-
-func TestFinalizeRequestPassesUpstreamCostBasisAndBilledEventToSettlement(t *testing.T) {
-	authorization := testAuthorization()
-	authorization.UpstreamByok = "0198f4cc-6c25-8000-8000-000000000001"
-	event := mustNewRequestEvent(t, EventInput{
-		Authorization:   authorization,
-		UpstreamCostUSD: "100",
-	})
-	settlementUpstreamCostUSD := ""
-	settlementRequestEventPayload := ""
-	service := &Service{
-		settleFunc: func(_ context.Context, _ *Authorization, _ string, upstreamCostUSD string, requestEventPayload string, _ bool) error {
-			settlementUpstreamCostUSD = upstreamCostUSD
-			settlementRequestEventPayload = requestEventPayload
-			return nil
-		},
-	}
-
-	if err := service.FinalizeRequest(context.Background(), authorization, event, nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	if settlementUpstreamCostUSD != "100" {
-		t.Fatalf("settlement upstream cost = %q, want 100", settlementUpstreamCostUSD)
-	}
-	settlementEvent, err := decodeGatewayRequestEvent(settlementRequestEventPayload)
-	if err != nil {
-		t.Fatalf("decode settlement request event: %v", err)
-	}
-	if settlementEvent.UpstreamCostUSD != "100" || settlementEvent.BilledCostUSD != "2" {
-		t.Fatalf(
-			"settlement event costs = upstream %q, billed %q; want upstream 100, billed 2",
-			settlementEvent.UpstreamCostUSD,
-			settlementEvent.BilledCostUSD,
-		)
-	}
-}
-
-func TestFinalizeRequestBindsDirectTinybirdEvidenceToTheExactHold(t *testing.T) {
-	var captured tinybirdGatewayRequestEventPayload
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
-			t.Fatalf("decode Tinybird request: %v", err)
-		}
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	authorization := testAuthorization()
-	authorization.UpstreamTargetJSON = `{"model":"gpt-4o-mini"}`
-	var settlementPayload string
-	service := &Service{
-		settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, payload string, _ bool) error {
-			settlementPayload = payload
-			return nil
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	defer service.Close()
-
-	if err := service.FinalizeRequest(context.Background(), authorization, testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	want := createHoldParamsHash(
-		authorization.ProviderKey,
-		authorization.ProductKey,
-		authorization.UpstreamTargetJSON,
-	)
-	if captured.HoldParamsHash != want {
-		t.Fatalf("hold_params_hash = %q, want %q", captured.HoldParamsHash, want)
-	}
-	if strings.Contains(settlementPayload, "hold_params_hash") {
-		t.Fatal("the private reconciliation hash entered the public outbox payload")
 	}
 }
 
@@ -1037,14 +765,14 @@ func TestTinybirdAppendRequiresCommittedSingleRowAcknowledgement(t *testing.T) {
 			status:     http.StatusOK,
 			body:       `{"successful_rows":2,"quarantined_rows":0}`,
 			wantErr:    true,
-			errContain: "successful_rows=2",
+			errContain: "did not commit every request log row",
 		},
 		{
 			name:       "missing acknowledgement",
 			status:     http.StatusOK,
 			body:       `{}`,
 			wantErr:    true,
-			errContain: "successful_rows=0",
+			errContain: "did not commit every request log row",
 		},
 		{
 			name:       "accepted async",
@@ -1062,7 +790,7 @@ func TestTinybirdAppendRequiresCommittedSingleRowAcknowledgement(t *testing.T) {
 			}))
 			defer server.Close()
 
-			err := newTestTinybirdClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
+			_, err := newTestRequestLogClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("AppendGatewayRequest error = %v, wantErr=%t", err, tt.wantErr)
 			}
@@ -1070,491 +798,6 @@ func TestTinybirdAppendRequiresCommittedSingleRowAcknowledgement(t *testing.T) {
 				t.Fatalf("AppendGatewayRequest error = %q, want to contain %q", err, tt.errContain)
 			}
 		})
-	}
-}
-
-func TestRetrySettleAfterTinybirdCommitDoesNotAppendDuplicateRescueEvidence(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			return errors.New("simulated postgres outage after tinybird commit")
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	service.retrySettle(
-		testAuthorization(),
-		"params",
-		ZeroChargeUSD,
-		`{"request_id":"request-1"}`,
-		false,
-	)
-
-	if requests.Load() != 0 {
-		t.Fatalf("Tinybird rescue requests = %d, want 0 after committed evidence", requests.Load())
-	}
-}
-
-func TestFinalizeRequestRetriesPostgresAfterTinybirdCommitWithoutDuplicateAppend(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	var attempts atomic.Int32
-	settled := make(chan struct{}, 1)
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			if attempts.Add(1) == 1 {
-				return errors.New("transient postgres failure")
-			}
-			settled <- struct{}{}
-			return nil
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	defer service.Close()
-
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	select {
-	case <-settled:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for settlement retry")
-	}
-	if attempts.Load() < 2 {
-		t.Fatalf("settlement attempts = %d, want retry after initial failure", attempts.Load())
-	}
-	if requests.Load() != 1 {
-		t.Fatalf("Tinybird requests = %d, want only initial committed append", requests.Load())
-	}
-}
-
-func TestFinalizeRequestRetriesTransactionalOutboxAfterTinybirdFailure(t *testing.T) {
-	var tinybirdRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tinybirdRequests.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	var attempts atomic.Int32
-	settled := make(chan bool, 1)
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       100 * time.Millisecond,
-		settleFunc: func(_ context.Context, _ *Authorization, _ string, _ string, _ string, writeOutbox bool) error {
-			if attempts.Add(1) == 1 {
-				return errors.New("simulated transient postgres failure")
-			}
-			settled <- writeOutbox
-			return nil
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	defer service.Close()
-
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	select {
-	case writeOutbox := <-settled:
-		if !writeOutbox {
-			t.Fatal("Postgres retry lost the required transactional outbox mode")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Postgres fallback did not recover inside the retry window")
-	}
-	if got := tinybirdRequests.Load(); got != 1 {
-		t.Fatalf("Tinybird requests = %d, want only the initial failed append", got)
-	}
-}
-
-func TestFinalizeRequestRescuesEvidenceAfterBothInitialSinksFail(t *testing.T) {
-	var tinybirdRequests atomic.Int32
-	rescued := make(chan struct{}, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if tinybirdRequests.Add(1) == 1 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		rescued <- struct{}{}
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	tinybird := newTestTinybirdClient(t, server.URL)
-	tinybird.circuitOpenDuration = 2 * time.Millisecond
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       15 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			return errors.New("simulated postgres outage")
-		},
-		tinybird: tinybird,
-	}
-
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	service.Close()
-	select {
-	case <-rescued:
-	case <-time.After(time.Second):
-		t.Fatal("final event was not rescued after Tinybird recovered")
-	}
-	if got := tinybirdRequests.Load(); got != 2 {
-		t.Fatalf("Tinybird requests = %d, want one failure and one final rescue", got)
-	}
-}
-
-func TestFinalizeRequestBoundsMemoryWhenNeitherSinkRecovers(t *testing.T) {
-	var tinybirdRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		tinybirdRequests.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-
-	tinybird := newTestTinybirdClient(t, server.URL)
-	tinybird.circuitOpenDuration = time.Hour
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       5 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			return errors.New("simulated persistent postgres outage")
-		},
-		tinybird: tinybird,
-	}
-
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	service.Close()
-
-	diagnostics := service.Diagnostics()
-	if diagnostics.SettlementRetries != 0 || diagnostics.SettlementRetryQueueDepth != 0 {
-		t.Fatalf("settlement retry state after exhaustion = %#v, want no retained work", diagnostics)
-	}
-	if got := tinybirdRequests.Load(); got != 1 {
-		t.Fatalf("Tinybird HTTP requests = %d, want one initial attempt while its circuit remains open", got)
-	}
-	if diagnostics.Tinybird == nil || diagnostics.Tinybird.ShortCircuits == 0 {
-		t.Fatalf("Tinybird diagnostics after bounded rescue = %#v, want a short-circuited rescue", diagnostics.Tinybird)
-	}
-}
-
-func TestCloseWaitsForActiveSettlementRetry(t *testing.T) {
-	retryStarted := make(chan struct{})
-	releaseRetry := make(chan struct{})
-	closeReturned := make(chan struct{})
-	attempts := 0
-	var once sync.Once
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       time.Second,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			attempts++
-			if attempts == 1 {
-				return errors.New("transient postgres failure")
-			}
-			once.Do(func() { close(retryStarted) })
-			<-releaseRetry
-			return nil
-		},
-	}
-
-	if err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), nil); err != nil {
-		t.Fatalf("FinalizeRequest returned error: %v", err)
-	}
-	<-retryStarted
-
-	go func() {
-		service.Close()
-		close(closeReturned)
-	}()
-
-	select {
-	case <-closeReturned:
-		t.Fatal("Close returned before active settlement retry finished")
-	case <-time.After(10 * time.Millisecond):
-	}
-
-	close(releaseRetry)
-	select {
-	case <-closeReturned:
-	case <-time.After(time.Second):
-		t.Fatal("Close did not return after settlement retry finished")
-	}
-}
-
-func TestSettlementRetryQueueRetainsABoundedBurst(t *testing.T) {
-	retryStarted := make(chan struct{})
-	releaseRetry := make(chan struct{})
-	var releaseOnce sync.Once
-	release := func() {
-		releaseOnce.Do(func() { close(releaseRetry) })
-	}
-
-	var attempts atomic.Int32
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       time.Second,
-		retryQueue:        make(chan settlementRetryTask, 1),
-		retryWorkerCount:  1,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			if attempts.Add(1) == 1 {
-				close(retryStarted)
-				<-releaseRetry
-			}
-			return nil
-		},
-	}
-	defer service.Close()
-	defer release()
-	var retained atomic.Int64
-	var bytesRetained atomic.Int64
-	retain := func(bytes int) (func(), bool) {
-		if bytes < len(`{}`) || bytes >= tinybirdMaxEventBytes {
-			t.Fatalf("unexpected task size: %d", bytes)
-		}
-		retained.Add(1)
-		bytesRetained.Add(int64(bytes))
-		return func() { retained.Add(-1); bytesRetained.Add(-int64(bytes)) }, true
-	}
-
-	start := func(requestID string) bool {
-		authorization := testAuthorization()
-		authorization.RequestID = requestID
-		return service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, true, retain)
-	}
-	if !start("request-1") {
-		t.Fatal("first settlement retry was not admitted")
-	}
-	select {
-	case <-retryStarted:
-	case <-time.After(time.Second):
-		t.Fatal("first settlement retry did not start")
-	}
-	if !start("request-2") {
-		t.Fatal("queued settlement retry was not admitted")
-	}
-	if start("request-3") {
-		t.Fatal("settlement retry beyond the configured queue bound was admitted")
-	}
-	if retained.Load() != 2 || bytesRetained.Load() <= 0 {
-		t.Fatal("queue rejection leaked a retained task or released active work")
-	}
-	diagnostics := service.Diagnostics()
-	if diagnostics.SettlementRetries != 1 || diagnostics.SettlementRetryQueueDepth != 1 || diagnostics.SettlementRetryQueueCapacity != 1 {
-		t.Fatalf("settlement retry diagnostics = %#v", diagnostics)
-	}
-	if diagnostics.SettlementRetryDeferrals != 1 {
-		t.Fatalf("settlement retry deferrals = %d, want 1", diagnostics.SettlementRetryDeferrals)
-	}
-	if diagnostics.SettlementRetryLastDeferredAt == nil || time.Since(*diagnostics.SettlementRetryLastDeferredAt) > time.Second {
-		t.Fatalf("settlement retry last deferred time = %v, want a current timestamp", diagnostics.SettlementRetryLastDeferredAt)
-	}
-	release()
-	service.Close()
-	if retained.Load() != 0 || bytesRetained.Load() != 0 {
-		t.Fatal("retry completion leaked memory ownership")
-	}
-	if start("closed") || retained.Load() != 0 || bytesRetained.Load() != 0 {
-		t.Fatal("closed service retained retry memory")
-	}
-}
-
-func TestFinalizeRequestAtRetryCapacityKeepsOnlyDurableEvidence(t *testing.T) {
-	for _, test := range []struct {
-		name           string
-		tinybirdStatus int
-		wantCircuitHit bool
-	}{
-		{name: "Tinybird already committed", tinybirdStatus: http.StatusOK},
-		{name: "neither sink acknowledged", tinybirdStatus: http.StatusServiceUnavailable, wantCircuitHit: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var tinybirdRequests atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				tinybirdRequests.Add(1)
-				w.WriteHeader(test.tinybirdStatus)
-				if test.tinybirdStatus == http.StatusOK {
-					_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-				}
-			}))
-			defer server.Close()
-
-			retryStarted := make(chan struct{})
-			releaseRetry := make(chan struct{})
-			var startOnce sync.Once
-			var releaseOnce sync.Once
-			release := func() {
-				releaseOnce.Do(func() { close(releaseRetry) })
-			}
-			service := &Service{
-				retryInitialDelay: time.Millisecond,
-				retryMaxDelay:     time.Millisecond,
-				retryWindow:       time.Second,
-				retryQueue:        make(chan settlementRetryTask, 1),
-				retryWorkerCount:  1,
-				settleFunc: func(_ context.Context, authorization *Authorization, _ string, _ string, _ string, _ bool) error {
-					switch authorization.RequestID {
-					case "active-retry":
-						startOnce.Do(func() { close(retryStarted) })
-						<-releaseRetry
-						return nil
-					case "queued-retry":
-						return nil
-					default:
-						return errors.New("simulated postgres outage")
-					}
-				},
-				tinybird: newTestTinybirdClient(t, server.URL),
-			}
-			defer func() {
-				release()
-				service.Close()
-			}()
-
-			for _, requestID := range []string{"active-retry", "queued-retry"} {
-				authorization := testAuthorization()
-				authorization.RequestID = requestID
-				if !service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, false, nil) {
-					t.Fatalf("failed to admit %s", requestID)
-				}
-				if requestID == "active-retry" {
-					select {
-					case <-retryStarted:
-					case <-time.After(time.Second):
-						t.Fatal("active retry did not start")
-					}
-				}
-			}
-
-			authorization := testAuthorization()
-			authorization.RequestID = "capacity-request"
-			event := testGatewayRequestEvent()
-			event.RequestID = authorization.RequestID
-			if err := service.FinalizeRequest(context.Background(), authorization, event, nil); err != nil {
-				t.Fatalf("FinalizeRequest returned error: %v", err)
-			}
-			diagnostics := service.Diagnostics()
-			if diagnostics.SettlementRetryDeferrals != 1 || diagnostics.SettlementRetryQueueDepth != 1 {
-				t.Fatalf("retry capacity diagnostics = %#v", diagnostics)
-			}
-			if got := tinybirdRequests.Load(); got != 1 {
-				t.Fatalf("Tinybird HTTP requests = %d, want one bounded append", got)
-			}
-			if got := service.tinybird.Diagnostics().ShortCircuits > 0; got != test.wantCircuitHit {
-				t.Fatalf("Tinybird circuit rescue hit = %t, want %t", got, test.wantCircuitHit)
-			}
-
-			release()
-			service.Close()
-		})
-	}
-}
-
-func TestSettlementRetryQueueWaitsThroughDatabaseFailover(t *testing.T) {
-	const requests = 12
-	var databaseAvailable atomic.Bool
-	var settled atomic.Int32
-	databaseAttempted := make(chan struct{})
-	var databaseAttemptedOnce sync.Once
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     5 * time.Millisecond,
-		retryWindow:       250 * time.Millisecond,
-		retryQueue:        make(chan settlementRetryTask, requests),
-		retryWorkerCount:  2,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			if !databaseAvailable.Load() {
-				databaseAttemptedOnce.Do(func() { close(databaseAttempted) })
-				return errors.New("simulated postgres failover")
-			}
-			settled.Add(1)
-			return nil
-		},
-	}
-	defer service.Close()
-
-	for index := range requests {
-		authorization := testAuthorization()
-		authorization.RequestID = fmt.Sprintf("request-%d", index)
-		if !service.startSettleRetry(authorization, "params", ZeroChargeUSD, `{}`, true, nil) {
-			t.Fatalf("settlement retry %d was not admitted", index)
-		}
-	}
-	select {
-	case <-databaseAttempted:
-	case <-time.After(time.Second):
-		t.Fatal("settlement retry did not reach the unavailable database")
-	}
-	databaseAvailable.Store(true)
-
-	deadline := time.Now().Add(time.Second)
-	for settled.Load() != requests && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if settled.Load() != requests {
-		t.Fatalf("settled requests = %d, want %d after database recovery", settled.Load(), requests)
-	}
-	if diagnostics := service.Diagnostics(); diagnostics.SettlementRetryDeferrals != 0 || diagnostics.SettlementRetryQueueDepth != 0 {
-		t.Fatalf("settlement retry diagnostics after recovery = %#v", diagnostics)
-	}
-}
-
-func TestRetrySettleDoesNotPublishRescueEvidenceForPermanentSettlementRejection(t *testing.T) {
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		_, _ = w.Write([]byte(`{"successful_rows":1,"quarantined_rows":0}`))
-	}))
-	defer server.Close()
-
-	service := &Service{
-		retryInitialDelay: time.Millisecond,
-		retryMaxDelay:     time.Millisecond,
-		retryWindow:       20 * time.Millisecond,
-		settleFunc: func(context.Context, *Authorization, string, string, string, bool) error {
-			return &settleResultError{
-				err:        errors.New("Invalid settlement payload"),
-				result:     "payload_mismatch",
-				statusCode: 400,
-			}
-		},
-		tinybird: newTestTinybirdClient(t, server.URL),
-	}
-	service.retrySettle(
-		testAuthorization(),
-		"params",
-		ZeroChargeUSD,
-		`{"request_id":"request-1"}`,
-		true,
-	)
-
-	if requests != 0 {
-		t.Fatalf("Tinybird rescue requests = %d, want 0 for permanent settlement rejection", requests)
 	}
 }
 
@@ -1611,12 +854,17 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 	}
 	rate := "0"
 	for name, meters := range map[string]EventMeters{
-		"incomplete":        {MeterCachedInputTokens: {Quantity: "300", USD: &rate}},
-		"priced aggregate":  {MeterTotalTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
-		"priced estimate":   {MeterEstimatedInputTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
-		"priced text bytes": {MeterInputTextBytes: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
-		"negative":          {MeterTotalTokens: {Quantity: "-1"}},
-		"overflow":          {MeterTotalTokens: {Quantity: "18446744073709551616"}},
+		"incomplete":             {MeterCachedInputTokens: {Quantity: "300", USD: &rate}},
+		"priced aggregate":       {MeterTotalTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced estimate":        {MeterEstimatedInputTokens: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced files":           {MeterInputFileCount: PricedMeter("1", RatePerMillionTokens, "1", "0.000001")},
+		"priced file URLs":       {MeterInputFileURLCount: PricedMeter("1", RatePerMillionTokens, "1", "0.000001")},
+		"priced inline files":    {MeterInputInlineFileBytes: PricedMeter("1", RatePerMillionTokens, "1", "0.000001")},
+		"priced text bytes":      {MeterInputTextBytes: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced output bytes":    {MeterOutputTextBytes: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"priced reasoning bytes": {MeterReasoningTextBytes: PricedMeter("300", RatePerMillionTokens, "1", "0.0003")},
+		"negative":               {MeterTotalTokens: {Quantity: "-1"}},
+		"overflow":               {MeterTotalTokens: {Quantity: "18446744073709551616"}},
 	} {
 		if _, _, err := ValidateMeters(meters); err == nil {
 			t.Fatalf("accepted %s", name)

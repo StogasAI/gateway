@@ -8,6 +8,11 @@ import (
 
 const (
 	MeterInputTextBytes        = "input_text_bytes"
+	MeterInputFileCount        = "input_file_count"
+	MeterInputFileURLCount     = "input_file_url_count"
+	MeterInputInlineFileBytes  = "input_inline_file_bytes"
+	MeterOutputTextBytes       = "output_text_bytes"
+	MeterReasoningTextBytes    = "reasoning_text_bytes"
 	MeterEstimatedInputTokens  = "estimated_input_tokens"
 	MeterTotalInputTokens      = "total_input_tokens"
 	MeterTotalOutputTokens     = "total_output_tokens"

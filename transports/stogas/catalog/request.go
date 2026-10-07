@@ -12,6 +12,8 @@ import (
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
@@ -28,7 +30,7 @@ var (
 	ErrCatalogUnavailable     = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
 	ErrInvalidJSON            = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
 	ErrModelAmbiguous         = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Multiple deployments match; specify a deployment or a routing sort order"}
-	ErrModelUnavailable       = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available"}
+	ErrModelUnavailable       = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
 	ErrProviderUnavailable    = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
 	ErrRouteUnavailable       = APIError{Code: "route_not_found", StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
 	ErrUnsupportedMethod      = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
@@ -93,10 +95,10 @@ type RequestInput struct {
 // RequestPolicy is an immutable policy prepared from the key's cached sources.
 // The selected policy transforms input exactly once, after routing finishes.
 type RequestPolicy struct {
-	Config                    *policy.Config
-	RedactionPolicy           *redaction.Policy
-	LoadRedactionPolicy       func() (*redaction.Policy, error)
-	LoadActiveRedactionPolicy func(*policy.Config) (*redaction.Policy, error)
+	Config              *policy.Config
+	RedactionPolicy     *redaction.Policy
+	LoadRedactionPolicy func() (*redaction.Policy, error)
+	LoadActivePlugins   func(*policy.Config) (*policy.ActivePlugins, error)
 }
 
 type ResolvedRequest struct {
@@ -110,11 +112,13 @@ type ResolvedRequest struct {
 	RequestedModel  string
 	Model           string
 	Deployment      Deployment
+	ExportConfig    *exportconfig.Config
 
 	chat                 *openaiprovider.OpenAIChatRequest
 	inputTokenLimit      int
 	inputTokenEstimate   *int
 	inputTextBytes       *int
+	inputFiles           inputfiles.Stats
 	outputTokenLimit     int
 	pricing              requestPricingContext
 	redactionSummary     *redaction.Summary
@@ -324,6 +328,13 @@ func (r *ResolvedRequest) InputTextBytes() (int, bool) {
 	return *r.inputTextBytes, true
 }
 
+func (r *ResolvedRequest) InputFiles() inputfiles.Stats {
+	if r == nil {
+		return inputfiles.Stats{}
+	}
+	return r.inputFiles
+}
+
 func (r *ResolvedRequest) OutputTokenLimit() int {
 	if r == nil {
 		return 0
@@ -386,6 +397,36 @@ func (r *ResolvedRequest) RawBody() map[string]json.RawMessage {
 		return nil
 	}
 	return r.pricing.RawBody
+}
+
+// ReleaseInput drops preprocessing representations after the final provider body
+// has been prepared. Dispatch owns its converted request; settlement and response
+// validation retain independent parameter bytes, never the input attachment JSON.
+// Call only after all admission and provider preparation has finished.
+func (r *ResolvedRequest) ReleaseInput() {
+	if r == nil {
+		return
+	}
+	r.chat, r.responses = nil, nil
+	retained := make(map[string]json.RawMessage, len(r.pricing.RawBody))
+	for key, value := range r.pricing.RawBody {
+		if key != "messages" && key != "input" {
+			retained[strings.Clone(key)] = bytes.Clone(value)
+		}
+	}
+	r.pricing.RawBody = retained
+	for i, tool := range r.pricing.RawTools {
+		retained := make(map[string]json.RawMessage, len(tool))
+		for key, value := range tool {
+			retained[strings.Clone(key)] = bytes.Clone(value)
+		}
+		r.pricing.RawTools[i] = retained
+	}
+	for i, kind := range r.pricing.ToolTypes {
+		r.pricing.ToolTypes[i] = strings.Clone(kind)
+	}
+	r.pricing.SearchContextSize = strings.Clone(r.pricing.SearchContextSize)
+	r.RequestedModel = strings.Clone(r.RequestedModel)
 }
 
 func (r *ResolvedRequest) RawTools() []map[string]json.RawMessage {
@@ -465,16 +506,6 @@ func (r *ResolvedRequest) SetSpeed(speed string) {
 		}
 		r.responses.SetExtraParams(params)
 	}
-}
-
-func (r *ResolvedRequest) EnsureResponsesMaxToolCalls(maxToolCalls int) {
-	if r == nil || r.responses == nil || maxToolCalls < 1 {
-		return
-	}
-	if r.responses.ResponsesParameters.MaxToolCalls == nil {
-		r.responses.ResponsesParameters.MaxToolCalls = schemas.Ptr(maxToolCalls)
-	}
-	setRawIntIfMissing(r.pricing.RawBody, "max_tool_calls", maxToolCalls)
 }
 
 func (r *ResolvedRequest) EnsureResponsesToolMaxUses(maxUses int, toolTypes ...schemas.ResponsesToolType) {
@@ -741,7 +772,9 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	resolution.chat = &request
 	textBytes := variant.textBytes
 	resolution.inputTextBytes = &textBytes
+	resolution.inputFiles = variant.files
 	resolution.redactionSummary = variant.summary
+	resolution.ExportConfig = variant.exports
 	resolution.retainPolicyDecision(candidatePolicy.Config)
 	resolution.policyTime, resolution.policyBudget = input.now, input.policyBudget
 	resolution.policyBodyBytes = len(input.Body)
@@ -881,7 +914,9 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 	resolution.responses = &request
 	textBytes := variant.textBytes
 	resolution.inputTextBytes = &textBytes
+	resolution.inputFiles = variant.files
 	resolution.redactionSummary = variant.summary
+	resolution.ExportConfig = variant.exports
 	resolution.retainPolicyDecision(candidatePolicy.Config)
 	resolution.policyTime, resolution.policyBudget = input.now, input.policyBudget
 	resolution.policyBodyBytes = len(input.Body)
@@ -1454,7 +1489,7 @@ func (r *ResolvedRequest) PrepareChutesChatWire(
 		if _, maxCompletionTokensSet := rawIntValue(r.pricing.RawBody["max_completion_tokens"]); !maxCompletionTokensSet &&
 			defaultOutputTokens >= 0 && defaultOutputTokens < r.outputTokenLimit {
 			r.outputTokenLimit = defaultOutputTokens
-			r.inputTokenLimit = maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens)
+			r.inputTokenLimit = min(r.Deployment.MaxInputTokens, maxInputTokenHold(r.Deployment.ContextWindowTokens, defaultOutputTokens))
 		}
 	}
 	limit := r.outputTokenLimit

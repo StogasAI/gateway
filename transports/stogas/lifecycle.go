@@ -241,6 +241,7 @@ func applyUpstreamCredentials(
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {
+	defer FinalizeExportState(state)
 	if billing == nil || state == nil || state.Authorization == nil || state.BillingFinalized {
 		return
 	}
@@ -318,53 +319,59 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 	}
 	catalogIdentity := state.Resolution.CatalogIdentity()
 	executionDeployment := ExecutionDeployment(state)
+	selectedChainHash := ""
+	if state.Resolution != nil {
+		selectedChainHash = state.Resolution.Deployment.ChainHash
+	}
 	event, err := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-		UpstreamCostUSD:        state.UpstreamCostUSD,
-		Authorization:          state.Authorization,
-		Cancelled:              state.Cancelled,
-		ClientStoppedAt:        state.ClientStoppedAt,
-		CatalogVersion:         catalogIdentity.Sequence,
-		PolicyVersions:         state.PolicyVersions,
-		CatalogChainHash:       executionDeployment.ChainHash,
-		Error:                  state.BifrostError,
-		Meters:                 metersForState(state),
-		Plugins:                state.PluginMetrics,
-		ProviderAttempts:       state.providerAttemptInputs(),
-		ProviderCompletedAt:    state.ProviderCompletedAt,
-		ProviderStartedAt:      state.ProviderStartedAt,
-		TTFTMS:                 state.TTFTMS,
-		ProviderOutputObserved: state.ProviderOutputObserved,
-		CacheReadSavingsUSD:    cacheSavings,
-		CacheWriteOverheadUSD:  cacheWriteOverhead,
-		NodeID:                 state.NodeID,
-		GatewayVersion:         state.GatewayVersion,
-		RequestType:            state.RequestType,
-		Response:               state.Response,
-		StartedAt:              state.StartedAt,
+		UpstreamCostUSD:          state.UpstreamCostUSD,
+		Authorization:            state.Authorization,
+		Cancelled:                state.Cancelled,
+		ClientStoppedAt:          state.ClientStoppedAt,
+		CatalogVersion:           catalogIdentity.Sequence,
+		PolicyVersions:           state.PolicyVersions,
+		CatalogChainHash:         executionDeployment.ChainHash,
+		SelectedCatalogChainHash: selectedChainHash,
+		Error:                    state.BifrostError,
+		Meters:                   metersForState(state),
+		Plugins:                  state.PluginMetrics,
+		ProviderAttempts:         state.providerAttemptInputs(),
+		ProviderCompletedAt:      state.ProviderCompletedAt,
+		ProviderStartedAt:        state.ProviderStartedAt,
+		TTFTMS:                   state.TTFTMS,
+		ProviderOutputObserved:   state.ProviderOutputObserved,
+		CacheReadSavingsUSD:      cacheSavings,
+		CacheWriteOverheadUSD:    cacheWriteOverhead,
+		NodeID:                   state.NodeID,
+		GatewayVersion:           state.GatewayVersion,
+		RequestType:              state.RequestType,
+		Response:                 state.Response,
+		StartedAt:                state.StartedAt,
 	})
 	if err != nil {
 		markFinalPricingFailure(state, err)
 		pricingFailed = true
 		event, err = gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
-			UpstreamCostUSD:        gatewaybilling.ZeroChargeUSD,
-			Authorization:          state.Authorization,
-			Cancelled:              state.Cancelled,
-			ClientStoppedAt:        state.ClientStoppedAt,
-			CatalogVersion:         catalogIdentity.Sequence,
-			PolicyVersions:         state.PolicyVersions,
-			CatalogChainHash:       executionDeployment.ChainHash,
-			Error:                  state.BifrostError,
-			ProviderAttempts:       state.providerAttemptInputs(),
-			Plugins:                state.PluginMetrics,
-			ProviderCompletedAt:    state.ProviderCompletedAt,
-			ProviderStartedAt:      state.ProviderStartedAt,
-			TTFTMS:                 state.TTFTMS,
-			ProviderOutputObserved: state.ProviderOutputObserved,
-			NodeID:                 state.NodeID,
-			GatewayVersion:         state.GatewayVersion,
-			RequestType:            state.RequestType,
-			Response:               state.Response,
-			StartedAt:              state.StartedAt,
+			UpstreamCostUSD:          gatewaybilling.ZeroChargeUSD,
+			Authorization:            state.Authorization,
+			Cancelled:                state.Cancelled,
+			ClientStoppedAt:          state.ClientStoppedAt,
+			CatalogVersion:           catalogIdentity.Sequence,
+			PolicyVersions:           state.PolicyVersions,
+			CatalogChainHash:         executionDeployment.ChainHash,
+			SelectedCatalogChainHash: selectedChainHash,
+			Error:                    state.BifrostError,
+			ProviderAttempts:         state.providerAttemptInputs(),
+			Plugins:                  state.PluginMetrics,
+			ProviderCompletedAt:      state.ProviderCompletedAt,
+			ProviderStartedAt:        state.ProviderStartedAt,
+			TTFTMS:                   state.TTFTMS,
+			ProviderOutputObserved:   state.ProviderOutputObserved,
+			NodeID:                   state.NodeID,
+			GatewayVersion:           state.GatewayVersion,
+			RequestType:              state.RequestType,
+			Response:                 state.Response,
+			StartedAt:                state.StartedAt,
 		})
 		if err != nil {
 			return nil
@@ -455,6 +462,16 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 	}
 	if textBytes, known := state.Resolution.InputTextBytes(); known {
 		addCount(billing.MeterInputTextBytes, textBytes)
+		files := state.Resolution.InputFiles()
+		addCount(billing.MeterInputFileCount, files.Count)
+		addCount(billing.MeterInputFileURLCount, files.URLs)
+		addCount(billing.MeterInputInlineFileBytes, files.InlineBytes)
+	}
+	if state.textMaterialObserved {
+		addCount(billing.MeterOutputTextBytes, state.textMaterial.output)
+	}
+	if textBytes, known := state.reasoningTextBytes(); known {
+		addCount(billing.MeterReasoningTextBytes, textBytes)
 	}
 	if observed != nil {
 		if observed.inputKnown {

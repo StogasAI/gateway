@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter"
 )
 
 type contextKey string
@@ -21,6 +22,7 @@ const stateContextKey contextKey = "stogas.state"
 var GatewayVersion = "dev"
 
 type State struct {
+	Export                  *exporter.Capture
 	Resolution              *catalog.ResolvedRequest
 	Adapter                 Adapter
 	observedUsage           *StandardSignals
@@ -32,7 +34,7 @@ type State struct {
 	RawAPIKey               string
 	APIKeyClaims            *billing.APIKeyClaims
 	DashboardCredential     *billing.DashboardCredential
-	EncryptionKeys           customerkey.Keys
+	EncryptionKeys          customerkey.Keys
 	Authorization           *billing.Authorization
 	BillingFinalized        bool
 	RetainMemory            billing.RetainMemory
@@ -81,6 +83,9 @@ type State struct {
 	responsesHostedCalls    int
 	responsesClientCalls    int
 	responsesItems          map[int]providerResponsesItem
+	textMaterial            textMaterial
+	textMaterialObserved    bool
+	responsesTextMaterial   map[int]textMaterial
 
 	ProviderResponseHeaders map[string]string
 
@@ -111,7 +116,7 @@ type providerResponsesItem struct {
 	callID            string
 	itemType          schemas.ResponsesMessageType
 	name              string
-	atomicPayload     string
+	compactionPayload string
 	toolCallerPayload string
 	toolActionPayload string
 	toolKind          string
@@ -326,13 +331,14 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	attempts := make([]billing.ProviderAttemptInput, len(s.providerAttempts))
 	for index, attempt := range s.providerAttempts {
 		attempts[index] = billing.ProviderAttemptInput{
-			Provider:         attempt.Provider,
-			CatalogChainHash: attempt.CatalogChainHash,
-			StartedAt:        attempt.StartedAt,
-			CompletedAt:      attempt.CompletedAt,
-			OutputObserved:   attempt.OutputObserved,
-			Response:         attempt.Response,
-			Error:            attempt.Error,
+			Provider:                 attempt.Provider,
+			CatalogChainHash:         attempt.CatalogChainHash,
+			SelectedCatalogChainHash: attempt.CatalogChainHash,
+			StartedAt:                attempt.StartedAt,
+			CompletedAt:              attempt.CompletedAt,
+			OutputObserved:           attempt.OutputObserved,
+			Response:                 attempt.Response,
+			Error:                    attempt.Error,
 		}
 	}
 	finalAttempt := &attempts[len(attempts)-1]

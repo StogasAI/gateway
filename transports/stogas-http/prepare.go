@@ -10,7 +10,6 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -76,7 +75,7 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 		s.writeBillingError(ctx, err)
 		return nil
 	}
-	policyMemory := s.memory.newLease(requestBodyMemory)
+	policyMemory := s.memory.newLease(requestLifetimeMemory)
 	defer policyMemory.release()
 	policyBytes := keyConfig.MemoryBytes()
 	if !policyMemory.grow(int(policyBytes)) {
@@ -141,14 +140,8 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 			if selected.Config.DeniedAt(requestStartedAt.UTC()) {
 				return catalog.RequestPolicy{}, catalog.APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
 			}
-			return catalog.RequestPolicy{Config: selected.Config, LoadActiveRedactionPolicy: func(config *policy.Config) (*redaction.Policy, error) {
-				var compiled *redaction.Policy
-				var err error
-				if config == selected.Config {
-					compiled, err = selected.RedactionPolicy()
-				} else {
-					compiled, err = keyConfig.ActiveRedactionPolicy(config, credential.EncryptionKeys)
-				}
+			return catalog.RequestPolicy{Config: selected.Config, LoadActivePlugins: func(config *policy.Config) (*policy.ActivePlugins, error) {
+				compiled, err := keyConfig.ActivePlugins(config, credential.EncryptionKeys)
 				if err != nil {
 					public := stogas.PublicBillingErrorFor(err)
 					return nil, errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
@@ -234,12 +227,19 @@ func (s *Server) prepareCandidate(
 	if err != nil {
 		return nil, &candidateFailure{err: err, kind: candidateFailureRequest}
 	}
+	state.StartedAt = requestStartedAt
+	if keyConfig != nil && keyConfig.Claims != nil {
+		state.Export = s.exports.Start(keyConfig.Claims.OrganizationID, state.RequestID, resolution.ExportConfig)
+	}
+	resolution.ExportConfig = nil
 	failBeforeHold := func(err error, kind candidateFailureKind) (*preparedCandidate, *candidateFailure) {
 		state.EncryptionKeys = nil
+		public := catalog.PublicError(err)
+		state.ProcessingError = &schemas.BifrostError{StatusCode: &public.StatusCode, Error: &schemas.ErrorField{Code: schemas.Ptr(public.Code)}}
+		stogas.FinalizeExportState(state)
 		cancel()
 		return nil, &candidateFailure{err: err, kind: kind}
 	}
-	state.StartedAt = requestStartedAt
 	state.KeyConfig = keyConfig
 	state.PreparedCredential = preparedCredential
 	if keyConfig != nil {
@@ -264,6 +264,7 @@ func (s *Server) prepareCandidate(
 	if err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}
+	state.Export.Input(bifrostReq)
 	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}
@@ -276,9 +277,7 @@ func (s *Server) prepareCandidate(
 		s.recordAdmission(ctx)
 	}
 	if err != nil {
-		if state.Authorization != nil {
-			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-		}
+		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
 		state.EncryptionKeys = nil
 		cancel()
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}

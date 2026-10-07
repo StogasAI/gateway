@@ -127,10 +127,10 @@ func TestUnusedEncryptedCredentialPolicyDoesNotRequireItsRoot(t *testing.T) {
 		t.Fatal("candidate enumeration opened encrypted plugins")
 	}
 	for range 2 {
-		if _, err := snapshot.ActiveRedactionPolicy(active, nil); !errors.Is(err, customerkey.ErrKey) {
+		if _, err := snapshot.ActivePlugins(active, nil); !errors.Is(err, customerkey.ErrKey) {
 			t.Fatalf("selected encrypted plugin bypassed its root: %v", err)
 		}
-		if _, err := snapshot.ActiveRedactionPolicy(active, key); err != nil {
+		if _, err := snapshot.ActivePlugins(active, key); err != nil {
 			t.Fatal(err)
 		}
 	}

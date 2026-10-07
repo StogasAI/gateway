@@ -43,7 +43,6 @@ func BenchmarkOpenAIInputScan(b *testing.B) {
 			name string
 			run  func() error
 		}{
-			{"media", func() error { return validateChatInput(raw) }},
 			{"cache_breakpoints", func() error {
 				found, err := validatePromptCacheBreakpoints(raw, catalog.RouteChat)
 				if found != 0 {

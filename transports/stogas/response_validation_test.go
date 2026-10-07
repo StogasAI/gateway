@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1736,6 +1737,27 @@ func TestProviderResponsesEnforcesToolChoiceAndCallLimits(t *testing.T) {
 	}
 }
 
+func TestProviderResponsesDoesNotEnforceFinancialToolAllowance(t *testing.T) {
+	for _, model := range []string{"gpt-5.5", "anthropic-claude-sonnet-4-6"} {
+		t.Run(model, func(t *testing.T) {
+			request := `{"model":"` + model + `","input":"hi","tools":[{"type":"web_search"}]}`
+			state := resolvedResponseValidationState(t, request)
+			response := validUnaryResponsesProviderResponse("resp_uncapped")
+			// Cross both the ten-call financial allowance and the former 128-call
+			// execution check; ordinary response resource limits still apply.
+			for i := 0; i < 129; i++ {
+				response.Output = append(response.Output, providerWebSearchOutputItem(fmt.Sprintf("ws_%d", i), "https://example.com/search"))
+			}
+			if model == "gpt-5.5" {
+				response.MaxToolCalls = schemas.Ptr(200)
+			}
+			if err := validateProviderResponsesResponse(state, response); err != nil {
+				t.Fatalf("unrequested execution cap rejected provider output: %v", err)
+			}
+		})
+	}
+}
+
 func TestProviderResponsesEnforcesTerminalItemStatusAndDomainFilters(t *testing.T) {
 	messageType := schemas.ResponsesMessageTypeMessage
 	role := schemas.ResponsesInputMessageRoleAssistant
@@ -2073,5 +2095,87 @@ func TestProviderStreamRejectsAggregatePayloadAboveCap(t *testing.T) {
 	state.providerStreamBytes = maxProviderResponseBodySize
 	if err := validateProviderChatResponse(state, validChatProviderChunk("chatcmpl_cap", false), true); !errors.Is(err, ErrProviderResponseMalformed) {
 		t.Fatalf("aggregate stream cap error = %v, want malformed provider response", err)
+	}
+}
+
+// Live OpenAI PDF-URL response, 2026-10-05: reasoning has content:[],
+// encrypted_content and no status. IDs/ciphertext/text are replaced; usage is
+// the observed 40 input, 34 output, including 25 reasoning tokens.
+const fileReasoningResponseFixture = `{"id":"resp_file","object":"response","model":"gpt-5.6-luna","status":"completed","output":[{"id":"rs_file","type":"reasoning","content":[],"summary":[],"encrypted_content":"fixture-final-ciphertext"},{"id":"msg_file","type":"message","status":"completed","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Dummy PDF file","annotations":[],"logprobs":[]}]}],"usage":{"input_tokens":40,"input_tokens_details":{"cached_tokens":0},"output_tokens":34,"output_tokens_details":{"reasoning_tokens":25},"total_tokens":74}}`
+
+func TestFileResponseAcceptsReasoningContentAndChargesObservedUsage(t *testing.T) {
+	state := resolvedResponseValidationState(t, `{"model":"openai-gpt-5.6-luna","max_output_tokens":256,"input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/invoice.pdf"}]}]}`)
+	var response schemas.BifrostResponsesResponse
+	if err := schemas.Unmarshal([]byte(fileReasoningResponseFixture), &response); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: &response}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
+		t.Fatal(err)
+	}
+	// Independent price: (40*0.2 + 34*1.2)/1,000,000 dollars.
+	if state.UpstreamCostUSD != "0.0000488" || state.Signals.ReasoningTokens() != 25 {
+		t.Fatalf("reasoning/file invoice = %s, reasoning = %d", state.UpstreamCostUSD, state.Signals.ReasoningTokens())
+	}
+	response.Output[0].Content.ContentBlocks = []schemas.ResponsesMessageContentBlock{{Type: schemas.ResponsesOutputMessageContentTypeText, Text: schemas.Ptr("not reasoning")}}
+	if err := validateProviderResponsesResponse(state, &response); !errors.Is(err, ErrProviderResponseMalformed) {
+		t.Fatal("accepted an output-text block inside reasoning")
+	}
+}
+
+func TestReasoningStreamCompletionOwnsFinalEncryptedContent(t *testing.T) {
+	for _, scenario := range []string{"final ciphertext", "changed terminal ciphertext", "changed terminal summary", "removed terminal ciphertext", "unstreamed summary", "unfinished status"} {
+		t.Run(scenario, func(t *testing.T) {
+			state := responsesValidationState()
+			if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_file")); err != nil {
+				t.Fatal(err)
+			}
+			var response schemas.BifrostResponsesResponse
+			if err := schemas.Unmarshal([]byte(fileReasoningResponseFixture), &response); err != nil {
+				t.Fatal(err)
+			}
+			finalItem := response.Output[0]
+			initialItem := finalItem
+			initialItem.ResponsesReasoning = &schemas.ResponsesReasoning{Summary: []schemas.ResponsesReasoningSummary{}, EncryptedContent: schemas.Ptr("fixture-provisional-ciphertext")}
+			if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1, OutputIndex: schemas.Ptr(0), Item: &initialItem}); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "unstreamed summary" {
+				finalItem.ResponsesReasoning.Summary = []schemas.ResponsesReasoningSummary{{Type: schemas.ResponsesReasoningContentBlockTypeSummaryText, Text: "unobserved text"}}
+			}
+			if scenario == "unfinished status" {
+				finalItem.Status = schemas.Ptr("in_progress")
+			}
+			err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeOutputItemDone, SequenceNumber: 2, OutputIndex: schemas.Ptr(0), Item: &finalItem})
+			if scenario == "unstreamed summary" || scenario == "unfinished status" {
+				if !errors.Is(err, ErrProviderResponseMalformed) {
+					t.Fatalf("accepted %s", scenario)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "changed terminal ciphertext" {
+				finalItem.ResponsesReasoning.EncryptedContent = schemas.Ptr("changed-after-item-done")
+			}
+			if scenario == "changed terminal summary" {
+				finalItem.ResponsesReasoning.Summary = []schemas.ResponsesReasoningSummary{{Type: schemas.ResponsesReasoningContentBlockTypeSummaryText, Text: "changed after completion"}}
+			}
+			if scenario == "removed terminal ciphertext" {
+				finalItem.ResponsesReasoning.EncryptedContent = nil
+			}
+			response.Output = []schemas.ResponsesMessage{finalItem}
+			err = validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{Type: schemas.ResponsesStreamResponseTypeCompleted, SequenceNumber: 3, Response: &response})
+			if scenario == "changed terminal summary" || scenario == "removed terminal ciphertext" {
+				if !errors.Is(err, ErrProviderResponseMalformed) {
+					t.Fatalf("accepted %s", scenario)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

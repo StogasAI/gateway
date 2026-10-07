@@ -10,6 +10,7 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/providerio"
 )
 
 type stogasContextKey string
@@ -37,7 +38,7 @@ func inferenceRequestID(ctx *requestContext) (string, error) {
 func newRequestContext(ctx *requestContext, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	lifetime := billing.GatewayRequestLifetime
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(
-		context.Background(),
+		providerio.WithBudget(context.Background(), ctx.memory),
 		lifetime,
 	)
 	if deadline, ok := bifrostCtx.Deadline(); ok {

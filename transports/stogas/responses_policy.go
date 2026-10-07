@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,10 +9,12 @@ import (
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 const (
-	defaultResponsesHostedToolCalls = 50
+	// Financial allowance only; never injected into provider execution controls.
+	defaultResponsesHostedToolCalls = 10
 	maxResponsesToolCalls           = 128
 )
 
@@ -77,7 +80,7 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateResponsesTruncation(state, raw["truncation"]); err != nil {
 		return err
 	}
-	return validateResponsesInputTextOnly(state, raw["input"])
+	return validateResponsesInput(state, raw["input"])
 }
 
 func validateResponsesTextConfig(state *State, raw json.RawMessage) error {
@@ -992,12 +995,12 @@ type responsesInputValidation struct {
 	seenConversation bool
 }
 
-func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
+func validateResponsesInput(state *State, raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return invalidRequest("input is required")
 	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return invalidRequest("input must be a non-empty string or array")
 	}
 	if trimmed[0] == '"' {
@@ -1013,8 +1016,8 @@ func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 	if trimmed[0] != '[' {
 		return invalidRequest("input must be a string or array")
 	}
-	var items []json.RawMessage
-	if err := sonic.Unmarshal(raw, &items); err != nil {
+	items, err := rawjson.Array(raw)
+	if err != nil {
 		return invalidRequest("input must be a string or array")
 	}
 	if len(items) == 0 {
@@ -1025,8 +1028,8 @@ func validateResponsesInputTextOnly(state *State, raw json.RawMessage) error {
 		outputs: make(map[string]bool),
 	}
 	for index, itemRaw := range items {
-		var item map[string]json.RawMessage
-		if err := sonic.Unmarshal(itemRaw, &item); err != nil || item == nil {
+		item, err := rawjson.Object(itemRaw)
+		if err != nil {
 			return invalidRequest("input items must be objects")
 		}
 		path := fmt.Sprintf("input[%d]", index)
@@ -1146,8 +1149,8 @@ func validateResponsesMessageInput(state *State, item map[string]json.RawMessage
 }
 
 func validateResponsesMessageContent(state *State, raw json.RawMessage, path string, role string) (bool, error) {
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" || trimmed == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return false, invalidRequest(path + " must contain text")
 	}
 	if trimmed[0] == '"' {
@@ -1160,13 +1163,17 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 		}
 		return true, nil
 	}
-	var blocks []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &blocks); err != nil || len(blocks) == 0 {
+	blocks, err := rawjson.Array(raw)
+	if err != nil || len(blocks) == 0 {
 		return false, invalidRequest(path + " must be text or a non-empty array of text blocks")
 	}
 	meaningful := false
-	for index, block := range blocks {
+	for index, blockRaw := range blocks {
 		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		block, err := rawjson.Object(blockRaw)
+		if err != nil {
+			return false, invalidRequest(blockPath + " must be an object")
+		}
 		switch rawString(block["type"]) {
 		case "input_text":
 			if err := rejectUnsupportedInputKeys(block, blockPath, "type", "text", "cache_control", "prompt_cache_breakpoint"); err != nil {
@@ -1213,8 +1220,14 @@ func validateResponsesMessageContent(state *State, raw json.RawMessage, path str
 				return false, invalidRequest(blockPath + ".refusal must be a string")
 			}
 			meaningful = meaningful || hasNonWhitespace(text)
-		case "input_file":
-			return false, invalidRequest("file inputs are not supported")
+		case "input_file", "input_image":
+			if role != "user" {
+				return false, invalidRequest(blockPath + " attachments require a user message")
+			}
+			if err := validateNativeAttachment(state, block, blockPath, true); err != nil {
+				return false, err
+			}
+			meaningful = true
 		default:
 			if err := validateTextOnlyMediaFields(block, "Only text input is supported"); err != nil {
 				return false, err

@@ -96,7 +96,7 @@ func referenceParseJSONHex4(body []byte, start int) (uint16, bool) {
 
 func referenceScanRequestJSONValue(decoder *json.Decoder, depth int, values *int) error {
 	*values++
-	if *values > maxRequestJSONValues {
+	if *values > MaxRequestJSONValues {
 		return errors.New("JSON value limit exceeded")
 	}
 	if depth > maxRequestJSONDepth {

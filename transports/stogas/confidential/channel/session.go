@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	ReplayWindow       = 4096
+	ReplayWindow       = 256
 	SkippedKeyLifetime = time.Minute
 )
 
@@ -20,10 +20,10 @@ type ServerSession struct {
 	id   [32]byte
 }
 
-func newServerSession(root, id, initialPrivate [32]byte, chunkBytes uint16) (*ServerSession, error) {
+func newServerSession(root, id, initialPrivate [32]byte) (*ServerSession, error) {
 	defer clear(root[:])
 	defer clear(initialPrivate[:])
-	core, err := verifier.NewChannelSession(root, id, initialPrivate, chunkBytes)
+	core, err := verifier.NewChannelSession(root, id, initialPrivate)
 	if err != nil {
 		return nil, err
 	}

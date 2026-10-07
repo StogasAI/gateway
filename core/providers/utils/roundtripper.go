@@ -60,10 +60,10 @@ var requestContexts sync.Map // *fasthttp.Request -> context.Context
 
 // bindRequestContext associates ctx with req for the duration of a client.Do call
 // so contextTransport can honor its deadline and cancellation. The returned unbind
-// is idempotent and must run after client.Do has returned. A ctx that can never be
-// cancelled or expire binds nothing.
+// is idempotent and must run after client.Do has returned. Values are retained
+// even without cancellation so response wrappers can receive request policy.
 func bindRequestContext(req *fasthttp.Request, ctx context.Context) (unbind func()) {
-	if req == nil || ctx == nil || ctx.Done() == nil {
+	if req == nil || ctx == nil {
 		return func() {}
 	}
 	requestContexts.Store(req, ctx)
@@ -75,7 +75,9 @@ func bindRequestContext(req *fasthttp.Request, ctx context.Context) (unbind func
 	}
 }
 
-func lookupRequestContext(req *fasthttp.Request) context.Context {
+// RequestContext returns the context bound for the current transport call.
+// A response wrapper must capture it before the pooled request is released.
+func RequestContext(req *fasthttp.Request) context.Context {
 	if v, ok := requestContexts.Load(req); ok {
 		if ctx, ok := v.(context.Context); ok {
 			return ctx
@@ -113,7 +115,7 @@ var testHookBeforeConnRelease func()
 // reported without a fasthttp-level retry and counts against Bifrost's own
 // max_retries (maximhq/bifrost#7035). ErrBodyTooLarge never retries.
 func (t *contextTransport) RoundTrip(hc *fasthttp.HostClient, req *fasthttp.Request, resp *fasthttp.Response) (retry bool, err error) {
-	ctx := lookupRequestContext(req)
+	ctx := RequestContext(req)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return false, ctxErr
 	}
@@ -331,11 +333,21 @@ func newStreamBodyReader(resp *fasthttp.Response, br *bufio.Reader) io.Reader {
 	case contentLength == -1:
 		return &chunkedBody{chunked: httputil.NewChunkedReader(br), br: br, resp: resp}
 	case contentLength >= 0:
-		return io.LimitReader(br, int64(contentLength))
+		return &fixedLengthBody{io.LimitedReader{R: br, N: int64(contentLength)}}
 	default:
 		// Identity encoding without a length: the body ends when the peer closes.
 		return br
 	}
+}
+
+type fixedLengthBody struct{ io.LimitedReader }
+
+func (b *fixedLengthBody) Read(p []byte) (int, error) {
+	n, err := b.LimitedReader.Read(p)
+	if errors.Is(err, io.EOF) && b.N != 0 {
+		err = io.ErrUnexpectedEOF
+	}
+	return n, err
 }
 
 type eofReader struct{}
@@ -384,6 +396,16 @@ type streamBody struct {
 }
 
 func (s *streamBody) Read(p []byte) (int, error) {
+	n, err := s.ReadStrict(p)
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		err = io.EOF
+	}
+	return n, err
+}
+
+// ReadStrict preserves framing errors for adapters that buffer a streamed body.
+// Core SSE consumers retain the existing EOF contract through Read above.
+func (s *streamBody) ReadStrict(p []byte) (int, error) {
 	if s.closed.Load() {
 		return 0, io.ErrClosedPipe
 	}
@@ -395,16 +417,6 @@ func (s *streamBody) Read(p []byte) (int, error) {
 	n, err := s.reader.Read(p)
 	if errors.Is(err, io.EOF) {
 		s.fullyRead = true
-	} else if errors.Is(err, io.ErrUnexpectedEOF) {
-		// The peer closed before the terminating 0-length chunk. fasthttp's own
-		// streaming reader reports that as a plain io.EOF, and every provider read
-		// loop plus the semantic truncation check (#5546) is built on that contract:
-		// an EOF without a terminal marker becomes the retryable 502 truncation
-		// error, while any other read error is a generic stream failure. The
-		// standard-library chunked reader says io.ErrUnexpectedEOF for the same
-		// close, so restore the contract here. fullyRead stays false: the half-read
-		// connection is closed on release, never returned to the pool.
-		err = io.EOF
 	}
 	return n, err
 }
@@ -428,6 +440,17 @@ func (s *streamBody) CloseWithError(err error) error {
 		s.release(discard)
 	})
 	return nil
+}
+
+// SetReadDeadline permits an owning response wrapper to preserve read bounds
+// after headers. Never touch a connection after returning it to the pool.
+func (s *streamBody) SetReadDeadline(deadline time.Time) error {
+	s.readLock.Lock()
+	defer s.readLock.Unlock()
+	if s.closed.Load() {
+		return io.ErrClosedPipe
+	}
+	return s.conn.SetReadDeadline(deadline)
 }
 
 // cancelWatcher closes the connection when the request context ends while the

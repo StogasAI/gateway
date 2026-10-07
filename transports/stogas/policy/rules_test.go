@@ -186,7 +186,7 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 			if provider == "openai" {
 				preset, sortBy = "credit_card_number", "deployment.id"
 			}
-			if len(active.RedactionSources) != 1 || active.RedactionSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != sortBy {
+			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != sortBy {
 				t.Fatalf("wrong settings for %s: %+v", provider, active)
 			}
 			if len(active.Routing.Query.Filters) != 1 {
@@ -258,7 +258,7 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 				t.Fatal("wrong catalog restriction")
 			}
 			hasPreset := false
-			for _, plugins := range active.RedactionSources {
+			for _, plugins := range active.PluginSources {
 				hasPreset = hasPreset || len(plugins.StogasRedaction.Presets) > 0
 			}
 			if hasPreset != withRequired {

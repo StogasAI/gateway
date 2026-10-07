@@ -1,20 +1,21 @@
 package stogashttp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/ecdh"
 	"crypto/hkdf"
-	"crypto/hmac"
 	"crypto/hpke"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	ref "github.com/StogasAI/verifier/go/testutil/channeltest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,12 +35,16 @@ import (
 type sessionTestAttester struct {
 	calls atomic.Int64
 	block <-chan struct{}
+	delay time.Duration
 }
 
 func (a *sessionTestAttester) Quote(_ context.Context, data [64]byte) ([]byte, error) {
 	a.calls.Add(1)
 	if a.block != nil {
 		<-a.block
+	}
+	if a.delay > 0 {
+		time.Sleep(a.delay)
 	}
 	report := make([]byte, 1184)
 	binary.LittleEndian.PutUint32(report, 3)
@@ -56,12 +61,21 @@ type sessionHTTPFixture struct {
 	initialPublic []byte
 	id            []byte
 	sequence      uint64
+	encoder       *ref.Peer
 }
 
 func newSessionHTTPFixture(t *testing.T, next requestHandler, http2 bool) *sessionHTTPFixture {
+	return newSessionHTTPFixtureWithReporter(t, next, http2, new(sessionTestAttester))
+}
+
+func newSessionHTTPFixtureWithReporter(t *testing.T, next requestHandler, http2 bool, reporter *sessionTestAttester) *sessionHTTPFixture {
 	t.Helper()
-	f := &sessionHTTPFixture{reporter: new(sessionTestAttester)}
-	batcher, err := attest.NewBatcher(f.reporter, func() (func(), bool) { return func() {}, true })
+	f := &sessionHTTPFixture{reporter: reporter}
+	memory := newRequestMemoryAdmission()
+	if err := memory.protectRequestMemory(128 * 1024 * 1024); err != nil {
+		t.Fatal(err)
+	}
+	batcher, err := attest.NewBatcher(f.reporter, memory.confidentialReservation(quoteRetainedBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,13 +85,16 @@ func newSessionHTTPFixture(t *testing.T, next requestHandler, http2 bool) *sessi
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := channel.NewStore(setup, func() (func(), bool) { return func() {}, true })
+	store, err := channel.NewStore(setup, memory.confidentialReservation(encryptedSessionRetainedBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	f.server = &Server{memory: newRequestMemoryAdmission(), requests: newRequestDrain(), sessions: store, sessionNodeID: "fixture-owner", ipAdmission: newIPAdmission()}
+	f.server = &Server{memory: memory, requests: newRequestDrain(), sessions: store, sessionNodeID: "fixture-owner", ipAdmission: newIPAdmission()}
+	memory.reclaim = f.server.reclaimIdleMemory
 	f.endpoint = httptest.NewUnstartedServer(f.server.ipRequestAdmission(f.server.sessionTransport(next)))
+	f.endpoint.Config.ConnContext = withHTTPConnection
+	f.endpoint.Config.ConnState = f.server.idleConnections.observe
 	f.endpoint.EnableHTTP2 = http2
 	f.endpoint.StartTLS()
 	t.Cleanup(f.endpoint.Close)
@@ -94,31 +111,41 @@ func newSessionHTTPFixture(t *testing.T, next requestHandler, http2 bool) *sessi
 	if err != nil {
 		t.Fatal(err)
 	}
-	const prefixSize = 6 + 32 + 4 + 1120 + 32
+	f.root, f.initialPublic = sessionTestSetupKeys(t, seed, hello, wire, boot.Document)
+	f.id = bytes.Clone(wire[6:38])
+	f.encoder = f.referenceClient()
+	t.Cleanup(func() { clear(f.root) })
+	return f
+}
+
+func sessionTestSetupKeys(t testing.TB, seed, hello, wire, boot []byte) ([]byte, []byte) {
+	t.Helper()
+	const prefixSize = 6 + 32 + 4 + 1120 + ref.PublicBytes
+	if len(wire) < prefixSize {
+		t.Fatal("short setup response")
+	}
 	key, err := hpke.MLKEM768X25519().NewPrivateKey(seed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	helloHash := sha256.Sum256(hello)
-	info := append([]byte("stogas.e2ee.setup.v3\x00"), helloHash[:]...)
-	recipient, err := hpke.NewRecipient(wire[42:prefixSize-32], key, hpke.HKDFSHA256(), hpke.ExportOnly(), info)
+	info := append([]byte("stogas.e2ee.setup.v1\x00"), helloHash[:]...)
+	recipient, err := hpke.NewRecipient(wire[42:prefixSize-ref.PublicBytes], key, hpke.HKDFSHA256(), hpke.ExportOnly(), info)
 	if err != nil {
 		t.Fatal(err)
 	}
 	hash := sha256.New()
-	hash.Write([]byte("stogas.e2ee.transcript.v3\x00"))
+	hash.Write([]byte("stogas.e2ee.transcript.v1\x00"))
 	hash.Write(hello)
 	hash.Write(wire[:prefixSize])
-	bootHash := sha256.Sum256(boot.Document)
+	bootHash := sha256.Sum256(boot)
 	hash.Write(bootHash[:])
-	f.root, err = recipient.Export("stogas.e2ee.root.v3\x00"+string(hash.Sum(nil)), 32)
+	root, err := recipient.Export("stogas.e2ee.root.v1\x00"+string(hash.Sum(nil)), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.id = bytes.Clone(wire[6:38])
-	f.initialPublic = bytes.Clone(wire[prefixSize-32 : prefixSize])
-	t.Cleanup(func() { clear(f.root) })
-	return f
+	return root, bytes.Clone(wire[prefixSize-ref.PublicBytes : prefixSize])
+
 }
 
 func (f *sessionHTTPFixture) post(t *testing.T, wire []byte, owner bool) *http.Response {
@@ -147,89 +174,29 @@ type sessionTestCipher struct {
 	requestNumber uint64
 }
 
-const testTriple = "stogas.e2ee.triple.v3_X25519_MLKEM768_HKDFSHA256"
-const testDouble = "stogas.e2ee.double.v3_X25519_HKDFSHA256:Root"
-const testQuantum = "stogas.e2ee.spqr.v3_MLKEM768_HKDFSHA256"
-
-func testHKDF(key, salt []byte, info string, size int) []byte {
-	result, err := hkdf.Key(sha256.New, key, salt, info, size)
-	if err != nil {
-		panic(err)
-	}
-	return result
-}
-func testClassicalKey() *ecdh.PrivateKey {
-	key, err := ecdh.X25519().NewPrivateKey(bytes.Repeat([]byte{7}, 32))
-	if err != nil {
-		panic(err)
-	}
-	return key
-}
-func testDH(public []byte) []byte {
-	key, err := ecdh.X25519().NewPublicKey(public)
-	if err != nil {
-		panic(err)
-	}
-	shared, err := testClassicalKey().ECDH(key)
-	if err != nil {
-		panic(err)
-	}
-	return shared
-}
-func (f *sessionHTTPFixture) initialChains() ([]byte, []byte) {
-	split := testHKDF(f.root, nil, testTriple+":Initialization", 64)
-	return testHKDF(testDH(f.initialPublic), split[:32], testDouble, 64), testHKDF(split[32:], nil, testQuantum+":Chain Start", 96)
-}
-func testMessageSecret(classical, quantum []byte, classicalN, quantumN uint64) []byte {
-	var ec, pq []byte
-	for i := uint64(0); i <= classicalN; i++ {
-		mac := hmac.New(sha256.New, classical)
-		mac.Write([]byte{1})
-		ec = mac.Sum(nil)
-		mac.Reset()
-		mac.Write([]byte{2})
-		classical = mac.Sum(nil)
-	}
-	for i := uint64(1); i <= quantumN; i++ {
-		info := binary.BigEndian.AppendUint64([]byte(testQuantum+":Chain Step"), i)
-		step := testHKDF(quantum, nil, string(info), 64)
-		quantum, pq = step[:32], step[32:]
-	}
-	return testHKDF(ec, pq, testTriple, 32)
+func (f *sessionHTTPFixture) referenceClient() *ref.Peer {
+	return ref.New(f.root, &ref.Keys{Public: [ref.PublicBytes]byte(f.initialPublic)}, true)
 }
 func (f *sessionHTTPFixture) cipher(t *testing.T, number uint64, direction byte) *sessionTestCipher {
 	t.Helper()
 	if direction != 1 {
 		t.Fatal("client sends requests only")
 	}
-	ec, pq := f.initialChains()
-	secret := testMessageSecret(ec[32:], pq[32:64], number, number+1)
-	header := testClassicalKey().PublicKey().Bytes()
-	header = binary.BigEndian.AppendUint64(header, 0)
-	header = binary.BigEndian.AppendUint64(header, number)
-	header = binary.BigEndian.AppendUint64(header, 0)
-	header = binary.BigEndian.AppendUint64(header, number+1)
-	header = binary.BigEndian.AppendUint64(header, 1)
-	header = append(header, 0)
-	return f.recordCipher(t, number, direction, secret, header)
+	if f.encoder.Sent != number {
+		t.Fatal("unordered fixture request")
+	}
+	message := f.encoder.Send(bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
+	return f.recordCipher(t, number, direction, message.Secret, message.Header)
 }
 func (f *sessionHTTPFixture) responseCipher(t *testing.T, number uint64, header []byte) *sessionTestCipher {
 	t.Helper()
-	if len(header) < 73 {
-		t.Fatal("short hybrid header")
-	}
-	ecN, pqN := binary.BigEndian.Uint64(header[40:48]), binary.BigEndian.Uint64(header[56:64])
-	if ecN > 4096 || pqN == 0 || pqN > 4096 || binary.BigEndian.Uint64(header[64:72]) != 1 {
-		t.Fatal("invalid hybrid counters")
-	}
-	ec, pq := f.initialChains()
-	next := testHKDF(testDH(header[:32]), ec[:32], testDouble, 64)
-	secret := testMessageSecret(next[32:], pq[64:], ecN, pqN)
-	return f.recordCipher(t, number, 2, secret, nil)
+	peer := f.referenceClient()
+	peer.Send(bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
+	return f.recordCipher(t, number, 2, peer.Receive(ref.Message{Header: header}), nil)
 }
 func (f *sessionHTTPFixture) recordCipher(t *testing.T, number uint64, direction byte, secret, header []byte) *sessionTestCipher {
 	t.Helper()
-	info := append([]byte("stogas.e2ee.record.v3\x00"), f.id...)
+	info := append([]byte("stogas.e2ee.record.v1\x00"), f.id...)
 	info = binary.BigEndian.AppendUint64(info, number)
 	info = append(info, direction)
 	material, err := hkdf.Expand(sha256.New, secret, string(info), 44)
@@ -267,14 +234,21 @@ func (c *sessionTestCipher) seal(kind byte, body []byte) []byte {
 	return c.aead.Seal(prefix, nonce[:], append([]byte{kind}, body...), prefix)
 }
 func (f *sessionHTTPFixture) request(t *testing.T, metadata, body []byte) ([]byte, *sessionTestCipher) {
+	return f.requestWithRecordSize(t, metadata, body, channel.MaxRecordPlaintext)
+}
+
+func (f *sessionHTTPFixture) requestWithRecordSize(t *testing.T, metadata, body []byte, recordSize int) ([]byte, *sessionTestCipher) {
 	number := f.sequence
 	f.sequence++
 	encoder := f.cipher(t, number, 1)
-	wire := append([]byte("STGS\x03\x03"), f.id...)
+	records := (len(body) + recordSize - 1) / recordSize
+	wire := make([]byte, 0, channel.RequestPrefixBytes+len(metadata)+len(body)+(records+2)*channel.RecordOverhead+2+len(encoder.header))
+	wire = append(wire, []byte("STGS\x01\x03")...)
+	wire = append(wire, f.id...)
 	wire = binary.BigEndian.AppendUint64(wire, number)
 	wire = append(wire, encoder.seal(byte(channel.Metadata), metadata)...)
 	for len(body) != 0 {
-		n := min(len(body), channel.MaxRecordPlaintext)
+		n := min(len(body), recordSize)
 		wire = append(wire, encoder.seal(byte(channel.Data), body[:n])...)
 		body = body[n:]
 	}
@@ -291,52 +265,30 @@ func readSessionResponse(t *testing.T, response *http.Response, decoder *session
 	var body []byte
 	finished := false
 	for {
-		var prefix [4]byte
-		_, err := io.ReadFull(response.Body, prefix[:])
+		kind, plaintext, err := readSessionRecord(t, response.Body, decoder)
 		if err == io.EOF {
 			break
 		}
 		if err != nil || finished {
 			t.Fatal("invalid response framing", err)
 		}
-		size, err := channel.RecordSize(prefix[:])
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded := make([]byte, size-4)
-		if _, err := io.ReadFull(response.Body, encoded); err != nil {
-			t.Fatal(err)
-		}
-		aad := prefix[:]
-		if decoder.counter == 0 {
-			if len(encoded) < 2+73+17 {
-				t.Fatal("short metadata frame")
-			}
-			headerEnd := 2 + int(binary.BigEndian.Uint16(encoded[:2]))
-			if headerEnd+17 > len(encoded) {
-				t.Fatal("invalid ratchet header")
-			}
-			// Response allocation order is independent of HTTP numbering.
-			derived := decoder.fixture.responseCipher(t, decoder.requestNumber, encoded[2:headerEnd])
-			decoder.aead, decoder.nonce = derived.aead, derived.nonce
-			aad = append(aad, encoded[:headerEnd]...)
-			encoded = encoded[headerEnd:]
-		}
-		nonce := decoder.nextNonce()
-		plaintext, err := decoder.aead.Open(nil, nonce[:], encoded, aad)
-		if err != nil {
-			t.Fatal(err)
-		}
-		switch channel.Kind(plaintext[0]) {
+		switch kind {
 		case channel.Metadata:
 			if metadata.Status != 0 {
 				t.Fatal("repeated metadata")
 			}
-			if err := json.Unmarshal(plaintext[1:], &metadata); err != nil {
+			if err := json.Unmarshal(plaintext, &metadata); err != nil {
 				t.Fatal(err)
 			}
 		case channel.Data:
-			body = append(body, plaintext[1:]...)
+			if metadata.Status == 0 {
+				t.Fatal("body before metadata")
+			}
+			body = append(body, plaintext...)
+		case channel.Keepalive:
+			if len(plaintext) != 0 {
+				t.Fatal("nonempty keepalive")
+			}
 		case channel.Finished:
 			finished = true
 		default:
@@ -347,6 +299,168 @@ func readSessionResponse(t *testing.T, response *http.Response, decoder *session
 		t.Fatal("unauthenticated completion")
 	}
 	return metadata, body
+}
+
+func readSessionRecord(t *testing.T, input io.Reader, decoder *sessionTestCipher) (channel.Kind, []byte, error) {
+	t.Helper()
+	var prefix [4]byte
+	if _, err := io.ReadFull(input, prefix[:]); err != nil {
+		return 0, nil, err
+	}
+	size, err := channel.RecordSize(prefix[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := make([]byte, size-4)
+	if _, err := io.ReadFull(input, encoded); err != nil {
+		return 0, nil, err
+	}
+	aad := prefix[:]
+	if decoder.counter == 0 {
+		if len(encoded) < 2+ref.HeaderBytes+17 {
+			t.Fatal("short first response frame")
+		}
+		headerEnd := 2 + int(binary.BigEndian.Uint16(encoded[:2]))
+		if headerEnd+17 > len(encoded) {
+			t.Fatal("invalid ratchet header")
+		}
+		// Response allocation order is independent of HTTP numbering.
+		derived := decoder.fixture.responseCipher(t, decoder.requestNumber, encoded[2:headerEnd])
+		decoder.aead, decoder.nonce = derived.aead, derived.nonce
+		aad = append(aad, encoded[:headerEnd]...)
+		encoded = encoded[headerEnd:]
+	}
+	nonce := decoder.nextNonce()
+	plaintext, err := decoder.aead.Open(nil, nonce[:], encoded, aad)
+	if err != nil || len(plaintext) == 0 {
+		t.Fatal("invalid encrypted record", err)
+	}
+	return channel.Kind(plaintext[0]), plaintext[1:], nil
+}
+
+func TestSessionHTTPAcknowledgesBeforeUploadAndPreservesLaterStatus(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("HTTP2=%t", http2), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			uploaded := make(chan struct{})
+			respond := make(chan struct{})
+			addresses := make(chan string, 2)
+			var dispatched atomic.Int64
+			body := bytes.Repeat([]byte("encrypted upload"), 4096)
+			f := newSessionHTTPFixture(t, func(request *requestContext) {
+				actual, err := io.ReadAll(request.request.Body)
+				if err != nil || !bytes.Equal(actual, body) {
+					t.Error("upload failed after receipt", err)
+					return
+				}
+				addresses <- request.request.RemoteAddr
+				if dispatched.Add(1) == 1 {
+					close(uploaded)
+					select {
+					case <-respond:
+					case <-request.request.Context().Done():
+						return
+					}
+				}
+				request.writer.Header().Set("Retry-After", "7")
+				request.writer.WriteHeader(http.StatusTooManyRequests)
+				_, _ = request.writer.Write([]byte("later rejection"))
+			}, http2)
+			metadata := []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`)
+			wire, decoder := f.request(t, metadata, body)
+			firstEnd := channel.RequestPrefixBytes + int(binary.BigEndian.Uint32(wire[channel.RequestPrefixBytes:]))
+			input, output := io.Pipe()
+			defer input.Close()
+			defer output.Close()
+			continueUpload := make(chan struct{})
+			written := make(chan error, 1)
+			go func() {
+				_, err := output.Write(wire[:firstEnd])
+				if err == nil {
+					select {
+					case <-continueUpload:
+						_, err = output.Write(wire[firstEnd:])
+					case <-ctx.Done():
+						err = ctx.Err()
+					}
+				}
+				_ = output.CloseWithError(err)
+				written <- err
+			}()
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.endpoint.URL+sessionPath, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Content-Type", sessionContentType)
+			request.Header.Set(sessionNodeHeader, f.server.sessionNodeID)
+			response, err := f.endpoint.Client().Do(request)
+			if err != nil {
+				t.Fatal("receipt waited for upload", err)
+			}
+			defer response.Body.Close()
+			kind, payload, err := readSessionRecord(t, response.Body, decoder)
+			if err != nil || kind != channel.Keepalive || len(payload) != 0 {
+				t.Fatalf("first response was not an authenticated receipt: %v %v", kind, err)
+			}
+			if response.Close {
+				t.Fatal("receipt disabled connection reuse")
+			}
+			close(continueUpload)
+			select {
+			case <-uploaded:
+			case <-ctx.Done():
+				t.Fatal("upload stalled after receipt")
+			}
+			if err := <-written; err != nil {
+				t.Fatal(err)
+			}
+			close(respond)
+			result, actual := readSessionResponse(t, response, decoder)
+			if result.Status != http.StatusTooManyRequests || result.Headers["Retry-After"] != "7" || string(actual) != "later rejection" {
+				t.Fatalf("receipt changed subsequent response: %#v %q", result, actual)
+			}
+			wire, decoder = f.request(t, metadata, body)
+			readSessionResponse(t, f.post(t, wire, true), decoder)
+			if <-addresses != <-addresses {
+				t.Fatal("completed request did not reuse its HTTPS connection")
+			}
+		})
+	}
+}
+
+func TestSessionHTTPEarlyErrorClosesAbandonedHTTP1Upload(t *testing.T) {
+	f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+		ctx.writer.WriteHeader(http.StatusTooManyRequests)
+	}, false)
+	wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), nil)
+	firstEnd := channel.RequestPrefixBytes + int(binary.BigEndian.Uint32(wire[channel.RequestPrefixBytes:]))
+	connection, err := tls.Dial("tcp", f.endpoint.Listener.Addr().String(), f.endpoint.Client().Transport.(*http.Transport).TLSClientConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(connection, "POST %s HTTP/1.1\r\nHost: fixture\r\nContent-Type: %s\r\n%s: %s\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n", sessionPath, sessionContentType, sessionNodeHeader, f.server.sessionNodeID, firstEnd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Write(append(wire[:firstEnd:firstEnd], '\r', '\n')); err != nil {
+		t.Fatal(err)
+	}
+	input := bufio.NewReader(connection)
+	response, err := http.ReadResponse(input, &http.Request{Method: http.MethodPost})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := readSessionResponse(t, response, decoder)
+	if metadata.Status != http.StatusTooManyRequests {
+		t.Fatal("lost authenticated error")
+	}
+	if _, err := input.ReadByte(); err != io.EOF {
+		t.Fatal("server retained the abandoned upload after its response", err)
+	}
 }
 
 func TestSessionHTTPStreamingReplayAndClose(t *testing.T) {
@@ -403,6 +517,90 @@ func testSessionHTTPStreamingReplayAndClose(t *testing.T, http2 bool) {
 	}
 }
 
+func TestSessionHTTPEarlyErrorDoesNotWaitForUpload(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("HTTP2=%t", http2), func(t *testing.T) {
+			var status atomic.Int64
+			f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+				ctx.writer.WriteHeader(int(status.Load()))
+			}, http2)
+			// Consecutive authenticated errors must not wait for a full ciphertext
+			// buffer or the unfinished upload, and must leave the session usable.
+			for _, code := range []int{http.StatusTooManyRequests, http.StatusBadGateway} {
+				status.Store(int64(code))
+				func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), nil)
+					firstEnd := channel.RequestPrefixBytes + int(binary.BigEndian.Uint32(wire[channel.RequestPrefixBytes:]))
+					input, output := io.Pipe()
+					defer input.Close()
+					defer output.Close()
+					written := make(chan error, 1)
+					go func() {
+						_, err := output.Write(wire[:firstEnd])
+						written <- err
+					}()
+					request, err := http.NewRequestWithContext(ctx, http.MethodPost, f.endpoint.URL+sessionPath, input)
+					if err != nil {
+						t.Fatal(err)
+					}
+					request.Header.Set("Content-Type", sessionContentType)
+					request.Header.Set(sessionNodeHeader, f.server.sessionNodeID)
+					response, err := f.endpoint.Client().Do(request)
+					if err != nil {
+						t.Fatal("error response waited for unfinished upload", err)
+					}
+					metadata, _ := readSessionResponse(t, response, decoder)
+					if metadata.Status != code {
+						t.Fatalf("status=%d, want %d", metadata.Status, code)
+					}
+					if err := <-written; err != nil {
+						t.Fatal(err)
+					}
+				}()
+			}
+		})
+	}
+}
+
+func TestSessionHTTPCompletedUploadRejectedBeforeReadDoesNotCancelNextRequest(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", http2), func(t *testing.T) {
+			f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+				if ctx.request.Header.Get("Authorization") == "" {
+					ctx.writer.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				if ctx.request.Context().Err() != nil {
+					ctx.writer.WriteHeader(499)
+					return
+				}
+				if _, err := io.Copy(io.Discard, ctx.request.Body); err != nil {
+					t.Error(err)
+				}
+				ctx.writer.WriteHeader(http.StatusNoContent)
+			}, http2)
+			for _, credential := range []string{"", "Bearer accepted", "Bearer accepted"} {
+				metadata, err := json.Marshal(sessionRequestMetadata{Method: http.MethodPost, Path: "/v1/responses", Headers: map[string]string{"Authorization": credential}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				wire, decoder := f.request(t, metadata, []byte(`{}`))
+				response := f.post(t, wire, true)
+				inner, _ := readSessionResponse(t, response, decoder)
+				want := http.StatusNoContent
+				if credential == "" {
+					want = http.StatusUnauthorized
+				}
+				if inner.Status != want {
+					t.Fatalf("inner status = %d, want %d", inner.Status, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testing.T) {
 	var dispatched atomic.Int64
 	f := newSessionHTTPFixture(t, func(ctx *requestContext) {
@@ -419,7 +617,7 @@ func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testin
 		func(wire []byte) []byte { wire[len(wire)-1] ^= 1; return wire },
 		func(wire []byte) []byte { return append(wire, 0) },
 	} {
-		wire, decoder := f.request(t, metadata, []byte("body"))
+		wire, decoder := f.requestWithRecordSize(t, metadata, []byte("body"), 1)
 		result, _ := readSessionResponse(t, f.post(t, mutate(wire), true), decoder)
 		if result.Status != 400 {
 			t.Fatal("accepted invalid body")
@@ -429,9 +627,9 @@ func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testin
 		t.Fatal("invalid input reached dispatch")
 	}
 	f.server.requests.start()
-	wire, decoder := f.request(t, metadata, nil)
-	result, _ := readSessionResponse(t, f.post(t, wire, true), decoder)
-	if result.Status != 503 || dispatched.Load() != 0 {
+	wire, decoder := f.request(t, metadata, []byte("undispatched request body"))
+	result, unavailable := readSessionResponse(t, f.post(t, wire, true), decoder)
+	if result.Status != 503 || !result.Closing || !bytes.Contains(unavailable, []byte("gateway_draining")) || dispatched.Load() != 0 {
 		t.Fatal("draining admitted work")
 	}
 	wire, decoder = f.request(t, []byte(`{"method":"DELETE","path":"/v1/session","headers":{}}`), nil)
@@ -484,11 +682,11 @@ func TestSessionHTTPTransportMemoryOutlivesApplicationFinalization(t *testing.T)
 			t.Error(err)
 			return
 		}
-		if got := server.memory.reserved.Load(); got != minimumRequestWeightBytes {
+		if got := server.memory.reserved.Load(); got != encryptedSessionRetainedBytes+minimumRequestWeightBytes {
 			t.Errorf("duplicated initial reservation: %d", got)
 		}
 		ctx.memory.release()
-		if got := server.memory.reserved.Load(); got != int64(sessionAdapterRetainedBytes) {
+		if got := server.memory.reserved.Load(); got != encryptedSessionRetainedBytes+int64(sessionAdapterRetainedBytes) {
 			t.Errorf("released live encryption buffers: %d", got)
 		}
 		ctx.writer.WriteHeader(204)
@@ -496,14 +694,14 @@ func TestSessionHTTPTransportMemoryOutlivesApplicationFinalization(t *testing.T)
 	server = f.server
 	wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), nil)
 	metadata, _ := readSessionResponse(t, f.post(t, wire, true), decoder)
-	if metadata.Status != 204 || f.server.memory.reserved.Load() != 0 {
+	if metadata.Status != 204 || f.server.memory.reserved.Load() != encryptedSessionRetainedBytes {
 		t.Fatal("transport did not release after its final write")
 	}
 }
 
 func sessionTestHello(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	encoded, err := os.ReadFile("../stogas/confidential/channel/testdata/setup-v3.json")
+	encoded, err := os.ReadFile("../stogas/confidential/channel/testdata/setup.json")
 	if err != nil {
 		t.Fatal(err)
 	}

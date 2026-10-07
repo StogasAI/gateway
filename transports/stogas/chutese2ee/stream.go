@@ -10,6 +10,8 @@ import (
 	"io"
 	"strings"
 	"sync"
+
+	"github.com/maximhq/bifrost/transports/stogas/providerio"
 )
 
 type streamReader struct {
@@ -24,9 +26,10 @@ type streamReader struct {
 	closed      bool
 	onError     func()
 	errorOnce   sync.Once
+	admit       func([]byte) error
 }
 
-func newStreamReader(source io.Reader, responseKey *mlkem.DecapsulationKey768, onError func()) io.ReadCloser {
+func newStreamReader(source io.Reader, responseKey *mlkem.DecapsulationKey768, onError func()) *streamReader {
 	reader := &streamReader{source: bufio.NewReaderSize(source, 64*1024), responseKey: responseKey, onError: onError}
 	if closer, ok := source.(io.Closer); ok {
 		reader.closer = closer
@@ -62,7 +65,7 @@ func (r *streamReader) Read(target []byte) (int, error) {
 
 func (r *streamReader) fail(err error) error {
 	r.errorOnce.Do(func() {
-		if r.onError != nil {
+		if r.onError != nil && !errors.Is(err, providerio.ErrCapacity) {
 			r.onError()
 		}
 	})
@@ -157,6 +160,11 @@ func (r *streamReader) processLine(line []byte) error {
 			return err
 		}
 		defer clear(plaintext)
+		if r.admit != nil {
+			if err := r.admit(plaintext); err != nil {
+				return err
+			}
+		}
 		if isDecryptedCompletionMarker(plaintext) {
 			if r.authDone {
 				return fmt.Errorf("%w: duplicate authenticated completion", ErrInvalidE2EEResponse)

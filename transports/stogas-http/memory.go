@@ -1,6 +1,7 @@
 package stogashttp
 
 import (
+	"math"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -15,7 +16,7 @@ const (
 	// This factor is conservative admission accounting for parsing and
 	// normalization. It does not allocate or prove five in-memory copies.
 	requestBodyReservationFactor = int64(5)
-	minimumRequestWeightBytes    = int64(1 * 1024 * 1024)
+	minimumRequestWeightBytes    = int64(512 * 1024)
 	// Wire bytes alone miss dense arrays of empty or short values. Charge each
 	// JSON value at the largest fixed input-item size before typed decoding.
 	// This is admission accounting, not a bound on every Go allocation or RSS.
@@ -26,22 +27,20 @@ const (
 		unsafe.Sizeof(schemas.ChatContentBlock{}),
 		unsafe.Sizeof(schemas.ResponsesMessageContentBlock{}),
 	))
-	// Four GiB out of the ten-GiB default Go limit reduces to two fifths.
-	// These small values keep lower-limit scaling within int64.
-	lowerGoLimitBudgetNumerator   = int64(2)
-	lowerGoLimitBudgetDenominator = int64(5)
 )
 
 type memoryReservationClass uint8
 
 const (
-	requestBodyMemory memoryReservationClass = iota
+	requestLifetimeMemory memoryReservationClass = iota
 	streamStateMemory
 	downstreamDeliveryMemory
+	confidentialStateMemory
 )
 
 type requestMemoryAdmission struct {
-	budget int64
+	budget               int64
+	confidentialHeadroom int64
 	// Installed before serving. It only releases independently owned idle state.
 	reclaim   func(needed int64) bool
 	reclaimMu sync.Mutex
@@ -49,49 +48,59 @@ type requestMemoryAdmission struct {
 	reserved     atomic.Int64
 	peakReserved atomic.Int64
 
-	requestBodyReserved atomic.Int64
-	streamStateReserved atomic.Int64
-	downstreamReserved  atomic.Int64
+	requestReserved      atomic.Int64
+	streamStateReserved  atomic.Int64
+	downstreamReserved   atomic.Int64
+	confidentialReserved atomic.Int64
 
-	requestBodyFailures atomic.Uint64
-	streamStateFailures atomic.Uint64
-	downstreamFailures  atomic.Uint64
+	requestFailures      atomic.Uint64
+	responseFailures     atomic.Uint64
+	streamStateFailures  atomic.Uint64
+	downstreamFailures   atomic.Uint64
+	confidentialFailures atomic.Uint64
 }
 
 type requestMemoryLease struct {
-	admission   *requestMemoryAdmission
-	class       memoryReservationClass
-	mu          sync.Mutex
-	released    atomic.Bool
-	transferred bool
-	weight      int64
-	retained    int64
-	bodyBytes   int
-	structure   int64
+	admission      *requestMemoryAdmission
+	parent         *requestMemoryLease
+	class          memoryReservationClass
+	mu             sync.Mutex
+	released       atomic.Bool
+	transferred    bool
+	weight         int64
+	retained       int64
+	bodyBytes      int
+	structure      int64
+	response       int64
+	responseFailed atomic.Bool
 }
 
 type requestMemoryDiagnostics struct {
-	BudgetBytes                    int64  `json:"budgetBytes"`
-	DownstreamReservationFailures  uint64 `json:"downstreamReservationFailures"`
-	DownstreamReservedBytes        int64  `json:"downstreamReservedBytes"`
-	MinimumRequestReservationBytes int64  `json:"minimumRequestReservationBytes"`
-	PeakReservedBytes              int64  `json:"peakReservedBytes"`
-	RequestBodyReservationFactor   int64  `json:"requestBodyReservationFactor"`
-	JSONValueReservationBytes      int64  `json:"jsonValueReservationBytes"`
-	RequestBodyReservationFailures uint64 `json:"requestBodyReservationFailures"`
-	RequestBodyReservedBytes       int64  `json:"requestBodyReservedBytes"`
-	ReservedBytes                  int64  `json:"reservedBytes"`
-	Saturated                      bool   `json:"saturated"`
-	StreamStateReservationFailures uint64 `json:"streamStateReservationFailures"`
-	StreamStateReservedBytes       int64  `json:"streamStateReservedBytes"`
+	BudgetBytes                      int64  `json:"budgetBytes"`
+	ConfidentialHeadroomBytes        int64  `json:"confidentialHeadroomBytes"`
+	ConfidentialReservedBytes        int64  `json:"confidentialReservedBytes"`
+	ConfidentialReservationFailures  uint64 `json:"confidentialReservationFailures"`
+	DownstreamReservationFailures    uint64 `json:"downstreamReservationFailures"`
+	DownstreamReservedBytes          int64  `json:"downstreamReservedBytes"`
+	MinimumRequestReservationBytes   int64  `json:"minimumRequestReservationBytes"`
+	PeakReservedBytes                int64  `json:"peakReservedBytes"`
+	ProviderResponseCapacityFailures uint64 `json:"providerResponseCapacityFailures"`
+	RequestBodyReservationFactor     int64  `json:"requestBodyReservationFactor"`
+	JSONValueReservationBytes        int64  `json:"jsonValueReservationBytes"`
+	RequestReservationFailures       uint64 `json:"requestReservationFailures"`
+	RequestReservedBytes             int64  `json:"requestReservedBytes"`
+	ReservedBytes                    int64  `json:"reservedBytes"`
+	Saturated                        bool   `json:"saturated"`
+	StreamStateReservationFailures   uint64 `json:"streamStateReservationFailures"`
+	StreamStateReservedBytes         int64  `json:"streamStateReservedBytes"`
 }
 
 func requestMemoryWeight(bodyBytes int, structure int64) int64 {
 	if bodyBytes <= 0 {
 		bodyBytes = 0
 	}
-	if int64(bodyBytes) > requestMemoryBudgetBytes/requestBodyReservationFactor || structure > requestMemoryBudgetBytes-int64(bodyBytes)*requestBodyReservationFactor {
-		return requestMemoryBudgetBytes + 1
+	if structure < 0 || int64(bodyBytes) > math.MaxInt64/requestBodyReservationFactor || structure > math.MaxInt64-int64(bodyBytes)*requestBodyReservationFactor {
+		return math.MaxInt64
 	}
 	weight := int64(bodyBytes)*requestBodyReservationFactor + structure
 	if weight < minimumRequestWeightBytes {
@@ -105,18 +114,7 @@ func newRequestMemoryAdmission() *requestMemoryAdmission {
 }
 
 func requestMemoryBudgetForGoLimit(limit int64) int64 {
-	if limit <= 0 {
-		return 1
-	}
-	if limit >= DefaultGoMemoryLimitBytes {
-		return requestMemoryBudgetBytes
-	}
-	budget := limit/lowerGoLimitBudgetDenominator*lowerGoLimitBudgetNumerator +
-		limit%lowerGoLimitBudgetDenominator*lowerGoLimitBudgetNumerator/lowerGoLimitBudgetDenominator
-	if budget < 1 {
-		return 1
-	}
-	return budget
+	return max(1, min(limit, requestMemoryBudgetBytes))
 }
 
 func (a *requestMemoryAdmission) budgetBytes() int64 {
@@ -128,10 +126,10 @@ func (a *requestMemoryAdmission) budgetBytes() int64 {
 
 func (a *requestMemoryAdmission) acquire(bodyBytes int) (*requestMemoryLease, bool) {
 	weight := requestMemoryWeight(bodyBytes, 0)
-	if !a.reserve(requestBodyMemory, weight) {
+	if !a.reserve(requestLifetimeMemory, weight) {
 		return nil, false
 	}
-	return &requestMemoryLease{admission: a, class: requestBodyMemory, weight: weight, bodyBytes: bodyBytes}, true
+	return &requestMemoryLease{admission: a, class: requestLifetimeMemory, weight: weight, bodyBytes: bodyBytes}, true
 }
 
 func (a *requestMemoryAdmission) newLease(class memoryReservationClass) *requestMemoryLease {
@@ -141,14 +139,27 @@ func (a *requestMemoryAdmission) newLease(class memoryReservationClass) *request
 	return &requestMemoryLease{admission: a, class: class}
 }
 
+// A response is already covered by the request's provider reservation. Pin its
+// retained state or delivery bytes so those owners can outlive the producer
+// without acquiring the same memory again when admission is full.
+func (l *requestMemoryLease) newRetainedLease(class memoryReservationClass) *requestMemoryLease {
+	if l == nil {
+		return nil
+	}
+	return &requestMemoryLease{admission: l.admission, class: class, parent: l}
+}
+
 func (a *requestMemoryAdmission) reserve(class memoryReservationClass, bytes int64) bool {
+	return a.reserveWithin(class, bytes, a.budgetBytes())
+}
+
+func (a *requestMemoryAdmission) reserveWithin(class memoryReservationClass, bytes, budget int64) bool {
 	if a == nil || bytes < 0 {
 		return false
 	}
 	if bytes == 0 {
 		return true
 	}
-	budget := a.budgetBytes()
 	reclaimed := false
 	for {
 		current := a.reserved.Load()
@@ -196,12 +207,14 @@ func (a *requestMemoryAdmission) recordPeak(value int64) {
 
 func (a *requestMemoryAdmission) reservedCounter(class memoryReservationClass) *atomic.Int64 {
 	switch class {
-	case requestBodyMemory:
-		return &a.requestBodyReserved
+	case requestLifetimeMemory:
+		return &a.requestReserved
 	case streamStateMemory:
 		return &a.streamStateReserved
 	case downstreamDeliveryMemory:
 		return &a.downstreamReserved
+	case confidentialStateMemory:
+		return &a.confidentialReserved
 	default:
 		panic("invalid memory reservation class")
 	}
@@ -209,12 +222,14 @@ func (a *requestMemoryAdmission) reservedCounter(class memoryReservationClass) *
 
 func (a *requestMemoryAdmission) failureCounter(class memoryReservationClass) *atomic.Uint64 {
 	switch class {
-	case requestBodyMemory:
-		return &a.requestBodyFailures
+	case requestLifetimeMemory:
+		return &a.requestFailures
 	case streamStateMemory:
 		return &a.streamStateFailures
 	case downstreamDeliveryMemory:
 		return &a.downstreamFailures
+	case confidentialStateMemory:
+		return &a.confidentialFailures
 	default:
 		panic("invalid memory reservation class")
 	}
@@ -229,7 +244,7 @@ func (l *requestMemoryLease) resize(bodyBytes int) bool {
 	if l.released.Load() {
 		return false
 	}
-	weight := max(requestMemoryWeight(bodyBytes, l.structure), l.retained)
+	weight := max(requestMemoryWeight(bodyBytes, l.structure+l.response), l.retained)
 	delta := weight - l.weight
 	if delta == 0 {
 		l.bodyBytes = bodyBytes
@@ -258,17 +273,71 @@ func (l *requestMemoryLease) admitJSON(values int) error {
 	if l.released.Load() {
 		return errRequestMemoryCapacity
 	}
-	structure := requestMemoryBudgetBytes + 1
-	if int64(values) <= requestMemoryBudgetBytes/requestJSONValueBytes {
+	structure := int64(math.MaxInt64)
+	if int64(values) <= math.MaxInt64/requestJSONValueBytes {
 		structure = int64(values) * requestJSONValueBytes
 	}
 	structure = max(l.structure, structure)
-	weight := max(requestMemoryWeight(l.bodyBytes, structure), l.retained)
+	if structure > math.MaxInt64-l.response {
+		return errRequestMemoryCapacity
+	}
+	weight := max(requestMemoryWeight(l.bodyBytes, structure+l.response), l.retained)
 	if !l.admission.reserve(l.class, weight-l.weight) {
 		return errRequestMemoryCapacity
 	}
 	l.structure, l.weight = structure, weight
 	return nil
+}
+
+func (l *requestMemoryLease) ReserveResponse(bytes, values int64) (ok bool) {
+	defer func() {
+		if !ok {
+			l.recordResponseCapacityFailure()
+		}
+	}()
+	if l == nil || l.admission == nil || bytes < 0 || values < 0 ||
+		bytes > requestMemoryBudgetBytes/requestBodyReservationFactor || values > requestMemoryBudgetBytes/requestJSONValueBytes {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released.Load() {
+		return false
+	}
+	response := l.response + bytes*requestBodyReservationFactor + values*requestJSONValueBytes
+	if response < l.response || response > math.MaxInt64-l.structure {
+		return false
+	}
+	weight := max(requestMemoryWeight(l.bodyBytes, l.structure+response), l.retained)
+	if !l.admission.reserve(l.class, weight-l.weight) {
+		return false
+	}
+	l.response, l.weight = response, weight
+	return true
+}
+
+func (l *requestMemoryLease) ReserveTemporary(bytes int64) (release func(), ok bool) {
+	defer func() {
+		if !ok {
+			l.recordResponseCapacityFailure()
+		}
+	}()
+	if l == nil || l.admission == nil || bytes < 0 || bytes > l.admission.budgetBytes() {
+		return nil, false
+	}
+	lease := l.admission.newLease(streamStateMemory)
+	if !lease.grow(int(bytes)) {
+		return nil, false
+	}
+	return lease.release, true
+}
+
+// Count affected requests once, including decoder scratch admission. These
+// failures can occur after dispatch and overlap the reservation-class counters.
+func (l *requestMemoryLease) recordResponseCapacityFailure() {
+	if l != nil && l.responseFailed.CompareAndSwap(false, true) && l.admission != nil {
+		l.admission.responseFailures.Add(1)
+	}
 }
 
 // grow reserves one byte for each retained or queued stream payload byte.
@@ -277,6 +346,10 @@ func (l *requestMemoryLease) grow(bytes int) bool {
 	if l == nil {
 		return true
 	}
+	return l.growWithin(bytes, l.admission.budgetBytes())
+}
+
+func (l *requestMemoryLease) growWithin(bytes int, budget int64) bool {
 	if l.admission == nil || bytes < 0 {
 		return false
 	}
@@ -289,8 +362,14 @@ func (l *requestMemoryLease) grow(bytes int) bool {
 		return false
 	}
 	delta := int64(bytes)
-	if !l.admission.reserve(l.class, delta) {
-		return false
+	if l.parent != nil {
+		if !l.parent.pin(l.class, delta) {
+			return false
+		}
+	} else {
+		if !l.admission.reserveWithin(l.class, delta, budget) {
+			return false
+		}
 	}
 	l.weight += delta
 	return true
@@ -310,7 +389,11 @@ func (l *requestMemoryLease) shrink(bytes int) {
 		delta = l.weight - l.retained
 	}
 	l.weight -= delta
-	l.admission.release(l.class, delta)
+	if l.parent != nil {
+		l.parent.unpin(l.class, delta)
+	} else {
+		l.admission.release(l.class, delta)
+	}
 }
 
 func (l *requestMemoryLease) release() {
@@ -320,8 +403,37 @@ func (l *requestMemoryLease) release() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.released.CompareAndSwap(false, true) {
-		l.admission.release(l.class, l.weight-l.retained)
+		if l.parent != nil {
+			l.parent.unpin(l.class, l.weight-l.retained)
+		} else {
+			l.admission.release(l.class, l.weight-l.retained)
+		}
 		l.weight = l.retained
+	}
+}
+
+func (l *requestMemoryLease) pin(class memoryReservationClass, bytes int64) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released.Load() || bytes > l.weight-l.retained {
+		return false
+	}
+	l.retained += bytes
+	l.admission.reservedCounter(l.class).Add(-bytes)
+	l.admission.reservedCounter(class).Add(bytes)
+	return true
+}
+
+func (l *requestMemoryLease) unpin(class memoryReservationClass, bytes int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.retained -= bytes
+	if l.released.Load() {
+		l.weight -= bytes
+		l.admission.release(class, bytes)
+	} else {
+		l.admission.reservedCounter(class).Add(-bytes)
+		l.admission.reservedCounter(l.class).Add(bytes)
 	}
 }
 
@@ -373,18 +485,22 @@ func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
 		}
 	}
 	return requestMemoryDiagnostics{
-		BudgetBytes:                    a.budgetBytes(),
-		DownstreamReservationFailures:  a.downstreamFailures.Load(),
-		DownstreamReservedBytes:        a.downstreamReserved.Load(),
-		MinimumRequestReservationBytes: minimumRequestWeightBytes,
-		PeakReservedBytes:              a.peakReserved.Load(),
-		RequestBodyReservationFactor:   requestBodyReservationFactor,
-		JSONValueReservationBytes:      requestJSONValueBytes,
-		RequestBodyReservationFailures: a.requestBodyFailures.Load(),
-		RequestBodyReservedBytes:       a.requestBodyReserved.Load(),
-		ReservedBytes:                  a.reserved.Load(),
-		Saturated:                      a.saturated(),
-		StreamStateReservationFailures: a.streamStateFailures.Load(),
-		StreamStateReservedBytes:       a.streamStateReserved.Load(),
+		BudgetBytes:                      a.budgetBytes(),
+		ConfidentialHeadroomBytes:        a.confidentialHeadroom,
+		ConfidentialReservedBytes:        a.confidentialReserved.Load(),
+		ConfidentialReservationFailures:  a.confidentialFailures.Load(),
+		DownstreamReservationFailures:    a.downstreamFailures.Load(),
+		DownstreamReservedBytes:          a.downstreamReserved.Load(),
+		MinimumRequestReservationBytes:   minimumRequestWeightBytes,
+		PeakReservedBytes:                a.peakReserved.Load(),
+		ProviderResponseCapacityFailures: a.responseFailures.Load(),
+		RequestBodyReservationFactor:     requestBodyReservationFactor,
+		JSONValueReservationBytes:        requestJSONValueBytes,
+		RequestReservationFailures:       a.requestFailures.Load(),
+		RequestReservedBytes:             a.requestReserved.Load(),
+		ReservedBytes:                    a.reserved.Load(),
+		Saturated:                        a.saturated(),
+		StreamStateReservationFailures:   a.streamStateFailures.Load(),
+		StreamStateReservedBytes:         a.streamStateReserved.Load(),
 	}
 }

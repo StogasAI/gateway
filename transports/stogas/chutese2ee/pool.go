@@ -25,6 +25,7 @@ const maximumPooledTicketsPerTarget = 512
 const maximumSynchronousRefillBackoffWait = 2 * time.Second
 
 type poolState struct {
+	managed        bool
 	mu             sync.Mutex
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -62,7 +63,7 @@ func newPoolState(api *apiClient, attestor *attestor, diagnostics *diagnostics) 
 	return state
 }
 
-func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTicket, error) {
+func (s *poolState) reserve(ctx context.Context, target ModelTarget) (_ reservedTicket, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -75,6 +76,12 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 		return reservedTicket{}, err
 	}
 	chuteID := target.ChuteID
+	var waitingSince time.Time
+	defer func() {
+		if !waitingSince.IsZero() {
+			s.diagnostics.chute(chuteID).ticketWait.record(0, time.Since(waitingSince), resultErr)
+		}
+	}()
 	failures := 0
 	for {
 		if err := ctx.Err(); err != nil {
@@ -84,6 +91,9 @@ func (s *poolState) reserve(ctx context.Context, target ModelTarget) (reservedTi
 			s.diagnostics.recordTicketAvailable(chuteID)
 			s.maybeWarm(target)
 			return ticket, nil
+		}
+		if waitingSince.IsZero() {
+			waitingSince = time.Now()
 		}
 		resultChannel := s.refills.DoChan(modelTargetKey(target), func() (any, error) {
 			if s.hasUsable(target, time.Now()) {
@@ -168,7 +178,9 @@ func (s *poolState) close() {
 	s.mu.Lock()
 	s.diagnostics.poolTargets.Add(-int64(len(s.trackedTargets)))
 	clear(s.trackedTargets)
-	clear(s.pools)
+	for chuteID := range s.pools {
+		s.discardPoolLocked(chuteID, time.Now())
+	}
 	clear(s.verified)
 	clear(s.cooldowns)
 	clear(s.activity)
@@ -219,7 +231,7 @@ func (s *poolState) maintain(now time.Time) {
 		if activity == nil || !validModelTarget(activity.Target) || now.Sub(activity.LastDemandAt) >= credentialIdleLifetime {
 			delete(s.activity, chuteID)
 			delete(s.refillState, chuteID)
-			delete(s.pools, chuteID)
+			s.discardPoolLocked(chuteID, now)
 			delete(s.verified, chuteID)
 			delete(s.cooldowns, chuteID)
 			if _, tracked := s.trackedTargets[chuteID]; tracked {
@@ -352,6 +364,11 @@ func (s *poolState) take(target ModelTarget, now time.Time) (reservedTicket, boo
 		instanceTickets.Values = instanceTickets.Values[1:]
 		pool.Cursor = (index + 1) % len(pool.Order)
 		s.recordDemandLocked(target, now)
+		metrics := s.diagnostics.chute(chuteID)
+		metrics.ticketsReserved.Add(1)
+		if s.managed {
+			metrics.managedTicketsReserved.Add(1)
+		}
 		return reservedTicket{
 			ChuteID:            chuteID,
 			InstanceID:         instanceID,
@@ -524,13 +541,21 @@ func (s *poolState) discover(target ModelTarget) ([]discoveredInstance, time.Tim
 			maxDiscoveryBody,
 			&response,
 		)
-		s.diagnostics.recordDiscovery(chuteID, status, latency, requestErr)
-		if requestErr != nil {
-			return requestErr
+		if requestErr == nil {
+			instances, expiresAt, requestErr = validateDiscovery(response, time.Now())
 		}
-		var validationErr error
-		instances, expiresAt, validationErr = validateDiscovery(response, time.Now())
-		return validationErr
+		s.diagnostics.recordDiscovery(chuteID, status, latency, requestErr)
+		if s.managed {
+			s.diagnostics.chute(chuteID).managedDiscoveryCalls.Add(1)
+		}
+		if requestErr == nil {
+			var received uint64
+			for _, instance := range instances {
+				received += uint64(len(instance.Tickets))
+			}
+			s.diagnostics.chute(chuteID).ticketsReceived.Add(received)
+		}
+		return requestErr
 	})
 	if err != nil {
 		return nil, time.Time{}, err
@@ -673,12 +698,16 @@ func (s *poolState) install(target ModelTarget, discovered []discoveredInstance,
 			existingValues[ticket.Value] = struct{}{}
 		}
 	}
+	var installed, discarded uint64
 	for _, instance := range discovered {
 		tickets := pool.Instances[instance.ID]
 		if tickets == nil && len(pool.Instances) >= maximumDiscoveredInstances {
 			continue
 		}
 		if tickets == nil || tickets.PublicKey != instance.PublicKey {
+			if tickets != nil {
+				discarded += uint64(len(tickets.Values))
+			}
 			tickets = &instanceTickets{PublicKey: instance.PublicKey}
 			pool.Instances[instance.ID] = tickets
 		}
@@ -690,8 +719,14 @@ func (s *poolState) install(target ModelTarget, discovered []discoveredInstance,
 				continue
 			}
 			tickets.Values = append(tickets.Values, pooledTicket{Value: value, ExpiresAt: expiresAt})
+			installed++
 			existingValues[value] = struct{}{}
 		}
+	}
+	if installed > 0 || discarded > 0 {
+		metrics := s.diagnostics.chute(chuteID)
+		metrics.ticketsInstalled.Add(installed)
+		metrics.ticketsDiscarded.Add(discarded)
 	}
 	s.rebuildOrderLocked(pool)
 	activity := s.activity[chuteID]
@@ -738,7 +773,7 @@ func (s *poolState) observeInvoke(ticket reservedTicket, status int, retryAfter 
 		delete(s.verified[ticket.ChuteID], ticket.InstanceID)
 		s.cooldowns[ticket.ChuteID][ticket.InstanceID] = now.Add(30 * time.Second)
 	case status == 403:
-		delete(s.pools, ticket.ChuteID)
+		s.discardPoolLocked(ticket.ChuteID, now)
 	case status == 429 || status == 500 || status == 502 || status == 503 || status == 504:
 		if retryAfter <= 0 {
 			retryAfter = instanceCooldown
@@ -749,12 +784,29 @@ func (s *poolState) observeInvoke(ticket reservedTicket, status int, retryAfter 
 
 func (s *poolState) clearInstanceTicketsLocked(chuteID, instanceID string) {
 	if pool := s.pools[chuteID]; pool != nil {
+		if tickets := pool.Instances[instanceID]; tickets != nil {
+			s.diagnostics.chute(chuteID).ticketsDiscarded.Add(uint64(len(tickets.Values)))
+		}
 		delete(pool.Instances, instanceID)
 		s.rebuildOrderLocked(pool)
 	}
 }
 
+// Account for expiry before classifying the remaining unused tickets as discarded.
+func (s *poolState) discardPoolLocked(chuteID string, now time.Time) {
+	s.pruneLocked(chuteID, now)
+	var discarded uint64
+	for _, tickets := range poolInstances(s.pools[chuteID]) {
+		discarded += uint64(len(tickets.Values))
+	}
+	if discarded > 0 {
+		s.diagnostics.chute(chuteID).ticketsDiscarded.Add(discarded)
+	}
+	delete(s.pools, chuteID)
+}
+
 func (s *poolState) pruneLocked(chuteID string, now time.Time) {
+	var expired uint64
 	if pool := s.pools[chuteID]; pool != nil {
 		for instanceID, tickets := range pool.Instances {
 			if tickets == nil {
@@ -765,6 +817,8 @@ func (s *poolState) pruneLocked(chuteID string, now time.Time) {
 			for _, ticket := range tickets.Values {
 				if now.Before(ticket.ExpiresAt) {
 					kept = append(kept, ticket)
+				} else {
+					expired++
 				}
 			}
 			tickets.Values = kept
@@ -777,6 +831,9 @@ func (s *poolState) pruneLocked(chuteID string, now time.Time) {
 		} else {
 			s.rebuildOrderLocked(pool)
 		}
+	}
+	if expired > 0 {
+		s.diagnostics.chute(chuteID).ticketsExpired.Add(expired)
 	}
 	for instanceID, verification := range s.verified[chuteID] {
 		if !now.Before(verification.ValidUntil) {
@@ -858,6 +915,9 @@ func (s *poolState) health() map[string]poolHealth {
 			versions[verification.MeasurementName+"@"+verification.MeasurementVersion] = struct{}{}
 		}
 		if s.pools[chuteID] != nil {
+			for _, tickets := range s.pools[chuteID].Instances {
+				state.PooledTickets += len(tickets.Values)
+			}
 			var nearestExpiry time.Time
 			if validModelTarget(target) {
 				state.UsableTickets, nearestExpiry = s.usablePoolStateLocked(target, now)
@@ -898,6 +958,7 @@ func aggregatePoolHealth(states []*poolState) map[string]poolHealth {
 			target.CredentialPools += source.CredentialPools
 			target.CredentialPoolsInRefillBackoff += source.CredentialPoolsInRefillBackoff
 			target.UsableTickets += source.UsableTickets
+			target.PooledTickets += source.PooledTickets
 			if source.RefillBackoffSeconds > target.RefillBackoffSeconds {
 				target.RefillBackoffSeconds = source.RefillBackoffSeconds
 			}

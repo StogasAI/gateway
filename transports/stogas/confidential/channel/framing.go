@@ -3,7 +3,7 @@ package channel
 import "encoding/binary"
 
 const (
-	requestHeader      = "STGS\x03\x03"
+	requestHeader      = "STGS\x01\x03"
 	RequestPrefixBytes = len(requestHeader) + 32 + 8
 )
 

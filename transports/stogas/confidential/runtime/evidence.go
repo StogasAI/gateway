@@ -33,7 +33,9 @@ type approvedCatalog struct {
 		Sequence               uint64 `json:"sequence"`
 		MinimumGatewaySequence uint64 `json:"minimum_gateway_sequence"`
 		RuntimeDigest          string `json:"runtime_digest"`
+        RuntimeSizeBytes       int64 `json:"runtime_size_bytes"`
 		PublicDigest           string `json:"public_digest"`
+        PublicSizeBytes        int64 `json:"public_size_bytes"`
 	} `json:"release"`
 }
 

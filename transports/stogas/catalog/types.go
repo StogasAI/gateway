@@ -27,7 +27,9 @@ type Deployment struct {
 	ModelID             string
 	Upstream            Upstream
 	Capabilities        Capabilities
+	FileInputs          FileInputs
 	ContextWindowTokens int
+	MaxInputTokens      int
 	ImpliedServiceTier  *schemas.BifrostServiceTier
 	MaxOutputTokens     int
 	Pricing             Pricing
@@ -109,7 +111,9 @@ type compiledDeployment struct {
 	ChainHashes         map[string]string                          `json:"chainHashes"`
 	Capabilities        Capabilities                               `json:"capabilities"`
 	ContextWindowTokens int                                        `json:"contextWindowTokens"`
+	MaxInputTokens      int                                        `json:"maxInputTokens"`
 	InputModalities     []string                                   `json:"inputModalities"`
+	FileInputsByRoute   map[string]FileInputs                      `json:"fileInputsByRoute"`
 	MaxOutputTokens     int                                        `json:"maxOutputTokens"`
 	ModelID             string                                     `json:"modelId"`
 	OutputModalities    []string                                   `json:"outputModalities"`
@@ -135,7 +139,6 @@ type Capabilities struct {
 	InputModalities         []string `json:"inputModalities"`
 	OutputModalities        []string `json:"outputModalities"`
 	ParallelFunctionCalling bool     `json:"parallelFunctionCalling"`
-	PDFInput                bool     `json:"pdfInput"`
 	ImplicitPromptCaching   bool     `json:"implicitPromptCaching"`
 	ExplicitPromptCaching   bool     `json:"explicitPromptCaching"`
 	Streaming               bool     `json:"streaming"`
@@ -160,15 +163,14 @@ type compiledUpstream struct {
 }
 
 type compiledModel struct {
-	Aliases            []string             `json:"aliases"`
-	AuthorID           string               `json:"authorId"`
-	TokenizerFamily    tokenizationStrategy `json:"tokenizerFamily"`
-	MaxOutputTokens    int                  `json:"maxOutputTokens"`
-	Name               string               `json:"name"`
-	Reasoning          string               `json:"reasoning"`
-	ReasoningEfforts   []string             `json:"reasoningEfforts"`
-	ReasoningMaxTokens *ReasoningMaxTokens  `json:"reasoningMaxTokens"`
-	ReleaseDate        string               `json:"releaseDate"`
+	Aliases            []string            `json:"aliases"`
+	AuthorID           string              `json:"authorId"`
+	MaxOutputTokens    int                 `json:"maxOutputTokens"`
+	Name               string              `json:"name"`
+	Reasoning          string              `json:"reasoning"`
+	ReasoningEfforts   []string            `json:"reasoningEfforts"`
+	ReasoningMaxTokens *ReasoningMaxTokens `json:"reasoningMaxTokens"`
+	ReleaseDate        string              `json:"releaseDate"`
 }
 
 type compiledProvider struct {

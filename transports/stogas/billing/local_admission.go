@@ -30,74 +30,6 @@ type LocalAdmissionDiagnostics struct {
 	RequestRejected           uint64     `json:"requestRejected"`
 }
 
-type verifiedAPIKeyShard struct {
-	mu      sync.Mutex
-	entries map[string]APIKeyClaims
-}
-
-// verifiedAPIKeyCache saves only immutable claims from valid signed keys.
-// PostgreSQL still checks every request-time permission, limit, and balance.
-type verifiedAPIKeyCache struct {
-	hits    atomic.Uint64
-	lookups atomic.Uint64
-	shards  [localAdmissionShards]verifiedAPIKeyShard
-}
-
-func (c *verifiedAPIKeyCache) get(key string) (*APIKeyClaims, bool) {
-	if c == nil || key == "" {
-		return nil, false
-	}
-	c.lookups.Add(1)
-	shard := &c.shards[localAdmissionShard(key)]
-	shard.mu.Lock()
-	claims, ok := shard.entries[key]
-	shard.mu.Unlock()
-	if !ok {
-		return nil, false
-	}
-	c.hits.Add(1)
-	return cloneAPIKeyClaims(claims), true
-}
-
-func (c *verifiedAPIKeyCache) put(key string, claims *APIKeyClaims) {
-	if c == nil || key == "" || claims == nil {
-		return
-	}
-	shard := &c.shards[localAdmissionShard(key)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	if shard.entries == nil {
-		shard.entries = make(map[string]APIKeyClaims)
-	}
-	if _, exists := shard.entries[key]; !exists {
-		evictVerifiedAPIKeyEntry(shard.entries)
-	}
-	shard.entries[key] = *cloneAPIKeyClaims(*claims)
-}
-
-func (c *verifiedAPIKeyCache) entryCount() int {
-	if c == nil {
-		return 0
-	}
-	total := 0
-	for index := range c.shards {
-		shard := &c.shards[index]
-		shard.mu.Lock()
-		total += len(shard.entries)
-		shard.mu.Unlock()
-	}
-	return total
-}
-
-func cloneAPIKeyClaims(claims APIKeyClaims) *APIKeyClaims {
-	copy := claims
-	if claims.GrantID != nil {
-		grantID := *claims.GrantID
-		copy.GrantID = &grantID
-	}
-	return &copy
-}
-
 type localRequestEntry struct {
 	tokens    float64
 	updatedAt time.Time
@@ -180,46 +112,10 @@ func (l *authorizationActivity) recordInFlight(value int64) {
 	}
 }
 
-type authorizationRejectionEntry struct {
-	blockedUntil time.Time
-	failures     uint8
-	lastFailedAt time.Time
-}
-
-type authorizationRejectionShard struct {
-	mu      sync.Mutex
-	entries map[string]authorizationRejectionEntry
-}
-
-type authorizationRejectionCache struct {
-	hits    atomic.Uint64
-	lookups atomic.Uint64
-	shards  [localAdmissionShards]authorizationRejectionShard
-}
-
-func (c *authorizationRejectionCache) get(
-	key string,
-	now time.Time,
-) time.Duration {
-	if c == nil || key == "" {
-		return 0
-	}
-	c.lookups.Add(1)
-	shard := &c.shards[localAdmissionShard(key)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	entry, ok := shard.entries[key]
-	if !ok || !now.Before(entry.blockedUntil) {
-		return 0
-	}
-	c.hits.Add(1)
-	return entry.blockedUntil.Sub(now)
-}
-
 func localAdmissionDiagnostics(
 	requests *localRequestLimiter,
 	authorizations *authorizationActivity,
-	rejections *authorizationRejectionCache,
+	rejections *callerFailureCache,
 	apiKeys *verifiedAPIKeyCache,
 ) LocalAdmissionDiagnostics {
 	result := LocalAdmissionDiagnostics{
@@ -256,60 +152,6 @@ func localAdmissionTime(unixMilliseconds int64) *time.Time {
 	return &value
 }
 
-func (c *authorizationRejectionCache) record(key string, now time.Time) {
-	if c == nil || key == "" {
-		return
-	}
-	shard := &c.shards[localAdmissionShard(key)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	if shard.entries == nil {
-		shard.entries = make(map[string]authorizationRejectionEntry)
-	}
-
-	entry := shard.entries[key]
-	// Concurrent completions can acquire the shard lock out of timestamp
-	// order. An older completion must not shorten the latest cooldown.
-	if now.Before(entry.lastFailedAt) {
-		now = entry.lastFailedAt
-	}
-	// Only overlapping failure bursts escalate. Once the advertised cooldown
-	// ends, a new failure starts fresh without requiring a successful request.
-	// Rejected retries only read this state and cannot prolong the penalty.
-	if !now.Before(entry.blockedUntil) {
-		entry.failures = 1
-	} else if entry.failures < 16 {
-		entry.failures++
-	}
-	delay := 25 * time.Millisecond
-	for attempt := uint8(1); attempt < entry.failures && delay < 2*time.Second; attempt++ {
-		delay *= 2
-	}
-	if delay > 2*time.Second {
-		delay = 2 * time.Second
-	}
-	entry.blockedUntil = now.Add(delay)
-	entry.lastFailedAt = now
-	if _, exists := shard.entries[key]; !exists {
-		evictAuthorizationRejectionEntry(shard.entries)
-	}
-	shard.entries[key] = entry
-}
-
-// A successful request ends an earlier failure streak. An older request
-// completing late must not erase failures recorded since that request started.
-func (c *authorizationRejectionCache) succeeded(key string, started time.Time) {
-	if c == nil || key == "" {
-		return
-	}
-	shard := &c.shards[localAdmissionShard(key)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	if entry, ok := shard.entries[key]; ok && !entry.lastFailedAt.After(started) {
-		delete(shard.entries, key)
-	}
-}
-
 func localAdmissionShard(value string) uint64 {
 	const (
 		offset = uint64(14695981039346656037)
@@ -324,26 +166,6 @@ func localAdmissionShard(value string) uint64 {
 }
 
 func evictLocalAdmissionEntry(entries map[string]localRequestEntry) {
-	if len(entries) < localAdmissionEntriesPerShard {
-		return
-	}
-	for key := range entries {
-		delete(entries, key)
-		return
-	}
-}
-
-func evictAuthorizationRejectionEntry(entries map[string]authorizationRejectionEntry) {
-	if len(entries) < localAdmissionEntriesPerShard {
-		return
-	}
-	for key := range entries {
-		delete(entries, key)
-		return
-	}
-}
-
-func evictVerifiedAPIKeyEntry(entries map[string]APIKeyClaims) {
 	if len(entries) < localAdmissionEntriesPerShard {
 		return
 	}

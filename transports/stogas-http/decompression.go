@@ -9,13 +9,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/zstd"
+	"github.com/maximhq/bifrost/transports/stogas/providerio"
 )
-
-// Brotli's format permits a 24-bit history window and three groups of at most
-// 256 Huffman tables. The pinned decoder uses at most 1,528 four-byte entries
-// per table. Include overlapping growth and small context/lookup buffers.
-// This temporary charge ends before inference; it is not a concurrency quota.
-const brotliDecoderReservation = 2*((1<<24)+(3*256*1528*4)) + (64 << 10)
 
 func decompressRequestBody(encoded []byte, encoding string, maximum int, lease *requestMemoryLease) ([]byte, error) {
 	if encoding == "zstd" {
@@ -39,8 +34,8 @@ func decompressRequestBody(encoded []byte, encoding string, maximum int, lease *
 		defer reader.Close()
 		decoded = reader
 	case "br":
-		scratch := lease.admission.newLease(requestBodyMemory)
-		if !scratch.grow(brotliDecoderReservation) {
+		scratch := lease.admission.newLease(requestLifetimeMemory)
+		if !scratch.grow(providerio.BrotliDecoderReservation) {
 			return nil, errRequestMemoryCapacity
 		}
 		defer scratch.release()
@@ -50,7 +45,7 @@ func decompressRequestBody(encoded []byte, encoding string, maximum int, lease *
 	}
 	// Decoder state and its reference to encoded bytes end before the caller
 	// releases the compressed-body reservation and enters provider processing.
-	return readAdmittedBody(decoded, maximum, lease, cap(encoded))
+	return readAdmittedBody(decoded, maximum, lease, cap(encoded), -1)
 }
 
 func decodeZstdBody(encoded []byte, maximum int, lease *requestMemoryLease) ([]byte, error) {

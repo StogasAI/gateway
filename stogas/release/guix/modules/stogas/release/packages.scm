@@ -103,6 +103,7 @@
 	                                  "MODULES"
 	                                  "PACKET"
 	                                  "PROFILING"
+	                                  "PSI_DEFAULT_DISABLED"
 	                                  "USER_NS"
 	                                  "VIRTIO_PCI_LEGACY"))
 	                      (built-ins '("ACPI"
@@ -139,6 +140,7 @@
 	                                   "PCI_MSI"
 	                                   "PCI_MMCONFIG"
 	                                   "PROC_FS"
+	                                   "PSI"
 	                                   "RANDOMIZE_BASE"
 	                                   "RD_ZSTD"
 	                                   "SECCOMP"

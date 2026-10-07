@@ -7,11 +7,16 @@ import (
 	"testing"
 )
 
-func inputTokenHoldEstimate(t *testing.T, rawData map[string]json.RawMessage, family tokenizationStrategy, route Route, maxInputTokens int) int {
+func inputTokenHoldEstimate(t *testing.T, rawData map[string]json.RawMessage, author string, route Route, maxInputTokens int) int {
 	t.Helper()
-	result, err := estimateInputHold(requestInputHoldStats(rawData, route), family, maxInputTokens)
+	stats := requestInputHoldStats(rawData, route)
+	result, err := estimateInputContent(stats, maxInputTokens)
 	if err != nil {
 		t.Fatal(err)
+	}
+	result += inputHoldFraming(stats, author)
+	if maxInputTokens > 0 {
+		result = min(result, maxInputTokens)
 	}
 	return result
 }
@@ -42,7 +47,7 @@ func TestRequestInputHoldStatsIncludesToolArgumentsAndAnthropicControls(t *testi
 }
 
 func TestInputHoldSupportsTwoMillionTokenCatalogLimit(t *testing.T) {
-	text := strings.Repeat("\ufdd0", 700_000)
+	text := strings.Repeat("\ufdd0", 1_000_000)
 	body := []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":%q}]}`, text))
 	raw, err := DecodeRequestBody(body, nil)
 	if err != nil {
@@ -83,13 +88,12 @@ func TestOpaqueReasoningUsesBytesWithoutTokenizingCiphertext(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		route      Route
-		family     tokenizationStrategy
 	}{
-		{"responses", `{"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"summary"}],"encrypted_content":%q}]}`, RouteResponses, tokenizationOpenAI},
-		{"signed chat", `{"messages":[{"role":"assistant","reasoning_details":[{"type":"reasoning.text","text":"summary","signature":%q}]}]}`, RouteChat, tokenizationAnthropic},
-		{"redacted chat", `{"messages":[{"role":"assistant","reasoning_details":[{"type":"reasoning.encrypted","data":%q}]}]}`, RouteChat, tokenizationAnthropic},
-		{"thinking block", `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"summary","signature":%q}]}]}`, RouteChat, tokenizationAnthropic},
-		{"redacted block", `{"messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":%q}]}]}`, RouteChat, tokenizationAnthropic},
+		{"responses", `{"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"summary"}],"encrypted_content":%q}]}`, RouteResponses},
+		{"signed chat", `{"messages":[{"role":"assistant","reasoning_details":[{"type":"reasoning.text","text":"summary","signature":%q}]}]}`, RouteChat},
+		{"redacted chat", `{"messages":[{"role":"assistant","reasoning_details":[{"type":"reasoning.encrypted","data":%q}]}]}`, RouteChat},
+		{"thinking block", `{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"summary","signature":%q}]}]}`, RouteChat},
+		{"redacted block", `{"messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":%q}]}]}`, RouteChat},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := DecodeRequestBody([]byte(fmt.Sprintf(tc.body, opaque)), nil)
@@ -103,20 +107,20 @@ func TestOpaqueReasoningUsesBytesWithoutTokenizingCiphertext(t *testing.T) {
 			if strings.Contains(strings.Join(stats.TextFields, ""), "summary") {
 				t.Fatal("a display summary was counted again beside its encrypted thinking")
 			}
-			estimate, err := estimateInputHold(stats, tc.family, 100_000)
+			estimate, err := estimateInputContent(stats, 100_000)
 			if err != nil {
 				t.Fatal(err)
 			}
 			visible := stats
 			visible.OpaqueReasoningBytes = 0
-			textEstimate, err := estimateInputHold(visible, tc.family, 100_000)
+			textEstimate, err := estimateInputContent(visible, 100_000)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if estimate != textEstimate+len(opaque) {
 				t.Fatalf("opaque bytes must be counted exactly once: %d versus %d visible", estimate, textEstimate)
 			}
-			capped, err := estimateInputHold(stats, tc.family, 1000)
+			capped, err := estimateInputContent(stats, 1000)
 			if err != nil || capped != 1000 {
 				t.Fatalf("context cap: %d, %v", capped, err)
 			}
@@ -133,7 +137,7 @@ func TestSignedReasoningSummaryDoesNotMultiplyTheEstimate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		estimate, err := estimateInputHold(requestInputHoldStats(raw, RouteChat), tokenizationAnthropic, 100_000)
+		estimate, err := estimateInputContent(requestInputHoldStats(raw, RouteChat), 100_000)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -163,5 +167,23 @@ func TestReasoningPropertiesInToolInputRemainText(t *testing.T) {
 	stats := requestInputHoldStats(raw, RouteChat)
 	if stats.OpaqueReasoningBytes != 0 || !strings.Contains(strings.Join(stats.TextFields, ""), "ordinary user text") {
 		t.Fatal("user text was mistaken for a provider reasoning envelope")
+	}
+}
+
+func TestRequestEstimatorUsesEachDeploymentsIndependentInputCeiling(t *testing.T) {
+	snap := loadTestCatalog(t)
+	raw, err := DecodeRequestBody([]byte(`{"input":"`+strings.Repeat("UNCOMMONWORD ", 1000)+`"}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := "gpt-5.6-sol"
+	small := Deployment{ModelID: model, ContextWindowTokens: 10000, MaxInputTokens: 100, snapshot: snap}
+	large := Deployment{ModelID: model, ContextWindowTokens: 10000, MaxInputTokens: 300, snapshot: snap}
+	estimate := requestTokenEstimator(raw, RouteResponses, []routingSelection{{deployment: small}, {deployment: large}})
+	for _, deployment := range []Deployment{small, large, small} {
+		got, err := estimate(deployment)
+		if err != nil || got != deployment.MaxInputTokens {
+			t.Fatalf("input ceiling %d: got %d, %v", deployment.MaxInputTokens, got, err)
+		}
 	}
 }

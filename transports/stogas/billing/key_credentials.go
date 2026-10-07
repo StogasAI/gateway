@@ -26,6 +26,7 @@ type CachedCredential struct {
 	Bindings        []AzureCredentialBinding `json:"bindings"`
 	Policy          credentialPolicyRecord   `json:"policy"`
 	policySource    *sharedCredentialPolicy
+	azureBindings   map[azureBindingKey][]*AzureCredentialBinding
 }
 
 // AzureCredentialBinding is decoded once with the immutable credential
@@ -33,6 +34,37 @@ type CachedCredential struct {
 type AzureCredentialBinding struct {
 	AzureBinding
 	ModelDeprecationAt *time.Time `json:"modelDeprecationAt"`
+}
+
+// Geography, expiry and endpoint safety are checked against each candidate.
+// Request controls such as service tier do not change the physical target.
+type azureBindingKey struct {
+	modelFormat, model, modelVersion, hosting, deploymentType string
+}
+
+func indexAzureBindings(bindings []AzureCredentialBinding) map[azureBindingKey][]*AzureCredentialBinding {
+	if len(bindings) == 0 {
+		return nil
+	}
+	index := make(map[azureBindingKey][]*AzureCredentialBinding)
+	for i := range bindings {
+		binding := &bindings[i]
+		key := azureBindingKey{binding.ModelFormat, binding.ModelName, binding.ModelVersion, binding.Hosting, binding.DeploymentType}
+		index[key] = append(index[key], binding)
+	}
+	return index
+}
+
+// AzureBindingLookup reuses the immutable credential's index across API keys
+// and requests. Uncached snapshots build it once for the caller's selection pass.
+func (c *CachedCredential) AzureBindingLookup() func(UpstreamTarget) []*AzureCredentialBinding {
+	index := c.azureBindings
+	if index == nil {
+		index = indexAzureBindings(c.Bindings)
+	}
+	return func(target UpstreamTarget) []*AzureCredentialBinding {
+		return index[azureBindingKey{target.ModelFormat, target.Model, target.ModelVersion, target.Hosting, target.DeploymentType}]
+	}
 }
 
 type credentialPolicyRecord struct {
@@ -56,6 +88,12 @@ type PreparedCredential struct {
 	provider  string
 	index     int
 	Secret    string
+}
+
+// UsesBYOK requires a prepared customer-owned credential. Provider file IDs
+// must never resolve through a shared managed credential.
+func (p *PreparedCredential) UsesBYOK() bool {
+	return p != nil && (p.selection.Mode == "stored" || p.selection.Mode == "encrypted")
 }
 
 func (p *PreparedCredential) Clear() {

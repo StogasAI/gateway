@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,15 +24,15 @@ func rejectionFixture() RejectionInput {
 	}
 }
 
-func rejectionTestClient(t *testing.T, handler http.HandlerFunc) *TinybirdClient {
+func rejectionTestClient(t *testing.T, handler http.HandlerFunc) *RequestLogClient {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := NewTinybirdClient(server.URL, "test", true)
+	client, err := NewRequestLogClient(RequestLogConfig{TinybirdHost: server.URL, TinybirdToken: "test", AllowInsecurePrivateNetwork: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.circuitOpenDuration = time.Millisecond
+	client.fallback.circuitOpenDuration = time.Millisecond
 	return client
 }
 
@@ -62,7 +64,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 		mu.Unlock()
 		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, len(lines))
 	})
-	service := &Service{tinybird: client}
+	service := &Service{requestLogs: client}
 	input := rejectionFixture()
 	var callers sync.WaitGroup
 	for i := range 100 {
@@ -133,7 +135,7 @@ func TestRejectionLogsKeepFirstRequestsIndividualAndBoundDeliveryBatches(t *test
 		}
 		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, len(lines))
 	})
-	service := &Service{tinybird: client}
+	service := &Service{requestLogs: client}
 	want := map[string]savedRow{}
 	var total uint64
 	// Enough distinct keys to cross the batch limit, including both sides of
@@ -208,7 +210,7 @@ func TestRejectionLogsFlushWhenTrafficStopsAndReplayAnAmbiguousBatchUnchanged(t 
 		// Simulate an accepted write whose acknowledgement did not prove delivery.
 		w.Write([]byte(`{"successful_rows":0,"quarantined_rows":0}`))
 	})
-	service := &Service{tinybird: client}
+	service := &Service{requestLogs: client}
 	input := rejectionFixture()
 	service.RecordRejection(input)
 	var first string
@@ -227,6 +229,9 @@ func TestRejectionLogsFlushWhenTrafficStopsAndReplayAnAmbiguousBatchUnchanged(t 
 	}
 	if got := service.Diagnostics().RejectionLogs; got.OldestPendingAt == nil || got.PendingGroups != 1 {
 		t.Fatalf("failed delivery lost its pending age: %+v", got)
+	}
+	if service.FinalizationReady() {
+		t.Fatal("failed rejection delivery left inference admission open")
 	}
 	service.Close()
 	if got := service.Diagnostics().RejectionLogs; got.StoredRequests != 0 || got.DroppedRequests != 1 || got.DeliveryFailures < 2 {
@@ -270,6 +275,38 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.RecordRejection(input)
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.RecordedRequests != got.DroppedRequests {
 		t.Fatalf("shutdown loss accounting: %+v", got)
+	}
+}
+
+func TestRejectionDeliveryRecoveryReopensAdmissionAfterRetainedGroupsDrain(t *testing.T) {
+	var recovered atomic.Bool
+	client := rejectionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if !recovered.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		rows := len(strings.Split(strings.TrimSpace(string(body)), "\n"))
+		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, rows)
+	})
+	service := &Service{requestLogs: client}
+	defer service.Close()
+	service.RecordRejection(rejectionFixture())
+	deadline := time.Now().Add(5 * time.Second)
+	for !service.rejectionLogs.deliveryBlocked.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if service.FinalizationReady() {
+		t.Fatal("failed rejection delivery did not close admission")
+	}
+	recovered.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := service.DrainFinalizations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := service.Diagnostics().RejectionLogs; !service.FinalizationReady() || got.StoredRequests != 1 || got.DroppedRequests != 0 || got.PendingGroups != 0 {
+		t.Fatalf("recovery did not drain retained rejections: %+v", got)
 	}
 }
 

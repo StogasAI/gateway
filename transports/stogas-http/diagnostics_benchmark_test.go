@@ -8,6 +8,13 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 )
 
+func BenchmarkProcessDiagnostics(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = currentProcessDiagnostics(time.Time{})
+	}
+}
+
 // Measures the two aggregate observations per request, including contention,
 // without parsing or provider work hiding the collection cost.
 func BenchmarkRequestWorkObservation(b *testing.B) {

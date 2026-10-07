@@ -49,7 +49,7 @@ func receiptService(t *testing.T) (*Service, []byte, *mldsa.PrivateKey) {
 
 func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	service, document, key := receiptService(t)
-	input := Input{RequestBody: []byte(`{"request":true}`), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
+	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{"request":true}`))), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
 	output, err := service.Build(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	if err = json.Unmarshal(output.JSON, &decoded); err != nil || !reflect.DeepEqual(decoded, output.Object) {
 		t.Fatal("metadata encoding differs", err)
 	}
-	if !proof.VerifyReceipt(key.PublicKey(), decoded.Receipt, sha256.Sum256(document), sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody), decoded) {
+	if !proof.VerifyReceipt(key.PublicKey(), decoded.Receipt, sha256.Sum256(document), *input.RequestDigest, sha256.Sum256(input.ResponseBody), decoded) {
 		t.Fatal("receipt does not verify")
 	}
 	input.Metadata.BilledCostUSD = "21"
@@ -76,7 +76,7 @@ func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
 	service, document, key := receiptService(t)
 	request := []byte(`{"stream":true}`)
 	requestDigest := sha256.Sum256(request)
-	stream, err := service.NewStream(context.Background(), Input{RequestBody: request, Metadata: testMetadata()})
+	stream, err := service.NewStream(context.Background(), Input{RequestDigest: &requestDigest, Metadata: testMetadata()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 	if _, err := service.NewStream(ctx, Input{}); err == nil {
 		t.Fatal("cancelled stream created")
 	}
-	if _, err := service.Build(context.Background(), Input{RequestBody: []byte("a"), ResponseBody: []byte("b")}); err == nil {
+	if _, err := service.Build(context.Background(), Input{RequestDigest: new(sha256.Sum256([]byte("a"))), ResponseBody: []byte("b")}); err == nil {
 		t.Fatal("invalid metadata accepted")
 	}
 	if _, err := (&Service{}).NewStream(context.Background(), Input{}); err == nil {
@@ -137,14 +137,14 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 
 func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *testing.T) {
 	service, document, key := receiptService(t)
-	input := Input{RequestBody: []byte(`{}`), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
+	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{}`))), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
 	input.Metadata.Provider = map[string]any{"detail": strings.Repeat("x", 7*1024)}
 	output, err := service.Build(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(output.JSON) <= 8*1024 || !proof.VerifyReceipt(key.PublicKey(), output.Object.Receipt,
-		sha256.Sum256(document), sha256.Sum256(input.RequestBody), sha256.Sum256(input.ResponseBody), output.Object) {
+		sha256.Sum256(document), *input.RequestDigest, sha256.Sum256(input.ResponseBody), output.Object) {
 		t.Fatal("post-quantum signature crowded out previously supported metadata")
 	}
 	input.Metadata.Provider["detail"] = strings.Repeat("x", proof.MaxObjectBytes)

@@ -22,7 +22,7 @@ func TestRecordSizeBeforeAllocation(t *testing.T) {
 
 func FuzzRecordDecoding(f *testing.F) {
 	root, id := [32]byte{1}, [32]byte{2}
-	encoder, _ := newRecords(requestSecret(root, 0), id, 0, requestDirection)
+	encoder, _ := newRecords(requestMessage(root, 0), id, 0, requestDirection)
 	valid, _ := encoder.seal(Metadata, []byte("metadata"))
 	f.Add(valid)
 	f.Add([]byte{0, 0, 0, 21})

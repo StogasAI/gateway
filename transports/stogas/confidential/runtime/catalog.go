@@ -45,18 +45,21 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	}
 	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
 	defer cancel()
-	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, catalog.MaxRuntimeBytes)
+	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
 	if err != nil {
 		return err
 	}
-	publicBytes, err := e.artifact(ctx, release.PublicDigest, catalog.MaxPublicBytes)
+	publicBytes, err := e.artifact(ctx, release.PublicDigest, release.PublicSizeBytes, catalog.MaxPublicBytes)
 	if err != nil {
 		return err
 	}
 	return catalog.InstallApproved(runtimeBytes, publicBytes, identity, release.PublicDigest)
 }
 
-func (e *currentEvidence) artifact(ctx context.Context, digest string, limit int64) ([]byte, error) {
+func (e *currentEvidence) artifact(ctx context.Context, digest string, size, limit int64) ([]byte, error) {
+	if size < 1 || size > limit {
+		return nil, errors.New("invalid approved artifact size")
+	}
 	hexDigest, ok := strings.CutPrefix(digest, "sha256:")
 	decoded, err := hex.DecodeString(hexDigest)
 	if !ok || err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != hexDigest {
@@ -64,13 +67,13 @@ func (e *currentEvidence) artifact(ctx context.Context, digest string, limit int
 	}
 	var failures []error
 	for _, origin := range e.origins {
-		bytes, err := e.fetchArtifact(ctx, origin.url+"/catalog/blobs/sha256/"+hexDigest+".json", limit)
+		bytes, err := e.fetchArtifact(ctx, origin.url+"/catalog/blobs/sha256/"+hexDigest+".json", size)
 		if err != nil {
 			failures = append(failures, err)
 			continue
 		}
 		sum := sha256.Sum256(bytes)
-		if hex.EncodeToString(sum[:]) != hexDigest {
+		if int64(len(bytes)) != size || hex.EncodeToString(sum[:]) != hexDigest {
 			failures = append(failures, errors.New("catalog artifact digest differs"))
 			continue
 		}

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-func requestWire(t *testing.T, root, id, initialPublic [32]byte, number uint64, body []byte) []byte {
+func requestWire(t *testing.T, root, id [32]byte, initialPublic [referencePublicBytes]byte, number uint64, body []byte) []byte {
 	t.Helper()
-	encoder, err := newRecords(requestSecretFor(root, number, initialPublic), id, number, requestDirection)
+	encoder, err := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +112,22 @@ func TestStreamRejectsTruncationTrailingDataAndRepeatedStarts(t *testing.T) {
 	store, _ := storeFixture(t, &setupReporter{})
 	id, root, initialPublic := openStoredSession(t, store)
 	defer clear(root[:])
-	// Every truncation must fail; give each arrival its own fresh request number
-	// so replay rejection cannot mask a framing/completion bug.
-	length := len(requestWire(t, root, id, initialPublic, 0, []byte("body")))
-	for end := range length {
-		wire := requestWire(t, root, id, initialPublic, uint64(end), []byte("body"))
+	// Test transport framing boundaries; the core exhaustively tests all byte truncations.
+	original := requestWire(t, root, id, initialPublic, 0, []byte("body"))
+	ends := []int{0, 1, RequestPrefixBytes - 1, RequestPrefixBytes}
+	for start := RequestPrefixBytes; start < len(original); {
+		length, _ := RecordSize(original[start : start+4])
+		ends = append(ends, start+1, start+3, start+4, start+length-17, start+length-1)
+		if start == RequestPrefixBytes {
+			ends = append(ends, start+5, start+6, start+6+MaxRatchetHeaderBytes-1)
+		}
+		start += length
+		if start < len(original) {
+			ends = append(ends, start)
+		}
+	}
+	for number, end := range ends {
+		wire := requestWire(t, root, id, initialPublic, uint64(number), []byte("body"))
 		incoming, _, err := Accept(store, bytes.NewReader(wire[:end]))
 		if err == nil {
 			_, err = io.ReadAll(incoming)
@@ -130,7 +141,7 @@ func TestStreamRejectsTruncationTrailingDataAndRepeatedStarts(t *testing.T) {
 		func(wire []byte) []byte { return append(wire, 0) },
 		func(wire []byte) []byte { wire[len(wire)-1] ^= 1; return wire },
 	} {
-		wire := mutation(requestWire(t, root, id, initialPublic, uint64(length+index), []byte("body")))
+		wire := mutation(requestWire(t, root, id, initialPublic, uint64(len(ends)+index), []byte("body")))
 		incoming, _, err := Accept(store, bytes.NewReader(wire))
 		if err != nil {
 			t.Fatal(err)
@@ -140,7 +151,7 @@ func TestStreamRejectsTruncationTrailingDataAndRepeatedStarts(t *testing.T) {
 		}
 		incoming.Close()
 	}
-	wire := requestWire(t, root, id, initialPublic, uint64(length+2), nil)
+	wire := requestWire(t, root, id, initialPublic, uint64(len(ends)+2), nil)
 	incoming, _, err := Accept(store, bytes.NewReader(wire))
 	if err != nil {
 		t.Fatal(err)

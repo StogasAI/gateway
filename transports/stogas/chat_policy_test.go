@@ -62,7 +62,6 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"message file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_url":"https://example.com/a.pdf"}]}`, "file_url inputs are not supported"},
 		{"message file data", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_data":"data:text/plain;base64,aGk="}]}`, "file inputs are not supported"},
 		{"message image url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","image_url":"https://example.com/x.png"}]}`, "Only text message content"},
-		{"image content block", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/x.png"}}]}]}`, "Only text message content"},
 		{"input file content block", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
 		{"text block file id", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_id":"file_123"}]}]}`, "file_id inputs are not supported"},
 		{"text block file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_url":"https://example.com/a.pdf"}]}]}`, "file_url inputs are not supported"},
@@ -1598,7 +1597,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic responses frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
 		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is only supported for OpenAI"},
 		{"anthropic responses presence penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"responses include unknown value", `{"model":"gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the text-only Stogas API"},
+		{"responses include unknown value", `{"model":"gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the current response contract"},
 		{"responses duplicate include", `{"model":"gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
 		{"responses text unknown field", `{"model":"gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
 		{"responses text format unknown field", `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
@@ -1643,8 +1642,8 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"openai hosted shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
 		{"openai local shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
 		{"openai apply patch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
-		{"openai computer", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "text-only Stogas API"},
-		{"openai image generation", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "text-only Stogas API"},
+		{"openai computer", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "not supported"},
+		{"openai image generation", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "not supported"},
 		{"openai tool search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"tool_search"}]}`, "tool-loading or provider-state lifecycle"},
 		{"openai namespace", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool-loading or provider-state lifecycle"},
 		{"openai memory", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "tool-loading or provider-state lifecycle"},
@@ -1694,9 +1693,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic hosted selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
 		{"anthropic allowed tools selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
 		{"image input", `{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
-		{"file id input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "file inputs are not supported"},
-		{"hosted file input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_url":"https://example.com/a.txt"}]}]}`, "file inputs are not supported"},
-		{"inline file input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
+		{"file id input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "Provider file IDs require BYOK"},
 	}
 
 	for _, tc := range cases {
@@ -2315,7 +2312,7 @@ func TestResponsesInputTextOnlyRejectsMultimodalAliases(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateResponsesInputTextOnly(nil, json.RawMessage(tc.body))
+			err := validateResponsesInput(nil, json.RawMessage(tc.body))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected %q error, got %v", tc.want, err)
 			}
@@ -2766,7 +2763,7 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 			wantContext: 272000,
 		},
 		{
-			name:          "hosted tool content headroom is already reserved",
+			name:          "hosted tool content is reserved per call",
 			body:          `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
 			wantContext:   1050000,
 			wantSearchCap: true,
@@ -2803,9 +2800,9 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 			}
 			wantHoldInput := wantInput
 			if tc.wantSearchCap {
-				// Hosted tools can add input after the local estimate. Their
-				// independent reservation still covers the remaining context.
-				wantHoldInput = tc.wantContext - resolution.OutputTokenLimit()
+				// Retrieved content is cumulative across the three budgeted
+				// calls and separate from the submitted reasoning envelope.
+				wantHoldInput += 3 * 128000
 			}
 			if findMeterEstimateQuantity(state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(wantHoldInput)) == nil {
 				t.Fatalf("expected input hold quantity %d, got %#v", wantHoldInput, state.Hold.Meters)
@@ -3369,7 +3366,7 @@ func TestAnthropicChatMCPToolsetFailsBeforeProviderRequest(t *testing.T) {
 	}
 }
 
-func TestResponsesHostedToolsInjectEffectiveCapBeforeHold(t *testing.T) {
+func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -3439,15 +3436,14 @@ func TestResponsesHostedToolsInjectEffectiveCapBeforeHold(t *testing.T) {
 			}
 			switch tc.provider {
 			case schemas.OpenAI:
-				if bifrostReq.ResponsesRequest.Params.MaxToolCalls == nil || *bifrostReq.ResponsesRequest.Params.MaxToolCalls != defaultResponsesHostedToolCalls {
-					t.Fatalf("expected OpenAI max_tool_calls=%d, got %#v", defaultResponsesHostedToolCalls, bifrostReq.ResponsesRequest.Params.MaxToolCalls)
+				if bifrostReq.ResponsesRequest.Params.MaxToolCalls != nil {
+					t.Fatalf("unexpected OpenAI execution cap: %#v", bifrostReq.ResponsesRequest.Params.MaxToolCalls)
 				}
 			case schemas.Anthropic:
 				if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch == nil ||
-					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses == nil ||
-					*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != defaultResponsesHostedToolCalls {
-					t.Fatalf("expected Anthropic web_search max_uses=%d, got %#v", defaultResponsesHostedToolCalls, bifrostReq.ResponsesRequest.Params.Tools)
+					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != nil {
+					t.Fatalf("unexpected Anthropic search execution cap: %#v", bifrostReq.ResponsesRequest.Params.Tools)
 				}
 				wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
 					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -3457,16 +3453,16 @@ func TestResponsesHostedToolsInjectEffectiveCapBeforeHold(t *testing.T) {
 				if bifrostErr != nil {
 					t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 				}
-				if !strings.Contains(string(wire), `"max_uses":50`) {
-					t.Fatalf("expected Anthropic provider body to contain injected max_uses=50, got %s", string(wire))
+				if strings.Contains(string(wire), `"max_uses"`) {
+					t.Fatalf("unexpected injected Anthropic max_uses, got %s", string(wire))
 				}
 			}
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
 			meter := findMeterEstimate(state.Hold.Meters, tc.meterKey)
-			if meter == nil || meter.Quantity != "50" || !meter.HoldRequired {
-				t.Fatalf("expected hold meter %s quantity 50, got %#v in %#v", tc.meterKey, meter, state.Hold.Meters)
+			if meter == nil || meter.Quantity != "10" || !meter.HoldRequired {
+				t.Fatalf("expected hold meter %s quantity 10, got %#v in %#v", tc.meterKey, meter, state.Hold.Meters)
 			}
 		})
 	}
@@ -3507,7 +3503,7 @@ func TestAnthropicResponsesExplicitMaxToolCallsBecomesMaxUses(t *testing.T) {
 	}
 }
 
-func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testing.T) {
+func TestAnthropicResponsesWebFetchOmittedCapReservesWithoutMaxUses(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -3529,9 +3525,8 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 	}
 	if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch == nil ||
-		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses == nil ||
-		*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != defaultResponsesHostedToolCalls {
-		t.Fatalf("expected omitted max_tool_calls to inject Anthropic web_fetch max_uses=%d, got %#v", defaultResponsesHostedToolCalls, bifrostReq.ResponsesRequest.Params.Tools)
+		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != nil {
+		t.Fatalf("unexpected Anthropic fetch execution cap: %#v", bifrostReq.ResponsesRequest.Params.Tools)
 	}
 	wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
 		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -3541,8 +3536,8 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 	if bifrostErr != nil {
 		t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 	}
-	if !strings.Contains(string(wire), `"max_uses":50`) {
-		t.Fatalf("expected Anthropic provider body to contain injected max_uses=50, got %s", string(wire))
+	if strings.Contains(string(wire), `"max_uses"`) {
+		t.Fatalf("unexpected injected Anthropic max_uses, got %s", string(wire))
 	}
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
@@ -3556,15 +3551,18 @@ func TestAnthropicResponsesWebFetchOmittedCapInjectsMaxUsesAndTokenHold(t *testi
 		t.Fatalf("expected web_fetch content headroom %d, got %d", expectedFetchInputTokens, got)
 	}
 	iterations := anthropicSamplingIterationLimit(req)
-	expectedInputTokens := (req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + expectedFetchInputTokens) * iterations
+	firstInput := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
+	newInput := firstInput + expectedFetchInputTokens + req.OutputTokenLimit
+	expectedInputTokens := firstInput + (iterations-1)*newInput
 	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
-	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(expectedInputTokens) {
-		t.Fatalf("expected one combined web_fetch 1h cache-write hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
+	if cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(newInput) {
+		t.Fatalf("expected distinct web_fetch material once at the write rate, got %#v", state.Hold.Meters)
 	}
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(expectedInputTokens-newInput))
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
-	assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(req.OutputTokenLimit*iterations))
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(req.OutputTokenLimit))
 	state.Signals = &StandardSignals{
 		Prompt:       resolution.InputTokenLimit() + 1000*defaultResponsesHostedToolCalls,
 		Completion:   resolution.OutputTokenLimit(),
@@ -3744,7 +3742,7 @@ func TestResponsesToolChoiceRequiresNamedFunctionSelectors(t *testing.T) {
 	}
 }
 
-func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
+func TestResponsesOmittedHostedToolCapCoversAllowance(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -3792,8 +3790,8 @@ func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
 			holdMeter := findMeterEstimate(state.Hold.Meters, tc.meterKey)
-			if holdMeter == nil || holdMeter.Quantity != "50" || !holdMeter.HoldRequired {
-				t.Fatalf("expected omitted cap to reserve 50 hosted calls, got %#v in %#v", holdMeter, state.Hold.Meters)
+			if holdMeter == nil || holdMeter.Quantity != "10" || !holdMeter.HoldRequired {
+				t.Fatalf("expected omitted cap to reserve ten hosted calls, got %#v in %#v", holdMeter, state.Hold.Meters)
 			}
 
 			state.Signals = &StandardSignals{Prompt: 1, WebSearch: defaultResponsesHostedToolCalls}
@@ -3801,7 +3799,7 @@ func TestResponsesOmittedHostedToolCapCoversMaximumAllowedUsage(t *testing.T) {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
 			finalMeter := findMeterEstimate(state.FinalMeters, tc.meterKey)
-			if finalMeter == nil || finalMeter.Quantity != "50" || finalMeter.HoldRequired {
+			if finalMeter == nil || finalMeter.Quantity != "10" || finalMeter.HoldRequired {
 				t.Fatalf("expected final hosted calls at the authorized maximum, got %#v in %#v", finalMeter, state.FinalMeters)
 			}
 			if compareMoneyStrings(state.Hold.EstimatedUpstreamCostUSD, state.UpstreamCostUSD) < 0 {
@@ -4267,15 +4265,16 @@ func TestAnthropicResponsesWebSearchPricingUsesObservedCalls(t *testing.T) {
 	req := anthropicAdapterContextForState(state)
 	searchContentHeadroom := anthropicHostedContentHoldTokens(req)
 	iterations := anthropicSamplingIterationLimit(req)
-	expectedInputTokens := (req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + searchContentHeadroom) * iterations
+	expectedInputTokens := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + (iterations-1)*req.Deployment.MaxInputTokens
 	cacheWriteMeter := findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens)
-	if searchContentHeadroom > 0 && (cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(expectedInputTokens)) {
-		t.Fatalf("expected one combined Anthropic web search 1h cache-write hold quantity %d, got %#v", expectedInputTokens, state.Hold.Meters)
+	if searchContentHeadroom > 0 && (cacheWriteMeter == nil || cacheWriteMeter.Quantity != strconv.Itoa(req.Deployment.MaxInputTokens)) {
+		t.Fatalf("expected one input allowance at the write rate, got %#v", state.Hold.Meters)
 	}
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterCachedInputTokens, strconv.Itoa(expectedInputTokens-req.Deployment.MaxInputTokens))
 	if findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens) != nil {
 		t.Fatalf("ordinary input must not duplicate the higher cache-write hold, got %#v", state.Hold.Meters)
 	}
-	assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(req.OutputTokenLimit*iterations))
+	assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(req.OutputTokenLimit))
 
 	numSearchQueries := 2
 	providerResponse := validUnaryResponsesProviderResponse("resp_search")
@@ -4391,14 +4390,14 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 			wantIterations: 1,
 		},
 		{
-			name:           "compaction can add one sampling step",
+			name:           "compaction adds separate input and output allowance",
 			body:           `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]}}`,
-			wantIterations: 2,
+			wantIterations: 1,
 		},
 		{
 			name:            "compaction can run before every hosted-tool sampling step",
 			body:            `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":64,"context_management":{"edits":[{"type":"compact_20260112"}]},"tools":[{"type":"web_search_20260318","name":"web_search"}],"max_tool_calls":2}`,
-			wantIterations:  6,
+			wantIterations:  10,
 			wantHostedCalls: "2",
 		},
 	}
@@ -4423,9 +4422,14 @@ func TestAnthropicCompactionHoldCoversEveryBoundedSamplingIteration(t *testing.T
 			if got := anthropicSamplingIterationLimit(req); got != tc.wantIterations {
 				t.Fatalf("sampling iteration limit = %d, want %d", got, tc.wantIterations)
 			}
-			inputPerIteration := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes) + anthropicHostedContentHoldTokens(req)
-			assertMeterQuantity(t, state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(inputPerIteration*tc.wantIterations))
-			assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(req.OutputTokenLimit*tc.wantIterations))
+			input := req.InputTokenLimit + anthropicToolSystemPromptHoldTokens(req.Deployment.Model, req.ToolTypes)
+			output := req.OutputTokenLimit
+			if tc.name != "clear-only context editing does not add sampling" {
+				input = 2 * tc.wantIterations * req.Deployment.MaxInputTokens
+				output += tc.wantIterations * req.Deployment.MaxOutputTokens
+			}
+			assertMeterQuantity(t, state.Hold.Meters, billing.MeterInputTokens, strconv.Itoa(input))
+			assertMeterQuantity(t, state.Hold.Meters, billing.MeterOutputTokens, strconv.Itoa(output))
 			searchMeter := findMeterEstimate(state.Hold.Meters, meterAnthropicWebSearchCalls)
 			if tc.wantHostedCalls == "" {
 				if searchMeter != nil {

@@ -15,6 +15,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
@@ -52,7 +53,7 @@ type Config struct {
 	requiredSettings       Permission
 	EncryptionKeys         map[string]string `json:"-"`
 	RequiredEncryptionKeys []string          `json:"-"`
-	RedactionSources       []*Plugins        `json:"-"`
+	PluginSources          []*Plugins        `json:"-"`
 	Access                 *Access           `json:"access"`
 	Input                  *Input            `json:"input,omitempty"`
 	CompilerVersion        int               `json:"compilerVersion"`
@@ -98,9 +99,11 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
-	digestOnce      sync.Once
-	digest          [32]byte
-	StogasRedaction *Redaction `json:"stogasRedaction,omitempty"`
+	digestOnce           sync.Once
+	digest               [32]byte
+	StogasExport         *exportconfig.Config `json:"stogasExport,omitempty"`
+	StogasRedaction      *Redaction           `json:"stogasRedaction,omitempty"`
+	StogasTextExtraction *bool                `json:"stogasTextExtraction,omitempty"`
 }
 
 type Redaction struct {
@@ -212,11 +215,19 @@ func (w *DenyWindow) validate(locations map[string]*time.Location) error {
 }
 
 func (p *Plugins) validate() error {
+	if p != nil {
+		if err := p.StogasExport.Validate(); err != nil {
+			return configError("invalid stogasExport configuration")
+		}
+	}
 	if p == nil || p.StogasRedaction == nil {
 		if p == nil {
 			return nil
 		}
-		return configError("redaction plugin is missing")
+		if p.StogasTextExtraction != nil || p.StogasExport != nil {
+			return nil
+		}
+		return configError("plugins require explicit configuration")
 	}
 	selected := p.StogasRedaction
 	if err := redaction.ValidateLiterals(selected.Literals); err != nil {
@@ -384,12 +395,13 @@ func configError(format string, arguments ...any) error {
 
 var exactFieldTypes = map[string]string{
 	"author.aliases": "string_list", "author.name": "string", "author.id": "string",
-	"deployment.aliases": "string_list", "deployment.contextWindowTokens": "integer",
+	"deployment.aliases": "string_list", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.retentionDays": "integer", "deployment.dataHandling.storageLocation": "string",
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse":       "boolean",
 	"deployment.dataHandling.zeroDataRetention": "boolean", "deployment.deprecationDate": "string",
+	"deployment.fileInputs.extensions": "string_list", "deployment.fileInputs.mediaTypes": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
 	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",
@@ -404,7 +416,7 @@ var exactFieldTypes = map[string]string{
 	"deployment.id":              "string", "model.aliases": "string_list", "model.authorId": "string",
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
-	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.tokenizerFamily": "string", "model.id": "string",
+	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
 	"provider.aliases": "string_list", "provider.credentialModes": "string_list",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.model": "string", "request.route": "string", "request.time": "timestamp",
@@ -414,7 +426,7 @@ var exactFieldTypes = map[string]string{
 func init() {
 	for _, capability := range []string{
 		"cancellation", "explicitPromptCaching", "functionCalling", "implicitPromptCaching",
-		"parallelFunctionCalling", "pdfInput", "streaming", "structuredOutputs", "systemMessages",
+		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
 		"toolChoice", "urlContext",
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"

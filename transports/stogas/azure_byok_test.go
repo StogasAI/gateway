@@ -78,6 +78,10 @@ func TestAzureCredentialEligibilityUsesOnlyLiveCompatibleBindings(t *testing.T) 
 		{"compatible", func(*billing.AzureBinding) {}, false, nil},
 		{"expired", func(*billing.AzureBinding) {}, true, billing.ErrByokTarget},
 		{"wrong model", func(b *billing.AzureBinding) { b.ModelName = "other" }, false, billing.ErrByokTarget},
+		{"wrong version", func(b *billing.AzureBinding) { b.ModelVersion = "2026-07-10" }, false, billing.ErrByokTarget},
+		{"wrong format", func(b *billing.AzureBinding) { b.ModelFormat = "Anthropic" }, false, billing.ErrByokTarget},
+		{"wrong hosting", func(b *billing.AzureBinding) { b.Hosting = "anthropic" }, false, billing.ErrByokTarget},
+		{"wrong deployment type", func(b *billing.AzureBinding) { b.DeploymentType = "data_zone_standard_us" }, false, billing.ErrByokTarget},
 		{"untrusted endpoint", func(b *billing.AzureBinding) { b.Endpoint = "https://example.com" }, false, billing.ErrByokTarget},
 		{"wrong scope", func(b *billing.AzureBinding) { b.TokenScope = "https://example.com/.default" }, false, billing.ErrByokTarget},
 	} {
@@ -98,6 +102,29 @@ func TestAzureCredentialEligibilityUsesOnlyLiveCompatibleBindings(t *testing.T) 
 				t.Fatal("Azure target metadata affected another provider")
 			}
 		})
+	}
+}
+
+func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	bindings := []billing.AzureCredentialBinding{
+		{AzureBinding: azureTestBinding(), ModelDeprecationAt: &now},
+		{AzureBinding: azureTestBinding()},
+	}
+	bindings[1].DeploymentName = "another-target"
+	snapshot := &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{
+		"azure": {{Credential: &billing.CachedCredential{Bindings: bindings}}},
+	}}
+	eligible := CredentialDeploymentFilter(snapshot, now)
+	deployment := azureTestResolution().Deployment
+	deployment.Upstream.ServiceTier = "priority"
+	deployment.Upstream.ReasoningMode = "pro"
+	if !eligible(schemas.Azure, 0, deployment) {
+		t.Fatal("an expired target hid a live target supporting the same request variants")
+	}
+	deployment.DataHandling.ProcessingLocation = "eu"
+	if eligible(schemas.Azure, 0, deployment) {
+		t.Fatal("matching model identity bypassed the requested processing boundary")
 	}
 }
 

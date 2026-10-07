@@ -360,7 +360,7 @@ func TestInspectionSharesDictionaryBudgetAcrossDistinctSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Compiled.RedactionSources) != 1 || len(result.Compiled.Routing.Query.Filters) != 36 {
+	if len(result.Compiled.PluginSources) != 1 || len(result.Compiled.Routing.Query.Filters) != 36 {
 		t.Fatal("dictionary sharing removed an independent filter")
 	}
 }

@@ -332,9 +332,9 @@ function verifyReleaseGraph() {
 		'"--cpus" "4"',
 		'"--real16"',
 		'igvmmeasure" "--check-kvm"',
-		'\\"launchPolicies\\":~a',
+		'\\"launch_policies\\":~a',
 		'%snp-launch-policies',
-		'\\"vcpuCount\\":4',
+		'\\"vcpu_count\\":4',
 		'(invoke "scripts/config" "--set-val" "NR_CPUS" "4")',
 		'(gateway-file "LICENSE" "LICENSE")',
 		'(gateway-file "NOTICE" "NOTICE")'
