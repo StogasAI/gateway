@@ -2,9 +2,9 @@ package identity
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -23,25 +23,6 @@ func TestGenerateCreatesDistinctInMemoryKeys(t *testing.T) {
 	}
 	if first.TLSSPKISHA256 == second.TLSSPKISHA256 {
 		t.Fatal("tls spki hashes should be unique per generation")
-	}
-	if first.HPKEPublicKey == second.HPKEPublicKey {
-		t.Fatal("hpke public keys should be unique per generation")
-	}
-	if first.SigningPublicKey == second.SigningPublicKey {
-		t.Fatal("ML-DSA-65 public keys should be unique per generation")
-	}
-	if decoded, err := base64.RawURLEncoding.DecodeString(first.HPKEPublicKey); err != nil {
-		t.Fatalf("hpke key is not base64url: %v", err)
-	} else if len(decoded) != 1_216 {
-		t.Fatalf("unexpected X-Wing HPKE public key length: %d", len(decoded))
-	}
-	if decoded, err := base64.RawURLEncoding.DecodeString(first.SigningPublicKey); err != nil {
-		t.Fatalf("ML-DSA-65 key is not base64url: %v", err)
-	} else if len(decoded) != 1952 {
-		t.Fatalf("unexpected ML-DSA-65 public key length: %d", len(decoded))
-	}
-	if len(first.TLSSPKISHA256) != 64 {
-		t.Fatalf("unexpected spki hash length: %d", len(first.TLSSPKISHA256))
 	}
 }
 
@@ -83,7 +64,7 @@ func TestCertificateStoreCreatesCSRWithExistingTLSKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if SHA256Hex(spki) != material.TLSSPKISHA256 {
+	if sha256.Sum256(spki) != material.TLSSPKISHA256 {
 		t.Fatal("csr did not use existing TLS key")
 	}
 	if got := strings.Join(csr.DNSNames, ","); got != "api.stogas.ai,gateway.stogas.ai" {

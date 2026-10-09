@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"crypto/mldsa"
 	"errors"
 	"sync"
 	"time"
@@ -18,12 +17,12 @@ import (
 // local state; neither a health probe nor a request performs evidence network I/O.
 // A policy pause is reversible. Terminal drain cannot be undone by maintenance.
 type bootMaintenance struct {
-	evidence   *currentEvidence
-	boot       attest.BootEvidence
-	certs      *identity.CertificateStore
-	client     provision.Client
-	hostname   string
-	signingKey *mldsa.PrivateKey
+	evidence *currentEvidence
+	boot     attest.BootEvidence
+	certs    *identity.CertificateStore
+	client   provision.Client
+	hostname string
+	keys     *verifier.NodeKeys
 
 	mu                   sync.RWMutex
 	identity             verifier.BootIdentity
@@ -123,7 +122,7 @@ func (m *bootMaintenance) completeRegistration(ctx context.Context) error {
 	if terminal {
 		return nil
 	}
-	if err := m.client.CompleteBootRegistration(ctx, nodeID, m.boot, m.signingKey); err != nil {
+	if err := m.client.CompleteBootRegistration(ctx, nodeID, m.boot, m.keys); err != nil {
 		return err
 	}
 	m.registrationComplete = true
@@ -154,7 +153,7 @@ func (m *bootMaintenance) renewCertificate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	response, err := m.client.RenewBootCertificate(ctx, nodeID, m.boot, csr, m.signingKey)
+	response, err := m.client.RenewBootCertificate(ctx, nodeID, m.boot, csr, m.keys)
 	if err != nil {
 		return err
 	}

@@ -20,23 +20,31 @@ func TestRecordSizeBeforeAllocation(t *testing.T) {
 	}
 }
 
+// Every session has fresh setup keys, so inputs either mask a freshly sealed
+// valid start or replace it entirely. Only the unmodified start authenticates.
 func FuzzRecordDecoding(f *testing.F) {
-	root, id := [32]byte{1}, [32]byte{2}
-	encoder, _ := newRecords(requestMessage(root, 0), id, 0, requestDirection)
-	valid, _ := encoder.seal(Metadata, []byte("metadata"))
-	f.Add(valid)
-	f.Add([]byte{0, 0, 0, 21})
-	f.Fuzz(func(t *testing.T, input []byte) {
+	f.Add(false, []byte{})
+	f.Add(false, []byte{0, 0, 0, 0, 0, 1})
+	f.Add(true, []byte{0, 0, 0, 21})
+	f.Fuzz(func(t *testing.T, raw bool, input []byte) {
 		if len(input) > MaxRecordBytes+1 {
 			return
 		}
-		session := testServerSession(root, id)
+		session, client := testServerSession(t)
 		defer session.Close()
-		request, metadata, err := session.AcceptStart(0, input)
+		encoded := input
+		if !raw {
+			encoder := newRecords(requestMessage(client, 0), client.ID, 0, requestDirection)
+			encoded = sealRecord(t, encoder, Metadata, []byte("metadata"))
+			for i := range min(len(input), len(encoded)) {
+				encoded[i] ^= input[i]
+			}
+		}
+		request, metadata, err := session.AcceptStart(0, encoded)
 		if err == nil {
 			defer request.Close()
-			if len(metadata) == 0 || len(metadata) > MaxRecordPlaintext {
-				t.Fatal("invalid authenticated metadata")
+			if string(metadata) != "metadata" {
+				t.Fatal("altered start authenticated")
 			}
 		}
 	})

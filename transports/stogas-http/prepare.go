@@ -219,24 +219,27 @@ func (s *Server) prepareCandidate(
 	candidateCredential := credential
 	bifrostCtx, state, cancel, err := newRequestContext(
 		ctx,
+		requestStartedAt,
 		resolution,
 		candidateCredential,
 		adapter,
 		nodeID,
 	)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
+		}
 		return nil, &candidateFailure{err: err, kind: candidateFailureRequest}
 	}
-	state.StartedAt = requestStartedAt
 	if keyConfig != nil && keyConfig.Claims != nil {
-		state.Export = s.exports.Start(keyConfig.Claims.OrganizationID, state.RequestID, resolution.ExportConfig)
+		state.Export = s.exports.Start(resolution.ExportConfig)
 	}
 	resolution.ExportConfig = nil
 	failBeforeHold := func(err error, kind candidateFailureKind) (*preparedCandidate, *candidateFailure) {
 		state.EncryptionKeys = nil
 		public := catalog.PublicError(err)
 		state.ProcessingError = &schemas.BifrostError{StatusCode: &public.StatusCode, Error: &schemas.ErrorField{Code: schemas.Ptr(public.Code)}}
-		stogas.FinalizeExportState(state)
+		stogas.FinalizeExportState(bifrostCtx, state)
 		cancel()
 		return nil, &candidateFailure{err: err, kind: kind}
 	}
@@ -264,7 +267,7 @@ func (s *Server) prepareCandidate(
 	if err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}
-	state.Export.Input(bifrostReq)
+	state.Export.Input(resolution.RawBody())
 	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}
@@ -272,6 +275,9 @@ func (s *Server) prepareCandidate(
 	// Selection and the single input transformation are complete. Database and
 	// provider waits are excluded from preprocessing; no failure can reroute.
 	finishPreprocessing()
+	if err := ctx.inferenceWaitError(); err != nil {
+		return failBeforeHold(err, candidateFailureBilling)
+	}
 	err = stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state)
 	if state.Authorization != nil {
 		s.recordAdmission(ctx)

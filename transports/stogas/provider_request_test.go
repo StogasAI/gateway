@@ -82,6 +82,60 @@ func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
 	}
 }
 
+func TestPreparedAnthropicThinkingDisplayPreservesCallerChoice(t *testing.T) {
+	for _, route := range []string{"chat/completions", "responses"} {
+		for _, display := range []string{"", "omitted", "summarized"} {
+			t.Run(route+"/"+display, func(t *testing.T) {
+				fields := `"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"high"`
+				if route == "responses" {
+					fields = `"input":"hello","reasoning":{"effort":"high"}`
+					if display != "" {
+						summary := "auto"
+						if display == "omitted" {
+							summary = "none"
+						}
+						fields = fmt.Sprintf(`"input":"hello","reasoning":{"effort":"high","summary":%q}`, summary)
+					}
+				} else if display != "" {
+					fields += fmt.Sprintf(`,"reasoning_display":%q`, display)
+				}
+				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route,
+					Body: []byte(`{"model":"anthropic-claude-opus-4-7",` + fields + `}`)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+				if err := state.Adapter.ValidateRequest(state); err != nil {
+					t.Fatal(err)
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+				request, err := resolved.ToBifrost(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := PrepareProviderRequest(ctx, state, request); err != nil {
+					t.Fatal(err)
+				}
+				var body []byte
+				if request.ChatRequest != nil {
+					body = preparedProviderBody(t, ctx, request.ChatRequest)
+				} else {
+					body = preparedProviderBody(t, ctx, request.ResponsesRequest)
+				}
+				var wire struct{ Thinking map[string]any }
+				if err := json.Unmarshal(body, &wire); err != nil {
+					t.Fatal(err)
+				}
+				got, present := wire.Thinking["display"]
+				if wire.Thinking["type"] != "adaptive" || display == "" && present || display != "" && got != display {
+					t.Fatalf("public reasoning controls changed: %s", body)
+				}
+			})
+		}
+	}
+}
+
 func TestPrepareProviderRequestRemovesClientIdentityAndAppliesStorePolicy(t *testing.T) {
 	text := "hello"
 	metadata := map[string]any{"private": "value"}

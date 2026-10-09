@@ -134,7 +134,6 @@ type compiledDeploymentRouteOverride struct {
 }
 
 type Capabilities struct {
-	Cancellation            bool     `json:"cancellation"`
 	FunctionCalling         bool     `json:"functionCalling"`
 	InputModalities         []string `json:"inputModalities"`
 	OutputModalities        []string `json:"outputModalities"`

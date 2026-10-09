@@ -9,9 +9,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	"net/http"
@@ -64,7 +62,9 @@ func retainResponseFailure(state *stogas.State, failure *schemas.BifrostError) {
 func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.BifrostContext, state *stogas.State, statusCode int, payload any) {
 	data, err := marshalPayload(payload)
 	if err != nil {
-		retainResponseFailure(state, responseEncodingFailure())
+		failure := responseEncodingFailure()
+		retainResponseFailure(state, failure)
+		captureExportError(state, failure)
 		s.writeError(ctx, http.StatusInternalServerError, map[string]any{
 			"error": map[string]any{"message": "Failed to encode response", "type": "internal_error"},
 		})
@@ -73,7 +73,10 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 	if _, borrowed := payload.([]byte); !borrowed {
 		defer clear(data)
 	}
-	if wantsReceipt(bifrostCtx) {
+	if state != nil {
+		state.Export.Response(data)
+	}
+	if wantsMetadata(bifrostCtx) {
 		if s.proofs == nil {
 			retainResponseFailure(state, responseProofFailure())
 			s.writeProofError(ctx)
@@ -91,6 +94,9 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 			s.writeProofError(ctx)
 			return
 		}
+		if state != nil {
+			state.Export.Metadata(output.JSON)
+		}
 		data, err = appendStogasReceipt(data, output.JSON)
 		defer clear(data)
 		if err != nil {
@@ -103,7 +109,7 @@ func (s *Server) writeInferenceJSON(ctx *requestContext, bifrostCtx *schemas.Bif
 }
 
 func (s *Server) newStreamProof(requestCtx *requestContext, ctx *schemas.BifrostContext, state *stogas.State) (*proofhttp.Stream, error) {
-	if !wantsReceipt(ctx) {
+	if !wantsMetadata(ctx) {
 		return nil, nil
 	}
 	if s.proofs == nil {
@@ -127,54 +133,8 @@ func (s *Server) proofInput(ctx *requestContext, bifrostCtx context.Context, sta
 	return proofhttp.Input{
 		RequestDigest: digest,
 		ResponseBody:  responseJSON,
-		Metadata:      proofMetadata(bifrostCtx, state),
+		Metadata:      stogas.FinalMetadata(bifrostCtx, state),
 	}, nil
-}
-
-func proofMetadata(ctx context.Context, state *stogas.State) proof.Metadata {
-	if state == nil || state.Resolution == nil {
-		return proof.Metadata{}
-	}
-	catalogIdentity := state.Resolution.CatalogIdentity()
-	executionDeployment := stogas.ExecutionDeployment(state)
-	metadata := proof.Metadata{
-		RequestID: state.RequestID,
-		CreatedAt: proofCreatedAt(state.FinalEvent),
-		Catalog: proof.Catalog{
-			Version:      catalogIdentity.Sequence,
-			ChainHash:    executionDeployment.ChainHash,
-			SelectionIDs: state.Resolution.CatalogNodeIDsForDeployment(executionDeployment),
-		},
-
-		Timing:   proofTiming(state.FinalEvent),
-		Provider: chutese2ee.InvocationMetadata(ctx),
-		Meters:   billing.EventMeters{}, UpstreamCostUSD: "0", BilledCostUSD: "0",
-	}
-	if event := state.FinalEvent; event != nil {
-		metadata.Meters = event.Meters
-		metadata.UpstreamCostUSD, metadata.BilledCostUSD = event.UpstreamCostUSD, event.BilledCostUSD
-		metadata.CacheReadSavingsUSD, metadata.CacheWriteOverheadUSD = event.CacheReadSavingsUSD, event.CacheWriteOverheadUSD
-	}
-	return metadata
-}
-
-func proofTiming(event *billing.RequestEvent) proof.Timing {
-	if event == nil {
-		return proof.Timing{}
-	}
-	result := proof.Timing{
-		TotalMS:    event.Performance.TotalMS,
-		ProviderMS: event.Performance.ProviderMS,
-		TTFTMS:     event.Performance.TTFTMS,
-	}
-	return result
-}
-
-func proofCreatedAt(event *billing.RequestEvent) string {
-	if event == nil {
-		return ""
-	}
-	return event.CreatedAt
 }
 
 func appendStogasReceipt(responseJSON, receiptJSON []byte) ([]byte, error) {

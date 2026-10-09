@@ -47,11 +47,17 @@ func TestProviderIntervalSharesRequestOrigin(t *testing.T) {
 	start := time.Unix(1700000000, 0)
 	// A first token at 35ms can precede the combined 85ms of gateway work:
 	// preparation occupies [0,20), provider [20,335), finalization [335,400).
-	offset, duration := requestProviderTiming(EventInput{
+	input := EventInput{
 		ProviderStartedAt:   start.Add(20 * time.Millisecond),
 		ProviderCompletedAt: start.Add(335 * time.Millisecond),
-	}, start, start.Add(400*time.Millisecond), 400)
+		FirstOutputAt:       start.Add(35 * time.Millisecond),
+	}
+	offset, duration := requestProviderTiming(input, start, start.Add(400*time.Millisecond), 400)
 	if offset == nil || *offset != 20 || duration != 315 {
 		t.Fatalf("provider interval = %v + %d, want 20 + 315", offset, duration)
+	}
+	firstOutput := requestFirstOutput(input, start, offset, duration)
+	if firstOutput == nil || *firstOutput != 35 {
+		t.Fatalf("first provider output = %v, want 35ms from request start", firstOutput)
 	}
 }

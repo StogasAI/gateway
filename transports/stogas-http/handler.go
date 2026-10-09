@@ -10,22 +10,24 @@ import (
 // Request state belongs to one handler. Provider work receives its own state
 // before it can outlive the handler; it must never retain the response writer.
 type requestContext struct {
-	request          *http.Request
-	writer           http.ResponseWriter
-	body             []byte
-	requestDigest    *[32]byte
-	memory           *requestMemoryLease
-	credential       *apiCredential
-	claims           *billing.APIKeyClaims
-	policyVersions   *billing.PolicyVersions
-	dashboard        *billing.DashboardCredential
-	encrypted        bool
-	requestID        string
-	requestType      string
-	admissionCounted bool
-	startedAt        time.Time
-	deliveryDeadline time.Time
-	pendingStream    <-chan providerStreamStart
+	request               *http.Request
+	writer                http.ResponseWriter
+	body                  []byte
+	requestDigest         *[32]byte
+	memory                *requestMemoryLease
+	credential            *apiCredential
+	claims                *billing.APIKeyClaims
+	policyVersions        *billing.PolicyVersions
+	dashboard             *billing.DashboardCredential
+	encrypted             bool
+	requestID             string
+	requestType           string
+	admissionCounted      bool
+	startedAt             time.Time
+	deliveryDeadline      time.Time
+	pendingStream         <-chan providerStreamStart
+	responseWait          *responseDeadline
+	stopClientObservation func()
 }
 
 type requestHandler func(*requestContext)

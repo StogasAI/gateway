@@ -18,7 +18,7 @@ func keyConfigSnapshot(generation int, digest string) *KeyConfigSnapshot {
 	return &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
 		Routing: policy.Routing{
-			MaxPreDispatchCandidates: 1,
+			MaxAttempts: 1,
 		},
 		Schema: "stogas.key-config.compiled.v1",
 	},

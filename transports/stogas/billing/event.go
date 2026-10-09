@@ -2,12 +2,12 @@ package billing
 
 import (
 	"fmt"
-	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
 	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
@@ -33,6 +33,7 @@ type EventInput struct {
 	ProviderCompletedAt      time.Time
 	ProviderStartedAt        time.Time
 	TTFTMS                   *uint32
+	FirstOutputAt            time.Time
 	ProviderOutputObserved   bool
 	CacheReadSavingsUSD      *string
 	CacheWriteOverheadUSD    *string
@@ -143,24 +144,35 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		Cancelled:            input.Cancelled,
 		ClientStopMS:         clientStopMS,
 		CatalogVersion:       catalogVersion(input.CatalogVersion),
-		CatalogChainHash:     optionalString(input.CatalogChainHash),
 		ProviderAttempts:     providerAttempts,
 		NodeID:               strings.ToLower(strings.TrimSpace(input.NodeID)),
 		Performance: RequestPerformance{
 			TotalMS:         totalTimeMS,
 			ProviderMS:      providerMS,
 			ProviderStartMS: providerStartMS,
+			FirstOutputMS:   requestFirstOutput(input, startedAt, providerStartMS, providerMS),
 			TTFTMS:          ttftMS,
 		},
-		UpstreamCostUSD:       upstreamCostUSD.String(),
-		BilledCostUSD:         billedCostUSD.String(),
-		CacheReadSavingsUSD:   cacheReadSavingsUSD,
-		CacheWriteOverheadUSD: cacheWriteOverheadUSD,
-		Meters:                pricing,
-		Plugins:               input.Plugins,
-		GatewayVersion:        strings.TrimSpace(input.GatewayVersion),
-		analyticsQuantities:   analyticsQuantities,
+		Usage: RequestUsage{
+			UpstreamCostUSD:       upstreamCostUSD.String(),
+			BilledCostUSD:         billedCostUSD.String(),
+			CacheReadSavingsUSD:   cacheReadSavingsUSD,
+			CacheWriteOverheadUSD: cacheWriteOverheadUSD,
+			Meters:                pricing,
+			StandardTextTokens:    standardTextTokens(pricing),
+		},
+		Plugins:             input.Plugins,
+		GatewayVersion:      strings.TrimSpace(input.GatewayVersion),
+		analyticsQuantities: analyticsQuantities,
 	}, nil
+}
+
+func requestFirstOutput(input EventInput, startedAt time.Time, providerStartMS *uint32, providerMS uint32) *uint32 {
+	if input.FirstOutputAt.IsZero() || providerStartMS == nil || input.FirstOutputAt.Before(input.ProviderStartedAt) {
+		return nil
+	}
+	value := min(uint32Duration(input.FirstOutputAt.Sub(startedAt)), *providerStartMS+providerMS)
+	return &value
 }
 
 func catalogVersion(value uint64) *uint64 {
@@ -208,7 +220,7 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 			OutputObserved:           input.ProviderOutputObserved,
 			ProviderRequestID:        upstreamRequestID(input.Response),
 			FinishReason:             finishReason(input.Response),
-			UpstreamByok:             loggedCredentialID(authorization),
+			Byok:                     loggedCredentialID(authorization),
 		}}
 	}
 
@@ -228,7 +240,7 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 			OutputObserved:           observed.OutputObserved,
 			ProviderRequestID:        upstreamRequestID(observed.Response),
 			FinishReason:             finishReason(observed.Response),
-			UpstreamByok:             loggedCredentialID(authorization),
+			Byok:                     loggedCredentialID(authorization),
 		}
 	}
 	return attempts

@@ -1157,8 +1157,8 @@ func TestToAnthropicChatRequest_Opus47_ReasoningMaxTokens_AdaptiveOnly(t *testin
 	if result.Thinking.BudgetTokens != nil {
 		t.Errorf("expected BudgetTokens to be nil for Opus 4.7, got %v", result.Thinking.BudgetTokens)
 	}
-	if result.Thinking.Display == nil || *result.Thinking.Display != "summarized" {
-		t.Errorf("expected Display to default to 'summarized' for Opus 4.7, got %v", result.Thinking.Display)
+	if result.Thinking.Display != nil {
+		t.Errorf("expected provider default display, got %v", result.Thinking.Display)
 	}
 }
 
@@ -1228,7 +1228,7 @@ func TestToAnthropicChatRequest_Opus47_ReasoningEffort_AdaptiveWithEffort(t *tes
 	}
 }
 
-func TestToAnthropicChatRequest_Opus47_DefaultsDisplayToSummarized(t *testing.T) {
+func TestToAnthropicChatRequest_Opus47_PreservesDefaultDisplay(t *testing.T) {
 	effort := "high"
 
 	bifrostReq := &schemas.BifrostChatRequest{
@@ -1253,8 +1253,8 @@ func TestToAnthropicChatRequest_Opus47_DefaultsDisplayToSummarized(t *testing.T)
 	if result.Thinking == nil {
 		t.Fatal("expected Thinking to be set")
 	}
-	if result.Thinking.Display == nil || *result.Thinking.Display != "summarized" {
-		t.Errorf("expected Display to default to 'summarized' for Opus 4.7, got %v", result.Thinking.Display)
+	if result.Thinking.Display != nil {
+		t.Errorf("expected provider default display, got %v", result.Thinking.Display)
 	}
 }
 
@@ -2270,12 +2270,11 @@ func TestToAnthropicChatRequest_PromotesThinkingFromExtraParams(t *testing.T) {
 		},
 		{
 			// Opus 4.7+ dropped budget_tokens; adaptive is the only thinking-on
-			// mode, and display defaults to summarized so the text stays visible.
+			// mode; omitted display preserves the provider default.
 			name:        "enabled with budget_tokens on an adaptive-only model",
 			model:       "claude-opus-4-7",
 			extraParams: enabled2048,
 			wantType:    "adaptive",
-			wantDisplay: schemas.Ptr("summarized"),
 		},
 		{
 			name:        "explicitly disabled",

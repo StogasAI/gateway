@@ -1,30 +1,16 @@
 package exporter
 
 import (
+	"container/list"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"slices"
+	"math/rand/v2"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
-	"go.opentelemetry.io/collector/pdata/pcommon"
-	"go.opentelemetry.io/collector/pdata/ptrace"
-	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
-)
-
-const (
-	memoryLimit       = 64 << 20
-	maxBatchBytes     = 512 << 10
-	maxBatchRecords   = 64
-	batchDelay        = 200 * time.Millisecond
-	deliveryAge       = 30 * time.Second
-	deliveryTimeout   = 5 * time.Second
-	deliveryWorkers   = 4
-	maxPendingRecords = 512
 )
 
 // Lease accounts retained export allocations in the gateway's shared budget.
@@ -37,30 +23,32 @@ type Options struct {
 	Local    bool
 	NewLease func() Lease
 }
+
+// Counts are per destination delivery. Memory drops separate gateway capacity
+// from receiver failures, which also include expiry and shutdown.
 type Diagnostics struct {
-	ReservedBytes    int64  `json:"reservedBytes"`
-	MemoryLimitBytes int64  `json:"memoryLimitBytes"`
-	PendingRecords   int64  `json:"pendingRecords"`
-	Delivered        uint64 `json:"delivered"`
-	Dropped          uint64 `json:"dropped"`
-	Retried          uint64 `json:"retried"`
-	Rejected         uint64 `json:"rejected"`
-	Truncated        uint64 `json:"truncated"`
+	ReservedBytes     int64  `json:"reservedBytes"`
+	PendingDeliveries int64  `json:"pendingDeliveries"`
+	Delivered         uint64 `json:"delivered"`
+	Retried           uint64 `json:"retried"`
+	Failed            uint64 `json:"failed"`
+	MemoryDropped     uint64 `json:"memoryDropped"`
 }
+
+// Each destination delivery runs independently, so a slow receiver delays only
+// its own records. Memory admission bounds retained records, and Reclaim gives
+// that memory back to inference, oldest record first.
 type Engine struct {
-	options                                          Options
-	client                                           deliveryClient
-	ctx                                              context.Context
-	cancel                                           context.CancelFunc
-	mu                                               sync.Mutex
-	closed                                           bool
-	input                                            chan *job
-	batches                                          chan *delivery
-	results                                          chan *delivery
-	done                                             chan struct{}
-	workers                                          sync.WaitGroup
-	bytes, pending                                   atomic.Int64
-	delivered, dropped, retried, rejected, truncated atomic.Uint64
+	options                                   Options
+	client                                    deliveryClient
+	ctx                                       context.Context
+	cancel                                    context.CancelFunc
+	mu                                        sync.Mutex
+	closed                                    bool
+	records                                   list.List
+	deliveries                                sync.WaitGroup
+	bytes, pending                            atomic.Int64
+	delivered, retried, failed, memoryDropped atomic.Uint64
 }
 type reservation struct {
 	engine *Engine
@@ -72,84 +60,87 @@ func (r *reservation) grow(n int) bool {
 	if n <= 0 {
 		return true
 	}
-	for {
-		previous := r.engine.bytes.Load()
-		if int64(n) > memoryLimit-previous {
-			return false
-		}
-		if r.engine.bytes.CompareAndSwap(previous, previous+int64(n)) {
-			break
-		}
-	}
-	if r.lease != nil && !r.lease.Grow(n) {
-		r.engine.bytes.Add(-int64(n))
+	if !r.lease.Grow(n) {
 		return false
 	}
 	r.bytes += n
+	r.engine.bytes.Add(int64(n))
 	return true
 }
 func (r *reservation) release() {
-	if r == nil {
-		return
-	}
+	r.lease.Release()
 	r.engine.bytes.Add(-int64(r.bytes))
 	r.bytes = 0
-	if r.lease != nil {
-		r.lease.Release()
-		r.lease = nil
-	}
-}
-func (e *Engine) reserve() *reservation {
-	r := &reservation{engine: e}
-	if e.options.NewLease != nil {
-		r.lease = e.options.NewLease()
-	}
-	return r
 }
 
+// Capture owns detached public JSON until Finish transfers it to delivery.
+// Its methods run on the request's single processing goroutine.
 type Capture struct {
-	engine        *Engine
-	tenant        string
-	destinations  []exportconfig.Destination
-	input, output conversation
-	reservation   *reservation
-	parameters    pcommon.Map
+	engine                      *Engine
+	destinations                []exportconfig.Destination
+	request, response, metadata []byte
+	events                      [][]byte
+	reservation                 *reservation
+	captureDuration             time.Duration
 }
 
-// Record is the explicit metadata boundary. Metadata contains the existing
-// customer request event, never the gateway state, credentials or HTTP headers.
-type Record struct {
-	RequestID, Model, ResponseModel, Provider, RequestType, Version                 string
-	StartedAt, EndedAt                                                              time.Time
-	Outcome, ErrorCode                                                              string
-	ErrorStatus                                                                     int
-	InputTokens, OutputTokens, CachedInputTokens, CacheWriteTokens, ReasoningTokens *int64
-	TimeToFirstTokenMS                                                              *uint32
-	FinishReason                                                                    string
-	CostUSD, Metadata                                                               string
+// CaptureDuration measures only copying public request/response content before
+// finalization. Receipt metadata, event encoding and delivery are later.
+func (c *Capture) CaptureDuration() *uint32 {
+	if c == nil {
+		return nil
+	}
+	value := uint32(min(max(c.captureDuration.Microseconds(), 0), int64(^uint32(0))))
+	return &value
 }
-type job struct {
-	target      exportconfig.Destination
-	group       [32]byte
-	traces      ptrace.Traces
-	encodedSize int
-	created     time.Time
+
+func (c *Capture) recordCapture(startedAt time.Time) {
+	c.captureDuration += time.Since(startedAt)
+}
+
+// record owns one finished payload shared by its destination deliveries.
+type record struct {
+	ctx         context.Context
+	cancel      context.CancelFunc
+	requestID   string
+	size        int64
+	mu          sync.Mutex
+	parts       [][]byte
 	reservation *reservation
+	// Guarded by Engine.mu.
+	remaining int
+	element   *list.Element
+	reclaimed bool
+}
+
+// release erases the payload under the read lock and returns its reservation.
+// Reclaim and the last delivery may both call it.
+func (r *record) release() int64 {
+	r.mu.Lock()
+	parts := r.parts
+	r.parts = nil
+	r.mu.Unlock()
+	if parts == nil {
+		return 0
+	}
+	for _, part := range parts {
+		clear(part)
+	}
+	bytes := int64(r.reservation.bytes)
+	r.reservation.release()
+	return bytes
 }
 
 func New(ctx context.Context, options Options) *Engine {
-	ctx, cancel := context.WithCancel(ctx)
-	e := &Engine{options: options, ctx: ctx, cancel: cancel, input: make(chan *job, maxPendingRecords), batches: make(chan *delivery), results: make(chan *delivery, deliveryWorkers), done: make(chan struct{})}
-	e.client = newDeliveryClient(options.Local)
-	for range deliveryWorkers {
-		e.workers.Add(1)
-		go e.worker()
+	if options.NewLease == nil {
+		panic("exporter requires shared memory admission")
 	}
-	go e.batch()
+	e := &Engine{options: options, client: newDeliveryClient(options.Local)}
+	e.ctx, e.cancel = context.WithCancel(ctx)
 	return e
 }
-func (e *Engine) Start(tenant, requestID string, config *exportconfig.Config) *Capture {
-	if e == nil || config == nil || len(config.Destinations) == 0 {
+func (e *Engine) Start(config *exportconfig.Config) *Capture {
+	if e == nil || config == nil || len(config.Destinations) == 0 || e.ctx.Err() != nil {
 		return nil
 	}
 	e.mu.Lock()
@@ -158,44 +149,27 @@ func (e *Engine) Start(tenant, requestID string, config *exportconfig.Config) *C
 	if closed {
 		return nil
 	}
-	r := e.reserve()
-	if !r.grow(4096) {
+	r := &reservation{engine: e, lease: e.options.NewLease()}
+	// The measured per-destination state includes the capture and record.
+	size := 0
+	for _, d := range config.Destinations {
+		size += len(d.URL) + deliveryStateBytes
+		for key, value := range d.Headers {
+			size += len(key) + len(value)
+		}
+	}
+	if !r.grow(size) {
 		r.release()
-		e.dropped.Add(1)
+		e.memoryDropped.Add(uint64(len(config.Destinations)))
 		return nil
 	}
-	c := &Capture{engine: e, tenant: tenant, reservation: r, parameters: pcommon.NewMap()}
-	c.input.budget = r
-	c.output.budget = r
-	c.output.output = true
+	c := &Capture{engine: e, reservation: r}
 	for _, d := range config.Destinations {
-		if sampleValue(requestID) >= d.Rate() {
-			continue
-		}
-		raw, _ := json.Marshal(d)
-		if !r.grow(len(raw)*4 + 512) {
-			clear(raw)
-			e.dropped.Add(1)
-			continue
-		}
-		// This copy also detaches strings from decrypted source-document buffers.
-		var copy exportconfig.Destination
-		err := json.Unmarshal(raw, &copy)
-		clear(raw)
-		if err != nil {
-			continue
+		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers))}
+		for key, value := range d.Headers {
+			copy.Headers[strings.Clone(key)] = strings.Clone(value)
 		}
 		c.destinations = append(c.destinations, copy)
-		if d.InputEnabled() {
-			c.input.limit = max(c.input.limit, d.CaptureLimit())
-		}
-		if d.OutputEnabled() {
-			c.output.limit = max(c.output.limit, d.CaptureLimit())
-		}
-	}
-	if len(c.destinations) == 0 {
-		r.release()
-		return nil
 	}
 	return c
 }
@@ -203,229 +177,194 @@ func (c *Capture) Discard() {
 	if c == nil || c.reservation == nil {
 		return
 	}
-	c.input.clear()
-	c.output.clear()
-	c.destinations = nil
+	clear(c.request)
+	clear(c.response)
+	clear(c.metadata)
+	for _, event := range c.events {
+		clear(event)
+	}
+	c.request, c.response, c.metadata, c.events, c.destinations = nil, nil, nil, nil, nil
 	c.reservation.release()
 	c.reservation = nil
 }
-func (c *Capture) Finish(record Record) {
+func (c *Capture) grow(n int) bool {
+	if c == nil || c.reservation == nil {
+		return false
+	}
+	if c.reservation.grow(n) {
+		return true
+	}
+	c.engine.memoryDropped.Add(uint64(len(c.destinations)))
+	c.Discard()
+	return false
+}
+
+// Finish appends captured content to the canonical event. A captured signed
+// metadata object wins over the unsigned final metadata, preserving its signature.
+func (c *Capture) Finish(requestID string, event any, finalMetadata any) {
 	if c == nil || c.reservation == nil {
 		return
 	}
-	defer c.Discard()
-	for _, d := range c.destinations {
-		if !d.Match(record.Outcome, record.ErrorStatus, record.ErrorCode) {
-			continue
-		}
-		r := c.engine.reserve()
-		// Covers pdata objects, JSON escaping and the overlapping batch encoder.
-		size := len(record.Metadata) + len(record.Model) + len(record.ResponseModel) + len(record.Provider)
-		if d.InputEnabled() {
-			size += min(c.input.used, d.CaptureLimit())
-		}
-		if d.OutputEnabled() {
-			size += min(c.output.used, d.CaptureLimit())
-		}
-		if !r.grow(size*24 + len(d.URL)*4 + exportconfig.MaxHeaderBytes*4 + 16384) {
-			r.release()
-			c.engine.dropped.Add(1)
-			continue
-		}
-		limit := d.CaptureLimit()
-		var traces ptrace.Traces
-		var encoded []byte
-		truncated := false
-		for {
-			traces, truncated = c.trace(record, d, limit)
-			request := ptraceotlp.NewExportRequestFromTraces(traces)
-			var err error
-			if d.Encoding == "protobuf" {
-				encoded, err = request.MarshalProto()
-			} else {
-				encoded, err = request.MarshalJSON()
-			}
-			if err != nil {
-				encoded = nil
-				break
-			}
-			if len(encoded) <= maxBatchBytes-1024 {
-				break
-			}
-			clear(encoded)
-			if limit == 0 {
-				encoded = nil
-				break
-			}
-			limit /= 2
-		}
-		if encoded == nil {
-			r.release()
-			c.engine.dropped.Add(1)
-			continue
-		}
-		if truncated {
-			c.engine.truncated.Add(1)
-		}
-		n := len(encoded)
-		clear(encoded)
-		id := d.Identity()
-		group := sha256.Sum256(append([]byte(c.tenant+"\x00"), id[:]...))
-		j := &job{target: d, group: group, traces: traces, encodedSize: n, created: time.Now(), reservation: r}
-		c.engine.enqueue(j)
-	}
-}
-func (e *Engine) enqueue(j *job) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.closed || e.pending.Load() >= maxPendingRecords {
-		e.drop(j)
+	encoded, err := json.Marshal(event)
+	if err != nil || len(encoded) < 2 || encoded[0] != '{' {
+		c.engine.failed.Add(uint64(len(c.destinations)))
+		c.Discard()
 		return
 	}
-	e.pending.Add(1)
-	select {
-	case e.input <- j:
-	default:
-		e.pending.Add(-1)
-		e.drop(j)
+	if c.metadata == nil {
+		metadata, err := json.Marshal(finalMetadata)
+		if err != nil {
+			c.engine.failed.Add(uint64(len(c.destinations)))
+			c.Discard()
+			clear(encoded)
+			return
+		}
+		c.Metadata(metadata)
+		clear(metadata)
 	}
+	// Parts retain the original JSON buffers without copying the whole body.
+	if !c.grow(len(encoded) + (len(c.events)*2+10)*24) {
+		clear(encoded)
+		return
+	}
+	parts := make([][]byte, 0, len(c.events)*2+10)
+	parts = append(parts, encoded[:len(encoded)-1], []byte(`,"stogas":`), c.metadata, []byte(`,"request":`), c.request)
+	if len(c.request) == 0 {
+		parts[len(parts)-1] = []byte(`null`)
+	}
+	if c.events != nil {
+		parts = append(parts, []byte(`,"events":[`))
+		for i, event := range c.events {
+			if i > 0 {
+				parts = append(parts, []byte{','})
+			}
+			parts = append(parts, event)
+		}
+		parts = append(parts, []byte(`]}`))
+	} else {
+		parts = append(parts, []byte(`,"response":`), c.response, []byte{'}'})
+		if len(c.response) == 0 {
+			parts[len(parts)-2] = []byte(`null`)
+		}
+	}
+	r := &record{requestID: requestID, parts: parts, reservation: c.reservation, remaining: len(c.destinations)}
+	for _, part := range parts {
+		r.size += int64(len(part))
+	}
+	destinations := c.destinations
+	c.request, c.response, c.metadata, c.events, c.destinations, c.reservation = nil, nil, nil, nil, nil, nil
+	c.engine.start(r, destinations)
 }
-func (e *Engine) drop(j *job) {
-	e.dropped.Add(1)
-	j.traces = ptrace.Traces{}
-	j.target = exportconfig.Destination{}
-	j.reservation.release()
-}
-func (e *Engine) release(batch []*job) {
-	for _, j := range batch {
-		j.traces = ptrace.Traces{}
-		j.target = exportconfig.Destination{}
-		j.reservation.release()
-		e.pending.Add(-1)
+
+func (e *Engine) start(r *record, destinations []exportconfig.Destination) {
+	r.ctx, r.cancel = context.WithTimeout(e.ctx, deliveryWindow)
+	e.mu.Lock()
+	if e.closed || e.ctx.Err() != nil {
+		e.mu.Unlock()
+		e.failed.Add(uint64(len(destinations)))
+		r.cancel()
+		r.release()
+		return
+	}
+	r.element = e.records.PushBack(r)
+	e.pending.Add(int64(len(destinations)))
+	e.deliveries.Add(len(destinations))
+	e.mu.Unlock()
+	for _, d := range destinations {
+		go e.deliver(r, d)
 	}
 }
 
-// batch owns all waiting work. Backoff never occupies an HTTP worker, so an
-// unavailable destination cannot monopolize workers while waiting to retry.
-func (e *Engine) batch() {
-	defer close(e.done)
-	defer close(e.batches)
-	groups := map[[32]byte][]*job{}
-	sizes := map[[32]byte]int{}
-	var waiting []*delivery
-	inflight := 0
-	input, stopped := e.input, e.ctx.Done()
-	flush := func(key [32]byte) {
-		jobs := groups[key]
-		delete(groups, key)
-		delete(sizes, key)
-		waiting = append(waiting, &delivery{jobs: jobs, deadline: jobs[0].created.Add(deliveryAge)})
-	}
-	timer := time.NewTimer(batchDelay)
-	defer timer.Stop()
-	for {
-		now := time.Now()
-		wake := now.Add(deliveryAge)
-		for key, jobs := range groups {
-			at := jobs[0].created.Add(batchDelay)
-			if input == nil || !now.Before(at) {
-				flush(key)
-			} else if at.Before(wake) {
-				wake = at
-			}
-		}
-		ready := -1
-		for i := 0; i < len(waiting); {
-			b := waiting[i]
-			if e.ctx.Err() != nil || !now.Before(b.deadline) {
-				e.dropped.Add(uint64(len(b.jobs)))
-				e.releaseDelivery(b)
-				waiting = slices.Delete(waiting, i, i+1)
-				continue
-			}
-			if !now.Before(b.nextAttempt) {
-				if ready == -1 {
-					ready = i
-				}
-			} else if b.nextAttempt.Before(wake) {
-				wake = b.nextAttempt
-			}
-			if b.deadline.Before(wake) {
-				wake = b.deadline
-			}
-			i++
-		}
-		if input == nil && len(groups) == 0 && len(waiting) == 0 && inflight == 0 {
+func (e *Engine) deliver(r *record, d exportconfig.Destination) {
+	delivered := false
+	defer func() { e.finishDelivery(r, delivered) }()
+	for attempts := 1; ; attempts++ {
+		result := e.client.send(r.ctx, d, r)
+		if result.delivered {
+			delivered = true
 			return
 		}
-		var dispatch chan *delivery
-		var next *delivery
-		if ready >= 0 {
-			dispatch, next = e.batches, waiting[ready]
+		if !result.retryable || attempts == maxAttempts {
+			return
 		}
-		timer.Reset(max(0, time.Until(wake)))
+		delay := retryDelay/2 + rand.N(retryDelay)
+		if result.retryAfter != nil {
+			delay = *result.retryAfter
+		}
+		if deadline, _ := r.ctx.Deadline(); time.Until(deadline) <= delay {
+			return
+		}
+		timer := time.NewTimer(delay)
 		select {
-		case j, ok := <-input:
-			if !ok {
-				input = nil
-				continue
-			}
-			if sizes[j.group]+j.encodedSize > maxBatchBytes {
-				flush(j.group)
-			}
-			groups[j.group] = append(groups[j.group], j)
-			sizes[j.group] += j.encodedSize
-			if len(groups[j.group]) >= maxBatchRecords {
-				flush(j.group)
-			}
-		case dispatch <- next:
-			waiting = slices.Delete(waiting, ready, ready+1)
-			inflight++
-		case b := <-e.results:
-			inflight--
-			if b.finished {
-				e.releaseDelivery(b)
-			} else {
-				waiting = append(waiting, b)
-			}
 		case <-timer.C:
-		case <-stopped:
-			// Also stop admission when the parent context ends before Close.
-			e.mu.Lock()
-			if !e.closed {
-				e.closed = true
-				close(e.input)
-			}
-			e.mu.Unlock()
-			stopped = nil
+			e.retried.Add(1)
+		case <-r.ctx.Done():
+			timer.Stop()
+			return
 		}
 	}
 }
-func (e *Engine) releaseDelivery(b *delivery) {
-	clear(b.payload)
-	b.payload = nil
-	e.release(b.jobs)
-}
-func (e *Engine) worker() {
-	defer e.workers.Done()
-	for b := range e.batches {
-		e.deliver(b)
-		e.results <- b
+
+func (e *Engine) finishDelivery(r *record, delivered bool) {
+	e.mu.Lock()
+	switch {
+	case delivered:
+		e.delivered.Add(1)
+	case r.reclaimed:
+		e.memoryDropped.Add(1)
+	default:
+		e.failed.Add(1)
 	}
+	r.remaining--
+	last := r.remaining == 0
+	if last && r.element != nil {
+		e.records.Remove(r.element)
+		r.element = nil
+	}
+	e.mu.Unlock()
+	if last {
+		r.cancel()
+		r.release()
+	}
+	e.pending.Add(-1)
+	e.deliveries.Done()
 }
+
+// Reclaim ends delivery of the oldest finished records until needed bytes are
+// free. Captures for active requests stay with those requests.
+func (e *Engine) Reclaim(needed int64) int64 {
+	if e == nil {
+		return 0
+	}
+	var reclaimed []*record
+	var selected int64
+	e.mu.Lock()
+	for selected < needed && e.records.Len() > 0 {
+		r := e.records.Remove(e.records.Front()).(*record)
+		r.element, r.reclaimed = nil, true
+		selected += int64(r.reservation.bytes)
+		reclaimed = append(reclaimed, r)
+	}
+	e.mu.Unlock()
+	var freed int64
+	for _, r := range reclaimed {
+		r.cancel()
+		freed += r.release()
+	}
+	return freed
+}
+
 func (e *Engine) Close() {
 	if e == nil {
 		return
 	}
 	e.mu.Lock()
-	if !e.closed {
-		e.closed = true
-		close(e.input)
-	}
+	e.closed = true
 	e.mu.Unlock()
-	timer := time.AfterFunc(deliveryTimeout, e.cancel)
-	<-e.done
-	e.workers.Wait()
+	drained := make(chan struct{})
+	go func() { e.deliveries.Wait(); close(drained) }()
+	timer := time.AfterFunc(shutdownDrain, e.cancel)
+	<-drained
 	timer.Stop()
 	e.cancel()
 	e.client.close()
@@ -434,9 +373,5 @@ func (e *Engine) Diagnostics() Diagnostics {
 	if e == nil {
 		return Diagnostics{}
 	}
-	return Diagnostics{ReservedBytes: e.bytes.Load(), MemoryLimitBytes: memoryLimit, PendingRecords: e.pending.Load(), Delivered: e.delivered.Load(), Dropped: e.dropped.Load(), Retried: e.retried.Load(), Rejected: e.rejected.Load(), Truncated: e.truncated.Load()}
-}
-func sha256ID(value string) string {
-	h := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(h[:])
+	return Diagnostics{ReservedBytes: e.bytes.Load(), PendingDeliveries: e.pending.Load(), Delivered: e.delivered.Load(), Retried: e.retried.Load(), Failed: e.failed.Load(), MemoryDropped: e.memoryDropped.Load()}
 }

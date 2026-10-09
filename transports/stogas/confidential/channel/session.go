@@ -20,16 +20,6 @@ type ServerSession struct {
 	id   [32]byte
 }
 
-func newServerSession(root, id, initialPrivate [32]byte) (*ServerSession, error) {
-	defer clear(root[:])
-	defer clear(initialPrivate[:])
-	core, err := verifier.NewChannelSession(root, id, initialPrivate)
-	if err != nil {
-		return nil, err
-	}
-	return &ServerSession{core: core, id: id}, nil
-}
-
 func (s *ServerSession) AcceptStart(number uint64, encoded []byte) (*ServerRequest, []byte, error) {
 	incoming, outgoing, metadata, err := s.core.AcceptStart(number, encoded)
 	if err != nil {

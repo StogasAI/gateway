@@ -10,10 +10,7 @@ import (
 
 func requestWire(t *testing.T, root, id [32]byte, initialPublic [referencePublicBytes]byte, number uint64, body []byte) []byte {
 	t.Helper()
-	encoder, err := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
-	if err != nil {
-		t.Fatal(err)
-	}
+	encoder := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
 	defer encoder.fail(ErrClosed)
 	encoded := append([]byte(requestHeader), id[:]...)
 	encoded = binary.BigEndian.AppendUint64(encoded, number)
@@ -75,10 +72,7 @@ func TestStreamOwnershipFragmentationAndCompletion(t *testing.T) {
 		if err := outgoing.Finish(); err != nil {
 			t.Fatal(err)
 		}
-		decoder, err := responseRecordsFor(root, id, initialPublic, uint64(index))
-		if err != nil {
-			t.Fatal(err)
-		}
+		decoder := responseRecordsFor(root, id, initialPublic, uint64(index))
 		var actual []byte
 		for response.Len() > 0 {
 			size, err := RecordSize(response.Bytes()[:4])

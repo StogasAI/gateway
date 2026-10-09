@@ -133,9 +133,9 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 	if secure != nil {
 		s.proofs = secure.Proofs
 		s.sessions = secure.Sessions
-		memory.reclaim = s.reclaimIdleMemory
 		s.sessionNodeID = secure.NodeID()
 	}
+	memory.reclaim = s.reclaimIdleMemory
 	if err := s.routes(); err != nil {
 		s.exports.Close()
 		if secure != nil {

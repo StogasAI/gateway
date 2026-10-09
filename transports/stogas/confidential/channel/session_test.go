@@ -9,14 +9,10 @@ import (
 )
 
 func TestSessionOnlyAuthenticatedFirstClaimantOwnsResponse(t *testing.T) {
-	root, id := [32]byte{1, 2, 3}, [32]byte{4, 5, 6}
-	session := testServerSession(root, id)
+	session, client := testServerSession(t)
 	defer session.Close()
-	encoder, _ := newRecords(requestMessage(root, 42), id, 42, requestDirection)
-	response, err := responseRecords(root, id, 42)
-	if err != nil {
-		t.Fatal(err)
-	}
+	encoder := newRecords(requestMessage(client, 42), client.ID, 42, requestDirection)
+	response := responseRecords(client, 42)
 	first := sealRecord(t, encoder, Metadata, []byte("credentials"))
 	forged := slices.Clone(first)
 	forged[len(forged)-1] ^= 1
@@ -84,14 +80,10 @@ func TestSessionOnlyAuthenticatedFirstClaimantOwnsResponse(t *testing.T) {
 }
 
 func TestSessionOutOfOrderAndRetiredStarts(t *testing.T) {
-	root, id := [32]byte{1}, [32]byte{2}
-	session := testServerSession(root, id)
+	session, client := testServerSession(t)
 	defer session.Close()
 	for _, number := range []uint64{100, 98, 99, 100 + ReplayWindow} {
-		encoder, err := newRecords(requestMessage(root, number), id, number, requestDirection)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encoder := newRecords(requestMessage(client, number), client.ID, number, requestDirection)
 		first := sealRecord(t, encoder, Metadata, []byte("credentials"))
 		request, _, err := session.AcceptStart(number, first)
 		if err != nil {
@@ -100,10 +92,7 @@ func TestSessionOutOfOrderAndRetiredStarts(t *testing.T) {
 		request.Close()
 	}
 	for _, number := range []uint64{98, 99, 100, 100 + ReplayWindow} {
-		encoder, err := newRecords(requestMessage(root, number), id, number, requestDirection)
-		if err != nil {
-			t.Fatal(err)
-		}
+		encoder := newRecords(requestMessage(client, number), client.ID, number, requestDirection)
 		request, metadata, err := session.AcceptStart(number, sealRecord(t, encoder, Metadata, []byte("credentials")))
 		if !errors.Is(err, ErrReplay) || request != nil || metadata != nil {
 			t.Fatalf("retired/duplicate start %d received cipher: %v", number, err)

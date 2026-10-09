@@ -1,7 +1,6 @@
 package runtime
 
 import (
-	"crypto/mldsa"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -16,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	verifier "github.com/StogasAI/verifier/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"
@@ -65,10 +65,7 @@ func TestMaintenanceLocalExpiryPolicyRecoveryAndTerminalDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer snapshot.Close()
-	document, err := fixture.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	document := fixture.Boot.document(t)
 	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now())}
 	if m.readiness().Ready {
 		t.Fatal("unappraised node became ready")
@@ -118,10 +115,7 @@ func TestMaintenanceAdmissionReadsRaceSafelyWithAppraisalAndDrain(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer snapshot.Close()
-	document, err := fixture.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	document := fixture.Boot.document(t)
 	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now())}
 	var group sync.WaitGroup
 	for range 4 {
@@ -145,11 +139,18 @@ func TestMaintenanceAdmissionReadsRaceSafelyWithAppraisalAndDrain(t *testing.T) 
 	}
 }
 
-func TestCertificateRenewalRetainsInstalledStateAndRespectsTerminalDrain(t *testing.T) {
-	key, err := mldsa.GenerateKey(mldsa.MLDSA65())
+func testNodeKeys(t *testing.T) *verifier.NodeKeys {
+	t.Helper()
+	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(keys.Close)
+	return keys
+}
+
+func TestCertificateRenewalRetainsInstalledStateAndRespectsTerminalDrain(t *testing.T) {
+	keys := testNodeKeys(t)
 	for _, tc := range []struct {
 		name                        string
 		status                      string
@@ -172,7 +173,7 @@ func TestCertificateRenewalRetainsInstalledStateAndRespectsTerminalDrain(t *test
 				now = before.NotBefore.Add(time.Hour)
 			}
 			var calls atomic.Int32
-			node := attest.SNPNodeID([32]byte{1})
+			node := "amber-anchor-01"
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if tc.status == "unavailable" {
@@ -191,7 +192,7 @@ func TestCertificateRenewalRetainsInstalledStateAndRespectsTerminalDrain(t *test
 			m := &bootMaintenance{
 				certs: store, evidence: &currentEvidence{now: func() time.Time { return now }},
 				client:   provision.Client{BaseURL: server.URL, AllowInsecureLocal: true},
-				hostname: "api-staging.stogas.ai", signingKey: key, terminal: tc.terminal,
+				hostname: "api-staging.stogas.ai", keys: keys, terminal: tc.terminal,
 			}
 			m.identity.NodeID = node
 			if err := m.renewCertificate(t.Context()); (err != nil) != tc.wantError {
@@ -216,17 +217,11 @@ func TestRegistrationAcknowledgementRetriesWithoutChangingLocalAdmission(t *test
 		t.Fatal(err)
 	}
 	defer snapshot.Close()
-	document, err := fixture.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := mldsa.GenerateKey(mldsa.MLDSA65())
-	if err != nil {
-		t.Fatal(err)
-	}
+	document := fixture.Boot.document(t)
+	keys := testNodeKeys(t)
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "retry recovers", true: "drain cancels retry"}[terminal], func(t *testing.T) {
-			m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now()), signingKey: key}
+			m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now()), keys: keys}
 			if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
 				t.Fatal(err)
 			}

@@ -31,12 +31,15 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	var invokeCalls atomic.Int32
+	caller, stopWaiting := context.WithCancel(t.Context())
+	defer stopWaiting()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != invocationPath {
 			response.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
 		invokeCalls.Add(1)
+		stopWaiting()
 		if request.URL.Path != invocationPath || request.Method != http.MethodPost {
 			t.Errorf("invoke request = %s %s", request.Method, request.URL.Path)
 		}
@@ -77,7 +80,7 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 			return
 		}
 		response.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = response.Write(encryptUnaryResponseForTest(t, responsePublicKey, []byte(`{"id":"private-response","choices":[]}`)))
+		_, _ = response.Write(encryptUnaryResponseForTest(t, responsePublicKey, []byte(`{"id":"private-response","choices":[],"usage":{"total_tokens":3}}`)))
 	}))
 	defer server.Close()
 
@@ -109,6 +112,7 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 
 	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 	defer ctx.Cancel()
+	SetInvocationBudget(ctx, 3, func() bool { return caller.Err() == nil })
 	if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 		t.Fatal(err)
 	}
@@ -126,8 +130,11 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	if response.StatusCode() != http.StatusOK {
 		t.Fatalf("response status = %d, body=%s", response.StatusCode(), response.Body())
 	}
-	if got := string(response.Body()); got != `{"id":"private-response","choices":[]}` {
+	if got := string(response.Body()); got != `{"id":"private-response","choices":[],"usage":{"total_tokens":3}}` {
 		t.Fatalf("decrypted response = %s", got)
+	}
+	if ctx.Err() != nil || caller.Err() == nil {
+		t.Fatalf("provider context = %v, stopped caller = %v", ctx.Err(), caller.Err())
 	}
 	if invokeCalls.Load() != 1 {
 		t.Fatalf("invoke calls = %d", invokeCalls.Load())
@@ -146,12 +153,15 @@ func TestTransportEncryptedStreamOwnsCredentialAndNeverReplays(t *testing.T) {
 				t.Fatal(err)
 			}
 			var invokes atomic.Int32
+			caller, stopWaiting := context.WithCancel(t.Context())
+			defer stopWaiting()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != invocationPath {
 					w.WriteHeader(http.StatusNotFound)
 					return
 				}
 				invokes.Add(1)
+				stopWaiting()
 				if r.Header.Get("X-E2E-Stream") != "true" {
 					t.Error("stream invocation was not marked encrypted streaming")
 				}
@@ -215,10 +225,14 @@ func TestTransportEncryptedStreamOwnsCredentialAndNeverReplays(t *testing.T) {
 			request.Header.SetMethod(http.MethodPost)
 			request.Header.Set("Authorization", "Bearer managed-key")
 			request.SetBodyString(`{"model":"upstream-model","stream":true,"messages":[{"role":"user","content":"private prompt"}]}`)
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
+			ctx := schemas.NewBifrostContext(t.Context(), time.Now().Add(2*time.Second))
+			defer ctx.Cancel()
+			SetInvocationBudget(ctx, 3, func() bool { return caller.Err() == nil })
 			if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
 				t.Fatal(err)
+			}
+			if ctx.Err() != nil || caller.Err() == nil {
+				t.Fatalf("provider context = %v, stopped caller = %v", ctx.Err(), caller.Err())
 			}
 			if outcome == "provider error" {
 				if response.StatusCode() != http.StatusServiceUnavailable || string(response.Header.Peek("Retry-After")) != "2" || string(response.Body()) != `{"error":{"code":"upstream_failed"}}` {
@@ -578,8 +592,11 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 	request.Header.Set("Authorization", "Bearer managed-key")
 	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
 	request.SetBodyString(`{"model":"upstream-model","messages":[{"role":"user","content":"private prompt"}]}`)
-	if retry, roundTripErr := transport.RoundTrip(nil, request, response); roundTripErr != nil || retry {
-		t.Fatalf("RoundTrip retry=%t error=%v", retry, roundTripErr)
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	defer ctx.Cancel()
+	SetInvocationBudget(ctx, 2, nil)
+	if roundTripErr := transport.DoRequestWithContext(ctx, request, response); roundTripErr != nil {
+		t.Fatalf("round trip error=%v", roundTripErr)
 	}
 	if response.StatusCode() != http.StatusOK || string(response.Body()) != `{"id":"fallback","choices":[]}` {
 		t.Fatalf("fallback response status=%d body=%s", response.StatusCode(), response.Body())
@@ -591,78 +608,107 @@ func TestTransportRetriesPreComputeInstanceFailureWithFreshTicket(t *testing.T) 
 	}
 }
 
-func TestTransportTriesEveryDiscoveredInstanceBeforeReturningCapacity(t *testing.T) {
-	instanceKey, err := mlkem.GenerateKey768()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var calls atomic.Int32
-	instanceIDs := make(map[string]struct{})
-	nonces := make(map[string]struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != invocationPath {
-			response.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		calls.Add(1)
-		instanceIDs[request.Header.Get("X-Instance-Id")] = struct{}{}
-		nonces[request.Header.Get("X-E2E-Nonce")] = struct{}{}
-		response.WriteHeader(http.StatusTooManyRequests)
-		_, _ = response.Write([]byte(`{"detail":"Instance is at maximum capacity, try again later"}`))
-	}))
-	defer server.Close()
+func TestTransportStopsAtInvocationBudget(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, test := range []struct {
+			limit       int
+			stopWaiting bool
+			want        int
+		}{{want: 1}, {limit: 2, want: 2}, {limit: 3, want: 3}, {limit: 3, stopWaiting: true, want: 1}} {
+			t.Run(fmt.Sprintf("stream=%t/limit=%d/stopped=%t", streaming, test.limit, test.stopWaiting), func(t *testing.T) {
+				instanceKey, err := mlkem.GenerateKey768()
+				if err != nil {
+					t.Fatal(err)
+				}
+				var calls atomic.Int32
+				caller, stopWaiting := context.WithCancel(t.Context())
+				defer stopWaiting()
+				instanceIDs := make(map[string]struct{})
+				nonces := make(map[string]struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+					if request.URL.Path != invocationPath {
+						response.WriteHeader(http.StatusTooManyRequests)
+						return
+					}
+					calls.Add(1)
+					if test.stopWaiting {
+						stopWaiting()
+					}
+					instanceIDs[request.Header.Get("X-Instance-Id")] = struct{}{}
+					nonces[request.Header.Get("X-E2E-Nonce")] = struct{}{}
+					response.WriteHeader(http.StatusTooManyRequests)
+					_, _ = response.Write([]byte(`{"detail":"Instance is at maximum capacity, try again later"}`))
+				}))
+				defer server.Close()
 
-	transport, err := New(Options{
-		APIKey:         "managed-key",
-		APIBaseURL:     server.URL,
-		RequestTimeout: 10 * time.Minute,
-		ResolveModel: func(model string) (ModelTarget, bool) {
-			return testModelTarget, model == "upstream-model"
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transport.Close()
-	now := time.Now()
-	publicKey := base64.StdEncoding.EncodeToString(instanceKey.EncapsulationKey().Bytes())
-	discovered := make([]discoveredInstance, 0, maximumDiscoveredInstances)
-	verified := make(map[string]verifiedInstance, maximumDiscoveredInstances)
-	for index := 1; index <= maximumDiscoveredInstances; index++ {
-		instanceID := fmt.Sprintf("10000000-0000-4000-8000-%012d", index)
-		ticket := strings.Repeat(string(rune('A'+index-1)), 32)
-		discovered = append(discovered, discoveredInstance{
-			ID: instanceID, PublicKey: publicKey, Tickets: []string{ticket},
-		})
-		verified[instanceID] = verifiedInstance{
-			InstanceID: instanceID, PublicKey: publicKey, GPUCount: testGPUCount, ValidUntil: now.Add(time.Minute),
-		}
-	}
-	transport.pools.install(testModelTarget, discovered, now.Add(time.Minute))
-	transport.pools.mu.Lock()
-	transport.pools.verified[testChuteID] = verified
-	transport.pools.warming[testChuteID] = true
-	transport.pools.mu.Unlock()
+				transport, err := New(Options{
+					APIKey:         "managed-key",
+					APIBaseURL:     server.URL,
+					RequestTimeout: 10 * time.Minute,
+					ResolveModel: func(model string) (ModelTarget, bool) {
+						return testModelTarget, model == "upstream-model"
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer transport.Close()
+				now := time.Now()
+				publicKey := base64.StdEncoding.EncodeToString(instanceKey.EncapsulationKey().Bytes())
+				discovered := make([]discoveredInstance, 0, maximumDiscoveredInstances)
+				verified := make(map[string]verifiedInstance, maximumDiscoveredInstances)
+				for index := 1; index <= maximumDiscoveredInstances; index++ {
+					instanceID := fmt.Sprintf("10000000-0000-4000-8000-%012d", index)
+					ticket := strings.Repeat(string(rune('A'+index-1)), 32)
+					discovered = append(discovered, discoveredInstance{
+						ID: instanceID, PublicKey: publicKey, Tickets: []string{ticket},
+					})
+					verified[instanceID] = verifiedInstance{
+						InstanceID: instanceID, PublicKey: publicKey, GPUCount: testGPUCount, ValidUntil: now.Add(time.Minute),
+					}
+				}
+				transport.pools.install(testModelTarget, discovered, now.Add(time.Minute))
+				transport.pools.mu.Lock()
+				transport.pools.verified[testChuteID] = verified
+				transport.pools.warming[testChuteID] = true
+				transport.pools.mu.Unlock()
 
-	request := fasthttp.AcquireRequest()
-	response := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseRequest(request)
-	defer fasthttp.ReleaseResponse(response)
-	request.Header.SetMethod(http.MethodPost)
-	request.Header.Set("Authorization", "Bearer managed-key")
-	request.SetRequestURI("http://provider.invalid/v1/chat/completions")
-	request.SetBodyString(`{"model":"upstream-model","messages":[]}`)
-	if retry, roundTripErr := transport.RoundTrip(nil, request, response); roundTripErr != nil || retry {
-		t.Fatalf("RoundTrip retry=%t error=%v", retry, roundTripErr)
-	}
-	if response.StatusCode() != http.StatusTooManyRequests ||
-		calls.Load() != maximumDiscoveredInstances ||
-		len(instanceIDs) != maximumDiscoveredInstances ||
-		len(nonces) != maximumDiscoveredInstances {
-		t.Fatalf(
-			"status=%d calls=%d instances=%d nonces=%d",
-			response.StatusCode(), calls.Load(), len(instanceIDs), len(nonces),
-		)
+				request := fasthttp.AcquireRequest()
+				response := fasthttp.AcquireResponse()
+				defer fasthttp.ReleaseRequest(request)
+				defer fasthttp.ReleaseResponse(response)
+				request.Header.SetMethod(http.MethodPost)
+				request.Header.Set("Authorization", "Bearer managed-key")
+				request.SetRequestURI("http://provider.invalid/v1/chat/completions")
+				request.SetBodyString(fmt.Sprintf(`{"model":"upstream-model","messages":[],"stream":%t}`, streaming))
+				ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+				defer ctx.Cancel()
+				var retries []int
+				SetRetryObserver(ctx, func(status int, completedAt, nextStartedAt time.Time) {
+					if status != http.StatusTooManyRequests || completedAt.IsZero() || nextStartedAt.Before(completedAt) {
+						t.Errorf("retry observation: status=%d completed=%v next=%v", status, completedAt, nextStartedAt)
+					}
+					retries = append(retries, status)
+				})
+				if test.limit > 0 {
+					SetInvocationBudget(ctx, test.limit, func() bool { return caller.Err() == nil })
+				}
+				if roundTripErr := transport.DoRequestWithContext(ctx, request, response); roundTripErr != nil {
+					t.Fatalf("round trip error=%v", roundTripErr)
+				}
+				if response.StatusCode() != http.StatusTooManyRequests ||
+					string(response.Body()) != `{"detail":"Instance is at maximum capacity, try again later"}` ||
+					calls.Load() != int32(test.want) ||
+					len(retries) != test.want-1 ||
+					len(instanceIDs) != test.want ||
+					len(nonces) != test.want {
+					t.Fatalf(
+						"status=%d calls=%d instances=%d nonces=%d",
+						response.StatusCode(), calls.Load(), len(instanceIDs), len(nonces),
+					)
+				}
+			})
+		}
 	}
 }
 
@@ -1081,16 +1127,19 @@ func TestContextAwareUnaryStopsSafeInstanceRetriesAtRouteDeadline(t *testing.T) 
 
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
 	defer cancel()
+	provider := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
+	defer provider.Cancel()
+	SetInvocationBudget(provider, 3, nil)
 	startedAt := time.Now()
-	err = transport.DoRequestWithContext(ctx, request, response)
+	err = transport.DoRequestWithContext(provider, request, response)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("unary request error = %v, want deadline exceeded", err)
 	}
 	if elapsed := time.Since(startedAt); elapsed > 200*time.Millisecond {
 		t.Fatalf("unary request deadline took %s, want a bounded wait", elapsed)
 	}
-	if got := calls.Load(); got >= maximumInvokeAttempts {
-		t.Fatalf("unary invocations = %d, want route deadline to stop safe retries before %d", got, maximumInvokeAttempts)
+	if got := calls.Load(); got >= 3 {
+		t.Fatalf("unary invocations = %d, want route deadline to stop safe retries before 3", got)
 	}
 }
 

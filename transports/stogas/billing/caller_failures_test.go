@@ -18,8 +18,8 @@ func TestTerminalBackoffUsesFinalOutcomeAndKeepsEventFacts(t *testing.T) {
 		{"success", RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, true, false},
 		{"recovered retry", RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "provider_error"}, {Status: "success"}}}, true, false},
 		{"failed after output", RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "success"}, {Status: "provider_error", OutputObserved: true}}}, false, false},
-		{"processing failed", RequestEvent{Error: &EventError{Code: "internal_error", Status: 500}, ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, false, false},
-		{"local error", RequestEvent{Error: &EventError{Code: "gateway_capacity_exceeded", Status: 503}, ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, false, false},
+		{"processing failed", RequestEvent{GatewayError: &EventError{Code: "internal_error", Status: 500}, ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, false, false},
+		{"local error", RequestEvent{GatewayError: &EventError{Code: "gateway_capacity_exceeded", Status: 503}, ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, false, false},
 		{"no dispatch", RequestEvent{}, false, false},
 		{"client cancelled", RequestEvent{Cancelled: true, ProviderAttempts: []ProviderAttempt{{Status: "provider_error"}}}, false, true},
 		{"cancelled after success", RequestEvent{Cancelled: true, ProviderAttempts: []ProviderAttempt{{Status: "success"}}}, false, true},
@@ -115,8 +115,8 @@ func TestFailureCooldownBoundaryAndBoundedState(t *testing.T) {
 	for i := 0; i < localAdmissionShards*localAdmissionEntriesPerShard*2; i++ {
 		c.record(string(rune(i+1)), now)
 	}
-	for _, shard := range c.shards {
-		if len(shard.entries) > localAdmissionEntriesPerShard {
+	for i := range c.shards {
+		if len(c.shards[i].entries) > localAdmissionEntriesPerShard {
 			t.Fatal("unbounded failure identities")
 		}
 	}

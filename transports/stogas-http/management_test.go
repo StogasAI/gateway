@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	ref "github.com/StogasAI/verifier/go/reference"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
 )
 
@@ -27,7 +27,7 @@ func TestPrivateDrainRequiresActuatorAndExactGuest(t *testing.T) {
 		digest := sha256.Sum256(cert.Leaf.RawSubjectPublicKeyInfo)
 		return hex.EncodeToString(digest[:])
 	}
-	nodeID := attest.SNPNodeID([32]byte{9})
+	nodeID := ref.SNPNodeID([32]byte{9})
 	s := &Server{config: stogas.Config{DiagnosticsClientSPKISHA256: pin(observer), DrainClientSPKISHA256: pin(actuator)}, secure: &confidentialruntime.Runtime{}, sessionNodeID: nodeID, requests: newRequestDrain()}
 	if err := s.routes(); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestPrivateDrainRequiresActuatorAndExactGuest(t *testing.T) {
 		status      int
 	}{
 		{"observer", `{"node_id":"` + nodeID + `"}`, observer, http.StatusForbidden},
-		{"previous guest", `{"node_id":"` + attest.SNPNodeID([32]byte{8}) + `"}`, actuator, http.StatusConflict},
+		{"previous guest", `{"node_id":"` + ref.SNPNodeID([32]byte{8}) + `"}`, actuator, http.StatusConflict},
 		{"trailing", `{"node_id":"` + nodeID + `"} {}`, actuator, http.StatusBadRequest},
 		{"unknown command", `{"node_id":"` + nodeID + `","resume":true}`, actuator, http.StatusBadRequest},
 		{"oversized", strings.Repeat(" ", 1025), actuator, http.StatusBadRequest},

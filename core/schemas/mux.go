@@ -585,8 +585,12 @@ func (cm *ChatMessage) ToResponsesMessages() []ResponsesMessage {
 		if messageType == ResponsesMessageTypeFunctionCallOutput {
 			// Don't set content for function_call_output - it will be set in ResponsesToolMessage.Output
 		} else {
-			responseBlocks := make([]ResponsesMessageContentBlock, len(cm.Content.ContentBlocks))
-			for i, block := range cm.Content.ContentBlocks {
+			responseBlocks := make([]ResponsesMessageContentBlock, 0, len(cm.Content.ContentBlocks))
+			for _, block := range cm.Content.ContentBlocks {
+				// Responses blocks have no cachePoint equivalent; a standalone marker would serialize as an empty-type block.
+				if block.Type == "" && block.CachePoint != nil {
+					continue
+				}
 				blockType := ResponsesMessageContentBlockType(block.Type)
 
 				switch block.Type {
@@ -604,33 +608,34 @@ func (cm *ChatMessage) ToResponsesMessages() []ResponsesMessage {
 					blockType = ResponsesInputMessageContentBlockTypeAudio
 				}
 
-				responseBlocks[i] = ResponsesMessageContentBlock{
+				responseBlocks = append(responseBlocks, ResponsesMessageContentBlock{
 					Type: blockType,
 					Text: block.Text,
-				}
+				})
+				rb := &responseBlocks[len(responseBlocks)-1]
 
 				// Convert specific block types
 				if block.ImageURLStruct != nil {
-					responseBlocks[i].ResponsesInputMessageContentBlockImage = &ResponsesInputMessageContentBlockImage{
+					rb.ResponsesInputMessageContentBlockImage = &ResponsesInputMessageContentBlockImage{
 						ImageURL: &block.ImageURLStruct.URL,
 						Detail:   block.ImageURLStruct.Detail,
 					}
 				}
 				if block.File != nil {
-					responseBlocks[i].ResponsesInputMessageContentBlockFile = &ResponsesInputMessageContentBlockFile{
+					rb.ResponsesInputMessageContentBlockFile = &ResponsesInputMessageContentBlockFile{
 						FileData: block.File.FileData,
 						FileURL:  block.File.FileURL,
 						Filename: block.File.Filename,
 						FileType: block.File.FileType,
 					}
-					responseBlocks[i].FileID = block.File.FileID
+					rb.FileID = block.File.FileID
 				}
 				if block.InputAudio != nil {
 					format := ""
 					if block.InputAudio.Format != nil {
 						format = *block.InputAudio.Format
 					}
-					responseBlocks[i].Audio = &ResponsesInputMessageContentBlockAudio{
+					rb.Audio = &ResponsesInputMessageContentBlockAudio{
 						Data:   block.InputAudio.Data,
 						Format: format,
 					}
@@ -854,7 +859,7 @@ func ToChatMessages(rms []ResponsesMessage) []ChatMessage {
 					// result collapse to the chat surface's single bool. Mirrors
 					// the same pair the Anthropic Responses converter treats as
 					// is_error (providers/anthropic/responses.go).
-					if (rm.ResponsesToolMessage.Error != nil && *rm.ResponsesToolMessage.Error != "") ||
+					if rm.ResponsesToolMessage.Error.IsError() ||
 						(rm.Status != nil && *rm.Status == "incomplete") {
 						cm.ChatToolMessage.IsError = Ptr(true)
 					}
@@ -1163,10 +1168,11 @@ func (cr *BifrostChatRequest) ToResponsesRequest() *BifrostResponsesRequest {
 		}
 
 		// Handle Reasoning from reasoning_effort
-		if cr.Params.Reasoning != nil && (cr.Params.Reasoning.Enabled != nil || cr.Params.Reasoning.Effort != nil || cr.Params.Reasoning.MaxTokens != nil) {
+		if cr.Params.Reasoning != nil && (cr.Params.Reasoning.Enabled != nil || cr.Params.Reasoning.Effort != nil || cr.Params.Reasoning.MaxTokens != nil || cr.Params.Reasoning.Type != nil) {
 			brr.Params.Reasoning = &ResponsesParametersReasoning{
 				Effort:    cr.Params.Reasoning.Effort,
 				MaxTokens: cr.Params.Reasoning.MaxTokens,
+				Type:      cr.Params.Reasoning.Type,
 			}
 		}
 
@@ -1262,6 +1268,7 @@ func (brr *BifrostResponsesRequest) ToChatRequest() *BifrostChatRequest {
 			bcr.Params.Reasoning = &ChatReasoning{
 				Effort:    brr.Params.Reasoning.Effort,
 				MaxTokens: brr.Params.Reasoning.MaxTokens,
+				Type:      brr.Params.Reasoning.Type,
 			}
 		}
 
@@ -1366,6 +1373,22 @@ func responsesStatusFromChatFinishReason(finishReason string) (status string, in
 	default:
 		return "", nil, false
 	}
+}
+
+// ResponsesStatusFromFinishReason maps a Bifrost finish reason to the Responses-API
+// status and incomplete_details. mapped is false for reasons with no Responses
+// equivalent, which should leave Status unset.
+func ResponsesStatusFromFinishReason(finishReason string) (status string, incompleteDetails *ResponsesResponseIncompleteDetails, mapped bool) {
+	return responsesStatusFromChatFinishReason(finishReason)
+}
+
+// MarkTruncatedOutputItem sets status "incomplete" on the last output item -- the one
+// being generated when the turn was cut short -- matching OpenAI's truncated-turn shape.
+func MarkTruncatedOutputItem(output []ResponsesMessage) {
+	if len(output) == 0 {
+		return
+	}
+	output[len(output)-1].Status = Ptr(ResponsesResponseStatusIncomplete)
 }
 
 func responsesStopReasonFromChatFinishReason(finishReason *string) *string {

@@ -394,7 +394,7 @@
 	            (invoke "go" "build"
                     "-trimpath"
                     "-buildvcs=false"
-                    "-tags=stogas_offline,netgo,osusergo"
+                    "-tags=stogas_gateway,netgo,osusergo"
                     (string-append
                       "-ldflags=-linkmode=external -extldflags \"-static -Wl,--gc-sections,--build-id=none\" -buildid= -s -w -X github.com/maximhq/bifrost/transports/stogas.GatewayVersion="
                       #$%release-tag)

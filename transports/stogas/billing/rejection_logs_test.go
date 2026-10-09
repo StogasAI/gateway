@@ -52,7 +52,13 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 				t.Error(err)
 				continue
 			}
-			for _, field := range []string{"provider_attempts", "meters", "plugins", "performance", "cancelled", "error", "policy_versions"} {
+			var usage string
+			if err := json.Unmarshal(fields["usage"], &usage); err != nil {
+				t.Error(err)
+				continue
+			}
+			fields["usage"] = json.RawMessage(usage)
+			for _, field := range []string{"provider_attempts", "plugins", "performance", "cancelled", "gateway_error", "policy_versions"} {
 				delete(fields, field)
 			}
 			encoded, _ := json.Marshal(fields)
@@ -99,7 +105,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 				t.Fatalf("incorrect first/last timestamps: %s %s", row.CreatedAt, row.LastRequestAt)
 			}
 		}
-		if len(row.ProviderAttempts) != 0 || row.BilledCostUSD != "0" {
+		if len(row.ProviderAttempts) != 0 || row.Usage.BilledCostUSD != "0" {
 			t.Fatalf("rejection became billable: %+v", row)
 		}
 	}
@@ -248,7 +254,7 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.rejectionLogs.mu.Lock()
 	for _, row := range service.rejectionLogs.groups {
 		encoded, _ := json.Marshal(row)
-		if strings.Contains(string(encoded), "secret") || row.RequestType != "unknown" || row.Error == nil || row.Error.Code != "insufficient_balance" {
+		if strings.Contains(string(encoded), "secret") || row.RequestType != "unknown" || row.GatewayError == nil || row.GatewayError.Code != "insufficient_balance" {
 			t.Errorf("untrusted labels escaped: %s", encoded)
 		}
 	}

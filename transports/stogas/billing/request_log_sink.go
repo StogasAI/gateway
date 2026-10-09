@@ -18,6 +18,8 @@ import (
 
 const requestLogMaxResponseBytes = 64 * 1024
 
+var errRequestLogQuarantined = errors.New("Tinybird explicitly quarantined request log rows")
+
 type requestLogSink struct {
 	client              *http.Client
 	endpoint            string
@@ -100,27 +102,40 @@ func NormalizeTinybirdHost(host string, allowPrivateHTTP bool) (string, error) {
 	return parsed.String(), nil
 }
 
-func (sink *requestLogSink) append(body []byte, rows int) error {
+func (sink *requestLogSink) append(ctx context.Context, body []byte, rows int) error {
 	if time.Now().UnixNano() < sink.circuitOpenUntil.Load() {
 		sink.shortCircuits.Add(1)
 		return errors.New("request log destination circuit is open")
 	}
 	// One batch worker owns calls to both destinations, so recovery needs no
 	// separate probe lock or per-request circuit admission state.
-	err := sink.send(body, rows)
+	err := sink.send(ctx, sink.endpoint, body, rows, false)
 	if err != nil {
 		sink.failures.Add(1)
-		sink.circuitOpenUntil.Store(time.Now().Add(sink.circuitOpenDuration).UnixNano())
+		// Rejected data does not establish a destination outage. Isolation must
+		// still be able to deliver healthy rows from the same microbatch.
+		if !errors.Is(err, errRequestLogQuarantined) {
+			sink.circuitOpenUntil.Store(time.Now().Add(sink.circuitOpenDuration).UnixNano())
+		}
 	} else {
 		sink.circuitOpenUntil.Store(0)
 	}
 	return err
 }
 
-func (sink *requestLogSink) send(body []byte, rows int) error {
-	ctx, cancel := context.WithTimeout(context.Background(), requestLogAppendTimeout)
+func (sink *requestLogSink) quarantine(ctx context.Context, body []byte, rows int) error {
+	if sink == nil {
+		return errors.New("request log quarantine is not configured")
+	}
+	// Queue admission and archive storage are independent dependencies. A queue
+	// outage must not prevent the same authenticated service preserving a bad row.
+	return sink.send(ctx, strings.TrimRight(sink.endpoint, "/")+"/quarantine", body, rows, true)
+}
+
+func (sink *requestLogSink) send(ctx context.Context, endpoint string, body []byte, rows int, quarantine bool) error {
+	ctx, cancel := context.WithTimeout(ctx, requestLogAppendTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, sink.endpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return errors.New("invalid request log destination")
 	}
@@ -155,11 +170,17 @@ func (sink *requestLogSink) send(body []byte, rows int) error {
 		return errors.New("request log acknowledgement contains trailing data")
 	}
 	if sink.queue {
-		if result.AcceptedRows != rows {
+		if result.AcceptedRows != rows || (quarantine && result.QuarantinedRows != rows) {
 			return errors.New("request log queue did not confirm every row")
 		}
-	} else if result.SuccessfulRows != rows || result.QuarantinedRows != 0 {
-		return errors.New("Tinybird did not commit every request log row")
+	} else {
+		if result.SuccessfulRows >= 0 && result.QuarantinedRows > 0 &&
+			result.SuccessfulRows <= rows && result.QuarantinedRows == rows-result.SuccessfulRows {
+			return errRequestLogQuarantined
+		}
+		if result.SuccessfulRows != rows || result.QuarantinedRows != 0 {
+			return errors.New("Tinybird did not commit every request log row")
+		}
 	}
 	return nil
 }

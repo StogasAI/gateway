@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
@@ -287,7 +288,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks":{"maxPreDispatchCandidates":2}},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"maxAttempts": 2},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -390,6 +391,7 @@ func TestOrderedCredentialsChooseWithinOneDeployment(t *testing.T) {
 					AvailableCredentials: map[string][]int{"openai": test.indexes},
 					CredentialPolicy: func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
 						config := policyConfig(test.limit)
+						config.Timeouts = &policy.Timeouts{TotalSeconds: schemas.Ptr(100 + index), OutputIdleSeconds: schemas.Ptr(10 + index)}
 						if index == 0 && test.firstFiltered {
 							config.Routing.Query = mustRouting(t, "false", nil)
 						}
@@ -415,6 +417,8 @@ func TestOrderedCredentialsChooseWithinOneDeployment(t *testing.T) {
 					}
 				} else if err != nil || resolved.CredentialIndex != test.want || len(transforms) != 1 || transforms[0] != test.want {
 					t.Fatalf("selection=%v error=%v transforms=%v", resolved, err, transforms)
+				} else if resolved.RequestTimeouts().Total() != time.Duration(100+test.want)*time.Second || resolved.RequestTimeouts().OutputIdle() != time.Duration(10+test.want)*time.Second {
+					t.Fatal("resolved request lost or mixed the selected credential's timeout policy")
 				}
 			})
 		}
@@ -574,7 +578,7 @@ func TestSharedPolicyGroupsPreserveInterleavedCredentialPreference(t *testing.T)
 				if err != nil || resolved.CredentialIndex != 2 || !reflect.DeepEqual(attempts, []int{0, 1, 2}) || !reflect.DeepEqual(transformed, []int{2}) {
 					t.Fatalf("selection=%v attempts=%v transformations=%v error=%v", resolved, attempts, transformed, err)
 				}
-				if resolved.policy != nil || resolved.PreDispatchCandidateLimit() != 3 {
+				if resolved.policy != nil || resolved.ProviderAttemptLimit() != 1 {
 					t.Fatal("inference retained the full policy graph or lost its decision")
 				}
 			})

@@ -55,7 +55,7 @@ func parseRuleDocuments(raw json.RawMessage, envelopes map[[32]byte]encryptedPlu
 		for field, value := range fields {
 			switch field {
 			case "when", "mode":
-			case "limits", "routing", "plugins", "input", "access":
+			case "limits", "routing", "plugins", "input", "access", "timeouts":
 				settings[field] = value
 			default:
 				return nil, configError("unknown rule field %q", field)
@@ -194,16 +194,20 @@ func (c *Config) Activate(values Values) (*Config, error) {
 }
 
 const pluginPermissions = permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport
+const orderingPermissions = permissionSort | permissionSelection
 
-// HasRequiredSort includes an explicit empty ordering, which suppresses
+// HasRequiredOrder includes an explicit empty ordering, which suppresses
 // defaults without removing any other applicable required ordering.
-func (c *Config) HasRequiredSort() bool {
-	return c != nil && c.requiredSettings&permissionSort != 0
+func (c *Config) HasRequiredOrder() bool {
+	return c != nil && c.requiredSettings&orderingPermissions != 0
 }
 
 func settingsMask(value Permission) Permission {
 	if value&pluginPermissions != 0 {
 		value |= pluginPermissions
+	}
+	if value&orderingPermissions != 0 {
+		value |= orderingPermissions
 	}
 	return value & requestPermissions
 }

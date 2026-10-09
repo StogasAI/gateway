@@ -92,7 +92,7 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 			}
 			original := value.Config
 			if existing, found := groups[original]; found {
-				if existing != nil && len(credentials[existing]) < existing.PreDispatchCandidateLimit() {
+				if existing != nil && len(credentials[existing]) < existing.attemptLimit() {
 					credentials[existing] = append(credentials[existing], index)
 				}
 				continue
@@ -112,7 +112,7 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 					return routingSelection{}, RequestPolicy{}, err
 				}
 			}
-			if matches && retained < policy.MaxPreDispatchCandidates {
+			if matches && retained < policy.MaxAttempts {
 				candidate := template
 				candidate.CredentialIndex, candidate.policy = index, value.Config
 				candidates.add(&candidate, values)
@@ -158,8 +158,8 @@ candidates:
 		})
 		for _, choice := range choices {
 			candidate := choice.candidate
-			if allowance == 0 || candidate.PreDispatchCandidateLimit() < allowance {
-				allowance = candidate.PreDispatchCandidateLimit()
+			if allowance == 0 || candidate.attemptLimit() < allowance {
+				allowance = candidate.attemptLimit()
 			}
 			if attempts >= allowance {
 				break candidates
@@ -181,7 +181,7 @@ candidates:
 			}
 			value, _ := variants.policyFor(candidate.Provider, choice.index)
 			value.Config = candidate.policy
-			selected := routingSelection{provider: candidate.Provider, deployment: candidate.Deployment, credential: choice.index}
+			selected := routingSelection{provider: candidate.Provider, deployment: candidate.Deployment, credential: choice.index, providerAttempts: allowance - attempts + 1}
 			variants.selections = []routingSelection{selected}
 			return selected, value, nil
 		}

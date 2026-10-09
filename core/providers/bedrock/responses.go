@@ -1993,14 +1993,23 @@ func ToBedrockConverseStreamResponse(bifrostResp *schemas.BifrostResponsesStream
 		event.ContentBlockIndex = &contentBlockIndex
 		event.ContentBlockStop = true
 
-	case schemas.ResponsesStreamResponseTypeCompleted:
+	// response.incomplete is terminal too: a truncated or filtered turn must still close
+	// with messageStop, or the client never sees the stop reason or usage.
+	case schemas.ResponsesStreamResponseTypeCompleted, schemas.ResponsesStreamResponseTypeIncomplete:
 		// Message stop - always set stopReason
 		stopReason := "end_turn"
 		if bifrostResp.Response != nil {
-			if bifrostResp.Response.StopReason != nil {
+			// Recognized incomplete details win: an explicit stop reason may be provider-specific
+			// (Anthropic "refusal") and not a valid Converse stopReason.
+			var detailsReason string
+			var detailsOK bool
+			if d := bifrostResp.Response.IncompleteDetails; d != nil {
+				detailsReason, detailsOK = bedrockStopReasonFromIncompleteDetails(d)
+			}
+			if detailsOK {
+				stopReason = detailsReason
+			} else if bifrostResp.Response.StopReason != nil {
 				stopReason = convertBifrostToBedrockStopReason(*bifrostResp.Response.StopReason)
-			} else if bifrostResp.Response.IncompleteDetails != nil {
-				stopReason = bifrostResp.Response.IncompleteDetails.Reason
 			}
 		}
 		event.StopReason = &stopReason
@@ -2169,6 +2178,7 @@ func (request *BedrockConverseRequest) ToBifrostResponsesRequest(ctx *schemas.Bi
 					Name:                  &tool.ToolSpec.Name,
 					Description:           tool.ToolSpec.Description,
 					DeferLoading:          tool.ToolSpec.DeferLoading,
+					EagerInputStreaming:   tool.ToolSpec.EagerInputStreaming,
 					ResponsesToolFunction: &schemas.ResponsesToolFunction{},
 				}
 
@@ -2279,7 +2289,7 @@ func (request *BedrockConverseRequest) ToBifrostResponsesRequest(ctx *schemas.Bi
 				if typeStr, ok := schemas.SafeExtractString(reasoningConfigMap["type"]); ok {
 					if typeStr == "enabled" || typeStr == "adaptive" {
 						var summary *string
-						if summaryValue, ok := schemas.SafeExtractStringPointer(request.ExtraParams["reasoning_summary"]); ok {
+						if summaryValue, ok := extraParamStringPointer(request.ExtraParams["reasoning_summary"]); ok {
 							summary = summaryValue
 						}
 						// Converse has no reasoning-summary field, so an OpenAI reasoning
@@ -2340,6 +2350,21 @@ func (request *BedrockConverseRequest) ToBifrostResponsesRequest(ctx *schemas.Bi
 								Summary: summary,
 							}
 						}
+					} else if typeStr == "between_tools" {
+						bifrostReq.Params.Reasoning = &schemas.ResponsesParametersReasoning{
+							Type: schemas.Ptr("between_tools"),
+						}
+						if outputConfig, ok := request.AdditionalModelRequestFields.Get("output_config"); ok {
+							var effortValue interface{}
+							if outputConfigOrderedMap, ok := schemas.SafeExtractOrderedMap(outputConfig); ok && outputConfigOrderedMap != nil {
+								effortValue, _ = outputConfigOrderedMap.Get("effort")
+							} else if outputConfigMap, ok := outputConfig.(map[string]interface{}); ok {
+								effortValue = outputConfigMap["effort"]
+							}
+							if effortStr, ok := schemas.SafeExtractString(effortValue); ok {
+								bifrostReq.Params.Reasoning.Effort = schemas.Ptr(effortStr)
+							}
+						}
 					} else {
 						bifrostReq.Params.Reasoning = &schemas.ResponsesParametersReasoning{
 							Effort: schemas.Ptr("none"),
@@ -2371,7 +2396,7 @@ func (request *BedrockConverseRequest) ToBifrostResponsesRequest(ctx *schemas.Bi
 		}
 	}
 
-	if include, ok := schemas.SafeExtractStringSlice(request.ExtraParams["include"]); ok {
+	if include, ok := extraParamStringSlice(request.ExtraParams["include"]); ok {
 		bifrostReq.Params.Include = include
 	}
 
@@ -2554,7 +2579,17 @@ func ToBedrockResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.
 			if bedrockReq.AdditionalModelRequestFields == nil {
 				bedrockReq.AdditionalModelRequestFields = schemas.NewOrderedMap()
 			}
-			if bifrostReq.Params.Reasoning.MaxTokens != nil {
+			if bifrostReq.Params.Reasoning.Type != nil && *bifrostReq.Params.Reasoning.Type == "between_tools" &&
+				schemas.IsAnthropicModelFamily(ctx, bifrostReq.Model) {
+				// A thinking type, independent of effort: the caller's effort is forwarded as-is.
+				if thinking := anthropic.BetweenToolsThinking(caps, bifrostReq.Params.Reasoning.Effort); thinking != nil {
+					bedrockReq.AdditionalModelRequestFields.Set("thinking", map[string]any{"type": thinking.Type})
+				}
+				if bifrostReq.Params.Reasoning.Effort != nil && *bifrostReq.Params.Reasoning.Effort != "none" &&
+					caps.SupportsNativeEffort(anthropic.DefaultSupportsNativeEffort(caps.Model())) {
+					setOutputConfigField(bedrockReq.AdditionalModelRequestFields, "effort", anthropic.MapBifrostEffortToAnthropic(*bifrostReq.Params.Reasoning.Effort))
+				}
+			} else if bifrostReq.Params.Reasoning.MaxTokens != nil {
 				tokenBudget := *bifrostReq.Params.Reasoning.MaxTokens
 				if *bifrostReq.Params.Reasoning.MaxTokens == -1 {
 					// bedrock does not support dynamic reasoning budget like gemini
@@ -2835,6 +2870,14 @@ func ToBedrockResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.
 	if dropped := append(append([]string{}, providerDroppedTools...), modelDroppedTools...); len(dropped) > 0 {
 		ctx.SetValue(schemas.BifrostContextKeyDroppedUnsupportedTools, dropped)
 	}
+
+	var eagerFlags []*bool
+	for _, tool := range keepTools {
+		if tool.ResponsesToolFunction != nil {
+			eagerFlags = append(eagerFlags, tool.EagerInputStreaming)
+		}
+	}
+	applyBedrockFineGrainedToolStreaming(ctx, bedrockReq, bifrostReq.Model, caps, eagerFlags)
 
 	// Convert tool choice
 	if bifrostReq.Params != nil && bifrostReq.Params.ToolChoice != nil {
@@ -4047,7 +4090,8 @@ func ConvertBifrostMessagesToBedrockMessages(ctx context.Context, model string, 
 			if isConverseResponseRendering(ctx) {
 				reasoningBlocks = convertBifrostReasoningToConverseResponseReasoning(&msg)
 			} else {
-				reasoningBlocks = convertBifrostReasoningToBedrockReasoning(&msg, converseReasoningShape(model), converseRequiresSignedReasoning(model))
+				requireSigned := converseRequiresSignedReasoning(model)
+				reasoningBlocks = convertBifrostReasoningToBedrockReasoning(&msg, converseReasoningShape(model), requireSigned, !requireSigned)
 			}
 			if len(reasoningBlocks) > 0 {
 				pendingReasoningContentBlocks = append(pendingReasoningContentBlocks, reasoningBlocks...)
@@ -4631,8 +4675,10 @@ func convertSingleBedrockMessageToBifrostMessages(ctx *schemas.BifrostContext, m
 				})
 			} else if block.ReasoningContent.RedactedContent != nil {
 				// Opaque blob: carried on the reasoning message rather than as a
-				// content block, since there is no prose for one to hold.
-				reasoningRedactedContent = block.ReasoningContent.RedactedContent
+				// content block, since there is no prose for one to hold. A blob
+				// Bifrost wrapped for a Converse client unwraps to the upstream's
+				// own token; native Bedrock blobs pass through.
+				reasoningRedactedContent = new(decodeRedactedContentFromConverse(*block.ReasoningContent.RedactedContent))
 			}
 		} else if block.ToolUse != nil {
 			// Tool use content
@@ -5044,6 +5090,22 @@ func isConverseResponseRendering(ctx context.Context) bool {
 // exposed text becomes reasoningText (signed when a signature exists), while an
 // encrypted-only block stays redactedContent.
 func convertBifrostReasoningToConverseResponseReasoning(msg *schemas.ResponsesMessage) []BedrockContentBlock {
+	return encodeConverseRedactedBlocks(renderConverseResponseReasoning(msg))
+}
+
+// encodeConverseRedactedBlocks makes every redactedContent a valid Converse blob.
+// Only the client-facing render does this: replays to Bedrock carry Bedrock's own
+// blob, which is already one.
+func encodeConverseRedactedBlocks(blocks []BedrockContentBlock) []BedrockContentBlock {
+	for i := range blocks {
+		if rc := blocks[i].ReasoningContent; rc != nil && rc.RedactedContent != nil {
+			rc.RedactedContent = new(encodeRedactedContentForConverse(*rc.RedactedContent))
+		}
+	}
+	return blocks
+}
+
+func renderConverseResponseReasoning(msg *schemas.ResponsesMessage) []BedrockContentBlock {
 	if msg == nil {
 		return nil
 	}
@@ -5051,15 +5113,15 @@ func convertBifrostReasoningToConverseResponseReasoning(msg *schemas.ResponsesMe
 		// Converse ingress stores text blocks (with their own signatures) on
 		// Content and a separate opaque block on EncryptedContent. Render both.
 		// Isolate Content so summary signatures are not mistaken for opaque blocks.
-		textBlocks := convertBifrostReasoningToBedrockReasoning(&schemas.ResponsesMessage{Content: msg.Content}, schemas.BedrockReasoningShapeText, false)
+		textBlocks := convertBifrostReasoningToBedrockReasoning(&schemas.ResponsesMessage{Content: msg.Content}, schemas.BedrockReasoningShapeText, false, false)
 		if len(textBlocks) > 0 {
-			return append(textBlocks, convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeRedacted, false)...)
+			return append(textBlocks, convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeRedacted, false, false)...)
 		}
 	}
 	if reasoningMessageHasText(msg) {
-		return convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeText, false)
+		return convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeText, false, false)
 	}
-	return convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeRedacted, false)
+	return convertBifrostReasoningToBedrockReasoning(msg, schemas.BedrockReasoningShapeRedacted, false, false)
 }
 
 func reasoningMessageHasText(msg *schemas.ResponsesMessage) bool {
@@ -5083,7 +5145,7 @@ func reasoningMessageHasText(msg *schemas.ResponsesMessage) bool {
 	return false
 }
 
-func convertBifrostReasoningToBedrockReasoning(msg *schemas.ResponsesMessage, shape schemas.BedrockReasoningShape, requireSigned bool) []BedrockContentBlock {
+func convertBifrostReasoningToBedrockReasoning(msg *schemas.ResponsesMessage, shape schemas.BedrockReasoningShape, requireSigned, stripBlockSignatures bool) []BedrockContentBlock {
 	if shape == schemas.BedrockReasoningShapeRedacted {
 		// These models reject reasoningText in every form -- with a signature,
 		// without one, empty or not -- with an opaque 500. Only the blob carried
@@ -5113,6 +5175,9 @@ func convertBifrostReasoningToBedrockReasoning(msg *schemas.ResponsesMessage, sh
 		for _, block := range msg.Content.ContentBlocks {
 			if block.Type == schemas.ResponsesOutputMessageContentTypeReasoning && block.Text != nil {
 				signature := reasoningSignatureForBedrock(block.Signature)
+				if stripBlockSignatures {
+					signature = nil
+				}
 				if signature == nil && requireSigned {
 					// Unsigned and unverifiable; skipped, and not counted as
 					// emitted so the ResponsesReasoning fall-through below still
@@ -5229,10 +5294,17 @@ func convertBifrostResponsesMessageContentBlocksToBedrockContentBlocks(ctx conte
 				}
 				if block.Text != nil {
 					signature := reasoningSignatureForBedrock(block.Signature)
-					if !isConverseResponseRendering(ctx) && signature == nil && converseRequiresSignedReasoning(model) {
-						// Unsigned thinking cannot be replayed to a model that
-						// verifies signatures (#6624); drop the block, keep the turn.
-						continue
+					if !isConverseResponseRendering(ctx) {
+						requireSigned := converseRequiresSignedReasoning(model)
+						if !requireSigned {
+							// Only models that verify signatures accept the field.
+							signature = nil
+						}
+						if signature == nil && requireSigned {
+							// Unsigned thinking cannot be replayed to a model that
+							// verifies signatures (#6624); drop the block, keep the turn.
+							continue
+						}
 					}
 					bedrockBlock.ReasoningContent = &BedrockReasoningContent{
 						ReasoningText: &BedrockReasoningContentText{

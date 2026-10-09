@@ -99,6 +99,7 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
 		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Azure Claude reordered developer message", `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
 		{"metadata non-string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
 		{"anthropic-only cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
@@ -208,7 +209,7 @@ func TestOpenAIProviderOwnedScalarsReachTheWireUnchanged(t *testing.T) {
 	if err := validateInteger(rawJSON(t, `{"top_logprobs":"many"}`), "top_logprobs"); err == nil || !strings.Contains(err.Error(), "top_logprobs must be an integer") {
 		t.Fatalf("expected top_logprobs shape error, got %v", err)
 	}
-	body := `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"temperature":2.01,"top_p":1.01,"frequency_penalty":-2.01,"presence_penalty":2.01,"logprobs":false,"top_logprobs":21,"logit_bias":{"future-token":100.1},"verbosity":"future-verbosity","stop":["a","b","c","d","e"]}`
+	body := `{"model":"gpt-5.5","reasoning_effort":"none","messages":[{"role":"user","content":"hi"}],"temperature":2.01,"top_p":1.01,"frequency_penalty":-2.01,"presence_penalty":2.01,"logprobs":false,"top_logprobs":21,"logit_bias":{"future-token":100.1},"verbosity":"future-verbosity","stop":["a","b","c","d","e"]}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -862,16 +863,6 @@ func TestAnthropicMidConversationSystemMessagesReachProviderWireInPlace(t *testi
 			path: "/v1/responses",
 			body: `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
-		{
-			name: "Sonnet 5 Chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`,
-		},
-		{
-			name: "Sonnet 5 Responses",
-			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
-		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1240,19 +1231,32 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 
 func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testing.T) {
 	for _, item := range []struct {
-		name string
-		path string
-		body string
+		name       string
+		path       string
+		body       string
+		deployment string
+		outputCap  string
 	}{
 		{
-			name: "chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null}`,
+			name:       "anthropic chat",
+			deployment: "anthropic-claude-opus-4-8",
+			outputCap:  "max_tokens",
+			path:       "/v1/chat/completions",
+			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"max_completion_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
 		},
 		{
-			name: "responses",
-			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"url":"https://example.com"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null}`,
+			name:       "anthropic responses",
+			deployment: "anthropic-claude-opus-4-8",
+			outputCap:  "max_tokens",
+			path:       "/v1/responses",
+			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
+		},
+		{
+			name:       "openai chat MCP credentials",
+			path:       "/v1/chat/completions",
+			deployment: "openai-gpt-5.5-2026-04-23",
+			outputCap:  "max_completion_tokens",
+			body:       `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"extra_params":{"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}]}}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1260,7 +1264,7 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
-			if resolution.Deployment.ID != "anthropic-claude-opus-4-8" {
+			if resolution.Deployment.ID != item.deployment {
 				t.Fatalf("ignored fields changed deployment: %s", resolution.Deployment.ID)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -1285,9 +1289,15 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			} else {
 				wire = preparedProviderBody(t, ctx, request.ResponsesRequest)
 			}
+			if strings.Contains(string(wire), "mcp-secret-must-not-leave") {
+				t.Fatal("MCP authorization token reached the provider body")
+			}
 			var payload map[string]any
 			if err := json.Unmarshal(wire, &payload); err != nil {
 				t.Fatalf("decode provider body: %v", err)
+			}
+			if payload[item.outputCap] != float64(16) {
+				t.Fatalf("client extras changed the output cap: %s", wire)
 			}
 			if payload["inference_geo"] == "us" {
 				t.Fatalf("client inference_geo changed provider execution: %s", wire)
@@ -1299,6 +1309,7 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 				"mcp_servers", "include_server_side_tool_invocations", "sdk_trace",
 				"user", "safety_identifier", "audio", "function_call", "functions", "fallbacks", "container",
 				"background", "conversation", "previous_response_id",
+				"extra_params", "tools", "anthropic_beta",
 			} {
 				if _, exists := payload[field]; exists {
 					t.Fatalf("ignored field %s reached provider: %s", field, wire)
@@ -1562,6 +1573,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"user refusal block", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
 		{"anthropic refusal block", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
 		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"Sonnet 5 Responses mid-conversation system", `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
 		{"output annotation unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
 		{"output annotation reversed range", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
@@ -1605,7 +1617,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic responses verbosity", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
 		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`, "cannot be preserved on Anthropic-format"},
-		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto for Anthropic-format"},
+		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto or none for Anthropic-format"},
 		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
 		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
 		{"top k openai", `{"model":"gpt-5.5","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
@@ -2405,10 +2417,10 @@ func TestResponsesClientToolContinuationReachesProviderWireLosslessly(t *testing
 				}
 				call, callOK := items[1].(map[string]any)
 				output, outputOK := items[2].(map[string]any)
-				if !callOK || call["type"] != "function_call" || call["id"] != "fc_1" || call["status"] != "completed" || call["call_id"] != "call_1" || call["name"] != "lookup" || call["arguments"] != `{"key":"value"}` {
+				if !callOK || call["type"] != "function_call" || call["id"] != "fc_1" || call["call_id"] != "call_1" || call["name"] != "lookup" || call["arguments"] != `{"key":"value"}` {
 					t.Fatalf("function call changed on OpenAI-format wire: %#v\n%s", call, wireBody)
 				}
-				if !outputOK || output["type"] != "function_call_output" || output["id"] != "fco_1" || output["status"] != "completed" || output["call_id"] != "call_1" || output["output"] != "record-result" {
+				if !outputOK || output["type"] != "function_call_output" || output["call_id"] != "call_1" || output["output"] != "record-result" {
 					t.Fatalf("function output changed on OpenAI-format wire: %#v\n%s", output, wireBody)
 				}
 				return
@@ -2691,7 +2703,7 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 		"message.output_text.logprobs",
 		"reasoning.encrypted_content",
 	}
-	body := `{"model":"gpt-5.5","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
+	body := `{"model":"gpt-5.5","reasoning":{"effort":"none"},"input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",

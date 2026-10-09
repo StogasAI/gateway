@@ -16,16 +16,41 @@ import (
 	"time"
 
 	verifier "github.com/StogasAI/verifier/go"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )
 
 type bootEvidenceFixture struct {
 	Root        verifier.TrustRoot `json:"root"`
 	Bundle      json.RawMessage    `json:"bundle"`
-	Boot        attest.BootRecord  `json:"boot"`
+	Boot        fixtureBoot        `json:"boot"`
 	Inclusion   json.RawMessage    `json:"inclusion"`
 	Now         int64              `json:"verified_at_ms"`
 	RotatedKeys json.RawMessage    `json:"rotated_keys"`
+}
+
+// fixtureBoot is a real logged boot whose report commits the fixture's seeded keys.
+type fixtureBoot struct {
+	GatewayReleaseID     string `json:"gateway_release_id"`
+	HardwarePolicySHA256 string `json:"hardware_policy_sha256"`
+	Report               string `json:"report"`
+	ReportData           struct {
+		Environment           string `json:"environment"`
+		HPKEPublicKey         string `json:"hpke_public_key"`
+		RegistrationChallenge string `json:"registration_challenge"`
+		Schema                string `json:"schema"`
+		SigningPublicKey      string `json:"signing_public_key"`
+		TLSSPKISHA256         string `json:"tls_spki_sha256"`
+	} `json:"report_data"`
+	Schema string `json:"schema"`
+}
+
+// document returns the exact logged bytes: sorted keys of ASCII-only fields and a newline.
+func (boot fixtureBoot) document(t *testing.T) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(boot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(encoded, '\n')
 }
 
 func evidenceFixture(t *testing.T) bootEvidenceFixture {
@@ -57,10 +82,7 @@ func fixtureEvidence(t *testing.T, fixture bootEvidenceFixture, origins ...strin
 
 func fixtureAppraisal(t *testing.T, fixture bootEvidenceFixture) func(*verifier.EvidenceSnapshot, evidenceSummary) error {
 	t.Helper()
-	document, err := fixture.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	document := fixture.Boot.document(t)
 	return func(snapshot *verifier.EvidenceSnapshot, summary evidenceSummary) error {
 		identity, err := snapshot.VerifyLoggedBootAt(document, fixture.Inclusion, time.UnixMilli(fixture.Now))
 		if err != nil {
@@ -147,10 +169,7 @@ func TestEvidenceBadDeliveryPreservesSnapshotWithoutExtendingValidity(t *testing
 	if err := appraise(snapshot, e.summary); err != nil {
 		t.Fatal(err)
 	}
-	document, err := fixture.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	document := fixture.Boot.document(t)
 	identity, err := snapshot.VerifyLoggedBootAt(document, fixture.Inclusion, time.UnixMilli(fixture.Now))
 	if err != nil {
 		t.Fatal(err)

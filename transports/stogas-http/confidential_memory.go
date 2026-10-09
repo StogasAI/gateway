@@ -34,11 +34,16 @@ const (
 	encryptedSessionRetainedBytes = 1024 * 1024
 )
 
+// Finished exports are best effort and yield first; an idle session costs its
+// client a new handshake and attestation.
 func (s *Server) reclaimIdleMemory(needed int64) bool {
-	count := (needed + encryptedSessionRetainedBytes - 1) / encryptedSessionRetainedBytes
-	remaining := needed - int64(s.sessions.ReclaimIdle(int(count)))*encryptedSessionRetainedBytes
-	for remaining > 0 && s.idleConnections.reclaim() {
-		remaining -= sessionRetainedBytes
+	remaining := needed - s.exports.Reclaim(needed)
+	if remaining > 0 && s.sessions != nil {
+		count := (remaining + encryptedSessionRetainedBytes - 1) / encryptedSessionRetainedBytes
+		remaining -= int64(s.sessions.ReclaimIdle(int(count))) * encryptedSessionRetainedBytes
+		for remaining > 0 && s.idleConnections.reclaim() {
+			remaining -= sessionRetainedBytes
+		}
 	}
 	return remaining < needed
 }

@@ -290,3 +290,54 @@ func TestProviderAttemptInputsKeepFallbackErrorsOnTheirAttempts(t *testing.T) {
 		t.Fatalf("final protocol failure was not projected onto the final attempt: %#v", attempts)
 	}
 }
+
+func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
+	base := time.Now().Add(-time.Second)
+	tracer := newProviderAttemptTracer(schemas.DefaultTracer())
+	now := base
+	tracer.now = func() time.Time { return now }
+	state := &State{Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes}}
+	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+	defer ctx.Cancel()
+	SetState(ctx, state)
+	_, handle := tracer.StartSpan(ctx, "chutes invocation", schemas.SpanKindLLMCall)
+	tracer.SetAttribute(handle, schemas.AttrBifrostProviderName, "chutes")
+	span := handle.(*providerAttemptSpan)
+	span.nextChutesInvocation(http.StatusTooManyRequests, base.Add(30*time.Millisecond), base.Add(40*time.Millisecond))
+	span.nextChutesInvocation(http.StatusNotFound, base.Add(60*time.Millisecond), base.Add(70*time.Millisecond))
+	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "completed-invocation"}}
+	tracer.PopulateLLMResponseAttributes(ctx, handle, response, nil)
+	now = base.Add(100 * time.Millisecond)
+	tracer.EndSpan(handle, schemas.SpanStatusOk, "")
+	tracer.EndSpan(handle, schemas.SpanStatusOk, "")
+	event, err := billing.NewRequestEvent(billing.EventInput{
+		Authorization: &billing.Authorization{
+			AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD),
+			ProviderKey: "chutes", RequestID: "safe-retries",
+		},
+		StartedAt: base, RequestType: string(schemas.ChatCompletionRequest),
+		UpstreamCostUSD: "0", ProviderAttempts: state.providerAttemptInputs(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(event.ProviderAttempts) != 3 {
+		t.Fatalf("provider attempts = %#v", event.ProviderAttempts)
+	}
+	for i, want := range []struct {
+		status string
+		code   int
+		ms     uint32
+	}{{"rate_limited", 429, 30}, {"model_unavailable", 404, 20}, {"success", 200, 30}} {
+		got := event.ProviderAttempts[i]
+		if got.Provider != "chutes" || got.Status != want.status || got.StatusCode == nil || *got.StatusCode != want.code || got.LatencyMS != want.ms {
+			t.Fatalf("attempt %d = %#v, want %#v", i, got, want)
+		}
+		if i < 2 && got.ProviderRequestID != "" {
+			t.Fatalf("final response leaked onto rejected attempt: %#v", got)
+		}
+	}
+	if last := event.ProviderAttempts[2]; last.ProviderRequestID != "completed-invocation" {
+		t.Fatalf("final invocation missing response identity: %#v", last)
+	}
+}

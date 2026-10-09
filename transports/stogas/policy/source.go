@@ -39,7 +39,7 @@ type Source struct {
 	Config                  *Config
 	Digest                  string
 	Delegation              *Delegation
-	HasCandidates           bool
+	HasAttempts             bool
 	previewRuleBytes        int
 	size                    sourceSize
 }
@@ -155,14 +155,14 @@ type sourceBody struct {
 	Delegation *Delegation     `json:"delegation"`
 	Access     *Access         `json:"access"`
 	Input      *Input          `json:"input"`
+	Timeouts   *Timeouts       `json:"timeouts"`
 	Plugins    json.RawMessage `json:"plugins"`
 	Routing    *struct {
-		Allowed   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-		Filter    *string              `json:"filter"`
-		Sort      []Sort               `json:"sort"`
-		Fallbacks *struct {
-			Candidates int `json:"maxPreDispatchCandidates"`
-		} `json:"fallbacks"`
+		Allowed     *AllowedCatalogNodes `json:"allowedCatalogNodes"`
+		Filter      *string              `json:"filter"`
+		Sort        []Sort               `json:"sort"`
+		Selection   *Selection           `json:"selection"`
+		MaxAttempts *int                 `json:"maxAttempts"`
 	} `json:"routing"`
 }
 
@@ -365,8 +365,8 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	if err := validateSourceMembers(canonical, reflect.TypeOf(doc)); err != nil {
 		return nil, err
 	}
-	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Access: doc.Access, Input: doc.Input,
-		Routing: Routing{MaxPreDispatchCandidates: 1}}
+	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Access: doc.Access, Input: doc.Input, Timeouts: doc.Timeouts,
+		Routing: Routing{MaxAttempts: 1}}
 	source := &Source{Config: config, Digest: d.digest, Delegation: doc.Delegation, size: d.size}
 	source.settings = settingsMask(d.ownSections())
 	if doc.Encryption != nil {
@@ -390,9 +390,10 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 			}
 		}
 		config.Routing.AllowedCatalogNodes = doc.Routing.Allowed
-		if doc.Routing.Fallbacks != nil {
-			source.HasCandidates = true
-			config.Routing.MaxPreDispatchCandidates = doc.Routing.Fallbacks.Candidates
+		config.Routing.Selection = doc.Routing.Selection
+		if doc.Routing.MaxAttempts != nil {
+			source.HasAttempts = true
+			config.Routing.MaxAttempts = *doc.Routing.MaxAttempts
 		}
 	}
 
@@ -697,7 +698,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if len(sources) == 0 || sources[0].Scope != OrganizationScope {
 		return nil, configError("organization source is required")
 	}
-	out := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, RequestPermission: RequestPermission(requestPermissions), Routing: Routing{MaxPreDispatchCandidates: 1}}
+	out := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, RequestPermission: RequestPermission(requestPermissions), Routing: Routing{MaxAttempts: 1}}
 	if sources[0].Value == nil {
 		return nil, configError("organization source is required")
 	}
@@ -717,7 +718,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	hasRequestPermission := false
 	var filters []*CELExpression
 	sorts := []Sort{}
-	var candidates *int
+	var attempts *int
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	for _, entry := range sources {
@@ -751,6 +752,17 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionInput != 0 && config.Input != nil && config.Input.ASCIIOnly {
 			out.Input = config.Input
 		}
+		if config.Timeouts != nil {
+			if out.Timeouts == nil {
+				out.Timeouts = &Timeouts{}
+			}
+			if value := config.Timeouts.TotalSeconds; allowed&permissionTotalTimeout != 0 && value != nil && (out.Timeouts.TotalSeconds == nil || *value < *out.Timeouts.TotalSeconds) {
+				out.Timeouts.TotalSeconds = value
+			}
+			if value := config.Timeouts.OutputIdleSeconds; allowed&permissionOutputIdleTimeout != 0 && value != nil && (out.Timeouts.OutputIdleSeconds == nil || *value < *out.Timeouts.OutputIdleSeconds) {
+				out.Timeouts.OutputIdleSeconds = value
+			}
+		}
 		if allowed&permissionAccess != 0 && config.Access != nil {
 			if out.Access == nil {
 				out.Access = &Access{}
@@ -766,8 +778,15 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionNodes != 0 {
 			out.Routing.AllowedCatalogNodes = intersectAllowedNodes(out.Routing.AllowedCatalogNodes, config.Routing.AllowedCatalogNodes)
 		}
-		if allowed&permissionFallbacks != 0 && source.HasCandidates && (candidates == nil || *candidates > config.Routing.MaxPreDispatchCandidates) {
-			candidates = &config.Routing.MaxPreDispatchCandidates
+		if allowed&permissionAttempts != 0 && source.HasAttempts && (attempts == nil || *attempts > config.Routing.MaxAttempts) {
+			attempts = &config.Routing.MaxAttempts
+		}
+		if selection := config.Routing.Selection; allowed&permissionSelection != 0 && selection != nil {
+			if out.Routing.Selection != nil && !out.Routing.Selection.Same(selection) {
+				return nil, configError("applicable policies require different routing selections")
+			}
+			out.Routing.Selection = selection
+			out.Routing.OrderDefault = source.defaultSettings
 		}
 		if q := config.Routing.Query; q != nil {
 			if allowed&permissionFilter != 0 {
@@ -778,7 +797,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 					return nil, configError("applicable policies require different routing sort orders")
 				}
 				sorts = q.OrderBy
-				out.Routing.SortDefault = source.defaultSettings
+				out.Routing.OrderDefault = source.defaultSettings
 			}
 		}
 		if allowed&pluginPermissions != 0 && config.Plugins != nil && !seenPlugins[config.Plugins] {
@@ -789,8 +808,8 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if !hasRequestPermission {
 		out.RequestPermission = 0
 	}
-	if candidates != nil {
-		out.Routing.MaxPreDispatchCandidates = *candidates
+	if attempts != nil {
+		out.Routing.MaxAttempts = *attempts
 	}
 	if len(filters) > 0 || len(sorts) > 0 {
 		out.Routing.Query = &Query{OrderBy: sorts, Filters: filters}
@@ -831,6 +850,9 @@ func (c *Config) ValidatePlugins() error {
 }
 
 func (c *Config) validateCombined() error {
+	if err := c.Routing.validateSelection(); err != nil {
+		return err
+	}
 	if err := c.ValidatePlugins(); err != nil {
 		return err
 	}

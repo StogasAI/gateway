@@ -62,7 +62,7 @@ func (s *Service) recordRequestOutcome(authorization *Authorization, event Reque
 	if event.Cancelled {
 		return
 	}
-	if event.Error == nil && len(event.ProviderAttempts) > 0 && event.ProviderAttempts[len(event.ProviderAttempts)-1].Status == "success" {
+	if event.GatewayError == nil && len(event.ProviderAttempts) > 0 && event.ProviderAttempts[len(event.ProviderAttempts)-1].Status == "success" {
 		s.recordRequestSuccess(authorization.KeyID, authorization.dashboardAdmissionIdentity, authorization.admissionStartedAt)
 		return
 	}

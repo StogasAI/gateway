@@ -125,7 +125,8 @@ type ResolvedRequest struct {
 	responses            *openaiprovider.OpenAIResponsesRequest
 	policy               *policy.Config
 	activePolicyRules    []policy.RuleMatch
-	policyCandidateLimit int
+	providerAttemptLimit int
+	policyTimeouts       *policy.Timeouts
 }
 
 // ActivePolicyRules carries only matched counter names into the financial hold.
@@ -142,7 +143,7 @@ func (r *ResolvedRequest) ActivePolicyRules() []policy.RuleMatch {
 func (r *ResolvedRequest) retainPolicyDecision(config *policy.Config) {
 	if config != nil {
 		r.activePolicyRules = append([]policy.RuleMatch(nil), config.ActiveRules...)
-		r.policyCandidateLimit = config.Routing.MaxPreDispatchCandidates
+		r.policyTimeouts = config.Timeouts
 	}
 }
 
@@ -244,14 +245,30 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-func (r *ResolvedRequest) PreDispatchCandidateLimit() int {
+func (r *ResolvedRequest) attemptLimit() int {
+	if r == nil || r.policy == nil {
+		return 1
+	}
+	return max(1, r.policy.Routing.MaxAttempts)
+}
+
+// ProviderAttemptLimit includes the first invocation. Failed local credential
+// preparations have already consumed their slots in the shared request budget.
+func (r *ResolvedRequest) ProviderAttemptLimit() int {
 	if r == nil {
 		return 1
 	}
-	if r.policy == nil {
-		return max(1, r.policyCandidateLimit)
+	return max(1, r.providerAttemptLimit)
+}
+
+func (r *ResolvedRequest) RequestTimeouts() *policy.Timeouts {
+	if r == nil {
+		return nil
 	}
-	return max(1, r.policy.Routing.MaxPreDispatchCandidates)
+	if r.policy != nil {
+		return r.policy.Timeouts
+	}
+	return r.policyTimeouts
 }
 
 func (r *ResolvedRequest) CatalogNodeIDsForDeployment(deployment Deployment) []string {
@@ -1049,6 +1066,7 @@ func resolveOpenAIRequest(
 	}
 	resolved := resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing)
 	resolved.CredentialIndex = selection.credential
+	resolved.providerAttemptLimit = selection.providerAttempts
 	resolved.inputTokenEstimate = &inputTokenEstimate
 	return resolved, nil
 }

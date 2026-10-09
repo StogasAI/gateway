@@ -11,12 +11,8 @@ const (
 	MaxRecordBytes        = 64 * 1024
 	RecordOverhead        = 4 + 1 + 16
 	MaxRecordPlaintext    = MaxRecordBytes - RecordOverhead
-	MaxRecords            = 1 << 24
 	MaxRequestBodyBytes   = 128 * 1024 * 1024
-	MaxResponseBodyBytes  = 64 * 1024 * 1024
-	MaxRatchetHeaderBytes = 16 + 2352 + 16
-	MaxRequestWireBytes   = RequestPrefixBytes + MaxRequestBodyBytes + MaxRecordPlaintext + MaxRecords*RecordOverhead + 2 + MaxRatchetHeaderBytes
-	MaxResponseWireBytes  = MaxResponseBodyBytes + MaxRecordPlaintext + MaxRecords*RecordOverhead + 2 + MaxRatchetHeaderBytes
+	MaxRatchetHeaderBytes = 2320 + 16
 )
 
 var (

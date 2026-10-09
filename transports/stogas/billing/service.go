@@ -23,7 +23,7 @@ const (
 	holdSettlementExpiryBuffer = 20 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference so reconciliation never races a live request.
-	GatewayRequestLifetime = 60 * time.Minute
+	GatewayRequestLifetime = time.Hour
 	ManagedUpstreamByok    = "stogas"
 )
 

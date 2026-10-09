@@ -3002,6 +3002,46 @@ func TestToolResultJSONParsingResponsesAPI(t *testing.T) {
 			expectedContentType: "json",
 			expectedJSON:        mustMarshalJSON(map[string]any{"results": []any{}}),
 		},
+		// Converse rejects a json document containing an empty-string object key with
+		// "The format of the value at ...toolResult.content.N.json is invalid" (verified
+		// live against us.anthropic.claude-haiku-4-5). Cursor's list_directory results
+		// carry such keys for extensionless files, so these payloads must fall back to a
+		// text block holding the original JSON string.
+		{
+			name:                "EmptyKeyObjectFallsBackToText",
+			toolResultContent:   `{"success":{"fullSubtreeExtensionCounts":{"":2,".md":1},"numFiles":3}}`,
+			expectedContentType: "text",
+			expectedText:        schemas.Ptr(`{"success":{"fullSubtreeExtensionCounts":{"":2,".md":1},"numFiles":3}}`),
+		},
+		{
+			name:                "EmptyKeyInsideArrayFallsBackToText",
+			toolResultContent:   `[{"path":"/repo","counts":{"":1}}]`,
+			expectedContentType: "text",
+			expectedText:        schemas.Ptr(`[{"path":"/repo","counts":{"":1}}]`),
+		},
+		{
+			// An empty string as a VALUE is fine; only empty keys are rejected.
+			name:                "EmptyStringValueStaysJSON",
+			toolResultContent:   `{"a":""}`,
+			expectedContentType: "json",
+			expectedJSON:        mustMarshalJSON(map[string]any{"a": ""}),
+		},
+		{
+			// Empty string value followed by an empty key: the detector must not
+			// confuse a value in key position with a key.
+			name:                "EmptyValueThenEmptyKeyFallsBackToText",
+			toolResultContent:   `{"a":"","":1}`,
+			expectedContentType: "text",
+			expectedText:        schemas.Ptr(`{"a":"","":1}`),
+		},
+		{
+			// Empty key appearing after a nested container in the same object: the
+			// detector must keep checking sibling keys after descending.
+			name:                "EmptyKeyAfterNestedContainerFallsBackToText",
+			toolResultContent:   `{"a":{"b":[1,2]},"":2}`,
+			expectedContentType: "text",
+			expectedText:        schemas.Ptr(`{"a":{"b":[1,2]},"":2}`),
+		},
 	}
 
 	for _, tt := range tests {
@@ -6081,7 +6121,7 @@ func TestToBedrockChatCompletionRequest_AliasesLongMCPToolNames(t *testing.T) {
 	assert.NotEqual(t, toolName, alias)
 	assert.Contains(t, alias, "_list_network_requests")
 	assert.Regexp(t, `^[A-Za-z0-9_-]{1,64}$`, alias)
-	assert.Regexp(t, `^[0-9a-f]{8}_`, alias)
+	assert.Regexp(t, `^t[0-9a-f]{8}_`, alias)
 	require.NotNil(t, result.ToolConfig.ToolChoice)
 	require.NotNil(t, result.ToolConfig.ToolChoice.Tool)
 	assert.Equal(t, alias, result.ToolConfig.ToolChoice.Tool.Name)
@@ -6125,7 +6165,7 @@ func TestToBedrockChatCompletionRequest_AliasesToolNamesWithInvalidChars(t *test
 	alias := result.ToolConfig.Tools[0].ToolSpec.Name
 	assert.NotEqual(t, toolName, alias, "name with disallowed chars must be aliased")
 	assert.Regexp(t, `^[A-Za-z0-9_-]{1,64}$`, alias)
-	assert.Regexp(t, `^[0-9a-f]{8}_`, alias)
+	assert.Regexp(t, `^t[0-9a-f]{8}_`, alias)
 	require.NotNil(t, result.ToolConfig.ToolChoice)
 	require.NotNil(t, result.ToolConfig.ToolChoice.Tool)
 	assert.Equal(t, alias, result.ToolConfig.ToolChoice.Tool.Name)
@@ -6220,7 +6260,7 @@ func TestToBedrockResponsesRequest_AliasesLongMCPToolNames(t *testing.T) {
 	assert.NotEqual(t, toolName, alias)
 	assert.Contains(t, alias, "_notion-notion-search")
 	assert.Regexp(t, `^[A-Za-z0-9_-]{1,64}$`, alias)
-	assert.Regexp(t, `^[0-9a-f]{8}_`, alias)
+	assert.Regexp(t, `^t[0-9a-f]{8}_`, alias)
 	require.NotNil(t, result.ToolConfig.ToolChoice)
 	require.NotNil(t, result.ToolConfig.ToolChoice.Tool)
 	assert.Equal(t, alias, result.ToolConfig.ToolChoice.Tool.Name)
@@ -7854,10 +7894,7 @@ func TestAnthropicIngressMantleReplayUsesResponsesInputShapes(t *testing.T) {
 			// Mantle /v1 strips status/annotations from assistant items, so only input_text validates for gpt-oss.
 			assert.Equalf(t, "input_text", part.Type, "input[%d].content[%d]: replayed gpt-oss assistant text must be input_text on Mantle", i, j)
 		}
-		if assert.NotNilf(t, item.Status,
-			"input[%d]: an assistant output message item requires `status` (ResponseOutputMessageParam), got item: %s", i, mustItem(body, i)) {
-			assert.Equalf(t, "completed", *item.Status, "input[%d].status", i)
-		}
+		assert.Nilf(t, item.Status, "input[%d]: Mantle input_text history must omit output status, got item: %s", i, mustItem(body, i))
 	}
 	require.True(t, sawAssistant, "fixture must include a replayed assistant message")
 }
@@ -8005,4 +8042,115 @@ collect:
 	require.Equal(t, 13, final.Usage.PromptTokens, "prompt_tokens")
 	require.Equal(t, 29, final.Usage.CompletionTokens, "completion_tokens")
 	require.Equal(t, 42, final.Usage.TotalTokens, "total_tokens")
+}
+
+// TestBedrockConverseFineGrainedToolStreaming pins the Converse carrier for
+// fine-grained tool streaming. Converse has no slot for the per-tool
+// eager_input_streaming flag and Bedrock's edge consumes the outer
+// anthropic-beta header, so the only way the opt-in reaches Claude is
+// additionalModelRequestFields.anthropic_beta. Without it Claude emits a tool's
+// input one complete JSON value at a time: Claude Code saw a Write call's
+// file_path immediately, then minutes of silence, then the whole content in one
+// burst, and aborted on its idle watchdog. Claude Code sends no flag at all when
+// pointed at a gateway, so Bifrost must default it on for the models Claude Code
+// itself enables on Bedrock.
+func TestBedrockConverseFineGrainedToolStreaming(t *testing.T) {
+	const beta = "fine-grained-tool-streaming-2025-05-14"
+	params := func() *schemas.ToolFunctionParameters {
+		return &schemas.ToolFunctionParameters{
+			Type:       "object",
+			Properties: schemas.NewOrderedMapFromPairs(schemas.KV("content", map[string]interface{}{"type": "string"})),
+		}
+	}
+
+	cases := []struct {
+		name       string
+		model      string
+		eager      *bool
+		noTools    bool
+		clientBeta string
+		serverTool bool
+		wantBeta   bool
+	}{
+		{name: "opus 5 tool without flag gets the default", model: "global.anthropic.claude-opus-5", wantBeta: true},
+		{name: "sonnet 4.6 tool without flag gets the default", model: "us.anthropic.claude-sonnet-4-6", wantBeta: true},
+		{name: "explicit true on an older model", model: "anthropic.claude-sonnet-4-5-20250929-v1:0", eager: schemas.Ptr(true), wantBeta: true},
+		{name: "client anthropic-beta header on an older model", model: "anthropic.claude-sonnet-4-5-20250929-v1:0", clientBeta: beta + ",interleaved-thinking-2025-05-14", wantBeta: true},
+		{name: "older model without any opt-in", model: "anthropic.claude-sonnet-4-5-20250929-v1:0", wantBeta: false},
+		{name: "explicit false is respected", model: "global.anthropic.claude-opus-5", eager: schemas.Ptr(false), wantBeta: false},
+		{name: "no custom tools", model: "global.anthropic.claude-opus-5", noTools: true, wantBeta: false},
+		{name: "non-Anthropic model", model: "amazon.nova-pro-v1:0", eager: schemas.Ptr(true), wantBeta: false},
+		{name: "dedupes against server-tool betas", model: "global.anthropic.claude-opus-5", serverTool: true, wantBeta: true},
+	}
+
+	for _, tc := range cases {
+		newCtx := func() *schemas.BifrostContext {
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			if tc.clientBeta != "" {
+				ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, map[string][]string{"anthropic-beta": {tc.clientBeta}})
+			}
+			return ctx
+		}
+		assertBeta := func(t *testing.T, fields *schemas.OrderedMap) {
+			t.Helper()
+			got := fields != nil && betaListContains(t, fields, beta)
+			assert.Equal(t, tc.wantBeta, got, "additionalModelRequestFields.anthropic_beta contains %s", beta)
+			if fields == nil {
+				return
+			}
+			if raw, ok := fields.Get("anthropic_beta"); ok {
+				encoded, err := json.Marshal(raw)
+				require.NoError(t, err)
+				assert.LessOrEqual(t, strings.Count(string(encoded), beta), 1, "beta duplicated: %s", encoded)
+			}
+		}
+
+		t.Run(tc.name+"/responses", func(t *testing.T) {
+			req := &schemas.BifrostResponsesRequest{
+				Model:  tc.model,
+				Input:  []schemas.ResponsesMessage{{Role: schemas.Ptr(schemas.ResponsesInputMessageRoleUser), Content: &schemas.ResponsesMessageContent{ContentStr: schemas.Ptr("write the file")}}},
+				Params: &schemas.ResponsesParameters{},
+			}
+			if !tc.noTools {
+				req.Params.Tools = append(req.Params.Tools, schemas.ResponsesTool{
+					Type:                  schemas.ResponsesToolTypeFunction,
+					Name:                  schemas.Ptr("Write"),
+					Description:           schemas.Ptr("Write a file"),
+					EagerInputStreaming:   tc.eager,
+					ResponsesToolFunction: &schemas.ResponsesToolFunction{Parameters: params()},
+				})
+			}
+			bedrockReq, err := bedrock.ToBedrockResponsesRequest(newCtx(), req)
+			require.NoError(t, err)
+			assertBeta(t, bedrockReq.AdditionalModelRequestFields)
+		})
+
+		t.Run(tc.name+"/chat", func(t *testing.T) {
+			req := &schemas.BifrostChatRequest{
+				Model:  tc.model,
+				Input:  []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("write the file")}}},
+				Params: &schemas.ChatParameters{},
+			}
+			if !tc.noTools {
+				req.Params.Tools = append(req.Params.Tools, schemas.ChatTool{
+					Type:                schemas.ChatToolTypeFunction,
+					Function:            &schemas.ChatToolFunction{Name: "Write", Description: schemas.Ptr("Write a file"), Parameters: params()},
+					EagerInputStreaming: tc.eager,
+				})
+			}
+			if tc.serverTool {
+				req.Params.Tools = append(req.Params.Tools, schemas.ChatTool{Type: "memory_20250818", Name: "memory"})
+			}
+			bedrockReq, err := bedrock.ToBedrockChatCompletionRequest(newCtx(), req)
+			require.NoError(t, err)
+			assertBeta(t, bedrockReq.AdditionalModelRequestFields)
+			if tc.serverTool {
+				raw, ok := bedrockReq.AdditionalModelRequestFields.Get("anthropic_beta")
+				require.True(t, ok)
+				encoded, err := json.Marshal(raw)
+				require.NoError(t, err)
+				assert.Greater(t, strings.Count(string(encoded), ","), 0, "server-tool beta was dropped: %s", encoded)
+			}
+		})
+	}
 }

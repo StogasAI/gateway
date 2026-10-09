@@ -1,23 +1,20 @@
 package proofhttp
 
 import (
-	"bytes"
 	"context"
-	"crypto/mldsa"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"hash"
 
-	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
+	verifier "github.com/StogasAI/verifier/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 )
 
 const SSECommentPrefix = "stogas "
 
 type Service struct {
-	signer *mldsa.PrivateKey
+	keys   *verifier.NodeKeys
 	boot   [32]byte
 	nodeID string
 }
@@ -28,29 +25,13 @@ type Output struct {
 	Object proof.Object
 }
 
-// New binds the signer to the immutable boot already appraised by the runtime.
-// This local consistency check does not replace hardware or log verification.
-func New(document []byte, signer *mldsa.PrivateKey) (*Service, error) {
-	if len(document) > attest.MaxSessionEvidenceBytes || signer == nil || signer.PublicKey().Parameters() != mldsa.MLDSA65() {
+// New binds receipts to the logged boot that commits these keys, after the
+// runtime has verified it and taken its node identity from that verification.
+func New(bootSHA256 [32]byte, nodeID string, keys *verifier.NodeKeys) (*Service, error) {
+	if keys == nil || nodeID == "" {
 		return nil, errors.New("invalid receipt identity")
 	}
-	var record attest.BootRecord
-	if err := json.Unmarshal(document, &record); err != nil {
-		return nil, err
-	}
-	canonical, err := record.Document()
-	if err != nil || !bytes.Equal(canonical, document) {
-		return nil, errors.New("receipt boot is not canonical")
-	}
-	public, err := base64.RawURLEncoding.DecodeString(record.ReportData.SigningPublicKey)
-	if err != nil || !bytes.Equal(public, signer.PublicKey().Bytes()) {
-		return nil, errors.New("receipt signer differs from boot")
-	}
-	report, err := base64.RawURLEncoding.DecodeString(record.Report)
-	if err != nil {
-		return nil, err
-	}
-	return &Service{signer: signer, boot: sha256.Sum256(document), nodeID: attest.SNPNodeID([32]byte(report[0x140:0x160]))}, nil
+	return &Service{keys: keys, boot: bootSHA256, nodeID: nodeID}, nil
 }
 
 func (s *Service) Build(ctx context.Context, input Input) (*Output, error) {
@@ -71,11 +52,17 @@ func (s *Service) output(metadata proof.Metadata, request, response [32]byte) (*
 		return nil, errors.New("receipt metadata or identity is invalid")
 	}
 	object := proof.Object{Metadata: metadata, NodeID: s.nodeID}
-	receipt, err := proof.SignReceipt(s.signer, s.boot, request, response, object)
+	unsigned, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
 	}
-	object.Receipt = receipt
+	receipt, err := s.keys.SignReceipt(s.boot, request, response, unsigned)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(receipt, &object.Receipt); err != nil {
+		return nil, err
+	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
 		return nil, err
@@ -101,7 +88,7 @@ func (s *Service) NewStream(ctx context.Context, input Input) (*Stream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if s.nodeID == "" || s.signer == nil || input.RequestDigest == nil || !proof.ValidCatalog(input.Metadata.Catalog) {
+	if s.nodeID == "" || s.keys == nil || input.RequestDigest == nil || !proof.ValidCatalog(input.Metadata.Catalog) {
 		return nil, errors.New("receipt context is incomplete")
 	}
 	return &Stream{request: *input.RequestDigest, response: sha256.New(), metadata: input.Metadata}, nil
@@ -134,6 +121,6 @@ func (s *Service) FinishStream(ctx context.Context, stream *Stream) (*Output, er
 // Close is called after all admitted requests finish.
 func (s *Service) Close() {
 	if s != nil {
-		s.signer = nil
+		s.keys = nil
 	}
 }

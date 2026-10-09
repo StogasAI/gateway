@@ -106,7 +106,7 @@ jobs:
             gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
         working-directory: ${{ matrix.module }}
-        run: GOWORK=off go test -tags=stogas_offline -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
+        run: GOWORK=off go test -tags=stogas_gateway -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: failure()
         with:

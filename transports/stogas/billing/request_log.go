@@ -30,6 +30,7 @@ const (
 	LogNotStored LogDestination = iota
 	LogQueue
 	LogTinybird
+	LogQuarantine
 )
 
 type logDelivery struct {
@@ -224,53 +225,79 @@ func (c *RequestLogClient) run() {
 		closing = closing || stopped
 		c.waitForDispatch(lastDispatch)
 		lastDispatch = time.Now()
-		result := c.appendBatch(batch)
+		ctx, cancel := context.WithTimeout(context.Background(), requestLogAppendWaitTimeout)
+		complete := c.appendBatch(ctx, batch)
+		cancel()
 		c.batches.Add(1)
 		c.rows.Add(uint64(len(batch)))
-		if result.err != nil {
+		if !complete {
 			c.batchFailures.Add(1)
-		}
-		for _, request := range batch {
-			request.result <- result
 		}
 	}
 }
 
-func (c *RequestLogClient) appendBatch(batch []requestLogAppendRequest) logDelivery {
+func completeLogBatch(batch []requestLogAppendRequest, result logDelivery) bool {
+	for _, request := range batch {
+		request.result <- result
+	}
+	return result.err == nil
+}
+
+func (c *RequestLogClient) appendBatch(ctx context.Context, batch []requestLogAppendRequest) bool {
 	var body bytes.Buffer
 	for _, request := range batch {
 		body.Write(request.line)
 	}
-	if c.primary != nil && c.primary.append(body.Bytes(), len(batch)) == nil {
-		return logDelivery{destination: LogQueue}
+	if c.primary != nil && c.primary.append(ctx, body.Bytes(), len(batch)) == nil {
+		return completeLogBatch(batch, logDelivery{destination: LogQueue})
+	}
+	return c.appendFallbackBatch(ctx, batch)
+}
+
+func (c *RequestLogClient) appendFallbackBatch(ctx context.Context, batch []requestLogAppendRequest) bool {
+	if err := ctx.Err(); err != nil {
+		return completeLogBatch(batch, logDelivery{err: err})
+	}
+	if c.fallback == nil {
+		return completeLogBatch(batch, logDelivery{err: errors.New("durable request log queue unavailable")})
 	}
 	var analytics bytes.Buffer
 	for _, request := range batch {
 		event, err := decodeGatewayRequestEvent(string(request.line))
 		if err != nil {
-			return logDelivery{err: err}
+			return completeLogBatch(batch, logDelivery{err: err})
 		}
 		var binding struct {
 			HoldParamsHash string `json:"hold_params_hash"`
 		}
 		if err := json.Unmarshal(request.line, &binding); err != nil {
-			return logDelivery{err: err}
+			return completeLogBatch(batch, logDelivery{err: err})
 		}
 		event.holdParamsHash = binding.HoldParamsHash
 		encoded, err := json.Marshal(tinybirdGatewayRequestEvent(event))
 		if err != nil {
-			return logDelivery{err: err}
+			return completeLogBatch(batch, logDelivery{err: err})
 		}
 		analytics.Write(encoded)
 		analytics.WriteByte('\n')
 	}
-	if c.fallback == nil {
-		return logDelivery{err: errors.New("durable request log queue unavailable")}
+	err := c.fallback.append(ctx, analytics.Bytes(), len(batch))
+	if errors.Is(err, errRequestLogQuarantined) {
+		if len(batch) > 1 {
+			midpoint := (len(batch) + 1) / 2
+			left := c.appendFallbackBatch(ctx, batch[:midpoint])
+			right := c.appendFallbackBatch(ctx, batch[midpoint:])
+			return left && right
+		}
+		// Confirm the isolated row before classifying it as invalid. A timeout,
+		// incomplete acknowledgement or HTTP error stays retryable in memory.
+		err = c.fallback.append(ctx, analytics.Bytes(), 1)
+		if errors.Is(err, errRequestLogQuarantined) {
+			err = c.primary.quarantine(ctx, batch[0].line, 1)
+			return completeLogBatch(batch, logDelivery{destination: LogQuarantine, err: err})
+		}
 	}
-	if err := c.fallback.append(analytics.Bytes(), len(batch)); err != nil {
-		return logDelivery{err: err}
-	}
-	return logDelivery{destination: LogTinybird}
+	return completeLogBatch(batch, logDelivery{destination: LogTinybird, err: err})
 }
 
 func (c *RequestLogClient) Diagnostics() *RequestLogDiagnostics {

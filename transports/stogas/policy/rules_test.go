@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 )
@@ -226,10 +227,54 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 	}
 }
 
+func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing.T) {
+	org := ruleSource(t, `{"delegation":{"request":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"totalSeconds":600}}}}`)
+	key := ruleSource(t, `{"timeouts":{"totalSeconds":1200}}`)
+	base, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := CompileRequest([]byte(`{"timeouts":{"outputIdleSeconds":180}}`), "org", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined, err := ApplyRequest(base, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, config := range []*Config{combined, base, combined} {
+		for _, provider := range []string{"openai", "anthropic"} {
+			active, err := config.Activate(ruleValues{"provider.id": {Type: "string", String: provider}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTotal, wantIdle := 900*time.Second, 180*time.Second
+			if provider == "openai" {
+				wantTotal = 600 * time.Second
+			}
+			if config == base {
+				wantIdle = 90 * time.Second
+			}
+			if active.Timeouts.Total() != wantTotal || active.Timeouts.OutputIdle() != wantIdle {
+				t.Fatalf("%s timeouts = %+v, want %s/%s", provider, active.Timeouts, wantTotal, wantIdle)
+			}
+		}
+	}
+	for _, raw := range []string{`{"timeouts":{"totalSeconds":300}}`, `{"rules":{"bypass":{"timeouts":{"totalSeconds":300}}}}`} {
+		denied, err := CompileRequest([]byte(raw), "org", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ApplyRequest(base, denied); !errors.Is(err, ErrRequestPolicyDenied) {
+			t.Fatalf("request bypassed timeout field delegation: %v", err)
+		}
+	}
+}
+
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"fallbacks":{"maxPreDispatchCandidates":2}}`
+	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"maxAttempts": 2}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"fallbacks":{"maxPreDispatchCandidates":1}}}`)
+	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"maxAttempts": 1}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -251,7 +296,7 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.Deny) > 0) != withRequired || (len(active.Routing.Query.OrderBy) > 0) != withRequired {
 				t.Fatalf("required=%v: wrong active restrictions: %+v", withRequired, active)
 			}
-			if !active.HasRequiredSort() || active.Routing.MaxPreDispatchCandidates != 1 {
+			if !active.HasRequiredOrder() || active.Routing.MaxAttempts != 1 {
 				t.Fatal("empty required settings did not suppress defaults")
 			}
 			if (len(active.Routing.AllowedCatalogNodes.Providers) > 0) != withRequired {

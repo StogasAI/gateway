@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 )
 
 // providerAttemptTracer observes Bifrost's LLM-call and retry spans.
@@ -61,11 +63,28 @@ func (t *providerAttemptTracer) wrapAttempt(ctx context.Context, kind schemas.Sp
 	if !ok {
 		return inner
 	}
-	return &providerAttemptSpan{
+	span := &providerAttemptSpan{
 		inner: inner,
 		state: state,
 		index: state.beginProviderAttempt(t.now()),
 	}
+	if state.Resolution != nil && state.Resolution.Provider == catalog.ProviderChutes {
+		chutese2ee.SetRetryObserver(bifrostCtx, span.nextChutesInvocation)
+	}
+	return span
+}
+
+// Chutes retries stay inside its transport, so core emits no new LLM span.
+// Move this span's accounting owner forward without losing the rejected call.
+func (s *providerAttemptSpan) nextChutesInvocation(status int, completedAt, startedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.finishProviderAttempt(s.index, completedAt, nil, &schemas.BifrostError{
+		StatusCode: &status,
+		Error:      &schemas.ErrorField{Message: "Chutes rejected the invocation before execution"},
+	})
+	s.index = s.state.beginProviderAttempt(startedAt)
+	s.state.setProviderAttemptProvider(s.index, string(catalog.ProviderChutes))
 }
 
 func (t *providerAttemptTracer) EndSpan(handle schemas.SpanHandle, status schemas.SpanStatus, statusMsg string) {
@@ -78,8 +97,9 @@ func (t *providerAttemptTracer) EndSpan(handle schemas.SpanHandle, status schema
 		span.mu.Lock()
 		response := span.response
 		bifrostErr := span.err
+		index := span.index
 		span.mu.Unlock()
-		span.state.finishProviderAttempt(span.index, t.now(), response, bifrostErr)
+		span.state.finishProviderAttempt(index, t.now(), response, bifrostErr)
 		t.Tracer.EndSpan(span.inner, status, statusMsg)
 	})
 }
@@ -88,7 +108,9 @@ func (t *providerAttemptTracer) SetAttribute(handle schemas.SpanHandle, key stri
 	span, inner := providerAttemptHandle(handle)
 	if span != nil && key == schemas.AttrBifrostProviderName {
 		if provider, ok := value.(string); ok {
+			span.mu.Lock()
 			span.state.setProviderAttemptProvider(span.index, provider)
+			span.mu.Unlock()
 		}
 	}
 	t.Tracer.SetAttribute(inner, key, value)
@@ -110,7 +132,9 @@ func (t *providerAttemptTracer) PopulateLLMRequestAttributes(handle schemas.Span
 		// Core now writes provider attributes directly onto its resolved span.
 		// The request supplies the same identity even when tracing is disabled.
 		provider, _, _ := req.GetRequestFields()
+		span.mu.Lock()
 		span.state.setProviderAttemptProvider(span.index, string(provider))
+		span.mu.Unlock()
 	}
 	t.Tracer.PopulateLLMRequestAttributes(inner, req)
 }

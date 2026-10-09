@@ -7,10 +7,13 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-type providerStreamStart struct {
-	stream  chan *schemas.BifrostStreamChunk
-	failure *schemas.BifrostError
+type providerResult[T any] struct {
+	response T
+	failure  *schemas.BifrostError
+	panic    any
 }
+
+type providerStreamStart = providerResult[chan *schemas.BifrostStreamChunk]
 
 // Canceling the provider is a request to stop, not proof that its goroutines
 // and buffers have been released. The returned channel closes after the core's
@@ -18,7 +21,7 @@ type providerStreamStart struct {
 func finishProviderStream(cancel context.CancelFunc, pending <-chan providerStreamStart, stream chan *schemas.BifrostStreamChunk) {
 	cancel()
 	if pending != nil {
-		stream = (<-pending).stream
+		stream = (<-pending).response
 	}
 	if stream != nil {
 		for range stream {
@@ -29,67 +32,61 @@ func finishProviderStream(cancel context.CancelFunc, pending <-chan providerStre
 // Bifrost inspects the first provider chunk before returning its stream. Allow
 // the response producer to send keepalives while that first chunk is silent.
 // The buffered result has exactly one consumer and never drops started work.
-func awaitProviderStream(ctx *requestContext, cancel context.CancelFunc, open func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError)) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
-	if _, encrypted := ctx.writer.(*sessionResponse); encrypted {
-		return awaitProviderResult(ctx, cancel, open)
-	}
-	result := make(chan providerStreamStart, 1)
-	go func() { stream, failure := open(); result <- providerStreamStart{stream, failure} }()
-	timer := time.NewTimer(responseKeepaliveInterval)
-	defer timer.Stop()
-	select {
-	case started := <-result:
-		return started.stream, started.failure
-	case <-timer.C:
-	case <-ctx.request.Context().Done():
-	}
-	ctx.pendingStream = result
-	return nil, nil
+func awaitProviderStream(ctx *requestContext, disconnected func(), open func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError)) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+	stream, failure, pending := awaitProviderResult(ctx, disconnected, open, true)
+	ctx.pendingStream = pending
+	return stream, failure
 }
 
 // Binary control records keep buffered calls and stream startup alive without
-// committing the E2EE response status. Ordinary HTTP calls remain synchronous.
-// The handler is the only writer and owns admission until the provider returns,
-// including after cancellation or a failed downstream write.
-func awaitProviderResult[T any](ctx *requestContext, cancel context.CancelFunc, call func() (T, *schemas.BifrostError)) (T, *schemas.BifrostError) {
+// committing the E2EE response status. On caller timeout or disconnect, pending
+// transfers the one result consumer to the provider's completion owner. That
+// owner must retain admission, ingest usage, and settle without the writer.
+func awaitProviderResult[T any](ctx *requestContext, disconnected func(), call func() (T, *schemas.BifrostError), streaming bool) (T, *schemas.BifrostError, <-chan providerResult[T]) {
 	writer, encrypted := ctx.writer.(*sessionResponse)
-	if !encrypted {
-		return call()
-	}
-	type result struct {
-		response T
-		failure  *schemas.BifrostError
-		panic    any
-	}
-	unwrap := func(response result) (T, *schemas.BifrostError) {
-		if response.panic != nil {
-			panic(response.panic)
-		}
-		return response.response, response.failure
-	}
-	ready := make(chan result, 1)
+	ready := make(chan providerResult[T], 1)
 	go func() {
-		var response result
+		var response providerResult[T]
 		defer func() {
-			// Preserve net/http's handler panic boundary for provider calls.
+			// A detached call must still settle after a provider panic. When the
+			// caller is waiting, preserve net/http's handler recovery boundary.
 			response.panic = recover()
+			if response.panic != nil {
+				response.failure = &schemas.BifrostError{
+					StatusCode: schemas.Ptr(500), AllowFallbacks: schemas.Ptr(false),
+					Error: &schemas.ErrorField{Message: "Provider request failed"},
+				}
+			}
 			ready <- response
 		}()
 		response.response, response.failure = call()
 	}()
-	ticker := time.NewTicker(responseKeepaliveInterval)
-	defer ticker.Stop()
+	var keepalive <-chan time.Time
+	if encrypted || streaming {
+		ticker := time.NewTicker(responseKeepaliveInterval)
+		defer ticker.Stop()
+		keepalive = ticker.C
+	}
+	var zero T
 	for {
 		select {
 		case response := <-ready:
-			return unwrap(response)
+			if response.panic != nil {
+				panic(response.panic)
+			}
+			return response.response, response.failure, nil
+		case <-ctx.responseWait.done():
+			return zero, nil, ready
 		case <-ctx.request.Context().Done():
-			cancel()
-			return unwrap(<-ready)
-		case <-ticker.C:
+			disconnected()
+			return zero, nil, ready
+		case <-keepalive:
+			if !encrypted {
+				return zero, nil, ready
+			}
 			if err := writer.flushRecord(writer.stream.Keepalive); err != nil {
-				cancel()
-				return unwrap(<-ready)
+				disconnected()
+				return zero, nil, ready
 			}
 		}
 	}

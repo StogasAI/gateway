@@ -86,7 +86,7 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 	s.recordRequestOutcome(authorization, event)
 	holdParamsHash := createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON)
 	event.holdParamsHash = holdParamsHash
-	upstreamCostRaw := event.UpstreamCostUSD
+	upstreamCostRaw := event.Usage.UpstreamCostUSD
 	if upstreamCostRaw == "" {
 		upstreamCostRaw = ZeroChargeUSD
 	}
@@ -95,15 +95,15 @@ func (s *Service) FinalizeRequest(ctx context.Context, authorization *Authorizat
 		s.finalizations.encodingFailed.Store(true)
 		return fmt.Errorf("invalid upstream cost: %w", err)
 	}
-	event.UpstreamCostUSD = upstreamCostUSD.String()
-	event.BilledCostUSD = calculateBilledCostUSD(authorization, upstreamCostUSD).String()
+	event.Usage.UpstreamCostUSD = upstreamCostUSD.String()
+	event.Usage.BilledCostUSD = calculateBilledCostUSD(authorization, upstreamCostUSD).String()
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		s.finalizations.encodingFailed.Store(true)
 		return err
 	}
 	destination, deliveryErr := s.requestLogs.AppendGatewayRequest(ctx, event)
-	if destination == LogQueue && deliveryErr == nil {
+	if (destination == LogQueue || destination == LogQuarantine) && deliveryErr == nil {
 		return nil
 	}
 	if destination == LogTinybird && deliveryErr == nil {
@@ -231,7 +231,7 @@ func (s *Service) retryFinalization(ctx context.Context, task *finalizationRetry
 	}
 	event.holdParamsHash = task.holdParamsHash
 	destination, err := s.requestLogs.AppendGatewayRequest(ctx, event)
-	if err == nil && destination == LogQueue {
+	if err == nil && (destination == LogQueue || destination == LogQuarantine) {
 		return true
 	}
 	if err == nil && destination == LogTinybird {

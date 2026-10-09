@@ -6,24 +6,25 @@ import (
 	"context"
 	"crypto/mldsa"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/google/uuid"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
@@ -35,7 +36,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := newTestRequest(t)
 	ctx.request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx.request.Header.Set("Authorization", "Bearer sk-secret")
 	ctx.request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -108,7 +109,7 @@ func TestNewRequestContextUsesSharedInferenceLifetime(t *testing.T) {
 	resolution.Route = catalog.RouteResponses
 	resolution.RequestType = schemas.ResponsesStreamRequest
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -650,14 +651,14 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	testRequestBody(ctx, `{"model":"gpt-5.5"}`)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasMetadataKey, true)
-	state := &stogas.State{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)), RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}
-	state.FinalEvent.Meters = billing.EventMeters{
+	state := &stogas.State{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)), RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}}
+	state.FinalEvent.Usage.Meters = billing.EventMeters{
 		"input_tokens":        billing.PricedMeter("1000", "per_mill_tokens", "2", "0.002"),
 		"cached_input_tokens": billing.PricedMeter("300", "per_mill_tokens", "0", "0"),
 		"total_input_tokens":  {Quantity: "1300"},
 	}
-	state.FinalEvent.UpstreamCostUSD, state.FinalEvent.BilledCostUSD = "0.002", "0.00004"
-	state.FinalEvent.CacheReadSavingsUSD, state.FinalEvent.CacheWriteOverheadUSD = schemas.Ptr("0.0006"), schemas.Ptr("0")
+	state.FinalEvent.Usage.UpstreamCostUSD, state.FinalEvent.Usage.BilledCostUSD = "0.002", "0.00004"
+	state.FinalEvent.Usage.CacheReadSavingsUSD, state.FinalEvent.Usage.CacheWriteOverheadUSD = schemas.Ptr("0.0006"), schemas.Ptr("0")
 	requestDigest := sha256.Sum256(ctx.body)
 	if _, err := ctx.receiptRequestDigest(); err != nil {
 		t.Fatal(err)
@@ -674,21 +675,21 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	if !response.OK || response.Stogas.CreatedAt != state.FinalEvent.CreatedAt {
 		t.Fatal("missing response metadata")
 	}
-	wantMeters, _ := json.Marshal(state.FinalEvent.Meters)
+	wantMeters, _ := json.Marshal(state.FinalEvent.Usage.Meters)
 	gotMeters, _ := json.Marshal(response.Stogas.Meters)
 	if !bytes.Equal(wantMeters, gotMeters) || response.Stogas.UpstreamCostUSD != "0.002" || response.Stogas.BilledCostUSD != "0.00004" ||
 		response.Stogas.CacheReadSavingsUSD == nil || *response.Stogas.CacheReadSavingsUSD != "0.0006" ||
 		response.Stogas.CacheWriteOverheadUSD == nil || *response.Stogas.CacheWriteOverheadUSD != "0" {
 		t.Fatal("response metadata differs from final request history")
 	}
-	if !proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+	if !verifyReceipt(publicKey, response.Stogas, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`))) {
 		t.Fatal("receipt does not bind exact request and response")
 	}
-	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, sha256.Sum256([]byte(`{}`)), sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+	if verifyReceipt(publicKey, response.Stogas, boot, sha256.Sum256([]byte(`{}`)), sha256.Sum256([]byte(`{"ok":true}`))) {
 		t.Fatal("receipt accepted another request")
 	}
 	response.Stogas.Meters["total_input_tokens"] = billing.EventMeter{Quantity: "1301"}
-	if proof.VerifyReceipt(publicKey, response.Stogas.Receipt, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`)), response.Stogas) {
+	if verifyReceipt(publicKey, response.Stogas, boot, requestDigest, sha256.Sum256([]byte(`{"ok":true}`))) {
 		t.Fatal("receipt accepted a changed informational meter")
 	}
 }
@@ -723,7 +724,7 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 		t.Fatalf("proof failure retained a prepared success event: %#v", state.FinalEvent)
 	}
 	event := stogas.PrepareFinalState(state)
-	if event == nil || event.Error == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
+	if event == nil || event.GatewayError == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
 		event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 200 {
 		t.Fatalf("proof failure overwrote the successful provider result: %#v", event)
 	}
@@ -778,7 +779,7 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 		Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)),
 		RequestID:  "", // Invalid final metadata must not become a successful receipt.
 		NodeID:     strings.Repeat("3", 64),
-		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
+		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}},
 	}
 
 	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
@@ -799,30 +800,45 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 
 func testProofService(t *testing.T) (*proofhttp.Service, *mldsa.PublicKey, [32]byte) {
 	t.Helper()
-	data, err := os.ReadFile("../stogas/confidential/attest/testdata/node-boot-v1.json")
+	keys, document, nodeID, err := fixtureNode("testdata/node-boot-v1.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixture struct {
-		Record attest.BootRecord `json:"record"`
-	}
-	if err = json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	document, err := fixture.Record.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := proofhttp.New(document, key)
+	t.Cleanup(keys.Close)
+	service, err := proofhttp.New(sha256.Sum256(document), nodeID, keys)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Close)
+	// Go derives the same FIPS 204 key independently from the public fixture seed.
+	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	return service, key.PublicKey(), sha256.Sum256(document)
+}
+
+// verifyReceipt independently checks the Rust signer's message, digests and metadata.
+func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, response [32]byte) bool {
+	receipt := object.Receipt
+	encoded, err := json.Marshal(object)
+	var bag map[string]json.RawMessage
+	if err != nil || json.Unmarshal(encoded, &bag) != nil {
+		return false
+	}
+	delete(bag, "receipt")
+	if encoded, err = json.Marshal(bag); err != nil {
+		return false
+	}
+	canonical, err := jsoncanonicalizer.Transform(encoded)
+	signature, signatureErr := base64.RawURLEncoding.DecodeString(receipt.Signature)
+	if err != nil || signatureErr != nil || receipt.Schema != "stogas.receipt.v1" || receipt.BootSHA256 != hex.EncodeToString(boot[:]) ||
+		receipt.RequestSHA256 != hex.EncodeToString(request[:]) || receipt.ResponseSHA256 != hex.EncodeToString(response[:]) {
+		return false
+	}
+	digest := sha256.Sum256(canonical)
+	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
+	return mldsa.Verify(public, message, signature, nil) == nil
 }
 
 func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyValidation(t *testing.T) {
@@ -1414,7 +1430,7 @@ func TestReceiptHeaderRejectsRepeatedValues(t *testing.T) {
 	ctx := newTestRequest(t)
 	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
 	ctx.request.Header.Add(stogasHeaderMetadata, "v1")
-	if _, err := receiptHeader(ctx); err == nil {
+	if _, err := metadataHeader(ctx); err == nil {
 		t.Fatal("repeated receipt header was accepted")
 	}
 }
@@ -1563,9 +1579,9 @@ func TestReceiptHeaderAcceptsOnlyV1(t *testing.T) {
 			if test.value != "" {
 				ctx.request.Header.Set(stogasHeaderMetadata, test.value)
 			}
-			got, err := receiptHeader(ctx)
+			got, err := metadataHeader(ctx)
 			if (err == nil) != test.valid || got != test.want {
-				t.Fatalf("receiptHeader() = (%v, %v), want (%v, valid=%v)", got, err, test.want, test.valid)
+				t.Fatalf("metadataHeader() = (%v, %v), want (%v, valid=%v)", got, err, test.want, test.valid)
 			}
 		})
 	}
@@ -2280,8 +2296,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
 		NodeID:     strings.Repeat("3", 64),
 		FinalEvent: &billing.RequestEvent{
-			CreatedAt:     "2026-08-24T12:34:56.789Z",
-			BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{},
+			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
 		},
 	}
 
@@ -2346,7 +2361,7 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 		proofFrames = append(proofFrames, frameSSEEvent("", []byte(chunk)))
 	}
 	proofFrames = append(proofFrames, frameSSEDone())
-	if !proof.VerifyReceipt(publicKey, proofObject.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256(bytes.Join(proofFrames, nil)), proofObject) {
+	if !verifyReceipt(publicKey, proofObject, boot, sha256.Sum256(ctx.body), sha256.Sum256(bytes.Join(proofFrames, nil))) {
 		t.Fatalf("streaming proof did not verify: signature=%q body=%q", proofObject.Receipt.Signature, body)
 	}
 }
@@ -2365,8 +2380,7 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
 		NodeID:     strings.Repeat("5", 64),
 		FinalEvent: &billing.RequestEvent{
-			CreatedAt:     "2026-08-24T12:34:56.789Z",
-			BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{},
+			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
 		},
 	}
 
@@ -2407,7 +2421,7 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsignedBody := body[:proofIndex] + body[proofIndex+proofEnd+2:]
-	if !proof.VerifyReceipt(publicKey, proofObject.Receipt, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(unsignedBody)), proofObject) {
+	if !verifyReceipt(publicKey, proofObject, boot, sha256.Sum256(ctx.body), sha256.Sum256([]byte(unsignedBody))) {
 		t.Fatal("Responses receipt did not cover the complete stream including its terminal event")
 	}
 }
@@ -2657,7 +2671,6 @@ func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithTimeout(t.Context(), 10*time.Millisecond)
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	defer close(stream)
 	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteResponses}}
 	completed := make(chan struct{})
 	var once sync.Once
@@ -2667,6 +2680,7 @@ func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 	})
 
 	body := readResponseBodyStream(t, streamBodyReader)
+	close(stream)
 	select {
 	case <-completed:
 	case <-time.After(time.Second):

@@ -36,13 +36,12 @@ func TestSessionPressureProbe(t *testing.T) {
 		Seconds      int    `json:"seconds"`
 		QuoteMillis  int    `json:"quote_millis"`
 		BodyBytes    int    `json:"body_bytes"`
-		RecordBytes  int    `json:"record_bytes"`
 		ChunkBytes   int    `json:"chunk_bytes"`
 		ChunkMicros  int    `json:"chunk_micros"`
 		CancelMillis int    `json:"cancel_millis"`
 		Corrupt      bool   `json:"corrupt"`
 	}
-	if err := json.Unmarshal([]byte(input), &config); err != nil || config.Seconds < 1 || config.Workers < 0 || config.PerSecond < 1 || config.QuoteMillis < 0 || (config.Mode != "setup" && config.Mode != "mixed" && config.Mode != "records") {
+	if err := json.Unmarshal([]byte(input), &config); err != nil || config.Seconds < 1 || config.Workers < 0 || config.PerSecond < 1 || config.QuoteMillis < 0 || (config.Mode != "setup" && config.Mode != "mixed" && config.Mode != "records") || (config.Mode == "records" && (config.BodyBytes < 1 || config.BodyBytes > channel.MaxRequestBodyBytes)) {
 		t.Fatal("invalid pressure configuration", err)
 	}
 	var dispatched atomic.Uint64
@@ -112,16 +111,9 @@ func TestSessionPressureProbe(t *testing.T) {
 		attackers[i] = clientFor(i + 1)
 		inputs[i] = hello
 		if config.Mode == "records" {
-			// Complete, independently encoded one-byte records reach the real
-			// receiver. Encoding is outside timing; no invalid-key shortcut.
-			bodyBytes, recordBytes := config.BodyBytes, config.RecordBytes
-			if bodyBytes == 0 {
-				bodyBytes, recordBytes = channel.MaxRecords-2, 1
-			}
-			if recordBytes == 0 {
-				recordBytes = channel.MaxRecordPlaintext
-			}
-			inputs[i], _ = fixture.requestWithRecordSize(t, metadata, make([]byte, bodyBytes), recordBytes)
+			// Complete, independently encoded uploads reach the real receiver.
+			// Only the final record may be short. Encoding is outside timing.
+			inputs[i], _ = fixture.request(t, metadata, make([]byte, config.BodyBytes))
 			if config.Corrupt {
 				inputs[i][len(inputs[i])-1] ^= 1
 			}

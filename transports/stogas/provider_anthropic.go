@@ -422,8 +422,8 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	}
 	if reasoning, ok := rawObject(raw["reasoning"]); ok {
 		for _, name := range []string{"summary", "generate_summary"} {
-			if value, exists := rawStringValue(reasoning[name]); exists && value != "auto" {
-				return invalidRequest("reasoning." + name + " must be auto for Anthropic-format deployments")
+			if value, exists := rawStringValue(reasoning[name]); exists && value != "auto" && value != "none" {
+				return invalidRequest("reasoning." + name + " must be auto or none for Anthropic-format deployments")
 			}
 		}
 	}

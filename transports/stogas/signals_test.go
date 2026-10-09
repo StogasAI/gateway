@@ -1006,15 +1006,19 @@ func TestProviderErrorBilledUsageIsValidatedAndSettledExactly(t *testing.T) {
 	providerErr := &schemas.BifrostError{
 		StatusCode: &statusCode,
 		Error:      &schemas.ErrorField{Message: "provider failed after processing"},
-		ExtraFields: schemas.BifrostErrorExtraFields{BilledUsage: &schemas.BifrostLLMUsage{
-			PromptTokens:     100,
-			CompletionTokens: 20,
-			TotalTokens:      120,
-			PromptTokensDetails: &schemas.ChatPromptTokensDetails{
-				CachedReadTokens: 10,
+		ExtraFields: schemas.BifrostErrorExtraFields{
+			OriginalModelRequested: "unpriced-alias",
+			ResolvedModelUsed:      "unpriced-alias",
+			BilledUsage: &schemas.BifrostLLMUsage{
+				PromptTokens:     100,
+				CompletionTokens: 20,
+				TotalTokens:      120,
+				PromptTokensDetails: &schemas.ChatPromptTokensDetails{
+					CachedReadTokens: 10,
+				},
+				CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{ReasoningTokens: 5},
 			},
-			CompletionTokensDetails: &schemas.ChatCompletionTokensDetails{ReasoningTokens: 5},
-		}},
+		},
 	}
 	if err := state.Adapter.IngestResponse(state, nil, providerErr); err != nil {
 		t.Fatalf("IngestResponse returned error: %v", err)

@@ -2,14 +2,19 @@ package attest
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	verifier "github.com/StogasAI/verifier/go"
+	ref "github.com/StogasAI/verifier/go/reference"
 )
 
 type quoteFunc func(context.Context, [64]byte) ([]byte, error)
@@ -54,13 +59,25 @@ func (r *testReservations) acquire() (func(), bool) {
 	}
 }
 
-func startQuote(b *Batcher, ctx context.Context, binding Binding) <-chan quoteOutcome {
+func startQuote(b *Batcher, ctx context.Context, leaf Leaf) <-chan quoteOutcome {
 	result := make(chan quoteOutcome, 1)
 	go func() {
-		quote, err := b.Quote(ctx, binding)
+		quote, err := b.Quote(ctx, leaf)
 		result <- quoteOutcome{quote, err}
 	}()
 	return result
+}
+
+func testTranscript(i int) [32]byte {
+	return sha256.Sum256(binary.BigEndian.AppendUint32(nil, uint32(i)))
+}
+
+func testLeaf(i int) Leaf {
+	leaf, err := E2EESessionLeaf(Production, [32]byte{17}, testTranscript(i))
+	if err != nil {
+		panic(err)
+	}
+	return leaf
 }
 
 func newTestBatcher(t *testing.T, backend Attester, reservations *testReservations) *Batcher {
@@ -72,17 +89,20 @@ func newTestBatcher(t *testing.T, backend Attester, reservations *testReservatio
 	return b
 }
 
-func verifyChannel(t *testing.T, outcome quoteOutcome, binding Binding) *ChannelQuote {
+// The independent reference decoder checks that each waiter received its own leaf's proof.
+func verifyChannel(t *testing.T, outcome quoteOutcome, i int) *ChannelQuote {
 	t.Helper()
 	if outcome.err != nil || outcome.quote == nil {
 		t.Fatal("quote failed", outcome.err)
 	}
 	quote := outcome.quote
-	if err := quote.Proof.Verify(binding, [64]byte(quote.Report[0x50:0x90])); err != nil {
+	if err := ref.VerifyBatchProof(ref.E2EELeaf(byte(Production), [32]byte{17}, testTranscript(i)), quote.Proof, [64]byte(quote.Report[0x50:0x90])); err != nil {
 		t.Fatal(err)
 	}
 	return quote
 }
+
+func leafCount(quote *ChannelQuote) uint16 { return binary.BigEndian.Uint16(quote.Proof) }
 
 func TestBatcherBatchesWaitersAcrossModesWithoutDelayingIdleWork(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -96,19 +116,19 @@ func TestBatcherBatchesWaitersAcrossModesWithoutDelayingIdleWork(t *testing.T) {
 			<-allow
 			return testReport(data), nil
 		}), resources)
-		first := startQuote(b, context.Background(), testBinding(0))
+		first := startQuote(b, context.Background(), testLeaf(0))
 		<-started
 		results := make([]<-chan quoteOutcome, 64)
 		for i := range results {
-			results[i] = startQuote(b, context.Background(), testBinding(i+1))
+			results[i] = startQuote(b, context.Background(), testLeaf(i+1))
 		}
 		synctest.Wait()
 		if b.Diagnostics().Pending != 64 || calls.Load() != 1 {
 			t.Fatal(b.Diagnostics(), calls.Load())
 		}
 		allow <- struct{}{}
-		q := verifyChannel(t, <-first, testBinding(0))
-		if q.Proof.LeafCount != 1 {
+		q := verifyChannel(t, <-first, 0)
+		if leafCount(q) != 1 {
 			t.Fatal("idle work waited for a batch")
 		}
 		q.Close()
@@ -116,8 +136,8 @@ func TestBatcherBatchesWaitersAcrossModesWithoutDelayingIdleWork(t *testing.T) {
 		allow <- struct{}{}
 		var previous *ChannelQuote
 		for i, result := range results {
-			quote := verifyChannel(t, <-result, testBinding(i+1))
-			if quote.Proof.LeafCount != 64 {
+			quote := verifyChannel(t, <-result, i+1)
+			if leafCount(quote) != 64 {
 				t.Fatal("waiters were not combined")
 			}
 			// A result may be retained/mutated by its owner without poisoning peers.
@@ -148,12 +168,12 @@ func TestBatcherCancellationRetainsActualHardwareOwnership(t *testing.T) {
 			return testReport(data), nil
 		}), resources)
 		ctx, cancel := context.WithCancel(context.Background())
-		active := startQuote(b, ctx, testBinding(0))
+		active := startQuote(b, ctx, testLeaf(0))
 		<-started
 		queuedCtx, cancelQueued := context.WithCancel(context.Background())
-		queued := startQuote(b, queuedCtx, testBinding(1))
+		queued := startQuote(b, queuedCtx, testLeaf(1))
 		synctest.Wait()
-		if _, err := b.Quote(context.Background(), testBinding(2)); !errors.Is(err, ErrQuoteCapacity) {
+		if _, err := b.Quote(context.Background(), testLeaf(2)); !errors.Is(err, ErrQuoteCapacity) {
 			t.Fatal(err)
 		}
 		cancelQueued()
@@ -178,7 +198,7 @@ func TestBatcherCancellationRetainsActualHardwareOwnership(t *testing.T) {
 		if resources.used.Load() != 1 {
 			t.Fatal("shutdown timeout released active hardware")
 		}
-		if _, err := b.Quote(context.Background(), testBinding(3)); !errors.Is(err, ErrQuoteClosed) {
+		if _, err := b.Quote(context.Background(), testLeaf(3)); !errors.Is(err, ErrQuoteClosed) {
 			t.Fatal(err)
 		}
 		close(allow)
@@ -200,15 +220,15 @@ func TestBatcherNeverExceedsProtocolBoundAndShutdownReleasesQueuedWork(t *testin
 			<-allow
 			return testReport(data), nil
 		}), resources)
-		first := startQuote(b, context.Background(), testBinding(0))
+		first := startQuote(b, context.Background(), testLeaf(0))
 		<-started
 		results := make([]<-chan quoteOutcome, MaxBatchLeaves+3)
 		for i := range results {
-			results[i] = startQuote(b, context.Background(), testBinding(i+1))
+			results[i] = startQuote(b, context.Background(), testLeaf(i+1))
 		}
 		synctest.Wait()
 		allow <- struct{}{}
-		verifyChannel(t, <-first, testBinding(0)).Close()
+		verifyChannel(t, <-first, 0).Close()
 		<-started
 		if got := b.Diagnostics(); got.Active != MaxBatchLeaves || got.Pending != 3 {
 			t.Fatal(got)
@@ -268,12 +288,12 @@ func TestBatcherRejectsMalformedLocalReportsAndRecovers(t *testing.T) {
 				}
 				return encoded, nil
 			}), resources)
-			if quote, err := b.Quote(context.Background(), testBinding(0)); quote != nil || !errors.Is(err, ErrQuoteReport) {
+			if quote, err := b.Quote(context.Background(), testLeaf(0)); quote != nil || !errors.Is(err, ErrQuoteReport) {
 				t.Fatal(err)
 			}
 			// A failure does not poison the worker or retain ownership after its batch.
-			quote, err := b.Quote(context.Background(), testBinding(1))
-			verifyChannel(t, quoteOutcome{quote, err}, testBinding(1)).Close()
+			quote, err := b.Quote(context.Background(), testLeaf(1))
+			verifyChannel(t, quoteOutcome{quote, err}, 1).Close()
 			if err := b.Close(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -287,12 +307,12 @@ func TestBatcherRejectsMalformedLocalReportsAndRecovers(t *testing.T) {
 func TestBatcherRejectsInvalidWorkBeforeAdmission(t *testing.T) {
 	resources := &testReservations{limit: 1}
 	b := newTestBatcher(t, quoteFunc(func(context.Context, [64]byte) ([]byte, error) { t.Error("backend should not run"); return nil, nil }), resources)
-	if _, err := b.Quote(context.Background(), NativeTLSBinding{}); err == nil {
+	if _, err := b.Quote(context.Background(), Leaf{}); err == nil {
 		t.Fatal("accepted invalid binding")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := b.Quote(ctx, testBinding(0)); !errors.Is(err, context.Canceled) {
+	if _, err := b.Quote(ctx, testLeaf(0)); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	if resources.peak.Load() != 0 {
@@ -319,22 +339,41 @@ func TestBatchWorkspaceStaysChargedWhenAnEarlyResultCloses(t *testing.T) {
 			if !ok {
 				t.Fatal("test reservation failed")
 			}
-			jobs[i] = &quoteJob{ctx: context.Background(), binding: testBinding(i), release: release, result: make(chan quoteOutcome)}
+			jobs[i] = &quoteJob{ctx: context.Background(), leaf: testLeaf(i), release: release, result: make(chan quoteOutcome)}
 			jobs[i].owners.Store(1)
 		}
 		done := make(chan struct{})
 		go func() { defer close(done); b.generate(jobs) }()
-		verifyChannel(t, <-jobs[0].result, testBinding(0)).Close()
+		verifyChannel(t, <-jobs[0].result, 0).Close()
 		// The second consumer has not received its result yet; the shared tree
 		// and batch arrays still belong to the worker, including the first job's share.
 		synctest.Wait()
 		if resources.used.Load() != 2 {
 			t.Fatal("shared batch storage released early", resources.used.Load())
 		}
-		verifyChannel(t, <-jobs[1].result, testBinding(1)).Close()
+		verifyChannel(t, <-jobs[1].result, 1).Close()
 		<-done
 		if resources.used.Load() != 0 {
 			t.Fatal("batch storage leaked")
 		}
 	})
+}
+
+// BenchmarkQuoteBatch measures leaf hashing, tree/report-data construction and
+// every encoded proof through the Rust producer, excluding hardware reports.
+func BenchmarkQuoteBatch(b *testing.B) {
+	for _, size := range []int{1, 64, MaxBatchLeaves} {
+		b.Run(strconv.Itoa(size), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				leaves := make([][64]byte, size)
+				for i := range leaves {
+					leaves[i] = testLeaf(i).hash
+				}
+				if _, _, err := verifier.QuoteBatch(leaves); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }

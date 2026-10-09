@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -62,7 +63,7 @@ func (s *CertificateStore) InstallBootChain(chain []byte, hostname string) (Cert
 	if err != nil {
 		return CertificateState{}, err
 	}
-	if SHA256Hex(spki) != s.material.TLSSPKISHA256 {
+	if sha256.Sum256(spki) != s.material.TLSSPKISHA256 {
 		return CertificateState{}, errors.New("certificate must reuse the guest TLS key")
 	}
 	intermediates := x509.NewCertPool()

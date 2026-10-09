@@ -43,10 +43,7 @@ func dosCPUSeconds() float64 {
 // valid-shaped header and invalid tag. The same bytes can be submitted again.
 func dosForgedStart(t testing.TB, number uint64) []byte {
 	t.Helper()
-	encoder, err := newRecords(referenceMessage{secret: [32]byte{99}, header: make([]byte, MaxRatchetHeaderBytes)}, [32]byte{2}, number, requestDirection)
-	if err != nil {
-		t.Fatal(err)
-	}
+	encoder := newRecords(referenceMessage{secret: [32]byte{99}, header: make([]byte, MaxRatchetHeaderBytes)}, [32]byte{2}, number, requestDirection)
 	encoded, err := encoder.seal(Metadata, []byte{0})
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +199,7 @@ func BenchmarkUnauthenticatedAdmission(b *testing.B) {
 	}
 	for _, gap := range []uint64{0, 32, 100, 256, ReplayWindow - 1, ReplayWindow} {
 		b.Run(fmt.Sprintf("forged_start/gap=%d", gap), func(b *testing.B) {
-			session := testServerSession([32]byte{1}, [32]byte{2})
+			session, _ := testServerSession(b)
 			defer session.Close()
 			forged := dosForgedStart(b, gap)
 			want := ErrAuthentication
@@ -306,7 +303,7 @@ func TestAdmissionCPUContentionProbe(t *testing.T) {
 	var workers sync.WaitGroup
 	var began time.Time
 	for worker := range config.Workers {
-		session := testServerSession([32]byte{1}, [32]byte{2})
+		session, _ := testServerSession(t)
 		forged := dosForgedStart(t, ReplayWindow-1)
 		workers.Go(func() {
 			defer session.Close()

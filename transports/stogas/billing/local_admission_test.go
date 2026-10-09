@@ -348,7 +348,7 @@ func TestTerminalProviderFailuresBackOffWithoutRelabelingTheEvent(t *testing.T) 
 	if s.callerBackoff(claims, nil, time.Now()) == nil {
 		t.Fatal("provider outage did not suppress repeated holds")
 	}
-	if event.Error != nil {
+	if event.GatewayError != nil {
 		t.Fatal("provider outcome changed Stogas lifecycle classification")
 	}
 	success := RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "success"}}}
