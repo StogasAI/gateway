@@ -191,9 +191,9 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	if _, exists := decoded["hold_params_hash"]; exists {
 		t.Fatal("the private reconciliation hash must not enter the public request-log payload")
 	}
-	pricing, ok := decoded["meters"].(map[string]any)
+	pricing, ok := decoded["usage"].(map[string]any)["meters"].(map[string]any)
 	if !ok || len(pricing) != 0 {
-		t.Fatalf("pricing = %#v, want empty object", decoded["meters"])
+		t.Fatalf("pricing = %#v, want empty object", decoded["usage"].(map[string]any)["meters"])
 	}
 }
 
@@ -219,10 +219,10 @@ func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.CatalogVersion = catalogVersion(39)
-	event.CatalogChainHash = optionalString("sha256:" + strings.Repeat("b", 64))
+	event.ProviderAttempts = []ProviderAttempt{{CatalogChainHash: optionalString("sha256:" + strings.Repeat("b", 64))}}
 	overhead := "29"
-	event.CacheWriteOverheadUSD = &overhead
-	event.Meters = EventMeters{
+	event.Usage.CacheWriteOverheadUSD = &overhead
+	event.Usage.Meters = EventMeters{
 		MeterCachedInputTokens: PricedMeter("300", RatePerMillionTokens, "0", "0"),
 		MeterInputTokens:       PricedMeter("17", "per_mill_tokens", "100", "2"),
 		MeterTotalInputTokens:  {Quantity: "317"},
@@ -236,7 +236,7 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 		t.Fatalf("decodeGatewayRequestEvent returned error: %v", err)
 	}
 	projected := tinybirdGatewayRequestEvent(decoded)
-	if projected.CatalogVersion == nil || *projected.CatalogVersion != 39 || projected.CatalogChainHash == nil || *projected.CatalogChainHash != *event.CatalogChainHash {
+	if projected.CatalogVersion == nil || *projected.CatalogVersion != 39 || projected.AnalyticsCatalogChainHash == nil || *projected.AnalyticsCatalogChainHash != *event.ProviderAttempts[0].CatalogChainHash {
 		t.Fatalf("request log projection lost the historical catalog identity: %#v", projected)
 	}
 	if projected.SchemaVersion != RequestLogSchemaVersion || projected.RequestID != event.RequestID ||
@@ -247,13 +247,13 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 		t.Fatalf("decoded Tinybird projection = %#v", projected)
 	}
 
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"meters":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsd":"1","usd":"1"}}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"meters":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsd":"1","usd":"1"}}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid canonical pricing")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_read_savings_usd":"-1","meters":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"cache_read_savings_usd":"-1","meters":{}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache read savings")
 	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"cache_write_overhead_usd":"-1","meters":{}}`); err == nil {
+	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"cache_write_overhead_usd":"-1","meters":{}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache write overhead")
 	}
 }
@@ -263,17 +263,10 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 	successStatus := 200
 	ttftMS := uint32(150)
 	event := tinybirdGatewayRequestEvent(RequestEvent{
-		SchemaVersion:         RequestLogSchemaVersion,
-		CacheWriteOverheadUSD: stringPtr("23"),
-		Performance:           RequestPerformance{TotalMS: 150, ProviderMS: 140, TTFTMS: &ttftMS},
-		Meters: EventMeters{
-			"input_tokens":                PricedMeter("12", "per_mill_tokens", "1", "1"),
-			"total_input_tokens":          {Quantity: "19"},
-			"total_cache_write_tokens":    {Quantity: "7"},
-			"cache_write_input_tokens":    {Quantity: "1"},
-			"cache_write_5m_input_tokens": {Quantity: "2"},
-			"cache_write_1h_input_tokens": {Quantity: "4"},
-		},
+		SchemaVersion: RequestLogSchemaVersion,
+
+		Performance: RequestPerformance{TotalMS: 150, ProviderMS: 140, TTFTMS: &ttftMS},
+
 		analyticsQuantities: map[string]uint64{
 			"input_tokens":                12,
 			"total_input_tokens":          19,
@@ -284,11 +277,11 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		},
 		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 3, DurationUS: 41}},
 		ProviderAttempts: []ProviderAttempt{{
-			LatencyMS:    30,
-			Provider:     "openai",
-			Status:       "connection_error",
-			StatusCode:   &failedStatus,
-			UpstreamByok: nil,
+			LatencyMS:  30,
+			Provider:   "openai",
+			Status:     "connection_error",
+			StatusCode: &failedStatus,
+			Byok:       nil,
 		}, {
 			LatencyMS:         90,
 			Provider:          "anthropic",
@@ -296,12 +289,21 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 			FinishReason:      "stop",
 			Status:            "success",
 			StatusCode:        &successStatus,
-			UpstreamByok:      nil,
+			Byok:              nil,
 		}},
-		GatewayVersion: "v1.5.13",
+		GatewayVersion: "v1.5.13", Usage: RequestUsage{CacheWriteOverheadUSD: stringPtr("23"),
+
+			Meters: EventMeters{
+				"input_tokens":                PricedMeter("12", "per_mill_tokens", "1", "1"),
+				"total_input_tokens":          {Quantity: "19"},
+				"total_cache_write_tokens":    {Quantity: "7"},
+				"cache_write_input_tokens":    {Quantity: "1"},
+				"cache_write_5m_input_tokens": {Quantity: "2"},
+				"cache_write_1h_input_tokens": {Quantity: "4"},
+			}},
 	})
 
-	if event.Error != "null" || event.AnalyticsErrorCode != "" || event.AnalyticsErrorStatus != nil {
+	if event.GatewayError != "null" || event.AnalyticsErrorCode != "" || event.AnalyticsErrorStatus != nil {
 		t.Fatalf("unexpected error: %#v", event)
 	}
 	if event.AnalyticsInputTokens == nil || *event.AnalyticsInputTokens != 19 || event.AnalyticsProviderStatus != "success" {
@@ -331,9 +333,9 @@ func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
 		len(attempts) != 2 || attempts[1].Provider != "anthropic" {
 		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
 	}
-	var pricing map[string]map[string]string
-	if err := json.Unmarshal([]byte(event.Meters), &pricing); err != nil || pricing["input_tokens"]["quantity"] != "12" {
-		t.Fatalf("pricing = %q, err=%v", event.Meters, err)
+	var usage RequestUsage
+	if err := json.Unmarshal([]byte(event.Usage), &usage); err != nil || usage.Meters["input_tokens"].Quantity != "12" {
+		t.Fatalf("pricing = %q, err=%v", event.Usage, err)
 	}
 	var pluginMetrics plugins.Metrics
 	if err := json.Unmarshal([]byte(event.Plugins), &pluginMetrics); err != nil ||
@@ -384,8 +386,8 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 		StartedAt: startedAt,
 	})
 
-	if *event.Meters["input_tokens"].RateUSD != "2000000" {
-		t.Fatalf("expected settled pricing audit, got %#v", event.Meters)
+	if *event.Usage.Meters["input_tokens"].RateUSD != "2000000" {
+		t.Fatalf("expected settled pricing audit, got %#v", event.Usage.Meters)
 	}
 	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != ttftMS {
 		t.Fatalf("expected request TTFT, got %#v", event.Performance.TTFTMS)
@@ -448,8 +450,8 @@ func TestNewRequestEventKeepsCacheEconomicsIndependentFromCustomerBilling(t *tes
 				Authorization:       tc.authorization,
 				CacheReadSavingsUSD: &upstreamSavings,
 			})
-			if event.BilledCostUSD != tc.wantBilledCost ||
-				event.CacheReadSavingsUSD == nil || *event.CacheReadSavingsUSD != "90" {
+			if event.Usage.BilledCostUSD != tc.wantBilledCost ||
+				event.Usage.CacheReadSavingsUSD == nil || *event.Usage.CacheReadSavingsUSD != "90" {
 				t.Fatalf("unexpected cache savings projection: %#v", event)
 			}
 		})
@@ -816,12 +818,11 @@ func testAuthorization() *Authorization {
 
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
-		SchemaVersion:   RequestLogSchemaVersion,
-		CreatedAt:       time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		RequestID:       "request-1",
-		StogasAPIKeyID:  "key-1",
-		UpstreamCostUSD: ZeroChargeUSD,
-		BilledCostUSD:   ZeroChargeUSD,
+		SchemaVersion:  RequestLogSchemaVersion,
+		CreatedAt:      time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		RequestID:      "request-1",
+		StogasAPIKeyID: "key-1", Usage: RequestUsage{UpstreamCostUSD: ZeroChargeUSD,
+			BilledCostUSD: ZeroChargeUSD},
 	}
 }
 
@@ -869,5 +870,58 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 		if _, _, err := ValidateMeters(meters); err == nil {
 			t.Fatalf("accepted %s", name)
 		}
+	}
+}
+
+func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
+	for _, item := range []struct{ bytes, tokens string }{{"0", "0"}, {"6", "1.5"}, {"7", "1.75"}, {"18446744073709551615", "4611686018427387903.75"}} {
+		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := encodeGatewayRequestEvent(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(payload), &wire); err != nil {
+			t.Fatal(err)
+		}
+		if wire["plugins"] != nil || wire["meters"] != nil || wire["catalog_chain_hash"] != nil || wire["error"] != nil {
+			t.Fatal("request log contains empty plugins or obsolete root fields")
+		}
+		var usage map[string]json.RawMessage
+		if err := json.Unmarshal(wire["usage"], &usage); err != nil {
+			t.Fatal(err)
+		}
+		if usage["cache_write_overhead_usd"] != nil || string(usage["cache_read_savings_usd"]) != `"0"` {
+			t.Fatal("cache costs did not distinguish unknown from measured zero")
+		}
+		var standardText map[string]string
+		if err := json.Unmarshal(usage["standard_text_tokens"], &standardText); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := standardText["reasoning"]; present || standardText["output"] != "0" || standardText["input"] != item.tokens {
+			t.Fatalf("standard text JSON contains an unmeasured value or lost measured zero: %s", usage["standard_text_tokens"])
+		}
+		restored, err := decodeGatewayRequestEvent(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stt := restored.Usage.StandardTextTokens
+		if stt.Input == nil || *stt.Input != item.tokens || stt.Output == nil || *stt.Output != "0" || stt.Reasoning != nil {
+			t.Fatalf("standard text units changed presence or precision: %#v", stt)
+		}
+		restored.Usage.StandardTextTokens.Input = stringPtr("1.25")
+		invalid, _ := encodeGatewayRequestEvent(restored)
+		if _, err := decodeGatewayRequestEvent(invalid); err == nil {
+			t.Fatal("inconsistent standard text units accepted")
+		}
+	}
+	event := testGatewayRequestEvent()
+	event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{}, StogasExport: &plugins.StogasExportMetrics{}}
+	payload, err := encodeGatewayRequestEvent(event)
+	if err != nil || !strings.Contains(payload, `"plugins":{"stogas_structured_pii_redaction":{"items_redacted":0,"duration_us":0},"stogas_export":{"capture_us":0}}`) {
+		t.Fatalf("configured plugins with measured zero disappeared: %s, %v", payload, err)
 	}
 }

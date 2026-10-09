@@ -58,6 +58,9 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	}
 	code := bifrostErrorCode(bifrostErr)
 	switch code {
+	case "request_timeout":
+		return http.StatusGatewayTimeout, schemas.RequestTimedOut, code,
+			"The response timed out. Generation may continue and be billed.", true
 	case "upstream_verification_failed":
 		return http.StatusServiceUnavailable, "gateway_error", code,
 			"Provider verification failed; the request was not sent", true

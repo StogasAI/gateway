@@ -94,348 +94,6 @@
     "valid": true
   },
   {
-    "name": "all settings",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "format": "otlp",
-              "encoding": "protobuf",
-              "headers": {
-                "Authorization": "Bearer test",
-                "x-project": "project"
-              },
-              "content": "both",
-              "maxCaptureBytes": 262144,
-              "maxRetries": 3,
-              "sampleRate": 0.5,
-              "outcomes": [
-                "success",
-                "failure",
-                "cancelled"
-              ],
-              "errorStatusRanges": [
-                {
-                  "min": 400,
-                  "max": 499
-                }
-              ],
-              "errorCodes": [
-                "upstream_protocol_error"
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": true
-  },
-  {
-    "name": "format raw",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "format": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "encoding xml",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "encoding": "xml"
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "content raw",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "content": "raw"
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "sampleRate -1",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "sampleRate": -1
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "sampleRate 1.1",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "sampleRate": 1.1
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxRetries 4",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxRetries": 4
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxRetries -1",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxRetries": -1
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxRetries 1.5",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxRetries": 1.5
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxCaptureBytes 0",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxCaptureBytes": 0
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxCaptureBytes 262145",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxCaptureBytes": 262145
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "maxCaptureBytes 1.5",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxCaptureBytes": 1.5
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "outcomes []",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "outcomes": []
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "outcomes ['failure', 'failure']",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "outcomes": [
-                "failure",
-                "failure"
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "errorCodes []",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorCodes": []
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "errorCodes ['Invalid']",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorCodes": [
-                "Invalid"
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "errorStatusRanges []",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorStatusRanges": []
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "errorStatusRanges [{'min': 500, 'max': 400}]",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorStatusRanges": [
-                {
-                  "min": 500,
-                  "max": 400
-                }
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "errorStatusRanges [{'min': 200, 'max': 500}]",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorStatusRanges": [
-                {
-                  "min": 200,
-                  "max": 500
-                }
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
     "name": "headers {'Authorization': 'one', 'authorization': 'two'}",
     "source": {
       "plugins": {
@@ -464,6 +122,24 @@
               "url": "https://collector.example/v1/traces",
               "headers": {
                 "Content-Type": "text/plain"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "headers {'Idempotency-Key': 'override'}",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "headers": {
+                "Idempotency-Key": "override"
               }
             }
           ]
@@ -542,38 +218,6 @@
     "valid": false
   },
   {
-    "name": "null format",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "format": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null encoding",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "encoding": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
     "name": "null headers",
     "source": {
       "plugins": {
@@ -582,118 +226,6 @@
             {
               "url": "https://collector.example/v1/traces",
               "headers": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null content",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "content": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null maxRetries",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxRetries": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null maxCaptureBytes",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "maxCaptureBytes": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null sampleRate",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "sampleRate": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null outcomes",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "outcomes": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null errorCodes",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorCodes": null
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "null errorStatusRanges",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "errorStatusRanges": null
             }
           ]
         }
@@ -807,76 +339,6 @@
     "valid": false
   },
   {
-    "name": "webhook",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "format": "webhook"
-            }
-          ]
-        }
-      }
-    },
-    "valid": true
-  },
-  {
-    "name": "webhook protobuf",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "format": "webhook",
-              "encoding": "protobuf"
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "unreachable failure filters",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "outcomes": [
-                "success"
-              ],
-              "errorCodes": [
-                "upstream_error"
-              ]
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
-    "name": "unknown field",
-    "source": {
-      "plugins": {
-        "stogasExport": {
-          "destinations": [
-            {
-              "url": "https://collector.example/v1/traces",
-              "retry": 3
-            }
-          ]
-        }
-      }
-    },
-    "valid": false
-  },
-  {
     "name": "Unicode header",
     "source": {
       "plugins": {
@@ -893,5 +355,158 @@
       }
     },
     "valid": true
+  },
+  {
+    "name": "unsupported format",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "format": "webhook"
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported encoding",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "encoding": "json"
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported content",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "content": "both"
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported maxCaptureBytes",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "maxCaptureBytes": 65536
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported maxRetries",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "maxRetries": 0
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported sampleRate",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "sampleRate": 1
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported outcomes",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "outcomes": [
+                "failure"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported errorStatusRanges",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "errorStatusRanges": [
+                {
+                  "min": 500,
+                  "max": 599
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "unsupported errorCodes",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://receiver.example/events",
+              "errorCodes": [
+                "gateway_error"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
   }
 ]

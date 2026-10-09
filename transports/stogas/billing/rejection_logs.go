@@ -74,6 +74,30 @@ type rejectionLogBuffer struct {
 	closed          bool
 }
 
+// NewRejectionEvent gives authenticated pre-authorization failures the same
+// customer-visible representation in telemetry and optional content exports.
+func NewRejectionEvent(input RejectionInput) RequestEvent {
+	at := input.CreatedAt.UTC()
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	stamp := at.Format("2006-01-02T15:04:05.000Z")
+	zero := ZeroChargeUSD
+	return RequestEvent{
+		SchemaVersion: RequestLogSchemaVersion,
+		RequestID:     input.RequestID, CreatedAt: stamp, LastRequestAt: stamp, RequestCount: 1,
+		PolicyVersions: input.PolicyVersions,
+		StogasAPIKeyID: input.Claims.KeyID, StogasOrganizationID: input.Claims.OrganizationID,
+		StogasUserID: input.Claims.ResponsibleID, StogasGrantID: input.Claims.GrantID,
+		RequestType:      input.RequestType,
+		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
+		ProviderAttempts: []ProviderAttempt{},
+		Usage: RequestUsage{Meters: EventMeters{}, UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
+			CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero},
+		NodeID: input.NodeID, GatewayVersion: input.GatewayVersion,
+	}
+}
+
 func (s *Service) RecordRejection(input RejectionInput) {
 	if s == nil || input.Claims == nil || input.RequestID == "" || input.StatusCode < 400 || input.StatusCode > 599 {
 		return
@@ -115,23 +139,8 @@ func (s *Service) RecordRejection(input RejectionInput) {
 			b.recordDropped(1)
 			return
 		}
-		status := input.StatusCode
-		zero := ZeroChargeUSD
-		group = &rejectionLogGroup{
-			queuedAt: time.Now().UTC(),
-			RequestEvent: RequestEvent{
-				SchemaVersion:  RequestLogSchemaVersion,
-				PolicyVersions: input.PolicyVersions,
-				StogasAPIKeyID: input.Claims.KeyID, StogasOrganizationID: input.Claims.OrganizationID,
-				StogasUserID:  input.Claims.ResponsibleID,
-				StogasGrantID: input.Claims.GrantID, RequestType: input.RequestType,
-				Error:            &EventError{Code: input.Code, Status: status},
-				ProviderAttempts: []ProviderAttempt{}, Meters: EventMeters{},
-				UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
-				CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero,
-				NodeID: input.NodeID, GatewayVersion: input.GatewayVersion,
-			},
-		}
+		group = &rejectionLogGroup{queuedAt: time.Now().UTC(), RequestEvent: NewRejectionEvent(input)}
+		group.RequestCount = 0
 		b.groups[key] = group
 		b.perKey[input.Claims.KeyID]++
 	}

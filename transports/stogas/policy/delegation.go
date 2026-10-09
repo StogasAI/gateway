@@ -20,25 +20,32 @@ const (
 	permissionFilter
 	permissionSort
 	permissionNodes
-	permissionFallbacks
+	permissionAttempts
 	permissionDelegation
 	permissionTextExtraction
 	permissionEncryption
 	permissionExport
-	allPermissions     = (permissionExport << 1) - 1
+	permissionTotalTimeout
+	permissionOutputIdleTimeout
+	permissionSelection
+	allPermissions     = permissionSelection | (permissionSelection - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation | permissionEncryption)
 )
 
 var permissionSections = map[string]Permission{
 	"access": permissionAccess, "input": permissionInput, "limits": permissionLimits,
+	"timeouts":                     permissionTotalTimeout | permissionOutputIdleTimeout,
+	"timeouts.totalSeconds":        permissionTotalTimeout,
+	"timeouts.outputIdleSeconds":   permissionOutputIdleTimeout,
 	"plugins":                      permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport,
 	"plugins.stogasExport":         permissionExport,
 	"plugins.stogasTextExtraction": permissionTextExtraction,
 	"plugins.stogasRedaction":      permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionFallbacks,
+	"routing":        permissionFilter | permissionSort | permissionNodes | permissionAttempts | permissionSelection,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
-	"routing.allowedCatalogNodes": permissionNodes, "routing.fallbacks": permissionFallbacks,
-	"delegation": permissionDelegation, "encryption": permissionEncryption,
+	"routing.allowedCatalogNodes": permissionNodes, "routing.maxAttempts": permissionAttempts,
+	"routing.selection": permissionSelection,
+	"delegation":        permissionDelegation, "encryption": permissionEncryption,
 }
 
 var policyEntityID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -80,7 +87,7 @@ func (p Permission) MarshalJSON() ([]byte, error) {
 	}
 	sections := make([]string, 0, len(permissionSections))
 	for section, mask := range permissionSections {
-		if section == "routing" || section == "plugins" {
+		if section == "routing" || section == "plugins" || section == "timeouts" {
 			continue
 		}
 		if p&mask == mask {
@@ -208,7 +215,7 @@ func (d *SourceDocument) ownSections() Permission {
 			sections |= permissionEncryptedPlugins
 			continue
 		}
-		if name == "routing" || name == "plugins" {
+		if name == "routing" || name == "plugins" || name == "timeouts" {
 			var settings map[string]json.RawMessage
 			if json.Unmarshal(raw, &settings) == nil {
 				for option := range settings {

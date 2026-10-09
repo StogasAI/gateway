@@ -1164,7 +1164,7 @@ func HandleGeminiResponsesStream(
 
 					// Check if this is the last chunk
 					isLastChunk := false
-					if response.Type == schemas.ResponsesStreamResponseTypeCompleted {
+					if response.Type == schemas.ResponsesStreamResponseTypeCompleted || response.Type == schemas.ResponsesStreamResponseTypeIncomplete {
 						isLastChunk = true
 					}
 
@@ -1188,7 +1188,11 @@ func HandleGeminiResponsesStream(
 				}
 			}
 		}
-		// Finalize the stream by closing any open items
+		// Finalize the stream by closing any open items. An upstream that sent no chunk
+		// never reported its model, so fall back to the requested one.
+		if streamState.Model == nil {
+			streamState.Model = &model
+		}
 		finalResponses := FinalizeGeminiResponsesStream(streamState, lastUsageMetadata, sequenceNumber)
 		for i, finalResponse := range finalResponses {
 			if finalResponse == nil {
@@ -1422,6 +1426,11 @@ func (provider *GeminiProvider) Speech(ctx *schemas.BifrostContext, key schemas.
 // Rerank is not supported by the Gemini provider.
 func (provider *GeminiProvider) Rerank(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostRerankRequest) (*schemas.BifrostRerankResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.RerankRequest, provider.GetProviderKey())
+}
+
+// Decision is not supported by the Gemini provider.
+func (provider *GeminiProvider) Decision(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostDecisionRequest) (*schemas.BifrostDecisionResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError(schemas.DecisionRequest, provider.GetProviderKey())
 }
 
 // OCR is not supported by the Gemini provider.

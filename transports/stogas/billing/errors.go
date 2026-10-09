@@ -78,7 +78,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"method_not_allowed",
 		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
-		"request_already_used", "request_preparation_failed", "request_too_large", "response_encoding_failed",
+		"request_already_used", "request_preparation_failed", "request_timeout", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",
 		"unsupported_media_type", "unsupported_request", "unsupported_service_tier", "unsupported_tool":
 		return code

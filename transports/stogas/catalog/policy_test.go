@@ -16,7 +16,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"fallbacks":{"maxPreDispatchCandidates":2}}}`))
+			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"maxAttempts": 2}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,7 +77,7 @@ func policyConfig(maxCandidates int) *policy.Config {
 	return &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
 		Routing: policy.Routing{
-			MaxPreDispatchCandidates: maxCandidates,
+			MaxAttempts: maxCandidates,
 		},
 		Schema: "stogas.key-config.compiled.v1",
 	}

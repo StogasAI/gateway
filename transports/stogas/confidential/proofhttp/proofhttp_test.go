@@ -5,14 +5,16 @@ import (
 	"context"
 	"crypto/mldsa"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
-	"github.com/maximhq/bifrost/transports/stogas/billing"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
+	verifier "github.com/StogasAI/verifier/go"
+	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 )
 
@@ -20,35 +22,72 @@ const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 var testCatalogSelectionIDs = []string{"author:openai", "model:gpt-5.5", "deployment:openai-gpt-5.5", "route:openai-responses", "provider:openai"}
 
-func receiptService(t *testing.T) (*Service, []byte, *mldsa.PrivateKey) {
+// receiptService signs under fresh keys committed by a synthetic boot document.
+func receiptService(t *testing.T) (*Service, [32]byte, *mldsa.PublicKey) {
 	t.Helper()
-	data, err := os.ReadFile("../attest/testdata/node-boot-v1.json")
+	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fixture struct {
-		Record attest.BootRecord `json:"record"`
-	}
-	if err = json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	document, err := fixture.Record.Document()
+	t.Cleanup(keys.Close)
+	report := make([]byte, 0x4a0)
+	data, err := keys.ReportData(1, [32]byte{1}, [32]byte{2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
+	copy(report[0x50:], data[:])
+	document, err := keys.BootDocument(1, [32]byte{1}, [32]byte{2}, report, [32]byte{3}, [32]byte{4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := New(document, key)
+	var boot struct {
+		ReportData struct {
+			SigningPublicKey string `json:"signing_public_key"`
+		} `json:"report_data"`
+	}
+	if err := json.Unmarshal(document, &boot); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return service, document, key
+	public, err := mldsa.NewPublicKey(mldsa.MLDSA65(), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := New(sha256.Sum256(document), "amber-anchor-00", keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service, sha256.Sum256(document), public
+}
+
+// verifyReceipt is an independent Go check of the Rust signer's message and digests.
+func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, response [32]byte) bool {
+	receipt := object.Receipt
+	encoded, err := json.Marshal(object)
+	var bag map[string]json.RawMessage
+	if err != nil || json.Unmarshal(encoded, &bag) != nil {
+		return false
+	}
+	delete(bag, "receipt")
+	if encoded, err = json.Marshal(bag); err != nil {
+		return false
+	}
+	canonical, err := jsoncanonicalizer.Transform(encoded)
+	signature, signatureErr := base64.RawURLEncoding.DecodeString(receipt.Signature)
+	if err != nil || signatureErr != nil || receipt.Schema != "stogas.receipt.v1" || receipt.BootSHA256 != hex.EncodeToString(boot[:]) ||
+		receipt.RequestSHA256 != hex.EncodeToString(request[:]) || receipt.ResponseSHA256 != hex.EncodeToString(response[:]) {
+		return false
+	}
+	digest := sha256.Sum256(canonical)
+	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
+	return mldsa.Verify(public, message, signature, nil) == nil
 }
 
 func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
-	service, document, key := receiptService(t)
+	service, boot, public := receiptService(t)
 	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{"request":true}`))), ResponseBody: []byte(`{"response":true}`), Metadata: testMetadata()}
 	output, err := service.Build(context.Background(), input)
 	if err != nil {
@@ -58,7 +97,7 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 	if err = json.Unmarshal(output.JSON, &decoded); err != nil || !reflect.DeepEqual(decoded, output.Object) {
 		t.Fatal("metadata encoding differs", err)
 	}
-	if !proof.VerifyReceipt(key.PublicKey(), decoded.Receipt, sha256.Sum256(document), *input.RequestDigest, sha256.Sum256(input.ResponseBody), decoded) {
+	if !verifyReceipt(public, decoded, boot, *input.RequestDigest, sha256.Sum256(input.ResponseBody)) {
 		t.Fatal("receipt does not verify")
 	}
 	input.Metadata.BilledCostUSD = "21"
@@ -73,7 +112,7 @@ func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {
 }
 
 func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
-	service, document, key := receiptService(t)
+	service, boot, public := receiptService(t)
 	request := []byte(`{"stream":true}`)
 	requestDigest := sha256.Sum256(request)
 	stream, err := service.NewStream(context.Background(), Input{RequestDigest: &requestDigest, Metadata: testMetadata()})
@@ -90,7 +129,7 @@ func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output.Object.BilledCostUSD != "21" || !proof.VerifyReceipt(key.PublicKey(), output.Object.Receipt, sha256.Sum256(document), requestDigest, sha256.Sum256([]byte("data: one\n\ndata: two\n\n")), output.Object) {
+	if output.Object.BilledCostUSD != "21" || !verifyReceipt(public, output.Object, boot, requestDigest, sha256.Sum256([]byte("data: one\n\ndata: two\n\n"))) {
 		t.Fatal("stream signature or final metadata differs")
 	}
 	stream.WriteSentChunk([]byte("late"))
@@ -100,18 +139,17 @@ func TestStreamSignsExactChunksAndFinalMetadataOnce(t *testing.T) {
 }
 
 func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
-	service, document, key := receiptService(t)
-	other, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{43}, 32))
+	service, boot, _ := receiptService(t)
+	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer keys.Close()
 	for _, candidate := range []struct {
-		document []byte
-		key      *mldsa.PrivateKey
-	}{
-		{document, other}, {document, nil}, {append(bytes.Clone(document), ' '), key}, {[]byte(`{}`), key},
-	} {
-		if _, err := New(candidate.document, candidate.key); err == nil {
+		node string
+		keys *verifier.NodeKeys
+	}{{"amber-anchor-00", nil}, {"", keys}} {
+		if _, err := New(boot, candidate.node, candidate.keys); err == nil {
 			t.Fatal("invalid receipt identity accepted")
 		}
 	}
@@ -136,15 +174,14 @@ func TestReceiptRejectsWrongIdentityAndInvalidOrCancelledWork(t *testing.T) {
 }
 
 func TestReceiptLeavesRoomForMetadataAndStillBoundsTheCompleteResponseBag(t *testing.T) {
-	service, document, key := receiptService(t)
+	service, boot, public := receiptService(t)
 	input := Input{RequestDigest: new(sha256.Sum256([]byte(`{}`))), ResponseBody: []byte(`{}`), Metadata: testMetadata()}
 	input.Metadata.Provider = map[string]any{"detail": strings.Repeat("x", 7*1024)}
 	output, err := service.Build(t.Context(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(output.JSON) <= 8*1024 || !proof.VerifyReceipt(key.PublicKey(), output.Object.Receipt,
-		sha256.Sum256(document), *input.RequestDigest, sha256.Sum256(input.ResponseBody), output.Object) {
+	if len(output.JSON) <= 8*1024 || !verifyReceipt(public, output.Object, boot, *input.RequestDigest, sha256.Sum256(input.ResponseBody)) {
 		t.Fatal("post-quantum signature crowded out previously supported metadata")
 	}
 	input.Metadata.Provider["detail"] = strings.Repeat("x", proof.MaxObjectBytes)

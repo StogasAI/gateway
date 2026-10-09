@@ -3,9 +3,9 @@ package stogashttp
 import (
 	"bytes"
 	"context"
-	"crypto/mldsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	verifier "github.com/StogasAI/verifier/go"
+	ref "github.com/StogasAI/verifier/go/reference"
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
@@ -23,6 +25,55 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 )
+
+// fixtureNode rebuilds the synthetic boot vector from its public seeds: 32 bytes
+// of 42 for signing and bytes 0 through 31 for provisioning.
+func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var fixture struct {
+		Record struct {
+			GatewayReleaseID     string `json:"gateway_release_id"`
+			HardwarePolicySHA256 string `json:"hardware_policy_sha256"`
+			Report               string `json:"report"`
+			ReportData           struct {
+				RegistrationChallenge string `json:"registration_challenge"`
+				TLSSPKISHA256         string `json:"tls_spki_sha256"`
+			} `json:"report_data"`
+		} `json:"record"`
+	}
+	if err := json.Unmarshal(encoded, &fixture); err != nil {
+		return nil, nil, "", err
+	}
+	digests := make([][32]byte, 4)
+	for i, value := range []string{fixture.Record.ReportData.TLSSPKISHA256, fixture.Record.ReportData.RegistrationChallenge, fixture.Record.GatewayReleaseID, fixture.Record.HardwarePolicySHA256} {
+		decoded, err := hex.DecodeString(value)
+		if err != nil || len(decoded) != 32 {
+			return nil, nil, "", fmt.Errorf("invalid boot fixture digest")
+		}
+		digests[i] = [32]byte(decoded)
+	}
+	report, err := base64.RawURLEncoding.DecodeString(fixture.Record.Report)
+	if err != nil || len(report) != 0x4a0 {
+		return nil, nil, "", fmt.Errorf("invalid boot fixture report")
+	}
+	seeds := bytes.Repeat([]byte{42}, 32)
+	for i := range 32 {
+		seeds = append(seeds, byte(i))
+	}
+	keys, err := verifier.GenerateNodeKeys(bytes.NewReader(seeds))
+	if err != nil {
+		return nil, nil, "", err
+	}
+	document, err := keys.BootDocument(byte(attest.Production), digests[0], digests[1], report, digests[2], digests[3])
+	if err != nil {
+		keys.Close()
+		return nil, nil, "", err
+	}
+	return keys, document, ref.SNPNodeID([32]byte(report[0x140:0x160])), nil
+}
 
 // The compiled test binary can host the real request pipeline for external SDK
 // conformance. Synthetic hardware is confined to this test binary. Production
@@ -82,34 +133,17 @@ func serveClientFixture(path string) error {
 		return err
 	}
 	defer server.shutdown()
-	encoded, err := os.ReadFile(path)
+	keys, document, nodeID, err := fixtureNode(path)
 	if err != nil {
 		return err
 	}
-	var fixture struct {
-		Record attest.BootRecord `json:"record"`
-	}
-	if err := json.Unmarshal(encoded, &fixture); err != nil {
-		return err
-	}
-	document, err := fixture.Record.Document()
-	if err != nil {
-		return err
-	}
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
-	if err != nil {
-		return err
-	}
-	server.proofs, err = proofhttp.New(document, key)
+	defer keys.Close()
+	server.proofs, err = proofhttp.New(sha256.Sum256(document), nodeID, keys)
 	if err != nil {
 		return err
 	}
 	defer server.proofs.Close()
-	report, err := base64.RawURLEncoding.DecodeString(fixture.Record.Report)
-	if err != nil {
-		return err
-	}
-	server.sessionNodeID = attest.SNPNodeID([32]byte(report[0x140:0x160]))
+	server.sessionNodeID = nodeID
 	batcher, err := attest.NewBatcher(new(sessionTestAttester), server.memory.confidentialReservation(quoteRetainedBytes))
 	if err != nil {
 		return err

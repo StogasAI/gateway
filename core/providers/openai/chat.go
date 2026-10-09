@@ -87,9 +87,24 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 		}
 	}
 
+	// gpt-5.6 and later take caching intent as prompt_cache_breakpoint on a text
+	// part rather than as Anthropic-style cache_control, which the serializer
+	// strips. Same translation as the Responses path (applyResponsesCacheBreakpoints),
+	// resolved on the base provider so a custom provider built on OpenAI is not
+	// sent down the strip-only default.
+	if chatUsesPromptCacheBreakpoints(caps, schemas.ResolveBaseProvider(ctx, bifrostReq.Provider), capModel) {
+		openaiReq.Messages = applyChatCacheBreakpoints(openaiReq.Messages)
+		if openaiReq.ChatParameters.PromptCacheOptions == nil && chatHasPromptCacheBreakpoint(openaiReq.Messages) {
+			openaiReq.ChatParameters.PromptCacheOptions = &schemas.PromptCacheOptions{
+				Mode: schemas.Ptr(PromptCacheBreakpointModeExplicit),
+			}
+		}
+	}
+
 	switch bifrostReq.Provider {
 	case schemas.OpenAI, schemas.Azure:
 		openaiReq.normalizeReasoningEffort(ctx, caps)
+		openaiReq.stripUnsupportedSamplingParams(caps)
 		// URL-sourced documents are NOT inlined here. Chat Completions rejects file_url, so they
 		// still have to be resolved before the request goes out - but that is a network fetch that
 		// can fail, and this function has no way to report a failure. Callers invoke
@@ -256,6 +271,32 @@ func (req *OpenAIChatRequest) normalizeReasoningEffort(ctx *schemas.BifrostConte
 			// Clear max_tokens since OpenAI doesn't use it
 			req.ChatParameters.Reasoning.MaxTokens = nil
 		}
+		// A model that always reasons rejects "none"; "minimal" normalizes to its lowest level.
+		if e := req.ChatParameters.Reasoning.Effort; e != nil && *e == schemas.ReasoningEffortNone &&
+			!caps.CanDisableReasoning(defaultCanDisableReasoning(caps.Model())) {
+			req.ChatParameters.Reasoning.Effort = schemas.Ptr(caps.NormalizeReasoningEffort(schemas.ReasoningEffortMinimal, defaultEffortControl(caps.Model())))
+		}
+	}
+}
+
+// stripUnsupportedSamplingParams drops sampling fields OpenAI rejects at the request's reasoning effort.
+func (req *OpenAIChatRequest) stripUnsupportedSamplingParams(caps schemas.ModelCaps) {
+	effort := ""
+	if req.ChatParameters.Reasoning != nil && req.ChatParameters.Reasoning.Effort != nil {
+		effort = *req.ChatParameters.Reasoning.Effort
+	}
+	model := caps.Model()
+	if samplingParamUnsupported(caps, schemas.FieldTopP, model, effort) {
+		req.ChatParameters.TopP = nil
+	}
+	if samplingParamUnsupported(caps, schemas.FieldTemperature, model, effort) {
+		req.ChatParameters.Temperature = nil
+	}
+	if samplingParamUnsupported(caps, schemas.FieldTopLogprobs, model, effort) {
+		req.ChatParameters.TopLogProbs = nil
+	}
+	if samplingParamUnsupported(caps, schemas.FieldLogprobs, model, effort) {
+		req.ChatParameters.LogProbs = nil
 	}
 }
 
@@ -343,4 +384,90 @@ func (req *OpenAIChatRequest) applyXAICompatibility(caps schemas.ModelCaps) {
 		caps.FieldUnsupported(schemas.FieldReasoningEffort, effortUnsupported) {
 		req.ChatParameters.Reasoning.Effort = nil
 	}
+}
+
+// chatUsesPromptCacheBreakpoints is the Chat Completions half of the gate behind
+// responsesUsesPromptCacheOptions: the OpenAI family on gpt-5.6 and later. OpenRouter
+// is deliberately absent, since it accepts cache_control verbatim on this path.
+func chatUsesPromptCacheBreakpoints(caps schemas.ModelCaps, provider schemas.ModelProvider, model string) bool {
+	switch provider {
+	case schemas.OpenAI, schemas.Azure, schemas.BedrockMantle, schemas.Bedrock:
+		return caps.SupportsPromptCacheBreakpoint(schemas.ModelSupportsPromptCacheBreakpoint(model))
+	default:
+		return false
+	}
+}
+
+// chatHasPromptCacheBreakpoint reports whether any content part carries a breakpoint,
+// so explicit mode is only switched on when there is a boundary for it to honour.
+func chatHasPromptCacheBreakpoint(messages []OpenAIMessage) bool {
+	for i := range messages {
+		if messages[i].Content == nil {
+			continue
+		}
+		for j := range messages[i].Content.ContentBlocks {
+			if messages[i].Content.ContentBlocks[j].PromptCacheBreakpoint != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// applyChatCacheBreakpoints rewrites ephemeral cache_control markers on text parts
+// into prompt_cache_breakpoint, for every role including tool messages, which is where
+// an agent loop's per-turn marker lands after a tool call. Only text parts are
+// marked: that is the one Chat Completions part type with a verified breakpoint
+// field, and a rejected field costs more than the miss it would fix. The same
+// four-breakpoint ceiling and keep-the-latest rule as the Responses path apply.
+//
+// Messages, their Content pointers and the part arrays alias bifrostReq.Input, which
+// plugins and the fallback chain reuse, so everything touched is copied first.
+func applyChatCacheBreakpoints(messages []OpenAIMessage) []OpenAIMessage {
+	type blockRef struct{ msg, block int }
+	var refs []blockRef
+	existing := 0
+	for i := range messages {
+		if messages[i].Content == nil {
+			continue
+		}
+		for j, block := range messages[i].Content.ContentBlocks {
+			if block.PromptCacheBreakpoint != nil {
+				existing++
+				continue
+			}
+			if block.CacheControl == nil || block.CacheControl.Type != schemas.CacheControlTypeEphemeral ||
+				block.Type != schemas.ChatContentBlockTypeText || block.Text == nil {
+				continue
+			}
+			refs = append(refs, blockRef{msg: i, block: j})
+		}
+	}
+	if len(refs) == 0 {
+		return messages
+	}
+	budget := maxResponsesCacheBreakpoints - existing
+	if budget <= 0 {
+		return messages
+	}
+	if len(refs) > budget {
+		refs = refs[len(refs)-budget:]
+	}
+
+	out := make([]OpenAIMessage, len(messages))
+	copy(out, messages)
+	copied := make(map[int]bool, len(refs))
+	for _, ref := range refs {
+		if !copied[ref.msg] {
+			contentCopy := *out[ref.msg].Content
+			contentCopy.ContentBlocks = append(
+				make([]schemas.ChatContentBlock, 0, len(contentCopy.ContentBlocks)), contentCopy.ContentBlocks...)
+			out[ref.msg].Content = &contentCopy
+			copied[ref.msg] = true
+		}
+		out[ref.msg].Content.ContentBlocks[ref.block].PromptCacheBreakpoint = &schemas.PromptCacheBreakpoint{
+			Mode: schemas.Ptr(PromptCacheBreakpointModeExplicit),
+		}
+	}
+	return out
 }

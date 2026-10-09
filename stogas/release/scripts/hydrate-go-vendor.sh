@@ -50,6 +50,9 @@ hydrate_go() {
 
         if [ -n "${STOGAS_VERIFIER_BUILD_ROOT:-}" ]; then
           go mod edit -replace=github.com/StogasAI/verifier/go=../verifier/source/go
+          # Gateway tests use the independent reference peer from the same source.
+          go mod edit -require=github.com/StogasAI/verifier/go/reference@v0.0.0-00010101000000-000000000000 \
+            -replace=github.com/StogasAI/verifier/go/reference=../verifier/source/go/reference
         fi
         ledgers=(go.mod go.sum ../core/go.mod ../core/go.sum)
         before="$(sha256sum "${ledgers[@]}")"

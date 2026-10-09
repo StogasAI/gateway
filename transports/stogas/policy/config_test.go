@@ -28,7 +28,7 @@ func TestDenyPeriodsUseTheSourceBudgetAndShareTimeZones(t *testing.T) {
 }
 
 func validCompiledConfig() Config {
-	return Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{MaxPreDispatchCandidates: 1}}
+	return Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{MaxAttempts: 1}}
 }
 func parseCompiledConfig(t *testing.T, config Config) *Config {
 	t.Helper()

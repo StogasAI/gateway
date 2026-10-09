@@ -1156,19 +1156,6 @@ func TestNetworkConfig_StreamIdleTimeoutRoundTrip(t *testing.T) {
 	assert.Contains(t, string(data), `"stream_idle_timeout_in_seconds":120`)
 }
 
-func TestResponsesToolMCPAllowedTools_ArrayRoundTrip(t *testing.T) {
-	for _, input := range [][]byte{[]byte(`["search","lookup"]`), []byte(`[]`)} {
-		var allowed ResponsesToolMCPAllowedTools
-		require.NoError(t, Unmarshal(input, &allowed))
-		require.NotNil(t, allowed.ToolNames)
-		require.Nil(t, allowed.Filter)
-
-		encoded, err := Marshal(allowed)
-		require.NoError(t, err)
-		require.JSONEq(t, string(input), string(encoded))
-	}
-}
-
 func TestNetworkConfig_HTTP2PingInterval(t *testing.T) {
 	nc := NetworkConfig{EnforceHTTP2: true, HTTP2PingIntervalInSeconds: 45}
 	data, err := json.Marshal(nc)
@@ -1230,6 +1217,8 @@ func TestNormalizeResponsesToolType(t *testing.T) {
 		{"web_fetch_20260209", ResponsesToolTypeWebFetch},
 		{"web_fetch_20260309", ResponsesToolTypeWebFetch},
 
+		// bare "computer" is OpenAI's own tool (GPT-6 Astra / GPT-5.6) and must not fold into the preview type
+		{ResponsesToolTypeComputer, ResponsesToolTypeComputer},
 		// computer versioned aliases
 		{"computer_20250124", ResponsesToolTypeComputerUsePreview},
 		{"computer_20251124", ResponsesToolTypeComputerUsePreview},

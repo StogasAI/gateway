@@ -31,6 +31,9 @@ type billingAuthorizer interface {
 }
 
 func PublicBillingErrorFor(err error) PublicBillingError {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return PublicBillingError{504, "request_timeout", schemas.RequestTimedOut, "The request exceeded its time limit."}
+	}
 	if errors.Is(err, policy.ErrSourceBudget) || errors.Is(err, policy.ErrPolicyWorkLimit) {
 		return PublicBillingError{400, "policy_work_limit_exceeded", "invalid_request_error", "The applicable policies exceed the request's policy work limit. Reduce distinct policy content or expressions."}
 	}
@@ -241,7 +244,7 @@ func applyUpstreamCredentials(
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {
-	defer FinalizeExportState(state)
+	defer FinalizeExportState(ctx, state)
 	if billing == nil || state == nil || state.Authorization == nil || state.BillingFinalized {
 		return
 	}
@@ -250,6 +253,7 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 	if event == nil {
 		return
 	}
+	finalizeExportMetrics(state)
 	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event, state.RetainMemory); err != nil {
 		writeOperationalLog(operationalLogEvent{
 			ErrorType:  safeOperationalErrorType(err),
@@ -323,11 +327,12 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 	if state.Resolution != nil {
 		selectedChainHash = state.Resolution.Deployment.ChainHash
 	}
+	cancelled, clientStoppedAt := state.ClientStatus()
 	event, err := gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 		UpstreamCostUSD:          state.UpstreamCostUSD,
 		Authorization:            state.Authorization,
-		Cancelled:                state.Cancelled,
-		ClientStoppedAt:          state.ClientStoppedAt,
+		Cancelled:                cancelled,
+		ClientStoppedAt:          clientStoppedAt,
 		CatalogVersion:           catalogIdentity.Sequence,
 		PolicyVersions:           state.PolicyVersions,
 		CatalogChainHash:         executionDeployment.ChainHash,
@@ -339,6 +344,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		ProviderCompletedAt:      state.ProviderCompletedAt,
 		ProviderStartedAt:        state.ProviderStartedAt,
 		TTFTMS:                   state.TTFTMS,
+		FirstOutputAt:            state.FirstOutputAt,
 		ProviderOutputObserved:   state.ProviderOutputObserved,
 		CacheReadSavingsUSD:      cacheSavings,
 		CacheWriteOverheadUSD:    cacheWriteOverhead,
@@ -354,8 +360,8 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		event, err = gatewaybilling.NewRequestEvent(gatewaybilling.EventInput{
 			UpstreamCostUSD:          gatewaybilling.ZeroChargeUSD,
 			Authorization:            state.Authorization,
-			Cancelled:                state.Cancelled,
-			ClientStoppedAt:          state.ClientStoppedAt,
+			Cancelled:                cancelled,
+			ClientStoppedAt:          clientStoppedAt,
 			CatalogVersion:           catalogIdentity.Sequence,
 			PolicyVersions:           state.PolicyVersions,
 			CatalogChainHash:         executionDeployment.ChainHash,
@@ -366,6 +372,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			ProviderCompletedAt:      state.ProviderCompletedAt,
 			ProviderStartedAt:        state.ProviderStartedAt,
 			TTFTMS:                   state.TTFTMS,
+			FirstOutputAt:            state.FirstOutputAt,
 			ProviderOutputObserved:   state.ProviderOutputObserved,
 			NodeID:                   state.NodeID,
 			GatewayVersion:           state.GatewayVersion,
@@ -386,7 +393,7 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		if state.ProcessingError.Error != nil && state.ProcessingError.Error.Code != nil {
 			code = *state.ProcessingError.Error.Code
 		}
-		event.Error = &gatewaybilling.EventError{Code: gatewaybilling.NormalizeStogasErrorCode(code, status), Status: status}
+		event.GatewayError = &gatewaybilling.EventError{Code: gatewaybilling.NormalizeStogasErrorCode(code, status), Status: status}
 	}
 	// A local failure can interrupt a provider stream before its outcome is
 	// known. Keep completed provider results; do not invent success or HTTP 500.
@@ -500,11 +507,11 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 			}
 		}
 		ordinary := observed.Prompt - observed.Cached - writes
-		if ordinary > 0 {
+		if ordinary >= 0 && observed.inputKnown {
 			addCount(billing.MeterInputTokens, ordinary)
 		}
 		output := observed.Completion - observed.Reasoning
-		if output > 0 {
+		if output >= 0 && observed.outputKnown {
 			addCount(billing.MeterOutputTokens, output)
 		}
 	}
@@ -512,10 +519,12 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 	// snapshots and stream updates reuse that identity; input results never enter it.
 	clientCalls := state.responsesClientCalls + len(state.chatToolCalls)
 	hostedCalls := state.responsesToolCalls - state.responsesClientCalls
-	if clientCalls > 0 {
+	completedOutput := state.Response != nil && state.BifrostError == nil &&
+		(state.RequestType == string(schemas.ChatCompletionRequest) || state.RequestType == string(schemas.ResponsesRequest) || state.chatStreamFinished || state.responsesStreamEnded)
+	if clientCalls > 0 || completedOutput {
 		addCount(billing.MeterClientToolCalls, clientCalls)
 	}
-	if hostedCalls > 0 {
+	if hostedCalls > 0 || completedOutput {
 		addCount(billing.MeterHostedToolCalls, hostedCalls)
 	}
 

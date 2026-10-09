@@ -24,7 +24,7 @@ runs:
       run: |
         set -euo pipefail
         rustup show active-toolchain
-        cargo build --locked --package stogas-verifier-ffi --no-default-features --features staging
+        cargo build --locked --package stogas-verifier-ffi --no-default-features --features staging,gateway
         mkdir -p "$RUNNER_TEMP/stogas-verifier-native"
         cp target/debug/libstogas_verifier_ffi.a "$RUNNER_TEMP/stogas-verifier-native/"
         echo "CGO_LDFLAGS=-L$RUNNER_TEMP/stogas-verifier-native" >> "$GITHUB_ENV"

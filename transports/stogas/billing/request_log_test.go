@@ -91,7 +91,7 @@ func TestFinalizationDurablyQueuesCanonicalMicrobatchWithoutDatabase(t *testing.
 		if record.HoldParamsHash != expected || record.RequestID != testAuthorization().RequestID {
 			t.Fatal("durable record lost its reservation binding")
 		}
-		if record.BilledCostUSD != record.UpstreamCostUSD {
+		if record.Usage.BilledCostUSD != record.Usage.UpstreamCostUSD {
 			t.Fatal("managed charge changed")
 		}
 	}
@@ -135,7 +135,7 @@ func TestQueueFailureFallsBackWithExactImmutableEvidence(t *testing.T) {
 			if primaryCalls.Load() != 1 || fallbackCalls.Load() != 2 {
 				t.Fatal("queue circuit blocked the independent fallback")
 			}
-			if queued.RequestID != stored.RequestID || queued.HoldParamsHash != stored.HoldParamsHash || queued.BilledCostUSD != stored.BilledCostUSD {
+			if queued.RequestID != stored.RequestID || queued.HoldParamsHash != stored.HoldParamsHash || queued.Usage.BilledCostUSD != stored.BilledCostUSD {
 				t.Fatal("fallback changed durable financial evidence")
 			}
 		})
@@ -170,6 +170,153 @@ func TestQueueRecoveryStopsTinybirdFallback(t *testing.T) {
 	destination, err = client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
 	if err != nil || destination != LogQueue || fallbackCalls.Load() != 1 {
 		t.Fatalf("recovered destination=%d err=%v", destination, err)
+	}
+}
+
+func TestFallbackIsolatesSchemaRejectionAndArchivesOnlyThatOriginalLog(t *testing.T) {
+	const count = 8
+	const badID = "request-7"
+	var archived []requestLogRecord
+	var mutex sync.Mutex
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/logs/quarantine" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.Header.Get("authorization") != "Bearer producer-token" {
+			t.Error("quarantine lost producer authentication")
+		}
+		var record requestLogRecord
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			t.Error(err)
+		}
+		mutex.Lock()
+		archived = append(archived, record)
+		mutex.Unlock()
+		io.WriteString(w, `{"accepted_rows":1,"quarantined_rows":1}`)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scanner := bufio.NewScanner(r.Body)
+		good, bad := 0, 0
+		for scanner.Scan() {
+			var record struct {
+				RequestID string `json:"request_id"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+				t.Error(err)
+			}
+			if record.RequestID == badID {
+				bad++
+			} else {
+				good++
+			}
+		}
+		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":%d}`, good, bad)
+	}))
+	defer fallback.Close()
+	client := queueTestClient(t, primary.URL+"/logs", fallback.URL)
+	client.batchWindow = 50 * time.Millisecond
+	results := make([]<-chan logDelivery, count)
+	for index := range count {
+		event := testGatewayRequestEvent()
+		event.RequestID = fmt.Sprintf("request-%d", index)
+		event.holdParamsHash = strings.Repeat("a", 64)
+		var err error
+		results[index], err = client.enqueueGatewayRequest(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for index, result := range results {
+		want := LogTinybird
+		if index == count-1 {
+			want = LogQuarantine
+		}
+		select {
+		case delivery := <-result:
+			if delivery.err != nil || delivery.destination != want {
+				t.Fatalf("request %d delivery=%+v, want destination %d", index, delivery, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("healthy neighbors stalled behind a schema rejection")
+		}
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if len(archived) != 1 || archived[0].RequestID != badID || archived[0].HoldParamsHash != strings.Repeat("a", 64) {
+		t.Fatalf("quarantine did not preserve only the bound original event: %+v", archived)
+	}
+}
+
+func TestFallbackDoesNotClassifyDependencyOrAmbiguousAcknowledgementAsInvalidLog(t *testing.T) {
+	for _, response := range []struct {
+		status int
+		body   string
+	}{
+		{400, "bad request"}, {403, "forbidden"}, {422, "materialized view failed"},
+		{429, "rate limited"}, {503, "unavailable"},
+		{200, `{}`}, {200, `{"successful_rows":0,"quarantined_rows":0}`},
+		{200, `{"successful_rows":0,"quarantined_rows":2}`},
+		{200, `{"successful_rows":0,"quarantined_rows":1} trailing`},
+	} {
+		t.Run(fmt.Sprintf("%d_%s", response.status, response.body), func(t *testing.T) {
+			var archived atomic.Int32
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/quarantine" {
+					archived.Add(1)
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer primary.Close()
+			fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(response.status)
+				io.WriteString(w, response.body)
+			}))
+			defer fallback.Close()
+			client := queueTestClient(t, primary.URL, fallback.URL)
+			if _, err := client.AppendGatewayRequest(context.Background(), testGatewayRequestEvent()); err == nil {
+				t.Fatal("unconfirmed delivery succeeded")
+			}
+			if archived.Load() != 0 {
+				t.Fatal("a dependency failure was classified as invalid data")
+			}
+		})
+	}
+}
+
+func TestQuarantineMustConfirmCustodyBeforeFinalizationCanReleaseMemory(t *testing.T) {
+	var available atomic.Bool
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/quarantine" && available.Load() {
+			io.WriteString(w, `{"accepted_rows":1,"quarantined_rows":1}`)
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"successful_rows":0,"quarantined_rows":1}`)
+	}))
+	defer fallback.Close()
+	client := queueTestClient(t, primary.URL, fallback.URL)
+	service := &Service{requestLogs: client}
+	defer service.Close()
+	var released atomic.Bool
+	err := service.FinalizeRequest(context.Background(), testAuthorization(), testGatewayRequestEvent(), func(int) (func(), bool) {
+		return func() { released.Store(true) }, true
+	})
+	if err != nil || service.FinalizationReady() || released.Load() {
+		t.Fatalf("undelivered quarantine released custody: err=%v ready=%v released=%v", err, service.FinalizationReady(), released.Load())
+	}
+	available.Store(true)
+	deadline := time.Now().Add(5 * time.Second)
+	for !service.FinalizationReady() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	// No database is configured: an archived invalid event must never settle.
+	if !service.FinalizationReady() || !released.Load() {
+		t.Fatal("confirmed quarantine did not drain retained memory")
 	}
 }
 

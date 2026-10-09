@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	verifier "github.com/StogasAI/verifier/go"
 )
 
 var (
@@ -28,7 +30,7 @@ type QuoteReservation func() (release func(), ok bool)
 // result; callers cannot alter another connection's evidence through shared slices.
 type ChannelQuote struct {
 	Report  []byte
-	Proof   BatchProof
+	Proof   []byte
 	once    sync.Once
 	release func()
 }
@@ -41,7 +43,7 @@ func (q *ChannelQuote) Close() {
 
 type quoteJob struct {
 	ctx     context.Context
-	binding Binding
+	leaf    Leaf
 	release func()
 	result  chan quoteOutcome
 	element *list.Element // guarded by Batcher.mu; nil once removed from the queue
@@ -100,12 +102,12 @@ func NewBatcher(attester Attester, reserve QuoteReservation) (*Batcher, error) {
 
 // Quote transfers result ownership to the caller on success. Cancellation returns
 // promptly, but a dispatched job keeps its reservation until the hardware returns.
-func (b *Batcher) Quote(ctx context.Context, binding Binding) (*ChannelQuote, error) {
+func (b *Batcher) Quote(ctx context.Context, leaf Leaf) (*ChannelQuote, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if _, err := hashBinding(binding); err != nil {
-		return nil, err
+	if leaf == (Leaf{}) {
+		return nil, errAbsentLeaf
 	}
 	if b.ctx.Err() != nil {
 		return nil, ErrQuoteClosed
@@ -117,7 +119,7 @@ func (b *Batcher) Quote(ctx context.Context, binding Binding) (*ChannelQuote, er
 		b.mu.Unlock()
 		return nil, ErrQuoteCapacity
 	}
-	job := &quoteJob{ctx: ctx, binding: binding, release: release, result: make(chan quoteOutcome), queued: time.Now()}
+	job := &quoteJob{ctx: ctx, leaf: leaf, release: release, result: make(chan quoteOutcome), queued: time.Now()}
 	job.owners.Store(1)
 	b.mu.Lock()
 	if b.ctx.Err() != nil {
@@ -252,22 +254,22 @@ func (b *Batcher) generate(jobs []*quoteJob) {
 	if len(active) == 0 {
 		return
 	}
-	bindings := make([]Binding, len(active))
+	leaves := make([][64]byte, len(active))
 	for i, job := range active {
-		bindings[i] = job.binding
+		leaves[i] = job.leaf.hash
 	}
-	tree, err := BuildBatch(bindings)
+	reportData, proofs, err := verifier.QuoteBatch(leaves)
 	var report []byte
 	if err == nil {
 		start := time.Now()
 		var envelope []byte
-		envelope, err = b.attester.Quote(b.ctx, tree.ReportData())
+		envelope, err = b.attester.Quote(b.ctx, reportData)
 		b.mu.Lock()
 		b.stats.Batches++
 		b.stats.ReportNanos += uint64(time.Since(start))
 		b.mu.Unlock()
 		if err == nil {
-			report, err = batchReport(envelope, tree.ReportData())
+			report, err = batchReport(envelope, reportData)
 		}
 	}
 	for i, job := range active {
@@ -279,13 +281,8 @@ func (b *Batcher) generate(jobs []*quoteJob) {
 			b.deliver(job, nil, err)
 			continue
 		}
-		proof, proofErr := tree.Proof(i)
-		if proofErr != nil {
-			b.deliver(job, nil, proofErr)
-			continue
-		}
 		job.owners.Add(1)
-		b.deliver(job, &ChannelQuote{Report: append([]byte(nil), report...), Proof: proof, release: job.releaseOwner}, nil)
+		b.deliver(job, &ChannelQuote{Report: append([]byte(nil), report...), Proof: proofs[i], release: job.releaseOwner}, nil)
 	}
 }
 

@@ -38,6 +38,7 @@ var reservedKeys = map[BifrostContextKey]struct{}{
 	BifrostContextKeyAttemptTrail:            {},
 	BifrostContextKeyStreamGated:             {},
 	BifrostContextKeyMCPHealthCheckRequest:   {},
+	BifrostContextKeyMCPUnattendedExecution:  {},
 	BifrostContextKeyUpstreamLatency:         {},
 	BifrostContextKeyStreamOverhead:          {},
 	BifrostContextKeyRoutingInfo:             {},
@@ -515,6 +516,11 @@ func (bc *BifrostContext) setReservedValue(key, value any) {
 // post-hook. Bifrost-internal (set by core - DO NOT SET THIS MANUALLY).
 func (bc *BifrostContext) SetRoutingInfoSnapshot(ri RoutingInfo) {
 	bc.setReservedValue(BifrostContextKeyRoutingInfo, ri)
+}
+
+// SetFallbackPinnedAPIKeyID pins a fallback's provider key, bypassing the restricted-writes guard (set by core - DO NOT SET THIS MANUALLY).
+func (bc *BifrostContext) SetFallbackPinnedAPIKeyID(keyID string) {
+	bc.setReservedValue(BifrostContextKeyAPIKeyID, keyID)
 }
 
 // ClearValue clears a value from the internal userValues map.

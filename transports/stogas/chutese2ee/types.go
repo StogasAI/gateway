@@ -35,7 +35,6 @@ const (
 	maxDecryptedResponse       = 64 << 20
 	maxEncryptedSSELine        = 8 << 20
 	maximumDiscoveredInstances = 5
-	maximumInvokeAttempts      = maximumDiscoveredInstances
 )
 
 var (

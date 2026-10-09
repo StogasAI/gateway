@@ -195,12 +195,18 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Input != nil {
 		effective["input"] = compiled.Input
 	}
+	if compiled.Timeouts != nil {
+		effective["timeouts"] = compiled.Timeouts
+	}
 	if compiled.Access != nil && len(compiled.Access.Deny) > 0 {
 		effective["access"] = compiled.Access
 	}
 	routing := map[string]any{}
 	if compiled.Routing.AllowedCatalogNodes != nil {
 		routing["allowedCatalogNodes"] = sortedAllowedNodes(compiled.Routing.AllowedCatalogNodes)
+	}
+	if compiled.Routing.Selection != nil {
+		routing["selection"] = compiled.Routing.Selection
 	}
 	if compiled.Routing.Query != nil {
 		if len(compiled.Routing.Query.Filters) > 0 {
@@ -227,8 +233,8 @@ func (v *Inspector) Finish() (*Inspection, error) {
 			limit["config"] = raw
 			limits = append(limits, limit)
 		}
-		if sources[i].Value.HasCandidates {
-			routing["fallbacks"] = map[string]int{"maxPreDispatchCandidates": compiled.Routing.MaxPreDispatchCandidates}
+		if sources[i].Value.HasAttempts {
+			routing["maxAttempts"] = compiled.Routing.MaxAttempts
 		}
 		if document.Encrypted() {
 			if !customerkey.Registered(compiled.EncryptionKeys, document.encrypted.KeyID) {

@@ -126,16 +126,24 @@ func (s *Store) AcceptStart(id [32]byte, number uint64, encoded []byte) (*Server
 
 	request, metadata, err := entry.session.AcceptStart(number, encoded)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err == nil && entry.retired {
 		clear(metadata)
 		request.Close()
 		err = ErrClosed
 	}
 	if err != nil {
+		retire := errors.Is(err, ErrClosed) && !entry.retired
+		if retire {
+			s.retire(id, entry)
+		}
 		s.unpin(entry)
+		s.mu.Unlock()
+		if retire {
+			s.finishRetirement(entry)
+		}
 		return nil, nil, err
 	}
+	defer s.mu.Unlock()
 	entry.active++
 	if entry.idle != nil {
 		s.idle.Remove(entry.idle)

@@ -24,6 +24,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 		"provider":"chutes",
 		"messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Reply with JSON."}],
 		"metadata":{"tenant":"must-not-reach-provider"},
+		"extra_params":{"model":"attacker-model","max_tokens":9999,"max_completion_tokens":9999,"repetition_penalty":999},
 		"store":false,
 		"max_completion_tokens":7,
 		"temperature":3,
@@ -72,6 +73,10 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(encoded, &body); err != nil {
 		t.Fatalf("decode Chutes wire request: %v", err)
 	}
+	var model string
+	if err := sonic.Unmarshal(body["model"], &model); err != nil || model != "Qwen/Qwen3-32B-TEE" {
+		t.Fatalf("model = %s, want the selected Chutes deployment", body["model"])
+	}
 	assertRawNumber(t, body, "max_tokens", 7)
 	assertRawNumber(t, body, "temperature", 3)
 	assertRawNumber(t, body, "top_p", 1.1)
@@ -84,7 +89,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(body["stop"], &stops); err != nil || len(stops) != 1 || stops[0] != "DONE" {
 		t.Fatalf("stop = %s, want [DONE]", body["stop"])
 	}
-	for _, name := range []string{"max_completion_tokens", "metadata", "provider", "rules", "store"} {
+	for _, name := range []string{"max_completion_tokens", "metadata", "provider", "rules", "store", "extra_params"} {
 		if _, exists := body[name]; exists {
 			t.Fatalf("Chutes wire contains private or gateway-only field %q: %s", name, encoded)
 		}
@@ -122,7 +127,7 @@ func TestChutesRulesSelectTheProviderWithoutReachingItsWire(t *testing.T) {
 }
 
 func TestChutesChatWireStreamingForcesUsage(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}],"stream":true,"extra_params":{"stream":false,"stream_options":{"include_usage":false}}}`)
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error: %v", err)
 	}

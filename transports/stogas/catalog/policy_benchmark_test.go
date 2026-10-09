@@ -177,7 +177,7 @@ func BenchmarkRoutingBlendedPrices(b *testing.B) {
 						predicates[i] = fmt.Sprintf("blended_price(%d, 9007199254740990, 'per_mill_tokens') < decimal('1000000000000')", weight)
 					}
 					filter := strings.Join(predicates, " && ")
-					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3, 'per_mill_tokens')", Direction: "asc"}}, "fallbacks": map[string]int{"maxPreDispatchCandidates": 3}}})
+					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3, 'per_mill_tokens')", Direction: "asc"}}, "maxAttempts": 3}})
 					if err != nil {
 						b.Fatal(err)
 					}

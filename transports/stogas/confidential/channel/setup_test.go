@@ -17,7 +17,16 @@ import (
 	"testing/synctest"
 	"time"
 
+	ref "github.com/StogasAI/verifier/go/reference"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
+)
+
+// This independent Go HPKE consumer pins the public setup contract.
+const (
+	setupInfoDomain    = "stogas.e2ee.setup.v1\x00"
+	transcriptDomain   = "stogas.e2ee.transcript.v1\x00"
+	rootDomain         = "stogas.e2ee.root.v1\x00"
+	confirmationDomain = "stogas.e2ee.confirmation.v1\x00"
 )
 
 type setupReporter struct {
@@ -128,11 +137,17 @@ func TestSetupEstablishesReusableUniqueSession(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The quoted evidence must commit this exact transcript and boot.
+		evidence, err := ref.ParseSessionEvidence(response[serverSetupPrefixBytes+32+4:])
+		if err != nil || !bytes.Equal(evidence.Document, setup.boot.Document) {
+			t.Fatal("setup evidence differs", err)
+		}
+		leaf := ref.E2EELeaf(byte(attest.Production), sha256.Sum256(setup.boot.Document), transcript)
+		if err := ref.VerifyBatchProof(leaf, evidence.Proof, [64]byte(evidence.Report[0x50:0x90])); err != nil {
+			t.Fatal(err)
+		}
 		for _, number := range []uint64{0, 2, 1} {
-			encoder, err := newRecords(requestMessageFor([32]byte(root), number, [referencePublicBytes]byte(response[serverSetupPrefixBytes-referencePublicBytes:serverSetupPrefixBytes])), session.ID(), number, requestDirection)
-			if err != nil {
-				t.Fatal(err)
-			}
+			encoder := newRecords(requestMessageFor([32]byte(root), number, [referencePublicBytes]byte(response[serverSetupPrefixBytes-referencePublicBytes:serverSetupPrefixBytes])), session.ID(), number, requestDirection)
 			request, metadata, err := session.AcceptStart(number, sealRecord(t, encoder, Metadata, []byte("credentials")))
 			if err != nil || string(metadata) != "credentials" {
 				t.Fatalf("request establishment: %v", err)

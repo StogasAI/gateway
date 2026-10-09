@@ -31,6 +31,26 @@ type Options struct {
 }
 
 type invocationMetadataKey struct{}
+type invocationBudgetKey struct{}
+type retryObserverKey struct{}
+
+type invocationBudget struct {
+	attempts     int
+	retryAllowed func() bool
+}
+
+// SetInvocationBudget passes the remaining request allowance into the private
+// transport. The caller wait may forbid another attempt without interrupting an
+// invocation already in flight. Install it before provider dispatch.
+func SetInvocationBudget(ctx interface{ SetValue(any, any) }, attempts int, retryAllowed func() bool) {
+	ctx.SetValue(invocationBudgetKey{}, invocationBudget{max(1, attempts), retryAllowed})
+}
+
+// SetRetryObserver reports a proven pre-execution rejection only when another
+// invocation is about to start. Failed ticket preparation is not a new dispatch.
+func SetRetryObserver(ctx interface{ SetValue(any, any) }, observe func(status int, completedAt, nextStartedAt time.Time)) {
+	ctx.SetValue(retryObserverKey{}, observe)
+}
 
 // InvocationMetadata returns only the selected attempt's public provider facts.
 // The transport publishes one immutable map before dispatch; tickets and keys stay private.
@@ -288,8 +308,14 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 		}
 	}()
 	credential.diagnostics.registerModel(chuteID, metadata.Model)
-	for attempt := 0; attempt < maximumInvokeAttempts; attempt++ {
-		setInvocationMetadata(ctx, nil)
+	budget, _ := ctx.Value(invocationBudgetKey{}).(invocationBudget)
+	observeRetry, _ := ctx.Value(retryObserverKey{}).(func(int, time.Time, time.Time))
+	var rejectedAt time.Time
+	setInvocationMetadata(ctx, nil)
+	for attempt := 0; attempt < max(1, budget.attempts); attempt++ {
+		if attempt > 0 && budget.retryAllowed != nil && !budget.retryAllowed() {
+			return false, nil
+		}
 		ticket, reserveErr := credential.pools.reserve(ctx, target)
 		if reserveErr != nil {
 			if err := ctx.Err(); err != nil {
@@ -308,6 +334,16 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 			clear(encrypted.Body)
 			return false, err
 		}
+		if attempt > 0 {
+			if budget.retryAllowed != nil && !budget.retryAllowed() {
+				clear(encrypted.Body)
+				return false, nil
+			}
+			if observeRetry != nil {
+				observeRetry(response.StatusCode(), rejectedAt, time.Now())
+			}
+			response.Reset()
+		}
 		configureInvokeRequest(request, credential, ticket, encrypted.Body, metadata.Stream, originalPath)
 		setInvocationMetadata(ctx, &ticket)
 		if metadata.Stream {
@@ -324,20 +360,20 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 			if streamOwnsCredential {
 				releaseCredential = nil
 			}
-			if streamErr != nil || streamOwnsCredential || attempt+1 >= maximumInvokeAttempts ||
+			if streamErr != nil || streamOwnsCredential ||
 				!safeInvokeFallbackResponse(response) {
 				return false, streamErr
 			}
-			response.Reset()
+			rejectedAt = time.Now()
 			continue
 		}
 		unaryErr := t.roundTripUnary(ctx, credential, request, response, ticket, encrypted)
 		clear(encrypted.Body)
-		if unaryErr != nil || attempt+1 >= maximumInvokeAttempts ||
+		if unaryErr != nil ||
 			!safeInvokeFallbackResponse(response) {
 			return false, unaryErr
 		}
-		response.Reset()
+		rejectedAt = time.Now()
 	}
 	return false, nil
 }

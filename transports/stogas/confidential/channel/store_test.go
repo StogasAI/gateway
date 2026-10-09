@@ -46,10 +46,7 @@ func openStoredSession(t *testing.T, store *Store) ([32]byte, [32]byte, [referen
 
 func storedStart(t *testing.T, root, id [32]byte, initialPublic [referencePublicBytes]byte, number uint64) []byte {
 	t.Helper()
-	encoder, err := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
-	if err != nil {
-		t.Fatal(err)
-	}
+	encoder := newRecords(requestMessageFor(root, number, initialPublic), id, number, requestDirection)
 	defer encoder.fail(ErrClosed)
 	return sealRecord(t, encoder, Metadata, []byte("credential"))
 }

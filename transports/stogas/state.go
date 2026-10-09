@@ -54,6 +54,8 @@ type State struct {
 	ProviderStartedAt       time.Time
 	ProviderCompletedAt     time.Time
 	TTFTMS                  *uint32
+	FirstOutputAt           time.Time
+	LastOutputAt            time.Time
 	ProviderOutputObserved  bool
 	providerOutputEmitted   bool
 	ClientStoppedAt         time.Time
@@ -386,21 +388,36 @@ func (s *State) ObserveChatStreamOutput(response *schemas.BifrostChatResponse) {
 func (s *State) observeChatProviderOutputEmitted(response *schemas.BifrostChatResponse) {
 	if s != nil && chatResponseHasProviderOutput(response) {
 		s.providerOutputEmitted = true
+		s.observeFirstProviderOutput()
 	}
 }
 
 func (s *State) observeResponsesProviderOutputEmitted(response *schemas.BifrostResponsesStreamResponse) {
 	if s != nil && responsesEventHasOutput(response) {
 		s.providerOutputEmitted = true
+		s.observeFirstProviderOutput()
 	}
 }
 
 func (s *State) observeProviderResponseOutputEmitted(response *schemas.BifrostResponse) {
 	if s != nil && providerResponseHasOutput(response) {
 		s.providerOutputEmitted = true
+		s.observeFirstProviderOutput()
 		// A buffered response is observed as one complete provider result. Record
 		// the output fact without creating TTFT, which only exists for streams.
 		s.observeProviderOutput()
+	}
+}
+
+func (s *State) observeFirstProviderOutput() {
+	s.LastOutputAt = time.Now()
+	if !s.FirstOutputAt.IsZero() {
+		return
+	}
+	s.FirstOutputAt = s.LastOutputAt
+	// Unary arrival is recorded before validated content is inspected.
+	if !s.ProviderCompletedAt.IsZero() && s.ProviderCompletedAt.Before(s.FirstOutputAt) {
+		s.FirstOutputAt = s.ProviderCompletedAt
 	}
 }
 

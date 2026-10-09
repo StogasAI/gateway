@@ -528,9 +528,9 @@ directory = \"vendor\"
        (setenv "RUSTFLAGS" "--remap-path-prefix=.=source")
        (invoke "cargo" "test" "--release" "--locked" "--offline"
                "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
-               "--no-default-features" "--features" "staging")
+               "--no-default-features" "--features" "staging,stogas-verifier-ffi/gateway")
        (invoke "cargo" "build" "--release" "--locked" "--offline"
-               "-p" "stogas-verifier-ffi" "--no-default-features" "--features" "staging"))
+               "-p" "stogas-verifier-ffi" "--no-default-features" "--features" "staging,gateway"))
    '("libstogas_verifier_ffi.a")
    "Offline confidential evidence verifier with explicit environment selection"
    #:output-directory "lib"))

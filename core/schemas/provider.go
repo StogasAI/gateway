@@ -370,6 +370,7 @@ type AllowedRequests struct {
 	Compaction            bool `json:"compaction"`
 	Embedding             bool `json:"embedding"`
 	Rerank                bool `json:"rerank"`
+	Decision              bool `json:"decisions"`
 	OCR                   bool `json:"ocr"`
 	Speech                bool `json:"speech"`
 	SpeechStream          bool `json:"speech_stream"`
@@ -455,6 +456,8 @@ func (ar *AllowedRequests) IsOperationAllowed(operation RequestType) bool {
 		return ar.Embedding
 	case RerankRequest:
 		return ar.Rerank
+	case DecisionRequest:
+		return ar.Decision
 	case OCRRequest:
 		return ar.OCR
 	case SpeechRequest:
@@ -621,6 +624,8 @@ type CacheControlInjectionPoint struct {
 	// shape does not have to change when they arrive.
 	Location string `json:"location"`
 	// Role matches messages by role ("system", "user", "assistant", "developer").
+	// "user" also matches tool results: Responses function_call_output items and Chat
+	// tool messages are the client-supplied turn that follows a tool call.
 	Role *string `json:"role,omitempty"`
 	// Index matches by position. Negative values count from the end, so -1 is the last
 	// message. Out-of-range indices match nothing rather than erroring - a conversation
@@ -727,6 +732,8 @@ type Provider interface {
 	Embedding(ctx *BifrostContext, key Key, request *BifrostEmbeddingRequest) (*BifrostEmbeddingResponse, *BifrostError)
 	// Rerank performs a rerank request to reorder documents by relevance to a query
 	Rerank(ctx *BifrostContext, key Key, request *BifrostRerankRequest) (*BifrostRerankResponse, *BifrostError)
+	// Decision performs an decision request against an annotated function-tool definition (Typesafe-only; other providers return unsupported)
+	Decision(ctx *BifrostContext, key Key, request *BifrostDecisionRequest) (*BifrostDecisionResponse, *BifrostError)
 	// OCR performs an optical character recognition request on a document
 	OCR(ctx *BifrostContext, key Key, request *BifrostOCRRequest) (*BifrostOCRResponse, *BifrostError)
 	// Speech performs a text to speech request

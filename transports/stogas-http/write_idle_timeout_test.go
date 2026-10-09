@@ -41,7 +41,7 @@ func TestResponseWritesBoundChunksAndClearDeadlines(t *testing.T) {
 
 func TestRequestContextSetsAbsoluteDownstreamDeliveryLimit(t *testing.T) {
 	ctx := newTestRequest(t)
-	_, _, cancel, err := newRequestContext(ctx, testResolution(), apiCredential{Raw: "sk-test"}, nil, "")
+	_, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

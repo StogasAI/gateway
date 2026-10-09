@@ -80,9 +80,9 @@ func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
 func TestTokenUsageSurvivesSerializationAndAnalyticsProjection(t *testing.T) {
 	for _, quantity := range []*uint64{nil, new(uint64), func() *uint64 { n := uint64(1_000_000_000_000); return &n }()} {
 		event := testGatewayRequestEvent()
-		event.Meters = EventMeters{}
+		event.Usage.Meters = EventMeters{}
 		if quantity != nil {
-			event.Meters[MeterTotalTokens] = EventMeter{Quantity: fmt.Sprint(*quantity)}
+			event.Usage.Meters[MeterTotalTokens] = EventMeter{Quantity: fmt.Sprint(*quantity)}
 		}
 		encoded, err := encodeGatewayRequestEvent(event)
 		if err != nil {
@@ -465,7 +465,7 @@ func TestTinybirdAppendRejectsOversizedEventBeforeAdmission(t *testing.T) {
 
 	client := newTestRequestLogClient(t, server.URL)
 	event := testGatewayRequestEvent()
-	event.Meters = EventMeters{"oversized": PricedMeter("1", strings.Repeat("x", requestLogMaxEventBytes), "1", "1")}
+	event.Usage.Meters = EventMeters{"oversized": PricedMeter("1", strings.Repeat("x", requestLogMaxEventBytes), "1", "1")}
 
 	_, err := client.AppendGatewayRequest(context.Background(), event)
 	if err == nil || !strings.Contains(err.Error(), "request log is") {

@@ -9,6 +9,40 @@ import (
 	"time"
 )
 
+func TestStoreRetiresClosedCryptoStateWithoutClosingAdmittedStreams(t *testing.T) {
+	var retained atomic.Int64
+	store, err := NewStore(newSetup(t, &setupReporter{}), func() (func(), bool) {
+		retained.Add(1)
+		return func() { retained.Add(-1) }, true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	id, root, public := openStoredSession(t, store)
+	request, _, err := store.AcceptStart(id, 0, storedStart(t, root, id, public, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer request.Close()
+	// The Rust owner reports Closed after exhausting its cryptographic budget.
+	// Exercise that real boundary without a test-only limit or millions of calls.
+	store.sessions[id].session.core.Close()
+	if _, _, err := store.AcceptStart(id, 1, storedStart(t, root, id, public, 1)); !errors.Is(err, ErrClosed) {
+		t.Fatal(err)
+	}
+	if stats := store.Diagnostics(); stats.Open != 0 || stats.Retained != 1 || stats.Active != 1 || retained.Load() != 1 {
+		t.Fatalf("retirement released an admitted stream's reservation: %+v", stats)
+	}
+	if _, err := request.Seal(Metadata, []byte("response")); err != nil {
+		t.Fatal(err)
+	}
+	request.Close()
+	if retained.Load() != 0 || store.Diagnostics().Retained != 0 {
+		t.Fatal("closed cryptographic session leaked its reservation")
+	}
+}
+
 func TestStoreReclaimOrdersIdleSessionsAndProtectsOwnedState(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var retained atomic.Int64

@@ -12,7 +12,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	CreatedAt                       string   `json:"created_at"`
 	LastRequestAt                   string   `json:"last_request_at"`
 	RequestCount                    uint32   `json:"request_count"`
-	Error                           string   `json:"error"`
+	GatewayError                    string   `json:"gateway_error"`
 	AnalyticsErrorCode              string   `json:"analytics_error_code"`
 	AnalyticsErrorStatus            *int     `json:"analytics_error_status"`
 	StogasAPIKeyID                  string   `json:"stogas_api_key_id"`
@@ -24,7 +24,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	ClientStopMS                    *uint32  `json:"client_stop_ms"`
 	CatalogVersion                  *uint64  `json:"catalog_version"`
 	PolicyVersions                  string   `json:"policy_versions"`
-	CatalogChainHash                *string  `json:"catalog_chain_hash"`
+	AnalyticsCatalogChainHash       *string  `json:"analytics_catalog_chain_hash"`
 	ProviderAttempts                string   `json:"provider_attempts"`
 	AnalyticsProviderStatus         string   `json:"analytics_provider_status"`
 	AnalyticsProviderOutputObserved uint8    `json:"analytics_provider_output_observed"`
@@ -40,7 +40,7 @@ type tinybirdGatewayRequestEventPayload struct {
 	CacheReadSavingsUSD             *string  `json:"cache_read_savings_usd"`
 	CacheWriteOverheadUSD           *string  `json:"cache_write_overhead_usd"`
 	AnalyticsUpstreamByok           []string `json:"analytics_upstream_byok"`
-	Meters                          string   `json:"meters"`
+	Usage                           string   `json:"usage"`
 	Plugins                         string   `json:"plugins"`
 	AnalyticsRedactedItems          *uint32  `json:"analytics_redacted_items"`
 	AnalyticsInputTokens            *uint64  `json:"analytics_input_tokens"`
@@ -57,7 +57,6 @@ type tinybirdGatewayRequestEventPayload struct {
 
 func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEventPayload {
 	attemptsJSON := mustJSONString(event.ProviderAttempts, "[]")
-	pricingJSON := mustJSONString(event.Meters, "{}")
 	pluginsJSON := mustJSONString(event.Plugins, `{}`)
 	var redactedItems *uint32
 	if metrics := event.Plugins.StogasStructuredPIIRedaction; metrics != nil {
@@ -66,9 +65,9 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	performanceJSON := mustJSONString(event.Performance, `{}`)
 	errorCode := ""
 	var errorStatus *int
-	if event.Error != nil {
-		errorCode = event.Error.Code
-		errorStatus = &event.Error.Status
+	if event.GatewayError != nil {
+		errorCode = event.GatewayError.Code
+		errorStatus = &event.GatewayError.Status
 	}
 	cancelled := uint8(0)
 	if event.Cancelled {
@@ -80,7 +79,9 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 	upstreamByok := make([]string, 0, len(event.ProviderAttempts))
 	providers := make([]string, 0, len(event.ProviderAttempts))
 	providerStatuses := make([]string, 0, len(event.ProviderAttempts))
+	var catalogChainHash *string
 	if finalAttempt, ok := event.FinalProviderAttempt(); ok {
+		catalogChainHash = finalAttempt.CatalogChainHash
 		providerStatus = finalAttempt.Status
 		if finalAttempt.OutputObserved {
 			providerOutputObserved = 1
@@ -96,10 +97,10 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		if attempt.StatusCode != nil && *attempt.StatusCode >= 100 && *attempt.StatusCode <= 599 {
 			providerStatuses = append(providerStatuses, strconv.Itoa(*attempt.StatusCode))
 		}
-		if attempt.UpstreamByok == nil {
+		if attempt.Byok == nil {
 			upstreamByok = append(upstreamByok, ManagedUpstreamByok)
 		} else {
-			upstreamByok = append(upstreamByok, *attempt.UpstreamByok)
+			upstreamByok = append(upstreamByok, *attempt.Byok)
 		}
 	}
 	return tinybirdGatewayRequestEventPayload{
@@ -123,14 +124,14 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		ClientStopMS:                    event.ClientStopMS,
 		CatalogVersion:                  event.CatalogVersion,
 		PolicyVersions:                  mustJSONString(event.PolicyVersions, "null"),
-		CatalogChainHash:                event.CatalogChainHash,
+		AnalyticsCatalogChainHash:       catalogChainHash,
 		CreatedAt:                       event.CreatedAt,
 		LastRequestAt:                   event.LastRequestAt,
 		RequestCount:                    event.RequestCount,
-		Error:                           mustJSONString(event.Error, "null"),
+		GatewayError:                    mustJSONString(event.GatewayError, "null"),
 		AnalyticsErrorCode:              errorCode,
 		AnalyticsErrorStatus:            errorStatus,
-		Meters:                          pricingJSON,
+		Usage:                           mustJSONString(event.Usage, "{}"),
 		Plugins:                         pluginsJSON,
 		AnalyticsRedactedItems:          redactedItems,
 		Performance:                     performanceJSON,
@@ -144,10 +145,10 @@ func tinybirdGatewayRequestEvent(event RequestEvent) tinybirdGatewayRequestEvent
 		StogasGrantID:                   event.StogasGrantID,
 		StogasOrganizationID:            event.StogasOrganizationID,
 		StogasUserID:                    event.StogasUserID,
-		UpstreamCostUSD:                 event.UpstreamCostUSD,
-		BilledCostUSD:                   event.BilledCostUSD,
-		CacheReadSavingsUSD:             event.CacheReadSavingsUSD,
-		CacheWriteOverheadUSD:           event.CacheWriteOverheadUSD,
+		UpstreamCostUSD:                 event.Usage.UpstreamCostUSD,
+		BilledCostUSD:                   event.Usage.BilledCostUSD,
+		CacheReadSavingsUSD:             event.Usage.CacheReadSavingsUSD,
+		CacheWriteOverheadUSD:           event.Usage.CacheWriteOverheadUSD,
 		AnalyticsTotalMS:                event.Performance.TotalMS,
 	}
 }

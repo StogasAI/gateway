@@ -2,15 +2,12 @@ package provision
 
 import (
 	"context"
-	"crypto/mldsa"
 	"encoding/base64"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
+	verifier "github.com/StogasAI/verifier/go"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )
@@ -22,17 +19,19 @@ type RegistrationChallenge struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// Boot is the exact logged boot document, sent as its JSON object.
 type BootRegistration struct {
-	InstanceID string            `json:"instance_id"`
-	Boot       attest.BootRecord `json:"boot"`
-	CSRDER     string            `json:"csr_der"`
+	InstanceID string          `json:"instance_id"`
+	Boot       json.RawMessage `json:"boot"`
+	CSRDER     string          `json:"csr_der"`
 }
 
+// Provisioning is Control's sealed envelope; the node keys check its binding when opening it.
 type RegistrationResponse struct {
-	Status       string            `json:"status"`
-	NodeID       string            `json:"node_id"`
-	Inclusion    json.RawMessage   `json:"inclusion,omitempty"`
-	Provisioning *BootProvisioning `json:"provisioning,omitempty"`
+	Status       string          `json:"status"`
+	NodeID       string          `json:"node_id"`
+	Inclusion    json.RawMessage `json:"inclusion,omitempty"`
+	Provisioning json.RawMessage `json:"provisioning,omitempty"`
 }
 
 type BootCertificateResponse struct {
@@ -49,37 +48,23 @@ type bootRequest struct {
 	Inclusion  json.RawMessage `json:"inclusion"`
 }
 
-const certificateRequestDomain = "stogas.certificate-renewal.v1\x00"
-const completionRequestDomain = "stogas.registration-complete.v1\x00"
-
-func newBootRequest(nodeID string, boot attest.BootEvidence, signingKey *mldsa.PrivateKey, domain string) (bootRequest, error) {
-	_, suffix, found := strings.Cut(nodeID, "-")
-	_, suffix, foundSecond := strings.Cut(suffix, "-")
-	bytes, err := hex.DecodeString(suffix)
-	if !found || !foundSecond || err != nil || len(bytes) != 32 || attest.SNPNodeID([32]byte(bytes)) != nodeID {
-		return bootRequest{}, errors.New("invalid boot request node identity")
+// The node ID comes from this boot's own verified identity.
+func newBootRequest(nodeID string, boot attest.BootEvidence, keys *verifier.NodeKeys, purpose verifier.BootRequestPurpose) (bootRequest, error) {
+	if keys == nil || nodeID == "" {
+		return bootRequest{}, errors.New("boot request requires the node identity and key")
 	}
-	if signingKey == nil || signingKey.PublicKey().Parameters() != mldsa.MLDSA65() {
-		return bootRequest{}, errors.New("boot request requires the node signing key")
-	}
-	issued := time.Now().UnixMilli()
-	signature, err := signingKey.Sign(nil, bootRequestTranscript(domain, nodeID, issued), &mldsa.Options{})
+	issued := time.Now()
+	signature, err := keys.SignBootRequest(purpose, nodeID, issued)
 	if err != nil {
 		return bootRequest{}, errors.New("boot request signing failed")
 	}
-	return bootRequest{nodeID, issued, base64.RawURLEncoding.EncodeToString(signature), boot.Document, boot.Inclusion}, nil
-}
-
-func bootRequestTranscript(domain, nodeID string, issued int64) []byte {
-	message := append([]byte(domain), []byte(nodeID)...)
-	message = append(message, 0)
-	return binary.BigEndian.AppendUint64(message, uint64(issued))
+	return bootRequest{nodeID, issued.UnixMilli(), base64.RawURLEncoding.EncodeToString(signature), boot.Document, boot.Inclusion}, nil
 }
 
 // CompleteBootRegistration acknowledges locally verified installation. Exact retries
 // let the authority discard its temporary recovery payload without another secret release.
-func (c Client) CompleteBootRegistration(ctx context.Context, nodeID string, boot attest.BootEvidence, signingKey *mldsa.PrivateKey) error {
-	request, err := newBootRequest(nodeID, boot, signingKey, completionRequestDomain)
+func (c Client) CompleteBootRegistration(ctx context.Context, nodeID string, boot attest.BootEvidence, keys *verifier.NodeKeys) error {
+	request, err := newBootRequest(nodeID, boot, keys, verifier.BootRegistrationComplete)
 	if err != nil {
 		return err
 	}
@@ -100,8 +85,8 @@ func (c Client) CompleteBootRegistration(ctx context.Context, nodeID string, boo
 
 // RenewBootCertificate carries the exact logged boot and a CSR for its existing TLS key.
 // The caller checks the returned chain, hostname, validity and key before installation.
-func (c Client) RenewBootCertificate(ctx context.Context, nodeID string, boot attest.BootEvidence, csrDER []byte, signingKey *mldsa.PrivateKey) (*BootCertificateResponse, error) {
-	authorization, err := newBootRequest(nodeID, boot, signingKey, certificateRequestDomain)
+func (c Client) RenewBootCertificate(ctx context.Context, nodeID string, boot attest.BootEvidence, csrDER []byte, keys *verifier.NodeKeys) (*BootCertificateResponse, error) {
+	authorization, err := newBootRequest(nodeID, boot, keys, verifier.BootCertificateRenewal)
 	if err != nil {
 		return nil, err
 	}
@@ -158,14 +143,10 @@ func (c Client) RegistrationChallenge(ctx context.Context, instanceID string) (*
 // still requires offline verification of inclusion and the decrypted certificate
 // before the runtime can open public admission. No provider credentials are sent.
 func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expectedNodeID string) (*RegistrationResponse, error) {
-	if !instanceUUID(request.InstanceID) || expectedNodeID == "" {
+	if !instanceUUID(request.InstanceID) || expectedNodeID == "" || !json.Valid(request.Boot) {
 		return nil, errors.New("invalid registration identity")
 	}
-	digest, err := request.Boot.Digest()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := decodeBootCiphertext(request.CSRDER, 1, 16*1024); err != nil {
+	if csr, err := base64.RawURLEncoding.Strict().DecodeString(request.CSRDER); err != nil || len(csr) == 0 || len(csr) > 16*1024 {
 		return nil, errors.New("invalid registration CSR encoding")
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrationAttemptTimeout)
@@ -184,8 +165,7 @@ func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expe
 			return nil, errors.New("pending registration included completion material")
 		}
 	case "ready":
-		if response.Provisioning == nil || len(response.Inclusion) == 0 || string(response.Inclusion) == "null" ||
-			response.Provisioning.Schema != BootProvisioningSchema || response.Provisioning.BootSHA256 != hex.EncodeToString(digest[:]) {
+		if absentJSON(response.Provisioning) || absentJSON(response.Inclusion) {
 			return nil, errors.New("registration omitted its boot-bound completion")
 		}
 	default:
@@ -208,6 +188,10 @@ func instanceUUID(value string) bool {
 }
 
 // Keep canonical binary encoding at the call site without exposing the TLS key.
-func NewBootRegistration(instanceID string, boot attest.BootRecord, csrDER []byte) BootRegistration {
-	return BootRegistration{InstanceID: instanceID, Boot: boot, CSRDER: base64.RawURLEncoding.EncodeToString(csrDER)}
+func NewBootRegistration(instanceID string, document, csrDER []byte) BootRegistration {
+	return BootRegistration{InstanceID: instanceID, Boot: document, CSRDER: base64.RawURLEncoding.EncodeToString(csrDER)}
+}
+
+func absentJSON(value json.RawMessage) bool {
+	return len(value) == 0 || string(value) == "null"
 }

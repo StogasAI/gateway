@@ -1086,7 +1086,17 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			if !hasInputHold || inputTokens <= 0 {
 				t.Fatalf("missing input-token authorization: %#v", state.Hold.Meters)
 			}
-			state.Signals = &StandardSignals{Prompt: inputTokens, ActualServiceTier: &actualTier}
+			response := validUnaryChatProviderResponse()
+			response.Model = resolution.Model
+			response.ServiceTier = &actualTier
+			response.Usage = &schemas.BifrostLLMUsage{PromptTokens: inputTokens, TotalTokens: inputTokens}
+			response.ExtraFields = schemas.BifrostResponseExtraFields{
+				OriginalModelRequested: "unpriced-alias",
+				ResolvedModelUsed:      "unpriced-alias",
+			}
+			if err := state.Adapter.IngestResponse(state, &schemas.BifrostResponse{ChatResponse: response}, nil); err != nil {
+				t.Fatalf("IngestResponse returned error: %v", err)
+			}
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 			}
@@ -1123,8 +1133,11 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			if len(authorizer.finalEvents) != 1 {
 				t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
 			}
-			if got := authorizer.finalEvents[0].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
+			if got := authorizer.finalEvents[0].ProviderAttempts[attemptCount-1].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
 				t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
+			}
+			if metadata := FinalMetadata(context.Background(), state); metadata.Catalog.ChainHash != actual.ChainHash {
+				t.Fatalf("response metadata lost the catalog identity: %#v", metadata.Catalog)
 			}
 			attempts := authorizer.finalEvents[0].ProviderAttempts
 			if len(attempts) != attemptCount || attempts[attemptCount-1].SelectedCatalogChainHash == nil || *attempts[attemptCount-1].SelectedCatalogChainHash != resolution.Deployment.ChainHash {
@@ -2008,15 +2021,15 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	inputPricing := event.Meters[billing.MeterInputTokens]
+	inputPricing := event.Usage.Meters[billing.MeterInputTokens]
 	if inputPricing.Quantity != "1000" {
-		t.Fatalf("unexpected final pricing %#v", event.Meters)
+		t.Fatalf("unexpected final pricing %#v", event.Usage.Meters)
 	}
-	if _, ok := event.Meters[billing.MeterOutputTokens]; ok {
-		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Meters)
+	if _, ok := event.Usage.Meters[billing.MeterOutputTokens]; ok {
+		t.Fatalf("telemetry must not log hold-only meters: %#v", event.Usage.Meters)
 	}
-	if event.UpstreamCostUSD != "1000" || event.BilledCostUSD != "1000" {
-		t.Fatalf("managed costs must match final meter sum, got upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
+	if event.Usage.UpstreamCostUSD != "1000" || event.Usage.BilledCostUSD != "1000" {
+		t.Fatalf("managed costs must match final meter sum, got upstream=%s billed=%s", event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD)
 	}
 	if event.GatewayVersion != "v1.5.13" {
 		t.Fatalf("gateway version = %q", event.GatewayVersion)
@@ -2048,7 +2061,7 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 			if event == nil {
 				t.Fatal("missing final event")
 			}
-			if got := event.Meters[billing.MeterTotalTokens].Quantity; got != item.want {
+			if got := event.Usage.Meters[billing.MeterTotalTokens].Quantity; got != item.want {
 				t.Fatalf("total token meter = %q, want %q", got, item.want)
 			}
 			if (len(event.ProviderAttempts) != 0) != item.dispatched {
@@ -2088,17 +2101,17 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 				t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 			}
 			event := authorizer.finalEvents[0]
-			if (event.Error == nil) != dispatched || event.UpstreamCostUSD != "0" || event.BilledCostUSD != "0" {
+			if (event.GatewayError == nil) != dispatched || event.Usage.UpstreamCostUSD != "0" || event.Usage.BilledCostUSD != "0" {
 				t.Fatalf("failure classification/cost = %#v", event)
 			}
 			if dispatched {
-				if event.Error != nil {
+				if event.GatewayError != nil {
 					t.Fatal("provider failure became a Stogas error")
 				}
 				if len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 503 {
 					t.Fatalf("missing provider failure: %#v", event.ProviderAttempts)
 				}
-			} else if event.Error == nil || event.Error.Code != "gateway_unavailable" || event.Error.Status != 503 || len(event.ProviderAttempts) != 0 {
+			} else if event.GatewayError == nil || event.GatewayError.Code != "gateway_unavailable" || event.GatewayError.Status != 503 || len(event.ProviderAttempts) != 0 {
 				t.Fatalf("fabricated provider attempt: %#v", event.ProviderAttempts)
 			}
 		})
@@ -2137,10 +2150,10 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 				state.BifrostError = &schemas.BifrostError{StatusCode: schemas.Ptr(wantCode)}
 			}
 			event := PrepareFinalState(state)
-			if event == nil || event.Error == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
+			if event == nil || event.GatewayError == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != item.want {
 				t.Fatalf("wrong independent outcomes: %#v", event)
 			}
-			if event.Error == nil || event.Error.Code != "response_encoding_failed" || event.Error.Status != 500 {
+			if event.GatewayError == nil || event.GatewayError.Code != "response_encoding_failed" || event.GatewayError.Status != 500 {
 				t.Fatalf("lost Stogas error: %#v", event)
 			}
 			code := event.ProviderAttempts[0].StatusCode
@@ -2356,6 +2369,19 @@ func TestProviderOutputEmissionIsIndependentOfCallerDelivery(t *testing.T) {
 	}
 	if !chatResponseHasProviderOutput(streamSignature) {
 		t.Fatal("a signature proves that the provider emitted generated reasoning")
+	}
+	state := &State{StartedAt: time.Now()}
+	state.observeChatProviderOutputEmitted(streamSignature)
+	if state.FirstOutputAt.Before(state.StartedAt) || state.FirstOutputAt.After(time.Now()) {
+		t.Fatal("provider output did not record its arrival time")
+	}
+	if state.ProviderOutputObserved || state.TTFTMS != nil {
+		t.Fatal("provider arrival fabricated downstream acceptance or a first token")
+	}
+	firstOutput := state.FirstOutputAt
+	state.observeChatProviderOutputEmitted(streamSignature)
+	if !state.FirstOutputAt.Equal(firstOutput) {
+		t.Fatal("later provider output replaced the first arrival")
 	}
 
 	text := "generated"
@@ -2591,7 +2617,11 @@ func TestTTFTRequiresGatewayRequestClock(t *testing.T) {
 }
 
 func TestBufferedOutputIsObservedWithoutTTFT(t *testing.T) {
-	state := &State{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+	arrivedAt := time.Now().Add(-10 * time.Millisecond)
+	state := &State{
+		Resolution:          &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		ProviderCompletedAt: arrivedAt,
+	}
 	response := validUnaryChatProviderResponse()
 	response.Choices[0].ChatNonStreamResponseChoice.Message.Content = &schemas.ChatMessageContent{
 		ContentStr: schemas.Ptr("hello"),
@@ -2607,6 +2637,9 @@ func TestBufferedOutputIsObservedWithoutTTFT(t *testing.T) {
 	}
 	if state.TTFTMS != nil {
 		t.Fatalf("buffered provider output must not record TTFT: %#v", state.TTFTMS)
+	}
+	if !state.FirstOutputAt.Equal(arrivedAt) {
+		t.Fatal("buffered first output must use provider arrival, excluding validation time")
 	}
 }
 
@@ -3303,22 +3336,22 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 	if event == nil {
 		t.Fatal("PrepareFinalState returned nil")
 	}
-	if event.CacheReadSavingsUSD == nil || *event.CacheReadSavingsUSD != "90" {
-		t.Fatalf("cache-read savings = %#v, want 90", event.CacheReadSavingsUSD)
+	if event.Usage.CacheReadSavingsUSD == nil || *event.Usage.CacheReadSavingsUSD != "90" {
+		t.Fatalf("cache-read savings = %#v, want 90", event.Usage.CacheReadSavingsUSD)
 	}
-	if event.CacheWriteOverheadUSD == nil || *event.CacheWriteOverheadUSD != "350" {
-		t.Fatalf("cache-write overhead = %#v, want 350", event.CacheWriteOverheadUSD)
+	if event.Usage.CacheWriteOverheadUSD == nil || *event.Usage.CacheWriteOverheadUSD != "350" {
+		t.Fatalf("cache-write overhead = %#v, want 350", event.Usage.CacheWriteOverheadUSD)
 	}
-	if event.UpstreamCostUSD != "860" || event.BilledCostUSD != "860" {
-		t.Fatalf("cache economics changed billing: upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
+	if event.Usage.UpstreamCostUSD != "860" || event.Usage.BilledCostUSD != "860" {
+		t.Fatalf("cache economics changed billing: upstream=%s billed=%s", event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD)
 	}
 	for _, meterKey := range []string{
 		billing.MeterCachedInputTokens,
 		billing.MeterCacheWrite5mInputTokens,
 		billing.MeterCacheWrite1hInputTokens,
 	} {
-		if _, ok := event.Meters[meterKey]; !ok {
-			t.Fatalf("pricing bag omitted %s: %#v", meterKey, event.Meters)
+		if _, ok := event.Usage.Meters[meterKey]; !ok {
+			t.Fatalf("pricing bag omitted %s: %#v", meterKey, event.Usage.Meters)
 		}
 	}
 }
@@ -3383,11 +3416,11 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
 	}
 	event := authorizer.finalEvents[0]
-	if event.UpstreamCostUSD != "0.000000000000000000000000000000000001" || event.BilledCostUSD != "0.000000000000000000000000000000000001" {
-		t.Fatalf("managed costs must use compacted final meters, got upstream=%s billed=%s", event.UpstreamCostUSD, event.BilledCostUSD)
+	if event.Usage.UpstreamCostUSD != "0.000000000000000000000000000000000001" || event.Usage.BilledCostUSD != "0.000000000000000000000000000000000001" {
+		t.Fatalf("managed costs must use compacted final meters, got upstream=%s billed=%s", event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD)
 	}
-	if event.Meters[billing.MeterInputTokens].Quantity != "2" {
-		t.Fatalf("unexpected compacted pricing %#v", event.Meters)
+	if event.Usage.Meters[billing.MeterInputTokens].Quantity != "2" {
+		t.Fatalf("unexpected compacted pricing %#v", event.Usage.Meters)
 	}
 }
 
@@ -3551,15 +3584,15 @@ func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T
 				t.Fatalf("Stogas pricing changed the provider result: %#v", event.ProviderAttempts)
 			}
 			if !tc.wantDiscard {
-				if state.BifrostError != providerErr || event.UpstreamCostUSD != tc.final {
+				if state.BifrostError != providerErr || event.Usage.UpstreamCostUSD != tc.final {
 					t.Fatalf("authorized final cost was changed: state=%#v event=%#v", state, event)
 				}
 				return
 			}
-			if state.UpstreamCostUSD != billing.ZeroChargeUSD || event.UpstreamCostUSD != billing.ZeroChargeUSD {
+			if state.UpstreamCostUSD != billing.ZeroChargeUSD || event.Usage.UpstreamCostUSD != billing.ZeroChargeUSD {
 				t.Fatalf("unsafe final cost was not discarded: state=%#v event=%#v", state, event)
 			}
-			if (event.Error != nil) != tc.pricingError {
+			if (event.GatewayError != nil) != tc.pricingError {
 				t.Fatal("handled zero-charge settlement must keep successful processing; fatal pricing errors must fail it")
 			}
 			if tc.pricingError && state.ProcessingError == nil {

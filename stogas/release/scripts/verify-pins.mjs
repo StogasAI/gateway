@@ -322,7 +322,7 @@ function verifyReleaseGraph() {
 		'(setenv "GOWORK" "off")',
 		'(setenv "CGO_ENABLED" "0")',
 		'(setenv "CGO_ENABLED" "1")',
-		'"-tags=stogas_offline,netgo,osusergo"',
+		'"-tags=stogas_gateway,netgo,osusergo"',
 		'libstogas_verifier_ffi.a',
 		'"-mod=vendor"',
 		'Go vendor tree hash mismatch',

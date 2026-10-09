@@ -2,6 +2,7 @@ package attest
 
 import (
 	"context"
+	"crypto"
 	"crypto/mldsa"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,38 +11,18 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"io"
 	"math/big"
 	"time"
+
+	verifier "github.com/StogasAI/verifier/go"
 )
 
-const (
-	NativeEvidenceMediaType = "application/vnd.stogas.native-tls.v1"
-	// rustls bounds a certificate handshake to 64 KiB. Leave room for DER/TLS
-	// framing rather than allowing a valid evidence object that cannot be sent.
-	MaxNativeCertificateBytes = 64*1024 - 13
-)
+// rustls bounds a certificate handshake to 64 KiB. Leave room for DER/TLS
+// framing rather than allowing a valid evidence object that cannot be sent.
+const MaxNativeCertificateBytes = 64*1024 - 13
 
 var cmwExtensionOID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 1, 35}
-
-func (e SessionEvidence) Extension() (pkix.Extension, error) {
-	payload, err := e.MarshalBinary()
-	if err != nil {
-		return pkix.Extension{}, err
-	}
-	size := len(payload)
-	// One canonical CBOR Record CMW: [media-type, byte-string]. This fixed
-	// profile has no nested/optional fields or general-purpose CBOR decoder.
-	cmw := make([]byte, 0, 3+len(NativeEvidenceMediaType)+3+size)
-	cmw = append(cmw, 0x82, 0x78, byte(len(NativeEvidenceMediaType)))
-	cmw = append(cmw, NativeEvidenceMediaType...)
-	cmw = append(cmw, 0x59, byte(size>>8), byte(size))
-	cmw = append(cmw, payload...)
-	der, err := asn1.Marshal(cmw) // CMW's DER OCTET STRING choice, inside extnValue
-	if err != nil {
-		return pkix.Extension{}, err
-	}
-	return pkix.Extension{Id: append(asn1.ObjectIdentifier(nil), cmwExtensionOID...), Value: der}, nil
-}
 
 // NewNativeIssuer captures already-verified boot evidence once. Each invocation
 // creates a fresh signer; the batcher only sees its locally computed SPKI digest.
@@ -51,8 +32,7 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 	}
 	// Validate the largest supported proof before retaining boot bytes. It must
 	// fit even when this VM is busy and a handshake joins a full batch.
-	_, err := (SessionEvidence{Report: make([]byte, snpReportSize), Proof: BatchProof{LeafCount: MaxBatchLeaves, Siblings: make([][64]byte, MaxProofHashes)}, Boot: boot}).Extension()
-	if err != nil {
+	if err := boot.CheckSize(); err != nil {
 		return nil, err
 	}
 	boot = BootEvidence{Document: append([]byte(nil), boot.Document...), Inclusion: append([]byte(nil), boot.Inclusion...)}
@@ -61,15 +41,19 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		key, err := mldsa.GenerateKey(mldsa.MLDSA65())
+		key, err := newTLSSigner()
 		if err != nil {
 			return nil, err
 		}
-		spki, err := x509.MarshalPKIXPublicKey(key.PublicKey())
+		spki, err := x509.MarshalPKIXPublicKey(key.Public())
 		if err != nil {
 			return nil, err
 		}
-		quote, err := batcher.Quote(ctx, NativeTLSBinding{Environment: environment, Challenge: challenge, BootEvidenceSHA256: bootHash, SignerSPKISHA256: sha256.Sum256(spki)})
+		leaf, err := NativeTLSLeaf(environment, bootHash, challenge, sha256.Sum256(spki))
+		if err != nil {
+			return nil, err
+		}
+		quote, err := batcher.Quote(ctx, leaf)
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +61,7 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		extension, err := (SessionEvidence{Report: quote.Report, Proof: quote.Proof, Boot: boot}).Extension()
+		evidence, err := quote.Evidence(boot, true)
 		if err != nil {
 			return nil, err
 		}
@@ -91,9 +75,9 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 			SerialNumber: serial, DNSNames: []string{hostname},
 			NotBefore: now.Add(-time.Minute), NotAfter: now.Add(5 * time.Minute),
 			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			ExtraExtensions: []pkix.Extension{extension},
+			ExtraExtensions: []pkix.Extension{{Id: append(asn1.ObjectIdentifier(nil), cmwExtensionOID...), Value: evidence}},
 		}
-		der, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey(), key)
+		der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
 		if err != nil {
 			return nil, err
 		}
@@ -105,4 +89,35 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 		}
 		return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, SupportedSignatureAlgorithms: []tls.SignatureScheme{tls.MLDSA65}}, nil
 	}, nil
+}
+
+// tlsSigner adapts a fresh Rust ML-DSA-65 key to the crypto.Signer used by Go's
+// TLS stack and X.509 issuance; both sign pure ML-DSA with no prehash or context.
+type tlsSigner struct {
+	key    *verifier.TLSKey
+	public *mldsa.PublicKey
+}
+
+func newTLSSigner() (*tlsSigner, error) {
+	key, err := verifier.GenerateTLSKey()
+	if err != nil {
+		return nil, err
+	}
+	public, err := mldsa.NewPublicKey(mldsa.MLDSA65(), key.PublicKey())
+	if err != nil {
+		return nil, err
+	}
+	return &tlsSigner{key: key, public: public}, nil
+}
+
+func (s *tlsSigner) Public() crypto.PublicKey { return s.public }
+
+func (s *tlsSigner) Sign(_ io.Reader, message []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if opts.HashFunc() != 0 {
+		return nil, errors.New("native TLS signing requires pure ML-DSA")
+	}
+	if options, ok := opts.(*mldsa.Options); ok && options.Context != "" {
+		return nil, errors.New("native TLS signing uses an empty context")
+	}
+	return s.key.Sign(message)
 }

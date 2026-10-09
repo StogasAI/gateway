@@ -13,9 +13,10 @@ import (
 )
 
 type routingSelection struct {
-	deployment Deployment
-	provider   schemas.ModelProvider
-	credential int
+	deployment       Deployment
+	provider         schemas.ModelProvider
+	credential       int
+	providerAttempts int
 }
 
 type policyDeploymentData struct {
@@ -347,9 +348,9 @@ func routingDeploymentsForProvider(
 type routingCandidates struct {
 	filtered                          []*ResolvedRequest
 	values                            map[*ResolvedRequest]*resolvedPolicyValues
-	requiredOrder, defaultOrder       *policy.Query
+	requiredOrder, defaultOrder       *policy.Routing
 	requiredConflict, defaultConflict bool
-	hasRequiredSort                   bool
+	hasRequiredOrder                  bool
 }
 
 // Every surviving policy participates in order agreement, including credentials
@@ -367,16 +368,16 @@ func (r *routingCandidates) consider(config *policy.Config, values *resolvedPoli
 		if !matches {
 			return false, nil
 		}
-		if len(query.OrderBy) != 0 {
-			prior, conflict := &r.requiredOrder, &r.requiredConflict
-			if config.Routing.SortDefault {
-				prior, conflict = &r.defaultOrder, &r.defaultConflict
-			}
-			*conflict = *conflict || *prior != nil && !(*prior).SameOrder(query)
-			*prior = query
-		}
 	}
-	r.hasRequiredSort = r.hasRequiredSort || config.HasRequiredSort()
+	if config != nil && config.Routing.HasOrder() {
+		prior, conflict := &r.requiredOrder, &r.requiredConflict
+		if config.Routing.OrderDefault {
+			prior, conflict = &r.defaultOrder, &r.defaultConflict
+		}
+		*conflict = *conflict || *prior != nil && !(*prior).SameOrder(&config.Routing)
+		*prior = &config.Routing
+	}
+	r.hasRequiredOrder = r.hasRequiredOrder || config.HasRequiredOrder()
 	return true, nil
 }
 
@@ -415,12 +416,16 @@ func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Confi
 }
 
 func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
-	query, conflict := r.requiredOrder, r.requiredConflict
-	if query == nil && !r.hasRequiredSort {
-		query, conflict = r.defaultOrder, r.defaultConflict
+	ordering, conflict := r.requiredOrder, r.requiredConflict
+	if ordering == nil && !r.hasRequiredOrder {
+		ordering, conflict = r.defaultOrder, r.defaultConflict
 	}
 	if conflict {
-		return nil, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: "invalid_request", Message: "Candidate policies require different routing sort orders"}
+		return nil, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: "invalid_request", Message: "Candidate policies require different routing orders"}
+	}
+	var query *policy.Query
+	if ordering != nil {
+		query = ordering.Query
 	}
 	filtered, values := r.filtered, r.values
 	if query != nil {
@@ -436,6 +441,9 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	}
 	if len(filtered) == 0 {
 		return nil, ErrModelUnavailable
+	}
+	if ordering != nil && ordering.Selection != nil {
+		return selectRoutingTargets(filtered, ordering.Selection)
 	}
 
 	// An explicit sort supplies a total order; its stable deployment-ID tie

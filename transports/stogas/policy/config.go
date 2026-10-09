@@ -23,7 +23,9 @@ const (
 	CompilerVersion          = 1
 	MaxCompiledBytes         = 512 << 10
 	MaxSorts                 = 3
-	MaxPreDispatchCandidates = 3
+	MaxAttempts              = 3
+	MaxRequestTimeout        = time.Hour
+	DefaultOutputIdleTimeout = 5 * time.Minute
 	MaxCustomPatterns        = 3
 	MaxCustomPatternBytes    = 512
 )
@@ -56,6 +58,7 @@ type Config struct {
 	PluginSources          []*Plugins        `json:"-"`
 	Access                 *Access           `json:"access"`
 	Input                  *Input            `json:"input,omitempty"`
+	Timeouts               *Timeouts         `json:"timeouts,omitempty"`
 	CompilerVersion        int               `json:"compilerVersion"`
 	Plugins                *Plugins          `json:"plugins"`
 	Routing                Routing           `json:"routing"`
@@ -67,11 +70,45 @@ type Input struct {
 	ASCIIOnly bool `json:"asciiOnly"`
 }
 
+type Timeouts struct {
+	TotalSeconds      *int `json:"totalSeconds,omitempty"`
+	OutputIdleSeconds *int `json:"outputIdleSeconds,omitempty"`
+}
+
+func (t *Timeouts) Total() time.Duration {
+	if t == nil || t.TotalSeconds == nil {
+		return MaxRequestTimeout
+	}
+	return time.Duration(*t.TotalSeconds) * time.Second
+}
+
+func (t *Timeouts) OutputIdle() time.Duration {
+	if t == nil || t.OutputIdleSeconds == nil {
+		return DefaultOutputIdleTimeout
+	}
+	return time.Duration(*t.OutputIdleSeconds) * time.Second
+}
+
 type Routing struct {
-	AllowedCatalogNodes      *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-	MaxPreDispatchCandidates int                  `json:"maxPreDispatchCandidates"`
-	Query                    *Query               `json:"query"`
-	SortDefault              bool                 `json:"sortDefault"`
+	AllowedCatalogNodes *AllowedCatalogNodes `json:"allowedCatalogNodes"`
+	MaxAttempts         int                  `json:"maxAttempts"`
+	Query               *Query               `json:"query"`
+	Selection           *Selection           `json:"selection,omitempty"`
+	OrderDefault        bool                 `json:"orderDefault"`
+}
+
+func (r *Routing) HasOrder() bool {
+	return r != nil && (r.Selection != nil || r.Query != nil && len(r.Query.OrderBy) > 0)
+}
+
+func (r *Routing) SameOrder(other *Routing) bool {
+	if !r.HasOrder() || !other.HasOrder() {
+		return r.HasOrder() == other.HasOrder()
+	}
+	if r.Selection != nil || other.Selection != nil {
+		return r.Selection.Same(other.Selection)
+	}
+	return r.Query.SameOrder(other.Query)
 }
 
 type AllowedCatalogNodes struct {
@@ -116,8 +153,21 @@ func (c *Config) validate() error {
 	if c == nil || c.Schema != "stogas.key-config.compiled.v1" || c.CompilerVersion != CompilerVersion {
 		return configError("unsupported schema or compiler version")
 	}
-	if c.Routing.MaxPreDispatchCandidates < 1 || c.Routing.MaxPreDispatchCandidates > MaxPreDispatchCandidates {
-		return configError("pre-dispatch candidate count is invalid")
+	if c.Routing.MaxAttempts < 1 || c.Routing.MaxAttempts > MaxAttempts {
+		return configError("routing.maxAttempts must be an integer from 1 to 3")
+	}
+	if err := c.Routing.validateSelection(); err != nil {
+		return err
+	}
+	if c.Timeouts != nil {
+		for _, field := range []struct {
+			name  string
+			value *int
+		}{{"totalSeconds", c.Timeouts.TotalSeconds}, {"outputIdleSeconds", c.Timeouts.OutputIdleSeconds}} {
+			if field.value != nil && (*field.value < 1 || *field.value > int(MaxRequestTimeout/time.Second)) {
+				return configError("timeouts.%s must be an integer from 1 to 3600", field.name)
+			}
+		}
 	}
 	if err := c.Routing.AllowedCatalogNodes.validate(); err != nil {
 		return err
@@ -425,7 +475,7 @@ var exactFieldTypes = map[string]string{
 
 func init() {
 	for _, capability := range []string{
-		"cancellation", "explicitPromptCaching", "functionCalling", "implicitPromptCaching",
+		"explicitPromptCaching", "functionCalling", "implicitPromptCaching",
 		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
 		"toolChoice", "urlContext",
 	} {

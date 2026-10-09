@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	ref "github.com/StogasAI/verifier/go/testutil/channeltest"
+	ref "github.com/StogasAI/verifier/go/reference"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 )
 
@@ -162,8 +162,8 @@ func TestSessionHTTPDoSProbe(t *testing.T) {
 			root, public := sessionTestSetupKeys(t, seed, hello, setupWire, []byte(`{"fixture":"HTTP adapter only"}`))
 			peer := ref.New(root, &ref.Keys{Public: [ref.PublicBytes]byte(public)}, true)
 			var message ref.Message
-			for range config.Gap + 1 {
-				message = peer.Send(bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
+			for request := range uint64(config.Gap) + 1 {
+				message = peer.Send(request, bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
 			}
 			record := ref.SealRecord(message.Secret, id[:], uint64(config.Gap), 1, 0, message.Header, byte(channel.Metadata), []byte{0})
 			record[len(record)-1] ^= 1

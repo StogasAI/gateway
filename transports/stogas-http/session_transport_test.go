@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hkdf"
 	"crypto/hpke"
 	"crypto/sha256"
 	"crypto/tls"
@@ -15,7 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	ref "github.com/StogasAI/verifier/go/testutil/channeltest"
+	ref "github.com/StogasAI/verifier/go/reference"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -166,8 +163,7 @@ func (f *sessionHTTPFixture) post(t *testing.T, wire []byte, owner bool) *http.R
 }
 
 type sessionTestCipher struct {
-	aead          cipher.AEAD
-	nonce         [12]byte
+	keys          *ref.RecordKeys
 	counter       uint64
 	header        []byte
 	fixture       *sessionHTTPFixture
@@ -185,53 +181,29 @@ func (f *sessionHTTPFixture) cipher(t *testing.T, number uint64, direction byte)
 	if f.encoder.Sent != number {
 		t.Fatal("unordered fixture request")
 	}
-	message := f.encoder.Send(bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
+	message := f.encoder.Send(number, bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
 	return f.recordCipher(t, number, direction, message.Secret, message.Header)
 }
 func (f *sessionHTTPFixture) responseCipher(t *testing.T, number uint64, header []byte) *sessionTestCipher {
 	t.Helper()
 	peer := f.referenceClient()
-	peer.Send(bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
-	return f.recordCipher(t, number, 2, peer.Receive(ref.Message{Header: header}), nil)
+	peer.Send(0, bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{9}, 32))
+	return f.recordCipher(t, number, 2, peer.Receive(ref.Message{Header: header, Request: number}), nil)
 }
 func (f *sessionHTTPFixture) recordCipher(t *testing.T, number uint64, direction byte, secret, header []byte) *sessionTestCipher {
 	t.Helper()
-	info := append([]byte("stogas.e2ee.record.v1\x00"), f.id...)
-	info = binary.BigEndian.AppendUint64(info, number)
-	info = append(info, direction)
-	material, err := hkdf.Expand(sha256.New, secret, string(info), 44)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := aes.NewCipher(material[:32])
-	if err != nil {
-		t.Fatal(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &sessionTestCipher{aead: aead, nonce: [12]byte(material[32:]), header: header}
-}
-func (c *sessionTestCipher) nextNonce() [12]byte {
-	nonce := c.nonce
-	var count [8]byte
-	binary.BigEndian.PutUint64(count[:], c.counter)
-	c.counter++
-	for index, value := range count {
-		nonce[4+index] ^= value
-	}
-	return nonce
+	return &sessionTestCipher{keys: ref.NewRecordKeys(secret, f.id, number, direction), header: header}
 }
 func (c *sessionTestCipher) seal(kind byte, body []byte) []byte {
-	nonce := c.nextNonce()
+	aead, nonce := c.keys.Next()
+	c.counter++
 	prefix := make([]byte, 4)
 	if c.counter == 1 {
 		prefix = binary.BigEndian.AppendUint16(prefix, uint16(len(c.header)))
 		prefix = append(prefix, c.header...)
 	}
 	binary.BigEndian.PutUint32(prefix, uint32(len(prefix)+1+len(body)+16))
-	return c.aead.Seal(prefix, nonce[:], append([]byte{kind}, body...), prefix)
+	return aead.Seal(prefix, nonce[:], append([]byte{kind}, body...), prefix)
 }
 func (f *sessionHTTPFixture) request(t *testing.T, metadata, body []byte) ([]byte, *sessionTestCipher) {
 	return f.requestWithRecordSize(t, metadata, body, channel.MaxRecordPlaintext)
@@ -326,12 +298,13 @@ func readSessionRecord(t *testing.T, input io.Reader, decoder *sessionTestCipher
 		}
 		// Response allocation order is independent of HTTP numbering.
 		derived := decoder.fixture.responseCipher(t, decoder.requestNumber, encoded[2:headerEnd])
-		decoder.aead, decoder.nonce = derived.aead, derived.nonce
+		decoder.keys = derived.keys
 		aad = append(aad, encoded[:headerEnd]...)
 		encoded = encoded[headerEnd:]
 	}
-	nonce := decoder.nextNonce()
-	plaintext, err := decoder.aead.Open(nil, nonce[:], encoded, aad)
+	aead, nonce := decoder.keys.Next()
+	decoder.counter++
+	plaintext, err := aead.Open(nil, nonce[:], encoded, aad)
 	if err != nil || len(plaintext) == 0 {
 		t.Fatal("invalid encrypted record", err)
 	}
@@ -612,13 +585,18 @@ func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testin
 		ctx.writer.WriteHeader(204)
 	}, true)
 	metadata := []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`)
-	for _, mutate := range []func([]byte) []byte{
-		func(wire []byte) []byte { return wire[:len(wire)-1] },
-		func(wire []byte) []byte { wire[len(wire)-1] ^= 1; return wire },
-		func(wire []byte) []byte { return append(wire, 0) },
+	for _, invalid := range []struct {
+		recordSize int
+		mutate     func([]byte) []byte
+	}{
+		{channel.MaxRecordPlaintext, func(wire []byte) []byte { return wire[:len(wire)-1] }},
+		{channel.MaxRecordPlaintext, func(wire []byte) []byte { wire[len(wire)-1] ^= 1; return wire }},
+		{channel.MaxRecordPlaintext, func(wire []byte) []byte { return append(wire, 0) }},
+		// Only the final upload record may be short.
+		{1, func(wire []byte) []byte { return wire }},
 	} {
-		wire, decoder := f.requestWithRecordSize(t, metadata, []byte("body"), 1)
-		result, _ := readSessionResponse(t, f.post(t, mutate(wire), true), decoder)
+		wire, decoder := f.requestWithRecordSize(t, metadata, []byte("body"), invalid.recordSize)
+		result, _ := readSessionResponse(t, f.post(t, invalid.mutate(wire), true), decoder)
 		if result.Status != 400 {
 			t.Fatal("accepted invalid body")
 		}
@@ -838,17 +816,17 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 		}
 		ctx.body, _ = io.ReadAll(ctx.request.Body)
 		resolution := mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))
-		bifrostCtx, state, cancel, err := newRequestContext(ctx, resolution, apiCredential{Raw: "secret"}, stogas.DefaultAdapter{}, "")
+		bifrostCtx, state, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "secret"}, stogas.DefaultAdapter{}, "")
 		if err != nil {
 			t.Error(err)
 			ctx.writer.WriteHeader(500)
 			return
 		}
 		defer cancel()
-		if !wantsReceipt(bifrostCtx) || !state.SingleUseRequestID || state.RequestID == "client-chosen" {
+		if !wantsMetadata(bifrostCtx) || !state.SingleUseRequestID || state.RequestID == "client-chosen" {
 			t.Error("request identity or metadata selection lost")
 		}
-		state.FinalEvent = &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}
+		state.FinalEvent = &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}
 		ctx.writer.Header().Set("Retry-After", "1")
 		ctx.writer.Header().Set("X-Internal-Note", "private")
 		(&Server{proofs: service}).writeInferenceJSON(ctx, bifrostCtx, state, 429, map[string]any{"error": "limited"})
@@ -885,7 +863,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 	if inner.Status != 429 || inner.Headers["Retry-After"] != "1" {
 		t.Fatal("lost inner status or retry guidance", inner)
 	}
-	if !proof.VerifyReceipt(publicKey, result.Receipt.Receipt, boot, sha256.Sum256(body), sha256.Sum256([]byte(`{"error":"limited"}`)), result.Receipt) {
+	if !verifyReceipt(publicKey, result.Receipt, boot, sha256.Sum256(body), sha256.Sum256([]byte(`{"error":"limited"}`))) {
 		t.Fatal("binary E2EE receipt does not cover original content")
 	}
 }

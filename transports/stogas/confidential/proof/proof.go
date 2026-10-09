@@ -45,6 +45,16 @@ type Input struct {
 	Metadata      Metadata
 }
 
+// Receipt is the gateway's signature over exact content hashes and the canonical
+// metadata bag. BootSHA256 resolves the hardware-bound signer.
+type Receipt struct {
+	Schema         string `json:"schema"`
+	BootSHA256     string `json:"boot_sha256"`
+	RequestSHA256  string `json:"request_sha256"`
+	ResponseSHA256 string `json:"response_sha256"`
+	Signature      string `json:"signature"`
+}
+
 // Object is the opt-in metadata covered by the receipt, excluding Receipt itself.
 type Object struct {
 	Metadata

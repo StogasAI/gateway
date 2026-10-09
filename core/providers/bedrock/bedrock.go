@@ -2435,6 +2435,11 @@ func (provider *BedrockProvider) Rerank(ctx *schemas.BifrostContext, key schemas
 	return bifrostResponse, nil
 }
 
+// Decision is not supported by the Bedrock provider.
+func (provider *BedrockProvider) Decision(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostDecisionRequest) (*schemas.BifrostDecisionResponse, *schemas.BifrostError) {
+	return nil, providerUtils.NewUnsupportedOperationError(schemas.DecisionRequest, provider.GetProviderKey())
+}
+
 // OCR is not supported by the Bedrock provider.
 func (provider *BedrockProvider) OCR(ctx *schemas.BifrostContext, key schemas.Key, request *schemas.BifrostOCRRequest) (*schemas.BifrostOCRResponse, *schemas.BifrostError) {
 	return nil, providerUtils.NewUnsupportedOperationError(schemas.OCRRequest, provider.GetProviderKey())
@@ -4436,6 +4441,32 @@ func toolNeedsAnthropicInvokePath(toolType string, deferLoading *bool) bool {
 	return deferLoading != nil && *deferLoading
 }
 
+// safeguardsSurviveStrip reports whether the shared Anthropic strip gate would
+// keep safeguards for this model. Only supported requests need InvokeModel,
+// where the native field and its required beta are assembled together.
+func safeguardsSurviveStrip(ctx *schemas.BifrostContext, model string) bool {
+	capModel := schemas.ResolveCanonicalModel(ctx, model)
+	caps := schemas.ResolveModelCaps(schemas.Bedrock, capModel)
+	return anthropic.ProviderFeatures[schemas.Bedrock].Safeguards &&
+		caps.SupportsSafeguards(anthropic.DefaultSupportsSafeguards(schemas.Bedrock, caps.Model()))
+}
+
+// extraParamsHasSafeguards accepts opaque JSON and programmatic parameter values.
+func extraParamsHasSafeguards(extraParams map[string]interface{}) bool {
+	v, exists := extraParams["safeguards"]
+	if !exists || v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case json.RawMessage:
+		return len(val) > 0
+	case []byte:
+		return len(val) > 0
+	default:
+		return true
+	}
+}
+
 func chatUsesAnthropicInvokePath(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest) bool {
 	if request == nil || request.Params == nil {
 		return false
@@ -4445,6 +4476,9 @@ func chatUsesAnthropicInvokePath(ctx *schemas.BifrostContext, request *schemas.B
 	}
 	if !schemas.IsAnthropicModelFamily(ctx, request.Model) {
 		return false
+	}
+	if extraParamsHasSafeguards(request.Params.ExtraParams) && safeguardsSurviveStrip(ctx, request.Model) {
+		return true
 	}
 	for _, tool := range request.Params.Tools {
 		if toolNeedsAnthropicInvokePath(string(tool.Type), tool.DeferLoading) {
@@ -4464,12 +4498,39 @@ func responsesUsesAnthropicInvokePath(ctx *schemas.BifrostContext, request *sche
 	if !schemas.IsAnthropicModelFamily(ctx, request.Model) {
 		return false
 	}
+	if extraParamsHasSafeguards(request.Params.ExtraParams) && safeguardsSurviveStrip(ctx, request.Model) {
+		return true
+	}
+	if invokeIngressThinkingNeedsInvokePath(ctx, request.Params.Reasoning) {
+		return true
+	}
 	for _, tool := range request.Params.Tools {
 		if toolNeedsAnthropicInvokePath(string(tool.Type), tool.DeferLoading) {
 			return true
 		}
 	}
 	return false
+}
+
+// invokeIngressThinkingNeedsInvokePath reports whether a request from the
+// InvokeModel-shaped ingress (BedrockContextKeyAnthropicInvokeIngress) has
+// thinking on. Converse TokenUsage has no thinking-token breakdown, while
+// InvokeModel returns usage.output_tokens_details.thinking_tokens, so such a
+// request is served by InvokeModel to keep the count the client asked for
+// (#7649). Thinking disabled (effort "none") or absent stays on Converse, and
+// so does every other ingress: /v1 and /bedrock converse callers never see
+// the marker. Callers gate on the Anthropic model family first.
+func invokeIngressThinkingNeedsInvokePath(ctx *schemas.BifrostContext, reasoning *schemas.ResponsesParametersReasoning) bool {
+	if ctx == nil || reasoning == nil {
+		return false
+	}
+	if marked, _ := ctx.Value(BedrockContextKeyAnthropicInvokeIngress).(bool); !marked {
+		return false
+	}
+	if reasoning.Effort != nil && *reasoning.Effort == "none" {
+		return false
+	}
+	return true
 }
 
 // invokeURL builds https://<bedrock-runtime host>/model/<model>/<action> using

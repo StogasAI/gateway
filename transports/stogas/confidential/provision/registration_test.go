@@ -6,22 +6,22 @@ import (
 	"crypto/mldsa"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	verifier "github.com/StogasAI/verifier/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )
 
 func TestControlDeliveryRefusesRedirectsAndMalformedCompletions(t *testing.T) {
-	request, node, _ := registrationFixture(t)
+	request, node := registrationFixture(t)
 	var forwarded atomic.Int32
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
@@ -60,28 +60,54 @@ func TestControlDeliveryRefusesRedirectsAndMalformedCompletions(t *testing.T) {
 	}
 }
 
-func registrationFixture(t *testing.T) (BootRegistration, string, string) {
+const testNode = "amber-anchor-01"
+
+// testBoot returns fresh node keys, the boot document they commit and its
+// signing key, read back from the document as Control would.
+func testBoot(t *testing.T) (*verifier.NodeKeys, []byte, *mldsa.PublicKey) {
 	t.Helper()
-	encoded, err := os.ReadFile("../attest/testdata/node-boot-v1.json")
+	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var vector struct {
-		Record attest.BootRecord `json:"record"`
-	}
-	if err := json.Unmarshal(encoded, &vector); err != nil {
-		t.Fatal(err)
-	}
-	request := NewBootRegistration("7700d119-e111-4c67-bfeb-17e127c38100", vector.Record, []byte("test CSR; server performs possession verification"))
-	digest, err := request.Boot.Digest()
+	t.Cleanup(keys.Close)
+	data, err := keys.ReportData(1, [32]byte{1}, [32]byte{2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return request, attest.SNPNodeID([32]byte{1}), hex.EncodeToString(digest[:])
+	report := make([]byte, 0x4a0)
+	copy(report[0x50:], data[:])
+	document, err := keys.BootDocument(1, [32]byte{1}, [32]byte{2}, report, [32]byte{3}, [32]byte{4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var boot struct {
+		ReportData struct {
+			SigningPublicKey string `json:"signing_public_key"`
+		} `json:"report_data"`
+	}
+	if err := json.Unmarshal(document, &boot); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := mldsa.NewPublicKey(mldsa.MLDSA65(), encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keys, document, public
+}
+
+func registrationFixture(t *testing.T) (BootRegistration, string) {
+	t.Helper()
+	_, document, _ := testBoot(t)
+	return NewBootRegistration("7700d119-e111-4c67-bfeb-17e127c38100", document, []byte("test CSR; server performs possession verification")), testNode
 }
 
 func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
-	request, node, digest := registrationFixture(t)
+	request, node := registrationFixture(t)
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("CF-Access-Client-Id") != "public-test-id" || r.Header.Get("CF-Access-Client-Secret") != "public-test-secret" {
@@ -95,8 +121,8 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 		if r.URL.Path != "/api/fleet/registration" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		var got BootRegistration
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got != request {
+		got, err := io.ReadAll(r.Body)
+		if want, _ := json.Marshal(request); err != nil || !bytes.Equal(got, want) {
 			t.Error("boot retry changed request bytes")
 		}
 		calls++
@@ -105,7 +131,7 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 			json.NewEncoder(w).Encode(RegistrationResponse{Status: "pending", NodeID: node})
 			return
 		}
-		json.NewEncoder(w).Encode(RegistrationResponse{Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{"test":"verified separately"}`), Provisioning: &BootProvisioning{Schema: BootProvisioningSchema, BootSHA256: digest}})
+		json.NewEncoder(w).Encode(RegistrationResponse{Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{"test":"verified separately"}`), Provisioning: json.RawMessage(`{"sealed":"opened by the node keys"}`)})
 	}))
 	defer server.Close()
 	client := Client{BaseURL: server.URL, AllowInsecureLocal: true, AccessClientID: "public-test-id", AccessClientSecret: "public-test-secret"}
@@ -122,17 +148,17 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 	}
 }
 
+// verifyBootRequest independently checks a request signature with Go's ML-DSA.
+func verifyBootRequest(public *mldsa.PublicKey, domain, node string, issued int64, encoded string) bool {
+	signature, err := base64.RawURLEncoding.DecodeString(encoded)
+	message := binary.BigEndian.AppendUint64(append([]byte(domain+node), 0), uint64(issued))
+	return err == nil && mldsa.Verify(public, message, signature, nil) == nil
+}
+
 func TestCertificateRenewalCompletion(t *testing.T) {
-	registration, node, _ := registrationFixture(t)
-	document, err := registration.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	keys, document, public := testBoot(t)
+	node := testNode
 	boot := attest.BootEvidence{Document: document, Inclusion: []byte(`{"fixture":"inclusion"}`)}
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name     string
 		response BootCertificateResponse
@@ -140,7 +166,7 @@ func TestCertificateRenewalCompletion(t *testing.T) {
 	}{
 		{"pending", BootCertificateResponse{Status: "pending", NodeID: node}, true},
 		{"ready", BootCertificateResponse{Status: "ready", NodeID: node, CertificatePEM: "public certificate; validated by installer"}, true},
-		{"wrong owner", BootCertificateResponse{Status: "ready", NodeID: attest.SNPNodeID([32]byte{2}), CertificatePEM: "certificate"}, false},
+		{"wrong owner", BootCertificateResponse{Status: "ready", NodeID: "amber-anchor-02", CertificatePEM: "certificate"}, false},
 		{"missing", BootCertificateResponse{Status: "ready", NodeID: node}, false},
 		{"premature", BootCertificateResponse{Status: "pending", NodeID: node, CertificatePEM: "certificate"}, false},
 		{"unknown", BootCertificateResponse{Status: "other", NodeID: node}, false},
@@ -165,11 +191,8 @@ func TestCertificateRenewalCompletion(t *testing.T) {
 				if !bytes.Equal(bytes.TrimSpace(request.Boot), bytes.TrimSpace(document)) || !bytes.Equal(request.Inclusion, boot.Inclusion) || request.CSR != "AQ" {
 					t.Error("renewal omitted or changed its boot, proof or CSR")
 				}
-				message := append([]byte("stogas.certificate-renewal.v1\x00"), []byte(request.NodeID)...)
-				message = append(message, 0)
-				message = binary.BigEndian.AppendUint64(message, uint64(request.Issued))
-				signature, err := base64.RawURLEncoding.DecodeString(request.Signature)
-				if err != nil || request.NodeID != node || time.Since(time.UnixMilli(request.Issued)).Abs() > time.Minute || mldsa.Verify(key.PublicKey(), message, signature, nil) != nil {
+				if request.NodeID != node || time.Since(time.UnixMilli(request.Issued)).Abs() > time.Minute ||
+					!verifyBootRequest(public, "stogas.certificate-renewal.v1\x00", node, request.Issued, request.Signature) {
 					t.Error("renewal was not signed by this node")
 				}
 				w.Header().Set("Content-Type", "application/json")
@@ -177,30 +200,31 @@ func TestCertificateRenewalCompletion(t *testing.T) {
 			}))
 			defer server.Close()
 			client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
-			_, err := client.RenewBootCertificate(context.Background(), node, boot, []byte{1}, key)
+			_, err := client.RenewBootCertificate(context.Background(), node, boot, []byte{1}, keys)
 			if (err == nil) != tc.valid {
 				t.Fatalf("valid=%v, error=%v", tc.valid, err)
 			}
 		})
 	}
-	for _, invalid := range []string{"", "node", "wrong-name-" + strings.Repeat("0", 64), strings.ToUpper(node)} {
-		if _, err := (Client{}).RenewBootCertificate(context.Background(), invalid, attest.BootEvidence{}, []byte{1}, key); err == nil {
-			t.Fatal("accepted invalid node identity")
-		}
+	if _, err := (Client{}).RenewBootCertificate(context.Background(), "", attest.BootEvidence{}, []byte{1}, keys); err == nil {
+		t.Fatal("accepted absent node identity")
+	}
+	if _, err := (Client{}).RenewBootCertificate(context.Background(), node, attest.BootEvidence{}, []byte{1}, nil); err == nil {
+		t.Fatal("renewed without node key")
 	}
 }
 
 func TestRegistrationRejectsInconsistentCompletionAndUntrustedNames(t *testing.T) {
-	request, node, digest := registrationFixture(t)
+	request, node := registrationFixture(t)
+	sealed := json.RawMessage(`{"sealed":true}`)
 	for name, response := range map[string]RegistrationResponse{
 		"different node":   {Status: "pending", NodeID: node + "a"},
 		"unknown status":   {Status: "approved", NodeID: node},
 		"pending proof":    {Status: "pending", NodeID: node, Inclusion: json.RawMessage(`{}`)},
-		"pending secrets":  {Status: "pending", NodeID: node, Provisioning: &BootProvisioning{}},
-		"ready no proof":   {Status: "ready", NodeID: node, Provisioning: &BootProvisioning{Schema: BootProvisioningSchema, BootSHA256: digest}},
+		"pending secrets":  {Status: "pending", NodeID: node, Provisioning: sealed},
+		"ready no proof":   {Status: "ready", NodeID: node, Provisioning: sealed},
+		"ready null proof": {Status: "ready", NodeID: node, Inclusion: json.RawMessage(`null`), Provisioning: sealed},
 		"ready no secrets": {Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{}`)},
-		"wrong boot":       {Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{}`), Provisioning: &BootProvisioning{Schema: BootProvisioningSchema, BootSHA256: strings.Repeat("0", 64)}},
-		"wrong profile":    {Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{}`), Provisioning: &BootProvisioning{Schema: "other", BootSHA256: digest}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(response) }))
@@ -214,13 +238,13 @@ func TestRegistrationRejectsInconsistentCompletionAndUntrustedNames(t *testing.T
 }
 
 func TestRegistrationRejectsInvalidLocalInputsBeforeSending(t *testing.T) {
-	request, node, _ := registrationFixture(t)
+	request, node := registrationFixture(t)
 	client := Client{BaseURL: "https://unreachable.invalid"}
 	for _, change := range []func(*BootRegistration){
 		func(v *BootRegistration) { v.InstanceID = "not-an-instance" },
 		func(v *BootRegistration) { v.CSRDER += "=" },
 		func(v *BootRegistration) { v.CSRDER = strings.Repeat("A", 21847) },
-		func(v *BootRegistration) { v.Boot.ReportData.RegistrationChallenge = strings.Repeat("0", 64) },
+		func(v *BootRegistration) { v.Boot = json.RawMessage(`{`) },
 	} {
 		altered := request
 		change(&altered)
@@ -231,7 +255,7 @@ func TestRegistrationRejectsInvalidLocalInputsBeforeSending(t *testing.T) {
 }
 
 func TestRegistrationCancellationAndTypedFailure(t *testing.T) {
-	request, node, _ := registrationFixture(t)
+	request, node := registrationFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	release := make(chan struct{})
@@ -272,48 +296,10 @@ func TestRegistrationChallengeRejectsExpiredAndNoncanonicalValues(t *testing.T) 
 	}
 }
 
-func TestCertificateRenewalIndependentSignatureVector(t *testing.T) {
-	data, err := os.ReadFile("../attest/testdata/node-boot-v1.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Renewal struct {
-			NodeID    string `json:"node_id"`
-			Issued    int64  `json:"issued_at_ms"`
-			Signature string `json:"signature"`
-		} `json:"certificate_renewal"`
-	}
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	signed, err := key.SignDeterministic(bootRequestTranscript(certificateRequestDomain, fixture.Renewal.NodeID, fixture.Renewal.Issued), &mldsa.Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if base64.RawURLEncoding.EncodeToString(signed) != fixture.Renewal.Signature {
-		t.Fatal("certificate renewal signature differs from independent vector")
-	}
-	if _, err := (Client{}).RenewBootCertificate(t.Context(), fixture.Renewal.NodeID, attest.BootEvidence{}, []byte{1}, nil); err == nil {
-		t.Fatal("renewed without node key")
-	}
-}
-
 func TestRegistrationAcknowledgementBindsPurposeAndExactBoot(t *testing.T) {
-	registration, node, _ := registrationFixture(t)
-	document, err := registration.Boot.Document()
-	if err != nil {
-		t.Fatal(err)
-	}
+	keys, document, public := testBoot(t)
+	node := testNode
 	boot := attest.BootEvidence{Document: document, Inclusion: []byte(`{"fixture":"inclusion"}`)}
-	key, err := mldsa.GenerateKey(mldsa.MLDSA65())
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, status := range []string{"complete", "pending", "wrong-node"} {
 		t.Run(status, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -328,20 +314,17 @@ func TestRegistrationAcknowledgementBindsPurposeAndExactBoot(t *testing.T) {
 				if request.NodeID != node || !bytes.Equal(bytes.TrimSpace(request.Boot), bytes.TrimSpace(document)) || !bytes.Equal(request.Inclusion, boot.Inclusion) {
 					t.Error("completion changed boot evidence")
 				}
-				signature, err := base64.RawURLEncoding.DecodeString(request.Signature)
-				message := append([]byte("stogas.registration-complete.v1\x00"), []byte(node)...)
-				message = binary.BigEndian.AppendUint64(append(message, 0), uint64(request.IssuedAtMS))
-				if err != nil || mldsa.Verify(key.PublicKey(), message, signature, nil) != nil {
+				if !verifyBootRequest(public, "stogas.registration-complete.v1\x00", node, request.IssuedAtMS, request.Signature) {
 					t.Error("invalid completion signature")
 				}
 				responseNode := node
 				if status == "wrong-node" {
-					responseNode = attest.SNPNodeID([32]byte{99})
+					responseNode = "amber-anchor-99"
 				}
 				_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "node_id": responseNode})
 			}))
 			defer server.Close()
-			err := (Client{BaseURL: server.URL, AllowInsecureLocal: true}).CompleteBootRegistration(t.Context(), node, boot, key)
+			err := (Client{BaseURL: server.URL, AllowInsecureLocal: true}).CompleteBootRegistration(t.Context(), node, boot, keys)
 			if (err == nil) != (status == "complete") {
 				t.Fatalf("completion result: %v", err)
 			}

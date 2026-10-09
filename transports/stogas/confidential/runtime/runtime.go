@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ type Runtime struct {
 	region       provision.Region
 	batcher      *attest.Batcher
 	material     *identity.Material
+	keys         *verifier.NodeKeys
 	cancel       context.CancelFunc
 	done         chan struct{}
 	shutdown     chan struct{}
@@ -91,11 +93,15 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig, resources Reso
 		evidence.close()
 		return nil, err
 	}
-	r, err := startBoot(ctx, config, resources, evidence, material, attest.DefaultSEVSNP(), nil)
+	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
 		evidence.close()
-		material.SigningKey = nil
-		material.HPKEPrivateKey = nil
+		return nil, err
+	}
+	r, err := startBoot(ctx, config, resources, evidence, material, keys, attest.DefaultSEVSNP(), nil)
+	if err != nil {
+		evidence.close()
+		keys.Close()
 		material.TLSPrivateKey = nil
 	}
 	return r, err
@@ -103,14 +109,10 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig, resources Reso
 
 // startBoot does not expose listeners or secrets until registration, logged boot
 // verification and the reused-address route barrier have all completed.
-func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources Resources, evidence *currentEvidence, material *identity.Material, reporter attest.Attester, roots *x509.CertPool) (*Runtime, error) {
+func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources Resources, evidence *currentEvidence, material *identity.Material, keys *verifier.NodeKeys, reporter attest.Attester, roots *x509.CertPool) (*Runtime, error) {
 	environment, hostname := attest.Production, "api.stogas.ai"
 	if config.Environment == "staging" {
 		environment, hostname = attest.Staging, "api-staging.stogas.ai"
-	}
-	environmentName := "prod"
-	if environment == attest.Staging {
-		environmentName = "staging"
 	}
 	certs, err := identity.NewBootCertificateStore(material, roots)
 	if err != nil {
@@ -138,13 +140,13 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		if err != nil {
 			return nil, err
 		}
-		quoted, e := quoteBoot(ctx, environmentName, material, challenge.Challenge, reporter)
+		quoted, e := quoteBoot(ctx, environment, material, keys, challenge.Challenge, reporter)
 		if e != nil {
 			return nil, e
 		}
 		err = retryStartup(ctx, func() (bool, error) {
 			var e error
-			boot, e = quoted.prepare(ctx, evidence)
+			boot, e = quoted.prepare(ctx, evidence, environment, material, keys)
 			return e == nil, e
 		})
 		if err != nil {
@@ -157,7 +159,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		if e != nil {
 			return nil, e
 		}
-		request := provision.NewBootRegistration(config.InstanceID, boot.record, csr)
+		request := provision.NewBootRegistration(config.InstanceID, boot.document, csr)
 		err = retryStartup(ctx, func() (bool, error) {
 			var e error
 			response, e = client.RegisterBoot(ctx, request, boot.identity.NodeID)
@@ -182,14 +184,12 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 	if err != nil {
 		return nil, err
 	}
-	completion, err := installBootCompletion(boot, response, evidence.snapshot, evidence.now(), material, certs, secrets, hostname)
+	completion, err := installBootCompletion(boot, response, evidence.snapshot, evidence.now(), keys, certs, secrets, hostname)
 	if err != nil {
 		return nil, err
 	}
 	logged, checked := completion.boot, completion.identity
-	// Provisioning decryption is one-shot. All later Control calls return public data.
-	material.HPKEPrivateKey = nil
-	proofs, err := proofhttp.New(boot.document, material.SigningKey)
+	proofs, err := proofhttp.New(sha256.Sum256(logged.Document), checked.NodeID, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -213,12 +213,12 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		cleanupBatcher()
 		return nil, err
 	}
-	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, signingKey: material.SigningKey, identity: checked}
+	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, keys: keys, identity: checked}
 	// A catalog delivery outage leaves this registered VM alive but unready; the
 	// same maintenance loop recovers it without a new quote or registration.
 	_ = maintenance.maintain(ctx)
 	runtimeContext, cancel := context.WithCancel(ctx)
-	r := &Runtime{Certs: certs, Proofs: proofs, Secrets: secrets, Sessions: sessions, NativeIssuer: issuer, maintenance: maintenance, region: completion.region, batcher: batcher, material: material, cancel: cancel, done: make(chan struct{}), shutdown: make(chan struct{})}
+	r := &Runtime{Certs: certs, Proofs: proofs, Secrets: secrets, Sessions: sessions, NativeIssuer: issuer, maintenance: maintenance, region: completion.region, batcher: batcher, material: material, keys: keys, cancel: cancel, done: make(chan struct{}), shutdown: make(chan struct{})}
 	installed = true
 	go r.run(runtimeContext)
 	return r, nil
@@ -372,7 +372,6 @@ func (r *Runtime) Close() {
 		}
 		if r.maintenance != nil {
 			r.maintenance.evidence.close()
-			r.maintenance.signingKey = nil
 		}
 		if r.Secrets != nil {
 			r.Secrets.Close()
@@ -380,9 +379,10 @@ func (r *Runtime) Close() {
 		if r.Proofs != nil {
 			r.Proofs.Close()
 		}
+		if r.keys != nil {
+			r.keys.Close()
+		}
 		if r.material != nil {
-			r.material.SigningKey = nil
-			r.material.HPKEPrivateKey = nil
 			r.material.TLSPrivateKey = nil
 		}
 	})
