@@ -3,7 +3,6 @@ package proofhttp
 import (
 	"bytes"
 	"context"
-	"crypto/mldsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	verifier "github.com/StogasAI/verifier/go"
+	"github.com/StogasAI/verifier/go/reference"
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
@@ -23,7 +23,7 @@ const testCatalogDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 var testCatalogSelectionIDs = []string{"author:openai", "model:gpt-5.5", "deployment:openai-gpt-5.5", "route:openai-responses", "provider:openai"}
 
 // receiptService signs under fresh keys committed by a synthetic boot document.
-func receiptService(t *testing.T) (*Service, [32]byte, *mldsa.PublicKey) {
+func receiptService(t *testing.T) (*Service, [32]byte, []byte) {
 	t.Helper()
 	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
@@ -48,11 +48,7 @@ func receiptService(t *testing.T) (*Service, [32]byte, *mldsa.PublicKey) {
 	if err := json.Unmarshal(document, &boot); err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, err := mldsa.NewPublicKey(mldsa.MLDSA65(), encoded)
+	public, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +60,7 @@ func receiptService(t *testing.T) (*Service, [32]byte, *mldsa.PublicKey) {
 }
 
 // verifyReceipt is an independent Go check of the Rust signer's message and digests.
-func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, response [32]byte) bool {
+func verifyReceipt(public []byte, object proof.Object, boot, request, response [32]byte) bool {
 	receipt := object.Receipt
 	encoded, err := json.Marshal(object)
 	var bag map[string]json.RawMessage
@@ -83,7 +79,7 @@ func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, 
 	}
 	digest := sha256.Sum256(canonical)
 	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
-	return mldsa.Verify(public, message, signature, nil) == nil
+	return reference.VerifySignature(public, message, signature) == nil
 }
 
 func TestReceiptSignsContentAndFinalMetadata(t *testing.T) {

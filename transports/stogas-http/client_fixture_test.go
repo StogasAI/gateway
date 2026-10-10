@@ -27,7 +27,7 @@ import (
 )
 
 // fixtureNode rebuilds the synthetic boot vector from its public seeds: 32 bytes
-// of 42 for signing and bytes 0 through 31 for provisioning.
+// of 42 for each signing component and bytes 0 through 31 for provisioning.
 func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
 	encoded, err := os.ReadFile(path)
 	if err != nil {
@@ -59,7 +59,7 @@ func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
 	if err != nil || len(report) != 0x4a0 {
 		return nil, nil, "", fmt.Errorf("invalid boot fixture report")
 	}
-	seeds := bytes.Repeat([]byte{42}, 32)
+	seeds := bytes.Repeat([]byte{42}, 64)
 	for i := range 32 {
 		seeds = append(seeds, byte(i))
 	}
