@@ -3,7 +3,6 @@ package provision
 import (
 	"bytes"
 	"context"
-	"crypto/mldsa"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	verifier "github.com/StogasAI/verifier/go"
+	"github.com/StogasAI/verifier/go/reference"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )
 
@@ -64,7 +64,7 @@ const testNode = "amber-anchor-01"
 
 // testBoot returns fresh node keys, the boot document they commit and its
 // signing key, read back from the document as Control would.
-func testBoot(t *testing.T) (*verifier.NodeKeys, []byte, *mldsa.PublicKey) {
+func testBoot(t *testing.T) (*verifier.NodeKeys, []byte, []byte) {
 	t.Helper()
 	keys, err := verifier.GenerateNodeKeys(nil)
 	if err != nil {
@@ -89,11 +89,7 @@ func testBoot(t *testing.T) (*verifier.NodeKeys, []byte, *mldsa.PublicKey) {
 	if err := json.Unmarshal(document, &boot); err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, err := mldsa.NewPublicKey(mldsa.MLDSA65(), encoded)
+	public, err := base64.RawURLEncoding.DecodeString(boot.ReportData.SigningPublicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +144,11 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 	}
 }
 
-// verifyBootRequest independently checks a request signature with Go's ML-DSA.
-func verifyBootRequest(public *mldsa.PublicKey, domain, node string, issued int64, encoded string) bool {
+// verifyBootRequest independently checks a request signature with Go's ML-DSA-65 and Ed25519.
+func verifyBootRequest(public []byte, domain, node string, issued int64, encoded string) bool {
 	signature, err := base64.RawURLEncoding.DecodeString(encoded)
 	message := binary.BigEndian.AppendUint64(append([]byte(domain+node), 0), uint64(issued))
-	return err == nil && mldsa.Verify(public, message, signature, nil) == nil
+	return err == nil && reference.VerifySignature(public, message, signature) == nil
 }
 
 func TestCertificateRenewalCompletion(t *testing.T) {

@@ -1,6 +1,7 @@
 (define-module (stogas release packages)
   #:use-module (gnu packages)
   #:use-module (gnu packages firmware)
+  #:use-module ((gnu packages rust) #:select (rust-1.94))
   #:use-module (guix base32)
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system meson)
@@ -361,7 +362,8 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
 
 (define* (rust-tool-package name version source source-directory vendor lock
                            vendor-sha256 config-body build-command binaries
-                           synopsis #:key (output-directory "bin"))
+                           synopsis #:key (output-directory "bin")
+                           (rust (list (pkg "rust"))))
   (package
     (name name)
     (version version)
@@ -413,7 +415,7 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
                      (install-file (string-append "target/release/" binary)
                                    bin))
                    '#$binaries))))))))
-    (native-inputs (map pkg '("bash-minimal" "coreutils" "findutils" "rust")))
+    (native-inputs (append (map pkg '("bash-minimal" "coreutils" "findutils")) rust))
     (synopsis synopsis)
     (description synopsis)
     (home-page "https://stogas.ai")
@@ -508,8 +510,8 @@ directory = \"vendor\"
                  "stogas-verifier-source" #:recursive? #t)
      (origin
      (method url-fetch)
-     (uri "https://github.com/StogasAI/verifier/archive/ca9ec8aff62375260da51d9803b6885d00b5d0ea.tar.gz")
-     (sha256 (base32 "1543y2qk0bh3plwk5n63hc36qbmjp19276j241n4h9yh1dcwaw3w"))))
+     (uri "https://github.com/StogasAI/verifier/archive/f9feaf2fb0c7d29f737073066c38de34a51b1024.tar.gz")
+     (sha256 (base32 "0fh1fx36zg9k5snfd1aibil6n0ajcfj2bpnwkla6pml8ack202c3"))))
    "."
    (if %verifier-build-root
        (local-file (string-append %verifier-build-root "/vendor")
@@ -518,7 +520,7 @@ directory = \"vendor\"
    stogas-verifier-lock
    (if %verifier-build-root
        #~(call-with-input-file #$(verifier-input "vendor.sha256" "stogas-verifier-vendor.sha256") read-line)
-       "1abab014130339f84fd63f75d14a200b77cc69554493c3620fc1d8355be0e165")
+       "a74aa2fda7a1e983a837610cb7b4c2e1069761adc3d85d5c7e227e6d30403329")
    "[source.crates-io]
 replace-with = \"vendored-sources\"
 [source.vendored-sources]
@@ -526,11 +528,15 @@ directory = \"vendor\"
 "
    #~(begin
        (setenv "RUSTFLAGS" "--remap-path-prefix=.=source")
-       (invoke "cargo" "test" "--release" "--locked" "--offline"
+       (invoke "cargo" "test" "--release" "--locked" "--offline" "--tests"
                "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
                "--no-default-features" "--features" "staging,stogas-verifier-ffi/gateway")
        (invoke "cargo" "build" "--release" "--locked" "--offline"
                "-p" "stogas-verifier-ffi" "--no-default-features" "--features" "staging,gateway"))
    '("libstogas_verifier_ffi.a")
    "Offline confidential evidence verifier with explicit environment selection"
-   #:output-directory "lib"))
+   #:output-directory "lib"
+   ;; The verifier requires Rust 1.94.1, newer than Guix's default Rust. This
+   ;; Guix bootstrap stage ships rustc and cargo without rustdoc, so the
+   ;; verifier tests run without doctests; its crates have none.
+   #:rust (list rust-1.94 (list rust-1.94 "cargo"))))

@@ -6,7 +6,8 @@ require (
 	cel.dev/cel-go v0.32.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
-	github.com/StogasAI/verifier/go v0.0.0-20261002030418-ca9ec8aff623
+	github.com/StogasAI/verifier/go v0.0.0-20261010024806-f9feaf2fb0c7
+	github.com/StogasAI/verifier/go/reference v0.0.0-20261010024806-f9feaf2fb0c7
 	github.com/andybalholm/brotli v1.2.2
 	github.com/bytedance/sonic v1.15.3-0.20260730064818-2a36d6da63e2
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
@@ -60,7 +61,6 @@ require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/cloudflare/circl v1.6.5 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect
 	github.com/google/logger v1.1.1 // indirect

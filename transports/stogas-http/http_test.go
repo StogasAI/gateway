@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"crypto/mldsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	ref "github.com/StogasAI/verifier/go/reference"
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/google/uuid"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
@@ -798,7 +800,7 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 	}
 }
 
-func testProofService(t *testing.T) (*proofhttp.Service, *mldsa.PublicKey, [32]byte) {
+func testProofService(t *testing.T) (*proofhttp.Service, []byte, [32]byte) {
 	t.Helper()
 	keys, document, nodeID, err := fixtureNode("testdata/node-boot-v1.json")
 	if err != nil {
@@ -810,16 +812,18 @@ func testProofService(t *testing.T) (*proofhttp.Service, *mldsa.PublicKey, [32]b
 		t.Fatal(err)
 	}
 	t.Cleanup(service.Close)
-	// Go derives the same FIPS 204 key independently from the public fixture seed.
-	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), bytes.Repeat([]byte{42}, 32))
+	// Go derives the same composite key independently from the public fixture seeds.
+	seed := bytes.Repeat([]byte{42}, 32)
+	key, err := mldsa.NewPrivateKey(mldsa.MLDSA65(), seed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return service, key.PublicKey(), sha256.Sum256(document)
+	public := append(key.PublicKey().Bytes(), ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)...)
+	return service, public, sha256.Sum256(document)
 }
 
 // verifyReceipt independently checks the Rust signer's message, digests and metadata.
-func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, response [32]byte) bool {
+func verifyReceipt(public []byte, object proof.Object, boot, request, response [32]byte) bool {
 	receipt := object.Receipt
 	encoded, err := json.Marshal(object)
 	var bag map[string]json.RawMessage
@@ -838,7 +842,7 @@ func verifyReceipt(public *mldsa.PublicKey, object proof.Object, boot, request, 
 	}
 	digest := sha256.Sum256(canonical)
 	message := bytes.Join([][]byte{[]byte("stogas.receipt.v1\x00"), request[:], response[:], digest[:]}, nil)
-	return mldsa.Verify(public, message, signature, nil) == nil
+	return ref.VerifySignature(public, message, signature) == nil
 }
 
 func TestRequireInferenceEnvelopeChecksAPIKeyBeforeBodyValidation(t *testing.T) {

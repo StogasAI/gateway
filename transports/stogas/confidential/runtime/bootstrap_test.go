@@ -243,7 +243,7 @@ func bootFixtureKeys(t *testing.T, fixture bootEvidenceFixture) (*identity.Mater
 	if err != nil {
 		t.Fatal(err)
 	}
-	seeds := bytes.Repeat([]byte{42}, 32)
+	seeds := bytes.Repeat([]byte{42}, 64)
 	for i := range 32 {
 		seeds = append(seeds, byte(i))
 	}
