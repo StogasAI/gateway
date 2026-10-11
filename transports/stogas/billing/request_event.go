@@ -9,8 +9,8 @@ import (
 )
 
 type ProviderAttempt struct {
-	CatalogChainHash         *string `json:"catalog_chain_hash"`
-	SelectedCatalogChainHash *string `json:"selected_catalog_chain_hash,omitempty"`
+	CatalogChainHash         string  `json:"catalog_chain_hash"`
+	SelectedCatalogChainHash string  `json:"selected_catalog_chain_hash,omitempty"`
 	Provider                 string  `json:"provider"`
 	Status                   string  `json:"status"`
 	StatusCode               *int    `json:"status_code"`
@@ -60,7 +60,6 @@ type RequestEvent struct {
 	Usage                RequestUsage       `json:"usage"`
 	Plugins              plugins.Metrics    `json:"plugins,omitzero"`
 	GatewayVersion       string             `json:"gateway_version"`
-	analyticsQuantities  map[string]uint64
 	holdParamsHash       string
 }
 
@@ -131,7 +130,7 @@ func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
 	if event.SchemaVersion != RequestLogSchemaVersion {
 		return RequestEvent{}, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
-	pricing, analyticsQuantities, err := ValidateMeters(event.Usage.Meters)
+	pricing, err := ValidateMeters(event.Usage.Meters)
 	if err != nil {
 		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
 	}
@@ -141,7 +140,6 @@ func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
 	if !equalOptionalString(actual.Input, expected.Input) || !equalOptionalString(actual.Reasoning, expected.Reasoning) || !equalOptionalString(actual.Output, expected.Output) {
 		return RequestEvent{}, fmt.Errorf("standard text tokens do not match observed UTF-8 bytes")
 	}
-	event.analyticsQuantities = analyticsQuantities
 	event.Usage.CacheReadSavingsUSD, err = requestOptionalUSD(
 		event.Usage.CacheReadSavingsUSD,
 		"cache read savings",

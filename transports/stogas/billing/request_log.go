@@ -244,16 +244,22 @@ func completeLogBatch(batch []requestLogAppendRequest, result logDelivery) bool 
 }
 
 func (c *RequestLogClient) appendBatch(ctx context.Context, batch []requestLogAppendRequest) bool {
-	var body bytes.Buffer
-	for _, request := range batch {
-		body.Write(request.line)
-	}
-	if c.primary != nil && c.primary.append(ctx, body.Bytes(), len(batch)) == nil {
+	if c.primary != nil && c.primary.append(ctx, requestLogBody(batch), len(batch)) == nil {
 		return completeLogBatch(batch, logDelivery{destination: LogQueue})
 	}
 	return c.appendFallbackBatch(ctx, batch)
 }
 
+func requestLogBody(batch []requestLogAppendRequest) []byte {
+	var body bytes.Buffer
+	for _, request := range batch {
+		body.Write(request.line)
+	}
+	return body.Bytes()
+}
+
+// Queue records are the Tinybird rows: the datasource derives its analytics
+// columns from the event, so direct delivery sends the same lines.
 func (c *RequestLogClient) appendFallbackBatch(ctx context.Context, batch []requestLogAppendRequest) bool {
 	if err := ctx.Err(); err != nil {
 		return completeLogBatch(batch, logDelivery{err: err})
@@ -261,27 +267,8 @@ func (c *RequestLogClient) appendFallbackBatch(ctx context.Context, batch []requ
 	if c.fallback == nil {
 		return completeLogBatch(batch, logDelivery{err: errors.New("durable request log queue unavailable")})
 	}
-	var analytics bytes.Buffer
-	for _, request := range batch {
-		event, err := decodeGatewayRequestEvent(string(request.line))
-		if err != nil {
-			return completeLogBatch(batch, logDelivery{err: err})
-		}
-		var binding struct {
-			HoldParamsHash string `json:"hold_params_hash"`
-		}
-		if err := json.Unmarshal(request.line, &binding); err != nil {
-			return completeLogBatch(batch, logDelivery{err: err})
-		}
-		event.holdParamsHash = binding.HoldParamsHash
-		encoded, err := json.Marshal(tinybirdGatewayRequestEvent(event))
-		if err != nil {
-			return completeLogBatch(batch, logDelivery{err: err})
-		}
-		analytics.Write(encoded)
-		analytics.WriteByte('\n')
-	}
-	err := c.fallback.append(ctx, analytics.Bytes(), len(batch))
+	body := requestLogBody(batch)
+	err := c.fallback.append(ctx, body, len(batch))
 	if errors.Is(err, errRequestLogQuarantined) {
 		if len(batch) > 1 {
 			midpoint := (len(batch) + 1) / 2
@@ -291,7 +278,7 @@ func (c *RequestLogClient) appendFallbackBatch(ctx context.Context, batch []requ
 		}
 		// Confirm the isolated row before classifying it as invalid. A timeout,
 		// incomplete acknowledgement or HTTP error stays retryable in memory.
-		err = c.fallback.append(ctx, analytics.Bytes(), 1)
+		err = c.fallback.append(ctx, body, 1)
 		if errors.Is(err, errRequestLogQuarantined) {
 			err = c.primary.quarantine(ctx, batch[0].line, 1)
 			return completeLogBatch(batch, logDelivery{destination: LogQuarantine, err: err})

@@ -107,7 +107,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	} else if ttftMS != nil && *ttftMS > totalTimeMS {
 		*ttftMS = totalTimeMS
 	}
-	pricing, analyticsQuantities, err := ValidateMeters(input.Meters)
+	pricing, err := ValidateMeters(input.Meters)
 	if err != nil {
 		return RequestEvent{}, err
 	}
@@ -166,9 +166,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 			Meters:                pricing,
 			StandardTextTokens:    standardTextTokens(pricing),
 		},
-		Plugins:             input.Plugins,
-		GatewayVersion:      strings.TrimSpace(input.GatewayVersion),
-		analyticsQuantities: analyticsQuantities,
+		Plugins:        input.Plugins,
+		GatewayVersion: strings.TrimSpace(input.GatewayVersion),
 	}, nil
 }
 
@@ -182,13 +181,6 @@ func requestFirstOutput(input EventInput, startedAt time.Time, providerStartMS *
 
 func catalogVersion(value uint64) *uint64 {
 	if value == 0 {
-		return nil
-	}
-	return &value
-}
-
-func optionalString(value string) *string {
-	if value == "" {
 		return nil
 	}
 	return &value
@@ -217,7 +209,7 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 		}
 		return []ProviderAttempt{{
 			Provider:                 authorization.ProviderKey,
-			CatalogChainHash:         optionalString(input.CatalogChainHash),
+			CatalogChainHash:         input.CatalogChainHash,
 			SelectedCatalogChainHash: changedCatalogSelection(input.SelectedCatalogChainHash, input.CatalogChainHash),
 			Status:                   providerAttemptStatus(input.Error, input.Response),
 			StatusCode:               providerStatusCode(input.Error),
@@ -237,7 +229,7 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 		}
 		attempts[index] = ProviderAttempt{
 			Provider:                 provider,
-			CatalogChainHash:         optionalString(observed.CatalogChainHash),
+			CatalogChainHash:         observed.CatalogChainHash,
 			SelectedCatalogChainHash: changedCatalogSelection(observed.SelectedCatalogChainHash, observed.CatalogChainHash),
 			Status:                   providerAttemptStatus(observed.Error, observed.Response),
 			StatusCode:               providerStatusCode(observed.Error),
@@ -251,11 +243,11 @@ func requestProviderAttempts(input EventInput, authorization *Authorization, fal
 	return attempts
 }
 
-func changedCatalogSelection(selected, settled string) *string {
+func changedCatalogSelection(selected, settled string) string {
 	if selected == settled {
-		return nil
+		return ""
 	}
-	return optionalString(selected)
+	return selected
 }
 
 func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse) string {
@@ -295,13 +287,6 @@ func requestOptionalUSD(raw *string, name string) (*string, error) {
 	}
 	normalized := value.String()
 	return &normalized, nil
-}
-
-func (event RequestEvent) FinalProviderAttempt() (ProviderAttempt, bool) {
-	if len(event.ProviderAttempts) == 0 {
-		return ProviderAttempt{}, false
-	}
-	return event.ProviderAttempts[len(event.ProviderAttempts)-1], true
 }
 
 func cloneUint32Pointer(value *uint32) *uint32 {
@@ -546,39 +531,37 @@ func IsInformationalMeter(key string) bool {
 	}
 }
 
-func ValidateMeters(pricing EventMeters) (EventMeters, map[string]uint64, error) {
+func ValidateMeters(pricing EventMeters) (EventMeters, error) {
 	cloned := make(EventMeters, len(pricing))
-	quantities := make(map[string]uint64, len(pricing))
 	for key, meter := range pricing {
 		if key == "" || strings.TrimSpace(key) != key {
-			return nil, nil, fmt.Errorf("invalid meter identity")
+			return nil, fmt.Errorf("invalid meter identity")
 		}
 		quantity, err := ParseNonnegativeInteger(meter.Quantity)
 		if err != nil || !quantity.IsUint64() {
-			return nil, nil, fmt.Errorf("invalid meter quantity for %s", key)
+			return nil, fmt.Errorf("invalid meter quantity for %s", key)
 		}
 		if meter.RateKey == nil && meter.RateUSD == nil && meter.USD == nil {
 			// A count without a price is not evidence of a free rate.
 		} else {
 			if IsInformationalMeter(key) {
-				return nil, nil, fmt.Errorf("informational meter cannot be priced: %s", key)
+				return nil, fmt.Errorf("informational meter cannot be priced: %s", key)
 			}
 			if meter.RateKey == nil || meter.RateUSD == nil || meter.USD == nil ||
 				*meter.RateKey == "" || strings.TrimSpace(*meter.RateKey) != *meter.RateKey {
-				return nil, nil, fmt.Errorf("incomplete meter pricing for %s", key)
+				return nil, fmt.Errorf("incomplete meter pricing for %s", key)
 			}
 			rate, rateErr := ParseUSD(*meter.RateUSD)
 			amount, amountErr := ParseUSD(*meter.USD)
 			if rateErr != nil || amountErr != nil ||
 				(quantity.Sign() == 0 && amount.Sign() != 0) ||
 				(quantity.Sign() > 0 && (rate.Sign() == 0) != (amount.Sign() == 0)) {
-				return nil, nil, fmt.Errorf("invalid meter amount for %s", key)
+				return nil, fmt.Errorf("invalid meter amount for %s", key)
 			}
 		}
 		cloned[key] = meter
-		quantities[key] = quantity.Uint64()
 	}
-	return cloned, quantities, nil
+	return cloned, nil
 }
 
 func uint32Duration(value time.Duration) uint32 {

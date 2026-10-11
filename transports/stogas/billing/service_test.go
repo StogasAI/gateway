@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -216,10 +217,10 @@ func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 	}
 }
 
-func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing.T) {
+func TestDecodeGatewayRequestEventRestoresCanonicalEvidence(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.CatalogVersion = catalogVersion(39)
-	event.ProviderAttempts = []ProviderAttempt{{CatalogChainHash: optionalString("sha256:" + strings.Repeat("b", 64))}}
+	event.ProviderAttempts = []ProviderAttempt{{CatalogChainHash: "sha256:" + strings.Repeat("b", 64)}}
 	overhead := "29"
 	event.Usage.CacheWriteOverheadUSD = &overhead
 	event.Usage.Meters = EventMeters{
@@ -227,6 +228,7 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 		MeterInputTokens:       PricedMeter("17", "per_mill_tokens", "100", "2"),
 		MeterTotalInputTokens:  {Quantity: "317"},
 	}
+	event.Usage.StandardTextTokens = standardTextTokens(event.Usage.Meters)
 	payload, err := encodeGatewayRequestEvent(event)
 	if err != nil {
 		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
@@ -235,16 +237,8 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 	if err != nil {
 		t.Fatalf("decodeGatewayRequestEvent returned error: %v", err)
 	}
-	projected := tinybirdGatewayRequestEvent(decoded)
-	if projected.CatalogVersion == nil || *projected.CatalogVersion != 39 || projected.AnalyticsCatalogChainHash == nil || *projected.AnalyticsCatalogChainHash != *event.ProviderAttempts[0].CatalogChainHash {
-		t.Fatalf("request log projection lost the historical catalog identity: %#v", projected)
-	}
-	if projected.SchemaVersion != RequestLogSchemaVersion || projected.RequestID != event.RequestID ||
-		projected.AnalyticsInputTokens == nil || *projected.AnalyticsInputTokens != 317 ||
-		projected.AnalyticsCachedInputTokens != 300 ||
-		projected.CacheWriteOverheadUSD == nil ||
-		*projected.CacheWriteOverheadUSD != overhead {
-		t.Fatalf("decoded Tinybird projection = %#v", projected)
+	if !reflect.DeepEqual(decoded, event) {
+		t.Fatalf("decoded event = %#v, want %#v", decoded, event)
 	}
 
 	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"meters":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsd":"1","usd":"1"}}}}`); err == nil {
@@ -255,119 +249,6 @@ func TestDecodeGatewayRequestEventRestoresTinybirdAnalyticsProjection(t *testing
 	}
 	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"cache_write_overhead_usd":"-1","meters":{}}}`); err == nil {
 		t.Fatal("decodeGatewayRequestEvent accepted invalid cache write overhead")
-	}
-}
-
-func TestTinybirdGatewayRequestEventStringifiesNestedPayload(t *testing.T) {
-	failedStatus := 502
-	successStatus := 200
-	ttftMS := uint32(150)
-	event := tinybirdGatewayRequestEvent(RequestEvent{
-		SchemaVersion: RequestLogSchemaVersion,
-
-		Performance: RequestPerformance{TotalMS: 150, ProviderMS: 140, TTFTMS: &ttftMS},
-
-		analyticsQuantities: map[string]uint64{
-			"input_tokens":                12,
-			"total_input_tokens":          19,
-			"total_cache_write_tokens":    7,
-			"cache_write_input_tokens":    1,
-			"cache_write_5m_input_tokens": 2,
-			"cache_write_1h_input_tokens": 4,
-		},
-		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 3, DurationUS: 41}},
-		ProviderAttempts: []ProviderAttempt{{
-			LatencyMS:  30,
-			Provider:   "openai",
-			Status:     "connection_error",
-			StatusCode: &failedStatus,
-			Byok:       nil,
-		}, {
-			LatencyMS:         90,
-			Provider:          "anthropic",
-			ProviderRequestID: "provider-request",
-			FinishReason:      "stop",
-			Status:            "success",
-			StatusCode:        &successStatus,
-			Byok:              nil,
-		}},
-		GatewayVersion: "v1.5.13", Usage: RequestUsage{CacheWriteOverheadUSD: stringPtr("23"),
-
-			Meters: EventMeters{
-				"input_tokens":                PricedMeter("12", "per_mill_tokens", "1", "1"),
-				"total_input_tokens":          {Quantity: "19"},
-				"total_cache_write_tokens":    {Quantity: "7"},
-				"cache_write_input_tokens":    {Quantity: "1"},
-				"cache_write_5m_input_tokens": {Quantity: "2"},
-				"cache_write_1h_input_tokens": {Quantity: "4"},
-			}},
-	})
-
-	if event.GatewayError != "null" || event.AnalyticsErrorCode != "" || event.AnalyticsErrorStatus != nil {
-		t.Fatalf("unexpected error: %#v", event)
-	}
-	if event.AnalyticsInputTokens == nil || *event.AnalyticsInputTokens != 19 || event.AnalyticsProviderStatus != "success" {
-		t.Fatalf("analytics projections do not match canonical payload: %#v", event)
-	}
-	if event.AnalyticsProviderLatencyMS != 140 {
-		t.Fatalf("analytics_provider_latency_ms = %d, want 140", event.AnalyticsProviderLatencyMS)
-	}
-	if event.AnalyticsCacheWriteTokens != 7 {
-		t.Fatalf("analytics cache-write tokens = %d, want 7", event.AnalyticsCacheWriteTokens)
-	}
-	if event.CacheWriteOverheadUSD == nil || *event.CacheWriteOverheadUSD != "23" {
-		t.Fatalf("cache-write overhead = %#v, want 23", event.CacheWriteOverheadUSD)
-	}
-	if strings.Join(event.AnalyticsProviders, ",") != "openai,anthropic" ||
-		strings.Join(event.AnalyticsProviderStatuses, ",") != "connection_error,502,success,200" {
-		t.Fatalf("analytics provider projections do not include every attempt: %#v", event)
-	}
-	if event.AnalyticsTTFTMS == nil || *event.AnalyticsTTFTMS != 150 {
-		t.Fatalf("ttft_ms = %#v, want 150", event.AnalyticsTTFTMS)
-	}
-	if event.GatewayVersion != "v1.5.13" {
-		t.Fatalf("gateway_version = %q", event.GatewayVersion)
-	}
-	var attempts []ProviderAttempt
-	if err := json.Unmarshal([]byte(event.ProviderAttempts), &attempts); err != nil ||
-		len(attempts) != 2 || attempts[1].Provider != "anthropic" {
-		t.Fatalf("provider_attempts = %q, err=%v", event.ProviderAttempts, err)
-	}
-	var usage RequestUsage
-	if err := json.Unmarshal([]byte(event.Usage), &usage); err != nil || usage.Meters["input_tokens"].Quantity != "12" {
-		t.Fatalf("pricing = %q, err=%v", event.Usage, err)
-	}
-	var pluginMetrics plugins.Metrics
-	if err := json.Unmarshal([]byte(event.Plugins), &pluginMetrics); err != nil ||
-		pluginMetrics.StogasStructuredPIIRedaction == nil ||
-		pluginMetrics.StogasStructuredPIIRedaction.ItemsRedacted != 3 ||
-		pluginMetrics.StogasStructuredPIIRedaction.DurationUS != 41 {
-		t.Fatalf("plugins = %q, err=%v", event.Plugins, err)
-	}
-	var performance RequestPerformance
-	if err := json.Unmarshal([]byte(event.Performance), &performance); err != nil ||
-		performance.TotalMS != 150 || performance.ProviderMS != 140 || performance.TTFTMS == nil || *performance.TTFTMS != 150 {
-		t.Fatalf("timings = %q, err=%v", event.Performance, err)
-	}
-}
-
-func TestTinybirdGatewayRequestEventPreservesMaximumPerformance(t *testing.T) {
-	maximum := ^uint32(0)
-	ttftMS := uint32(1)
-	event := tinybirdGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, Performance: RequestPerformance{TotalMS: maximum, ProviderMS: maximum, TTFTMS: &ttftMS}, ProviderAttempts: []ProviderAttempt{
-		{LatencyMS: maximum, Provider: "openai", Status: "connection_error"},
-		{
-			LatencyMS: 1,
-			Provider:  "anthropic",
-			Status:    "success",
-		},
-	}})
-
-	if event.AnalyticsProviderLatencyMS != maximum {
-		t.Fatalf("analytics_provider_latency_ms = %d, want %d", event.AnalyticsProviderLatencyMS, maximum)
-	}
-	if event.AnalyticsTTFTMS == nil || *event.AnalyticsTTFTMS != ttftMS {
-		t.Fatalf("ttft_ms = %#v, want %d", event.AnalyticsTTFTMS, ttftMS)
 	}
 }
 
@@ -525,9 +406,6 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	if event.Performance.ProviderStartMS != nil {
 		t.Fatalf("a request never dispatched must not have a provider start: %#v", event.Performance)
 	}
-	if payload := tinybirdGatewayRequestEvent(event); payload.ProviderAttempts != "[]" || len(payload.AnalyticsProviders) != 0 || payload.AnalyticsProviderStatus != "" {
-		t.Fatalf("pre-provider analytics projection is not empty: %#v", payload)
-	}
 
 	event = mustNewRequestEvent(t, EventInput{
 		Authorization:   &Authorization{RequestID: "request-client-stop-clamp"},
@@ -676,15 +554,11 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 	if event.ProviderAttempts[0].Status != "provider_error" || event.ProviderAttempts[1].Status != "success" {
 		t.Fatalf("provider attempt statuses = %#v", event.ProviderAttempts)
 	}
-	payload := tinybirdGatewayRequestEvent(event)
-	if payload.AnalyticsProviderLatencyMS != 145 {
-		t.Fatalf("analytics provider latency = %d, want 145", payload.AnalyticsProviderLatencyMS)
+	if event.Performance.ProviderMS != 145 {
+		t.Fatalf("provider duration = %d, want 145", event.Performance.ProviderMS)
 	}
-	if payload.AnalyticsTTFTMS == nil || *payload.AnalyticsTTFTMS != ttftMS {
-		t.Fatalf("TTFT = %#v, want %d", payload.AnalyticsTTFTMS, ttftMS)
-	}
-	if payload.AnalyticsProviderStatus != "success" || strings.Join(payload.AnalyticsProviders, ",") != "openai,anthropic" {
-		t.Fatalf("analytics provider projection = %#v", payload)
+	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != ttftMS {
+		t.Fatalf("TTFT = %#v, want %d", event.Performance.TTFTMS, ttftMS)
 	}
 
 	requestTTFTMS := uint32(7)
@@ -854,7 +728,7 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 		"unpriced":   {Quantity: "300"},
 		"known zero": {Quantity: "0"},
 	} {
-		if _, _, err := ValidateMeters(EventMeters{MeterCachedInputTokens: meter}); err != nil {
+		if _, err := ValidateMeters(EventMeters{MeterCachedInputTokens: meter}); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -872,7 +746,7 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 		"negative":               {MeterTotalTokens: {Quantity: "-1"}},
 		"overflow":               {MeterTotalTokens: {Quantity: "18446744073709551616"}},
 	} {
-		if _, _, err := ValidateMeters(meters); err == nil {
+		if _, err := ValidateMeters(meters); err == nil {
 			t.Fatalf("accepted %s", name)
 		}
 	}

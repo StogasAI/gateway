@@ -14,8 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
 func TestTinybirdRequiresAuthenticatedHybridTLS(t *testing.T) {
@@ -51,55 +49,6 @@ func TestTinybirdRequiresAuthenticatedHybridTLS(t *testing.T) {
 				t.Fatalf("TLS mode %s accepted=%v", mode, err == nil)
 			}
 		})
-	}
-}
-
-func TestRedactionProjectionPreservesUnrecordedZeroAndMaximum(t *testing.T) {
-	for _, metrics := range []*plugins.StogasStructuredPIIRedactionMetrics{nil, {}, {ItemsRedacted: ^uint32(0), DurationUS: 125}} {
-		event := testGatewayRequestEvent()
-		event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: metrics}
-		encoded, err := json.Marshal(event)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var restored RequestEvent
-		if err := json.Unmarshal(encoded, &restored); err != nil {
-			t.Fatal(err)
-		}
-		payload := tinybirdGatewayRequestEvent(restored)
-		if metrics == nil {
-			if payload.AnalyticsRedactedItems != nil {
-				t.Fatal("unrecorded redaction became a zero count")
-			}
-		} else if payload.AnalyticsRedactedItems == nil || *payload.AnalyticsRedactedItems != metrics.ItemsRedacted {
-			t.Fatalf("redaction count changed: got %v, want %d", payload.AnalyticsRedactedItems, metrics.ItemsRedacted)
-		}
-	}
-}
-
-func TestTokenUsageSurvivesSerializationAndAnalyticsProjection(t *testing.T) {
-	for _, quantity := range []*uint64{nil, new(uint64), func() *uint64 { n := uint64(1_000_000_000_000); return &n }()} {
-		event := testGatewayRequestEvent()
-		event.Usage.Meters = EventMeters{}
-		if quantity != nil {
-			event.Usage.Meters[MeterTotalTokens] = EventMeter{Quantity: fmt.Sprint(*quantity)}
-		}
-		encoded, err := encodeGatewayRequestEvent(event)
-		if err != nil {
-			t.Fatal(err)
-		}
-		restored, err := decodeGatewayRequestEvent(encoded)
-		if err != nil {
-			t.Fatal(err)
-		}
-		payload := tinybirdGatewayRequestEvent(restored)
-		if quantity == nil {
-			if payload.AnalyticsTotalTokens != nil {
-				t.Fatal("unknown usage became a known value")
-			}
-		} else if payload.AnalyticsTotalTokens == nil || *payload.AnalyticsTotalTokens != *quantity {
-			t.Fatalf("token usage changed: got %v, want %d", payload.AnalyticsTotalTokens, *quantity)
-		}
 	}
 }
 
@@ -198,7 +147,7 @@ func TestTinybirdAppendMicrobatchesConcurrentEvents(t *testing.T) {
 		scanner := bufio.NewScanner(r.Body)
 		batchRows := 0
 		for scanner.Scan() {
-			payload := tinybirdGatewayRequestEventPayload{}
+			payload := requestLogRecord{}
 			if err := json.Unmarshal(scanner.Bytes(), &payload); err != nil {
 				t.Errorf("decode NDJSON row: %v", err)
 				continue
@@ -529,29 +478,4 @@ func newTestRequestLogClient(t *testing.T, host string) *RequestLogClient {
 	client.minRequestInterval = time.Millisecond
 	t.Cleanup(client.Close)
 	return client
-}
-
-func TestPolicyVersionsSurviveSerializationAndTinybirdEncoding(t *testing.T) {
-	event := testGatewayRequestEvent()
-	event.PolicyVersions = &PolicyVersions{{Scope: "organization", ID: "org", Revision: 3}, {Scope: "grant", ID: "grant", Revision: 4}, {Scope: "key", ID: "key", Revision: 8}}
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var restored RequestEvent
-	if err := json.Unmarshal(encoded, &restored); err != nil {
-		t.Fatal(err)
-	}
-	payload := tinybirdGatewayRequestEvent(restored)
-	var versions PolicyVersions
-	if err := json.Unmarshal([]byte(payload.PolicyVersions), &versions); err != nil {
-		t.Fatal(err)
-	}
-	if len(versions) != 3 || versions[0].Revision != 3 || versions[1].Revision != 4 || versions[2].Revision != 8 {
-		t.Fatalf("wrong recorded snapshot: %#v", versions)
-	}
-	event.PolicyVersions = nil
-	if tinybirdGatewayRequestEvent(event).PolicyVersions != "null" {
-		t.Fatal("unknown snapshot was invented")
-	}
 }

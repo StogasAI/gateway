@@ -46,23 +46,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 		mu.Lock()
 		for _, line := range lines {
 			var row RequestEvent
-			// Ingestion serializes nested bags; inspect only the public scalar fields.
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal([]byte(line), &fields); err != nil {
-				t.Error(err)
-				continue
-			}
-			var usage string
-			if err := json.Unmarshal(fields["usage"], &usage); err != nil {
-				t.Error(err)
-				continue
-			}
-			fields["usage"] = json.RawMessage(usage)
-			for _, field := range []string{"provider_attempts", "plugins", "performance", "cancelled", "gateway_error", "policy_versions"} {
-				delete(fields, field)
-			}
-			encoded, _ := json.Marshal(fields)
-			if err := json.Unmarshal(encoded, &row); err != nil {
+			if err := json.Unmarshal([]byte(line), &row); err != nil {
 				t.Error(err)
 			}
 			rows = append(rows, row)
