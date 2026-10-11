@@ -7,34 +7,31 @@ permissions:
   contents: read
 
 jobs:
-  verify-vendor:
-    name: Verify Go Vendor State
+  verify:
+    name: Verify Dependencies
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      GOWORK: 'off'
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: transports/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
       - name: Verify release pins
         run: node stogas/release/scripts/verify-pins.mjs
-      - name: Test source snapshots
-        run: node --test stogas/release/scripts/snapshot-source.test.mjs
-      - name: Restore Stogas release vendor cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: stogas/release/vendor
-          key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
-          restore-keys: |
-            stogas-release-vendor-${{ runner.os }}-
-      - name: Install pinned Guix bootstrap
-        run: stogas/release/scripts/install-guix-bootstrap.sh
-      - name: Verify Go module hydration
-        run: stogas/release/scripts/hydrate-go-vendor.sh
-      - name: Run Go vulnerability scan
+      - name: Test release scripts
+        run: node --test stogas/release/scripts/*.test.mjs
+      - name: Verify Go modules
+        working-directory: transports
         run: |
-          set -euo pipefail
-          cd transports
-          GOWORK=off go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-          GOWORK=off "$(go env GOPATH)/bin/govulncheck" ./...
-      - name: Verify module files did not change
-        run: git diff --exit-code -- transports/go.mod transports/go.sum
+          go mod verify
+          go mod tidy -diff
+      - name: Run Go vulnerability scan
+        working-directory: transports
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -tags=stogas_gateway ./...

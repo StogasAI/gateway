@@ -1,107 +1,80 @@
-# Stogas Gateway Build Audit
+# Gateway IGVM Build Audit
 
-This directory builds the SEV-SNP gateway IGVM from reviewed source and fixed public inputs. The supported build host is x86_64 Linux with Bash, Git, Node.js, curl, GNU core and find utilities, tar, patch, and a working Guix daemon. `scripts/install-guix-bootstrap.sh` installs the fixed Guix bootstrap on systems with sudo and standard Linux account tools. No host compiler or host package set is trusted.
+`scripts/build-release.sh <vX.Y.Z> <empty-out-dir>` builds the SEV-SNP gateway image from the tagged source. It runs on x86_64 Linux with Bash, Git, Node.js, GNU coreutils, and a running Guix daemon. `scripts/install-guix-bootstrap.sh` installs the pinned Guix release on hosts with sudo. Guix supplies every compiler and tool, so the host toolchain never reaches the image.
 
-## Authority
+## Inputs
 
-The build authority is:
+Everything that can change the image is in the tagged tree:
 
-- the gateway Git tag and tree;
-- `guix/channels.scm`, which fixes and authenticates the Guix revision;
-- `pins.lock.json`, which records direct source, cache, lock, action, and patch hashes;
-- `core/go.mod`, `core/go.sum`, `transports/go.mod`, and `transports/go.sum`;
-- `locks/*.Cargo.lock`;
-- `patches/*.patch`;
-- `guix/release.scm` and `guix/modules/stogas/release/packages.scm`.
+| Input                                                          | Purpose                                                                                                                                                                                |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `guix/channels.scm`                                            | The Guix commit that supplies every compiler and tool. Guix authenticates the channel before use.                                                                                      |
+| `pins.lock.json`                                               | The Guix bootstrap binary, and each upstream source (Go, Linux, edk2, systemd, virt-firmware-rs, COCONUT-SVSM, ntpd-rs, and the verifier) as a full commit with its Guix content hash. |
+| `core/go.sum`, `transports/go.sum`                             | The hash of every Go module.                                                                                                                                                           |
+| `locks/*.Cargo.lock`                                           | The version and hash of every Rust crate. See `locks/README.md`.                                                                                                                       |
+| `patches/`                                                     | Four upstream patches, described below.                                                                                                                                                |
+| `guix/linux.config`                                            | The kernel options, applied on top of `allnoconfig`.                                                                                                                                   |
+| `guix/cmdline.txt`, `guix/os-release`, `guix/ntp.toml`         | The kernel command line, the image metadata, and the NTS time sources.                                                                                                                 |
+| `snp-launch-policies.json`                                     | The SEV-SNP launch policies that the release manifest embeds.                                                                                                                          |
+| `guix/release.scm`, `guix/modules/stogas/release/packages.scm` | The build recipe.                                                                                                                                                                      |
 
-`vendor/` and `transports/vendor/` are ignored caches. They are never source authority.
+## Build
 
-The final gateway source input contains only `core/` and `transports/`. Each release file is passed to Guix as an explicit input. Unrelated repository files cannot change the IGVM.
+`build-release.sh`:
 
-## Build Flow
+1. Copies the tracked files and any new files that Git does not ignore to a temporary directory, and builds only from that copy. It refuses uncommitted changes unless `STOGAS_RELEASE_ALLOW_DIRTY=1` is set for a local test build.
+2. Runs `scripts/verify-pins.mjs`, which checks the pins that Guix cannot check: a full Guix commit, the Go toolchain line in `transports/go.mod`, the commit of the Go verifier bindings, and full-commit GitHub Action pins.
+3. Downloads and vendors the Go modules with the pinned Go in a pure Guix environment. `go mod verify` checks every module against `go.sum`, and the build stops if vendoring changes `go.mod` or `go.sum`.
+4. Runs `guix build -f guix/release.scm`.
 
-### 1. Verify pins
+Guix builds each package without network access, and every download must match its pinned hash. Guix substitute servers do not carry the custom packages (Go, Linux, AmdSev OVMF, the systemd EFI stub and `ukify`, the IGVM tools, ntpd-rs, and the verifier), so Guix builds them from source. Unmodified Guix packages such as GCC and Rust can come from the Guix substitute servers, which build them through the Guix full-source bootstrap. To build them locally instead, run the Guix daemon with `--no-substitutes`.
 
-`scripts/verify-pins.mjs` checks:
+The final step:
 
-- lock, source, Cargo lock, cache-tree, and patch hashes;
-- exact patch-directory contents and safe patch paths;
-- the authenticated Guix channel;
-- fixed GitHub Action commits;
-- the grouped `snp-launch-policies.json` file;
-- the offline build and cache boundaries.
+1. Builds the gateway with CGO, statically linked to the verifier library, and the init program in pure Go.
+2. Packs init, the gateway, `ntp-daemon`, `guix/ntp.toml`, and the Guix CA certificates into a reproducible zstd cpio initramfs.
+3. Combines the kernel, the initramfs, `cmdline.txt`, and `os-release` into a unified kernel image (UKI) with the systemd EFI stub.
+4. Wraps AmdSev OVMF into an SNP IGVM file with four vCPUs and adds the UKI as measured pages. The build fails if any page is unmeasured or shared, because the host could change it without changing the launch measurement.
+5. Computes the launch measurement with `igvmmeasure --check-kvm` and writes `release-manifest.json`.
 
-### 2. Hydrate inputs
+The build sets `SOURCE_DATE_EPOCH=1`, `LC_ALL=C`, `TZ=UTC`, and umask `022`, and sets every initramfs timestamp to 1. Go binaries build with `-trimpath` and no build ID.
 
-After Guix is installed, hydration is the only networked build phase. Each downloader checks the fixed hash before an input is used; Guix also checks every source in its package graph.
+## Patches
 
-#### Pure-Source Go Hydration
+Guix applies each patch with zero fuzz.
 
-`scripts/hydrate-go-vendor.sh` uses the pinned Guix Go package. It runs `go mod tidy`, `go mod download`, `go mod verify`, and `go mod vendor`. Public modules use `sum.golang.org`. Hydration fails if a committed `go.mod` or `go.sum` changes.
+| Patch                             | Upstream         | Change                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `edk2-amdsev-kernel-only.patch`   | edk2             | The AmdSev firmware boots only the kernel in the IGVM file and halts if it does not start. It has no GRUB and no drivers for disks, USB, displays, keyboards, virtio devices, or host SMBIOS tables, and it never reads PCI option ROMs or restores variables from disk. GenFw writes a zero PE timestamp, so the firmware builds reproducibly. |
+| `linux-snp-host-acpi.patch`       | Linux            | The host supplies the ACPI tables, so in SEV-SNP guests the kernel ignores their CPU wakeup mailbox and reset vector, and ACPI code cannot map private guest RAM.                                                                                                                                                                               |
+| `virt-firmware-rs-qemu-kvm.patch` | virt-firmware-rs | `igvm-wrap --cpus` adds an SNP VMSA for each additional vCPU at the OVMF SEV reset vector, sets the CR0 value that QEMU/KVM requires, and places the VMSAs last in vCPU order, as QEMU/KVM measures them. Includes tests.                                                                                                                       |
+| `svsm-igvmmeasure-qemu-kvm.patch` | COCONUT-SVSM     | Makes `igvmmeasure` a standalone crate, accepts one VMSA per vCPU in order, and applies the CR4 and RFLAGS bits that KVM sets before it measures a VMSA. Includes tests.                                                                                                                                                                        |
 
-The verified source view is written to `stogas/release/vendor/go-vendor`. The final build copies it to `transports/vendor/`, checks its complete tree hash, and builds with `GOPROXY=off`, `GOSUMDB=off`, and `-mod=vendor`. `GOFLAGS=-modcacherw` keeps the ignored download cache removable.
+## Checks During the Build
 
-#### Rust Hydration
-
-`scripts/hydrate-rust-vendor.sh` downloads each fixed archive, checks SHA-256 and runs `cargo vendor --locked` with pinned Guix Rust. Firmware tools apply the ordered patches with zero fuzz and use the committed Cargo locks. The offline verifier normally uses its published source revision and requires that source's lock to match the committed lock exactly. Its Go binding resolves to the same revision. An explicit `STOGAS_VERIFIER_SOURCE_ROOT` captures tracked and non-ignored working-tree files once for both bindings; the same Guix phases build that source with its Cargo lock and a Go module replacement. The release manifest records the actual verifier source hash, including this override.
-
-Go verifies restored module downloads, regenerates the vendor tree, and records its complete tree hash. Restored Rust vendor trees are accepted only when their fixed tree hashes match. The shared tree hash includes paths, file bytes, entry type, executable state, and empty directories. Links and special files fail.
-
-#### Guix Closure
-
-`scripts/hydrate-guix-closure.sh` builds and roots only the final package's development inputs. It then dry-runs the offline release and permits only the final release derivation to remain unbuilt.
-
-### 3. Build once, offline
-
-`scripts/build-release.sh <vX.Y.Z> <out-dir>`:
-
-1. Requires a clean gateway tree.
-2. Resolves the authenticated Guix time-machine profile once.
-3. Takes one immutable snapshot of the allowed gateway source.
-4. Hydrates and verifies all inputs.
-5. Runs one final Guix build with:
-
-   ```text
-   --no-substitutes --substitute-urls='' --no-offload
-   ```
-
-6. Copies only the allowed output files.
-
-The final Guix derivation fixes `SOURCE_DATE_EPOCH=1`, `LC_ALL=C`, `TZ=UTC`, and umask `022`. The gateway statically links the offline Rust verifier through CGO using pinned Guix GCC and its static libraries; the init binary uses pure Go. Both use an empty build ID and `-trimpath`. The verifier omits its HTTP transport and includes both explicit environment policies, so the same measured image can boot in either environment. Customer SDK production builds remain separate. The build normalizes root file-system timestamps, writes deterministic cpio and zstd output, builds the UKI, creates four ordered SNP VMSAs, injects the UKI, and measures the result with `igvmmeasure --check-kvm`.
-
-There is no same-store `guix build --check` pass. GitHub builds the tag once. Stogas independently builds the same tag once before publication and requires the complete release manifest to match. The manifest binds the IGVM, grouped launch-policy file, source identity, tools, inputs, and launch measurement. These two independent builds are the reproducibility check.
-
-## Custom Patches
-
-Each patched upstream project has one self-contained patch. `pins.lock.json` is the ordered patch ledger used by hydration; the Guix package graph applies the same files.
-
-| Patch                                     | Upstream                                                             | Purpose                                                                                                                                                                           |
-| ----------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `patches/virt-firmware-rs-qemu-kvm.patch` | `virt-firmware-rs` commit `e01dffc463934547a42506df656becd9061926f7` | Adds four-CPU SNP VMSAs, uses the OVMF AP reset vector, sets the required real-mode CR0 value, and orders VMSAs for QEMU/KVM measurement. Includes focused register tests.        |
-| `patches/svsm-igvmmeasure-qemu-kvm.patch` | SVSM commit `8850f7bd766e0b592d01efb67c615a9d8f171269`               | Makes `igvmmeasure` a standalone locked crate and checks and normalizes QEMU/KVM multi-VMSA measurement behavior. Includes focused ordering, validation, and normalization tests. |
-
-Both patched Rust packages and the offline verifier run their tests inside their Guix builds.
+- Go runs its full test suite. The patched IGVM tools, the ntpd-rs protocol and daemon libraries, and the verifier run their tests.
+- The kernel build fails if the final configuration differs from any line in `guix/linux.config`.
+- `igvmmeasure --check-kvm` fails if the IGVM file breaks the rules that QEMU/KVM measurement depends on.
+- The release fails if `snp-launch-policies.json` is not canonical JSON, because verifiers check the embedded policies against the hash of that file.
 
 ## Outputs
 
-The local build contains:
+| File                                                           | Use                                                       |
+| -------------------------------------------------------------- | --------------------------------------------------------- |
+| `gateway.igvm`, `release-manifest.json`, `LICENSE`, `NOTICE`   | Published in the GitHub release with a build attestation. |
+| `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst` | Local tests.                                              |
+| `kernel-config.txt`                                            | Review of the full kernel configuration.                  |
 
-- `gateway.igvm`;
-- `snp-launch-policies.json`;
-- `release-manifest.json`;
-- `LICENSE` and `NOTICE`;
-- `gateway.init`, `gateway.kernel`, and `gateway.initramfs.cpio.zst` for local smoke tests;
-- `kernel-config.txt` for direct audit.
+The manifest records the image hash and size, the launch measurement and launch policies, the source commit and tree, the Guix commit, the hashes of the kernel, firmware, EFI stub, UKI, and measurement tool, and the hashes of the inputs above.
 
-The GitHub release contains `LICENSE`, `NOTICE`, `gateway.igvm`, `snp-launch-policies.json`, `release-manifest.json`, and its build-identity record. The manifest records the exact hash and size of both security files, so one authorized manifest covers them without another checksum file. The smoke files and full kernel configuration remain in the local counterbuild. Pins, locks, patches, and recipes remain in the tagged source, so the public release does not duplicate them.
+## Reproducibility
 
-The release manifest records the Git identity, direct input hashes, compiler and tool identity, public artifact hashes and sizes, grouped SNP launch policies, four-vCPU count, and launch measurement. The exact Guix closure is recoverable from the fixed channel and derivation; a host-specific store-path listing is not a release artifact.
+GitHub builds each tag, and Stogas rebuilds it independently. Stogas approves a release only if both `release-manifest.json` files match byte for byte.
 
-## Audit Procedure
+To check a release:
 
-1. Check the tag and Git tree.
-2. Run `node stogas/release/scripts/verify-pins.mjs`.
-3. Review both files under `patches/`.
-4. Run `stogas/release/scripts/build-release.sh <tag> <allowed-output-dir>` on x86_64 Linux.
-5. Check that the IGVM and launch-policy hashes and sizes match `release-manifest.json`.
-6. Compare `release-manifest.json` byte for byte with the other independent build.
+1. Check out the tag on x86_64 Linux.
+2. Review `patches/` and the pins.
+3. Run `stogas/release/scripts/build-release.sh <tag> <empty-dir>`.
+4. Compare the new `release-manifest.json` with the published one byte for byte.
+5. Check that the published `gateway.igvm` matches the hash and size in the manifest.

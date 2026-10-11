@@ -1,0 +1,40 @@
+# The host sets the guest's boot clock, so the first agreed measurement may step
+# it by any amount. After that, the daemon exits instead of stepping the clock
+# by more than one second, and init powers off the guest.
+[synchronization]
+minimum-agreeing-sources = 3
+startup-step-panic-threshold = "inf"
+single-step-panic-threshold = 1
+
+# A source counts only after eight measurements at the minimum interval, so a
+# four-second minimum gives the first agreed time about 30 seconds after boot.
+# Later polls keep the daemon defaults: 16 seconds at first, up to 1024.
+[source-defaults]
+poll-interval-limits = { min = 2, max = 10 }
+initial-poll-interval = 4
+
+# The host reads the serial console; routine synchronization lines are noise.
+[observability]
+ansi-colors = false
+log-level = "warn"
+
+# Five independent operators, so any three that agree are a majority.
+[[source]]
+mode = "nts"
+address = "time.cloudflare.com"
+
+[[source]]
+mode = "nts"
+address = "any.time.nl"
+
+[[source]]
+mode = "nts"
+address = "nts.netnod.se"
+
+[[source]]
+mode = "nts"
+address = "ptbtime1.ptb.de"
+
+[[source]]
+mode = "nts"
+address = "a.st1.ntp.br"

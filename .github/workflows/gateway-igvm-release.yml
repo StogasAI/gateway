@@ -23,33 +23,21 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.ref }}
           persist-credentials: false
 
       - name: Verify checked-out tag
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
+          test "$GITHUB_REF" = "refs/tags/$GITHUB_REF_NAME"
+          commit="$(git rev-parse HEAD)"
+          test "$(git rev-parse --verify "$GITHUB_REF^{commit}")" = "$commit"
+          test "$GITHUB_SHA" = "$commit"
 
-      - name: Verify release pins
-        run: node stogas/release/scripts/verify-pins.mjs
-      - name: Test source snapshots
-        run: node --test stogas/release/scripts/snapshot-source.test.mjs
-
-      - name: Restore Stogas release vendor cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: stogas/release/vendor
-          key: stogas-release-vendor-${{ runner.os }}-${{ hashFiles('transports/go.mod', 'transports/go.sum', 'core/go.mod', 'core/go.sum', 'stogas/release/locks/*.Cargo.lock', 'stogas/release/patches/*.patch', 'stogas/release/pins.lock.json', 'stogas/release/guix/channels.scm') }}
-
-      - name: Restore Guix channel checkout cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ~/.cache/guix/checkouts
-          key: stogas-release-guix-channel-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('stogas/release/guix/channels.scm', 'stogas/release/pins.lock.json') }}
+      - name: Test release scripts
+        run: node --test stogas/release/scripts/*.test.mjs
 
       - name: Install pinned Guix bootstrap
         run: stogas/release/scripts/install-guix-bootstrap.sh
@@ -59,7 +47,7 @@ jobs:
 
       - name: Generate GitHub artifact attestation
         id: attest
-        uses: actions/attest@c32b4b8b198b65d0bd9d63490e847ff7b53989d4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             dist/gateway/${{ github.ref_name }}/release-manifest.json
@@ -104,7 +92,7 @@ jobs:
           done
 
       - name: Upload release payload for publish job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gateway-release-${{ github.ref_name }}
           path: dist/gateway/${{ github.ref_name }}
@@ -121,19 +109,21 @@ jobs:
       attestations: read
       contents: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.ref }}
           persist-credentials: false
 
       - name: Verify checked-out tag
         run: |
           set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          test "$(git rev-list -n1 "$tag")" = "$(git rev-parse HEAD)"
+          test "$GITHUB_REF" = "refs/tags/$GITHUB_REF_NAME"
+          commit="$(git rev-parse HEAD)"
+          test "$(git rev-parse --verify "$GITHUB_REF^{commit}")" = "$commit"
+          test "$GITHUB_SHA" = "$commit"
 
       - name: Download release payload
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: gateway-release-${{ github.ref_name }}
           path: dist/gateway/${{ github.ref_name }}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,19 +12,33 @@ import (
 	"syscall"
 )
 
-func runGateway(command *exec.Cmd, shutdown <-chan os.Signal) error {
-	if err := command.Start(); err != nil {
+var errClockDaemon = errors.New("clock daemon stopped")
+
+// runGuest starts the NTS daemon before the gateway, which waits for a
+// synchronized clock. The daemon exits when the clock would need a step larger
+// than its limit after boot. The gateway then drains as it does at shutdown,
+// and the guest powers off instead of restarting either process.
+func runGuest(clock, gateway *exec.Cmd, shutdown <-chan os.Signal) error {
+	if err := clock.Start(); err != nil {
+		return fmt.Errorf("%w: %w", errClockDaemon, err)
+	}
+	clockExited := make(chan struct{})
+	go func() { _ = clock.Wait(); close(clockExited) }()
+	if err := gateway.Start(); err != nil {
 		return err
 	}
-	exited := make(chan error, 1)
-	go func() { exited <- command.Wait() }()
+	gatewayExited := make(chan error, 1)
+	go func() { gatewayExited <- gateway.Wait() }()
+	var err error
 	select {
-	case err := <-exited:
+	case err := <-gatewayExited:
 		return err
 	case <-shutdown:
-		_ = command.Process.Signal(syscall.SIGTERM)
-		return <-exited
+	case <-clockExited:
+		err = errClockDaemon
 	}
+	_ = gateway.Process.Signal(syscall.SIGTERM)
+	return errors.Join(err, <-gatewayExited)
 }
 
 func watchPowerButtons(shutdown chan<- os.Signal) func() {

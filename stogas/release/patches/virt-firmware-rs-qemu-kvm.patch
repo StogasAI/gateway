@@ -1,18 +1,33 @@
 diff --git a/igvm-tools/src/bin/igvm-elfis.rs b/igvm-tools/src/bin/igvm-elfis.rs
-index 2be8f23..73d764a 100644
+index 77b829b..30f65f3 100644
 --- a/igvm-tools/src/bin/igvm-elfis.rs
 +++ b/igvm-tools/src/bin/igvm-elfis.rs
-@@ -287 +287 @@ fn process(cfg: &Args) -> Result<IgvmFile, Box<dyn std::error::Error>> {
+@@ -284,7 +284,7 @@ fn process(cfg: &Args) -> Result<IgvmFile, Box<dyn std::error::Error>> {
+         let entry = entry_addr(&object, "entry_snp");
+         let regs = flat32_mode_regs(entry);
+         builder.add_snp_platform();
 -        builder.add_snp_vmsa_context(&regs, false);
 +        builder.add_snp_vmsa_context(&regs, 0, false);
+         builder.add_snp_policy(None);
+     }
+ 
 diff --git a/igvm-tools/src/bin/igvm-wrap.rs b/igvm-tools/src/bin/igvm-wrap.rs
-index 8ef4c14..43dab5b 100644
+index abfb366..a2c97f0 100644
 --- a/igvm-tools/src/bin/igvm-wrap.rs
 +++ b/igvm-tools/src/bin/igvm-wrap.rs
-@@ -12 +12 @@ use virtfw_igvm_tools::ovmfmeta::OvmfMeta;
+@@ -9,7 +9,7 @@ use std::process::ExitCode;
+ use virtfw_igvm_tools::builder::Builder;
+ use virtfw_igvm_tools::inspect::inspect_igvm;
+ use virtfw_igvm_tools::ovmfmeta::OvmfMeta;
 -use virtfw_igvm_tools::x86regs::{flat32_mode_regs, real_mode_regs};
 +use virtfw_igvm_tools::x86regs::{flat32_mode_regs, real_mode_regs, sev_ap_reset_regs};
-@@ -58,0 +59,9 @@ struct Args {
+ 
+ #[derive(Parser, Debug)]
+ #[command(version, author, name = "igvm-wrap",
+@@ -56,6 +56,15 @@ struct Args {
+     #[arg(long, help_heading = "IGVM build options", conflicts_with = "real16")]
+     flat32: bool,
+ 
 +    /// number of SNP virtual processors
 +    #[arg(
 +        long,
@@ -22,7 +37,13 @@ index 8ef4c14..43dab5b 100644
 +    )]
 +    cpus: u16,
 +
-@@ -180 +189,13 @@ fn main() -> ExitCode {
+     /// print ovmf metadata
+     #[arg(long, help_heading = "Print informations")]
+     meta: bool,
+@@ -177,7 +186,19 @@ fn main() -> ExitCode {
+                 real_mode_regs()
+             };
+             builder.add_snp_platform();
 -            builder.add_snp_vmsa_context(&regs, false);
 +            builder.add_snp_vmsa_context(&regs, 0, false);
 +            if cfg.cpus > 1 {
@@ -37,11 +58,17 @@ index 8ef4c14..43dab5b 100644
 +                    builder.add_snp_vmsa_context(&ap_regs, vp_index, false);
 +                }
 +            }
+             if let Some(m) = ovmfmeta.as_ref() {
+                 builder.add_ovmf_snp_pages(m);
+             }
 diff --git a/igvm-tools/src/builder.rs b/igvm-tools/src/builder.rs
-index 6073e1a..3c2397a 100644
+index a6fe766..0c565af 100644
 --- a/igvm-tools/src/builder.rs
 +++ b/igvm-tools/src/builder.rs
-@@ -86 +86,6 @@ impl Builder {
+@@ -83,14 +83,19 @@ impl Builder {
+         self
+     }
+ 
 -    pub fn add_snp_vmsa_context(&mut self, regs: &[X86Register], debug: bool) -> &mut Builder {
 +    pub fn add_snp_vmsa_context(
 +        &mut self,
@@ -49,10 +76,21 @@ index 6073e1a..3c2397a 100644
 +        vp_index: u16,
 +        debug: bool,
 +    ) -> &mut Builder {
-@@ -93 +98 @@ impl Builder {
+         let features = SevFeatures::new().with_snp(true).with_debug_swap(debug);
+         let vmsa = vmsa_context(regs, features);
+         let gpa = 0xFFFFFFFFF000;
+         let ctx = IgvmDirectiveHeader::SnpVpContext {
+             gpa,
+             compatibility_mask: SEV_SNP_COMPAT,
 -            vp_index: 0,
 +            vp_index,
-@@ -355 +360,10 @@ impl Builder {
+             vmsa: Box::new(vmsa),
+         };
+         self.directives.push(ctx);
+@@ -367,7 +372,16 @@ impl Builder {
+ 
+     pub fn finalize(&self) -> Result<IgvmFile, igvm::Error> {
+         let mut directives = self.directives.clone();
 -        directives.sort_by(Self::sort_pages);
 +        directives.sort_by(|a, b| match (a, b) {
 +            (
@@ -64,32 +102,68 @@ index 6073e1a..3c2397a 100644
 +            _ => Self::sort_pages(a, b),
 +        });
 +
+         IgvmFile::new(
+             self.revision,
+             self.platforms.clone(),
 diff --git a/igvm-tools/src/ovmfmeta.rs b/igvm-tools/src/ovmfmeta.rs
-index ae5874c..f6bdd97 100644
+index e442768..a1c0aae 100644
 --- a/igvm-tools/src/ovmfmeta.rs
 +++ b/igvm-tools/src/ovmfmeta.rs
-@@ -168,0 +169 @@ pub struct OvmfMeta<'f> {
+@@ -166,6 +166,7 @@ impl fmt::Display for OvmfRegion {
+ pub struct OvmfMeta<'f> {
+     firmware: &'f [u8],
+     pub regions: Vec<OvmfRegion>,
 +    pub sev_reset: Option<u32>,
-@@ -185,0 +187 @@ impl OvmfMeta<'_> {
+ }
+ 
+ impl OvmfMeta<'_> {
+@@ -183,6 +184,7 @@ impl OvmfMeta<'_> {
+         match guid {
+             OVMF_META_SEV_RESET => {
+                 let (addr, _) = u32::read_from_prefix(blk).ok()?;
 +                self.sev_reset = Some(addr);
-@@ -257,0 +260 @@ impl OvmfMeta<'_> {
+                 debug!("  sev reset: 0x{addr:x}");
+             }
+             OVMF_META_SEV_SECRET => {
+@@ -255,6 +257,7 @@ impl OvmfMeta<'_> {
+         let mut ovmfmeta = OvmfMeta {
+             firmware,
+             regions: Vec::new(),
 +            sev_reset: None,
+         };
+ 
+         let s = firmware.len().checked_sub(0x20)?;
 diff --git a/igvm-tools/src/x86regs.rs b/igvm-tools/src/x86regs.rs
 index 9c7eb31..e9e127a 100644
 --- a/igvm-tools/src/x86regs.rs
 +++ b/igvm-tools/src/x86regs.rs
-@@ -205,2 +205,2 @@ fn common_regs() -> Vec<X86Register> {
+@@ -202,10 +202,10 @@ fn common_regs() -> Vec<X86Register> {
+     ]
+ }
+ 
 -pub fn real_mode_regs() -> Vec<X86Register> {
 -    let cr0 = ControlRegister0::reset_fast().into();
 +fn reset_regs(reset_addr: u32) -> Vec<X86Register> {
 +    let cr0 = ControlRegister0::reset_fast().with_ne(true).into();
-@@ -208 +208 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+     let code = SegmentRegister {
 -        base: 0xffff0000,
 +        base: u64::from(reset_addr & 0xffff0000),
-@@ -227 +227 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+         limit: 0xffff,
+         selector: 0xf000,
+         attributes: SegmentAttributes::code16().into(),
+@@ -224,7 +224,7 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+     };
+     let mut regs = vec![
+         X86Register::Cr0(cr0),
 -        X86Register::Rip(0xfff0),
 +        X86Register::Rip(u64::from(reset_addr & 0xffff)),
-@@ -240,0 +241,8 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+         X86Register::Cs(code),
+         X86Register::Ss(data),
+         X86Register::Ds(data),
+@@ -238,6 +238,14 @@ pub fn real_mode_regs() -> Vec<X86Register> {
+     regs
+ }
+ 
 +pub fn real_mode_regs() -> Vec<X86Register> {
 +    reset_regs(0xfffffff0)
 +}
@@ -98,16 +172,66 @@ index 9c7eb31..e9e127a 100644
 +    reset_regs(reset_addr)
 +}
 +
+ pub fn flat32_mode_regs(rip: Option<u64>) -> Vec<X86Register> {
+     let cr0 = ControlRegister0::reset_fast()
+         .with_pe(true)
+diff --git a/igvm-tools/tests/builder.rs b/igvm-tools/tests/builder.rs
+new file mode 100644
+index 0000000..b473c62
+--- /dev/null
++++ b/igvm-tools/tests/builder.rs
+@@ -0,0 +1,34 @@
++use igvm::IgvmDirectiveHeader;
++
++use virtfw_igvm_tools::builder::Builder;
++use virtfw_igvm_tools::x86regs::{real_mode_regs, sev_ap_reset_regs};
++
++#[test]
++fn test_snp_vmsas_are_ordered_suffix() {
++    let mut builder = Builder::new();
++    builder.add_snp_platform();
++    for vp_index in [2, 0, 3, 1] {
++        let regs = if vp_index == 0 {
++            real_mode_regs()
++        } else {
++            sev_ap_reset_regs(0x1234fff0)
++        };
++        builder.add_snp_vmsa_context(&regs, vp_index, false);
++    }
++    builder.add_data_pages(0x1000, &[0; 0x2000]);
++
++    let igvm = builder.finalize().unwrap();
++    let directives = igvm.directives();
++    let vmsa_start = directives.len() - 4;
++    assert!(directives[..vmsa_start]
++        .iter()
++        .all(|d| matches!(d, IgvmDirectiveHeader::PageData { .. })));
++    let vp_indexes: Vec<u16> = directives[vmsa_start..]
++        .iter()
++        .map(|d| match d {
++            IgvmDirectiveHeader::SnpVpContext { vp_index, .. } => *vp_index,
++            _ => panic!("expected an SNP VMSA"),
++        })
++        .collect();
++    assert_eq!(vp_indexes, [0, 1, 2, 3]);
++}
 diff --git a/igvm-tools/tests/x86regs.rs b/igvm-tools/tests/x86regs.rs
 index 7d71564..7ec14d8 100644
 --- a/igvm-tools/tests/x86regs.rs
 +++ b/igvm-tools/tests/x86regs.rs
-@@ -3 +3,3 @@ use igvm::snp_defs::SevFeatures;
+@@ -1,13 +1,28 @@
+ use igvm::snp_defs::SevFeatures;
+ 
 -use virtfw_igvm_tools::x86regs::{flat32_mode_regs, native_context, real_mode_regs, vmsa_context};
 +use virtfw_igvm_tools::x86regs::{
 +    flat32_mode_regs, native_context, real_mode_regs, sev_ap_reset_regs, vmsa_context,
 +};
-@@ -10 +12,14 @@ fn test_real_mode() {
+ 
+ #[test]
+ fn test_real_mode() {
+     let features = SevFeatures::new();
+     let regs = real_mode_regs();
+     let _ = native_context(&regs);
 -    let _ = vmsa_context(&regs, features);
 +    let vmsa = vmsa_context(&regs, features);
 +    assert_eq!(vmsa.cr0, 0x30);
@@ -123,3 +247,6 @@ index 7d71564..7ec14d8 100644
 +    assert_eq!(vmsa.cr0, 0x30);
 +    assert_eq!(vmsa.rip, 0xfff0);
 +    assert_eq!(vmsa.cs.base, 0x12340000);
+ }
+ 
+ #[test]

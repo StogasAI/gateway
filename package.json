@@ -19,7 +19,7 @@
 		"build": "cd transports && GOWORK=off go build -o ../dist/stogas-gateway ./cmd/stogas-gateway",
 		"check": "cd transports && GOWORK=off go test ./...",
 		"test:policy": "npm run build:policy && node --test bindings/policy/compiler.test.mjs",
-		"clean": "rm -rf dist tmp transports/vendor stogas/release/vendor",
+		"clean": "rm -rf dist tmp",
 		"dev": "cd transports && GOWORK=off go run ./cmd/stogas-gateway",
 		"release:build": "stogas/release/scripts/build-release.sh",
 		"release:verify-pins": "node stogas/release/scripts/verify-pins.mjs"
