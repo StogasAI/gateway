@@ -791,17 +791,7 @@ func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[stri
 				return invalidRequest("Hosted tools are not supported for this deployment")
 			}
 		}
-		if anthropicResponsesWebFetchToolType(rawType) {
-			for _, field := range []string{"allowed_callers", "allowed_domains", "blocked_domains", "citations", "response_inclusion", "use_cache"} {
-				if _, ok := tool[field]; ok {
-					return invalidRequest("tools[]." + field + " is not supported because it is not preserved by the current Anthropic Responses translation")
-				}
-			}
-		}
 		return nil
-	}
-	if anthropicResponsesCodeExecutionToolType(rawType) {
-		return invalidRequest("Explicit Anthropic code_execution tools are not supported because dynamic web search/fetch auto-injects code execution when available, and standalone code execution has separate container-time pricing")
 	}
 	return invalidRequest("Only function, web_fetch, and priced hosted web search tools are supported")
 }
@@ -1163,11 +1153,6 @@ func anthropicResponsesWebFetchToolType(rawType string) bool {
 	default:
 		return false
 	}
-}
-
-func anthropicResponsesCodeExecutionToolType(rawType string) bool {
-	rawType = strings.TrimSpace(rawType)
-	return rawType == "code_execution" || strings.HasPrefix(rawType, "code_execution_")
 }
 
 func anthropicHostedToolHoldQuantity(req anthropicAdapterContext) int {

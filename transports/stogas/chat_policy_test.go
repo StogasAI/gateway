@@ -1672,7 +1672,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
 		{"anthropic web fetch max tool calls conflicts with max uses", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":2,"tools":[{"type":"web_fetch_20260309","name":"web_fetch","max_uses":3}]}`, "max_tool_calls conflicts with tools[].max_uses"},
 		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260318","name":"web_search","max_uses":2},{"type":"web_fetch_20260318","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
-		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Explicit Anthropic code_execution tools are not supported"},
+		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Only function, web_fetch, and priced hosted web search tools are supported"},
 		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, web_fetch"},
 		{"openai web fetch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "Only function, custom"},
 		{"openai code execution version", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
@@ -4108,17 +4108,6 @@ func TestResponsesIngestionTracksActualWebSearchCalls(t *testing.T) {
 	}
 	if calls := actualWebSearchCalls(state); calls != 0 {
 		t.Fatalf("expected completed web fetch stream event not to count as billable search call, got %d", calls)
-	}
-
-	codeInterpreterType := schemas.ResponsesMessageTypeCodeInterpreterCall
-	state = &State{}
-	if err := adapter.IngestResponse(state, &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
-		Output: []schemas.ResponsesMessage{{ID: &itemID, Type: &codeInterpreterType, Status: &completedStatus}},
-	}}, nil); err != nil {
-		t.Fatalf("IngestResponse completed code execution returned error: %v", err)
-	}
-	if calls := actualWebSearchCalls(state); calls != 0 {
-		t.Fatalf("expected auto-injected code execution not to count as billable search call, got %d", calls)
 	}
 
 	failedStatus := "failed"

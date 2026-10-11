@@ -157,7 +157,6 @@ func TestResponsesGeneratedToolTextAndRefusals(t *testing.T) {
 	}{
 		{"function arguments", `{"type":"function_call","arguments":"{\"q\":\"é\"}"}`, 10},
 		{"custom input", `{"type":"custom_tool_call","input":"café"}`, 5},
-		{"generated code", `{"type":"code_interpreter_call","code":"print('é')"}`, 11},
 		{"refusal", `{"type":"message","content":[{"type":"refusal","refusal":"Non."}]}`, 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -122,7 +122,6 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 		`{"type":"web_search_latest"}`,
 		`{"type":"web_search_20270101"}`,
 		`{"type":"web_fetch_latest"}`,
-		`{"type":"web_fetch_20260309","name":"web_fetch","use_cache":true}`,
 	} {
 		if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, raw)); err == nil {
 			t.Fatalf("expected Anthropic tool %s to reject", raw)

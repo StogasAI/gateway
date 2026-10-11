@@ -352,6 +352,56 @@ func TestPrepareProviderRequestUsesNativeAnthropicBodiesForAzureClaude(t *testin
 	}
 }
 
+func TestPrepareProviderRequestSendsBasicAnthropicWebToolVersions(t *testing.T) {
+	text := "hello"
+	role := schemas.ResponsesInputMessageRoleUser
+	for _, provider := range []schemas.ModelProvider{schemas.Anthropic, schemas.Azure} {
+		for _, model := range []string{"claude-sonnet-4-6", "claude-opus-5"} {
+			t.Run(string(provider)+"/"+model, func(t *testing.T) {
+				request := &schemas.BifrostRequest{
+					RequestType: schemas.ResponsesRequest,
+					ResponsesRequest: &schemas.BifrostResponsesRequest{
+						Provider: provider,
+						Model:    model,
+						Input: []schemas.ResponsesMessage{{
+							Role:    &role,
+							Content: &schemas.ResponsesMessageContent{ContentStr: &text},
+						}},
+						Params: &schemas.ResponsesParameters{Tools: []schemas.ResponsesTool{
+							{Type: schemas.ResponsesToolTypeWebSearch, ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{}},
+							{Type: schemas.ResponsesToolTypeWebFetch, ResponsesToolWebFetch: &schemas.ResponsesToolWebFetch{}},
+						}},
+					},
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
+				state := providerRequestTestState(provider, model, request.RequestType, 32000)
+				state.Resolution.Deployment.ModelID = model
+
+				if err := PrepareProviderRequest(ctx, state, request); err != nil {
+					t.Fatalf("PrepareProviderRequest returned error: %v", err)
+				}
+				var payload struct {
+					Tools []struct {
+						Type string `json:"type"`
+					} `json:"tools"`
+				}
+				body := preparedProviderBody(t, ctx, request.ResponsesRequest)
+				if err := json.Unmarshal(body, &payload); err != nil {
+					t.Fatalf("decode prepared body: %v", err)
+				}
+				types := make([]string, 0, len(payload.Tools))
+				for _, tool := range payload.Tools {
+					types = append(types, tool.Type)
+				}
+				if strings.Join(types, ",") != "web_search_20250305,web_fetch_20250910" {
+					t.Fatalf("tool types = %v, want the basic web tool versions: %s", types, body)
+				}
+			})
+		}
+	}
+}
+
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
 	wrongLimit := 100000
