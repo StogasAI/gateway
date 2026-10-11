@@ -1,6 +1,9 @@
 package stogas
 
 import (
+	"strconv"
+	"strings"
+
 	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
@@ -188,7 +191,7 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Azure:
 		if schemas.IsAnthropicModelFamily(ctx, request.Model) {
-			return anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
+			return prepareAnthropicResponsesBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
 				Provider:      schemas.Azure,
 				Model:         request.Model,
 				IsStreaming:   streaming,
@@ -197,13 +200,42 @@ func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.
 		}
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Anthropic:
-		return anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
+		return prepareAnthropicResponsesBody(ctx, request, anthropicprovider.AnthropicRequestBuildConfig{
 			Provider:    schemas.Anthropic,
 			IsStreaming: streaming,
 		})
 	default:
 		return nil, providerutils.NewUnsupportedOperationError(requestTypeForResponses(streaming), request.Provider)
 	}
+}
+
+// prepareAnthropicResponsesBody sends web search and web fetch at their basic
+// versions. Core picks newer versions for recent Claude models; those filter
+// results with code execution, which keeps container data for up to 30 days,
+// and Azure-hosted Claude rejects them.
+func prepareAnthropicResponsesBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, config anthropicprovider.AnthropicRequestBuildConfig) ([]byte, *schemas.BifrostError) {
+	body, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(ctx, request, config)
+	if bifrostErr != nil {
+		return nil, bifrostErr
+	}
+	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
+		toolType := tool.Get("type").String()
+		basic := toolType
+		switch {
+		case strings.HasPrefix(toolType, "web_search_"):
+			basic = string(anthropicprovider.AnthropicToolTypeWebSearch20250305)
+		case strings.HasPrefix(toolType, "web_fetch_"):
+			basic = string(anthropicprovider.AnthropicToolTypeWebFetch20250910)
+		}
+		if basic == toolType {
+			continue
+		}
+		var err error
+		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".type", basic); err != nil {
+			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		}
+	}
+	return body, nil
 }
 
 func usesAnthropicWireFormat(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string) bool {

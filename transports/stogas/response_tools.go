@@ -38,7 +38,7 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 	if response == nil || len(response.Output) > maxProviderResponseItems {
 		return ErrProviderResponseMalformed
 	}
-	if !terminal && (len(response.Output) != 0 || response.CompletedAt != nil || response.Container != nil ||
+	if !terminal && (len(response.Output) != 0 || response.CompletedAt != nil ||
 		response.StopReason != nil || response.StopDetails != nil) {
 		return ErrProviderResponseMalformed
 	}
@@ -50,14 +50,8 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 	}
 	if response.Background != nil && *response.Background || response.Store != nil && *response.Store ||
 		response.Conversation != nil || response.PreviousResponseID != nil || response.Prompt != nil ||
-		response.Error != nil {
+		response.Container != nil || response.Error != nil {
 		return ErrProviderResponseMalformed
-	}
-	if response.Container != nil {
-		if !providerResponsesImplicitCodeExecutionAllowed(state) || !validProviderResponseID(response.Container.ID) ||
-			response.Container.ExpiresAt == nil || !validProviderRFC3339(*response.Container.ExpiresAt) {
-			return ErrProviderResponseMalformed
-		}
 	}
 	if response.MaxToolCalls != nil {
 		cap, supplied := responsesExplicitMaxToolCalls(state)
@@ -66,21 +60,14 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		}
 	}
 	seenIDs := make(map[string]struct{}, len(response.Output))
-	codeExecutionItems := 0
 	for index := range response.Output {
 		item := &response.Output[index]
 		observed, err := validateProviderResponsesItem(state, item)
 		if err != nil {
 			return err
 		}
-		if terminal && validateProviderResponsesTerminalItem(state, item, false) != nil {
+		if terminal && validateProviderResponsesTerminalItem(item) != nil {
 			return ErrProviderResponseMalformed
-		}
-		if item.Type != nil && *item.Type == schemas.ResponsesMessageTypeCodeInterpreterCall {
-			codeExecutionItems++
-			if terminal && !providerResponsesCodeExecutionContainerMatches(response.Container, item) {
-				return ErrProviderResponseMalformed
-			}
 		}
 		if _, duplicate := seenIDs[observed.id]; duplicate {
 			return ErrProviderResponseMalformed
@@ -110,12 +97,6 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 				return ErrProviderResponseMalformed
 			}
 		}
-		if validateProviderResponsesCallerReferences(response.Output) != nil {
-			return ErrProviderResponseMalformed
-		}
-	}
-	if terminal && (response.Container != nil) != (codeExecutionItems > 0) {
-		return ErrProviderResponseMalformed
 	}
 	return sanitizeProviderResponsesEcho(state, response)
 }
@@ -420,35 +401,6 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 			return ErrProviderResponseMalformed
 		}
 		return nil
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallInterpreting,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCompleted:
-		if !providerResponsesImplicitCodeExecutionAllowed(state) ||
-			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadItemReference) ||
-			validateProviderResponsesHostedToolEvent(state, response) != nil {
-			return ErrProviderResponseMalformed
-		}
-		return nil
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
-		if !providerResponsesImplicitCodeExecutionAllowed(state) || response.Delta == nil ||
-			!validProviderText(*response.Delta, maxProviderResponseBodySize, true) ||
-			!validOptionalProviderText(response.Obfuscation, maxProviderResponseBodySize, false) ||
-			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadDelta|responsePayloadObfuscation) ||
-			validateProviderResponsesHostedToolEvent(state, response) != nil {
-			return ErrProviderResponseMalformed
-		}
-		return nil
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
-		if !providerResponsesImplicitCodeExecutionAllowed(state) || response.Code == nil ||
-			!validProviderText(*response.Code, maxProviderResponseBodySize, true) ||
-			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeCodeInterpreterCall) ||
-			responsesStreamUnexpectedPayload(response, responsePayloadItemReference|responsePayloadCode) ||
-			validateProviderResponsesHostedToolEvent(state, response) != nil {
-			return ErrProviderResponseMalformed
-		}
-		return nil
 	case schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded,
 		schemas.ResponsesStreamResponseTypeOutputTextAnnotationDone:
 		if response.Annotation == nil || response.AnnotationIndex == nil ||
@@ -474,9 +426,6 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 	if err != nil {
 		return err
 	}
-	if !providerResponsesStreamCallerReferencesCode(state, response.Item) {
-		return ErrProviderResponseMalformed
-	}
 	if response.ItemID != nil && *response.ItemID != item.id {
 		return ErrProviderResponseMalformed
 	}
@@ -495,10 +444,9 @@ func validateProviderResponsesOutputItemEvent(state *State, response *schemas.Bi
 		state.responsesItems[index] = item
 		return nil
 	}
-	if !exists || prior.done || response.Item.Status != nil &&
-		(*response.Item.Status == "in_progress" || *response.Item.Status == "interpreting") ||
+	if !exists || prior.done || response.Item.Status != nil && *response.Item.Status == "in_progress" ||
 		!sameProviderResponsesItem(prior, item) ||
-		validateProviderResponsesTerminalItem(state, response.Item, true) != nil ||
+		validateProviderResponsesTerminalItem(response.Item) != nil ||
 		validateProviderResponsesCompletedStreamItem(prior, response.Item) != nil {
 		return ErrProviderResponseMalformed
 	}
@@ -557,7 +505,7 @@ func providerResponsesToolItemValue(item *schemas.ResponsesMessage) (string, boo
 	}
 }
 
-func validateProviderResponsesTerminalItem(state *State, item *schemas.ResponsesMessage, allowPendingContainer bool) error {
+func validateProviderResponsesTerminalItem(item *schemas.ResponsesMessage) error {
 	if item == nil || item.Type == nil {
 		return ErrProviderResponseMalformed
 	}
@@ -606,32 +554,8 @@ func validateProviderResponsesTerminalItem(state *State, item *schemas.Responses
 		if result.ResultType == "web_fetch_result" && (result.URL == nil || *result.URL != actionURL) {
 			return ErrProviderResponseMalformed
 		}
-	case schemas.ResponsesMessageTypeCodeInterpreterCall:
-		if item.ResponsesToolMessage == nil || item.ResponsesToolMessage.ResponsesCodeInterpreterToolCall == nil ||
-			item.ResponsesToolMessage.ResponsesCodeExecutionCall == nil {
-			return ErrProviderResponseMalformed
-		}
-		carry := item.ResponsesToolMessage.ResponsesCodeExecutionCall
-		failed := strings.HasSuffix(carry.ResultType, "_tool_result_error")
-		if carry.Input == nil || carry.ResultType == "" || item.Status == nil ||
-			failed && *item.Status != "failed" || !failed && *item.Status != "completed" ||
-			!validProviderCodeExecutionNeutralMatch(item.ResponsesToolMessage.ResponsesCodeInterpreterToolCall, carry, allowPendingContainer) {
-			return ErrProviderResponseMalformed
-		}
 	}
 	return nil
-}
-
-func providerResponsesCodeExecutionContainerMatches(container *schemas.ResponsesResponseContainer, item *schemas.ResponsesMessage) bool {
-	if container == nil || container.ExpiresAt == nil || item == nil || item.ResponsesToolMessage == nil ||
-		item.ResponsesToolMessage.ResponsesCodeInterpreterToolCall == nil ||
-		item.ResponsesToolMessage.ResponsesCodeExecutionCall == nil {
-		return false
-	}
-	interpreter := item.ResponsesToolMessage.ResponsesCodeInterpreterToolCall
-	carry := item.ResponsesToolMessage.ResponsesCodeExecutionCall
-	return interpreter.ContainerID == container.ID && carry.ContainerExpiresAt != nil &&
-		*carry.ContainerExpiresAt == *container.ExpiresAt
 }
 
 // numberAnthropicResponsesContentPart replaces the Anthropic block index that
@@ -704,18 +628,6 @@ func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesIt
 		if streamItem.stage != 3 {
 			return ErrProviderResponseMalformed
 		}
-	case schemas.ResponsesMessageTypeCodeInterpreterCall:
-		if streamItem.stage != 4 || !streamItem.codeDone {
-			return ErrProviderResponseMalformed
-		}
-		tool := finalItem.ResponsesToolMessage
-		call := tool.ResponsesCodeInterpreterToolCall
-		carry := tool.ResponsesCodeExecutionCall
-		if streamItem.code == nil || carry == nil ||
-			carry.ToolName == "text_editor_code_execution" && (call.Code != nil || streamItem.code.Len() != 0) ||
-			carry.ToolName != "text_editor_code_execution" && (call.Code == nil || *call.Code != streamItem.code.String()) {
-			return ErrProviderResponseMalformed
-		}
 	}
 	if len(streamItem.parts) != 0 && !providerResponsesFinalContentMatches(streamItem.parts, finalItem) {
 		return ErrProviderResponseMalformed
@@ -737,20 +649,6 @@ func providerResponsesCompletedItemFingerprint(item *schemas.ResponsesMessage) (
 		reasoning := *item.ResponsesReasoning
 		reasoning.EncryptedContent = schemas.Ptr("present")
 		copyItem.ResponsesReasoning = &reasoning
-	}
-	if item.ResponsesToolMessage != nil {
-		tool := *item.ResponsesToolMessage
-		copyItem.ResponsesToolMessage = &tool
-		if tool.ResponsesCodeInterpreterToolCall != nil {
-			interpreter := *tool.ResponsesCodeInterpreterToolCall
-			interpreter.ContainerID = ""
-			tool.ResponsesCodeInterpreterToolCall = &interpreter
-		}
-		if tool.ResponsesCodeExecutionCall != nil {
-			carry := *tool.ResponsesCodeExecutionCall
-			carry.ContainerExpiresAt = nil
-			tool.ResponsesCodeExecutionCall = &carry
-		}
 	}
 	encoded, err := json.Marshal(&copyItem)
 	if err != nil || len(encoded) == 0 || len(encoded) > maxProviderResponseBodySize {
@@ -962,7 +860,7 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		parts:          make(map[int]*providerResponsesPart),
 		reasoningParts: make(map[int]*providerResponsesPart),
 	}
-	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed", "interpreting") {
+	if item.Status != nil && !stringInSet(*item.Status, "in_progress", "completed", "incomplete", "failed") {
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
 	if item.Role != nil && *item.Role != schemas.ResponsesInputMessageRoleAssistant ||
@@ -1030,47 +928,29 @@ func validateProviderResponsesItem(state *State, item *schemas.ResponsesMessage)
 		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
 			return providerResponsesItem{}, err
 		}
-	case schemas.ResponsesMessageTypeCodeInterpreterCall:
-		if item.Role != nil || item.Phase != nil || item.Content != nil || item.ResponsesReasoning != nil ||
-			!providerResponsesImplicitCodeExecutionAllowed(state) || item.ResponsesToolMessage == nil ||
-			validateProviderResponsesToolMessage(state, item.ResponsesToolMessage, *item.Type) != nil {
-			return providerResponsesItem{}, ErrProviderResponseMalformed
-		}
-		if err := validateAndRecordProviderResponsesToolCall(state, item, &observed, false); err != nil {
-			return providerResponsesItem{}, err
-		}
-		observed.code = &bytes.Buffer{}
 	default:
 		return providerResponsesItem{}, ErrProviderResponseMalformed
 	}
 	if item.ResponsesToolMessage != nil {
-		callerPayload, actionPayload, toolKind, err := providerResponsesToolIdentity(item)
+		callerPayload, actionPayload, err := providerResponsesToolIdentity(item)
 		if err != nil {
 			return providerResponsesItem{}, ErrProviderResponseMalformed
 		}
 		observed.toolCallerPayload = callerPayload
 		observed.toolActionPayload = actionPayload
-		observed.toolKind = toolKind
 	}
 	observed.compactionPayload = providerResponsesCompactionPayload(item)
 	return observed, nil
 }
 
-func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, string, string, error) {
+func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, string, error) {
 	if item == nil || item.Type == nil || item.ResponsesToolMessage == nil {
-		return "", "", "", nil
+		return "", "", nil
 	}
 	tool := item.ResponsesToolMessage
-	callerIdentity := struct {
-		Caller     *schemas.ResponsesToolCaller `json:"caller"`
-		CodeCaller *schemas.ResponsesToolCaller `json:"code_caller"`
-	}{Caller: tool.Caller}
-	if tool.ResponsesCodeExecutionCall != nil {
-		callerIdentity.CodeCaller = tool.ResponsesCodeExecutionCall.Caller
-	}
-	callerPayload, err := json.Marshal(callerIdentity)
+	callerPayload, err := json.Marshal(tool.Caller)
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
 	actionPayload := ""
@@ -1087,7 +967,7 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 			}{action.Type, action.Query, action.Queries, action.URL, action.Pattern}
 			encoded, marshalErr := json.Marshal(identity)
 			if marshalErr != nil {
-				return "", "", "", marshalErr
+				return "", "", marshalErr
 			}
 			actionPayload = string(encoded)
 		}
@@ -1095,16 +975,12 @@ func providerResponsesToolIdentity(item *schemas.ResponsesMessage) (string, stri
 		if tool.Action != nil && tool.Action.ResponsesWebFetchToolCallAction != nil {
 			encoded, marshalErr := json.Marshal(tool.Action.ResponsesWebFetchToolCallAction)
 			if marshalErr != nil {
-				return "", "", "", marshalErr
+				return "", "", marshalErr
 			}
 			actionPayload = string(encoded)
 		}
 	}
-	toolKind := ""
-	if tool.ResponsesCodeExecutionCall != nil {
-		toolKind = tool.ResponsesCodeExecutionCall.ToolName
-	}
-	return string(callerPayload), actionPayload, toolKind, nil
+	return string(callerPayload), actionPayload, nil
 }
 
 func providerResponsesCompactionPayload(item *schemas.ResponsesMessage) string {
@@ -1156,42 +1032,32 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 		tool.ResponsesComputerToolCallOutput != nil || tool.ResponsesMCPToolCall != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
-		tool.ResponsesToolSearchCall != nil {
+		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeInterpreterToolCall != nil ||
+		tool.ResponsesCodeExecutionCall != nil {
 		return ErrProviderResponseMalformed
 	}
 
 	switch itemType {
 	case schemas.ResponsesMessageTypeFunctionCall:
 		if tool.CallID == nil || tool.Name == nil || tool.Arguments == nil || tool.Action != nil || tool.Caller != nil ||
-			tool.ResponsesCustomToolCall != nil || tool.ResponsesCodeInterpreterToolCall != nil ||
-			tool.ResponsesWebFetchCall != nil || tool.ResponsesCodeExecutionCall != nil {
+			tool.ResponsesCustomToolCall != nil || tool.ResponsesWebFetchCall != nil {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeCustomToolCall:
 		if tool.CallID == nil || tool.Name == nil || tool.Arguments != nil || tool.Action != nil || tool.Caller != nil ||
-			tool.ResponsesCustomToolCall == nil || tool.ResponsesCodeInterpreterToolCall != nil ||
-			tool.ResponsesWebFetchCall != nil || tool.ResponsesCodeExecutionCall != nil {
+			tool.ResponsesCustomToolCall == nil || tool.ResponsesWebFetchCall != nil {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebSearchCall:
 		if tool.Name != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
-			tool.ResponsesCodeInterpreterToolCall != nil || tool.ResponsesWebFetchCall != nil ||
-			tool.ResponsesCodeExecutionCall != nil || !validProviderWebSearchAction(state, tool.Action) ||
+			tool.ResponsesWebFetchCall != nil || !validProviderWebSearchAction(state, tool.Action) ||
 			!validProviderToolCaller(tool.Caller) {
 			return ErrProviderResponseMalformed
 		}
 	case schemas.ResponsesMessageTypeWebFetchCall:
 		if tool.Name != nil || tool.Arguments != nil || tool.ResponsesCustomToolCall != nil ||
-			tool.ResponsesCodeInterpreterToolCall != nil || tool.ResponsesCodeExecutionCall != nil ||
 			!validProviderWebFetchAction(state, tool.Action) || !validProviderToolCaller(tool.Caller) ||
 			!validProviderWebFetchResult(state, tool.ResponsesWebFetchCall) {
-			return ErrProviderResponseMalformed
-		}
-	case schemas.ResponsesMessageTypeCodeInterpreterCall:
-		if tool.CallID == nil || tool.Name != nil || tool.Arguments != nil || tool.Action != nil || tool.Caller != nil ||
-			tool.ResponsesCustomToolCall != nil || tool.ResponsesCodeInterpreterToolCall == nil ||
-			tool.ResponsesWebFetchCall != nil || !validProviderCodeInterpreterCall(tool.ResponsesCodeInterpreterToolCall) ||
-			!validProviderCodeExecutionCall(tool.ResponsesCodeExecutionCall) {
 			return ErrProviderResponseMalformed
 		}
 	default:
@@ -1369,300 +1235,10 @@ func validProviderRFC3339(value string) bool {
 	return err == nil
 }
 
-func validProviderCodeInterpreterCall(call *schemas.ResponsesCodeInterpreterToolCall) bool {
-	if call == nil || !validOptionalProviderText(call.Code, maxProviderResponseBodySize, true) ||
-		call.ContainerID != "" && !validProviderResponseID(call.ContainerID) ||
-		len(call.Outputs) > maxProviderResponseItems {
-		return false
-	}
-	for _, output := range call.Outputs {
-		if output.ResponsesCodeInterpreterOutputLogs == nil || output.ResponsesCodeInterpreterOutputImage != nil {
-			return false
-		}
-		logs := output.ResponsesCodeInterpreterOutputLogs
-		if logs.Type != "logs" || !validProviderText(logs.Logs, maxProviderResponseBodySize, true) {
-			return false
-		}
-	}
-	return true
-}
-
-func validProviderCodeExecutionCall(call *schemas.ResponsesCodeExecutionCall) bool {
-	if call == nil || !stringInSet(call.ToolName, "code_execution", "bash_code_execution", "text_editor_code_execution") ||
-		!validOptionalProviderText(call.Stdout, maxProviderResponseBodySize, true) ||
-		!validOptionalProviderText(call.Stderr, maxProviderResponseBodySize, true) ||
-		!validOptionalProviderText(call.EncryptedStdout, maxProviderResponseBodySize, false) ||
-		!validOptionalProviderText(call.FileType, 1024, false) ||
-		!validOptionalProviderText(call.FileContent, maxProviderResponseBodySize, true) ||
-		!validOptionalProviderText(call.ErrorCode, 1024, false) ||
-		!validOptionalProviderText(call.ErrorMessage, maxProviderResponseBodySize, true) ||
-		!validOptionalProviderText(call.ContainerExpiresAt, 1024, false) ||
-		call.ContainerExpiresAt != nil && !validProviderRFC3339(*call.ContainerExpiresAt) ||
-		!validProviderToolCaller(call.Caller) || len(call.Lines) > maxProviderResponseItems || len(call.Files) != 0 {
-		return false
-	}
-	if call.Input != nil && !validProviderCodeExecutionInput(call.ToolName, *call.Input) {
-		return false
-	}
-	for _, line := range call.Lines {
-		if !validProviderText(line, maxProviderResponseBodySize, true) {
-			return false
-		}
-	}
-	for _, value := range []*int{call.NumLines, call.TotalLines, call.OldLines, call.NewLines} {
-		if value != nil && *value < 0 {
-			return false
-		}
-	}
-	for _, value := range []*int{call.StartLine, call.OldStart, call.NewStart} {
-		if value != nil && *value < 1 {
-			return false
-		}
-	}
-	return validProviderCodeExecutionResult(call)
-}
-
-func validProviderCodeExecutionInput(toolName, value string) bool {
-	if len(value) > maxProviderResponseBodySize || !catalog.ValidateJSONObjectText(value) {
-		return false
-	}
-	var input map[string]json.RawMessage
-	if json.Unmarshal([]byte(value), &input) != nil {
-		return false
-	}
-	validString := func(key string, allowEmpty bool) bool {
-		field, ok := rawStringValue(input[key])
-		return ok && validProviderText(field, maxProviderResponseBodySize, allowEmpty)
-	}
-	only := func(keys ...string) bool {
-		if len(input) != len(keys) {
-			return false
-		}
-		allowed := make(map[string]struct{}, len(keys))
-		for _, key := range keys {
-			allowed[key] = struct{}{}
-		}
-		for key := range input {
-			if _, ok := allowed[key]; !ok {
-				return false
-			}
-		}
-		return true
-	}
-
-	switch toolName {
-	case "code_execution":
-		return only("code") && validString("code", false)
-	case "bash_code_execution":
-		return only("command") && validString("command", false)
-	case "text_editor_code_execution":
-		command, ok := rawStringValue(input["command"])
-		if !ok || !validString("path", false) {
-			return false
-		}
-		switch command {
-		case "view":
-			if only("command", "path") {
-				return true
-			}
-			if !only("command", "path", "view_range") {
-				return false
-			}
-			var viewRange []int
-			return json.Unmarshal(input["view_range"], &viewRange) == nil && len(viewRange) == 2 &&
-				viewRange[0] >= 1 && (viewRange[1] == -1 || viewRange[1] >= viewRange[0])
-		case "create":
-			return only("command", "path", "file_text") && validString("file_text", true)
-		case "str_replace":
-			return only("command", "path", "old_str", "new_str") &&
-				validString("old_str", false) && validString("new_str", true)
-		default:
-			return false
-		}
-	default:
-		return false
-	}
-}
-
-func validProviderCodeExecutionResult(call *schemas.ResponsesCodeExecutionCall) bool {
-	if call == nil {
-		return false
-	}
-	if call.ResultType == "" {
-		return !providerCodeExecutionResultPayloadSet(call)
-	}
-
-	noExecution := call.Stdout == nil && call.Stderr == nil && call.ReturnCode == nil && call.EncryptedStdout == nil
-	noEditor := call.FileType == nil && call.FileContent == nil && call.StartLine == nil && call.NumLines == nil &&
-		call.TotalLines == nil && call.IsFileUpdate == nil && call.OldStart == nil && call.OldLines == nil &&
-		call.NewStart == nil && call.NewLines == nil && len(call.Lines) == 0
-	noError := call.ErrorCode == nil && call.ErrorMessage == nil
-
-	switch call.ResultType {
-	case "code_execution_result":
-		return call.ToolName == "code_execution" && call.Stdout != nil && call.Stderr != nil && call.ReturnCode != nil &&
-			call.EncryptedStdout == nil && noEditor && noError
-	case "encrypted_code_execution_result":
-		return call.ToolName == "code_execution" && call.Stdout == nil && call.Stderr != nil && call.ReturnCode != nil &&
-			call.EncryptedStdout != nil && noEditor && noError
-	case "bash_code_execution_result":
-		return call.ToolName == "bash_code_execution" && call.Stdout != nil && call.Stderr != nil && call.ReturnCode != nil &&
-			call.EncryptedStdout == nil && noEditor && noError
-	case "text_editor_code_execution_view_result":
-		return call.ToolName == "text_editor_code_execution" && noExecution && noError && len(call.Files) == 0 &&
-			call.FileType != nil && *call.FileType == "text" && call.FileContent != nil &&
-			call.IsFileUpdate == nil && call.OldStart == nil && call.OldLines == nil && call.NewStart == nil &&
-			call.NewLines == nil && len(call.Lines) == 0
-	case "text_editor_code_execution_create_result":
-		return call.ToolName == "text_editor_code_execution" && noExecution && noError && len(call.Files) == 0 &&
-			call.IsFileUpdate != nil && call.FileType == nil && call.FileContent == nil && call.StartLine == nil &&
-			call.NumLines == nil && call.TotalLines == nil && call.OldStart == nil && call.OldLines == nil &&
-			call.NewStart == nil && call.NewLines == nil && len(call.Lines) == 0
-	case "text_editor_code_execution_str_replace_result":
-		return call.ToolName == "text_editor_code_execution" && noExecution && noError && len(call.Files) == 0 &&
-			call.FileType == nil && call.FileContent == nil && call.StartLine == nil && call.NumLines == nil &&
-			call.TotalLines == nil && call.IsFileUpdate == nil
-	case "code_execution_tool_result_error":
-		return call.ToolName == "code_execution" && noExecution && noEditor && len(call.Files) == 0 &&
-			call.ErrorCode != nil && call.ErrorMessage == nil &&
-			stringInSet(*call.ErrorCode, "invalid_tool_input", "unavailable", "too_many_requests", "execution_time_exceeded")
-	case "bash_code_execution_tool_result_error":
-		return call.ToolName == "bash_code_execution" && noExecution && noEditor && len(call.Files) == 0 &&
-			call.ErrorCode != nil && call.ErrorMessage == nil &&
-			stringInSet(*call.ErrorCode, "invalid_tool_input", "unavailable", "too_many_requests", "execution_time_exceeded", "output_file_too_large")
-	case "text_editor_code_execution_tool_result_error":
-		return call.ToolName == "text_editor_code_execution" && noExecution && noEditor && len(call.Files) == 0 &&
-			call.ErrorCode != nil &&
-			stringInSet(*call.ErrorCode, "invalid_tool_input", "unavailable", "too_many_requests", "execution_time_exceeded", "file_not_found")
-	default:
-		return false
-	}
-}
-
-func providerCodeExecutionResultPayloadSet(call *schemas.ResponsesCodeExecutionCall) bool {
-	return call.Stdout != nil || call.Stderr != nil || call.ReturnCode != nil || call.EncryptedStdout != nil ||
-		call.FileType != nil || call.FileContent != nil || call.StartLine != nil || call.NumLines != nil ||
-		call.TotalLines != nil || call.IsFileUpdate != nil || call.OldStart != nil || call.OldLines != nil ||
-		call.NewStart != nil || call.NewLines != nil || len(call.Lines) != 0 || call.ErrorCode != nil ||
-		call.ErrorMessage != nil || len(call.Files) != 0
-}
-
-func validProviderCodeExecutionNeutralMatch(
-	interpreter *schemas.ResponsesCodeInterpreterToolCall,
-	call *schemas.ResponsesCodeExecutionCall,
-	allowPendingContainer bool,
-) bool {
-	if interpreter == nil || call == nil || call.Input == nil {
-		return false
-	}
-	var input map[string]json.RawMessage
-	if json.Unmarshal([]byte(*call.Input), &input) != nil {
-		return false
-	}
-	if call.ToolName == "text_editor_code_execution" {
-		if interpreter.Code != nil || len(interpreter.Outputs) != 0 {
-			return false
-		}
-	} else {
-		key := "code"
-		if call.ToolName == "bash_code_execution" {
-			key = "command"
-		}
-		code, ok := rawStringValue(input[key])
-		if !ok || interpreter.Code == nil || *interpreter.Code != code {
-			return false
-		}
-		wantLogs := call.Stdout != nil && *call.Stdout != ""
-		if wantLogs {
-			if len(interpreter.Outputs) != 1 || interpreter.Outputs[0].ResponsesCodeInterpreterOutputLogs == nil ||
-				interpreter.Outputs[0].ResponsesCodeInterpreterOutputLogs.Logs != *call.Stdout {
-				return false
-			}
-		} else if len(interpreter.Outputs) != 0 {
-			return false
-		}
-	}
-	return allowPendingContainer || interpreter.ContainerID != ""
-}
-
+// Anthropic reports tools that the model called itself as "direct". Requests
+// cannot enable code execution, so no other caller is valid.
 func validProviderToolCaller(caller *schemas.ResponsesToolCaller) bool {
-	if caller == nil {
-		return true
-	}
-	switch caller.Type {
-	case "direct":
-		return caller.ToolID == nil
-	case "code_execution_20250825", "code_execution_20260120", "code_execution_20260521":
-		return caller.ToolID != nil && validProviderResponseID(*caller.ToolID)
-	default:
-		return false
-	}
-}
-
-func validateProviderResponsesCallerReferences(output []schemas.ResponsesMessage) error {
-	codeCalls := make(map[string]struct{})
-	for index := range output {
-		item := &output[index]
-		if item.Type == nil || *item.Type != schemas.ResponsesMessageTypeCodeInterpreterCall || item.ID == nil {
-			continue
-		}
-		codeCalls[*item.ID] = struct{}{}
-		if item.ResponsesToolMessage != nil && item.ResponsesToolMessage.CallID != nil {
-			codeCalls[*item.ResponsesToolMessage.CallID] = struct{}{}
-		}
-	}
-	for index := range output {
-		item := &output[index]
-		if item.ResponsesToolMessage == nil {
-			continue
-		}
-		callers := []*schemas.ResponsesToolCaller{item.ResponsesToolMessage.Caller}
-		if item.ResponsesToolMessage.ResponsesCodeExecutionCall != nil {
-			callers = append(callers, item.ResponsesToolMessage.ResponsesCodeExecutionCall.Caller)
-		}
-		for _, caller := range callers {
-			if caller == nil || caller.Type == "direct" {
-				continue
-			}
-			if caller.ToolID == nil {
-				return ErrProviderResponseMalformed
-			}
-			if _, ok := codeCalls[*caller.ToolID]; !ok {
-				return ErrProviderResponseMalformed
-			}
-		}
-	}
-	return nil
-}
-
-func providerResponsesStreamCallerReferencesCode(state *State, item *schemas.ResponsesMessage) bool {
-	if state == nil || item == nil || item.ResponsesToolMessage == nil {
-		return true
-	}
-	callers := []*schemas.ResponsesToolCaller{item.ResponsesToolMessage.Caller}
-	if item.ResponsesToolMessage.ResponsesCodeExecutionCall != nil {
-		callers = append(callers, item.ResponsesToolMessage.ResponsesCodeExecutionCall.Caller)
-	}
-	for _, caller := range callers {
-		if caller == nil || caller.Type == "direct" {
-			continue
-		}
-		if caller.ToolID == nil {
-			return false
-		}
-		found := false
-		for _, observed := range state.responsesItems {
-			if observed.itemType == schemas.ResponsesMessageTypeCodeInterpreterCall &&
-				(observed.id == *caller.ToolID || observed.callID == *caller.ToolID) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
+	return caller == nil || caller.Type == "direct" && caller.ToolID == nil
 }
 
 func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.ResponsesMessage, observed *providerResponsesItem, requireCallID bool) error {
@@ -1915,8 +1491,7 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 	next := item.stage
 	switch response.Type {
 	case schemas.ResponsesStreamResponseTypeWebSearchCallInProgress,
-		schemas.ResponsesStreamResponseTypeWebFetchCallInProgress,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress:
+		schemas.ResponsesStreamResponseTypeWebFetchCallInProgress:
 		if item.stage != 0 {
 			return ErrProviderResponseMalformed
 		}
@@ -1947,28 +1522,6 @@ func validateProviderResponsesHostedToolEvent(state *State, response *schemas.Bi
 			return ErrProviderResponseMalformed
 		}
 		next = 3
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
-		if item.stage != 1 || item.code == nil || item.codeDone || response.Delta == nil ||
-			!appendProviderBuffer(item.code, *response.Delta) {
-			return ErrProviderResponseMalformed
-		}
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
-		if item.stage != 1 || item.code == nil || item.codeDone || response.Code == nil ||
-			item.code.String() != *response.Code {
-			return ErrProviderResponseMalformed
-		}
-		item.codeDone = true
-		next = 2
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallInterpreting:
-		if item.stage != 2 {
-			return ErrProviderResponseMalformed
-		}
-		next = 3
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCompleted:
-		if item.stage != 3 {
-			return ErrProviderResponseMalformed
-		}
-		next = 4
 	default:
 		return ErrProviderResponseMalformed
 	}
@@ -2197,14 +1750,6 @@ func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesTool
 	return false
 }
 
-func providerResponsesImplicitCodeExecutionAllowed(state *State) bool {
-	return state != nil && state.Resolution != nil &&
-		(state.Resolution.Provider == schemas.Anthropic ||
-			state.Resolution.Provider == schemas.Azure && azureDeploymentUsesAnthropicWire(state)) &&
-		(providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebSearch) ||
-			providerResponsesToolTypeAllowed(state, schemas.ResponsesToolTypeWebFetch))
-}
-
 func providerResponsesToolNameAllowed(state *State, kind schemas.ResponsesToolType, name string) bool {
 	if !validClientToolName(name) || !providerResponsesToolTypeAllowed(state, kind) {
 		return false
@@ -2248,7 +1793,7 @@ func providerResponsesToolNameAllowed(state *State, kind schemas.ResponsesToolTy
 
 func sameProviderResponsesItem(left, right providerResponsesItem) bool {
 	return left.id == right.id && left.callID == right.callID && left.itemType == right.itemType && left.name == right.name &&
-		left.toolCallerPayload == right.toolCallerPayload && left.toolKind == right.toolKind &&
+		left.toolCallerPayload == right.toolCallerPayload &&
 		(left.toolActionPayload == "" || left.toolActionPayload == right.toolActionPayload)
 }
 

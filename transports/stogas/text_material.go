@@ -105,10 +105,6 @@ func responsesItemTextMaterial(item *schemas.ResponsesMessage) textMaterial {
 			if tool.ResponsesCustomToolCall != nil {
 				material.output += len(tool.ResponsesCustomToolCall.Input)
 			}
-		case schemas.ResponsesMessageTypeCodeInterpreterCall:
-			if tool.ResponsesCodeInterpreterToolCall != nil {
-				material.output += textBytes(tool.Code)
-			}
 		}
 	}
 	return material
@@ -149,8 +145,7 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 		current.output += textBytes(event.Delta)
 	case schemas.ResponsesStreamResponseTypeRefusalDelta,
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta:
+		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		current.output += textBytes(event.Delta)
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:

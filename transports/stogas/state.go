@@ -120,13 +120,10 @@ type providerResponsesItem struct {
 	compactionPayload string
 	toolCallerPayload string
 	toolActionPayload string
-	toolKind          string
 	parts             map[int]*providerResponsesPart
 	reasoningParts    map[int]*providerResponsesPart
 	value             *bytes.Buffer
 	valueDone         bool
-	code              *bytes.Buffer
-	codeDone          bool
 	completedPayload  string
 	stage             int
 	done              bool
@@ -630,7 +627,6 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
@@ -641,8 +637,6 @@ func responsesEventHasOutput(response *schemas.BifrostResponsesStreamResponse) b
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
-		return nonEmptyString(response.Code)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
 	case schemas.ResponsesStreamResponseTypeImageGenerationCallPartialImage:
@@ -680,7 +674,6 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 		schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDelta,
-		schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta,
 		schemas.ResponsesStreamResponseTypeCustomToolCallInputDelta:
 		return nonEmptyString(response.Delta)
 	case schemas.ResponsesStreamResponseTypeOutputTextDone,
@@ -691,8 +684,6 @@ func responsesEventHasToken(response *schemas.BifrostResponsesStreamResponse) bo
 	case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDone,
 		schemas.ResponsesStreamResponseTypeMCPCallArgumentsDone:
 		return nonEmptyString(response.Arguments)
-	case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
-		return nonEmptyString(response.Code)
 	case schemas.ResponsesStreamResponseTypeCustomToolCallInputDone:
 		return nonEmptyString(response.Input)
 	case schemas.ResponsesStreamResponseTypeContentPartAdded,
@@ -754,8 +745,6 @@ func responsesMessageHasOutput(message *schemas.ResponsesMessage) bool {
 	}
 	return tool.ResponsesImageGenerationCall != nil && tool.ResponsesImageGenerationCall.Result != "" ||
 		tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
-		tool.ResponsesCodeInterpreterToolCall != nil &&
-			(nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) || len(tool.ResponsesCodeInterpreterToolCall.Outputs) > 0) ||
 		tool.ResponsesFileSearchToolCall != nil &&
 			(len(tool.ResponsesFileSearchToolCall.Queries) > 0 || len(tool.ResponsesFileSearchToolCall.Results) > 0) ||
 		tool.ResponsesAdvisorCall != nil &&
@@ -834,9 +823,7 @@ func responsesMessageHasToken(message *schemas.ResponsesMessage) bool {
 		return true
 	}
 	return tool.ResponsesCustomToolCall != nil && tool.ResponsesCustomToolCall.Input != "" ||
-		tool.ResponsesCodeInterpreterToolCall != nil && nonEmptyString(tool.ResponsesCodeInterpreterToolCall.Code) ||
-		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0 ||
-		tool.ResponsesCodeExecutionCall != nil && nonEmptyString(tool.ResponsesCodeExecutionCall.Input)
+		tool.ResponsesFileSearchToolCall != nil && len(tool.ResponsesFileSearchToolCall.Queries) > 0
 }
 
 func responsesToolActionHasToken(action *schemas.ResponsesToolMessageActionStruct) bool {

@@ -988,144 +988,37 @@ func TestProviderHostedToolTerminalItemsRequireCompleteEvidence(t *testing.T) {
 	}
 }
 
-func TestProviderCodeExecutionResultUnionAndTerminalEvidence(t *testing.T) {
-	zero := 0
-	falseValue := false
-	stdout := "result\n"
-	stderr := ""
-	encrypted := "encrypted-result"
-	fileType := "text"
-	fileContent := "line one\n"
-	one := 1
-	viewInput := `{"command":"view","path":"notes.txt","view_range":[1,-1]}`
-	createInput := `{"command":"create","path":"notes.txt","file_text":"line one\n"}`
-	replaceInput := `{"command":"str_replace","path":"notes.txt","old_str":"one","new_str":"two"}`
-
-	valid := []*schemas.ResponsesCodeExecutionCall{
-		{
-			ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`), ResultType: "code_execution_result",
-			Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero,
-		},
-		{
-			ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`), ResultType: "encrypted_code_execution_result",
-			EncryptedStdout: &encrypted, Stderr: &stderr, ReturnCode: &zero,
-		},
-		{
-			ToolName: "bash_code_execution", Input: schemas.Ptr(`{"command":"printf ok"}`), ResultType: "bash_code_execution_result",
-			Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero,
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &viewInput, ResultType: "text_editor_code_execution_view_result",
-			FileType: &fileType, FileContent: &fileContent, StartLine: &one, NumLines: &one, TotalLines: &one,
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &createInput, ResultType: "text_editor_code_execution_create_result",
-			IsFileUpdate: &falseValue,
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &replaceInput, ResultType: "text_editor_code_execution_str_replace_result",
-			OldStart: &one, OldLines: &one, NewStart: &one, NewLines: &one, Lines: []string{"-one", "+two"},
-		},
-		{
-			ToolName: "bash_code_execution", Input: schemas.Ptr(`{"command":"exit 1"}`), ResultType: "bash_code_execution_tool_result_error",
-			ErrorCode: schemas.Ptr("execution_time_exceeded"),
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &viewInput, ResultType: "text_editor_code_execution_tool_result_error",
-			ErrorCode: schemas.Ptr("file_not_found"), ErrorMessage: schemas.Ptr("not found"),
-		},
-	}
-	for _, call := range valid {
-		if !validProviderCodeExecutionCall(call) {
-			t.Fatalf("valid code-execution variant rejected: %#v", call)
-		}
-	}
-
-	invalid := []*schemas.ResponsesCodeExecutionCall{
-		{
-			ToolName: "bash_code_execution", Input: schemas.Ptr(`{"command":"printf ok","provider_extension":true}`),
-		},
-		{
-			ToolName: "bash_code_execution", Input: schemas.Ptr(`{"command":"printf ok"}`), ResultType: "code_execution_result",
-			Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero,
-		},
-		{
-			ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`), ResultType: "code_execution_result",
-			Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero, ErrorCode: schemas.Ptr("unavailable"),
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &createInput, ResultType: "text_editor_code_execution_create_result",
-			IsFileUpdate: &falseValue, FileContent: &fileContent,
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &viewInput, ResultType: "text_editor_code_execution_tool_result_error",
-			ErrorCode: schemas.Ptr("string_not_found"),
-		},
-		{
-			ToolName: "bash_code_execution", Input: schemas.Ptr(`{"command":"printf ok"}`), ResultType: "bash_code_execution_result",
-			Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero,
-			Files: []schemas.ResponsesCodeExecutionFileOutput{{FileID: "file_1"}},
-		},
-		{
-			ToolName: "text_editor_code_execution", Input: &viewInput, ResultType: "text_editor_code_execution_view_result",
-			FileType: schemas.Ptr("pdf"), FileContent: &fileContent, StartLine: &one, NumLines: &one, TotalLines: &one,
-		},
-	}
-	for _, call := range invalid {
-		if validProviderCodeExecutionCall(call) {
-			t.Fatalf("malformed code-execution variant accepted: %#v", call)
-		}
-	}
-
+// Requests reach only the basic web tool versions, which never run code
+// execution, so code execution output means the provider kept container data.
+func TestProviderResponsesRejectsCodeExecutionOutput(t *testing.T) {
 	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search"}]}`
+	code := "print(1)"
 	expiresAt := "2026-09-20T12:34:56Z"
-	terminalResponse := func() *schemas.BifrostResponsesResponse {
-		code := "print(1)"
-		return &schemas.BifrostResponsesResponse{
-			ID: schemas.Ptr("resp_code"), Object: "response", Status: schemas.Ptr("completed"),
-			Container: &schemas.ResponsesResponseContainer{ID: "container_1", ExpiresAt: &expiresAt},
-			Output: []schemas.ResponsesMessage{{
-				ID: schemas.Ptr("srvtoolu_1"), Type: schemas.Ptr(schemas.ResponsesMessageTypeCodeInterpreterCall),
-				Status: schemas.Ptr("completed"),
-				ResponsesToolMessage: &schemas.ResponsesToolMessage{
-					CallID: schemas.Ptr("srvtoolu_1"),
-					ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{
-						Code: &code, ContainerID: "container_1",
-						Outputs: []schemas.ResponsesCodeInterpreterOutput{{
-							ResponsesCodeInterpreterOutputLogs: &schemas.ResponsesCodeInterpreterOutputLogs{Type: "logs", Logs: stdout},
-						}},
-					},
-					ResponsesCodeExecutionCall: &schemas.ResponsesCodeExecutionCall{
-						ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`),
-						ResultType: "code_execution_result", Stdout: &stdout, Stderr: &stderr, ReturnCode: &zero,
-						ContainerExpiresAt: &expiresAt,
-					},
-				},
-			}},
-		}
+	codeItem := schemas.ResponsesMessage{
+		ID: schemas.Ptr("srvtoolu_1"), Type: schemas.Ptr(schemas.ResponsesMessageTypeCodeInterpreterCall),
+		Status: schemas.Ptr("completed"),
+		ResponsesToolMessage: &schemas.ResponsesToolMessage{
+			CallID:                           schemas.Ptr("srvtoolu_1"),
+			ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{Code: &code, ContainerID: "container_1"},
+		},
 	}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), terminalResponse()); err != nil {
-		t.Fatalf("valid terminal code execution rejected: %v", err)
+	searchFromCode := providerWebSearchOutputItem("ws_nested", "https://example.com/page")
+	searchFromCode.ResponsesToolMessage.Caller = &schemas.ResponsesToolCaller{
+		Type: "code_execution_20260521", ToolID: schemas.Ptr("srvtoolu_1"),
 	}
 	for name, mutate := range map[string]func(*schemas.BifrostResponsesResponse){
-		"missing response container": func(response *schemas.BifrostResponsesResponse) {
-			response.Container = nil
+		"container": func(response *schemas.BifrostResponsesResponse) {
+			response.Container = &schemas.ResponsesResponseContainer{ID: "container_1", ExpiresAt: &expiresAt}
 		},
-		"mismatched neutral output": func(response *schemas.BifrostResponsesResponse) {
-			response.Output[0].ResponsesToolMessage.ResponsesCodeInterpreterToolCall.Outputs[0].ResponsesCodeInterpreterOutputLogs.Logs = "forged"
+		"code execution item": func(response *schemas.BifrostResponsesResponse) {
+			response.Output = []schemas.ResponsesMessage{codeItem}
 		},
-		"mismatched container expiry": func(response *schemas.BifrostResponsesResponse) {
-			response.Output[0].ResponsesToolMessage.ResponsesCodeExecutionCall.ContainerExpiresAt = schemas.Ptr("2026-09-21T12:34:56Z")
-		},
-		"missing exact input": func(response *schemas.BifrostResponsesResponse) {
-			response.Output[0].ResponsesToolMessage.ResponsesCodeExecutionCall.Input = nil
-		},
-		"wrong terminal status": func(response *schemas.BifrostResponsesResponse) {
-			response.Output[0].Status = schemas.Ptr("failed")
+		"search called by code execution": func(response *schemas.BifrostResponsesResponse) {
+			response.Output = []schemas.ResponsesMessage{codeItem, searchFromCode}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			response := terminalResponse()
+			response := validUnaryResponsesProviderResponse("resp_code")
 			mutate(response)
 			if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), response); !errors.Is(err, ErrProviderResponseMalformed) {
 				t.Fatalf("error = %v, want malformed provider response", err)
@@ -1793,51 +1686,6 @@ func TestProviderResponsesEnforcesTerminalItemStatusAndDomainFilters(t *testing.
 	}
 }
 
-func TestProviderResponsesRejectsUnknownProgrammaticCaller(t *testing.T) {
-	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}]}`
-	response := validUnaryResponsesProviderResponse("resp_caller")
-	item := providerWebSearchOutputItem("ws_nested", "https://example.com/page")
-	item.ResponsesToolMessage.Caller = &schemas.ResponsesToolCaller{
-		Type: "code_execution_20260521", ToolID: schemas.Ptr("missing_code_call"),
-	}
-	response.Output = []schemas.ResponsesMessage{item}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), response); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("unknown caller reference error = %v, want malformed provider response", err)
-	}
-
-	expiresAt := "2026-08-20T13:00:00Z"
-	containerID := "container_1"
-	code := "print(1)"
-	empty := ""
-	zero := 0
-	codeType := schemas.ResponsesMessageTypeCodeInterpreterCall
-	completed := "completed"
-	valid := validUnaryResponsesProviderResponse("resp_caller_valid")
-	valid.Container = &schemas.ResponsesResponseContainer{ID: containerID, ExpiresAt: &expiresAt}
-	codeItem := schemas.ResponsesMessage{
-		ID: schemas.Ptr("code_1"), Type: &codeType, Status: &completed,
-		ResponsesToolMessage: &schemas.ResponsesToolMessage{
-			CallID: schemas.Ptr("code_1"),
-			ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{
-				Code: &code, ContainerID: containerID,
-			},
-			ResponsesCodeExecutionCall: &schemas.ResponsesCodeExecutionCall{
-				ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`),
-				ResultType: "code_execution_result", Stdout: &empty, Stderr: &empty, ReturnCode: &zero,
-				ContainerExpiresAt: &expiresAt,
-			},
-		},
-	}
-	validNested := providerWebSearchOutputItem("ws_nested", "https://example.com/page")
-	validNested.ResponsesToolMessage.Caller = &schemas.ResponsesToolCaller{
-		Type: "code_execution_20260521", ToolID: schemas.Ptr("code_1"),
-	}
-	valid.Output = []schemas.ResponsesMessage{codeItem, validNested}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), valid); err != nil {
-		t.Fatalf("valid programmatic caller reference rejected: %v", err)
-	}
-}
-
 func TestProviderResponsesStreamBindsCompletedItemPayload(t *testing.T) {
 	request := `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"}]}`
 	state := resolvedResponseValidationState(t, request)
@@ -1888,52 +1736,6 @@ func TestProviderResponsesStreamBindsCompletedItemPayload(t *testing.T) {
 	terminal.Response.Output = []schemas.ResponsesMessage{changedItem}
 	if err := validateProviderResponsesStream(state, terminal); !errors.Is(err, ErrProviderResponseMalformed) {
 		t.Fatalf("changed completed item error = %v, want malformed provider response", err)
-	}
-}
-
-func TestProviderResponsesStreamBindsCodeDeltaToDoneValue(t *testing.T) {
-	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}]}`
-	state := resolvedResponseValidationState(t, request)
-	if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_code")); err != nil {
-		t.Fatal(err)
-	}
-	outputIndex := 0
-	itemID := "code_1"
-	itemType := schemas.ResponsesMessageTypeCodeInterpreterCall
-	inProgress := "in_progress"
-	added := &schemas.ResponsesMessage{
-		ID: &itemID, Type: &itemType, Status: &inProgress,
-		ResponsesToolMessage: &schemas.ResponsesToolMessage{
-			CallID:                           &itemID,
-			ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{},
-			ResponsesCodeExecutionCall:       &schemas.ResponsesCodeExecutionCall{ToolName: "code_execution"},
-		},
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1,
-		OutputIndex: &outputIndex, Item: added,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress, SequenceNumber: 2,
-		OutputIndex: &outputIndex, ItemID: &itemID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	delta := "print(1)"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta, SequenceNumber: 3,
-		OutputIndex: &outputIndex, ItemID: &itemID, Delta: &delta,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	changed := "print(2)"
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone, SequenceNumber: 4,
-		OutputIndex: &outputIndex, ItemID: &itemID, Code: &changed,
-	}); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("changed code.done error = %v, want malformed provider response", err)
 	}
 }
 
@@ -1994,99 +1796,6 @@ func TestProviderResponsesStreamBindsReasoningSignatureToCompletedPart(t *testin
 		},
 	}); !errors.Is(err, ErrProviderResponseMalformed) {
 		t.Fatalf("changed reasoning signature error = %v, want malformed provider response", err)
-	}
-}
-
-func TestProviderResponsesStreamAcceptsContainerCompletedAfterCodeItem(t *testing.T) {
-	request := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}]}`
-	state := resolvedResponseValidationState(t, request)
-	if err := validateProviderResponsesStream(state, validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCreated, 0, "resp_code_complete")); err != nil {
-		t.Fatal(err)
-	}
-
-	outputIndex := 0
-	itemID := "code_complete_1"
-	itemType := schemas.ResponsesMessageTypeCodeInterpreterCall
-	inProgress := "in_progress"
-	added := &schemas.ResponsesMessage{
-		ID: &itemID, Type: &itemType, Status: &inProgress,
-		ResponsesToolMessage: &schemas.ResponsesToolMessage{
-			CallID:                           &itemID,
-			ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{},
-			ResponsesCodeExecutionCall:       &schemas.ResponsesCodeExecutionCall{ToolName: "code_execution"},
-		},
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemAdded, SequenceNumber: 1,
-		OutputIndex: &outputIndex, Item: added,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	itemEvent := func(eventType schemas.ResponsesStreamResponseType, sequence int) *schemas.BifrostResponsesStreamResponse {
-		return &schemas.BifrostResponsesStreamResponse{
-			Type: eventType, SequenceNumber: sequence, OutputIndex: &outputIndex, ItemID: &itemID,
-		}
-	}
-	if err := validateProviderResponsesStream(state, itemEvent(schemas.ResponsesStreamResponseTypeCodeInterpreterCallInProgress, 2)); err != nil {
-		t.Fatal(err)
-	}
-	code := "print(1)"
-	delta := itemEvent(schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDelta, 3)
-	delta.Delta = &code
-	if err := validateProviderResponsesStream(state, delta); err != nil {
-		t.Fatal(err)
-	}
-	doneCode := itemEvent(schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone, 4)
-	doneCode.Code = &code
-	if err := validateProviderResponsesStream(state, doneCode); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateProviderResponsesStream(state, itemEvent(schemas.ResponsesStreamResponseTypeCodeInterpreterCallInterpreting, 5)); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateProviderResponsesStream(state, itemEvent(schemas.ResponsesStreamResponseTypeCodeInterpreterCallCompleted, 6)); err != nil {
-		t.Fatal(err)
-	}
-
-	empty := ""
-	zero := 0
-	completed := "completed"
-	doneItem := &schemas.ResponsesMessage{
-		ID: &itemID, Type: &itemType, Status: &completed,
-		ResponsesToolMessage: &schemas.ResponsesToolMessage{
-			CallID:                           &itemID,
-			ResponsesCodeInterpreterToolCall: &schemas.ResponsesCodeInterpreterToolCall{Code: &code},
-			ResponsesCodeExecutionCall: &schemas.ResponsesCodeExecutionCall{
-				ToolName: "code_execution", Input: schemas.Ptr(`{"code":"print(1)"}`),
-				ResultType: "code_execution_result", Stdout: &empty, Stderr: &empty, ReturnCode: &zero,
-			},
-		},
-	}
-	if err := validateProviderResponsesStream(state, &schemas.BifrostResponsesStreamResponse{
-		Type: schemas.ResponsesStreamResponseTypeOutputItemDone, SequenceNumber: 7,
-		OutputIndex: &outputIndex, Item: doneItem,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	expiresAt := "2026-08-20T00:00:00Z"
-	containerID := "container_code_1"
-	terminalItem := *doneItem
-	terminalTool := *doneItem.ResponsesToolMessage
-	terminalInterpreter := *doneItem.ResponsesToolMessage.ResponsesCodeInterpreterToolCall
-	terminalInterpreter.ContainerID = containerID
-	terminalCarry := *doneItem.ResponsesToolMessage.ResponsesCodeExecutionCall
-	terminalCarry.ContainerExpiresAt = &expiresAt
-	terminalTool.ResponsesCodeInterpreterToolCall = &terminalInterpreter
-	terminalTool.ResponsesCodeExecutionCall = &terminalCarry
-	terminalItem.ResponsesToolMessage = &terminalTool
-
-	terminal := validResponsesProviderEvent(schemas.ResponsesStreamResponseTypeCompleted, 8, "resp_code_complete")
-	terminal.Response.Output = []schemas.ResponsesMessage{terminalItem}
-	terminal.Response.Container = &schemas.ResponsesResponseContainer{ID: containerID, ExpiresAt: &expiresAt}
-	if err := validateProviderResponsesStream(state, terminal); err != nil {
-		t.Fatalf("valid completed code lifecycle rejected: %v", err)
 	}
 }
 
