@@ -34,7 +34,9 @@ func validateCommonResponsesPolicy(state *State) error {
 		"container",
 		"conversation",
 		"fallbacks",
+		"inference_geo",
 		"previous_response_id",
+		"speed",
 		"stop",
 	} {
 		if _, ok := raw[name]; ok {

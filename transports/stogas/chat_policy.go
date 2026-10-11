@@ -38,7 +38,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "prompt_cache_isolation_key"} {
+	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "inference_geo", "prompt_cache_isolation_key", "speed"} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
