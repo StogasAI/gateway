@@ -17,16 +17,16 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 
 		ProviderAttempts: []billing.ProviderAttempt{
 			{
-				Provider:     "openai",
-				Status:       "provider_error",
-				LatencyMS:    30,
-				Byok: nil,
+				Provider:  "openai",
+				Status:    "provider_error",
+				LatencyMS: 30,
+				Byok:      nil,
 			},
 			{
-				Provider:     "anthropic",
-				Status:       "success",
-				LatencyMS:    90,
-				Byok: &credentialID,
+				Provider:  "anthropic",
+				Status:    "success",
+				LatencyMS: 90,
+				Byok:      &credentialID,
 			},
 		}, Usage: billing.RequestUsage{UpstreamCostUSD: "100",
 			BilledCostUSD: "2"},

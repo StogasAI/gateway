@@ -28,6 +28,8 @@ type requestContext struct {
 	pendingStream         <-chan providerStreamStart
 	responseWait          *responseDeadline
 	stopClientObservation func()
+	// finalize settles a finished inference after its response is complete.
+	finalize func()
 }
 
 type requestHandler func(*requestContext)

@@ -52,6 +52,16 @@ func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
 	}
 }
 
+// publicErrorStatus returns the HTTP status and code that the client receives.
+func publicErrorStatus(bifrostErr *schemas.BifrostError) (int, string) {
+	if statusCode, _, code, _, ok := publicStableGatewayError(bifrostErr); ok {
+		return statusCode, code
+	}
+	statusCode := publicBifrostStatus(bifrostErr)
+	code, _ := publicBifrostCode(statusCode, bifrostErr).(string)
+	return statusCode, code
+}
+
 func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, string, string, bool) {
 	if bifrostErr == nil {
 		return 0, "", "", "", false

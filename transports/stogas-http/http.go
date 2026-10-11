@@ -9,7 +9,9 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	stogasbilling "github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
 	"net/http"
 )
@@ -171,9 +173,25 @@ func (s *Server) inference(ctx *requestContext) {
 		return
 	}
 	defer func() {
-		if requestComplete {
-			s.requests.end()
+		if !requestComplete {
+			return
 		}
+		finalize := ctx.finalize
+		if finalize == nil {
+			s.requests.end()
+			return
+		}
+		// Settlement waits on the request log and the wallet. The caller gets the
+		// response first; the request keeps its admission and memory until then.
+		requestComplete = false
+		body := ctx.body
+		ctx.body = nil
+		go func() {
+			defer lease.release()
+			defer s.requests.end()
+			finalize()
+			clear(body)
+		}()
 	}()
 
 	prepared := s.prepareInference(ctx, requestStartedAt)
@@ -191,8 +209,7 @@ func (s *Server) inference(ctx *requestContext) {
 	// reduce the memory lease before the provider releases its own references.
 	if wantsMetadata(bifrostCtx) {
 		if _, err := ctx.receiptRequestDigest(); err != nil {
-			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-			cancel()
+			s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
 			s.writeProofError(ctx)
 			return
 		}
@@ -200,16 +217,14 @@ func (s *Server) inference(ctx *requestContext) {
 	resolution.ReleaseInput()
 	ctx.body = nil
 	if err := ctx.inferenceWaitError(); err != nil {
-		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-		cancel()
+		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
 		if err == context.DeadlineExceeded {
 			s.writeBifrostError(ctx, requestTimeoutError())
 		}
 		return
 	}
 	if !ctx.responseWait.startOutput() {
-		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, context.DeadlineExceeded)
-		cancel()
+		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, context.DeadlineExceeded)
 		s.writeBifrostError(ctx, requestTimeoutError())
 		return
 	}
@@ -275,8 +290,7 @@ func (s *Server) inference(ctx *requestContext) {
 			}
 			return
 		}
-		defer cancel()
-		defer stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
+		s.finalizeAfterResponse(ctx, bifrostCtx, state, cancel)
 		outcome, bifrostErr := ingestUnaryResponse(lease, bifrostCtx, state, adapter, response, bifrostErr)
 		if ctx.responseWait.timedOut() {
 			bifrostErr = requestTimeoutError()
@@ -310,9 +324,33 @@ func (s *Server) failStreamStart(ctx *requestContext, bifrostCtx *schemas.Bifros
 		bifrostErr = requestTimeoutError()
 		retainResponseFailure(state, bifrostErr)
 	}
-	stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
-	cancel()
+	recordUnsentProviderFailure(bifrostCtx, state, bifrostErr)
+	s.finalizeAfterResponse(ctx, bifrostCtx, state, cancel)
 	s.writeBifrostError(ctx, bifrostErr)
+}
+
+// finalizeAfterResponse settles the request once its response is complete.
+func (s *Server) finalizeAfterResponse(ctx *requestContext, bifrostCtx *schemas.BifrostContext, state *stogas.State, cancel context.CancelFunc) {
+	ctx.finalize = func() {
+		cancel()
+		stogas.FinalizeState(context.WithoutCancel(bifrostCtx), s.runtime.Billing(), state)
+	}
+}
+
+// recordUnsentProviderFailure handles a failure that the Chutes transport
+// proved happened before it sent anything. As with other failures before
+// dispatch, the request has no provider attempt, settles no tokens and logs the
+// client's error as a gateway error. Cancellation stays a separate field.
+func recordUnsentProviderFailure(bifrostCtx *schemas.BifrostContext, state *stogas.State, failure *schemas.BifrostError) {
+	if failure == nil || !chutese2ee.NotSent(bifrostCtx) {
+		return
+	}
+	state.MarkProviderNotSent()
+	if state.ProcessingError != nil || stogasbilling.NormalizeUpstreamStatus(failure) == "cancelled" {
+		return
+	}
+	status, code := publicErrorStatus(failure)
+	state.ProcessingError = &schemas.BifrostError{StatusCode: &status, Error: &schemas.ErrorField{Code: &code}}
 }
 
 // ingestUnaryResponse returns the provider outcome, nil for a valid response,
@@ -334,6 +372,7 @@ func ingestUnaryResponse(memory *requestMemoryLease, bifrostCtx *schemas.Bifrost
 	}
 	adapter.SanitizeResponse(state)
 	bifrostErr = providerResponseMemoryError(memory, state, bifrostErr)
+	recordUnsentProviderFailure(bifrostCtx, state, bifrostErr)
 	stogas.PrepareFinalState(state)
 	if bifrostErr != nil {
 		return bifrostErr, bifrostErr
@@ -561,6 +600,7 @@ func (s *Server) startSSEStream(ctx *requestContext, bifrostCtx *schemas.Bifrost
 							state.BifrostError = stogas.UpstreamProtocolError(err)
 						}
 					}
+					recordUnsentProviderFailure(bifrostCtx, state, state.BifrostError)
 					sendStreamError(state.BifrostError)
 					return
 				}

@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,8 +27,7 @@ import (
 
 func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	measurement := validMeasurementForTest()
-	measurements := []measurementPolicy{measurement}
-	digest, err := validateAndDigestMeasurements(measurements)
+	measurements, digest, err := validateAndDigestMeasurements([]measurementPolicy{measurement})
 	if err != nil {
 		t.Fatalf("validate policy: %v", err)
 	}
@@ -49,11 +49,73 @@ func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	}
 }
 
+// Chutes lists the same measurement once per host class, naming the class in
+// `fingerprint`. Those records must count as one measurement in any order.
+func TestMeasurementPolicyCollapsesHostClassRecords(t *testing.T) {
+	record := func(fingerprint string) map[string]any {
+		measurement := validMeasurementForTest()
+		return map[string]any{
+			"version":       measurement.Version,
+			"name":          measurement.Name,
+			"mrtd":          measurement.MRTD,
+			"boot_rtmrs":    measurement.BootRTMRs,
+			"runtime_rtmrs": measurement.RuntimeRTMRs,
+			"expected_gpus": measurement.ExpectedGPUs,
+			"gpu_count":     measurement.GPUCount,
+			"fingerprint":   fingerprint,
+		}
+	}
+	other := validMeasurementForTest()
+	other.Version = "1.5.0"
+	decode := func(values ...any) []measurementPolicy {
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var records []measurementPolicy
+		if err := json.Unmarshal(encoded, &records); err != nil {
+			t.Fatal(err)
+		}
+		return records
+	}
+
+	measurements, digest, err := validateAndDigestMeasurements(decode(record(strings.Repeat("a", 64)), other, record(strings.Repeat("b", 64))))
+	if err != nil {
+		t.Fatalf("validate policy: %v", err)
+	}
+	if len(measurements) != 2 {
+		t.Fatalf("measurements = %d, want 2", len(measurements))
+	}
+	_, reorderedDigest, err := validateAndDigestMeasurements(decode(other, record(strings.Repeat("b", 64)), record(strings.Repeat("a", 64))))
+	if err != nil || reorderedDigest != digest {
+		t.Fatalf("reordered digest = %q, %v; want %q", reorderedDigest, err, digest)
+	}
+	if _, err := matchMeasurement(quoteForMeasurementForTest(measurements[0]), &policySnapshot{Measurements: measurements}); err != nil {
+		t.Fatalf("match measurement: %v", err)
+	}
+}
+
+func TestMeasurementPolicySkipsUnsupportedGPUFamilies(t *testing.T) {
+	future := validMeasurementForTest()
+	future.Version = "2.0.0"
+	future.ExpectedGPUs = []string{"future_gpu"}
+	measurements, _, err := validateAndDigestMeasurements([]measurementPolicy{future, validMeasurementForTest()})
+	if err != nil {
+		t.Fatalf("validate policy: %v", err)
+	}
+	if len(measurements) != 1 || measurements[0].Version != "1.3.1" {
+		t.Fatalf("measurements = %#v", measurements)
+	}
+	if _, err := matchMeasurement(quoteForMeasurementForTest(future), &policySnapshot{Measurements: measurements}); err != nil {
+		t.Fatalf("supported record with the same measurement: %v", err)
+	}
+}
+
 func TestMeasurementPolicyRejectsMalformedOrAmbiguousRecords(t *testing.T) {
 	tests := map[string]func(*measurementPolicy){
-		"unknown GPU": func(value *measurementPolicy) { value.ExpectedGPUs = []string{"future_gpu"} },
-		"zero GPUs":   func(value *measurementPolicy) { value.GPUCount = 0 },
-		"bad MRTD":    func(value *measurementPolicy) { value.MRTD = "00" },
+		"only unknown GPU": func(value *measurementPolicy) { value.ExpectedGPUs = []string{"future_gpu"} },
+		"zero GPUs":        func(value *measurementPolicy) { value.GPUCount = 0 },
+		"bad MRTD":         func(value *measurementPolicy) { value.MRTD = "00" },
 		"missing RTMR": func(value *measurementPolicy) {
 			delete(value.RuntimeRTMRs, "RTMR3")
 		},
@@ -65,7 +127,7 @@ func TestMeasurementPolicyRejectsMalformedOrAmbiguousRecords(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			measurement := validMeasurementForTest()
 			mutate(&measurement)
-			if _, err := validateAndDigestMeasurements([]measurementPolicy{measurement}); err == nil {
+			if _, _, err := validateAndDigestMeasurements([]measurementPolicy{measurement}); err == nil {
 				t.Fatal("expected policy validation failure")
 			}
 		})
@@ -270,9 +332,7 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 	publicKey := base64.StdEncoding.EncodeToString(instanceKey.EncapsulationKey().Bytes())
 	now := time.Now()
-	measurement := validMeasurementForTest()
-	measurements := []measurementPolicy{measurement}
-	digest, err := validateAndDigestMeasurements(measurements)
+	measurements, digest, err := validateAndDigestMeasurements([]measurementPolicy{validMeasurementForTest()})
 	if err != nil {
 		t.Fatal(err)
 	}

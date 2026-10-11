@@ -240,8 +240,7 @@ func TestSlowReceiverDoesNotDelayOtherDestinations(t *testing.T) {
 		}
 	}))
 	defer slow.Close()
-	var fastReceived atomic.Int32
-	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fastReceived.Add(1) }))
+	fast := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer fast.Close()
 	e := New(context.Background(), testOptions(true, 1<<20))
 	defer e.Close()
@@ -252,8 +251,9 @@ func TestSlowReceiverDoesNotDelayOtherDestinations(t *testing.T) {
 	for i := range 20 {
 		e.Start(testConfig(fast.URL)).Finish(fmt.Sprint("fast", i), testRecord("fast"), testMetadata())
 	}
-	await(t, func() bool { return fastReceived.Load() == 20 })
-	if d := e.Diagnostics(); d.PendingDeliveries != 4*maxConnsPerHost || d.Delivered != 20 {
+	// Wait for the exporter's own count: the receiver sees a request before its response is recorded.
+	await(t, func() bool { return e.Diagnostics().Delivered == 20 })
+	if d := e.Diagnostics(); d.PendingDeliveries != 4*maxConnsPerHost {
 		t.Fatalf("slow receiver blocked others: %+v", d)
 	}
 }

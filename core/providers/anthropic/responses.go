@@ -1695,9 +1695,10 @@ func (chunk *AnthropicStreamEvent) ToBifrostResponsesStream(ctx context.Context,
 					Type: schemas.ResponsesOutputMessageContentTypeReasoning,
 					Text: &emptyText,
 				}
-				// Preserve signature in the content part if present
-				if chunk.ContentBlock.Signature != nil {
-					part.Signature = chunk.ContentBlock.Signature
+				// Anthropic opens every thinking block with an empty signature and
+				// sends the real one in a signature_delta, which is ignored when empty.
+				if signature := chunk.ContentBlock.Signature; signature != nil && *signature != "" {
+					part.Signature = signature
 				}
 				responses = append(responses, &schemas.BifrostResponsesStreamResponse{
 					Type:           schemas.ResponsesStreamResponseTypeContentPartAdded,

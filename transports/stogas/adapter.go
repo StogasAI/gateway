@@ -143,6 +143,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		state.Response = &schemas.BifrostResponse{ChatResponse: response}
 	case chunk.BifrostResponsesStreamResponse != nil:
 		streamResp := chunk.BifrostResponsesStreamResponse
+		numberAnthropicResponsesContentPart(state, streamResp)
 		if streamResp.Response != nil && streamResp.Response.Usage != nil {
 			usage := streamResp.Response.Usage.ToBifrostLLMUsage()
 			if err := ingestReportedUsage(state, usage); err != nil {

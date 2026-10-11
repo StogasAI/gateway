@@ -1277,8 +1277,9 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 					Text:      c.Thinking,
 					Signature: c.Signature,
 				})
+				// Streaming forwards thinking deltas without a separator.
 				if c.Thinking != nil {
-					reasoningText += *c.Thinking + "\n"
+					reasoningText += *c.Thinking
 				}
 			case AnthropicContentBlockTypeRedactedThinking:
 				// Redacted thinking is an opaque encrypted payload. Preserve it as a
