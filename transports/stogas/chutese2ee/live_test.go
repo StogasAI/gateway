@@ -77,6 +77,43 @@ func TestLiveChutesE2EE(t *testing.T) {
 	}
 }
 
+// TestLiveChutesMeasurements fails when Chutes publishes a TDX record the gateway
+// skips or any SEV-SNP measurement, which the gateway cannot verify yet.
+func TestLiveChutesMeasurements(t *testing.T) {
+	if os.Getenv("STOGAS_LIVE_CHUTES_MEASUREMENTS") != "1" {
+		t.Skip("set STOGAS_LIVE_CHUTES_MEASUREMENTS=1 to read Chutes' public measurement lists")
+	}
+	read := func(path string, target any) {
+		response, err := http.Get(productionAPIBaseURL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxMeasurementBody+1))
+		if err != nil || response.StatusCode != http.StatusOK || len(body) > maxMeasurementBody {
+			t.Fatalf("GET %s: HTTP %d, %d bytes, %v", path, response.StatusCode, len(body), err)
+		}
+		if err := json.Unmarshal(body, target); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+	}
+	var records []measurementPolicy
+	read(measurementsPath, &records)
+	for _, record := range records {
+		if _, ok := normalizeMeasurement(record); !ok {
+			t.Errorf("gateway skips TDX measurement %s %q for GPUs %v", record.Version, record.Name, record.ExpectedGPUs)
+		}
+	}
+	if _, _, err := supportedMeasurements(records); err != nil {
+		t.Error(err)
+	}
+	var snp []json.RawMessage
+	read("/servers/snp/measurements", &snp)
+	if len(snp) > 0 {
+		t.Errorf("Chutes publishes %d SEV-SNP measurements; the gateway cannot verify SEV-SNP instances", len(snp))
+	}
+}
+
 type liveChutesUsage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	PromptTokens     int `json:"prompt_tokens"`

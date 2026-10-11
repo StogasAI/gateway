@@ -27,7 +27,7 @@ import (
 
 func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	measurement := validMeasurementForTest()
-	measurements, digest, err := validateAndDigestMeasurements([]measurementPolicy{measurement})
+	measurements, digest, err := supportedMeasurements([]measurementPolicy{measurement})
 	if err != nil {
 		t.Fatalf("validate policy: %v", err)
 	}
@@ -49,24 +49,24 @@ func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	}
 }
 
-// Chutes lists the same measurement once per host class, naming the class in
-// `fingerprint`. Those records must count as one measurement in any order.
-func TestMeasurementPolicyCollapsesHostClassRecords(t *testing.T) {
-	record := func(fingerprint string) map[string]any {
-		measurement := validMeasurementForTest()
+// Records use the published /servers/tdx/measurements shape. A record the gateway
+// cannot use is skipped without disabling the others, and the digest ignores order.
+func TestMeasurementPolicyReadsPublishedRecords(t *testing.T) {
+	register := func(value byte) string { return strings.Repeat(fmt.Sprintf("%02X", value), 48) }
+	record := func(version string, gpus []string, mrtd string) map[string]any {
 		return map[string]any{
-			"version":       measurement.Version,
-			"name":          measurement.Name,
-			"mrtd":          measurement.MRTD,
-			"boot_rtmrs":    measurement.BootRTMRs,
-			"runtime_rtmrs": measurement.RuntimeRTMRs,
-			"expected_gpus": measurement.ExpectedGPUs,
-			"gpu_count":     measurement.GPUCount,
-			"fingerprint":   fingerprint,
+			"version":       version,
+			"name":          "8xh200 [10.2.1, flat-188c-1128g-nvsw4]",
+			"expected_gpus": gpus,
+			"gpu_count":     8,
+			"fingerprints":  []string{strings.Repeat("a", 64)},
+			"mrtd":          mrtd,
+			"rtmr0":         register(0x20),
+			"rtmr1":         register(0x21),
+			"rtmr2":         register(0x22),
+			"rtmr3":         register(0x23),
 		}
 	}
-	other := validMeasurementForTest()
-	other.Version = "1.5.0"
 	decode := func(values ...any) []measurementPolicy {
 		encoded, err := json.Marshal(values)
 		if err != nil {
@@ -78,20 +78,29 @@ func TestMeasurementPolicyCollapsesHostClassRecords(t *testing.T) {
 		}
 		return records
 	}
+	current := record("1.5.0", []string{"h200"}, register(0x11))
+	previous := record("1.4.1", []string{"h200"}, register(0x12))
+	unverifiableGPU := record("1.5.0", []string{"h100"}, register(0x13))
+	malformed := record("1.5.0", []string{"h200"}, "00")
 
-	measurements, digest, err := validateAndDigestMeasurements(decode(record(strings.Repeat("a", 64)), other, record(strings.Repeat("b", 64))))
+	measurements, digest, err := supportedMeasurements(decode(current, unverifiableGPU, malformed, previous))
 	if err != nil {
-		t.Fatalf("validate policy: %v", err)
+		t.Fatalf("read policy: %v", err)
 	}
-	if len(measurements) != 2 {
-		t.Fatalf("measurements = %d, want 2", len(measurements))
+	if len(measurements) != 2 || measurements[0].RTMR3 != strings.ToLower(register(0x23)) {
+		t.Fatalf("measurements = %#v", measurements)
 	}
-	_, reorderedDigest, err := validateAndDigestMeasurements(decode(other, record(strings.Repeat("b", 64)), record(strings.Repeat("a", 64))))
+	_, reorderedDigest, err := supportedMeasurements(decode(previous, malformed, current))
 	if err != nil || reorderedDigest != digest {
 		t.Fatalf("reordered digest = %q, %v; want %q", reorderedDigest, err, digest)
 	}
-	if _, err := matchMeasurement(quoteForMeasurementForTest(measurements[0]), &policySnapshot{Measurements: measurements}); err != nil {
-		t.Fatalf("match measurement: %v", err)
+	for _, measurement := range measurements {
+		if _, err := matchMeasurement(quoteForMeasurementForTest(measurement), &policySnapshot{Measurements: measurements}); err != nil {
+			t.Fatalf("match %s: %v", measurement.Version, err)
+		}
+	}
+	if _, err := matchMeasurement(quoteForMeasurementForTest(decode(unverifiableGPU)[0]), &policySnapshot{Measurements: measurements}); err == nil {
+		t.Fatal("expected a skipped record to match no quote")
 	}
 }
 
@@ -99,7 +108,7 @@ func TestMeasurementPolicySkipsUnsupportedGPUFamilies(t *testing.T) {
 	future := validMeasurementForTest()
 	future.Version = "2.0.0"
 	future.ExpectedGPUs = []string{"future_gpu"}
-	measurements, _, err := validateAndDigestMeasurements([]measurementPolicy{future, validMeasurementForTest()})
+	measurements, _, err := supportedMeasurements([]measurementPolicy{future, validMeasurementForTest()})
 	if err != nil {
 		t.Fatalf("validate policy: %v", err)
 	}
@@ -111,14 +120,12 @@ func TestMeasurementPolicySkipsUnsupportedGPUFamilies(t *testing.T) {
 	}
 }
 
-func TestMeasurementPolicyRejectsMalformedOrAmbiguousRecords(t *testing.T) {
+func TestMeasurementPolicySkipsMalformedRecordsAndRejectsAmbiguousMatches(t *testing.T) {
 	tests := map[string]func(*measurementPolicy){
 		"only unknown GPU": func(value *measurementPolicy) { value.ExpectedGPUs = []string{"future_gpu"} },
 		"zero GPUs":        func(value *measurementPolicy) { value.GPUCount = 0 },
 		"bad MRTD":         func(value *measurementPolicy) { value.MRTD = "00" },
-		"missing RTMR": func(value *measurementPolicy) {
-			delete(value.RuntimeRTMRs, "RTMR3")
-		},
+		"missing RTMR":     func(value *measurementPolicy) { value.RTMR3 = "" },
 		"duplicate GPU": func(value *measurementPolicy) {
 			value.ExpectedGPUs = []string{"h200", "H200"}
 		},
@@ -127,8 +134,12 @@ func TestMeasurementPolicyRejectsMalformedOrAmbiguousRecords(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			measurement := validMeasurementForTest()
 			mutate(&measurement)
-			if _, _, err := validateAndDigestMeasurements([]measurementPolicy{measurement}); err == nil {
-				t.Fatal("expected policy validation failure")
+			if _, _, err := supportedMeasurements([]measurementPolicy{measurement}); err == nil {
+				t.Fatal("expected a list without usable records to fail")
+			}
+			measurements, _, err := supportedMeasurements([]measurementPolicy{measurement, validMeasurementForTest()})
+			if err != nil || len(measurements) != 1 {
+				t.Fatalf("valid sibling = %#v, %v", measurements, err)
 			}
 		})
 	}
@@ -332,7 +343,7 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 	publicKey := base64.StdEncoding.EncodeToString(instanceKey.EncapsulationKey().Bytes())
 	now := time.Now()
-	measurements, digest, err := validateAndDigestMeasurements([]measurementPolicy{validMeasurementForTest()})
+	measurements, digest, err := supportedMeasurements([]measurementPolicy{validMeasurementForTest()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -611,33 +622,24 @@ func TestNVIDIAClaimHelpersFailClosed(t *testing.T) {
 
 func validMeasurementForTest() measurementPolicy {
 	return measurementPolicy{
-		Version: "1.3.1",
-		Name:    "8xh200",
-		MRTD:    hex.EncodeToString(bytes.Repeat([]byte{0x11}, 48)),
-		BootRTMRs: map[string]string{
-			"RTMR0": hex.EncodeToString(bytes.Repeat([]byte{0x20}, 48)),
-			"RTMR1": hex.EncodeToString(bytes.Repeat([]byte{0x21}, 48)),
-			"RTMR2": hex.EncodeToString(bytes.Repeat([]byte{0x22}, 48)),
-			"RTMR3": hex.EncodeToString(bytes.Repeat([]byte{0x00}, 48)),
-		},
-		RuntimeRTMRs: map[string]string{
-			"RTMR0": hex.EncodeToString(bytes.Repeat([]byte{0x20}, 48)),
-			"RTMR1": hex.EncodeToString(bytes.Repeat([]byte{0x21}, 48)),
-			"RTMR2": hex.EncodeToString(bytes.Repeat([]byte{0x22}, 48)),
-			"RTMR3": hex.EncodeToString(bytes.Repeat([]byte{0x23}, 48)),
-		},
+		Version:      "1.3.1",
+		Name:         "8xh200",
+		MRTD:         hex.EncodeToString(bytes.Repeat([]byte{0x11}, 48)),
+		RTMR0:        hex.EncodeToString(bytes.Repeat([]byte{0x20}, 48)),
+		RTMR1:        hex.EncodeToString(bytes.Repeat([]byte{0x21}, 48)),
+		RTMR2:        hex.EncodeToString(bytes.Repeat([]byte{0x22}, 48)),
+		RTMR3:        hex.EncodeToString(bytes.Repeat([]byte{0x23}, 48)),
 		ExpectedGPUs: []string{"H200"},
 		GPUCount:     8,
 	}
 }
 
 func quoteForMeasurementForTest(measurement measurementPolicy) *tdxpb.QuoteV4 {
-	mrtd, _ := decodeMeasurementHex(measurement.MRTD)
-	rtmrs := make([][]byte, 4)
-	for index := range rtmrs {
-		rtmrs[index], _ = decodeMeasurementHex(measurement.RuntimeRTMRs["RTMR"+string(rune('0'+index))])
+	registers := make([][]byte, 5)
+	for index, value := range measurement.registers() {
+		registers[index], _ = decodeMeasurementHex(value)
 	}
-	return &tdxpb.QuoteV4{TdQuoteBody: &tdxpb.TDQuoteBody{MrTd: mrtd, Rtmrs: rtmrs}}
+	return &tdxpb.QuoteV4{TdQuoteBody: &tdxpb.TDQuoteBody{MrTd: registers[0], Rtmrs: registers[1:]}}
 }
 
 func validDetachedClaimsForTest(now time.Time, nonce string) jwt.MapClaims {

@@ -284,10 +284,11 @@ func verifyTDXEvidence(
 	if err != nil {
 		return nil, false, err
 	}
-	mrtd, _ := decodeMeasurementHex(measurement.MRTD)
+	registers := measurement.registers()
+	mrtd, _ := decodeMeasurementHex(registers[0])
 	rtmrs := make([][]byte, 4)
-	for index := 0; index < 4; index++ {
-		rtmrs[index], _ = decodeMeasurementHex(measurement.RuntimeRTMRs[fmt.Sprintf("RTMR%d", index)])
+	for index := range rtmrs {
+		rtmrs[index], _ = decodeMeasurementHex(registers[index+1])
 	}
 	if err := validate.RawTdxQuote(quoteBytes, &validate.Options{
 		TdQuoteBodyOptions: validate.TdQuoteBodyOptions{

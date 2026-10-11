@@ -73,7 +73,7 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 		if fetchErr != nil {
 			return nil, fmt.Errorf("fetch measurement policy: %w", fetchErr)
 		}
-		measurements, digest, err := validateAndDigestMeasurements(records)
+		measurements, digest, err := supportedMeasurements(records)
 		if err != nil {
 			return nil, err
 		}
@@ -94,51 +94,18 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 	return result.(*policySnapshot), nil
 }
 
-// validateAndDigestMeasurements returns the distinct supported measurements in
-// a stable order and their digest. Chutes repeats a measurement for each host
-// class it covers and names the class in an extra `fingerprint` field. A quote
-// cannot prove its host class, so records that agree on every verified field are
-// one measurement. A malformed record rejects the whole list.
-func validateAndDigestMeasurements(records []measurementPolicy) ([]measurementPolicy, string, error) {
-	if len(records) == 0 || len(records) > 256 {
-		return nil, "", fmt.Errorf("%w: invalid record count", ErrMeasurementPolicy)
-	}
+// supportedMeasurements returns the records a quote can match, in a stable order,
+// and their digest. The list is an allowlist, so dropping a record can only
+// narrow it: a malformed record, or one for GPUs that NRAS verification rejects,
+// is skipped instead of disabling every chute. The provider drift check reports
+// skipped records.
+func supportedMeasurements(records []measurementPolicy) ([]measurementPolicy, string, error) {
 	unique := make(map[string]measurementPolicy, len(records))
-	for _, measurement := range records {
-		measurement.Version = strings.TrimSpace(measurement.Version)
-		measurement.Name = strings.TrimSpace(measurement.Name)
-		if measurement.Version == "" || measurement.Name == "" || measurement.GPUCount < 1 || measurement.GPUCount > 16 {
-			return nil, "", fmt.Errorf("%w: invalid measurement metadata", ErrMeasurementPolicy)
-		}
-		if _, err := decodeMeasurementHex(measurement.MRTD); err != nil {
-			return nil, "", fmt.Errorf("%w: invalid MRTD", ErrMeasurementPolicy)
-		}
-		if err := validateRTMRSet(measurement.BootRTMRs); err != nil {
-			return nil, "", fmt.Errorf("%w: invalid boot RTMRs", ErrMeasurementPolicy)
-		}
-		if err := validateRTMRSet(measurement.RuntimeRTMRs); err != nil {
-			return nil, "", fmt.Errorf("%w: invalid runtime RTMRs", ErrMeasurementPolicy)
-		}
-		if len(measurement.ExpectedGPUs) == 0 || len(measurement.ExpectedGPUs) > 4 {
-			return nil, "", fmt.Errorf("%w: invalid GPU families", ErrMeasurementPolicy)
-		}
-		gpuSeen := map[string]struct{}{}
-		supported := true
-		for gpuIndex, family := range measurement.ExpectedGPUs {
-			family = strings.ToLower(strings.TrimSpace(family))
-			if _, duplicate := gpuSeen[family]; duplicate {
-				return nil, "", fmt.Errorf("%w: duplicate GPU family", ErrMeasurementPolicy)
-			}
-			gpuSeen[family] = struct{}{}
-			_, accepted := acceptedGPUFamilies[family]
-			supported = supported && accepted
-			measurement.ExpectedGPUs[gpuIndex] = family
-		}
-		if !supported {
-			// NRAS verification rejects these GPUs, so no instance can match the record.
+	for _, record := range records {
+		measurement, ok := normalizeMeasurement(record)
+		if !ok {
 			continue
 		}
-		slices.Sort(measurement.ExpectedGPUs)
 		identity, err := json.Marshal(measurement)
 		if err != nil {
 			return nil, "", fmt.Errorf("%w: encode measurement", ErrMeasurementPolicy)
@@ -161,20 +128,32 @@ func validateAndDigestMeasurements(records []measurementPolicy) ([]measurementPo
 	return measurements, hex.EncodeToString(digest[:]), nil
 }
 
-func validateRTMRSet(values map[string]string) error {
-	if len(values) != 4 {
-		return errors.New("RTMR set must contain four values")
+func normalizeMeasurement(measurement measurementPolicy) (measurementPolicy, bool) {
+	measurement.Version = strings.TrimSpace(measurement.Version)
+	measurement.Name = strings.TrimSpace(measurement.Name)
+	if measurement.Version == "" || measurement.Name == "" || measurement.GPUCount < 1 || measurement.GPUCount > 16 ||
+		len(measurement.ExpectedGPUs) == 0 || len(measurement.ExpectedGPUs) > 4 {
+		return measurement, false
 	}
-	for index := 0; index < 4; index++ {
-		value, ok := values[fmt.Sprintf("RTMR%d", index)]
-		if !ok {
-			return errors.New("RTMR key is missing")
+	registers := []*string{&measurement.MRTD, &measurement.RTMR0, &measurement.RTMR1, &measurement.RTMR2, &measurement.RTMR3}
+	for _, register := range registers {
+		decoded, err := decodeMeasurementHex(*register)
+		if err != nil {
+			return measurement, false
 		}
-		if _, err := decodeMeasurementHex(value); err != nil {
-			return err
-		}
+		*register = hex.EncodeToString(decoded)
 	}
-	return nil
+	families := make([]string, 0, len(measurement.ExpectedGPUs))
+	for _, family := range measurement.ExpectedGPUs {
+		family = strings.ToLower(strings.TrimSpace(family))
+		if _, accepted := acceptedGPUFamilies[family]; !accepted || slices.Contains(families, family) {
+			return measurement, false
+		}
+		families = append(families, family)
+	}
+	slices.Sort(families)
+	measurement.ExpectedGPUs = families
+	return measurement, true
 }
 
 func decodeMeasurementHex(value string) ([]byte, error) {
@@ -194,16 +173,15 @@ func matchMeasurement(quote *tdxpb.QuoteV4, snapshot *policySnapshot) (*measurem
 		return nil, ErrMeasurementPolicy
 	}
 	body := quote.GetTdQuoteBody()
+	if len(body.GetRtmrs()) != 4 {
+		return nil, fmt.Errorf("%w: quote has no RTMR set", ErrAttestationFailed)
+	}
 	matches := make([]measurementPolicy, 0, 1)
 	for _, measurement := range snapshot.Measurements {
-		mrtd, _ := decodeMeasurementHex(measurement.MRTD)
-		if !slices.Equal(body.GetMrTd(), mrtd) || len(body.GetRtmrs()) != 4 {
-			continue
-		}
 		matched := true
-		for index := 0; index < 4; index++ {
-			expected, _ := decodeMeasurementHex(measurement.RuntimeRTMRs[fmt.Sprintf("RTMR%d", index)])
-			if !slices.Equal(body.GetRtmrs()[index], expected) {
+		for index, register := range [][]byte{body.GetMrTd(), body.GetRtmrs()[0], body.GetRtmrs()[1], body.GetRtmrs()[2], body.GetRtmrs()[3]} {
+			expected, _ := decodeMeasurementHex(measurement.registers()[index])
+			if !slices.Equal(register, expected) {
 				matched = false
 				break
 			}
