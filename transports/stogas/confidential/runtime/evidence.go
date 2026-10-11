@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	verifier "github.com/StogasAI/verifier/go"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
 )
 
 const (
@@ -51,19 +53,22 @@ type evidenceOrigin struct {
 	url  string
 	etag string
 	// An ETag is usable only while its representation is the installed snapshot.
-	generation uint64
+	digest [sha256.Size]byte
 }
 
 // One maintenance owner performs all fetches. Request admission reads the last
 // appraisal and its actual validity deadline, never waits for this network work.
 type currentEvidence struct {
-	verifier   *verifier.Evidence
-	snapshot   *verifier.EvidenceSnapshot
-	summary    evidenceSummary
-	client     *http.Client
-	origins    []evidenceOrigin
-	generation uint64
-	now        func() time.Time
+	verifier        *verifier.Evidence
+	snapshot        *verifier.EvidenceSnapshot
+	summary         evidenceSummary
+	client          *http.Client
+	origins         []evidenceOrigin
+	installed       [sha256.Size]byte
+	rejectedCatalog catalogRejection
+	now             func() time.Time
+	// now is trusted only while NTS keeps the guest clock synchronized.
+	synchronized func() bool
 }
 
 func newCurrentEvidence(environment string) (*currentEvidence, error) {
@@ -86,7 +91,7 @@ func newCurrentEvidence(environment string) (*currentEvidence, error) {
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("evidence redirects are not permitted")
 	}}
-	return &currentEvidence{verifier: core, client: client, origins: origins, now: time.Now}, nil
+	return &currentEvidence{verifier: core, client: client, origins: origins, now: time.Now, synchronized: clock.Synchronized}, nil
 }
 
 func (e *currentEvidence) close() {
@@ -97,36 +102,33 @@ func (e *currentEvidence) close() {
 	e.client.CloseIdleConnections()
 }
 
-// refresh tries the replica when a valid primary still cannot satisfy appraisal.
-// A complete authenticated withdrawal remains installed even when check rejects
-// this boot. Invalid delivery cannot erase learned CRLs or root-key retirement.
+// refresh asks every origin, so one stale or withholding origin cannot hide a
+// newer copy such as a withdrawal; the verifier rejects older and conflicting
+// copies. An unavailable origin alone preserves valid installed state. A complete
+// authenticated withdrawal remains installed even when check rejects this boot.
+// Invalid delivery cannot erase learned CRLs or root-key retirement.
 func (e *currentEvidence) refresh(parent context.Context, check func(*verifier.EvidenceSnapshot, evidenceSummary) error) error {
 	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
 	defer cancel()
 	var failures []error
+	var appraisal error
+	answered := false
 	for i := range e.origins {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if err := e.fetch(ctx, &e.origins[i]); err != nil {
 			failures = append(failures, err)
-			// A rejected candidate can still authenticate a revocation or retired key.
-			// Appraise retained state before waiting for another origin so admission
-			// reacts immediately; an unavailable delivery alone preserves valid state.
-			if e.snapshot != nil {
-				if appraisal := check(e.snapshot, e.summary); appraisal != nil {
-					failures = append(failures, appraisal)
-				}
-			}
-			continue
+		} else {
+			answered = true
 		}
-		if err := check(e.snapshot, e.summary); err != nil {
-			failures = append(failures, err)
-			continue
+		// A rejected candidate can still authenticate a revocation or retired key.
+		// Appraise before asking the next origin so admission reacts immediately.
+		if e.snapshot != nil {
+			appraisal = check(e.snapshot, e.summary)
 		}
+	}
+	if answered && appraisal == nil {
 		return nil
 	}
-	return errors.Join(failures...)
+	return errors.Join(append(failures, appraisal)...)
 }
 
 func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) error {
@@ -137,7 +139,7 @@ func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) 
 		return err
 	}
 	request.Header.Set("Accept", "application/json")
-	conditional := e.snapshot != nil && origin.generation == e.generation && origin.etag != ""
+	conditional := e.snapshot != nil && origin.digest == e.installed && origin.etag != ""
 	if conditional {
 		request.Header.Set("If-None-Match", origin.etag)
 	}
@@ -162,6 +164,16 @@ func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) 
 	if len(bytes) > evidenceBodyLimit {
 		return errors.New("evidence exceeds decoded size limit")
 	}
+	digest := sha256.Sum256(bytes)
+	etag := response.Header.Get("ETag")
+	if len(etag) > 512 {
+		etag = ""
+	}
+	// Origins serve the same bytes under different ETags; reverify only new bytes.
+	if e.snapshot != nil && digest == e.installed {
+		origin.digest, origin.etag = digest, etag
+		return nil
+	}
 	candidate, err := e.verifier.RefreshAt(bytes, e.now())
 	if err != nil {
 		return err
@@ -176,13 +188,8 @@ func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) 
 		return err
 	}
 	previous := e.snapshot
-	e.snapshot, e.summary = candidate, summary
-	e.generation++
-	origin.generation = e.generation
-	origin.etag = response.Header.Get("ETag")
-	if len(origin.etag) > 512 {
-		origin.etag = ""
-	}
+	e.snapshot, e.summary, e.installed = candidate, summary, digest
+	origin.digest, origin.etag = digest, etag
 	if previous != nil {
 		_ = previous.Close()
 	}

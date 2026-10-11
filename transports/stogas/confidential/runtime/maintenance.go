@@ -28,6 +28,7 @@ type bootMaintenance struct {
 	identity             verifier.BootIdentity
 	evidenceReason       string
 	catalogReady         bool
+	catalogIncompatible  bool
 	terminal             bool
 	lastAttempt          time.Time
 	lastSuccess          time.Time
@@ -68,6 +69,7 @@ func (m *bootMaintenance) maintain(ctx context.Context) error {
 		catalogErr := m.evidence.updateCatalog(ctx, gatewayID)
 		m.mu.Lock()
 		m.catalogReady = m.evidence.summary.activeCatalogApproved(gatewayID)
+		m.catalogIncompatible = errors.Is(catalogErr, errCatalogIncompatible)
 		m.mu.Unlock()
 		err = errors.Join(err, catalogErr)
 	}
@@ -85,18 +87,23 @@ func (m *bootMaintenance) maintain(ctx context.Context) error {
 func (m *bootMaintenance) readiness() readiness.Result {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	reasons := make([]string, 0, 4)
+	reasons := make([]string, 0, 5)
 	if m.terminal {
 		reasons = append(reasons, "node is draining")
 	}
 	if m.evidenceReason != "" {
 		reasons = append(reasons, m.evidenceReason)
 	}
+	if !m.evidence.synchronized() {
+		reasons = append(reasons, "clock is not synchronized")
+	}
 	now := m.evidence.now()
 	if m.identity.NodeID == "" || now.UnixMilli() < m.identity.ValidFromUnixMS || now.UnixMilli() >= m.identity.ValidUntilUnixMS {
 		reasons = append(reasons, "required collateral is not valid")
 	}
-	if !m.catalogReady {
+	if !m.catalogReady && m.catalogIncompatible {
+		reasons = append(reasons, errCatalogIncompatible.Error())
+	} else if !m.catalogReady {
 		reasons = append(reasons, "approved compatible catalog is not installed")
 	}
 	certificate := m.certs.State()

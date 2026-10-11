@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,5 +88,35 @@ func TestApprovedCatalogSelectionRespectsGatewayCompatibility(t *testing.T) {
 	summary.Catalogs = summary.Catalogs[:1]
 	if _, ok := summary.catalog("gateway"); ok {
 		t.Fatal("selected catalog requiring a newer gateway")
+	}
+}
+
+func TestRejectedCatalogIsNotDownloadedAgain(t *testing.T) {
+	fixture := evidenceFixture(t)
+	payload := []byte(`{"catalog":"not installable"}`)
+	sum := sha256.Sum256(payload)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	var reads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reads.Add(1)
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	e := fixtureEvidence(t, fixture, server.URL)
+	gateway := approvedGateway{ID: "gateway"}
+	gateway.Release.Sequence = 4
+	approved := approvedCatalog{ID: "catalog"}
+	approved.Release.Sequence = 9
+	approved.Release.MinimumGatewaySequence = 4
+	approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest, int64(len(payload))
+	approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest, int64(len(payload))
+	e.summary.Gateways, e.summary.Catalogs = []approvedGateway{gateway}, []approvedCatalog{approved}
+	for range 2 {
+		if err := e.updateCatalog(t.Context(), "gateway"); !errors.Is(err, errCatalogIncompatible) {
+			t.Fatalf("installed or misreported an incompatible catalog: %v", err)
+		}
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("refused catalog was downloaded again: %d reads", reads.Load())
 	}
 }
