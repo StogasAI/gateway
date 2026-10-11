@@ -38,7 +38,8 @@ const isoCountryCodes = "|AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|" +
 
 const euCountryCodes = "|AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE|"
 
-const europeCountryCodes = "|AD|AL|AT|AX|BA|BE|BG|BY|CH|CZ|DE|DK|EE|ES|FI|FO|FR|GB|GG|GI|GR|" +
+// Europe contains its EU child, so it includes Cyprus.
+const europeCountryCodes = "|AD|AL|AT|AX|BA|BE|BG|BY|CH|CY|CZ|DE|DK|EE|ES|FI|FO|FR|GB|GG|GI|GR|" +
 	"HR|HU|IE|IM|IS|IT|JE|LI|LT|LU|LV|MC|MD|ME|MK|MT|NL|NO|PL|PT|RO|RS|RU|SE|SI|SJ|SK|SM|UA|VA|"
 
 const apacCountryCodes = "|AF|AM|AS|AU|AZ|BD|BN|BT|CC|CK|CN|CX|FJ|FM|GE|GU|HK|ID|IN|IO|JP|KG|KH|KI|KP|KR|KZ|" +

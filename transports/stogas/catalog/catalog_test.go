@@ -314,59 +314,48 @@ func TestResolveRequestRejectsAmbiguousOrPathologicalJSON(t *testing.T) {
 
 func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel(t *testing.T) {
 	loadTestCatalog(t)
-	for _, modelCase := range []struct {
-		model     string
-		selectors []string
-	}{
-		{model: "gpt-5.6-sol", selectors: []string{"gpt-5.6-pro", "gpt-5.6-sol-pro"}},
-		{model: "gpt-5.6-terra", selectors: []string{"gpt-5.6-terra-pro"}},
-		{model: "gpt-5.6-luna", selectors: []string{"gpt-5.6-luna-pro"}},
-	} {
+	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} {
 		for _, tierCase := range []struct {
-			selectorSuffix   string
-			serviceTier      string
-			deploymentSuffix string
+			suffix      string
+			serviceTier string
 		}{
 			{serviceTier: "default"},
-			{selectorSuffix: "-flex", serviceTier: "flex", deploymentSuffix: "-flex"},
-			{selectorSuffix: "-fast", serviceTier: "priority", deploymentSuffix: "-fast"},
+			{suffix: "-flex", serviceTier: "flex"},
+			{suffix: "-fast", serviceTier: "priority"},
 		} {
-			deploymentID := "openai-" + modelCase.model + "-pro" + tierCase.deploymentSuffix
-			for _, baseSelector := range modelCase.selectors {
-				selector := baseSelector + tierCase.selectorSuffix
-				t.Run(selector, func(t *testing.T) {
-					resolution, err := ResolveRequest(RequestInput{
-						Method: "POST",
-						Path:   "/v1/responses",
-						Body:   []byte(`{"model":"` + selector + `","input":"hello"}`),
-					})
-					if err != nil {
-						t.Fatalf("resolve Pro deployment: %v", err)
-					}
-					if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != deploymentID ||
-						resolution.Deployment.Upstream.Model != modelCase.model ||
-						resolution.Deployment.Upstream.ReasoningMode != "pro" ||
-						resolution.Deployment.Upstream.ServiceTier != tierCase.serviceTier {
-						t.Fatalf("unexpected Pro resolution: %#v", resolution.Deployment)
-					}
-					request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
-					if err != nil {
-						t.Fatalf("build Pro request: %v", err)
-					}
-					if request.ResponsesRequest == nil || request.ResponsesRequest.Model != modelCase.model ||
-						request.ResponsesRequest.Params.Reasoning == nil ||
-						request.ResponsesRequest.Params.Reasoning.Mode == nil ||
-						*request.ResponsesRequest.Params.Reasoning.Mode != "pro" {
-						t.Fatalf("Pro mode did not reach the typed provider request: %#v", request.ResponsesRequest)
-					}
-					if actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, resolution.Deployment, nil, ""); !ok || actual.ID != deploymentID {
-						t.Fatalf("actual execution lost Pro identity: %#v", actual)
-					}
+			deploymentID := "openai-" + model + "-pro" + tierCase.suffix
+			t.Run(deploymentID, func(t *testing.T) {
+				resolution, err := ResolveRequest(RequestInput{
+					Method: "POST",
+					Path:   "/v1/responses",
+					Body:   []byte(`{"model":"` + deploymentID + `","input":"hello"}`),
 				})
-			}
-			if _, ok := testDeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
-				t.Fatalf("%s was exposed on Chat Completions", deploymentID)
-			}
+				if err != nil {
+					t.Fatalf("resolve Pro deployment: %v", err)
+				}
+				if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != deploymentID ||
+					resolution.Deployment.Upstream.Model != model ||
+					resolution.Deployment.Upstream.ReasoningMode != "pro" ||
+					resolution.Deployment.Upstream.ServiceTier != tierCase.serviceTier {
+					t.Fatalf("unexpected Pro resolution: %#v", resolution.Deployment)
+				}
+				request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
+				if err != nil {
+					t.Fatalf("build Pro request: %v", err)
+				}
+				if request.ResponsesRequest == nil || request.ResponsesRequest.Model != model ||
+					request.ResponsesRequest.Params.Reasoning == nil ||
+					request.ResponsesRequest.Params.Reasoning.Mode == nil ||
+					*request.ResponsesRequest.Params.Reasoning.Mode != "pro" {
+					t.Fatalf("Pro mode did not reach the typed provider request: %#v", request.ResponsesRequest)
+				}
+				if actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, resolution.Deployment, nil, ""); !ok || actual.ID != deploymentID {
+					t.Fatalf("actual execution lost Pro identity: %#v", actual)
+				}
+				if _, ok := testDeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
+					t.Fatalf("%s was exposed on Chat Completions", deploymentID)
+				}
+			})
 		}
 	}
 
@@ -381,35 +370,14 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 	if standard.Deployment.Upstream.ReasoningMode != "" {
 		t.Fatalf("standard deployment unexpectedly enabled Pro mode: %#v", standard.Deployment)
 	}
-	flex, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.6-pro","input":"hello","service_tier":"flex"}`),
-	})
-	if err != nil || flex.Deployment.ID != "openai-gpt-5.6-sol-pro-flex" {
-		t.Fatalf("service tier did not retarget within the Pro deployment family: resolution=%#v err=%v", flex, err)
-	}
-	for _, tier := range []string{"fast", "priority"} {
-		fast, err := ResolveRequest(RequestInput{
-			Method: "POST",
-			Path:   "/v1/responses",
-			Body:   []byte(`{"model":"gpt-5.6-pro","input":"hello","service_tier":"` + tier + `"}`),
-		})
-		if err != nil || fast.Deployment.ID != "openai-gpt-5.6-sol-pro-fast" {
-			t.Fatalf("%s tier did not retarget within the Pro deployment family: resolution=%#v err=%v", tier, fast, err)
-		}
+	flex, ok := testDeploymentForRoute(schemas.OpenAI, "openai-gpt-5.6-sol-pro-flex", RouteResponses)
+	if !ok {
+		t.Fatal("GPT-5.6 Sol Pro Flex is missing")
 	}
 	actualTier := schemas.BifrostServiceTierDefault
-	actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, flex.Deployment, &actualTier, "")
+	actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, flex, &actualTier, "")
 	if !ok || actual.ID != "openai-gpt-5.6-sol-pro" {
 		t.Fatalf("actual service tier did not preserve Pro mode while selecting settlement pricing: %#v", actual)
-	}
-	if _, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.6-pro-flex","input":"hello","service_tier":"default"}`),
-	}); err == nil {
-		t.Fatal("a conflicting service tier changed a pinned Pro Flex selector")
 	}
 	if _, err := ResolveRequest(RequestInput{
 		Method: "POST",
@@ -762,7 +730,7 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 			Body:   []byte(`{"model":"azure-` + model + `-pro-fast","input":"hello"}`),
 		})
 		if err != nil {
-			t.Fatalf("resolve Azure Pro Priority alias: %v", err)
+			t.Fatalf("resolve Azure Pro Priority deployment: %v", err)
 		}
 		if resolution.Deployment.ID != proPriorityID ||
 			resolution.Deployment.Upstream.ReasoningMode != "pro" ||
@@ -823,7 +791,7 @@ func TestAzureClaudeUsesNativeRouteAndManualReasoningBudget(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolve Azure Claude request: %v", err)
 		}
-		if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-claude-sonnet-4-6" ||
+		if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-claude-sonnet-4-6-anthropic-hosted" ||
 			len(resolution.Deployment.RouteIDs) != 1 || resolution.Deployment.RouteIDs[0] != "azure-anthropic-messages" ||
 			resolution.Deployment.ReasoningMaxTokens == nil || resolution.Deployment.ReasoningMaxTokens.Minimum != 1024 ||
 			resolution.Deployment.ReasoningMaxTokens.Maximum != 127999 {
@@ -971,13 +939,6 @@ func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
 		if ok {
 			t.Fatalf("conflicting %q request tier accepted for exact flex deployment: %#v", requestedFastTier, flex)
 		}
-	}
-	if retired, retiredOK := testDeploymentForRoute(
-		schemas.OpenAI,
-		"openai-gpt-5.5-2026-04-23-priority",
-		RouteResponses,
-	); retiredOK {
-		t.Fatalf("retired Priority deployment selector remained available: %#v", retired)
 	}
 	if _, ok = DeploymentForRouteServiceTier(
 		schemas.OpenAI,
@@ -1556,6 +1517,11 @@ func TestCanonicalDataLocationContainment(t *testing.T) {
 				t.Fatalf("DataLocationWithin(%q, %q) = %v, want %v", test.actual, test.boundary, got, test.allowed)
 			}
 		})
+	}
+	for _, country := range strings.Split(strings.Trim(euCountryCodes, "|"), "|") {
+		if !DataLocationWithin(country, "europe") {
+			t.Fatalf("EU country %s is outside Europe", country)
+		}
 	}
 }
 

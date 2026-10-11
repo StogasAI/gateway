@@ -94,11 +94,11 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic custom tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported for the selected Chat deployment"},
 		{"anthropic custom tool choice", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported for the selected Chat deployment"},
 		{"anthropic message name", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","name":"alice","content":"hi"}]}`, "name is not supported for Anthropic-format history"},
-		{"azure claude tool result name", `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
+		{"azure claude tool result name", `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
 		{"anthropic refusal history", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
 		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
 		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
-		{"Azure Claude reordered developer message", `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"Azure Claude reordered developer message", `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
 		{"metadata non-string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
@@ -720,7 +720,7 @@ func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing
 		{name: "OpenAI", model: "gpt-5.5"},
 		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
-		{name: "Azure Claude", model: "azure-claude-sonnet-4-6", anthropicWire: true},
+		{name: "Azure Claude", model: "azure-claude-sonnet-4-6-anthropic-hosted", anthropicWire: true},
 		{name: "Chutes", model: "chutes-glm-5.2"},
 	}
 	for _, tc := range tests {
@@ -815,7 +815,7 @@ func TestChatSignedReasoningHistoryReachesAnthropicFamilyWireLosslessly(t *testi
 		name  string
 	}{
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6"},
-		{name: "Azure Claude", model: "azure-claude-sonnet-4-6"},
+		{name: "Azure Claude", model: "azure-claude-sonnet-4-6-anthropic-hosted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"answer","reasoning":"visible thought\n","reasoning_details":[{"index":0,"type":"reasoning.text","text":"visible thought","signature":"signed-thought"},{"index":1,"type":"reasoning.encrypted","data":"opaque-redacted"}]},{"role":"user","content":"continue"}],"reasoning":{"effort":"high"}}`, tc.model)

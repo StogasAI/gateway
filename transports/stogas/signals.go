@@ -191,20 +191,11 @@ func validateActualExecutionReport(state *State, tier *schemas.BifrostServiceTie
 	if speedValue != "" && executionSpeedClass(state.Resolution.Provider, speedValue) != "" && allowedSpeed == "" {
 		return ErrProviderExecutionMismatch
 	}
-	if inferenceGeo != nil {
-		reportedGeo := strings.ToLower(strings.TrimSpace(*inferenceGeo))
-		if reportedGeo != "" {
-			selectedGeo := strings.ToLower(strings.TrimSpace(state.Resolution.Deployment.Upstream.InferenceGeo))
-			if state.Resolution.Provider != schemas.Anthropic {
-				return ErrProviderExecutionMismatch
-			}
-			if selectedGeo == "" {
-				if reportedGeo != "not_available" {
-					return ErrProviderExecutionMismatch
-				}
-			} else if !stringInSet(selectedGeo, "global", "us") || reportedGeo != selectedGeo {
-				return ErrProviderExecutionMismatch
-			}
+	// Only a deployment pinned to one geography can be contradicted. Other
+	// reports, including new provider values, stay within what was selected.
+	if pinnedGeo := state.Resolution.Deployment.Upstream.InferenceGeo; inferenceGeo != nil && pinnedGeo != "" && pinnedGeo != "global" {
+		if reportedGeo := strings.ToLower(strings.TrimSpace(*inferenceGeo)); reportedGeo != "" && reportedGeo != pinnedGeo {
+			return ErrProviderExecutionMismatch
 		}
 	}
 	reportedTierClass := executionTierClass(state.Resolution.Provider, tier)
@@ -578,7 +569,7 @@ func mergeUsageSignals(current, next *StandardSignals) {
 	normalizeUsagePartitions(current)
 }
 
-func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo ...*string) {
+func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string) {
 	if state == nil {
 		return
 	}
@@ -592,9 +583,6 @@ func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, spee
 	}
 	if speed != nil && executionSpeedClass(provider, *speed) != "" {
 		state.ActualSpeed = strings.ToLower(strings.TrimSpace(*speed))
-	}
-	if len(inferenceGeo) > 0 && inferenceGeo[0] != nil && strings.TrimSpace(*inferenceGeo[0]) != "" {
-		state.ActualInferenceGeo = strings.ToLower(strings.TrimSpace(*inferenceGeo[0]))
 	}
 }
 
@@ -662,7 +650,7 @@ func observeUsageExecution(state *State, usage *schemas.BifrostLLMUsage) {
 	if state == nil || usage == nil {
 		return
 	}
-	observeActualExecution(state, nil, usage.Speed, usage.InferenceGeo)
+	observeActualExecution(state, nil, usage.Speed)
 }
 
 func setWebSearchSignals(state *State, count int) {
