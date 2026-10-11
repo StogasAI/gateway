@@ -119,7 +119,7 @@ func (l *ipAdmission) allow(remote string, setup bool, now time.Time) (time.Dura
 
 func (s *Server) ipRequestAdmission(next requestHandler) requestHandler {
 	return func(ctx *requestContext) {
-		if s.admitIP(ctx, false) {
+		if s.admitLocation(ctx) && s.admitIP(ctx, false) {
 			next(ctx)
 		}
 	}

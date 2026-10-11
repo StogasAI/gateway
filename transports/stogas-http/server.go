@@ -69,6 +69,7 @@ type Server struct {
 	requests              *requestDrain
 	admission             requestAdmissionCounters
 	ipAdmission           *ipAdmission
+	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections
 	jsonDecode            requestWorkActivity
 	preprocessing         requestWorkActivity
@@ -119,15 +120,24 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, fmt.Errorf("%w: %w", ErrGatewayRuntimeInitialization, err)
 	}
+	sanctioned, err := startSanctionedNetworks(ctx, runtime.Billing(), logger)
+	if err != nil {
+		runtime.Close()
+		if secure != nil {
+			secure.Close()
+		}
+		return nil, fmt.Errorf("%w: load sanctioned networks: %w", ErrGatewayRuntimeInitialization, err)
+	}
 
 	s := &Server{
-		config:    config,
-		logger:    logger,
-		requests:  newRequestDrain(),
-		memory:    memory,
-		startedAt: time.Now().UTC(),
-		runtime:   runtime,
-		secure:    secure,
+		config:             config,
+		logger:             logger,
+		requests:           newRequestDrain(),
+		memory:             memory,
+		startedAt:          time.Now().UTC(),
+		runtime:            runtime,
+		secure:             secure,
+		sanctionedNetworks: sanctioned,
 	}
 	s.exports = exporter.New(context.Background(), exporter.Options{Local: config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork, NewLease: s.exportLease})
 	if secure != nil {
@@ -137,6 +147,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 	}
 	memory.reclaim = s.reclaimIdleMemory
 	if err := s.routes(); err != nil {
+		sanctioned.close()
 		s.exports.Close()
 		if secure != nil {
 			secure.Close()
