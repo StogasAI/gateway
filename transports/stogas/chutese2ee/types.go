@@ -10,7 +10,7 @@ const (
 	invocationPath             = "/e2e/invoke"
 	discoveryPathPrefix        = "/e2e/instances/"
 	evidencePathPrefix         = "/chutes/"
-	measurementsPath           = "/servers/tee/measurements"
+	measurementsPath           = "/servers/tdx/measurements"
 	ticketExpiryMargin         = 5 * time.Second
 	attestationLifetime        = 3 * time.Minute
 	instanceCooldown           = 5 * time.Second
@@ -155,14 +155,24 @@ type evidenceResponse struct {
 	FailedInstanceIDs []string           `json:"failed_instance_ids"`
 }
 
+// measurementPolicy is one record of Chutes' published TDX measurements. RTMR3 is
+// the runtime value; a record also lists the host classes it covers, which a quote
+// cannot prove, so that field is not decoded.
 type measurementPolicy struct {
-	Version      string            `json:"version"`
-	Name         string            `json:"name"`
-	MRTD         string            `json:"mrtd"`
-	BootRTMRs    map[string]string `json:"boot_rtmrs"`
-	RuntimeRTMRs map[string]string `json:"runtime_rtmrs"`
-	ExpectedGPUs []string          `json:"expected_gpus"`
-	GPUCount     int               `json:"gpu_count"`
+	Version      string   `json:"version"`
+	Name         string   `json:"name"`
+	MRTD         string   `json:"mrtd"`
+	RTMR0        string   `json:"rtmr0"`
+	RTMR1        string   `json:"rtmr1"`
+	RTMR2        string   `json:"rtmr2"`
+	RTMR3        string   `json:"rtmr3"`
+	ExpectedGPUs []string `json:"expected_gpus"`
+	GPUCount     int      `json:"gpu_count"`
+}
+
+// registers lists MRTD and RTMR0-3 in quote order.
+func (m measurementPolicy) registers() [5]string {
+	return [5]string{m.MRTD, m.RTMR0, m.RTMR1, m.RTMR2, m.RTMR3}
 }
 
 type httpStatusError struct {
