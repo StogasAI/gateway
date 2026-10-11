@@ -917,6 +917,8 @@ func (s *Server) shutdown() {
 func (s *Server) shutdownWithContext(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// The last loaded list keeps refusing sanctioned clients while requests drain.
+	s.sanctionedNetworks.close()
 	var idle <-chan struct{}
 	if s.requests != nil {
 		idle = s.requests.start()
