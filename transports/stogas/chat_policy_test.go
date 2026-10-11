@@ -116,6 +116,8 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic presence penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
 		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
 		{"prompt cache isolation key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
+		{"speed", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`, "speed is not supported"},
+		{"inference geo", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`, "inference_geo is not supported"},
 		{"anthropic seed", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"seed":1}`, "seed is only supported for OpenAI"},
 		{"anthropic top logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_logprobs":1}`, "top_logprobs is only supported for OpenAI"},
 		{"anthropic verbosity", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"verbosity":"medium"}`, "verbosity is only supported for OpenAI"},
@@ -1242,14 +1244,14 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			deployment: "anthropic-claude-opus-4-8",
 			outputCap:  "max_tokens",
 			path:       "/v1/chat/completions",
-			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"max_completion_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":[],"prompt_cache_isolation_key":"","store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
 		},
 		{
 			name:       "anthropic responses",
 			deployment: "anthropic-claude-opus-4-8",
 			outputCap:  "max_tokens",
 			path:       "/v1/responses",
-			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"speed":"fast","inference_geo":"us","mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
 		},
 		{
 			name:       "openai chat MCP credentials",
@@ -1298,12 +1300,6 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			}
 			if payload[item.outputCap] != float64(16) {
 				t.Fatalf("client extras changed the output cap: %s", wire)
-			}
-			if payload["inference_geo"] == "us" {
-				t.Fatalf("client inference_geo changed provider execution: %s", wire)
-			}
-			if payload["speed"] == "fast" {
-				t.Fatalf("client speed changed provider execution: %s", wire)
 			}
 			for _, field := range []string{
 				"mcp_servers", "include_server_side_tool_invocations", "sdk_trace",
@@ -1598,6 +1594,8 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"conversation", `{"model":"gpt-5.5","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
 		{"fallbacks", `{"model":"gpt-5.5","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
 		{"previous response", `{"model":"gpt-5.5","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
+		{"speed", `{"model":"anthropic-claude-opus-4-8","input":"hi","speed":"fast"}`, "speed is not supported"},
+		{"inference geo", `{"model":"anthropic-claude-opus-4-8","input":"hi","inference_geo":"us"}`, "inference_geo is not supported"},
 		{"reasoning input item without encrypted content", `{"model":"gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
 		{"reasoning input item on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
 		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
