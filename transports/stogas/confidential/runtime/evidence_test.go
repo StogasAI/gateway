@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -72,7 +73,7 @@ func fixtureEvidence(t *testing.T, fixture bootEvidenceFixture, origins ...strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &currentEvidence{verifier: core, client: &http.Client{}, now: func() time.Time { return time.UnixMilli(fixture.Now) }}
+	e := &currentEvidence{verifier: core, client: &http.Client{}, now: func() time.Time { return time.UnixMilli(fixture.Now) }, synchronized: func() bool { return true }}
 	for _, origin := range origins {
 		e.origins = append(e.origins, evidenceOrigin{url: origin})
 	}
@@ -98,31 +99,26 @@ func fixtureAppraisal(t *testing.T, fixture bootEvidenceFixture) func(*verifier.
 	}
 }
 
-func TestEvidenceRecoveryAndOriginScopedConditionalReads(t *testing.T) {
+func TestEvidenceAsksEveryOriginWithOriginScopedConditionalReads(t *testing.T) {
 	fixture := evidenceFixture(t)
-	var conditional []string
-	var conditionalMu sync.Mutex
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conditionalMu.Lock()
-		conditional = append(conditional, r.Header.Get("If-None-Match"))
-		conditionalMu.Unlock()
-		w.Header().Set("ETag", `"primary"`)
-		if r.Header.Get("If-None-Match") == `"primary"` {
-			w.WriteHeader(304)
-			return
-		}
-		_, _ = w.Write(fixture.Bundle)
-	}))
+	var mu sync.Mutex
+	conditional := map[string][]string{}
+	origin := func(name string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			conditional[name] = append(conditional[name], r.Header.Get("If-None-Match"))
+			mu.Unlock()
+			etag := `"` + name + `"`
+			w.Header().Set("ETag", etag)
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(304)
+				return
+			}
+			_, _ = w.Write(fixture.Bundle)
+		}))
+	}
+	primary, replica := origin("primary"), origin("replica")
 	defer primary.Close()
-	var replicaReads atomic.Int32
-	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		replicaReads.Add(1)
-		if r.Header.Get("If-None-Match") != "" {
-			t.Error("primary ETag leaked to replica")
-		}
-		w.Header().Set("ETag", `"replica"`)
-		_, _ = w.Write(fixture.Bundle)
-	}))
 	defer replica.Close()
 	e := fixtureEvidence(t, fixture, primary.URL, replica.URL)
 	appraise := fixtureAppraisal(t, fixture)
@@ -134,18 +130,22 @@ func TestEvidenceRecoveryAndOriginScopedConditionalReads(t *testing.T) {
 		}
 		return appraise(snapshot, summary)
 	})
-	if err != nil || replicaReads.Load() != 1 {
-		t.Fatalf("valid but unresolved primary did not try replica: %v", err)
+	if err != nil {
+		t.Fatalf("replica did not resolve an unresolved primary: %v", err)
 	}
-	if err := e.refresh(t.Context(), appraise); err != nil {
-		t.Fatal(err)
+	snapshot := e.snapshot
+	for range 2 {
+		if err := e.refresh(t.Context(), appraise); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := e.refresh(t.Context(), appraise); err != nil {
-		t.Fatal(err)
+	if e.snapshot != snapshot {
+		t.Fatal("identical bytes from another origin replaced the snapshot")
 	}
-	conditionalMu.Lock()
-	defer conditionalMu.Unlock()
-	if len(conditional) != 3 || conditional[0] != "" || conditional[1] != "" || conditional[2] != `"primary"` {
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(conditional["primary"], []string{"", `"primary"`, `"primary"`}) ||
+		!slices.Equal(conditional["replica"], []string{"", `"replica"`, `"replica"`}) {
 		t.Fatalf("conditional reads used the wrong retained representation: %q", conditional)
 	}
 }
@@ -210,7 +210,7 @@ func TestEvidenceFetchBoundsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestEvidenceRetirementAppliesBeforeReplicaRecoveryDespiteIncompleteDelivery(t *testing.T) {
+func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
 	fixture := evidenceFixture(t)
 	var candidate map[string]json.RawMessage
 	if err := json.Unmarshal(fixture.Bundle, &candidate); err != nil {
@@ -233,42 +233,50 @@ func TestEvidenceRetirementAppliesBeforeReplicaRecoveryDespiteIncompleteDelivery
 	if err != nil {
 		t.Fatal(err)
 	}
-	bytes, err := json.Marshal(candidate)
+	retirement, err := json.Marshal(candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var delivery atomic.Value
-	delivery.Store(fixture.Bundle)
-	var rejected atomic.Bool
-	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(delivery.Load().(json.RawMessage)) }))
-	defer primary.Close()
-	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if !rejected.Load() {
-			t.Error("replica contacted before learned retirement closed admission")
-		}
-		_, _ = w.Write(fixture.Bundle)
-	}))
-	defer replica.Close()
-	e := fixtureEvidence(t, fixture, primary.URL, replica.URL)
-	appraisal := fixtureAppraisal(t, fixture)
-	if err := e.refresh(t.Context(), appraisal); err != nil {
-		t.Fatal(err)
-	}
-	previous := e.snapshot
-	delivery.Store(json.RawMessage(bytes))
-	if err := e.refresh(t.Context(), func(snapshot *verifier.EvidenceSnapshot, summary evidenceSummary) error {
-		err := appraisal(snapshot, summary)
-		if err != nil {
-			rejected.Store(true)
-		}
-		return err
-	}); err == nil {
-		t.Fatal("retired key remained accepted")
-	}
-	if !rejected.Load() || e.snapshot != previous {
-		t.Fatal("incomplete retirement delivery did not retain and reject old snapshot")
-	}
-	if err := appraisal(previous, e.summary); err == nil {
-		t.Fatal("lagging replica restored retired trust")
+	for _, retiring := range []int{0, 1} {
+		t.Run([]string{"primary", "replica"}[retiring], func(t *testing.T) {
+			var deliveries [2]atomic.Value
+			deliveries[0].Store(fixture.Bundle)
+			deliveries[1].Store(fixture.Bundle)
+			var rejected, retired atomic.Bool
+			var servers [2]*httptest.Server
+			for i := range servers {
+				servers[i] = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					// A retirement on the primary closes admission before the replica answers.
+					if i == 1 && retiring == 0 && retired.Load() && !rejected.Load() {
+						t.Error("replica contacted before learned retirement closed admission")
+					}
+					_, _ = w.Write(deliveries[i].Load().(json.RawMessage))
+				}))
+				defer servers[i].Close()
+			}
+			e := fixtureEvidence(t, fixture, servers[0].URL, servers[1].URL)
+			appraisal := fixtureAppraisal(t, fixture)
+			if err := e.refresh(t.Context(), appraisal); err != nil {
+				t.Fatal(err)
+			}
+			previous := e.snapshot
+			deliveries[retiring].Store(json.RawMessage(retirement))
+			retired.Store(true)
+			if err := e.refresh(t.Context(), func(snapshot *verifier.EvidenceSnapshot, summary evidenceSummary) error {
+				err := appraisal(snapshot, summary)
+				if err != nil {
+					rejected.Store(true)
+				}
+				return err
+			}); err == nil {
+				t.Fatal("retired key remained accepted")
+			}
+			if !rejected.Load() || e.snapshot != previous {
+				t.Fatal("incomplete retirement delivery did not retain and reject old snapshot")
+			}
+			if err := appraisal(previous, e.summary); err == nil {
+				t.Fatal("lagging origin restored retired trust")
+			}
+		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
+	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/entropy"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
@@ -83,6 +84,10 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig, resources Reso
 	cancel()
 	if err != nil {
 		return nil, fmt.Errorf("confidential entropy readiness: %w", err)
+	}
+	// Evidence, registration and certificates all check validity times.
+	if err := clock.Wait(ctx, clock.Synchronized); err != nil {
+		return nil, err
 	}
 	evidence, err := newCurrentEvidence(config.Environment)
 	if err != nil {

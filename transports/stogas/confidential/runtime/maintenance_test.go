@@ -57,7 +57,7 @@ func maintenanceCertificate(t *testing.T, fixtureNow time.Time) *identity.Certif
 	return store
 }
 
-func TestMaintenanceLocalExpiryPolicyRecoveryAndTerminalDrain(t *testing.T) {
+func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T) {
 	fixture := evidenceFixture(t)
 	evidence := fixtureEvidence(t, fixture)
 	snapshot, err := evidence.verifier.RefreshAt(fixture.Bundle, evidence.now())
@@ -85,6 +85,11 @@ func TestMaintenanceLocalExpiryPolicyRecoveryAndTerminalDrain(t *testing.T) {
 		t.Fatal("expiry waited for a network refresh")
 	}
 	evidence.now = func() time.Time { return time.UnixMilli(fixture.Now) }
+	evidence.synchronized = func() bool { return false }
+	if !slices.Contains(m.readiness().Reasons, "clock is not synchronized") {
+		t.Fatal("an unsynchronized clock kept admission open")
+	}
+	evidence.synchronized = func() bool { return true }
 	m.boot.Inclusion = []byte(`{}`)
 	if err := m.appraise(snapshot, evidenceSummary{}); err == nil || m.readiness().Ready {
 		t.Fatal("rejected boot did not close admission")

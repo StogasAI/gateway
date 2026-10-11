@@ -12,6 +12,16 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
+// errCatalogIncompatible marks verified catalog bytes that this binary refused.
+var errCatalogIncompatible = errors.New("approved catalog is incompatible with this gateway")
+
+// catalogRejection identifies a refused catalog. Installation of verified bytes is
+// deterministic, so the same approval is not downloaded again by this process.
+type catalogRejection struct {
+	identity     catalog.Identity
+	publicDigest string
+}
+
 func (summary evidenceSummary) activeCatalogApproved(gatewayID string) bool {
 	var sequence uint64
 	found := false
@@ -43,6 +53,10 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	if catalog.ActiveMatchesApproved(identity, release.PublicDigest) {
 		return nil
 	}
+	rejection := catalogRejection{identity: identity, publicDigest: release.PublicDigest}
+	if e.rejectedCatalog == rejection {
+		return errCatalogIncompatible
+	}
 	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
 	defer cancel()
 	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
@@ -53,7 +67,11 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	if err != nil {
 		return err
 	}
-	return catalog.InstallApproved(runtimeBytes, publicBytes, identity, release.PublicDigest)
+	if err := catalog.InstallApproved(runtimeBytes, publicBytes, identity, release.PublicDigest); err != nil {
+		e.rejectedCatalog = rejection
+		return errors.Join(errCatalogIncompatible, err)
+	}
+	return nil
 }
 
 func (e *currentEvidence) artifact(ctx context.Context, digest string, size, limit int64) ([]byte, error) {
