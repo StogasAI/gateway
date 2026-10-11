@@ -283,14 +283,11 @@ func (s *Server) prepareCandidate(
 		s.recordAdmission(ctx)
 	}
 	if err != nil {
-		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-		state.EncryptionKeys = nil
-		cancel()
+		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
 	if err := s.runtime.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
-		finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-		cancel()
+		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
 		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
 	}
 	if resolution.Provider == schemas.Azure {
@@ -299,8 +296,7 @@ func (s *Server) prepareCandidate(
 			err = stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq)
 		}
 		if err != nil {
-			finalizePreparedFailure(bifrostCtx, s.runtime.Billing(), state, err)
-			cancel()
+			s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
 			return nil, &candidateFailure{err: err, kind: candidateFailureCatalog}
 		}
 	}
@@ -314,10 +310,12 @@ func (s *Server) prepareCandidate(
 	}, nil
 }
 
-func finalizePreparedFailure(
-	ctx *schemas.BifrostContext,
-	billingService *billing.Service,
+// finalizePreparedFailure ends a prepared request before its provider call.
+func (s *Server) finalizePreparedFailure(
+	ctx *requestContext,
+	bifrostCtx *schemas.BifrostContext,
 	state *stogas.State,
+	cancel context.CancelFunc,
 	err error,
 ) {
 	apiErr := stogas.PublicBillingErrorFor(err)
@@ -327,5 +325,5 @@ func finalizePreparedFailure(
 		StatusCode:     &status,
 		Error:          &schemas.ErrorField{Message: apiErr.Message, Code: schemas.Ptr(apiErr.Code)},
 	}
-	stogas.FinalizeState(context.WithoutCancel(ctx), billingService, state)
+	s.finalizeAfterResponse(ctx, bifrostCtx, state, cancel)
 }

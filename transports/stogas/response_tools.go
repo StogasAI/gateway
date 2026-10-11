@@ -89,7 +89,7 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		if terminal && state != nil && state.responsesStreamSeen {
 			streamItem, ok := state.responsesItems[index]
 			if !ok || !streamItem.done || !sameProviderResponsesItem(streamItem, observed) ||
-				validateProviderResponsesCompletedStreamItem(streamItem, item) != nil {
+				validateProviderResponsesCompletedStreamItem(streamItem, providerResponsesStreamedItem(state, response, index)) != nil {
 				return ErrProviderResponseMalformed
 			}
 		}
@@ -405,7 +405,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		}
 		return nil
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
-		if (response.Delta == nil) == (response.Signature == nil) || (response.SummaryIndex == nil) == (response.ContentIndex == nil) ||
+		if (response.Delta == nil) == (response.Signature == nil) || response.SummaryIndex == nil && response.ContentIndex == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadSummaryIndex|responsePayloadContentIndex|responsePayloadDelta|responsePayloadSignature|responsePayloadObfuscation) ||
 			validateProviderResponsesTextEvent(state, response, schemas.ResponsesOutputMessageContentTypeReasoning) != nil {
@@ -413,7 +413,7 @@ func validateProviderResponsesStreamPayload(state *State, response *schemas.Bifr
 		}
 		return nil
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
-		if response.Text == nil || (response.SummaryIndex == nil) == (response.ContentIndex == nil) ||
+		if response.Text == nil || response.SummaryIndex == nil && response.ContentIndex == nil ||
 			!responsesStreamHasItemType(state, response, schemas.ResponsesMessageTypeReasoning) ||
 			responsesStreamUnexpectedPayload(response, responsePayloadOutputIndex|responsePayloadItemID|responsePayloadSummaryIndex|responsePayloadContentIndex|responsePayloadText) ||
 			validateProviderResponsesTextEvent(state, response, schemas.ResponsesOutputMessageContentTypeReasoning) != nil {
@@ -632,6 +632,31 @@ func providerResponsesCodeExecutionContainerMatches(container *schemas.Responses
 	carry := item.ResponsesToolMessage.ResponsesCodeExecutionCall
 	return interpreter.ContainerID == container.ID && carry.ContainerExpiresAt != nil &&
 		*carry.ContainerExpiresAt == *container.ExpiresAt
+}
+
+// numberAnthropicResponsesContentPart replaces the Anthropic block index that
+// core's conversion sends as content_index. Each block becomes its own output
+// item, so its content part is the item's first.
+func numberAnthropicResponsesContentPart(state *State, response *schemas.BifrostResponsesStreamResponse) {
+	if response.ContentIndex != nil && responsesUsesAnthropicWire(state) {
+		response.ContentIndex = schemas.Ptr(0)
+	}
+}
+
+// providerResponsesStreamedItem returns a terminal output item as the stream
+// completed it. Core's Anthropic conversion completes each item before the stop
+// reason arrives, then marks the last one incomplete in a truncated or refused
+// terminal response.
+func providerResponsesStreamedItem(state *State, response *schemas.BifrostResponsesResponse, index int) *schemas.ResponsesMessage {
+	item := &response.Output[index]
+	if !responsesUsesAnthropicWire(state) || index != len(response.Output)-1 ||
+		response.Status == nil || *response.Status != schemas.ResponsesResponseStatusIncomplete ||
+		item.Status == nil || *item.Status != schemas.ResponsesResponseStatusIncomplete {
+		return item
+	}
+	streamed := *item
+	streamed.Status = schemas.Ptr("completed")
+	return &streamed
 }
 
 func validateProviderResponsesCompletedStreamItem(streamItem providerResponsesItem, finalItem *schemas.ResponsesMessage) error {
@@ -1995,11 +2020,13 @@ func providerResponsesPartForEvent(state *State, response *schemas.BifrostRespon
 	if !ok || item.done {
 		return nil
 	}
-	if response.SummaryIndex != nil {
-		return item.reasoningParts[*response.SummaryIndex]
-	}
+	// Core's Anthropic conversion sends reasoning summary events with both
+	// indexes; content_index binds them to their reasoning_text content part.
 	if response.ContentIndex != nil {
 		return item.parts[*response.ContentIndex]
+	}
+	if response.SummaryIndex != nil {
+		return item.reasoningParts[*response.SummaryIndex]
 	}
 	return nil
 }

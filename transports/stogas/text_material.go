@@ -155,12 +155,12 @@ func (s *State) observeResponsesStreamTextMaterial(event *schemas.BifrostRespons
 	case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
 		schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
 		// Core uses these events for both summaries and raw content blocks.
-		// SummaryIndex identifies summaries; ContentIndex identifies content.
-		if event.SummaryIndex != nil {
-			current.opaque = 1
-		} else if event.ContentIndex != nil {
+		// ContentIndex identifies content; SummaryIndex alone identifies summaries.
+		if event.ContentIndex != nil {
 			current.reasoning += textBytes(event.Delta)
 			current.visible = 1
+		} else if event.SummaryIndex != nil {
+			current.opaque = 1
 		}
 	case schemas.ResponsesStreamResponseTypeContentPartAdded:
 		if event.Part != nil && event.Part.Type == schemas.ResponsesOutputMessageContentTypeReasoning {

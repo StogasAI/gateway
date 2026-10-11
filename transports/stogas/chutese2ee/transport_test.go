@@ -127,6 +127,9 @@ func TestTransportEncryptsAndTargetsVerifiedInstance(t *testing.T) {
 	if InvocationMetadata(t.Context()) != nil {
 		t.Fatal("request metadata leaked across contexts")
 	}
+	if NotSent(ctx) {
+		t.Fatal("dispatched request reported as unsent")
+	}
 	if response.StatusCode() != http.StatusOK {
 		t.Fatalf("response status = %d, body=%s", response.StatusCode(), response.Body())
 	}
@@ -854,11 +857,16 @@ func TestTransportRejectsUnsupportedWireRequestsBeforeDispatch(t *testing.T) {
 			request.Header.Set("Authorization", test.authorization)
 			request.SetRequestURI("http://provider.invalid" + test.path)
 			request.SetBodyString(test.body)
-			if _, err := transport.RoundTrip(nil, request, response); err != nil {
-				t.Fatalf("RoundTrip: %v", err)
+			ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
+			defer ctx.Cancel()
+			if err := transport.DoRequestWithContext(ctx, request, response); err != nil {
+				t.Fatalf("round trip: %v", err)
 			}
 			if response.StatusCode() != test.wantStatus {
 				t.Fatalf("status = %d, want %d", response.StatusCode(), test.wantStatus)
+			}
+			if !NotSent(ctx) {
+				t.Fatal("rejection before dispatch was not reported as unsent")
 			}
 		})
 	}

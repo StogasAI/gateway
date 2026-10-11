@@ -206,6 +206,19 @@ func (s *State) MarkProviderCompleted() {
 	s.completeLatestProviderAttempt(completedAt)
 }
 
+// MarkProviderNotSent removes the provider call after its transport proved
+// that nothing reached the provider. The request settles like any other
+// failure before dispatch: no provider attempt and no tokens.
+func (s *State) MarkProviderNotSent() {
+	if s == nil {
+		return
+	}
+	s.ProviderStartedAt, s.ProviderCompletedAt = time.Time{}, time.Time{}
+	s.providerAttemptsMu.Lock()
+	s.providerAttempts = nil
+	s.providerAttemptsMu.Unlock()
+}
+
 func (s *State) MarkClientStopped() {
 	if s == nil {
 		return

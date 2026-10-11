@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -57,23 +57,23 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 		if cached != nil && now.Before(cached.ExpiresAt) {
 			return cached, nil
 		}
-		var measurements []measurementPolicy
+		var records []measurementPolicy
 		fetchErr := retryChutesRead(ctx, false, 5*time.Second, func() error {
-			measurements = nil
+			records = nil
 			_, _, requestErr := c.api.requestJSON(
 				ctx,
 				http.MethodGet,
 				measurementsPath,
 				nil,
 				maxMeasurementBody,
-				&measurements,
+				&records,
 			)
 			return requestErr
 		})
 		if fetchErr != nil {
 			return nil, fmt.Errorf("fetch measurement policy: %w", fetchErr)
 		}
-		digest, err := validateAndDigestMeasurements(measurements)
+		measurements, digest, err := validateAndDigestMeasurements(records)
 		if err != nil {
 			return nil, err
 		}
@@ -94,58 +94,71 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 	return result.(*policySnapshot), nil
 }
 
-func validateAndDigestMeasurements(measurements []measurementPolicy) (string, error) {
-	if len(measurements) == 0 || len(measurements) > 256 {
-		return "", fmt.Errorf("%w: invalid record count", ErrMeasurementPolicy)
+// validateAndDigestMeasurements returns the distinct supported measurements in
+// a stable order and their digest. Chutes repeats a measurement for each host
+// class it covers and names the class in an extra `fingerprint` field. A quote
+// cannot prove its host class, so records that agree on every verified field are
+// one measurement. A malformed record rejects the whole list.
+func validateAndDigestMeasurements(records []measurementPolicy) ([]measurementPolicy, string, error) {
+	if len(records) == 0 || len(records) > 256 {
+		return nil, "", fmt.Errorf("%w: invalid record count", ErrMeasurementPolicy)
 	}
-	seen := make(map[string]struct{}, len(measurements))
-	for index := range measurements {
-		measurement := &measurements[index]
+	unique := make(map[string]measurementPolicy, len(records))
+	for _, measurement := range records {
 		measurement.Version = strings.TrimSpace(measurement.Version)
 		measurement.Name = strings.TrimSpace(measurement.Name)
 		if measurement.Version == "" || measurement.Name == "" || measurement.GPUCount < 1 || measurement.GPUCount > 16 {
-			return "", fmt.Errorf("%w: invalid measurement metadata", ErrMeasurementPolicy)
+			return nil, "", fmt.Errorf("%w: invalid measurement metadata", ErrMeasurementPolicy)
 		}
 		if _, err := decodeMeasurementHex(measurement.MRTD); err != nil {
-			return "", fmt.Errorf("%w: invalid MRTD", ErrMeasurementPolicy)
+			return nil, "", fmt.Errorf("%w: invalid MRTD", ErrMeasurementPolicy)
 		}
 		if err := validateRTMRSet(measurement.BootRTMRs); err != nil {
-			return "", fmt.Errorf("%w: invalid boot RTMRs", ErrMeasurementPolicy)
+			return nil, "", fmt.Errorf("%w: invalid boot RTMRs", ErrMeasurementPolicy)
 		}
 		if err := validateRTMRSet(measurement.RuntimeRTMRs); err != nil {
-			return "", fmt.Errorf("%w: invalid runtime RTMRs", ErrMeasurementPolicy)
+			return nil, "", fmt.Errorf("%w: invalid runtime RTMRs", ErrMeasurementPolicy)
 		}
 		if len(measurement.ExpectedGPUs) == 0 || len(measurement.ExpectedGPUs) > 4 {
-			return "", fmt.Errorf("%w: invalid GPU families", ErrMeasurementPolicy)
+			return nil, "", fmt.Errorf("%w: invalid GPU families", ErrMeasurementPolicy)
 		}
 		gpuSeen := map[string]struct{}{}
+		supported := true
 		for gpuIndex, family := range measurement.ExpectedGPUs {
 			family = strings.ToLower(strings.TrimSpace(family))
-			if _, ok := acceptedGPUFamilies[family]; !ok {
-				return "", fmt.Errorf("%w: unknown GPU family", ErrMeasurementPolicy)
-			}
 			if _, duplicate := gpuSeen[family]; duplicate {
-				return "", fmt.Errorf("%w: duplicate GPU family", ErrMeasurementPolicy)
+				return nil, "", fmt.Errorf("%w: duplicate GPU family", ErrMeasurementPolicy)
 			}
 			gpuSeen[family] = struct{}{}
+			_, accepted := acceptedGPUFamilies[family]
+			supported = supported && accepted
 			measurement.ExpectedGPUs[gpuIndex] = family
 		}
-		slices.Sort(measurement.ExpectedGPUs)
-		identity := measurementIdentity(*measurement)
-		if _, duplicate := seen[identity]; duplicate {
-			return "", fmt.Errorf("%w: duplicate measurement", ErrMeasurementPolicy)
+		if !supported {
+			// NRAS verification rejects these GPUs, so no instance can match the record.
+			continue
 		}
-		seen[identity] = struct{}{}
+		slices.Sort(measurement.ExpectedGPUs)
+		identity, err := json.Marshal(measurement)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: encode measurement", ErrMeasurementPolicy)
+		}
+		unique[string(identity)] = measurement
 	}
-	sort.Slice(measurements, func(left, right int) bool {
-		return measurementIdentity(measurements[left]) < measurementIdentity(measurements[right])
-	})
+	if len(unique) == 0 {
+		return nil, "", fmt.Errorf("%w: no supported measurement", ErrMeasurementPolicy)
+	}
+	identities := slices.Sorted(maps.Keys(unique))
+	measurements := make([]measurementPolicy, 0, len(identities))
+	for _, identity := range identities {
+		measurements = append(measurements, unique[identity])
+	}
 	encoded, err := json.Marshal(measurements)
 	if err != nil {
-		return "", fmt.Errorf("%w: encode policy", ErrMeasurementPolicy)
+		return nil, "", fmt.Errorf("%w: encode policy", ErrMeasurementPolicy)
 	}
 	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:]), nil
+	return measurements, hex.EncodeToString(digest[:]), nil
 }
 
 func validateRTMRSet(values map[string]string) error {
@@ -174,20 +187,6 @@ func decodeMeasurementHex(value string) ([]byte, error) {
 		return nil, errors.New("measurement is not canonical hexadecimal")
 	}
 	return decoded, nil
-}
-
-func measurementIdentity(measurement measurementPolicy) string {
-	return strings.Join([]string{
-		measurement.Version,
-		measurement.Name,
-		strings.ToUpper(measurement.MRTD),
-		strings.ToUpper(measurement.RuntimeRTMRs["RTMR0"]),
-		strings.ToUpper(measurement.RuntimeRTMRs["RTMR1"]),
-		strings.ToUpper(measurement.RuntimeRTMRs["RTMR2"]),
-		strings.ToUpper(measurement.RuntimeRTMRs["RTMR3"]),
-		fmt.Sprintf("%d", measurement.GPUCount),
-		strings.Join(measurement.ExpectedGPUs, ","),
-	}, "|")
 }
 
 func matchMeasurement(quote *tdxpb.QuoteV4, snapshot *policySnapshot) (*measurementPolicy, error) {

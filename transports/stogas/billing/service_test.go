@@ -382,8 +382,9 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 		Meters: EventMeters{
 			"input_tokens": PricedMeter("1", "per_mill_tokens", "2000000", "2"),
 		},
-		Plugins:   plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
-		StartedAt: startedAt,
+		Plugins:           plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
+		ProviderStartedAt: startedAt,
+		StartedAt:         startedAt,
 	})
 
 	if *event.Usage.Meters["input_tokens"].RateUSD != "2000000" {
@@ -506,6 +507,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 
 	event = mustNewRequestEvent(t, EventInput{
 		Authorization: &Authorization{RequestID: "request-2"},
+		Meters:        EventMeters{"input_text_bytes": {Quantity: "12"}},
 		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 500},
 		}},
@@ -513,6 +515,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	})
 	if len(event.ProviderAttempts) != 0 {
 		t.Fatalf("a request that never started a provider has attempts: %#v", event.ProviderAttempts)
+	}
+	if len(event.Usage.Meters) != 0 || event.Usage.StandardTextTokens != (StandardTextTokens{}) {
+		t.Fatalf("a request that never started a provider has usage: %#v", event.Usage)
 	}
 	if event.Performance.ProviderMS != 0 {
 		t.Fatalf("a request never dispatched must not record provider time: %#v", event.Performance)
@@ -875,7 +880,7 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 
 func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 	for _, item := range []struct{ bytes, tokens string }{{"0", "0"}, {"6", "1.5"}, {"7", "1.75"}, {"18446744073709551615", "4611686018427387903.75"}} {
-		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0")})
+		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0"), ProviderStartedAt: time.Now()})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -33,6 +33,7 @@ type Options struct {
 type invocationMetadataKey struct{}
 type invocationBudgetKey struct{}
 type retryObserverKey struct{}
+type dispatchKey struct{}
 
 type invocationBudget struct {
 	attempts     int
@@ -50,6 +51,25 @@ func SetInvocationBudget(ctx interface{ SetValue(any, any) }, attempts int, retr
 // invocation is about to start. Failed ticket preparation is not a new dispatch.
 func SetRetryObserver(ctx interface{ SetValue(any, any) }, observe func(status int, completedAt, nextStartedAt time.Time)) {
 	ctx.SetValue(retryObserverKey{}, observe)
+}
+
+// NotSent reports that the transport failed this request before it sent any
+// invocation, so the provider received nothing it could bill. An earlier
+// dispatch on the same context keeps it false.
+func NotSent(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	dispatched, ok := ctx.Value(dispatchKey{}).(bool)
+	return ok && !dispatched
+}
+
+func recordDispatch(ctx context.Context, dispatched bool) {
+	setter, ok := ctx.(interface{ SetValue(any, any) })
+	if !ok || !dispatched && ctx.Value(dispatchKey{}) != nil {
+		return
+	}
+	setter.SetValue(dispatchKey{}, dispatched)
 }
 
 // InvocationMetadata returns only the selected attempt's public provider facts.
@@ -264,6 +284,12 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	dispatched := false
+	defer func() {
+		if !dispatched {
+			recordDispatch(ctx, false)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
@@ -346,6 +372,8 @@ func (t *Transport) roundTrip(ctx context.Context, request *fasthttp.Request, re
 		}
 		configureInvokeRequest(request, credential, ticket, encrypted.Body, metadata.Stream, originalPath)
 		setInvocationMetadata(ctx, &ticket)
+		dispatched = true
+		recordDispatch(ctx, true)
 		if metadata.Stream {
 			streamOwnsCredential, streamErr := t.roundTripStream(
 				ctx,

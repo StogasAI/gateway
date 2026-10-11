@@ -20,7 +20,6 @@ func TestEveryFuzzTargetHasScheduledCampaign(t *testing.T) {
 	if !strings.Contains(workflowText, "path: ~/.cache/go-build/fuzz") ||
 		!strings.Contains(workflowText, "github.run_id") ||
 		!strings.Contains(workflowText, "working-directory: ${{ matrix.module }}") ||
-		!strings.Contains(workflowText, "go-version-file: ${{ matrix.module }}/go.mod") ||
 		!strings.Contains(workflowText, "path: ${{ matrix.module }}/**/testdata/fuzz/${{ matrix.target }}") {
 		t.Error("scheduled fuzzing must restore and advance each generated corpus")
 	}

@@ -21,7 +21,7 @@ The public listener uses port `5185`; private readiness uses `5186` and TLS diag
 
 ## Build and test
 
-Install Bun and Go, then run:
+Install Bun, Go, Rust through rustup, and jq, then run:
 
 ```console
 bun install --frozen-lockfile
@@ -29,7 +29,7 @@ bun run check
 bun run build
 ```
 
-`check` validates the embedded emergency catalog and runs the transport Go tests.
+The scripts first build the native verifier library at the commit pinned in `stogas/release/pins.lock.json`. `check` validates the embedded emergency catalog and runs the transport Go tests.
 
 ## Releases
 

@@ -1999,11 +1999,12 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 				},
 			},
 		},
-		RequestType:     string(schemas.ChatCompletionRequest),
-		Model:           "gpt-5",
-		GatewayVersion:  "v1.5.13",
-		StartedAt:       time.Now().UTC(),
-		UpstreamCostUSD: "1000",
+		RequestType:       string(schemas.ChatCompletionRequest),
+		Model:             "gpt-5",
+		GatewayVersion:    "v1.5.13",
+		StartedAt:         time.Now().UTC(),
+		ProviderStartedAt: time.Now().UTC(),
+		UpstreamCostUSD:   "1000",
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:     billing.MeterInputTokens,
 			RateKey:      billing.RatePerMillionTokens,
@@ -3328,8 +3329,9 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 				RouteIDs: []string{"anthropic-messages"},
 			},
 		},
-		Signals:   &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
-		StartedAt: time.Now().UTC(),
+		Signals:           &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
+		StartedAt:         time.Now().UTC(),
+		ProviderStartedAt: time.Now().UTC(),
 	}
 
 	event := PrepareFinalState(state)
@@ -3411,6 +3413,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	}}
 	state.UpstreamCostUSD = total
 	state.StartedAt = time.Now().UTC()
+	state.ProviderStartedAt = state.StartedAt
 	FinalizeState(context.Background(), authorizer, state)
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))

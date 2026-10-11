@@ -127,6 +127,11 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		return RequestEvent{}, err
 	}
 	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
+	if len(providerAttempts) == 0 {
+		// A request that reached no provider has no usage. Settlement rejects
+		// meters without an attempt, including request-side counts.
+		pricing = EventMeters{}
+	}
 	providerStartMS, providerMS := requestProviderTiming(input, startedAt, finishedAt, totalTimeMS)
 
 	return RequestEvent{
