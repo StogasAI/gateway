@@ -65,7 +65,6 @@ type State struct {
 	NodeID                  string
 	ActualServiceTier       *schemas.BifrostServiceTier
 	ActualSpeed             string
-	ActualInferenceGeo      string
 	ActualModel             string
 	providerStreamBytes     int
 	chatStreamObserved      bool

@@ -61,18 +61,8 @@ func DeploymentForRouteServiceTier(provider schemas.ModelProvider, model string,
 		}
 		if pinned {
 			deployment, ok := snap.graph.Deployments[deploymentID]
-			if !ok {
+			if !ok || !deploymentMatchesRequestedTier(provider, deployment, requestedTier) {
 				continue
-			}
-			if !deploymentMatchesRequestedTier(provider, deployment, requestedTier) {
-				if !deploymentAliasCanSelectTier(provider, model, deploymentID, deployment, requestedTier) {
-					continue
-				}
-				deploymentID = snap.deploymentIDForRequestedServiceTier(provider, routeNode, deploymentID, requestedTier)
-				deployment, ok = snap.graph.Deployments[deploymentID]
-				if !ok || !deploymentMatchesRequestedTier(provider, deployment, requestedTier) {
-					continue
-				}
 			}
 		} else {
 			deploymentID = snap.deploymentIDForRequestedServiceTier(provider, routeNode, deploymentID, requestedTier)
@@ -83,22 +73,6 @@ func DeploymentForRouteServiceTier(provider schemas.ModelProvider, model string,
 		}
 	}
 	return Deployment{}, false
-}
-
-func deploymentAliasCanSelectTier(
-	provider schemas.ModelProvider,
-	requestedModel string,
-	deploymentID string,
-	deployment compiledDeployment,
-	requestedTier *schemas.BifrostServiceTier,
-) bool {
-	if deploymentServiceTierForRequest(provider, requestedTier) == "" ||
-		deployment.Upstream.ReasoningMode == "" ||
-		impliedServiceTierForDeployment(provider, deployment) != nil {
-		return false
-	}
-	_, selector := splitQualifiedModel(requestedModel)
-	return selector != "" && selector != strings.ToLower(deploymentID)
 }
 
 func deploymentMatchesRequestedTier(

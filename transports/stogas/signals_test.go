@@ -868,13 +868,12 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		{name: "equivalent OpenAI Priority labels", provider: schemas.OpenAI, selectedTier: "priority", currentTier: "priority", reportedTier: "fast"},
 		{name: "OpenAI tier changes during response", provider: schemas.OpenAI, selectedTier: "priority", currentTier: "priority", reportedTier: "default", wantError: true},
 		{name: "Anthropic speed changes during response", provider: schemas.Anthropic, selectedSpeed: "fast", currentSpeed: "fast", reportedSpeed: "standard", wantError: true},
-		{name: "Anthropic Global geography", provider: schemas.Anthropic, selectedGeo: "global", reportedGeo: "global"},
+		{name: "Anthropic Global may run in the US", provider: schemas.Anthropic, selectedGeo: "global", reportedGeo: "us"},
 		{name: "Anthropic US geography", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "us"},
-		{name: "Anthropic geography unavailable when none was selected", provider: schemas.Anthropic, reportedGeo: "not_available"},
-		{name: "Anthropic cannot report a priced geography when none was selected", provider: schemas.Anthropic, reportedGeo: "global", wantError: true},
-		{name: "Anthropic geography mismatch", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "global", wantError: true},
-		{name: "unknown Anthropic geography", provider: schemas.Anthropic, reportedGeo: "eu", wantError: true},
-		{name: "unexpected OpenAI geography", provider: schemas.OpenAI, reportedGeo: "global", wantError: true},
+		{name: "Anthropic US cannot run globally", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "global", wantError: true},
+		{name: "Anthropic US cannot become unavailable", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "not_available", wantError: true},
+		{name: "new Anthropic geography without a pinned geography", provider: schemas.Anthropic, reportedGeo: "eu"},
+		{name: "OpenAI geography report", provider: schemas.OpenAI, reportedGeo: "global"},
 	}
 
 	for _, tc := range tests {

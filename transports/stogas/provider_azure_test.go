@@ -160,11 +160,11 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 	}{
 		{
 			path: "/v1/chat/completions",
-			body: `{"model":"azure-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_completion_tokens":64,"stop_sequences":["END"],"top_k":40}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_completion_tokens":64,"stop_sequences":["END"],"top_k":40}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_output_tokens":64,"stop_sequences":["END"],"top_k":40}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_output_tokens":64,"stop_sequences":["END"],"top_k":40}`,
 		},
 	}
 
@@ -247,27 +247,27 @@ func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 	}{
 		{
 			name: "prompt cache key",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant","max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","prompt_cache_key":"tenant","max_output_tokens":64}`,
 		},
 		{
 			name: "prompt cache options",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
 		},
 		{
 			name: "task budget",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP connector",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar"}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar"}],"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP headers",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","headers":{"authorization":"secret"}}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","headers":{"authorization":"secret"}}],"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP approval",
-			body: `{"model":"azure-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}],"max_output_tokens":64}`,
 		},
 	}
 
@@ -289,7 +289,7 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	state := resolveAzureState(
 		t,
 		"/v1/chat/completions",
-		`{"model":"azure-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":64,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
+		`{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":64,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
 	)
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)

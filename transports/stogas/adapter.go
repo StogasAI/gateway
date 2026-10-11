@@ -136,7 +136,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 		if responseHasFallbackModel(response.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
 			return ErrProviderExecutionMismatch
 		}
-		observeActualExecution(state, response.ServiceTier, response.Speed, response.InferenceGeo)
+		observeActualExecution(state, response.ServiceTier, response.Speed)
 		observeActualResponseModel(state, response.Model)
 		state.observeChatProviderOutputEmitted(response)
 		state.observeChatTextMaterial(response)
@@ -166,7 +166,7 @@ func (DefaultAdapter) IngestChunk(state *State, chunk *schemas.BifrostStreamChun
 			if responseHasFallbackModel(streamResp.Response.ExtraFields.RoutingInfo.ServerSideFallbackModel) {
 				return ErrProviderExecutionMismatch
 			}
-			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed, streamResp.Response.InferenceGeo)
+			observeActualExecution(state, streamResp.Response.ServiceTier, streamResp.Response.Speed)
 			observeActualResponseModel(state, streamResp.Response.Model)
 		}
 		state.observeResponsesProviderOutputEmitted(streamResp)
@@ -386,13 +386,13 @@ func observeBifrostActualExecution(state *State, resp *schemas.BifrostResponse) 
 	}
 	switch {
 	case resp.ChatResponse != nil:
-		observeActualExecution(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed, resp.ChatResponse.InferenceGeo)
+		observeActualExecution(state, resp.ChatResponse.ServiceTier, resp.ChatResponse.Speed)
 		observeActualResponseModel(state, resp.ChatResponse.Model)
 	case resp.ResponsesResponse != nil:
-		observeActualExecution(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed, resp.ResponsesResponse.InferenceGeo)
+		observeActualExecution(state, resp.ResponsesResponse.ServiceTier, resp.ResponsesResponse.Speed)
 		observeActualResponseModel(state, resp.ResponsesResponse.Model)
 	case resp.ResponsesStreamResponse != nil && resp.ResponsesStreamResponse.Response != nil:
-		observeActualExecution(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed, resp.ResponsesStreamResponse.Response.InferenceGeo)
+		observeActualExecution(state, resp.ResponsesStreamResponse.Response.ServiceTier, resp.ResponsesStreamResponse.Response.Speed)
 		observeActualResponseModel(state, resp.ResponsesStreamResponse.Response.Model)
 	}
 }
