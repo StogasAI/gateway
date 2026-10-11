@@ -11,41 +11,70 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"testing/iotest"
 	"time"
 )
 
-func TestInitSupervisesGracefulAndUnexpectedExit(t *testing.T) {
-	for _, mode := range []string{"drain", "clean-exit", "crash"} {
+func TestInitSupervisesGatewayAndClockDaemon(t *testing.T) {
+	for _, mode := range []string{"drain", "clean-exit", "crash", "clock-exit"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInitLifecycleChild$")
-			command.Env = append(os.Environ(), "STOGAS_INIT_TEST_CHILD="+mode)
+			clockInput, clockControl, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer clockInput.Close()
+			defer clockControl.Close()
+			clock := lifecycleChild(ctx, "exit-on-eof")
+			clock.Stdin = clockInput
+			gatewayMode := mode
+			if mode == "clock-exit" {
+				gatewayMode = "drain"
+			}
+			gateway := lifecycleChild(ctx, gatewayMode)
 			output, writer := io.Pipe()
 			defer output.Close()
-			command.Stdout = writer
+			gateway.Stdout = writer
 			shutdown := make(chan os.Signal, 1)
 			done := make(chan error, 1)
-			go func() { defer writer.Close(); done <- runGateway(command, shutdown) }()
+			go func() { defer writer.Close(); done <- runGuest(clock, gateway, shutdown) }()
 			scanner := bufio.NewScanner(output)
 			if !scanner.Scan() || scanner.Text() != "ready" {
-				t.Fatal("child did not start")
+				t.Fatal("gateway did not start")
 			}
-			if mode == "drain" {
+			switch mode {
+			case "drain":
 				shutdown <- syscall.SIGTERM
-				if !scanner.Scan() || scanner.Text() != "drained" {
-					t.Fatal("init did not let the child drain")
-				}
+			case "clock-exit":
+				_ = clockControl.Close()
 			}
-			err := <-done
-			if (err != nil) != (mode == "crash") {
+			if gatewayMode == "drain" && (!scanner.Scan() || scanner.Text() != "drained") {
+				t.Fatal("init did not let the gateway drain")
+			}
+			err = <-done
+			if errors.Is(err, errClockDaemon) != (mode == "clock-exit") || (err != nil) != (mode == "crash" || mode == "clock-exit") {
 				t.Fatalf("exit error: %v", err)
 			}
 		})
 	}
+}
+
+func TestInitDoesNotStartTheGatewayWithoutTheClockDaemon(t *testing.T) {
+	gateway := lifecycleChild(t.Context(), "clean-exit")
+	err := runGuest(exec.Command(filepath.Join(t.TempDir(), "missing")), gateway, make(chan os.Signal))
+	if !errors.Is(err, errClockDaemon) || gateway.Process != nil {
+		t.Fatal("gateway started without the clock daemon", err)
+	}
+}
+
+func lifecycleChild(ctx context.Context, mode string) *exec.Cmd {
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInitLifecycleChild$")
+	command.Env = append(os.Environ(), "STOGAS_INIT_TEST_CHILD="+mode)
+	return command
 }
 
 func TestInitLifecycleChild(t *testing.T) {
@@ -62,6 +91,8 @@ func TestInitLifecycleChild(t *testing.T) {
 		fmt.Println("drained")
 	case "crash":
 		os.Exit(7)
+	case "exit-on-eof":
+		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
 	os.Exit(0)
 }

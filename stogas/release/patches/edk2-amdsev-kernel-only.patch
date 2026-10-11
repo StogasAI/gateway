@@ -1,0 +1,188 @@
+diff --git a/BaseTools/Source/C/GenFw/Elf32Convert.c b/BaseTools/Source/C/GenFw/Elf32Convert.c
+index 7b4fb44..0f05bfc 100644
+--- a/BaseTools/Source/C/GenFw/Elf32Convert.c
++++ b/BaseTools/Source/C/GenFw/Elf32Convert.c
+@@ -550,7 +550,7 @@ ScanSections32 (
+   }
+ 
+   NtHdr->Pe32.FileHeader.NumberOfSections = mCoffNbrSections;
+-  NtHdr->Pe32.FileHeader.TimeDateStamp = (UINT32) time(NULL);
++  NtHdr->Pe32.FileHeader.TimeDateStamp = 0;
+   mImageTimeStamp = NtHdr->Pe32.FileHeader.TimeDateStamp;
+   NtHdr->Pe32.FileHeader.PointerToSymbolTable = 0;
+   NtHdr->Pe32.FileHeader.NumberOfSymbols = 0;
+diff --git a/BaseTools/Source/C/GenFw/Elf64Convert.c b/BaseTools/Source/C/GenFw/Elf64Convert.c
+index 1208137..ed326c6 100644
+--- a/BaseTools/Source/C/GenFw/Elf64Convert.c
++++ b/BaseTools/Source/C/GenFw/Elf64Convert.c
+@@ -1227,7 +1227,7 @@ ScanSections64 (
+   }
+ 
+   NtHdr->Pe32Plus.FileHeader.NumberOfSections = mCoffNbrSections;
+-  NtHdr->Pe32Plus.FileHeader.TimeDateStamp = (UINT32) time(NULL);
++  NtHdr->Pe32Plus.FileHeader.TimeDateStamp = 0;
+   mImageTimeStamp = NtHdr->Pe32Plus.FileHeader.TimeDateStamp;
+   NtHdr->Pe32Plus.FileHeader.PointerToSymbolTable = 0;
+   NtHdr->Pe32Plus.FileHeader.NumberOfSymbols = 0;
+diff --git a/MdeModulePkg/Bus/Pci/PciBusDxe/PciEnumeratorSupport.c b/MdeModulePkg/Bus/Pci/PciBusDxe/PciEnumeratorSupport.c
+index ae94462..d0fdd2e 100644
+--- a/MdeModulePkg/Bus/Pci/PciBusDxe/PciEnumeratorSupport.c
++++ b/MdeModulePkg/Bus/Pci/PciBusDxe/PciEnumeratorSupport.c
+@@ -453,13 +453,10 @@ PciSearchDevice (
+   }
+ 
+   //
+-  // Detect this function has option rom
++  // Never read option ROMs. The host supplies them outside the launch
++  // measurement.
+   //
+   if (gFullEnumeration) {
+-    if (!IS_CARDBUS_BRIDGE (Pci) && !IgnoreOptionRom) {
+-      GetOpRomInfo (PciIoDevice);
+-    }
+-
+     ResetPowerManagementFeature (PciIoDevice);
+   }
+ 
+diff --git a/OvmfPkg/AmdSev/AmdSevX64.dsc b/OvmfPkg/AmdSev/AmdSevX64.dsc
+index 2fbcd01..c91aa59 100644
+--- a/OvmfPkg/AmdSev/AmdSevX64.dsc
++++ b/OvmfPkg/AmdSev/AmdSevX64.dsc
+@@ -25,7 +25,6 @@
+   BUILD_TARGETS                  = NOOPT|DEBUG|RELEASE
+   SKUID_IDENTIFIER               = DEFAULT
+   FLASH_DEFINITION               = OvmfPkg/AmdSev/AmdSevX64.fdf
+-  PREBUILD                       = sh OvmfPkg/AmdSev/Grub/grub.sh
+ 
+   #
+   # Defines for default states.  These can be changed on the command line.
+@@ -755,7 +754,6 @@
+   MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
+ 
+   OvmfPkg/AmdSev/SecretDxe/SecretDxe.inf
+-  OvmfPkg/AmdSev/Grub/Grub.inf
+ 
+ !include OvmfPkg/Include/Dsc/ShellComponents.dsc.inc
+ !include OvmfPkg/Include/Dsc/OvmfRngComponents.dsc.inc
+diff --git a/OvmfPkg/AmdSev/AmdSevX64.fdf b/OvmfPkg/AmdSev/AmdSevX64.fdf
+index f860050..4b89fd9 100644
+--- a/OvmfPkg/AmdSev/AmdSevX64.fdf
++++ b/OvmfPkg/AmdSev/AmdSevX64.fdf
+@@ -164,11 +164,6 @@ INF  MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+ INF  MdeModulePkg/Universal/Metronome/Metronome.inf
+ INF  PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcatRealTimeClockRuntimeDxe.inf
+ 
+-INF  OvmfPkg/VirtioPciDeviceDxe/VirtioPciDeviceDxe.inf
+-INF  OvmfPkg/Virtio10Dxe/Virtio10.inf
+-INF  OvmfPkg/VirtioBlkDxe/VirtioBlk.inf
+-INF  OvmfPkg/VirtioScsiDxe/VirtioScsi.inf
+-
+ INF  MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+ INF  MdeModulePkg/Universal/MonotonicCounterRuntimeDxe/MonotonicCounterRuntimeDxe.inf
+ INF  MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
+@@ -182,16 +177,8 @@ INF  MdeModulePkg/Application/UiApp/UiApp.inf
+ INF  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+ INF  OvmfPkg/QemuKernelLoaderFsDxe/QemuKernelLoaderFsDxe.inf
+ INF  MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
+-INF  MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+-INF  MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+ INF  MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+ INF  MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
+-INF  MdeModulePkg/Bus/Scsi/ScsiBusDxe/ScsiBusDxe.inf
+-INF  MdeModulePkg/Bus/Scsi/ScsiDiskDxe/ScsiDiskDxe.inf
+-INF  MdeModulePkg/Bus/Pci/SataControllerDxe/SataControllerDxe.inf
+-INF  MdeModulePkg/Bus/Ata/AtaAtapiPassThru/AtaAtapiPassThru.inf
+-INF  MdeModulePkg/Bus/Ata/AtaBusDxe/AtaBusDxe.inf
+-INF  MdeModulePkg/Bus/Pci/NvmExpressDxe/NvmExpressDxe.inf
+ INF  MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+ INF  MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+ INF  MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+@@ -200,10 +187,8 @@ INF  OvmfPkg/SioBusDxe/SioBusDxe.inf
+ !if $(SOURCE_DEBUG_ENABLE) == FALSE
+ INF  MdeModulePkg/Bus/Pci/PciSioSerialDxe/PciSioSerialDxe.inf
+ !endif
+-INF  MdeModulePkg/Bus/Isa/Ps2KeyboardDxe/Ps2KeyboardDxe.inf
+ 
+ INF  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+-INF  OvmfPkg/SmbiosPlatformDxe/SmbiosPlatformDxe.inf
+ 
+ INF  MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+ INF  OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf
+@@ -211,28 +196,10 @@ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+ INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+ 
+-INF  FatPkg/EnhancedFatDxe/Fat.inf
+-INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+-
+ INF OvmfPkg/AmdSev/SecretDxe/SecretDxe.inf
+-INF  OvmfPkg/AmdSev/Grub/Grub.inf
+ 
+ INF MdeModulePkg/Logo/LogoDxe.inf
+ 
+-#
+-# Usb Support
+-#
+-INF  MdeModulePkg/Bus/Pci/UhciDxe/UhciDxe.inf
+-INF  MdeModulePkg/Bus/Pci/EhciDxe/EhciDxe.inf
+-INF  MdeModulePkg/Bus/Pci/XhciDxe/XhciDxe.inf
+-INF  MdeModulePkg/Bus/Usb/UsbBusDxe/UsbBusDxe.inf
+-INF  MdeModulePkg/Bus/Usb/UsbKbDxe/UsbKbDxe.inf
+-INF  MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
+-
+-INF  OvmfPkg/QemuVideoDxe/QemuVideoDxe.inf
+-
+-INF  OvmfPkg/QemuRamfbDxe/QemuRamfbDxe.inf
+-INF  OvmfPkg/VirtioGpuDxe/VirtioGpu.inf
+ INF  OvmfPkg/PlatformDxe/Platform.inf
+ INF  OvmfPkg/AmdSevDxe/AmdSevDxe.inf
+ INF  OvmfPkg/IoMmuDxe/IoMmuDxe.inf
+@@ -252,8 +219,7 @@ INF  MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+ !include OvmfPkg/Include/Fdf/OvmfTpmDxe.fdf.inc
+ 
+ !include OvmfPkg/Include/Fdf/ShellDxe.fdf.inc
+-!include OvmfPkg/Include/Fdf/OvmfRngDxe.fdf.inc
+-!include OvmfPkg/Include/Fdf/OvmfOptHw.fdf.inc
++INF  SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf
+ 
+ ################################################################################
+ 
+diff --git a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
+index 3edb92f..a4dc656 100644
+--- a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
++++ b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
+@@ -1619,20 +1619,6 @@ PlatformBootManagerAfterConsole (
+ 
+   DEBUG ((DEBUG_INFO, "PlatformBootManagerAfterConsole\n"));
+ 
+-  if (PcdGetBool (PcdOvmfFlashVariablesEnable)) {
+-    DEBUG ((
+-      DEBUG_INFO,
+-      "PlatformBdsPolicyBehavior: not restoring NvVars "
+-      "from disk since flash variables appear to be supported.\n"
+-      ));
+-  } else {
+-    //
+-    // Try to restore variables from the hard disk early so
+-    // they can be used for the other BDS connect operations.
+-    //
+-    PlatformBdsRestoreNvVarsFromHardDisk ();
+-  }
+-
+   //
+   // Get current Boot Mode
+   //
+@@ -1665,6 +1651,13 @@ PlatformBootManagerAfterConsole (
+   //
+   TryRunningQemuKernel ();
+ 
++  //
++  // Halt instead of falling back to another boot path, so that only the
++  // measured kernel can run.
++  //
++  AsciiPrint ("%a: The kernel did not start.\n", gEfiCallerBaseName);
++  CpuDeadLoop ();
++
+   //
+   // Perform some platform specific connect sequence
+   //

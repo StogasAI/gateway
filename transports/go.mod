@@ -2,6 +2,8 @@ module github.com/maximhq/bifrost/transports
 
 go 1.27.0
 
+toolchain go1.27.2
+
 require (
 	cel.dev/cel-go v0.32.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
@@ -20,7 +22,6 @@ require (
 	github.com/pires/go-proxyproto v0.15.0
 	github.com/tidwall/sjson v1.2.5
 	github.com/valyala/fasthttp v1.74.0
-	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sync v0.22.0

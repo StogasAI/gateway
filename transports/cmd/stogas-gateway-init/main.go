@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,8 @@ import (
 )
 
 const (
+	clockConfigPath = "/etc/ntpd-rs/ntp.toml"
+	clockDaemonPath = "/stogas/ntp-daemon"
 	envFallbackPath = "/stogas/env"
 	envFWCfgPath    = "/sys/firmware/qemu_fw_cfg/by_name/opt/stogas/env/raw"
 	gatewayPath     = "/stogas/gateway.init"
@@ -25,6 +28,7 @@ const (
 type initReasonCode string
 
 const (
+	initClockDaemonFailed        initReasonCode = "clock_daemon_failed"
 	initConfigurationOpenFailed  initReasonCode = "configuration_open_failed"
 	initConfigurationReadFailed  initReasonCode = "configuration_read_failed"
 	initExecFailed               initReasonCode = "gateway_exec_failed"
@@ -74,9 +78,16 @@ func main() {
 	}
 	closeButtons := watchPowerButtons(shutdown)
 	defer closeButtons()
+	clock := exec.Command(clockDaemonPath, "--config", clockConfigPath)
+	clock.Stdout, clock.Stderr = os.Stdout, os.Stderr
 	command := exec.Command(args[0], args[1:]...)
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := runGateway(command, shutdown); err != nil {
+	// The host reads this console, so a gateway crash must not print the
+	// registers and stack contents that the Go runtime prints by default.
+	command.Env = append(os.Environ(), "GOTRACEBACK=none")
+	if err := runGuest(clock, command, shutdown); errors.Is(err, errClockDaemon) {
+		writeInitEvent(os.Stderr, "guest_init_failed", "error", initClockDaemonFailed)
+	} else if err != nil {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
 	}
 	// Any gateway exit ends this ephemeral guest. The host's desired service

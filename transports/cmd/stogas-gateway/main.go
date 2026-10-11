@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.uber.org/automaxprocs/maxprocs"
-
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
@@ -37,7 +35,6 @@ const (
 	startupConfidentialSecretReleaseFailed            startupReasonCode = "confidential_secret_release_installation_failed"
 	startupConfidentialSecretReleaseContentsInvalid   startupReasonCode = "confidential_secret_release_contents_invalid"
 	startupGatewayRuntimeInitFailed                   startupReasonCode = "gateway_runtime_initialization_failed"
-	startupMaxProcsAdjustmentFailed                   startupReasonCode = "maxprocs_adjustment_failed"
 	startupOpenFileLimitFailed                        startupReasonCode = "open_file_limit_failed"
 	startupRouteInitFailed                            startupReasonCode = "route_initialization_failed"
 	startupRuntimeInitFailed                          startupReasonCode = "runtime_initialization_failed"
@@ -52,9 +49,6 @@ func main() {
 		fatal(startupOpenFileLimitFailed)
 	}
 	setDefaultGuestCertFile()
-	if _, err := maxprocs.Set(); err != nil {
-		writeStartupEvent(os.Stderr, "gateway_startup_warning", "warn", startupMaxProcsAdjustmentFailed)
-	}
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(stogashttp.DefaultGoMemoryLimitBytes)
 	}

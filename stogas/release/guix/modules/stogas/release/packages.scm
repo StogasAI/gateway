@@ -1,222 +1,119 @@
 (define-module (stogas release packages)
   #:use-module (gnu packages)
-  #:use-module (gnu packages firmware)
-  #:use-module ((gnu packages rust) #:select (rust-1.94))
+  #:use-module ((gnu packages firmware) #:select (ovmf-x86-64))
+  #:use-module ((gnu packages rust) #:select (rust-1.95))
+  #:use-module (guix base16)
   #:use-module (guix base32)
+  #:use-module ((guix build-system cargo) #:select (crate-name->package-name
+                                                   crate-uri))
   #:use-module (guix build-system gnu)
   #:use-module (guix build-system meson)
   #:use-module (guix download)
   #:use-module (guix gexp)
   #:use-module (guix git-download)
+  #:use-module ((guix licenses) #:prefix license:)
   #:use-module (guix packages)
   #:use-module (guix utils)
-  #:export (pkg
-            stogas-edk2-amdsev-ovmf
-            stogas-go-1-27
+  #:use-module (ice-9 match)
+  #:use-module (ice-9 rdelim)
+  #:use-module (ice-9 regex)
+  #:use-module (json)
+  #:use-module (srfi srfi-1)
+  #:export (stogas-go
             stogas-igvmmeasure
-            stogas-linux-6-18
+            stogas-linux
+            stogas-ntpd-rs
+            stogas-ovmf
             stogas-systemd-uki-tools
-            stogas-verifier-offline
-	        stogas-verifier-lock
-            stogas-virt-firmware-rs-tools
-            stogas-release-root))
+            stogas-verifier
+            stogas-virt-firmware-rs))
 
-(define %this-file
-  (or (current-filename)
-      (and=> (getenv "STOGAS_RELEASE_ROOT")
-             (lambda (root)
-               (string-append root
-                              "/guix/modules/stogas/release/packages.scm")))))
+;; Guix commands load this module without compiling it, so current-filename
+;; is unknown; find the module on the load path instead.
+(define %release-root
+  (let ((file (search-path %load-path "stogas/release/packages.scm")))
+    (dirname (dirname (dirname (dirname (dirname (canonicalize-path file))))))))
 
-(define stogas-release-root
-  (dirname (dirname (dirname (dirname (dirname %this-file))))))
+(define (release-path path)
+  (string-append %release-root "/" path))
 
-(define (pkg spec)
-  (specification->package spec))
+(define (release-file path)
+  (local-file (release-path path)))
 
-(define* (release-file path name #:key recursive?)
-  (local-file (string-append stogas-release-root "/" path)
-              name
-              #:recursive? (or recursive? #f)))
+(define (patch-file name)
+  (release-file (string-append "patches/" name)))
 
-(define (patch-file path)
-  (release-file (string-append "patches/" path) path))
+(define %sources
+  (assoc-ref (call-with-input-file (release-path "pins.lock.json") json->scm)
+             "releaseSources"))
 
-(define %tree-sha256
-  (release-file "scripts/tree-sha256.sh" "tree-sha256.sh"))
+(define (pin source field)
+  (or (and=> (assoc-ref %sources source)
+             (lambda (fields) (assoc-ref fields field)))
+      (error "missing release pin" source field)))
 
-(define %linux-6-18
-  (specification->package "linux-libre@6.18.38"))
+(define* (pinned-git-origin source url #:key (name source)
+                            (version (pin source "version"))
+                            recursive? (patches '()))
+  (origin
+    (method git-fetch)
+    (uri (git-reference
+          (url url)
+          (commit (pin source "commit"))
+          (recursive? recursive?)))
+    (file-name (git-file-name name version))
+    (sha256 (nix-base32-string->bytevector (pin source "narSha256")))
+    (patches patches)
+    (patch-flags '("-p1" "--fuzz=0"))))
 
-;; Go 1.27 uses the same recipe and Go 1.24.6+ bootstrap as Go 1.26.
-(define %go-1-26
-  (specification->package "go@1.26.4"))
+(define stogas-go
+  (let ((base (specification->package
+               (string-append "go@" (version-major+minor (pin "go" "version"))))))
+    (package
+      (inherit base)
+      (version (pin "go" "version"))
+      (source (pinned-git-origin "go" "https://github.com/golang/go")))))
 
-(define stogas-go-1-27
-  (package
-    (inherit %go-1-26)
-    (name "stogas-go")
-    (version "1.27.1")
-    (source
-     (origin
-       (method url-fetch)
-       (uri "https://go.dev/dl/go1.27.1.src.tar.gz")
-       (sha256
-        (base32 "1c9qn8m8cpxldnw97mhj2g5f7w2l5hzij9s62sv1dn96w6x8lh2f"))))
-    (arguments
-     (substitute-keyword-arguments (package-arguments %go-1-26)
-       ((#:phases phases)
-        #~(modify-phases #$phases
-            (add-after 'unpack 'patch-test-toolchain-shells
-              (lambda _
-                (for-each
-                 (lambda (file)
-                   (substitute* file
-                     (("/bin/sh") (which "sh"))))
-                 (find-files
-                  "src/cmd/go/testdata/mod"
-                  "^golang\\.org_toolchain_.*\\.txt$"))))))))))
-
-(define stogas-linux-6-18
-  (package
-    (inherit %linux-6-18)
-    (name "stogas-linux-6.18")
-    (version "6.18.38")
-    (arguments
-     (substitute-keyword-arguments (package-arguments %linux-6-18)
-       ((#:phases phases)
-        #~(modify-phases #$phases
-            (add-after 'configure 'stogas-built-in-guest-drivers
-              (lambda _
-	                (let ((disabled '("DEBUG_INFO"
-	                                  "BINFMT_MISC"
-	                                  "BPF_SYSCALL"
-	                                  "DEBUG_INFO_BTF"
-	                                  "DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT"
-	                                  "DEBUG_INFO_REDUCED"
-	                                  "DEBUG_INFO_SPLIT"
-	                                  "FW_LOADER"
-	                                  "FTRACE"
-	                                  "HIBERNATION"
-	                                  "KALLSYMS"
-	                                  "KEXEC"
-	                                  "KPROBES"
-	                                  "MODULES"
-	                                  "PACKET"
-	                                  "PROFILING"
-	                                  "PSI_DEFAULT_DISABLED"
-	                                  "USER_NS"
-	                                  "VIRTIO_PCI_LEGACY"))
-	                      (built-ins '("ACPI"
-	                                   "ACPI_BUTTON"
-	                                   "AMD_MEM_ENCRYPT"
-	                                   "BINFMT_ELF"
-	                                   "BLK_DEV_INITRD"
-	                                   "CONFIGFS_FS"
-	                                   "CPU_SUP_AMD"
-	                                   "DEVTMPFS"
-	                                   "DEVTMPFS_MOUNT"
-	                                   "DMI"
-	                                   "EARLY_PRINTK"
-	                                   "EFI"
-	                                   "EFI_COCO_SECRET"
-	                                   "EFI_SECRET"
-	                                   "EFI_STUB"
-	                                   "ELF_CORE"
-	                                   "EXPERT"
-	                                   "FORTIFY_SOURCE"
-	                                   "FW_CFG_SYSFS"
-	                                   "HARDENED_USERCOPY"
-	                                   "INET"
-	                                   "INPUT"
-	                                   "INPUT_EVDEV"
-	                                   "INIT_ON_ALLOC_DEFAULT_ON"
-	                                   "IPV6"
-	                                   "IP_PNP"
-	                                   "IP_PNP_DHCP"
-	                                   "NETDEVICES"
-	                                   "NET"
-	                                   "PCI"
-	                                   "PCI_DIRECT"
-	                                   "PCI_MSI"
-	                                   "PCI_MMCONFIG"
-	                                   "PROC_FS"
-	                                   "PSI"
-	                                   "RANDOMIZE_BASE"
-	                                   "RD_ZSTD"
-	                                   "SECCOMP"
-	                                   "SECCOMP_FILTER"
-	                                   "SECURITYFS"
-	                                   "SERIAL_8250"
-	                                   "SERIAL_8250_CONSOLE"
-	                                   "SERIAL_8250_PCI"
-	                                   "SEV_GUEST"
-	                                   "SLAB_FREELIST_HARDENED"
-	                                   "SLAB_FREELIST_RANDOM"
-	                                   "SMP"
-	                                   "STACKPROTECTOR"
-	                                   "STACKPROTECTOR_STRONG"
-	                                   "STRICT_KERNEL_RWX"
-	                                   "SYSFS"
-	                                   "TMPFS"
-	                                   "TTY"
-	                                   "TSM_GUEST"
-                                   "TSM_REPORTS"
-                                   "UNIX"
-	                                   "VIRT_DRIVERS"
-	                                   "VIRTIO_MENU"
-	                                   "VIRTIO"
-	                                   "VIRTIO_CONSOLE"
-	                                   "VIRTIO_NET"
-	                                   "VIRTIO_PCI"
-	                                   "VIRTIO_VSOCKETS"
-	                                   "VIRTIO_VSOCKETS_COMMON"
-	                                   "VSOCKETS")))
-                  (setenv "ARCH" "x86_64")
+(define stogas-linux
+  (let ((base (specification->package
+               (string-append "linux-libre@" (pin "linux" "version"))))
+        (config (release-file "guix/linux.config")))
+    (package
+      (inherit base)
+      (name "stogas-linux")
+      ;; This replaces Guix's kernel patches, which add a boot logo and an ARM
+      ;; export that this x86 kernel does not build.
+      (source
+       (origin
+         (inherit (package-source base))
+         (patches (list (patch-file "linux-snp-host-acpi.patch")))
+         (patch-flags '("-p1" "--fuzz=0"))))
+      (arguments
+       (substitute-keyword-arguments (package-arguments base)
+         ((#:imported-modules modules %default-gnu-imported-modules)
+          `((guix build kconfig) ,@modules))
+         ((#:modules modules)
+          `((guix build kconfig) ,@modules))
+         ((#:phases phases)
+          #~(modify-phases #$phases
+              (replace 'configure
+                (lambda _
+                  ;; Guix sets this to SOURCE_DATE_EPOCH, "1", which `date -d`
+                  ;; reads as 01:00 today when dating the built-in initramfs.
                   (setenv "KBUILD_BUILD_TIMESTAMP" "1970-01-01 00:00:01 UTC")
-                  (unsetenv "KCONFIG_ALLCONFIG")
-                  (invoke "make" "ARCH=x86_64" "allnoconfig")
-                  (for-each
-                   (lambda (option)
-                     (invoke "scripts/config" "--disable" option))
-                   disabled)
-                  (for-each
-                   (lambda (option)
-                     (invoke "scripts/config" "--enable" option))
-                   built-ins)
-                  (invoke "scripts/config" "--set-val" "NR_CPUS" "4")
-                  (invoke "make" "ARCH=x86_64" "olddefconfig")
-                  (define (assert-enabled option)
-                    (invoke "grep" "-q"
-                            (string-append "^CONFIG_" option "=y$")
-                            ".config"))
-                  (define (assert-disabled option)
-                    (invoke "bash" "-c"
-                            (string-append
-                             "! grep -q '^CONFIG_" option "=' .config"
-                             " || grep -q '^# CONFIG_" option " is not set$' .config")))
-                  (for-each assert-enabled built-ins)
-	                  (invoke "grep" "-q" "^# CONFIG_MODULES is not set$"
-	                          ".config")
-                  (invoke "grep" "-q" "^CONFIG_NR_CPUS=4$" ".config")
-	                  (for-each assert-disabled disabled))))))))
-    (synopsis "Stogas SEV-SNP guest Linux kernel")
-    (description
-     "Linux 6.18.38 with the virtio, EFI secret, configfs/TSM, and SEV-SNP
-guest-report paths built into the kernel for a diskless Go initramfs.")
-    (home-page "https://stogas.ai")
-    (license (package-license %linux-6-18))))
+                  (invoke "make" "allnoconfig"
+                          (string-append "KCONFIG_ALLCONFIG=" #$config))
+                  (verify-config ".config" #$config)))))))
+      (synopsis "Linux kernel for the Stogas SEV-SNP gateway guest")
+      (description
+       "Linux-libre configured from @code{allnoconfig} with only the options
+that the diskless SEV-SNP gateway guest uses."))))
 
 (define stogas-systemd-uki-tools
   (package
     (name "stogas-systemd-uki-tools")
-    (version "261")
-    (source
-     (origin
-       (method url-fetch)
-       (uri "https://github.com/systemd/systemd/archive/de9dbc37ad4aa637e200ac02a0545095997055df.tar.gz")
-       (sha256
-         (base32 "0lidwd6k6agrn1nh72vv3g7y5sca2j0dmzf7n7rpwsnyvfancn1j"))))
+    (version (pin "systemd" "version"))
+    (source (pinned-git-origin "systemd" "https://github.com/systemd/systemd"))
     (build-system meson-build-system)
     (arguments
      (list
@@ -224,319 +121,308 @@ guest-report paths built into the kernel for a diskless Go initramfs.")
       #~(list "-Dmode=release"
               "-Dauto_features=disabled"
               "-Dbootloader=enabled"
-              "-Defi=true"
               "-Dukify=enabled"
               "-Dtpm=false"
               "-Dtests=false"
-              "-Dinstall-tests=false"
-              "-Dsbat-distro=stogas"
-              "-Dsbat-distro-summary=Stogas"
-              "-Dsbat-distro-url=https://stogas.ai/security"
-              "-Dsbat-distro-pkgname=stogas-gateway"
-              "-Dsbat-distro-version=1")
+              ;; Without Secure Boot or shim, the stub needs no distribution
+              ;; SBAT entry.
+              "-Dsbat-distro=")
       #:tests? #f
       #:phases
       #~(modify-phases %standard-phases
           (replace 'build
             (lambda _
-              (invoke "ninja"
-                      "src/boot/linuxx64.efi.stub"
-                      "ukify")))
+              (invoke "ninja" "src/boot/linuxx64.efi.stub" "ukify")))
           (replace 'install
             (lambda _
-              (let ((bin (string-append #$output "/bin"))
-                    (stub-dir (string-append #$output
-                                             "/lib/systemd/boot/efi")))
-                (mkdir-p bin)
-                (mkdir-p stub-dir)
-                (copy-file "ukify" (string-append bin "/ukify"))
-                (chmod (string-append bin "/ukify") #o555)
-                (wrap-program (string-append bin "/ukify")
+              (let ((ukify (string-append #$output "/bin/ukify")))
+                (install-file "src/boot/linuxx64.efi.stub"
+                              (string-append #$output "/lib/systemd/boot/efi"))
+                (install-file "ukify" (dirname ukify))
+                (chmod ukify #o555)
+                (wrap-program ukify
                   `("GUIX_PYTHONPATH" ":" prefix
-                    (,(getenv "GUIX_PYTHONPATH"))))
-                (copy-file "src/boot/linuxx64.efi.stub"
-                           (string-append stub-dir "/linuxx64.efi.stub"))))))))
+                    (,(getenv "GUIX_PYTHONPATH"))))))))))
     (native-inputs
-     (map pkg
-          '("bash-minimal"
-            "binutils"
-            "coreutils"
-            "gcc-toolchain"
-            "gperf"
-            "meson"
-            "ninja"
+     (map specification->package
+          '("gperf"
             "pkg-config"
             "python"
             "python-jinja2"
             "python-pefile"
             "python-pyelftools")))
-    (synopsis "Pinned systemd ukify and EFI stub")
-    (description "Deterministic systemd v261 ukify and linuxx64.efi.stub.")
     (home-page "https://systemd.io")
-    (license #f)))
+    (synopsis "systemd ukify and EFI stub")
+    (description "The systemd @command{ukify} tool and the EFI stub it uses to
+build unified kernel images.")
+    (license license:lgpl2.1+)))
 
-(define stogas-edk2-amdsev-ovmf
+(define stogas-ovmf
   (package
     (inherit ovmf-x86-64)
-    (name "stogas-edk2-amdsev-ovmf")
-    (version "stable202605")
+    (name "stogas-ovmf")
+    (version (pin "edk2" "version"))
     (source
-     (origin
-       (method git-fetch)
-       (uri (git-reference
-             (url "https://github.com/tianocore/edk2")
-             (commit "b03a21a63e3bd001f52c527e5a57feddb53a690b")
-             (recursive? #t)))
-       (file-name (git-file-name "edk2" version))
-       (sha256
-        (base32 "0mpfs9vd9fy6103k83jwd58xcy1j908m6b27bclxmbrc9vim9l8n"))))
+     (pinned-git-origin "edk2" "https://github.com/tianocore/edk2"
+                        #:recursive? #t
+                        #:patches
+                        (list (patch-file "edk2-amdsev-kernel-only.patch"))))
     (arguments
      (substitute-keyword-arguments (package-arguments ovmf-x86-64)
        ((#:phases phases)
         #~(modify-phases #$phases
-            (add-before 'build 'pin-amdsev-grub-tools
-              (lambda _
-                (invoke "sed" "-i"
-                        "s|mkfs\\.msdos -C --|mkfs.msdos --invariant -C --|"
-                        "OvmfPkg/AmdSev/Grub/grub.sh")
-                (invoke "sed" "-i"
-                        "s|mcopy -i |mcopy -m -i |"
-                        "OvmfPkg/AmdSev/Grub/grub.sh")
-                (invoke "sed" "-i"
-                        "s|(UINT32) time(NULL)|(UINT32) 1|g"
-                        "BaseTools/Source/C/GenFw/Elf32Convert.c"
-                        "BaseTools/Source/C/GenFw/Elf64Convert.c")
-                (invoke "sed" "-i"
-                        (string-append "s|^mkimage=$|mkimage="
-                                       #$(file-append (pkg "grub-efi")
-                                                      "/bin/grub-mkimage")
-                                       "|")
-                        "OvmfPkg/AmdSev/Grub/grub.sh")
-                (invoke "sed" "-i"
-                        (string-append "s|mkfs\\.msdos|"
-                                       #$(file-append (pkg "dosfstools")
-                                                      "/sbin/mkfs.fat")
-                                       "|g")
-                        "OvmfPkg/AmdSev/Grub/grub.sh")
-                (invoke "sed" "-i"
-                        (string-append "s|\\bmcopy\\b|"
-                                       #$(file-append (pkg "mtools")
-                                                      "/bin/mcopy")
-                                       "|g")
-                        "OvmfPkg/AmdSev/Grub/grub.sh")
-                (invoke "sed" "-i"
-                        "/linuxefi/d;/sevsecret/d"
-                        "OvmfPkg/AmdSev/Grub/grub.sh"
-                        "OvmfPkg/AmdSev/Grub/grub.cfg")
-                (invoke "touch" "-d" "1980-01-01 00:00:00 UTC"
-                        "OvmfPkg/AmdSev/Grub/grub.cfg")
-                (invoke "grep" "-q"
-                        #$(file-append (pkg "grub-efi") "/bin/grub-mkimage")
-                        "OvmfPkg/AmdSev/Grub/grub.sh")))
             (replace 'build
               (lambda _
-                (invoke "build"
-                        "-a" "X64"
-                        "-t" "GCC"
+                (invoke "build" "-a" "X64" "-t" "GCC"
                         "-p" "OvmfPkg/AmdSev/AmdSevX64.dsc")))
+            (delete 'install-efi-shell)
             (replace 'install
               (lambda _
-                (let* ((firmware-dir (string-append #$output
-                                                     "/share/firmware"))
-                       (files (sort (find-files "Build" "^OVMF\\.fd$")
-                                    string<?)))
-                  (when (null? files)
-                    (error "AmdSev OVMF.fd was not produced"))
-                  (mkdir-p firmware-dir)
-                  (copy-file (car files)
-                             (string-append firmware-dir
-                                            "/ovmf-amdsev-x64.fd")))))))))
-    (synopsis "Pinned edk2 AmdSev OVMF firmware")
-    (description "edk2 stable202605 OVMF built from OvmfPkg/AmdSev/AmdSevX64.dsc.")
-    (home-page "https://github.com/tianocore/edk2")
-    (native-inputs
-     (modify-inputs (package-native-inputs ovmf-x86-64)
-       (append (pkg "dosfstools")
-               (pkg "grub-efi")
-               (pkg "mtools"))))))
+                (install-file "Build/AmdSev/RELEASE_GCC/FV/OVMF.fd"
+                              (string-append #$output "/share/firmware"))))
+            (delete 'install-qemu-firmware-metadata)))))
+    (synopsis "AmdSev OVMF firmware that boots only the measured kernel")
+    (description "OVMF built from @file{OvmfPkg/AmdSev/AmdSevX64.dsc}.  It
+boots the unified kernel image from the IGVM file and halts if that fails.")))
 
-(define* (rust-tool-package name version source source-directory vendor lock
-                           vendor-sha256 config-body build-command binaries
-                           synopsis #:key (output-directory "bin")
-                           (rust (list (pkg "rust"))))
-  (package
-    (name name)
-    (version version)
-    (source source)
-    (build-system gnu-build-system)
-    (arguments
-     (list
-      #:tests? #f
-      #:phases
-      #~(modify-phases %standard-phases
-          (delete 'bootstrap)
-          (delete 'configure)
-          (delete 'patch-usr-bin-file)
-          (delete 'patch-source-shebangs)
-          (delete 'patch-generated-file-shebangs)
-          (add-after 'unpack 'attach-vendored-dependencies
-            (lambda _
-              (with-directory-excursion #$source-directory
-                (copy-file #$lock "Cargo.lock")
+;;; Rust tools build offline from the crates their reviewed Cargo.lock names.
+
+(define %crates-io "registry+https://github.com/rust-lang/crates.io-index")
+
+(define (cargo-lock-packages lock)
+  "Return the fields of each package in the Cargo.lock file LOCK that comes
+from a registry or Git rather than the workspace."
+  (call-with-input-file lock
+    (lambda (port)
+      (let loop ((packages '()) (fields #f))
+        (let ((line (read-line port))
+              (done (if fields (cons fields packages) packages)))
+          (cond
+           ((eof-object? line)
+            (filter (lambda (fields) (assoc-ref fields "source"))
+                    (reverse done)))
+           ((string=? line "[[package]]")
+            (loop done '()))
+           ((and fields
+                 (string-match "^(name|version|source|checksum) = \"([^\"]*)\"$"
+                               line))
+            => (lambda (m)
+                 (loop packages
+                       (acons (match:substring m 1) (match:substring m 2)
+                              fields))))
+           (else
+            (loop packages fields))))))))
+
+(define (cargo-git-source fields)
+  "Return the URL, revision and commit of a Git package, or #f."
+  (match (string-match "^git\\+([^?#]+)\\?rev=([^#]+)#([0-9a-f]{40})$"
+                       (assoc-ref fields "source"))
+    (#f #f)
+    (m (map (lambda (group) (match:substring m group)) '(1 2 3)))))
+
+(define (cargo-crate fields)
+  "Return the vendor directory, source and checksum of one locked package."
+  (let ((name (assoc-ref fields "name"))
+        (version (assoc-ref fields "version"))
+        (source (assoc-ref fields "source"))
+        (checksum (assoc-ref fields "checksum")))
+    (list
+     (string-append name "-" version)
+     (match (cargo-git-source fields)
+       ((url _ commit)
+        (unless (string=? commit (pin name "commit"))
+          (error "Git crate differs from its release pin" name commit))
+        (pinned-git-origin name url #:version version))
+       (#f
+        (unless (and (string=? source %crates-io) checksum)
+          (error "unsupported Cargo source" name source))
+        (origin
+          (method url-fetch)
+          (uri (crate-uri name version))
+          (file-name (string-append (crate-name->package-name name)
+                                    "-" version ".tar.gz"))
+          (sha256 (base16-string->bytevector checksum)))))
+     checksum)))
+
+(define (cargo-config packages)
+  (string-append
+   "[source.crates-io]\nreplace-with = \"vendored-sources\"\n"
+   (string-concatenate
+    (filter-map
+     (lambda (fields)
+       (match (cargo-git-source fields)
+         ((url rev _)
+          (format #f "[source.~s]\ngit = ~s\nrev = ~s\nreplace-with = \"vendored-sources\"\n"
+                  (assoc-ref fields "name") url rev))
+         (#f #f)))
+     packages))
+   "[source.vendored-sources]\ndirectory = \"vendor\"\n"))
+
+(define* (cargo-package name version source lock build check outputs
+                        home-page synopsis license
+                        #:key (directory ".") (target "target/release")
+                        (install-directory "bin"))
+  "Build SOURCE with the crates in the Cargo.lock file LOCK and install the
+OUTPUTS files that BUILD leaves in TARGET."
+  (let ((packages (cargo-lock-packages lock))
+        (lock-file (local-file lock)))
+    (package
+      (name name)
+      (version version)
+      (source source)
+      (build-system gnu-build-system)
+      (arguments
+       (list
+        #:modules '((guix build gnu-build-system)
+                    (guix build utils)
+                    (ice-9 match))
+        #:phases
+        #~(modify-phases %standard-phases
+            (delete 'bootstrap)
+            (delete 'configure)
+            (delete 'patch-usr-bin-file)
+            (delete 'patch-source-shebangs)
+            (delete 'patch-generated-file-shebangs)
+            (add-after 'unpack 'vendor-crates
+              (lambda _
+                (chdir #$directory)
+                ;; A lock in the source must match the reviewed copy.
+                (if (file-exists? "Cargo.lock")
+                    (invoke "cmp" "Cargo.lock" #$lock-file)
+                    (copy-file #$lock-file "Cargo.lock"))
+                (for-each
+                 (match-lambda
+                   ((name crate checksum)
+                    (let ((target (string-append "vendor/" name)))
+                      (if checksum
+                          (begin
+                            (mkdir-p target)
+                            (invoke "tar" "-xzf" crate "-C" target
+                                    "--strip-components=1"))
+                          (copy-recursively crate target
+                                            #:log (%make-void-port "w")))
+                      (call-with-output-file
+                          (string-append target "/.cargo-checksum.json")
+                        (lambda (port)
+                          (format port "{\"files\":{},\"package\":~a}"
+                                  (if checksum
+                                      (string-append "\"" checksum "\"")
+                                      "null")))))))
+                 '#$(map cargo-crate packages))
                 (mkdir-p ".cargo")
                 (call-with-output-file ".cargo/config.toml"
                   (lambda (port)
-                    (display #$config-body port)))
-                (copy-recursively #$vendor "vendor"))))
-          (add-after 'attach-vendored-dependencies 'verify-vendored-dependencies
-            (lambda _
-              (with-directory-excursion #$source-directory
-                (use-modules (ice-9 rdelim))
-                (invoke "bash" "-c" "bash \"$1\" \"$2\" > .vendor.sha256"
-                        "tree-sha256" #$%tree-sha256 "vendor")
-                (let ((actual (call-with-input-file ".vendor.sha256" read-line)))
-                  (unless (string=? actual #$vendor-sha256)
-                    (error "Cargo vendor cache hash mismatch"
-                           actual
-                           #$vendor-sha256))))))
-          (replace 'build
-            (lambda _
-              (with-directory-excursion #$source-directory
-                (setenv "CARGO_NET_OFFLINE" "true")
-                (setenv "HOME" (getcwd))
-                #$build-command)))
-          (replace 'install
-            (lambda _
-              (with-directory-excursion #$source-directory
-                (let ((bin (string-append #$output "/" #$output-directory)))
-                  (mkdir-p bin)
-                  (for-each
-                   (lambda (binary)
-                     (install-file (string-append "target/release/" binary)
-                                   bin))
-                   '#$binaries))))))))
-    (native-inputs (append (map pkg '("bash-minimal" "coreutils" "findutils")) rust))
-    (synopsis synopsis)
-    (description synopsis)
-    (home-page "https://stogas.ai")
-    (license #f)))
+                    (display #$(cargo-config packages) port)))
+                (setenv "CARGO_HOME" (string-append (getcwd) "/.cargo"))
+                (setenv "CC" "gcc")))
+            (replace 'build
+              (lambda _ #$build))
+            (replace 'check
+              (lambda* (#:key tests? #:allow-other-keys)
+                (when tests? #$check)))
+            (replace 'install
+              (lambda _
+                (for-each
+                 (lambda (file)
+                   (install-file (string-append #$target "/" file)
+                                 (string-append #$output "/"
+                                                #$install-directory)))
+                 '#$outputs))))))
+      ;; This Rust ships without rustdoc, so tests skip doctests.
+      (native-inputs (list rust-1.95 (list rust-1.95 "cargo")))
+      (home-page home-page)
+      (synopsis synopsis)
+      (description synopsis)
+      (license license))))
 
-(define stogas-virt-firmware-rs-tools
-  (rust-tool-package
-   "stogas-virt-firmware-rs-tools"
-   "26.4"
-   (origin
-     (method url-fetch)
-     (uri "https://gitlab.com/kraxel/virt-firmware-rs/-/archive/e01dffc463934547a42506df656becd9061926f7/virt-firmware-rs-e01dffc463934547a42506df656becd9061926f7.tar.gz")
-     (sha256
-      (base32 "09gahq7j8s2grlmgjd5nnv2gvway2gv52p5b8wqlywjj175l5lph"))
-     (patches
-      (list (patch-file "virt-firmware-rs-qemu-kvm.patch"))))
-   "."
-   (release-file "vendor/virt-firmware-rs/vendor"
-                 "virt-firmware-rs-vendor"
-                 #:recursive? #t)
-   (release-file "locks/virt-firmware-rs.Cargo.lock"
-                 "virt-firmware-rs-Cargo.lock")
-   "3a7407068888eb8fcf0e6d468be87d991da62aaac099e87c6f103848d23638c1"
-   "[source.crates-io]
-replace-with = \"vendored-sources\"
-
-[source.\"git+https://github.com/ardbiesheuvel/efiloader.git?rev=699b3142085c\"]
-git = \"https://github.com/ardbiesheuvel/efiloader.git\"
-rev = \"699b3142085c\"
-replace-with = \"vendored-sources\"
-
-[source.vendored-sources]
-directory = \"vendor\"
-"
-   #~(begin
-       (invoke "cargo" "test" "--release" "--locked" "--offline"
-               "-p" "virtfw-igvm-tools")
-       (invoke "cargo" "build" "--release" "--locked" "--offline"
-               "-p" "virtfw-igvm-tools" "--bins"))
-   '("igvm-wrap" "igvm-update")
-   "Pinned virt-firmware-rs IGVM update tools"))
+(define stogas-virt-firmware-rs
+  (cargo-package
+   "stogas-virt-firmware-rs" (pin "virtFirmwareRs" "version")
+   (pinned-git-origin "virtFirmwareRs" "https://gitlab.com/kraxel/virt-firmware-rs"
+                      #:name "virt-firmware-rs"
+                      #:patches (list (patch-file "virt-firmware-rs-qemu-kvm.patch")))
+   (release-path "locks/virt-firmware-rs.Cargo.lock")
+   #~(invoke "cargo" "build" "--release" "--locked" "--offline"
+             "-p" "virtfw-igvm-tools" "--bins")
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests"
+             "-p" "virtfw-igvm-tools")
+   '("igvm-inspect" "igvm-update" "igvm-wrap")
+   "https://gitlab.com/kraxel/virt-firmware-rs"
+   "virt-firmware-rs IGVM tools with four-CPU SEV-SNP support"
+   license:expat))
 
 (define stogas-igvmmeasure
-  (rust-tool-package
-   "stogas-igvmmeasure"
-   "2026.05"
-   (origin
-     (method url-fetch)
-     (uri "https://github.com/coconut-svsm/svsm/archive/8850f7bd766e0b592d01efb67c615a9d8f171269.tar.gz")
-     (sha256
-      (base32 "03lnkgbw40p43dx2pf07kdjayxz4mv1hy752dk7h27awc680y7ih"))
-     (patches
-      (list (patch-file "svsm-igvmmeasure-qemu-kvm.patch"))))
-   "tools/igvmmeasure"
-   (release-file "vendor/igvmmeasure/vendor"
-                 "igvmmeasure-vendor"
-                 #:recursive? #t)
-   (release-file "locks/igvmmeasure.Cargo.lock"
-                 "igvmmeasure-Cargo.lock")
-   "a7bd28909d262a496f16b4b9e28d0546e62c5e3bfd026ad32be5c6664c4f5a29"
-   "[source.crates-io]
-replace-with = \"vendored-sources\"
-
-[source.vendored-sources]
-directory = \"vendor\"
-"
-   #~(begin
-       (invoke "cargo" "test" "--release" "--locked" "--offline")
-       (invoke "cargo" "build" "--release" "--locked" "--offline"))
+  (cargo-package
+   "stogas-igvmmeasure" (pin "svsm" "version")
+   (pinned-git-origin "svsm" "https://github.com/coconut-svsm/svsm"
+                      #:patches (list (patch-file "svsm-igvmmeasure-qemu-kvm.patch")))
+   (release-path "locks/igvmmeasure.Cargo.lock")
+   #~(invoke "cargo" "build" "--release" "--locked" "--offline")
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests")
    '("igvmmeasure")
-   "Pinned standalone SVSM igvmmeasure tool"))
+   "https://github.com/coconut-svsm/svsm"
+   "COCONUT-SVSM igvmmeasure tool that checks QEMU/KVM SEV-SNP launches"
+   license:expat
+   #:directory "tools/igvmmeasure"))
 
-
-(define %verifier-build-root
-  (let ((root (getenv "STOGAS_VERIFIER_BUILD_ROOT")))
-    (and root (not (string-null? root)) root)))
-
-(define (verifier-input path name)
-  (local-file (string-append %verifier-build-root "/" path) name))
-
-(define stogas-verifier-lock
-  (if %verifier-build-root
-      (verifier-input "source/Cargo.lock" "stogas-verifier-Cargo.lock")
-      (release-file "locks/stogas-verifier.Cargo.lock" "stogas-verifier-Cargo.lock")))
-
-(define stogas-verifier-offline
-  (rust-tool-package
-   "stogas-verifier-offline"
-   "0.1.0-alpha.1"
-   (if %verifier-build-root
-     (local-file (string-append %verifier-build-root "/source")
-                 "stogas-verifier-source" #:recursive? #t)
-     (origin
-     (method url-fetch)
-     (uri "https://github.com/StogasAI/verifier/archive/f9feaf2fb0c7d29f737073066c38de34a51b1024.tar.gz")
-     (sha256 (base32 "0fh1fx36zg9k5snfd1aibil6n0ajcfj2bpnwkla6pml8ack202c3"))))
-   "."
-   (if %verifier-build-root
-       (local-file (string-append %verifier-build-root "/vendor")
-                   "stogas-verifier-vendor" #:recursive? #t)
-       (release-file "vendor/stogas-verifier/vendor" "stogas-verifier-vendor" #:recursive? #t))
-   stogas-verifier-lock
-   (if %verifier-build-root
-       #~(call-with-input-file #$(verifier-input "vendor.sha256" "stogas-verifier-vendor.sha256") read-line)
-       "a74aa2fda7a1e983a837610cb7b4c2e1069761adc3d85d5c7e227e6d30403329")
-   "[source.crates-io]
-replace-with = \"vendored-sources\"
-[source.vendored-sources]
-directory = \"vendor\"
-"
+(define stogas-ntpd-rs
+  (cargo-package
+   "stogas-ntpd-rs" (pin "ntpdRs" "version")
+   (pinned-git-origin "ntpdRs" "https://github.com/pendulum-project/ntpd-rs"
+                      #:name "ntpd-rs")
+   (release-path "locks/ntpd-rs.Cargo.lock")
+   ;; The guest rootfs holds only static binaries. An explicit target keeps
+   ;; crt-static off build scripts and procedural macros. Guix glibc cannot
+   ;; relocate a static PIE at startup, so the daemon is a fixed-address
+   ;; static executable like the gateway. The client needs neither the NTS
+   ;; server nor PPS support.
    #~(begin
-       (setenv "RUSTFLAGS" "--remap-path-prefix=.=source")
-       (invoke "cargo" "test" "--release" "--locked" "--offline" "--tests"
-               "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
-               "--no-default-features" "--features" "staging,stogas-verifier-ffi/gateway")
+       (setenv "CARGO_BUILD_TARGET" "x86_64-unknown-linux-gnu")
+       (setenv "CARGO_PROFILE_RELEASE_DEBUG" "false")
+       (setenv "RUSTFLAGS" "-C target-feature=+crt-static -C relocation-model=static")
+       (setenv "NTPD_RS_GIT_REV" #$(pin "ntpdRs" "commit"))
+       (setenv "NTPD_RS_GIT_DATE" #$(pin "ntpdRs" "commitDate"))
        (invoke "cargo" "build" "--release" "--locked" "--offline"
-               "-p" "stogas-verifier-ffi" "--no-default-features" "--features" "staging,gateway"))
+               "-p" "ntpd" "--bin" "ntp-daemon"
+               "--no-default-features" "--features" "aws-lc,rustcrypto"))
+   ;; The libraries hold the protocol and daemon logic; the integration
+   ;; tests cover only the unshipped ntp-ctl. Without nsswitch.conf, glibc
+   ;; in the build sandbox stops after the failed DNS lookup and never
+   ;; reads /etc/hosts for localhost.
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--lib"
+             "-p" "ntp-proto" "-p" "ntpd"
+             "--no-default-features" "--features" "aws-lc,rustcrypto"
+             "--" "--skip" "allow_srv_direct_name_resolution")
+   '("ntp-daemon")
+   "https://github.com/pendulum-project/ntpd-rs"
+   "Static ntpd-rs NTS client daemon"
+   (list license:asl2.0 license:expat)
+   #:target "target/x86_64-unknown-linux-gnu/release"))
+
+;; A staging build sets STOGAS_VERIFIER_SOURCE to a captured working tree.
+(define %verifier-snapshot
+  (let ((source (getenv "STOGAS_VERIFIER_SOURCE")))
+    (and source (not (string-null? source)) source)))
+
+(define stogas-verifier
+  (cargo-package
+   "stogas-verifier-ffi" "0"
+   (if %verifier-snapshot
+       (local-file %verifier-snapshot "stogas-verifier-source" #:recursive? #t)
+       (pinned-git-origin "stogasVerifier" "https://github.com/StogasAI/verifier"
+                          #:name "stogas-verifier" #:version "0"))
+   (if %verifier-snapshot
+       (string-append %verifier-snapshot "/Cargo.lock")
+       (release-path "locks/stogas-verifier.Cargo.lock"))
+   #~(invoke "cargo" "build" "--release" "--locked" "--offline"
+             "-p" "stogas-verifier-ffi"
+             "--no-default-features" "--features" "staging,gateway")
+   #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests"
+             "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
+             "--no-default-features"
+             "--features" "staging,stogas-verifier-ffi/gateway")
    '("libstogas_verifier_ffi.a")
-   "Offline confidential evidence verifier with explicit environment selection"
-   #:output-directory "lib"
-   ;; The verifier requires Rust 1.94.1, newer than Guix's default Rust. This
-   ;; Guix bootstrap stage ships rustc and cargo without rustdoc, so the
-   ;; verifier tests run without doctests; its crates have none.
-   #:rust (list rust-1.94 (list rust-1.94 "cargo"))))
+   "https://github.com/StogasAI/verifier"
+   "Offline Stogas evidence verifier library for the gateway"
+   license:asl2.0
+   #:install-directory "lib"))

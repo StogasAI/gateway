@@ -52,8 +52,6 @@ node_modules/
 go.work
 go.work.sum
 *.test
-transports/vendor/
-stogas/release/vendor/
 *.db
 *.db-shm
 *.db-wal
