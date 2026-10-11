@@ -2,6 +2,7 @@ package billing
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -101,13 +102,10 @@ func TestQueueFailureFallsBackWithExactImmutableEvidence(t *testing.T) {
 	for _, acknowledgement := range []string{"unavailable", `{"accepted_rows":0}`, `{"accepted_rows":1} {}`, `{"accepted_rows":"1"}`} {
 		t.Run(acknowledgement, func(t *testing.T) {
 			var primaryCalls, fallbackCalls atomic.Int32
-			var queued requestLogRecord
-			var stored tinybirdGatewayRequestEventPayload
+			var queued, stored []byte
 			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				primaryCalls.Add(1)
-				if err := json.NewDecoder(r.Body).Decode(&queued); err != nil {
-					t.Error(err)
-				}
+				queued, _ = io.ReadAll(r.Body)
 				if acknowledgement == "unavailable" {
 					w.WriteHeader(503)
 					return
@@ -117,9 +115,7 @@ func TestQueueFailureFallsBackWithExactImmutableEvidence(t *testing.T) {
 			defer primary.Close()
 			fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				fallbackCalls.Add(1)
-				if err := json.NewDecoder(r.Body).Decode(&stored); err != nil {
-					t.Error(err)
-				}
+				stored, _ = io.ReadAll(r.Body)
 				io.WriteString(w, `{"successful_rows":1,"quarantined_rows":0}`)
 			}))
 			defer fallback.Close()
@@ -135,7 +131,7 @@ func TestQueueFailureFallsBackWithExactImmutableEvidence(t *testing.T) {
 			if primaryCalls.Load() != 1 || fallbackCalls.Load() != 2 {
 				t.Fatal("queue circuit blocked the independent fallback")
 			}
-			if queued.RequestID != stored.RequestID || queued.HoldParamsHash != stored.HoldParamsHash || queued.Usage.BilledCostUSD != stored.BilledCostUSD {
+			if len(queued) == 0 || !bytes.Equal(queued, stored) {
 				t.Fatal("fallback changed durable financial evidence")
 			}
 		})

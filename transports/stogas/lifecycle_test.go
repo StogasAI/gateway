@@ -1133,17 +1133,17 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			if len(authorizer.finalEvents) != 1 {
 				t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
 			}
-			if got := authorizer.finalEvents[0].ProviderAttempts[attemptCount-1].CatalogChainHash; got == nil || *got != actual.ChainHash || *got == resolution.Deployment.ChainHash {
+			if got := authorizer.finalEvents[0].ProviderAttempts[attemptCount-1].CatalogChainHash; got != actual.ChainHash || got == resolution.Deployment.ChainHash {
 				t.Fatalf("final chain = %v, want the actual standard-tier chain %s", got, actual.ChainHash)
 			}
 			if metadata := FinalMetadata(context.Background(), state); metadata.Catalog.ChainHash != actual.ChainHash {
 				t.Fatalf("response metadata lost the catalog identity: %#v", metadata.Catalog)
 			}
 			attempts := authorizer.finalEvents[0].ProviderAttempts
-			if len(attempts) != attemptCount || attempts[attemptCount-1].SelectedCatalogChainHash == nil || *attempts[attemptCount-1].SelectedCatalogChainHash != resolution.Deployment.ChainHash {
+			if len(attempts) != attemptCount || attempts[attemptCount-1].SelectedCatalogChainHash != resolution.Deployment.ChainHash {
 				t.Fatalf("original Fast selection was lost: %#v", attempts)
 			}
-			if attemptCount == 2 && attempts[0].SelectedCatalogChainHash != nil {
+			if attemptCount == 2 && attempts[0].SelectedCatalogChainHash != "" {
 				t.Fatal("unchanged attempt repeated its selected chain")
 			}
 		})

@@ -93,7 +93,7 @@ func validMeterCosts(metadata Metadata) bool {
 		metadata.CacheWriteOverheadUSD != nil && !isUSD(*metadata.CacheWriteOverheadUSD) {
 		return false
 	}
-	_, _, err := billing.ValidateMeters(metadata.Meters)
+	_, err := billing.ValidateMeters(metadata.Meters)
 	return err == nil
 }
 
