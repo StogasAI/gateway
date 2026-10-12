@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -526,7 +527,14 @@ func (s *Service) authorizeResolvedRequest(
 	if apiKeyHash != "" {
 		apiKeyHashValue = &apiKeyHash
 	}
-	err = s.db.pool.QueryRow(
+	// A statement that never left the gateway cannot have created a hold, so it
+	// needs no close. An exhausted pool or an unreachable database then gets
+	// no extra calls from the requests it already failed.
+	conn, err := s.db.pool.Acquire(queryCtx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+	}
+	err = conn.QueryRow(
 		queryCtx,
 		s.authorizeHoldQuery,
 		apiKeyHashValue,
@@ -553,9 +561,12 @@ func (s *Service) authorizeResolvedRequest(
 	).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 	)
+	conn.Release()
 	if err != nil {
-		s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
-		releaseFinalization = nil
+		if !pgconn.SafeToRetry(err) {
+			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
+			releaseFinalization = nil
+		}
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 
