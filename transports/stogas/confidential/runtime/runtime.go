@@ -103,7 +103,7 @@ func Start(ctx context.Context, config stogas.ConfidentialConfig, resources Reso
 		evidence.close()
 		return nil, err
 	}
-	r, err := startBoot(ctx, config, resources, evidence, material, keys, attest.DefaultSEVSNP(), nil)
+	r, err := startBoot(ctx, config, resources, evidence, material, keys, attest.SEVGuestDevice{}, nil)
 	if err != nil {
 		evidence.close()
 		keys.Close()
