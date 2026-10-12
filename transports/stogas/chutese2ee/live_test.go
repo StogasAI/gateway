@@ -97,14 +97,14 @@ func TestLiveChutesMeasurements(t *testing.T) {
 			t.Fatalf("decode %s: %v", path, err)
 		}
 	}
-	var records []measurementPolicy
+	var records []json.RawMessage
 	read(measurementsPath, &records)
 	for _, record := range records {
-		if _, ok := normalizeMeasurement(record); !ok {
-			t.Errorf("gateway skips TDX measurement %s %q for GPUs %v", record.Version, record.Name, record.ExpectedGPUs)
+		if _, ok := parseMeasurement(record); !ok {
+			t.Errorf("gateway skips TDX measurement %.400s", record)
 		}
 	}
-	if _, _, err := supportedMeasurements(records); err != nil {
+	if _, err := supportedMeasurements(records); err != nil {
 		t.Error(err)
 	}
 	var snp []json.RawMessage

@@ -27,10 +27,11 @@ import (
 
 func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 	measurement := validMeasurementForTest()
-	measurements, digest, err := supportedMeasurements([]measurementPolicy{measurement})
+	policy, err := supportedMeasurements(measurementRecordsForTest(t, measurement))
 	if err != nil {
 		t.Fatalf("validate policy: %v", err)
 	}
+	measurements, digest := policy.Measurements, policy.Digest
 	if len(digest) != sha256.Size*2 {
 		t.Fatalf("policy digest length = %d", len(digest))
 	}
@@ -50,7 +51,8 @@ func TestMeasurementPolicyValidationAndMatching(t *testing.T) {
 }
 
 // Records use the published /servers/tdx/measurements shape. A record the gateway
-// cannot use is skipped without disabling the others, and the digest ignores order.
+// cannot decode or use is skipped without disabling the others, and the digest
+// ignores order.
 func TestMeasurementPolicyReadsPublishedRecords(t *testing.T) {
 	register := func(value byte) string { return strings.Repeat(fmt.Sprintf("%02X", value), 48) }
 	record := func(version string, gpus []string, mrtd string) map[string]any {
@@ -67,40 +69,35 @@ func TestMeasurementPolicyReadsPublishedRecords(t *testing.T) {
 			"rtmr3":         register(0x23),
 		}
 	}
-	decode := func(values ...any) []measurementPolicy {
-		encoded, err := json.Marshal(values)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var records []measurementPolicy
-		if err := json.Unmarshal(encoded, &records); err != nil {
-			t.Fatal(err)
-		}
-		return records
-	}
 	current := record("1.5.0", []string{"h200"}, register(0x11))
 	previous := record("1.4.1", []string{"h200"}, register(0x12))
 	unverifiableGPU := record("1.5.0", []string{"h100"}, register(0x13))
 	malformed := record("1.5.0", []string{"h200"}, "00")
+	retyped := record("1.5.0", []string{"h200"}, register(0x14))
+	retyped["gpu_count"] = "8"
 
-	measurements, digest, err := supportedMeasurements(decode(current, unverifiableGPU, malformed, previous))
+	policy, err := supportedMeasurements(measurementRecordsForTest(t, current, unverifiableGPU, malformed, retyped, previous))
 	if err != nil {
 		t.Fatalf("read policy: %v", err)
 	}
-	if len(measurements) != 2 || measurements[0].RTMR3 != strings.ToLower(register(0x23)) {
-		t.Fatalf("measurements = %#v", measurements)
+	measurements := policy.Measurements
+	if len(measurements) != 2 || measurements[0].RTMR3 != strings.ToLower(register(0x23)) || policy.Skipped != 3 {
+		t.Fatalf("policy = %#v", policy)
 	}
-	_, reorderedDigest, err := supportedMeasurements(decode(previous, malformed, current))
-	if err != nil || reorderedDigest != digest {
-		t.Fatalf("reordered digest = %q, %v; want %q", reorderedDigest, err, digest)
+	reordered, err := supportedMeasurements(measurementRecordsForTest(t, previous, malformed, current))
+	if err != nil || reordered.Digest != policy.Digest {
+		t.Fatalf("reordered digest = %q, %v; want %q", reordered.Digest, err, policy.Digest)
 	}
 	for _, measurement := range measurements {
 		if _, err := matchMeasurement(quoteForMeasurementForTest(measurement), &policySnapshot{Measurements: measurements}); err != nil {
 			t.Fatalf("match %s: %v", measurement.Version, err)
 		}
 	}
-	if _, err := matchMeasurement(quoteForMeasurementForTest(decode(unverifiableGPU)[0]), &policySnapshot{Measurements: measurements}); err == nil {
-		t.Fatal("expected a skipped record to match no quote")
+	for _, mrtd := range []string{register(0x13), register(0x14)} {
+		skipped := measurementPolicy{MRTD: mrtd, RTMR0: register(0x20), RTMR1: register(0x21), RTMR2: register(0x22), RTMR3: register(0x23)}
+		if _, err := matchMeasurement(quoteForMeasurementForTest(skipped), &policySnapshot{Measurements: measurements}); err == nil {
+			t.Fatal("expected a skipped record to match no quote")
+		}
 	}
 }
 
@@ -108,10 +105,11 @@ func TestMeasurementPolicySkipsUnsupportedGPUFamilies(t *testing.T) {
 	future := validMeasurementForTest()
 	future.Version = "2.0.0"
 	future.ExpectedGPUs = []string{"future_gpu"}
-	measurements, _, err := supportedMeasurements([]measurementPolicy{future, validMeasurementForTest()})
+	policy, err := supportedMeasurements(measurementRecordsForTest(t, future, validMeasurementForTest()))
 	if err != nil {
 		t.Fatalf("validate policy: %v", err)
 	}
+	measurements := policy.Measurements
 	if len(measurements) != 1 || measurements[0].Version != "1.3.1" {
 		t.Fatalf("measurements = %#v", measurements)
 	}
@@ -134,12 +132,12 @@ func TestMeasurementPolicySkipsMalformedRecordsAndRejectsAmbiguousMatches(t *tes
 		t.Run(name, func(t *testing.T) {
 			measurement := validMeasurementForTest()
 			mutate(&measurement)
-			if _, _, err := supportedMeasurements([]measurementPolicy{measurement}); err == nil {
+			if _, err := supportedMeasurements(measurementRecordsForTest(t, measurement)); err == nil {
 				t.Fatal("expected a list without usable records to fail")
 			}
-			measurements, _, err := supportedMeasurements([]measurementPolicy{measurement, validMeasurementForTest()})
-			if err != nil || len(measurements) != 1 {
-				t.Fatalf("valid sibling = %#v, %v", measurements, err)
+			policy, err := supportedMeasurements(measurementRecordsForTest(t, measurement, validMeasurementForTest()))
+			if err != nil || len(policy.Measurements) != 1 || policy.Skipped != 1 {
+				t.Fatalf("valid sibling = %#v, %v", policy, err)
 			}
 		})
 	}
@@ -343,10 +341,11 @@ func TestBYOKDiscoveryUsesCustomerKeyWhileEvidenceUsesManagedKey(t *testing.T) {
 	}
 	publicKey := base64.StdEncoding.EncodeToString(instanceKey.EncapsulationKey().Bytes())
 	now := time.Now()
-	measurements, digest, err := supportedMeasurements([]measurementPolicy{validMeasurementForTest()})
+	policy, err := supportedMeasurements(measurementRecordsForTest(t, validMeasurementForTest()))
 	if err != nil {
 		t.Fatal(err)
 	}
+	measurements, digest := policy.Measurements, policy.Digest
 	var discoveryAuthorization string
 	var evidenceAuthorization string
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -618,6 +617,19 @@ func TestNVIDIAClaimHelpersFailClosed(t *testing.T) {
 	if _, err := validateTokenTimes(claims, now); err == nil {
 		t.Fatal("expected stale NVIDIA token to be rejected")
 	}
+}
+
+func measurementRecordsForTest(t *testing.T, records ...any) []json.RawMessage {
+	t.Helper()
+	encoded := make([]json.RawMessage, 0, len(records))
+	for _, record := range records {
+		value, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded = append(encoded, value)
+	}
+	return encoded
 }
 
 func validMeasurementForTest() measurementPolicy {

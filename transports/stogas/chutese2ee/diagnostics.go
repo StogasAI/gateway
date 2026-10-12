@@ -135,6 +135,7 @@ type DiagnosticsSnapshot struct {
 	CredentialPools       int               `json:"credentialPools"`
 	ActiveCredentialPools int               `json:"activeCredentialPools"`
 	BYOKCredentialPools   int               `json:"byokCredentialPools"`
+	SkippedMeasurements   int               `json:"skippedMeasurements"`
 	Chutes                []ChuteDiagnostic `json:"chutes"`
 }
 

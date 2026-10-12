@@ -266,6 +266,9 @@ func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 	snapshot.EvidenceInFlight = t.diagnostics.evidenceInFlight.Load()
 	snapshot.EvidenceCapacity = maximumConcurrentEvidenceRefreshes
 	snapshot.EvidenceRejected = t.diagnostics.evidenceRejected.Load()
+	if t.attestor != nil {
+		snapshot.SkippedMeasurements = t.attestor.policies.skipped()
+	}
 	return snapshot
 }
 
