@@ -30,10 +30,9 @@ type bootEvidenceFixture struct {
 
 // fixtureBoot is a real logged boot whose report commits the fixture's seeded keys.
 type fixtureBoot struct {
-	GatewayReleaseID     string `json:"gateway_release_id"`
-	HardwarePolicySHA256 string `json:"hardware_policy_sha256"`
-	Report               string `json:"report"`
-	ReportData           struct {
+	GatewayReleaseID string `json:"gateway_release_id"`
+	Report           string `json:"report"`
+	ReportData       struct {
 		Environment           string `json:"environment"`
 		HPKEPublicKey         string `json:"hpke_public_key"`
 		RegistrationChallenge string `json:"registration_challenge"`

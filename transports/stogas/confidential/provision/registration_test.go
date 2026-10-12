@@ -77,7 +77,7 @@ func testBoot(t *testing.T) (*verifier.NodeKeys, []byte, []byte) {
 	}
 	report := make([]byte, 0x4a0)
 	copy(report[0x50:], data[:])
-	document, err := keys.BootDocument(1, [32]byte{1}, [32]byte{2}, report, [32]byte{3}, [32]byte{4})
+	document, err := keys.BootDocument(1, [32]byte{1}, [32]byte{2}, report, [32]byte{3})
 	if err != nil {
 		t.Fatal(err)
 	}

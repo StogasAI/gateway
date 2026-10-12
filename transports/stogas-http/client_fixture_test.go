@@ -35,10 +35,9 @@ func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
 	}
 	var fixture struct {
 		Record struct {
-			GatewayReleaseID     string `json:"gateway_release_id"`
-			HardwarePolicySHA256 string `json:"hardware_policy_sha256"`
-			Report               string `json:"report"`
-			ReportData           struct {
+			GatewayReleaseID string `json:"gateway_release_id"`
+			Report           string `json:"report"`
+			ReportData       struct {
 				RegistrationChallenge string `json:"registration_challenge"`
 				TLSSPKISHA256         string `json:"tls_spki_sha256"`
 			} `json:"report_data"`
@@ -47,8 +46,8 @@ func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
 	if err := json.Unmarshal(encoded, &fixture); err != nil {
 		return nil, nil, "", err
 	}
-	digests := make([][32]byte, 4)
-	for i, value := range []string{fixture.Record.ReportData.TLSSPKISHA256, fixture.Record.ReportData.RegistrationChallenge, fixture.Record.GatewayReleaseID, fixture.Record.HardwarePolicySHA256} {
+	digests := make([][32]byte, 3)
+	for i, value := range []string{fixture.Record.ReportData.TLSSPKISHA256, fixture.Record.ReportData.RegistrationChallenge, fixture.Record.GatewayReleaseID} {
 		decoded, err := hex.DecodeString(value)
 		if err != nil || len(decoded) != 32 {
 			return nil, nil, "", fmt.Errorf("invalid boot fixture digest")
@@ -67,7 +66,7 @@ func fixtureNode(path string) (*verifier.NodeKeys, []byte, string, error) {
 	if err != nil {
 		return nil, nil, "", err
 	}
-	document, err := keys.BootDocument(byte(attest.Production), digests[0], digests[1], report, digests[2], digests[3])
+	document, err := keys.BootDocument(byte(attest.Production), digests[0], digests[1], report, digests[2])
 	if err != nil {
 		keys.Close()
 		return nil, nil, "", err
