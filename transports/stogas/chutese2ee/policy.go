@@ -30,8 +30,10 @@ var acceptedGPUFamilies = map[string]struct{}{
 type policySnapshot struct {
 	Measurements []measurementPolicy
 	Digest       string
-	FetchedAt    time.Time
-	ExpiresAt    time.Time
+	// Skipped counts published records the gateway cannot use.
+	Skipped   int
+	FetchedAt time.Time
+	ExpiresAt time.Time
 }
 
 type policyCache struct {
@@ -57,7 +59,7 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 		if cached != nil && now.Before(cached.ExpiresAt) {
 			return cached, nil
 		}
-		var records []measurementPolicy
+		var records []json.RawMessage
 		fetchErr := retryChutesRead(ctx, false, 5*time.Second, func() error {
 			records = nil
 			_, _, requestErr := c.api.requestJSON(
@@ -73,20 +75,16 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 		if fetchErr != nil {
 			return nil, fmt.Errorf("fetch measurement policy: %w", fetchErr)
 		}
-		measurements, digest, err := supportedMeasurements(records)
+		snapshot, err := supportedMeasurements(records)
 		if err != nil {
 			return nil, err
 		}
-		snapshot := &policySnapshot{
-			Measurements: measurements,
-			Digest:       digest,
-			FetchedAt:    now,
-			ExpiresAt:    now.Add(measurementPolicyTTL),
-		}
+		snapshot.FetchedAt = now
+		snapshot.ExpiresAt = now.Add(measurementPolicyTTL)
 		c.mu.Lock()
-		c.value = snapshot
+		c.value = &snapshot
 		c.mu.Unlock()
-		return snapshot, nil
+		return &snapshot, nil
 	})
 	if err != nil {
 		return nil, err
@@ -94,26 +92,39 @@ func (c *policyCache) current(ctx context.Context) (*policySnapshot, error) {
 	return result.(*policySnapshot), nil
 }
 
+// skipped reports how many records of the last accepted list the gateway cannot
+// use, without fetching the list.
+func (c *policyCache) skipped() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.value == nil {
+		return 0
+	}
+	return c.value.Skipped
+}
+
 // supportedMeasurements returns the records a quote can match, in a stable order,
-// and their digest. The list is an allowlist, so dropping a record can only
-// narrow it: a malformed record, or one for GPUs that NRAS verification rejects,
-// is skipped instead of disabling every chute. The provider drift check reports
-// skipped records.
-func supportedMeasurements(records []measurementPolicy) ([]measurementPolicy, string, error) {
+// their digest, and how many records it skipped. The list is an allowlist, so
+// dropping a record can only narrow it: a record that does not decode, is
+// malformed, or names GPUs that NRAS verification rejects is skipped instead of
+// disabling every chute. Node diagnostics report the skipped count.
+func supportedMeasurements(records []json.RawMessage) (policySnapshot, error) {
 	unique := make(map[string]measurementPolicy, len(records))
+	skipped := 0
 	for _, record := range records {
-		measurement, ok := normalizeMeasurement(record)
+		measurement, ok := parseMeasurement(record)
 		if !ok {
+			skipped++
 			continue
 		}
 		identity, err := json.Marshal(measurement)
 		if err != nil {
-			return nil, "", fmt.Errorf("%w: encode measurement", ErrMeasurementPolicy)
+			return policySnapshot{}, fmt.Errorf("%w: encode measurement", ErrMeasurementPolicy)
 		}
 		unique[string(identity)] = measurement
 	}
 	if len(unique) == 0 {
-		return nil, "", fmt.Errorf("%w: no supported measurement", ErrMeasurementPolicy)
+		return policySnapshot{}, fmt.Errorf("%w: no supported measurement", ErrMeasurementPolicy)
 	}
 	identities := slices.Sorted(maps.Keys(unique))
 	measurements := make([]measurementPolicy, 0, len(identities))
@@ -122,13 +133,17 @@ func supportedMeasurements(records []measurementPolicy) ([]measurementPolicy, st
 	}
 	encoded, err := json.Marshal(measurements)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: encode policy", ErrMeasurementPolicy)
+		return policySnapshot{}, fmt.Errorf("%w: encode policy", ErrMeasurementPolicy)
 	}
 	digest := sha256.Sum256(encoded)
-	return measurements, hex.EncodeToString(digest[:]), nil
+	return policySnapshot{Measurements: measurements, Digest: hex.EncodeToString(digest[:]), Skipped: skipped}, nil
 }
 
-func normalizeMeasurement(measurement measurementPolicy) (measurementPolicy, bool) {
+func parseMeasurement(record json.RawMessage) (measurementPolicy, bool) {
+	var measurement measurementPolicy
+	if err := json.Unmarshal(record, &measurement); err != nil {
+		return measurement, false
+	}
 	measurement.Version = strings.TrimSpace(measurement.Version)
 	measurement.Name = strings.TrimSpace(measurement.Name)
 	if measurement.Version == "" || measurement.Name == "" || measurement.GPUCount < 1 || measurement.GPUCount > 16 ||
