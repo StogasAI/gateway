@@ -71,6 +71,32 @@ func TestInitDoesNotStartTheGatewayWithoutTheClockDaemon(t *testing.T) {
 	}
 }
 
+func TestInitRaisesAClockThatStartsBeforeTheRelease(t *testing.T) {
+	release := time.Unix(1_790_000_000, 0)
+	for _, test := range []struct {
+		now  time.Time
+		want time.Time
+	}{
+		{now: time.Unix(0, 0), want: release},
+		{now: release.Add(-time.Nanosecond), want: release},
+		{now: release},
+		{now: release.Add(time.Hour)},
+	} {
+		var set time.Time
+		var output bytes.Buffer
+		err := raiseClock(&output, test.now, "1790000000", func(t time.Time) error { set = t; return nil })
+		if err != nil || !set.Equal(test.want) || (output.Len() > 0) == test.want.IsZero() {
+			t.Fatalf("clock %v: set %v, log %q, error %v", test.now, set, output.String(), err)
+		}
+	}
+	if err := raiseClock(io.Discard, time.Unix(0, 0), "", nil); err != nil {
+		t.Fatal("a build without a release time changed the clock", err)
+	}
+	if err := raiseClock(io.Discard, time.Unix(0, 0), "17900000x0", nil); err == nil {
+		t.Fatal("init accepted a malformed release time")
+	}
+}
+
 func lifecycleChild(ctx context.Context, mode string) *exec.Cmd {
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInitLifecycleChild$")
 	command.Env = append(os.Environ(), "STOGAS_INIT_TEST_CHILD="+mode)

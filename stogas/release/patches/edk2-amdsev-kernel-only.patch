@@ -44,8 +44,290 @@ index ae94462..d0fdd2e 100644
      ResetPowerManagementFeature (PciIoDevice);
    }
  
+diff --git a/OvmfPkg/AmdSev/AcpiTables/AcpiTables.h b/OvmfPkg/AmdSev/AcpiTables/AcpiTables.h
+new file mode 100644
+index 0000000..5024350
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/AcpiTables.h
+@@ -0,0 +1,26 @@
++/** @file
++  Header fields shared by the fixed ACPI tables.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#ifndef AMD_SEV_ACPI_TABLES_H_
++#define AMD_SEV_ACPI_TABLES_H_
++
++#include <IndustryStandard/Acpi.h>
++
++//
++// AcpiPlatformDxe computes the checksum when it installs the table.
++//
++#define ACPI_TABLE_HEADER(Sig, Type, Rev)  {                        \
++    .Signature       = (Sig),                                       \
++    .Length          = sizeof (Type),                               \
++    .Revision        = (Rev),                                       \
++    .OemId           = { 'S', 'T', 'O', 'G', 'A', 'S' },            \
++    .OemTableId      = SIGNATURE_64 ('G', 'A', 'T', 'E', 'W', 'A', 'Y', ' '), \
++    .OemRevision     = 1,                                           \
++    .CreatorId       = SIGNATURE_32 ('S', 'T', 'G', 'S'),           \
++    .CreatorRevision = 1,                                           \
++  }
++
++#endif
+diff --git a/OvmfPkg/AmdSev/AcpiTables/AcpiTables.inf b/OvmfPkg/AmdSev/AcpiTables/AcpiTables.inf
+new file mode 100644
+index 0000000..2230313
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/AcpiTables.inf
+@@ -0,0 +1,24 @@
++## @file
++#  Fixed ACPI tables for the AmdSev guest, which replace the tables that QEMU
++#  would supply. AcpiPlatformDxe installs them from this module's FFS file.
++#
++#  SPDX-License-Identifier: BSD-2-Clause-Patent
++#
++##
++
++[Defines]
++  INF_VERSION                    = 1.29
++  BASE_NAME                      = AmdSevAcpiTables
++  FILE_GUID                      = 769B8161-A741-4B55-A8AC-1B649A245EE4
++  MODULE_TYPE                    = USER_DEFINED
++  VERSION_STRING                 = 1.0
++
++[Sources]
++  AcpiTables.h
++  Dsdt.asl
++  Facp.aslc
++  Facs.aslc
++  Madt.aslc
++
++[Packages]
++  MdePkg/MdePkg.dec
+diff --git a/OvmfPkg/AmdSev/AcpiTables/Dsdt.asl b/OvmfPkg/AmdSev/AcpiTables/Dsdt.asl
+new file mode 100644
+index 0000000..d62d642
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/Dsdt.asl
+@@ -0,0 +1,52 @@
++/** @file
++  Differentiated System Description Table (DSDT).
++
++  It describes only what the kernel uses: the PCI root bridge with the windows
++  where OVMF places BARs, the fw_cfg device, and the S5 sleep type for power
++  off. PCI devices use MSI-X, so there is no interrupt routing.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++DefinitionBlock ("Dsdt.aml", "DSDT", 2, "STOGAS", "GATEWAY", 1)
++{
++  Scope (\_SB) {
++    Device (PCI0) {
++      Name (_HID, EisaId ("PNP0A03"))
++      Name (_UID, 0)
++      Name (_CRS, ResourceTemplate () {
++        WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
++          0x0000, 0x0000, 0x00FF, 0x0000, 0x0100)
++        IO (Decode16, 0x0CF8, 0x0CF8, 0x01, 0x08)
++        WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
++          0x0000, 0x0000, 0x0CF7, 0x0000, 0x0CF8)
++        WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
++          0x0000, 0x0D00, 0xFFFF, 0x0000, 0xF300)
++        //
++        // From the end of the 2 GiB of low memory to the PCIe configuration
++        // space at 0xE0000000
++        //
++        DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++          NonCacheable, ReadWrite,
++          0x00000000, 0x80000000, 0xDFFFFFFF, 0x00000000, 0x60000000)
++        //
++        // From the end of the 16 GiB of memory, at 18 GiB, to the top of a
++        // 48-bit address space. The kernel limits this window to the guest's
++        // physical address width.
++        //
++        QWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
++          Cacheable, ReadWrite,
++          0x0, 0x480000000, 0xFFFFFFFFFFFF, 0x0, 0xFFFB80000000)
++      })
++
++      Device (FWCF) {
++        Name (_HID, "QEMU0002")
++        Name (_CRS, ResourceTemplate () {
++          IO (Decode16, 0x0510, 0x0510, 0x01, 0x0C)
++        })
++      }
++    }
++  }
++
++  Name (_S5, Package () { 0, 0, 0, 0 })
++}
+diff --git a/OvmfPkg/AmdSev/AcpiTables/Facp.aslc b/OvmfPkg/AmdSev/AcpiTables/Facp.aslc
+new file mode 100644
+index 0000000..a2360e0
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/Facp.aslc
+@@ -0,0 +1,45 @@
++/** @file
++  Fixed ACPI Description Table (FADT).
++
++  The ICH9 power management registers at ICH9_PMBASE_VALUE provide the SCI on
++  IRQ 9, the power button, S5 power off, and the 24-bit PM timer that the
++  kernel measures the TSC frequency against. SMI_CMD is zero because there is
++  no SMM, so the guest is always in ACPI mode. There is no GPE block or reset
++  register. AcpiTableDxe fills in the FACS and DSDT addresses.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include "AcpiTables.h"
++
++EFI_ACPI_6_6_FIXED_ACPI_DESCRIPTION_TABLE  Fadt = {
++  .Header = ACPI_TABLE_HEADER (
++              EFI_ACPI_6_6_FIXED_ACPI_DESCRIPTION_TABLE_SIGNATURE,
++              EFI_ACPI_6_6_FIXED_ACPI_DESCRIPTION_TABLE,
++              EFI_ACPI_6_6_FIXED_ACPI_DESCRIPTION_TABLE_REVISION
++              ),
++  .SciInt       = 9,
++  .Pm1aEvtBlk   = 0x600,
++  .Pm1aCntBlk   = 0x604,
++  .PmTmrBlk     = 0x608,
++  .Pm1EvtLen    = 4,
++  .Pm1CntLen    = 2,
++  .PmTmrLen     = 4,
++  .PLvl2Lat     = 0x0FFF,                   // No C2 state
++  .PLvl3Lat     = 0x0FFF,                   // No C3 state
++  .Century      = 0x32,
++  //
++  // SLP_BUTTON says there is no sleep button. PWR_BUTTON stays clear, so the
++  // power button is the fixed hardware one in the PM1 registers.
++  //
++  .Flags        = EFI_ACPI_6_6_WBINVD | EFI_ACPI_6_6_PROC_C1 | EFI_ACPI_6_6_SLP_BUTTON,
++  .MinorVersion = EFI_ACPI_6_6_FIXED_ACPI_DESCRIPTION_TABLE_MINOR_REVISION,
++};
++
++VOID *
++ReferenceAcpiTable (
++  VOID
++  )
++{
++  return &Fadt;
++}
+diff --git a/OvmfPkg/AmdSev/AcpiTables/Facs.aslc b/OvmfPkg/AmdSev/AcpiTables/Facs.aslc
+new file mode 100644
+index 0000000..1803555
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/Facs.aslc
+@@ -0,0 +1,25 @@
++/** @file
++  Firmware ACPI Control Structure (FACS).
++
++  AcpiPlatformDxe writes a checksum into byte 9 of every table it installs.
++  In the FACS, that byte is part of HardwareSignature, which only matters when
++  resuming from hibernation.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include "AcpiTables.h"
++
++EFI_ACPI_6_6_FIRMWARE_ACPI_CONTROL_STRUCTURE  Facs = {
++  .Signature = EFI_ACPI_6_6_FIRMWARE_ACPI_CONTROL_STRUCTURE_SIGNATURE,
++  .Length    = sizeof (EFI_ACPI_6_6_FIRMWARE_ACPI_CONTROL_STRUCTURE),
++  .Version   = EFI_ACPI_6_6_FIRMWARE_ACPI_CONTROL_STRUCTURE_VERSION,
++};
++
++VOID *
++ReferenceAcpiTable (
++  VOID
++  )
++{
++  return &Facs;
++}
+diff --git a/OvmfPkg/AmdSev/AcpiTables/Madt.aslc b/OvmfPkg/AmdSev/AcpiTables/Madt.aslc
+new file mode 100644
+index 0000000..cc4d1f5
+--- /dev/null
++++ b/OvmfPkg/AmdSev/AcpiTables/Madt.aslc
+@@ -0,0 +1,74 @@
++/** @file
++  Multiple APIC Description Table (MADT) for the four vCPUs in the IGVM file,
++  with APIC IDs 0 to 3, and the q35 I/O APIC.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++
++#include "AcpiTables.h"
++
++#define LOCAL_APIC(Id)  {                                                  \
++    .Type             = EFI_ACPI_6_6_PROCESSOR_LOCAL_APIC,                 \
++    .Length           = sizeof (EFI_ACPI_6_6_PROCESSOR_LOCAL_APIC_STRUCTURE), \
++    .AcpiProcessorUid = (Id),                                              \
++    .ApicId           = (Id),                                              \
++    .Flags            = EFI_ACPI_6_6_LOCAL_APIC_ENABLED,                   \
++  }
++
++#define INTERRUPT_SOURCE_OVERRIDE(Irq, Gsi, IntiFlags)  {                  \
++    .Type                  = EFI_ACPI_6_6_INTERRUPT_SOURCE_OVERRIDE,       \
++    .Length                = sizeof (EFI_ACPI_6_6_INTERRUPT_SOURCE_OVERRIDE_STRUCTURE), \
++    .Source                = (Irq),                                        \
++    .GlobalSystemInterrupt = (Gsi),                                        \
++    .Flags                 = (IntiFlags),                                  \
++  }
++
++#pragma pack (1)
++typedef struct {
++  EFI_ACPI_6_6_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER    Header;
++  EFI_ACPI_6_6_PROCESSOR_LOCAL_APIC_STRUCTURE            LocalApic[4];
++  EFI_ACPI_6_6_IO_APIC_STRUCTURE                         IoApic;
++  EFI_ACPI_6_6_INTERRUPT_SOURCE_OVERRIDE_STRUCTURE       InterruptSourceOverride[2];
++} AMD_SEV_MADT;
++#pragma pack ()
++
++AMD_SEV_MADT  Madt = {
++  .Header = {
++    .Header = ACPI_TABLE_HEADER (
++                EFI_ACPI_6_6_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
++                AMD_SEV_MADT,
++                EFI_ACPI_6_6_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION
++                ),
++    .LocalApicAddress = 0xFEE00000,
++    .Flags            = EFI_ACPI_6_6_PCAT_COMPAT,
++  },
++  .LocalApic = {
++    LOCAL_APIC (0),
++    LOCAL_APIC (1),
++    LOCAL_APIC (2),
++    LOCAL_APIC (3),
++  },
++  .IoApic = {
++    .Type          = EFI_ACPI_6_6_IO_APIC,
++    .Length        = sizeof (EFI_ACPI_6_6_IO_APIC_STRUCTURE),
++    .IoApicAddress = 0xFEC00000,
++  },
++  .InterruptSourceOverride = {
++    //
++    // The PIT on ISA IRQ 0 is wired to I/O APIC input 2.
++    //
++    INTERRUPT_SOURCE_OVERRIDE (0, 2, 0),
++    //
++    // The SCI is active high (bits 1:0 = 01) and level triggered (bits 3:2 = 11).
++    //
++    INTERRUPT_SOURCE_OVERRIDE (9, 9, 0x000D),
++  },
++};
++
++VOID *
++ReferenceAcpiTable (
++  VOID
++  )
++{
++  return &Madt;
++}
 diff --git a/OvmfPkg/AmdSev/AmdSevX64.dsc b/OvmfPkg/AmdSev/AmdSevX64.dsc
-index 2fbcd01..c91aa59 100644
+index 2fbcd01..044c3e7 100644
 --- a/OvmfPkg/AmdSev/AmdSevX64.dsc
 +++ b/OvmfPkg/AmdSev/AmdSevX64.dsc
 @@ -25,7 +25,6 @@
@@ -56,7 +338,17 @@ index 2fbcd01..c91aa59 100644
  
    #
    # Defines for default states.  These can be changed on the command line.
-@@ -755,7 +754,6 @@
+@@ -739,7 +738,8 @@
+   # ACPI Support
+   #
+   MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+-  OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf
++  MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf
++  OvmfPkg/AmdSev/AcpiTables/AcpiTables.inf
+   MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+   MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+   MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+@@ -755,7 +755,6 @@
    MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
  
    OvmfPkg/AmdSev/SecretDxe/SecretDxe.inf
@@ -65,10 +357,18 @@ index 2fbcd01..c91aa59 100644
  !include OvmfPkg/Include/Dsc/ShellComponents.dsc.inc
  !include OvmfPkg/Include/Dsc/OvmfRngComponents.dsc.inc
 diff --git a/OvmfPkg/AmdSev/AmdSevX64.fdf b/OvmfPkg/AmdSev/AmdSevX64.fdf
-index f860050..4b89fd9 100644
+index f860050..2c6beb9 100644
 --- a/OvmfPkg/AmdSev/AmdSevX64.fdf
 +++ b/OvmfPkg/AmdSev/AmdSevX64.fdf
-@@ -164,11 +164,6 @@ INF  MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+@@ -105,7 +105,6 @@ INF  MdeModulePkg/Universal/ReportStatusCodeRouter/Pei/ReportStatusCodeRouterPei
+ INF  MdeModulePkg/Universal/StatusCodeHandler/Pei/StatusCodeHandlerPei.inf
+ INF  OvmfPkg/PlatformPei/PlatformPei.inf
+ INF  MdeModulePkg/Core/DxeIplPeim/DxeIpl.inf
+-INF  UefiCpuPkg/Universal/Acpi/S3Resume2Pei/S3Resume2Pei.inf
+ INF  UefiCpuPkg/CpuMpPei/CpuMpPei.inf
+ INF  OvmfPkg/AmdSev/SecretPei/SecretPei.inf
+ 
+@@ -164,11 +163,6 @@ INF  MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
  INF  MdeModulePkg/Universal/Metronome/Metronome.inf
  INF  PcAtChipsetPkg/PcatRealTimeClockRuntimeDxe/PcatRealTimeClockRuntimeDxe.inf
  
@@ -80,7 +380,7 @@ index f860050..4b89fd9 100644
  INF  MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
  INF  MdeModulePkg/Universal/MonotonicCounterRuntimeDxe/MonotonicCounterRuntimeDxe.inf
  INF  MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
-@@ -182,16 +177,8 @@ INF  MdeModulePkg/Application/UiApp/UiApp.inf
+@@ -182,16 +176,8 @@ INF  MdeModulePkg/Application/UiApp/UiApp.inf
  INF  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
  INF  OvmfPkg/QemuKernelLoaderFsDxe/QemuKernelLoaderFsDxe.inf
  INF  MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
@@ -97,29 +397,31 @@ index f860050..4b89fd9 100644
  INF  MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
  INF  MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
  INF  MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
-@@ -200,10 +187,8 @@ INF  OvmfPkg/SioBusDxe/SioBusDxe.inf
+@@ -200,39 +186,13 @@ INF  OvmfPkg/SioBusDxe/SioBusDxe.inf
  !if $(SOURCE_DEBUG_ENABLE) == FALSE
  INF  MdeModulePkg/Bus/Pci/PciSioSerialDxe/PciSioSerialDxe.inf
  !endif
 -INF  MdeModulePkg/Bus/Isa/Ps2KeyboardDxe/Ps2KeyboardDxe.inf
- 
- INF  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+-
+-INF  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
 -INF  OvmfPkg/SmbiosPlatformDxe/SmbiosPlatformDxe.inf
  
  INF  MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
- INF  OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf
-@@ -211,28 +196,10 @@ INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
- INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
- INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
- 
+-INF  OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf
+-INF  MdeModulePkg/Universal/Acpi/S3SaveStateDxe/S3SaveStateDxe.inf
+-INF  MdeModulePkg/Universal/Acpi/BootScriptExecutorDxe/BootScriptExecutorDxe.inf
+-INF  MdeModulePkg/Universal/Acpi/BootGraphicsResourceTableDxe/BootGraphicsResourceTableDxe.inf
+-
 -INF  FatPkg/EnhancedFatDxe/Fat.inf
 -INF  MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
--
++INF  MdeModulePkg/Universal/Acpi/AcpiPlatformDxe/AcpiPlatformDxe.inf
++INF  RuleOverride=ACPITABLE OvmfPkg/AmdSev/AcpiTables/AcpiTables.inf
+ 
  INF OvmfPkg/AmdSev/SecretDxe/SecretDxe.inf
 -INF  OvmfPkg/AmdSev/Grub/Grub.inf
- 
- INF MdeModulePkg/Logo/LogoDxe.inf
- 
+-
+-INF MdeModulePkg/Logo/LogoDxe.inf
+-
 -#
 -# Usb Support
 -#
@@ -131,13 +433,13 @@ index f860050..4b89fd9 100644
 -INF  MdeModulePkg/Bus/Usb/UsbMassStorageDxe/UsbMassStorageDxe.inf
 -
 -INF  OvmfPkg/QemuVideoDxe/QemuVideoDxe.inf
--
+ 
 -INF  OvmfPkg/QemuRamfbDxe/QemuRamfbDxe.inf
 -INF  OvmfPkg/VirtioGpuDxe/VirtioGpu.inf
  INF  OvmfPkg/PlatformDxe/Platform.inf
  INF  OvmfPkg/AmdSevDxe/AmdSevDxe.inf
  INF  OvmfPkg/IoMmuDxe/IoMmuDxe.inf
-@@ -252,8 +219,7 @@ INF  MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+@@ -252,8 +212,7 @@ INF  MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
  !include OvmfPkg/Include/Fdf/OvmfTpmDxe.fdf.inc
  
  !include OvmfPkg/Include/Fdf/ShellDxe.fdf.inc
@@ -147,8 +449,21 @@ index f860050..4b89fd9 100644
  
  ################################################################################
  
+@@ -369,6 +328,12 @@ FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+     VERSION   STRING="$(INF_VERSION)" Optional BUILD_NUM=$(BUILD_NUMBER)
+   }
+ 
++[Rule.Common.USER_DEFINED.ACPITABLE]
++  FILE FREEFORM = 7E374E25-8E01-4FEE-87F2-390C23C606CD {
++    RAW ACPI               |.acpi
++    RAW ASL                |.aml
++  }
++
+ [Rule.Common.USER_DEFINED.RESET_VECTOR]
+   FILE RAW = $(NAMED_GUID) {
+     RAW BIN   Align = 16   |.bin
 diff --git a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
-index 3edb92f..a4dc656 100644
+index 3edb92f..b9d730c 100644
 --- a/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
 +++ b/OvmfPkg/Library/PlatformBootManagerLib/BdsPlatform.c
 @@ -1619,20 +1619,6 @@ PlatformBootManagerAfterConsole (
@@ -172,17 +487,65 @@ index 3edb92f..a4dc656 100644
    //
    // Get current Boot Mode
    //
-@@ -1665,6 +1651,13 @@ PlatformBootManagerAfterConsole (
+@@ -1645,25 +1631,22 @@ PlatformBootManagerAfterConsole (
    //
-   TryRunningQemuKernel ();
+   ASSERT (BootMode == BOOT_WITH_FULL_CONFIGURATION);
  
-+  //
+-  //
+-  // Logo show
+-  //
+-  BootLogoEnableLogo ();
+-
+   //
+   // Set PCI Interrupt Line registers and ACPI SCI_EN
+   //
+   PciAcpiInitialization ();
+ 
+   //
+-  // Write qemu bootorder to efi variables
++  // Process QEMU's -kernel command line option
+   //
+-  StoreQemuBootOrder ();
++  TryRunningQemuKernel ();
+ 
+   //
+-  // Process QEMU's -kernel command line option
 +  // Halt instead of falling back to another boot path, so that only the
 +  // measured kernel can run.
-+  //
+   //
+-  TryRunningQemuKernel ();
 +  AsciiPrint ("%a: The kernel did not start.\n", gEfiCallerBaseName);
 +  CpuDeadLoop ();
-+
+ 
    //
    // Perform some platform specific connect sequence
-   //
+diff --git a/OvmfPkg/Library/PlatformInitLib/Platform.c b/OvmfPkg/Library/PlatformInitLib/Platform.c
+index db01c45..7da16a5 100644
+--- a/OvmfPkg/Library/PlatformInitLib/Platform.c
++++ b/OvmfPkg/Library/PlatformInitLib/Platform.c
+@@ -266,7 +266,11 @@ PlatformNoexecDxeInitialization (
+   IN OUT EFI_HOB_PLATFORM_INFO  *PlatformInfoHob
+   )
+ {
+-  if (TdIsEnabled ()) {
++  //
++  // The host must not decide whether a confidential guest can execute code
++  // on its stack.
++  //
++  if (TdIsEnabled () || MemEncryptSevIsEnabled ()) {
+     PlatformInfoHob->PcdSetNxForStack = TRUE;
+     return EFI_SUCCESS;
+   }
+diff --git a/OvmfPkg/PlatformPei/Platform.c b/OvmfPkg/PlatformPei/Platform.c
+index c2085cd..bf658ac 100644
+--- a/OvmfPkg/PlatformPei/Platform.c
++++ b/OvmfPkg/PlatformPei/Platform.c
+@@ -201,7 +201,7 @@ BootModeInitialization (
+ {
+   EFI_STATUS  Status;
+ 
+-  if (PlatformCmosRead8 (0xF) == 0xFE) {
++  if (PlatformInfoHob->S3Supported && (PlatformCmosRead8 (0xF) == 0xFE)) {
+     PlatformInfoHob->BootMode = BOOT_ON_S3_RESUME;
+   }
+ 
