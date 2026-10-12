@@ -79,11 +79,7 @@ func (q *quotedBoot) prepare(ctx context.Context, evidence *currentEvidence, env
 		if err != nil {
 			return err
 		}
-		policy, err := hexDigest(summary.Approvals.HardwarePolicySHA256)
-		if err != nil {
-			return err
-		}
-		document, err := keys.BootDocument(byte(environment), material.TLSSPKISHA256, q.challenge, q.report, release, policy)
+		document, err := keys.BootDocument(byte(environment), material.TLSSPKISHA256, q.challenge, q.report, release)
 		if err != nil {
 			return err
 		}

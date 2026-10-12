@@ -42,11 +42,8 @@ type approvedCatalog struct {
 }
 
 type evidenceSummary struct {
-	Gateways  []approvedGateway `json:"gateways"`
-	Catalogs  []approvedCatalog `json:"catalogs"`
-	Approvals struct {
-		HardwarePolicySHA256 string `json:"hardware_policy_sha256"`
-	} `json:"approvals"`
+	Gateways []approvedGateway `json:"gateways"`
+	Catalogs []approvedCatalog `json:"catalogs"`
 }
 
 type evidenceOrigin struct {
