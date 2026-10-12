@@ -18,6 +18,7 @@ import (
 	"time"
 
 	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
@@ -68,6 +69,7 @@ func TestRuntimeInitializationReasonUsesOnlyFixedStages(t *testing.T) {
 		{stogashttp.ErrConfidentialRuntimeSecretApplication, startupConfidentialRuntimeSecretApplicationFailed},
 		{stogashttp.ErrConfidentialRuntimeInitialization, startupConfidentialRuntimeInitFailed},
 		{stogashttp.ErrGatewayRuntimeInitialization, startupGatewayRuntimeInitFailed},
+		{fmt.Errorf("%w: %w", stogashttp.ErrGatewayRuntimeInitialization, billing.ErrSchemaIncompatible), startupDatabaseSchemaIncompatible},
 		{stogashttp.ErrRouteInitialization, startupRouteInitFailed},
 	}
 	for _, test := range tests {

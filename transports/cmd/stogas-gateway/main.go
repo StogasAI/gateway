@@ -17,6 +17,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	stogashttp "github.com/maximhq/bifrost/transports/stogas-http"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
@@ -34,6 +35,7 @@ const (
 	startupConfidentialRuntimeSecretApplicationFailed startupReasonCode = "confidential_runtime_secret_application_failed"
 	startupConfidentialSecretReleaseFailed            startupReasonCode = "confidential_secret_release_installation_failed"
 	startupConfidentialSecretReleaseContentsInvalid   startupReasonCode = "confidential_secret_release_contents_invalid"
+	startupDatabaseSchemaIncompatible                 startupReasonCode = "database_schema_incompatible"
 	startupGatewayRuntimeInitFailed                   startupReasonCode = "gateway_runtime_initialization_failed"
 	startupOpenFileLimitFailed                        startupReasonCode = "open_file_limit_failed"
 	startupRouteInitFailed                            startupReasonCode = "route_initialization_failed"
@@ -108,6 +110,8 @@ func runtimeInitializationReason(err error) startupReasonCode {
 		return startupConfidentialRuntimeSecretApplicationFailed
 	case errors.Is(err, stogashttp.ErrConfidentialRuntimeInitialization):
 		return startupConfidentialRuntimeInitFailed
+	case errors.Is(err, billing.ErrSchemaIncompatible):
+		return startupDatabaseSchemaIncompatible
 	case errors.Is(err, stogashttp.ErrGatewayRuntimeInitialization):
 		return startupGatewayRuntimeInitFailed
 	case errors.Is(err, stogashttp.ErrRouteInitialization):

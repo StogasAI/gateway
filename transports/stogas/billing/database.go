@@ -3,13 +3,19 @@ package billing
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// ErrSchemaIncompatible reports a database schema without a function, argument
+// type, result column or privilege that this release uses.
+var ErrSchemaIncompatible = errors.New("database schema is incompatible with this gateway")
 
 const (
 	poolHealthCheckPeriod     = 30 * time.Second
@@ -125,7 +131,14 @@ func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error 
 	defer conn.Release()
 	for _, query := range queries {
 		if _, err := conn.Conn().Prepare(checkCtx, "", query); err != nil {
-			return fmt.Errorf("database schema %s lacks a function this gateway calls: %w", db.schemaName, err)
+			// Class 42 covers missing routines, types, columns and privileges, and
+			// 3F000 a missing schema. Other errors, such as a lost connection, are
+			// not schema problems.
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "42") || pgErr.Code == "3F000") {
+				return fmt.Errorf("%w: %s: %w", ErrSchemaIncompatible, db.schemaName, err)
+			}
+			return fmt.Errorf("check database schema %s: %w", db.schemaName, err)
 		}
 	}
 	return nil
