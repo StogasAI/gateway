@@ -110,6 +110,25 @@ func (db *GatewayDB) functionQuery(functionName string, arguments string) string
 	return "select * from " + pgx.Identifier{db.schemaName, functionName}.Sanitize() + "(\n" + arguments + "\n);"
 }
 
+// checkQueries parses each query without running it. Control chooses the schema
+// at boot, so a schema without a function signature this release calls stops
+// the gateway here instead of failing its requests.
+func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	conn, err := db.pool.Acquire(checkCtx)
+	if err != nil {
+		return fmt.Errorf("acquire postgres connection: %w", err)
+	}
+	defer conn.Release()
+	for _, query := range queries {
+		if _, err := conn.Conn().Prepare(checkCtx, "", query); err != nil {
+			return fmt.Errorf("database schema %s lacks a function this gateway calls: %w", db.schemaName, err)
+		}
+	}
+	return nil
+}
+
 func (db *GatewayDB) Close() {
 	if db != nil && db.pool != nil {
 		db.pool.Close()

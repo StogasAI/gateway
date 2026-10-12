@@ -17,7 +17,7 @@ func matcherSnapshot(digest, literal string) *KeyConfigSnapshot {
 	return &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: digest, Config: &policy.Config{
 		Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{Presets: []string{},
 			Literals: []redaction.Literal{{Text: literal, Fuzzy: true}}}},
-	}}, Generation: 1,
+	}}, CredentialsGeneration: 1,
 	}
 }
 
@@ -102,7 +102,7 @@ func TestKeyCacheSharedObjectsCountOnceAndOldestEvicts(t *testing.T) {
 	}
 }
 
-func TestKeyCacheReplacementPreservesPlanAndGeneration(t *testing.T) {
+func TestKeyCacheReplacementPreservesPlanAndCredentialsGeneration(t *testing.T) {
 	var cache keyConfigCache
 	now := time.Now()
 	first := cache.put("a", matcherSnapshot("same", "ProjectAurora"), now)
@@ -111,7 +111,7 @@ func TestKeyCacheReplacementPreservesPlanAndGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	next := matcherSnapshot("same", "ProjectAurora")
-	next.Generation = 2
+	next.CredentialsGeneration = 2
 	replacement := cache.put("a", next, now.Add(time.Second))
 	older := cache.put("a", first, now.Add(2*time.Second))
 	if replacement.matchers[0] != first.matchers[0] || older != replacement || replacement.Config != first.Config {

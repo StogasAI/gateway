@@ -65,7 +65,6 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	state.RequestID = requestID
 	state.StartedAt = startedAt
 	state.RequestLifetime = billing.GatewayRequestLifetime
-	state.SingleUseRequestID = ctx.encrypted
 	stogas.SetState(bifrostCtx, state)
 
 	metadata, err := metadataHeader(ctx)

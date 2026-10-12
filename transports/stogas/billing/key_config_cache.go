@@ -151,7 +151,7 @@ func (c *keyConfigCache) put(key string, snapshot *KeyConfigSnapshot, now time.T
 	if current != nil {
 		entry := current.Value.(keyConfigCacheEntry)
 		previous := entry.snapshot
-		if previous.Generation > snapshot.Generation || previous.CredentialsGeneration > snapshot.CredentialsGeneration ||
+		if previous.CredentialsGeneration > snapshot.CredentialsGeneration ||
 			entry.expiresAt.After(now.Add(keyConfigCacheTTL)) {
 			return previous
 		}

@@ -25,7 +25,7 @@ type PublicBillingError struct {
 }
 
 type billingAuthorizer interface {
-	AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*gatewaybilling.Authorization, error)
+	AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent, retain gatewaybilling.RetainMemory) error
 }
@@ -56,9 +56,6 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 	case 403:
 		errorType = "permission_denied"
 		message = "Permission denied"
-	case 409:
-		errorType = "invalid_request_error"
-		message = "Request conflicts with an existing authorization"
 	case 429:
 		errorType = "rate_limit_error"
 		message = "Rate limit exceeded"
@@ -140,7 +137,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 			state.RequestLifetime,
 		)
 	} else {
-		authorization, err = billing.AuthorizeRequestWithEncryptionKeys(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSD, usage, state.KeyConfig, state.PreparedCredential, state.Resolution.ActivePolicyRules(), encryptionKeys, upstreamTarget, state.RequestLifetime, state.SingleUseRequestID)
+		authorization, err = billing.AuthorizeRequestWithEncryptionKeys(ctx, state.RawAPIKey, requestID, hold.ProviderKey, hold.ProductKey, hold.EstimatedUpstreamCostUSD, usage, state.KeyConfig, state.PreparedCredential, state.Resolution.ActivePolicyRules(), encryptionKeys, upstreamTarget, state.RequestLifetime)
 	}
 	if err != nil && authorization != nil {
 		state.Authorization = authorization

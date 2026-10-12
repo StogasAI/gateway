@@ -38,7 +38,6 @@ type State struct {
 	Authorization           *billing.Authorization
 	BillingFinalized        bool
 	RetainMemory            billing.RetainMemory
-	SingleUseRequestID      bool
 	RequestLifetime         time.Duration
 	RequestID               string
 	StartedAt               time.Time

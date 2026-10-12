@@ -89,7 +89,7 @@ func BenchmarkCompiledPolicyCacheFootprint(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			snapshot := cache.put(fmt.Sprint(index), &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: source.value.Config, Digest: source.value.Digest, sourceRefs: []*sharedPolicySource{source}}, Generation: 1}, now)
+			snapshot := cache.put(fmt.Sprint(index), &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: source.value.Config, Digest: source.value.Digest, sourceRefs: []*sharedPolicySource{source}}, CredentialsGeneration: 1}, now)
 			cache.releaseSources([]*sharedPolicySource{source})
 			if _, err := snapshot.RedactionPolicy(); err != nil {
 				b.Fatal(err)

@@ -41,7 +41,7 @@ func credentialPolicySnapshot(t testing.TB, cache *keyConfigCache, organization 
 		}
 	}
 
-	return cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(values), Versions: &versions, sourceRefs: sources}, Claims: &APIKeyClaims{OrganizationID: organization, KeyID: "key"}, Generation: 1, CredentialsGeneration: 1, Credentials: selections}, time.Now())
+	return cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(values), Versions: &versions, sourceRefs: sources}, Claims: &APIKeyClaims{OrganizationID: organization, KeyID: "key"}, CredentialsGeneration: 1, Credentials: selections}, time.Now())
 }
 
 func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {

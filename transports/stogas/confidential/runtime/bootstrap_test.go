@@ -136,7 +136,7 @@ func TestBootRuntimeRetainsIdentityAcrossPolicyRejectionAndPendingRegistration(t
 	roots, chain := bootFixtureCertificate(t, material)
 	values := []provision.BootSecretValue{}
 	for _, name := range []string{"CHUTES_API_KEY", "API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY"} {
-		values = append(values, provision.BootSecretValue{Name: name, KeyID: name, Version: "1", Plaintext: "fixture"})
+		values = append(values, provision.BootSecretValue{Name: name, Plaintext: "fixture"})
 	}
 	plain, err := json.Marshal(provision.BootSecrets{CertificatePEM: string(chain), Region: provision.RegionUSVA, Secrets: values})
 	if err != nil {

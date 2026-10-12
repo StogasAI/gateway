@@ -24,10 +24,8 @@ type BootSecrets struct {
 }
 
 type BootSecretValue struct {
-	KeyID     string `json:"key_id"`
 	Name      string `json:"name"`
 	Plaintext string `json:"plaintext"`
-	Version   string `json:"version"`
 }
 
 // ParseBootSecrets validates opened provisioning. Certificate/key/hostname checks
@@ -44,7 +42,7 @@ func ParseBootSecrets(plaintext []byte) (*BootSecrets, error) {
 	}
 	names := make(map[string]bool, len(result.Secrets))
 	for _, secret := range result.Secrets {
-		if !bootSecretName(secret.Name) || names[secret.Name] || secret.KeyID == "" || secret.Plaintext == "" || secret.Version == "" {
+		if !bootSecretName(secret.Name) || names[secret.Name] || secret.Plaintext == "" {
 			return nil, errors.New("invalid boot secret")
 		}
 		names[secret.Name] = true

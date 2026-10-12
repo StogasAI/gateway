@@ -823,7 +823,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 			return
 		}
 		defer cancel()
-		if !wantsMetadata(bifrostCtx) || !state.SingleUseRequestID || state.RequestID == "client-chosen" {
+		if !wantsMetadata(bifrostCtx) || state.RequestID == "client-chosen" {
 			t.Error("request identity or metadata selection lost")
 		}
 		state.FinalEvent = &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}

@@ -14,7 +14,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-func keyConfigSnapshot(generation int, digest string) *KeyConfigSnapshot {
+func keyConfigSnapshot(credentialsGeneration int, digest string) *KeyConfigSnapshot {
 	return &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
 		Routing: policy.Routing{
@@ -22,7 +22,7 @@ func keyConfigSnapshot(generation int, digest string) *KeyConfigSnapshot {
 		},
 		Schema: "stogas.key-config.compiled.v1",
 	},
-		Digest: digest}, Generation: generation,
+		Digest: digest}, CredentialsGeneration: credentialsGeneration,
 	}
 }
 
@@ -131,11 +131,11 @@ func TestKeyConfigCacheIsBoundedExpiringAndGenerationMonotonic(t *testing.T) {
 
 	newer := keyConfigSnapshot(2, strings.Repeat("b", 64))
 	cache.put("key", newer, now)
-	if got, ok := cache.get("key", now.Add(keyConfigCacheTTL-time.Nanosecond)); !ok || got.Config != newer.Config || got.Generation != newer.Generation || got.Digest != newer.Digest {
+	if got, ok := cache.get("key", now.Add(keyConfigCacheTTL-time.Nanosecond)); !ok || got.Config != newer.Config || got.CredentialsGeneration != newer.CredentialsGeneration || got.Digest != newer.Digest {
 		t.Fatalf("cached snapshot = %#v, %t", got, ok)
 	}
 	cache.put("key", keyConfigSnapshot(1, strings.Repeat("a", 64)), now)
-	if got, ok := cache.get("key", now); !ok || got.Generation != 2 {
+	if got, ok := cache.get("key", now); !ok || got.CredentialsGeneration != 2 {
 		t.Fatalf("older generation replaced current snapshot: %#v, %t", got, ok)
 	}
 	if _, ok := cache.get("key", now.Add(keyConfigCacheTTL)); ok {
@@ -387,7 +387,7 @@ func TestOnDemandSourcesAndPIIMatchersShareAcrossDistinctKeys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		snapshot := cache.put(fmt.Sprint(i), &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: digest, sourceRefs: sources, cacheBytes: 16 << 10}, Generation: 1}, now)
+		snapshot := cache.put(fmt.Sprint(i), &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: digest, sourceRefs: sources, cacheBytes: 16 << 10}, CredentialsGeneration: 1}, now)
 		cache.releaseSources(sources)
 		if first == nil {
 			first = snapshot
@@ -453,7 +453,7 @@ func TestSiblingKeyPinsReuseConfirmedSourcesAcrossEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := policy.ChainDigest(values)
-	cache.put("first", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Versions: versions, Config: config, Digest: digest, sourceRefs: []*sharedPolicySource{sources[0], sources[2]}}, Claims: claims, Generation: 1}, time.Now())
+	cache.put("first", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Versions: versions, Config: config, Digest: digest, sourceRefs: []*sharedPolicySource{sources[0], sources[2]}}, Claims: claims, CredentialsGeneration: 1}, time.Now())
 	cache.releaseSources(sources)
 	sibling := *claims
 	sibling.KeyID = "second"
@@ -517,8 +517,8 @@ func TestDelayedSourceRefreshCannotReplaceNewerParentSnapshot(t *testing.T) {
 	var cache keyConfigCache
 	defer cache.close()
 	old := time.Now()
-	first := cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: "old-parent"}, Generation: 1, CredentialsGeneration: 1}, old)
-	second := cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: "new-parent"}, Generation: 1, CredentialsGeneration: 1}, old.Add(time.Second))
+	first := cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: "old-parent"}, CredentialsGeneration: 1}, old)
+	second := cache.put("key", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: "new-parent"}, CredentialsGeneration: 1}, old.Add(time.Second))
 	if got := cache.put("key", first, old.Add(time.Millisecond)); got != second {
 		t.Fatal("a delayed refresh replaced a newer parent revision")
 	}

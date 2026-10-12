@@ -12,7 +12,7 @@ import (
 func TestBootSecretsInstallOnceAndEraseOwnedBytes(t *testing.T) {
 	var values []provision.BootSecretValue
 	for _, name := range requiredSecretNames {
-		values = append(values, provision.BootSecretValue{KeyID: name, Name: name, Plaintext: "secret", Version: "1"})
+		values = append(values, provision.BootSecretValue{Name: name, Plaintext: "secret"})
 	}
 	store := NewStore()
 	for _, bad := range [][]provision.BootSecretValue{nil, values[:1], append(append([]provision.BootSecretValue(nil), values...), values[0])} {
