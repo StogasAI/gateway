@@ -16,16 +16,12 @@ var (
 	ErrAPIKeyExpired       = &RequestError{"key_expired", "API key is expired", 403}
 	ErrGrantDisabled       = &RequestError{"grant_disabled", "Grant is disabled", 403}
 	ErrInvalidAPIKey       = &RequestError{"invalid_api_key", "Invalid API key", 401}
-	ErrRequestAlreadyUsed  = &RequestError{"request_already_used", "Request already finalized; use a new request ID", 409}
-	ErrAuthorizationClosed = &RequestError{"authorization_closed", "Authorization already completed; use a new request ID", 409}
-	ErrParamsMismatch      = &RequestError{"authorization_conflict", "Authorization already exists with different parameters", 409}
 	ErrInsufficientBalance = &RequestError{"insufficient_balance", "Insufficient credit. Add funds to your organization to retry this request.", 402}
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
 	ErrAbuseRateLimit      = &RequestError{"abuse_rate_limited", "Too many requests. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
 	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
-	ErrAPIKeyLimit         = &RequestError{"key_limit_exceeded", "API key limit reached or disabled/expired", 402}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}
@@ -70,15 +66,15 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		return code
 	}
 	switch code {
-	case "abuse_rate_limited", "authorization_closed", "authorization_conflict", "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
+	case "abuse_rate_limited", "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
 		"byok_not_allowed", "byok_required", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
-		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_limit_exceeded", "policy_work_limit_exceeded",
+		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "policy_work_limit_exceeded",
 		"method_not_allowed",
 		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
-		"request_already_used", "request_preparation_failed", "request_timeout", "request_too_large", "response_encoding_failed",
+		"request_timeout", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",
 		"unsupported_media_type", "unsupported_request", "unsupported_service_tier", "unsupported_tool",
 		// The Chutes transport proved these failed before it sent anything.

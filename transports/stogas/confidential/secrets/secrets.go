@@ -16,10 +16,8 @@ type Store struct {
 }
 
 type Secret struct {
-	KeyID   string
-	Name    string
-	Value   []byte
-	Version string
+	Name  string
+	Value []byte
 }
 
 var requiredSecretNames = []string{
@@ -40,7 +38,7 @@ func NewStore() *Store {
 func (s *Store) InstallBoot(values []provision.BootSecretValue) error {
 	secrets := make([]Secret, 0, len(values))
 	for _, value := range values {
-		secrets = append(secrets, Secret{KeyID: value.KeyID, Name: value.Name, Value: []byte(value.Plaintext), Version: value.Version})
+		secrets = append(secrets, Secret{Name: value.Name, Value: []byte(value.Plaintext)})
 	}
 	return s.install(secrets)
 }
@@ -59,7 +57,7 @@ func (s *Store) install(secrets []Secret) error {
 	}
 	next := make(map[string]Secret, len(secrets))
 	for _, secret := range secrets {
-		if secret.Name == "" || secret.KeyID == "" || secret.Version == "" || len(secret.Value) == 0 {
+		if secret.Name == "" || len(secret.Value) == 0 {
 			return ErrInvalidReleaseContents
 		}
 		if _, exists := next[secret.Name]; exists {
@@ -108,19 +106,6 @@ func (s *Store) Ready() bool {
 		}
 	}
 	return true
-}
-
-func (s *Store) Versions() map[string]string {
-	versions := map[string]string{}
-	if s == nil {
-		return versions
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for name, secret := range s.secrets {
-		versions[name] = secret.Version
-	}
-	return versions
 }
 
 func (s *Store) Get(name string) (Secret, bool) {

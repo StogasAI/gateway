@@ -424,7 +424,7 @@ type fakeSecretLookup map[string]string
 
 func (f fakeSecretLookup) Get(name string) (secretstore.Secret, bool) {
 	value, ok := f[name]
-	return secretstore.Secret{Name: name, Value: []byte(value), Version: "test"}, ok
+	return secretstore.Secret{Name: name, Value: []byte(value)}, ok
 }
 
 func TestConfidentialConfigRequiresFixedOriginAndInstance(t *testing.T) {

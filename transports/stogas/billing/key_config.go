@@ -57,7 +57,6 @@ type PolicySnapshot struct {
 type KeyConfigSnapshot struct {
 	PolicySnapshot
 	Claims                *APIKeyClaims
-	Generation            int
 	CredentialsGeneration int
 	Credentials           map[string][]CredentialSelection
 	credentialRefs        []*sharedCredential
@@ -71,7 +70,6 @@ type keyConfigRow struct {
 	Claims                *APIKeyClaims
 	Result                string
 	KeyID                 *string
-	Generation            *int
 	Sources               []policySourceRecord
 	CredentialsGeneration *int
 	Credentials           map[string][]CredentialSelection
@@ -218,7 +216,6 @@ func (s *Service) fetchKeyConfig(
 	).Scan(
 		&row.Result,
 		&row.KeyID,
-		&row.Generation,
 		&row.Sources,
 		&row.Claims,
 		&row.CredentialsGeneration,
@@ -236,7 +233,7 @@ func (s *Service) fetchKeyConfig(
 		}
 		return nil, resultErr
 	}
-	if row.Result != "ok" || row.KeyID == nil || *row.KeyID != expectedKeyID || row.Generation == nil || *row.Generation < 1 || row.Claims == nil {
+	if row.Result != "ok" || row.KeyID == nil || *row.KeyID != expectedKeyID || row.Claims == nil {
 		return nil, ErrGatewayUnavailable
 	}
 	if claims != nil && (row.Claims == nil || row.Claims.KeyID != claims.KeyID || row.Claims.OrganizationID != claims.OrganizationID || row.Claims.ResponsibleID != claims.ResponsibleID || derefString(row.Claims.GrantID) != derefString(claims.GrantID)) {
@@ -247,7 +244,7 @@ func (s *Service) fetchKeyConfig(
 	}
 	first, last := row.Sources[0], row.Sources[len(row.Sources)-1]
 	if first.Scope != policy.OrganizationScope || first.ID != row.Claims.OrganizationID ||
-		last.Scope != policy.KeyScope || last.ID != row.Claims.KeyID || last.Revision != *row.Generation {
+		last.Scope != policy.KeyScope || last.ID != row.Claims.KeyID {
 		return nil, ErrGatewayUnavailable
 	}
 	sources, err := s.keyConfigs.acquireSourceDelta(row.Sources, row.Claims.OrganizationID, pins, encryptionKeys)
@@ -285,7 +282,6 @@ func (s *Service) fetchKeyConfig(
 			cacheBytes: compiled.CompositionBytes(),
 			sourceRefs: sources,
 		},
-		Generation:            *row.Generation,
 		CredentialsGeneration: *row.CredentialsGeneration,
 		Credentials:           row.Credentials,
 	}

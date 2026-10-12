@@ -43,15 +43,20 @@ const authorizeHoldArguments = `
   $11::text,
   $12::jsonb,
   $13::text,
-  $14::integer,
-  $15::boolean,
-  $16::numeric,
-  $17::timestamptz,
-  $18::integer,
+  $14::timestamptz,
+  $15::numeric,
+  $16::timestamptz,
+  $17::bigint,
+  $18::jsonb,
   $19::jsonb,
   $20::jsonb,
-  $21::jsonb,
-  $22::numeric
+  $21::numeric
+`
+
+const closeRequestArguments = `
+  $1::uuid,
+  $2::text,
+  $3::timestamptz
 `
 
 const settleHoldArguments = `
@@ -166,6 +171,7 @@ func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 type Service struct {
 	db                         *GatewayDB
 	authorizeHoldQuery         string
+	closeRequestQuery          string
 	keyConfigQuery             string
 	keyConfigs                 keyConfigCache
 	keyConfigFlights           singleflight.Group
@@ -200,18 +206,6 @@ type DiagnosticsSnapshot struct {
 	RequestLogs                    *RequestLogDiagnostics    `json:"requestLogs,omitempty"`
 }
 
-type settleResultError struct {
-	err        error
-	result     string
-	statusCode int
-}
-
-func (e *settleResultError) Error() string { return e.err.Error() }
-func (e *settleResultError) Unwrap() error { return e.err }
-func (e *settleResultError) StatusCode() int {
-	return e.statusCode
-}
-
 func NewService(
 	ctx context.Context,
 	databaseURL string,
@@ -238,12 +232,17 @@ func NewService(
 	service := &Service{
 		db:                      db,
 		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
+		closeRequestQuery:       db.functionQuery("close_gateway_request", closeRequestArguments),
 		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigArguments),
 		inferenceTokenPublicKey: publicKey,
 		requestLogs:             requestLogs,
 		settleHoldQuery:         db.functionQuery("settle_gateway_hold", settleHoldArguments),
 		apiKeyPepper:            apiKeyPepper,
 		byok:                    byok,
+	}
+	if err := db.checkQueries(ctx, service.authorizeHoldQuery, service.closeRequestQuery, service.keyConfigQuery, service.settleHoldQuery); err != nil {
+		db.Close()
+		return nil, err
 	}
 	return service, nil
 }
@@ -357,12 +356,11 @@ func (s *Service) AuthorizeRequestWithEncryptionKeys(
 	encryptionKeys customerkey.Keys,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
-	singleUse bool,
 ) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSD, usage, snapshot, prepared, activeRules, encryptionKeys, upstreamTarget, requestLifetime, singleUse)
+	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSD, usage, snapshot, prepared, activeRules, encryptionKeys, upstreamTarget, requestLifetime)
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage UsageReservation, snapshot *KeyConfigSnapshot, prepared *PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *UpstreamTarget, requestLifetime time.Duration, singleUse bool) (*Authorization, error) {
+func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage UsageReservation, snapshot *KeyConfigSnapshot, prepared *PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *UpstreamTarget, requestLifetime time.Duration) (*Authorization, error) {
 	claims, apiKeyHash, _, err := s.parseVerifiedAPIKey(rawAPIKey)
 	if err != nil {
 		return nil, ErrInvalidAPIKey
@@ -387,7 +385,6 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 		encryptionKeys,
 		upstreamTarget,
 		requestLifetime,
-		singleUse,
 	)
 }
 
@@ -427,7 +424,6 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 		encryptionKeys,
 		upstreamTarget,
 		requestLifetime,
-		true,
 	)
 }
 
@@ -446,7 +442,6 @@ func (s *Service) authorizeResolvedRequest(
 	encryptionKeys customerkey.Keys,
 	upstreamTarget *UpstreamTarget,
 	requestLifetime time.Duration,
-	singleUse bool,
 ) (*Authorization, error) {
 	releaseFinalization, err := s.reserveFinalization()
 	if err != nil {
@@ -457,7 +452,7 @@ func (s *Service) authorizeResolvedRequest(
 			releaseFinalization()
 		}
 	}()
-	if snapshot == nil || snapshot.Config == nil || snapshot.Claims == nil || snapshot.Generation < 1 || snapshot.CredentialsGeneration < 1 || snapshot.Versions == nil {
+	if snapshot == nil || snapshot.Config == nil || snapshot.Claims == nil || snapshot.CredentialsGeneration < 1 || snapshot.Versions == nil {
 		return nil, ErrGatewayUnavailable
 	}
 	if prepared == nil || prepared.snapshot != snapshot || prepared.provider != providerKey {
@@ -512,7 +507,10 @@ func (s *Service) authorizeResolvedRequest(
 	defer releaseAuthorization()
 
 	row := authorizeRow{}
-	queryCtx, cancel := context.WithTimeout(ctx, authorizeTimeout)
+	// PostgreSQL creates no hold after this time by its own clock, so a close
+	// that finds this time passed cannot miss one.
+	authorizeBefore := time.Now().Add(authorizeTimeout)
+	queryCtx, cancel := context.WithDeadline(ctx, authorizeBefore)
 	defer cancel()
 	var dashboardKeyID, dashboardActorUserID, dashboardSessionID *string
 	if dashboard != nil {
@@ -540,8 +538,7 @@ func (s *Service) authorizeResolvedRequest(
 		holdParamsHash,
 		nullableString(upstreamTargetJSON),
 		nullableString(credentialKeyID),
-		snapshot.Generation,
-		singleUse,
+		authorizeBefore,
 		usage.Tokens,
 		expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
 		snapshot.CredentialsGeneration,
@@ -553,6 +550,8 @@ func (s *Service) authorizeResolvedRequest(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 	)
 	if err != nil {
+		s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
+		releaseFinalization = nil
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 
@@ -640,12 +639,9 @@ func authorizationResultError(result string) error {
 	switch result {
 	case "invalid_key", "hold_missing":
 		return ErrInvalidAPIKey
-	case "params_mismatch":
-		return ErrParamsMismatch
-	case "authorization_closed":
-		return ErrAuthorizationClosed
-	case "expired":
-		return ErrRequestAlreadyUsed
+	case "params_mismatch", "authorization_closed", "expired":
+		// The gateway's own parameters or clock failed these checks, not the caller.
+		return fmt.Errorf("%w: authorization %s", ErrGatewayUnavailable, result)
 	case "insufficient_balance":
 		return ErrInsufficientBalance
 	case "byok_disabled":
@@ -664,8 +660,6 @@ func authorizationResultError(result string) error {
 		return ErrAPIKeyConfigStale
 	case "key_configuration_too_large":
 		return ErrAPIKeyConfigSize
-	case "api_key_limit":
-		return ErrAPIKeyLimit
 	case "invalid_amount":
 		return errors.New("invalid estimated upstream cost")
 	default:

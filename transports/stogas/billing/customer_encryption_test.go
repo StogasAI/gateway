@@ -52,7 +52,7 @@ func TestEncryptedPolicyWarmCacheRequiresKeyAndRefreshKeepsPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: sources[0].value}, {Scope: policy.KeyScope, Value: sources[2].value}}), sourceRefs: sources}, Generation: 1}, time.Now())
+	snapshot := s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: sources[0].value}, {Scope: policy.KeyScope, Value: sources[2].value}}), sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
 	s.keyConfigs.releaseSources(sources)
 	plan, err := snapshot.RedactionPolicy()
 	if err != nil {
@@ -130,7 +130,7 @@ func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, Generation: 1}, time.Now())
+	snapshot := cache.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: policy.ChainDigest(sources), sourceRefs: refs}, Claims: &APIKeyClaims{OrganizationID: org}, CredentialsGeneration: 1}, time.Now())
 	cache.releaseSources(refs)
 	for _, provider := range []string{"anthropic", "openai", "anthropic", "openai"} {
 		active, err := snapshot.Config.Activate(conditionalPolicyValues{"provider.id": {Type: "string", String: provider}})
@@ -212,7 +212,7 @@ func BenchmarkEncryptedPolicy(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: "test", sourceRefs: sources}, Generation: 1}, time.Now())
+		s.keyConfigs.put("api", &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: config, Digest: "test", sourceRefs: sources}, CredentialsGeneration: 1}, time.Now())
 		s.keyConfigs.releaseSources(sources)
 		defer s.keyConfigs.close()
 		for b.Loop() {

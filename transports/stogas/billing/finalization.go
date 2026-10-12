@@ -37,6 +37,7 @@ type finalizationState struct {
 	cancel         context.CancelFunc
 	workers        sync.WaitGroup
 	pending        atomic.Int64
+	closing        atomic.Int64
 	abandoned      atomic.Int64
 	encodingFailed atomic.Bool
 }
@@ -256,6 +257,68 @@ func (s *Service) finishFinalization(task *finalizationRetryTask, abandoned bool
 
 }
 
+// PostgreSQL can still commit a hold after authorization stopped waiting for
+// it, and the gateway never runs that request. Closing it releases any such
+// hold at zero charge once authorizeBefore passes. The request's finalization
+// reservation bounds these closes. They do not block admission: one slow
+// database would otherwise make every gateway unready at once.
+func (s *Service) closeUnconfirmedAuthorization(requestID string, keyID string, authorizeBefore time.Time, release func()) {
+	f := &s.finalizations
+	f.mu.Lock()
+	s.startFinalizationWorkersLocked()
+	ctx := f.ctx
+	if f.closed {
+		f.mu.Unlock()
+		release()
+		return
+	}
+	f.workers.Add(1)
+	f.closing.Add(1)
+	f.mu.Unlock()
+	go func() {
+		defer f.workers.Done()
+		defer f.closing.Add(-1)
+		defer release()
+		wait := time.Until(authorizeBefore)
+		for delay := finalizationInitialDelay; ; delay = min(finalizationMaxDelay, delay*2) {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+			err := s.closeRequestOnce(ctx, requestID, keyID, authorizeBefore)
+			if err == nil || ctx.Err() != nil || !(errors.Is(err, errClosePending) || errors.Is(err, context.DeadlineExceeded) || retryableSettlementError(err)) {
+				return
+			}
+			wait = jitteredSettleRetryDelay(delay)
+		}
+	}()
+}
+
+// The database clock has not yet passed the authorization deadline.
+var errClosePending = errors.New("close gateway request: authorization deadline pending")
+
+// Each attempt has its own deadline. Closing is idempotent, so an attempt that
+// timed out is safe to repeat.
+func (s *Service) closeRequestOnce(ctx context.Context, requestID string, keyID string, authorizeBefore time.Time) error {
+	ctx, cancel := context.WithTimeout(ctx, settleTimeout)
+	defer cancel()
+	var result string
+	if err := s.db.pool.QueryRow(ctx, s.closeRequestQuery, requestID, keyID, authorizeBefore).Scan(&result); err != nil {
+		return fmt.Errorf("close gateway request: %w", err)
+	}
+	switch result {
+	case "closed", "released":
+		return nil
+	case "pending":
+		return errClosePending
+	default:
+		return fmt.Errorf("unexpected close result: %s", result)
+	}
+}
+
 // Call after stopping inference admission. Shutdown uses the server's existing
 // cleanup deadline; normal operation never discards a log because time elapsed.
 func (s *Service) DrainFinalizations(ctx context.Context) error {
@@ -264,7 +327,7 @@ func (s *Service) DrainFinalizations(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(finalizationInitialDelay)
 	defer ticker.Stop()
-	for s.finalizations.pending.Load() != 0 || s.rejectionLogs.deliveryBlocked.Load() {
+	for s.finalizations.pending.Load() != 0 || s.finalizations.closing.Load() != 0 || s.rejectionLogs.deliveryBlocked.Load() {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -382,10 +445,9 @@ func (s *Service) settleOnce(ctx context.Context, authorization *Authorization, 
 	case "negative_balance":
 		s.negativeBalanceSettlements.Add(1)
 		return nil
-	case "params_mismatch", "review_required":
-		return &settleResultError{err: ErrAuthorizationClosed, result: row.Result, statusCode: 409}
-	case "invalid_amount", "invalid_payload", "payload_mismatch":
-		return &settleResultError{err: errors.New("invalid settlement payload"), result: row.Result, statusCode: 400}
+	case "params_mismatch", "review_required", "invalid_amount", "invalid_payload", "payload_mismatch":
+		// Retrying cannot change these; the hold awaits reconciliation or review.
+		return fmt.Errorf("settlement refused: %s", row.Result)
 	default:
 		return fmt.Errorf("unknown settlement result: %s", row.Result)
 	}
