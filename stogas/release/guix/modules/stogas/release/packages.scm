@@ -81,13 +81,12 @@
     (package
       (inherit base)
       (name "stogas-linux")
-      ;; This replaces Guix's kernel patches, which add a boot logo and an ARM
+      ;; This drops Guix's kernel patches, which add a boot logo and an ARM
       ;; export that this x86 kernel does not build.
       (source
        (origin
          (inherit (package-source base))
-         (patches (list (patch-file "linux-snp-host-acpi.patch")))
-         (patch-flags '("-p1" "--fuzz=0"))))
+         (patches '())))
       (arguments
        (substitute-keyword-arguments (package-arguments base)
          ((#:imported-modules modules %default-gnu-imported-modules)

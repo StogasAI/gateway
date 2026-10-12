@@ -171,7 +171,9 @@
                       "-o" (string-append rootfs "/stogas/gateway.init")
                       "./cmd/stogas-gateway")
               (setenv "CGO_ENABLED" "0")
-              (invoke "go" "build" "-trimpath" "-mod=vendor" "-ldflags=-s -w"
+              (invoke "go" "build" "-trimpath" "-mod=vendor"
+                      (string-append "-ldflags=-s -w -X main.releaseTime="
+                                     #$(environment "STOGAS_RELEASE_TIME"))
                       "-o" (string-append rootfs "/init")
                       "./cmd/stogas-gateway-init"))
 

@@ -23,7 +23,8 @@ STOGAS_RELEASE_TAG="$tag"
 STOGAS_RELEASE_SEQUENCE="$(stogas_release_sequence "$tag")"
 STOGAS_RELEASE_COMMIT="$(git -C "$repo_root" rev-parse HEAD)"
 STOGAS_RELEASE_TREE="$(git -C "$repo_root" rev-parse 'HEAD^{tree}')"
-export STOGAS_RELEASE_TAG STOGAS_RELEASE_SEQUENCE STOGAS_RELEASE_COMMIT STOGAS_RELEASE_TREE
+STOGAS_RELEASE_TIME="$(git -C "$repo_root" show -s --format=%ct HEAD)"
+export STOGAS_RELEASE_TAG STOGAS_RELEASE_SEQUENCE STOGAS_RELEASE_COMMIT STOGAS_RELEASE_TREE STOGAS_RELEASE_TIME
 
 # Build from one capture of the tracked and non-ignored files, never from the
 # changing checkout or its ignored files.
