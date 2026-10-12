@@ -106,13 +106,15 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 	return &GatewayDB{pool: pool, schemaName: schemaName}, nil
 }
 
-func (db *GatewayDB) functionQuery(functionName string, arguments string) string {
-	return "select * from " + pgx.Identifier{db.schemaName, functionName}.Sanitize() + "(\n" + arguments + "\n);"
+// functionQuery selects the result columns the caller scans by name, so a function
+// that adds or reorders columns cannot shift a scan. A scalar result passes "*".
+func (db *GatewayDB) functionQuery(functionName string, columns string, arguments string) string {
+	return "select " + columns + " from " + pgx.Identifier{db.schemaName, functionName}.Sanitize() + "(\n" + arguments + "\n);"
 }
 
 // checkQueries parses each query without running it. Control chooses the schema
-// at boot, so a schema without a function signature this release calls stops
-// the gateway here instead of failing its requests.
+// at boot, so a schema that lacks a function, argument type or result column this
+// release uses stops the gateway here instead of failing its requests.
 func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

@@ -53,6 +53,8 @@ const authorizeHoldArguments = `
   $21::numeric
 `
 
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, available_balance_usd, upstream_byok, upstream_byok_binding, config_current"
+
 const closeRequestArguments = `
   $1::uuid,
   $2::text,
@@ -68,6 +70,8 @@ const settleHoldArguments = `
   $6::numeric,
   $7::json
 `
+
+const settleHoldColumns = "result, billed_cost_usd, balance_adjustment_usd, available_balance_usd"
 
 type authorizeRow struct {
 	Result                  string
@@ -231,12 +235,12 @@ func NewService(
 
 	service := &Service{
 		db:                      db,
-		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldArguments),
-		closeRequestQuery:       db.functionQuery("close_gateway_request", closeRequestArguments),
-		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigArguments),
+		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldColumns, authorizeHoldArguments),
+		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
+		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
 		inferenceTokenPublicKey: publicKey,
 		requestLogs:             requestLogs,
-		settleHoldQuery:         db.functionQuery("settle_gateway_hold", settleHoldArguments),
+		settleHoldQuery:         db.functionQuery("settle_gateway_hold", settleHoldColumns, settleHoldArguments),
 		apiKeyPepper:            apiKeyPepper,
 		byok:                    byok,
 	}

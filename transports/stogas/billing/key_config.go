@@ -25,6 +25,8 @@ const keyConfigArguments = `
   $5::jsonb
 `
 
+const keyConfigColumns = "result, key_id, policy_sources, key_claims, credentials_generation, credentials, credential_sources"
+
 type PolicyVersion struct {
 	Scope    policy.Scope `json:"scope"`
 	ID       string       `json:"id"`
