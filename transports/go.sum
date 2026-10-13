@@ -18,10 +18,10 @@ github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1 h1:WJ
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1/go.mod h1:tCcJZ0uHAmvjsVYzEFivsRTN00oz5BEsRgQHu5JZ9WE=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 h1:XRzhVemXdgvJqCH0sFfrBUTnUJSBrBf7++ypk+twtRs=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0/go.mod h1:HKpQxkWaGLJ+D/5H8QRpyQXA1eKjxkFlOMwck5+33Jk=
-github.com/StogasAI/verifier/go v0.0.0-20261013063414-4add88c839ad h1:gGXphMw3MPW5Y/Pqrck/LXggOgYtKvPppdsrRLWwiCw=
-github.com/StogasAI/verifier/go v0.0.0-20261013063414-4add88c839ad/go.mod h1:YLFuE1D+g1hx23cLgGZhGW8OnvT782qepX48Ce5moqM=
-github.com/StogasAI/verifier/go/reference v0.0.0-20261013063414-4add88c839ad h1:4Xozt1LKcE9+Ld5JH6guxKTlRwQ1yvhaQMKjq3aLQ4I=
-github.com/StogasAI/verifier/go/reference v0.0.0-20261013063414-4add88c839ad/go.mod h1:q21NbTrTVpy90CUOfyfPHziAsVQ/iFP3BDKy0dcT7lA=
+github.com/StogasAI/verifier/go v0.0.0-20261013225946-baff7488b295 h1:qCMC9riCTHiz5ssNPWmB2NisdHLucaWzpI1UjSpkPHY=
+github.com/StogasAI/verifier/go v0.0.0-20261013225946-baff7488b295/go.mod h1:YLFuE1D+g1hx23cLgGZhGW8OnvT782qepX48Ce5moqM=
+github.com/StogasAI/verifier/go/reference v0.0.0-20261013225946-baff7488b295 h1:FhB45ZLBiNfVluB2pxtfxwLAnTv/T7dgPNeEBdz87q8=
+github.com/StogasAI/verifier/go/reference v0.0.0-20261013225946-baff7488b295/go.mod h1:q21NbTrTVpy90CUOfyfPHziAsVQ/iFP3BDKy0dcT7lA=
 github.com/andybalholm/brotli v1.2.2 h1:HzTuoo2ErYQqf5qvcJInB8uvqSVxRttzkFexPWtnceM=
 github.com/andybalholm/brotli v1.2.2/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
