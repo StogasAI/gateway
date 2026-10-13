@@ -172,6 +172,8 @@ type Service struct {
 	underReservedSettlements   atomic.Uint64
 	negativeBalanceSettlements atomic.Uint64
 	settleQuery                string
+	sanctionedSourceQuery      string
+	sanctionedNetworksQuery    string
 	// Each hold records the boot that owns it, so Control can release the
 	// holds of a boot that stopped.
 	nodeID                  string
@@ -218,12 +220,22 @@ func NewService(
 		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
 		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
 		settleQuery:             db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
+		sanctionedSourceQuery:   db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
+		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
 		inferenceTokenPublicKey: publicKey,
 		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
 		byok:                    byok,
 	}
-	if err := db.checkQueries(ctx, service.authorizeHoldQuery, service.closeRequestQuery, service.keyConfigQuery, service.settleQuery); err != nil {
+	if err := db.checkQueries(
+		ctx,
+		service.authorizeHoldQuery,
+		service.closeRequestQuery,
+		service.keyConfigQuery,
+		service.settleQuery,
+		service.sanctionedSourceQuery,
+		service.sanctionedNetworksQuery,
+	); err != nil {
 		db.Close()
 		return nil, err
 	}
