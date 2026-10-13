@@ -27,7 +27,7 @@ type PublicBillingError struct {
 type billingAuthorizer interface {
 	AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
 	AuthorizeDashboardRequestWithDuration(ctx context.Context, credential *gatewaybilling.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage gatewaybilling.UsageReservation, snapshot *gatewaybilling.KeyConfigSnapshot, prepared *gatewaybilling.PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *gatewaybilling.UpstreamTarget, requestLifetime time.Duration) (*gatewaybilling.Authorization, error)
-	FinalizeRequest(ctx context.Context, authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent, retain gatewaybilling.RetainMemory) error
+	FinalizeRequest(authorization *gatewaybilling.Authorization, event gatewaybilling.RequestEvent) error
 }
 
 func PublicBillingErrorFor(err error) PublicBillingError {
@@ -251,11 +251,19 @@ func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State)
 		return
 	}
 	finalizeExportMetrics(state)
-	if err := billing.FinalizeRequest(context.WithoutCancel(ctx), state.Authorization, *event, state.RetainMemory); err != nil {
+	if err := billing.FinalizeRequest(state.Authorization, *event); err != nil {
+		reason, errorType := "finalization_failed", safeOperationalErrorType(err)
+		var settlementErr *gatewaybilling.SettlementError
+		if errors.As(err, &settlementErr) {
+			reason = settlementErr.Reason
+			if settlementErr.SQLState != "" {
+				errorType = settlementErr.SQLState
+			}
+		}
 		writeOperationalLog(operationalLogEvent{
-			ErrorType:  safeOperationalErrorType(err),
-			Event:      "billing_settlement_schedule_failed",
-			ReasonCode: "finalization_failed",
+			ErrorType:  errorType,
+			Event:      "billing_settlement_failed",
+			ReasonCode: reason,
 			RequestID:  state.Authorization.RequestID,
 			Severity:   "error",
 		})

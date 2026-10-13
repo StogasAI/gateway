@@ -439,8 +439,8 @@ func (l *requestMemoryLease) unpin(class memoryReservationClass, bytes int64) {
 
 // retain transfers ownership of part of an existing reservation. The live
 // request keeps its full charge until release; afterward only retained bytes
-// remain. No admission/reacquisition race can discard a settlement under load.
-// The returned closure retains this small lease, never the request or body.
+// remain, so the holder never competes for admission again. The returned
+// closure retains this small lease, never the request or body.
 func (l *requestMemoryLease) retain(bytes int) (func(), bool) {
 	if l == nil || l.admission == nil || bytes <= 0 {
 		return nil, false

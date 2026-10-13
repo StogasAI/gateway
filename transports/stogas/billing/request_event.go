@@ -60,7 +60,6 @@ type RequestEvent struct {
 	Usage                RequestUsage       `json:"usage"`
 	Plugins              plugins.Metrics    `json:"plugins,omitzero"`
 	GatewayVersion       string             `json:"gateway_version"`
-	holdParamsHash       string
 }
 
 type RequestUsage struct {
@@ -105,54 +104,36 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-func encodeGatewayRequestEvent(event RequestEvent) (string, error) {
+const requestLogMaxEventBytes = 64 * 1024
+
+// settlementLog carries the hold binding, which settlement checks and removes
+// before the log reaches customer history.
+type settlementLog struct {
+	RequestEvent
+	HoldParamsHash string `json:"hold_params_hash"`
+}
+
+// encodeRequestLog encodes a request's log for settlement. Rejections have no
+// hold and pass an empty hash.
+func encodeRequestLog(event RequestEvent, holdParamsHash string) (string, error) {
 	if event.SchemaVersion != RequestLogSchemaVersion {
 		return "", fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
 	}
 	if event.Usage.Meters == nil {
 		event.Usage.Meters = EventMeters{}
 	}
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		return "", fmt.Errorf("marshal gateway request log payload: %w", err)
+	var encoded []byte
+	var err error
+	if holdParamsHash == "" {
+		encoded, err = json.Marshal(event)
+	} else {
+		encoded, err = json.Marshal(settlementLog{event, holdParamsHash})
 	}
-	if len(encoded)+1 > requestLogMaxEventBytes {
-		return "", fmt.Errorf("gateway request log payload is %d bytes, limit is %d", len(encoded), requestLogMaxEventBytes-1)
+	if err != nil {
+		return "", fmt.Errorf("marshal request log: %w", err)
+	}
+	if len(encoded) > requestLogMaxEventBytes {
+		return "", fmt.Errorf("request log is %d bytes, limit is %d", len(encoded), requestLogMaxEventBytes)
 	}
 	return string(encoded), nil
-}
-
-func decodeGatewayRequestEvent(payload string) (RequestEvent, error) {
-	event := RequestEvent{}
-	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return RequestEvent{}, fmt.Errorf("unmarshal gateway request log payload: %w", err)
-	}
-	if event.SchemaVersion != RequestLogSchemaVersion {
-		return RequestEvent{}, fmt.Errorf("unsupported request log schema version: %d", event.SchemaVersion)
-	}
-	pricing, err := ValidateMeters(event.Usage.Meters)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	event.Usage.Meters = pricing
-	expected := standardTextTokens(pricing)
-	actual := event.Usage.StandardTextTokens
-	if !equalOptionalString(actual.Input, expected.Input) || !equalOptionalString(actual.Reasoning, expected.Reasoning) || !equalOptionalString(actual.Output, expected.Output) {
-		return RequestEvent{}, fmt.Errorf("standard text tokens do not match observed UTF-8 bytes")
-	}
-	event.Usage.CacheReadSavingsUSD, err = requestOptionalUSD(
-		event.Usage.CacheReadSavingsUSD,
-		"cache read savings",
-	)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	event.Usage.CacheWriteOverheadUSD, err = requestOptionalUSD(
-		event.Usage.CacheWriteOverheadUSD,
-		"cache write overhead",
-	)
-	if err != nil {
-		return RequestEvent{}, fmt.Errorf("validate gateway request log payload: %w", err)
-	}
-	return event, nil
 }

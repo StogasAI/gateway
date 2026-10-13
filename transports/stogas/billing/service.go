@@ -23,7 +23,8 @@ const (
 	authorizeTimeout           = 1500 * time.Millisecond
 	holdSettlementExpiryBuffer = 20 * time.Minute
 
-	// GatewayRequestLifetime bounds direct inference so reconciliation never races a live request.
+	// GatewayRequestLifetime bounds direct inference, so a hold that outlives it
+	// by holdSettlementExpiryBuffer failed to settle and raises an alert.
 	GatewayRequestLifetime = time.Hour
 	ManagedUpstreamByok    = "stogas"
 )
@@ -51,7 +52,8 @@ const authorizeHoldArguments = `
   $18::jsonb,
   $19::jsonb,
   $20::jsonb,
-  $21::numeric
+  $21::numeric,
+  $22::text
 `
 
 const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, available_balance_usd, upstream_byok, upstream_byok_binding, config_current"
@@ -61,18 +63,6 @@ const closeRequestArguments = `
   $2::text,
   $3::timestamptz
 `
-
-const settleHoldArguments = `
-  $1::uuid,
-  $2::text,
-  $3::text,
-  $4::text,
-  $5::text,
-  $6::numeric,
-  $7::json
-`
-
-const settleHoldColumns = "result, billed_cost_usd, balance_adjustment_usd, available_balance_usd"
 
 type authorizeRow struct {
 	Result                  string
@@ -88,13 +78,6 @@ type authorizeRow struct {
 	UpstreamByok            *string
 	UpstreamByokBinding     *string
 	ConfigCurrent           bool
-}
-
-type settleRow struct {
-	Result               string
-	BilledCostUSD        *string
-	BalanceAdjustmentUSD *string
-	AvailableBalanceUSD  *string
 }
 
 type Authorization struct {
@@ -188,27 +171,22 @@ type Service struct {
 	finalizations              finalizationState
 	underReservedSettlements   atomic.Uint64
 	negativeBalanceSettlements atomic.Uint64
-	requestLogs                *RequestLogClient
-	settleHoldQuery            string
-	apiKeyPepper               string
-	inferenceTokenPublicKey    ed25519.PublicKey
-	byok                       *byokDecryptor
+	settleQuery                string
+	// Each hold records the boot that owns it, so Control can release the
+	// holds of a boot that stopped.
+	nodeID                  string
+	apiKeyPepper            string
+	inferenceTokenPublicKey ed25519.PublicKey
+	byok                    *byokDecryptor
 }
 
 type DiagnosticsSnapshot struct {
-	KeyConfigCache                 PolicyCacheDiagnostics    `json:"keyConfigCache"`
-	RedactionCache                 PolicyCacheDiagnostics    `json:"redactionCache"`
-	RejectionLogs                  RejectionLogDiagnostics   `json:"rejectionLogs"`
-	Database                       *DatabaseDiagnostics      `json:"database,omitempty"`
-	LocalAdmission                 LocalAdmissionDiagnostics `json:"localAdmission"`
-	FinalizationRetries            int64                     `json:"finalizationRetries"`
-	UnderReservedSettlements       uint64                    `json:"underReservedSettlements"`
-	NegativeBalanceSettlements     uint64                    `json:"negativeBalanceSettlements"`
-	FinalizationAbandoned          int64                     `json:"finalizationAbandoned"`
-	FinalizationEncodingFailed     bool                      `json:"finalizationEncodingFailed"`
-	FinalizationRetryQueueCapacity int                       `json:"finalizationRetryQueueCapacity"`
-	FinalizationRetryQueueDepth    int                       `json:"finalizationRetryQueueDepth"`
-	RequestLogs                    *RequestLogDiagnostics    `json:"requestLogs,omitempty"`
+	KeyConfigCache PolicyCacheDiagnostics    `json:"keyConfigCache"`
+	RedactionCache PolicyCacheDiagnostics    `json:"redactionCache"`
+	RejectionLogs  RejectionLogDiagnostics   `json:"rejectionLogs"`
+	Database       *DatabaseDiagnostics      `json:"database,omitempty"`
+	LocalAdmission LocalAdmissionDiagnostics `json:"localAdmission"`
+	Settlement     SettlementDiagnostics     `json:"settlement"`
 }
 
 func NewService(
@@ -219,7 +197,7 @@ func NewService(
 	byokEncryptionSecret string,
 	inferenceTokenPublicKey string,
 	databasePool DatabasePoolConfig,
-	requestLogs *RequestLogClient,
+	nodeID string,
 ) (*Service, error) {
 	publicKey, err := parseInferenceTokenPublicKey(inferenceTokenPublicKey)
 	if err != nil {
@@ -239,13 +217,13 @@ func NewService(
 		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldColumns, authorizeHoldArguments),
 		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
 		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
+		settleQuery:             db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
 		inferenceTokenPublicKey: publicKey,
-		requestLogs:             requestLogs,
-		settleHoldQuery:         db.functionQuery("settle_gateway_hold", settleHoldColumns, settleHoldArguments),
+		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
 		byok:                    byok,
 	}
-	if err := db.checkQueries(ctx, service.authorizeHoldQuery, service.closeRequestQuery, service.keyConfigQuery, service.settleHoldQuery); err != nil {
+	if err := db.checkQueries(ctx, service.authorizeHoldQuery, service.closeRequestQuery, service.keyConfigQuery, service.settleQuery); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -254,10 +232,9 @@ func NewService(
 
 func (s *Service) Close() {
 	s.keyConfigs.close()
-	s.closeRejectionLogs()
 	s.closeFinalizations()
-	if s.requestLogs != nil {
-		s.requestLogs.Close()
+	if done := s.stopRejectionLogs(); done != nil {
+		<-done
 	}
 	if s.db != nil {
 		s.db.Close()
@@ -268,21 +245,13 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 	if s == nil {
 		return DiagnosticsSnapshot{}
 	}
-	retryQueueDepth := s.finalizationQueueDepth()
 	return DiagnosticsSnapshot{
-		KeyConfigCache:                 s.keyConfigs.diagnostics(),
-		RedactionCache:                 s.keyConfigs.redactionDiagnostics(),
-		RejectionLogs:                  s.rejectionLogs.snapshot(),
-		Database:                       s.db.Diagnostics(),
-		LocalAdmission:                 localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.callerFailures, &s.apiKeys),
-		FinalizationRetries:            s.finalizations.pending.Load(),
-		UnderReservedSettlements:       s.underReservedSettlements.Load(),
-		NegativeBalanceSettlements:     s.negativeBalanceSettlements.Load(),
-		FinalizationAbandoned:          s.finalizations.abandoned.Load(),
-		FinalizationEncodingFailed:     s.finalizations.encodingFailed.Load(),
-		FinalizationRetryQueueCapacity: finalizationCapacity,
-		FinalizationRetryQueueDepth:    retryQueueDepth,
-		RequestLogs:                    s.requestLogs.Diagnostics(),
+		KeyConfigCache: s.keyConfigs.diagnostics(),
+		RedactionCache: s.keyConfigs.redactionDiagnostics(),
+		RejectionLogs:  s.rejectionLogs.snapshot(),
+		Database:       s.db.Diagnostics(),
+		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.callerFailures, &s.apiKeys),
+		Settlement:     s.settlementDiagnostics(),
 	}
 }
 
@@ -558,6 +527,7 @@ func (s *Service) authorizeResolvedRequest(
 		selectedPolicy.Versions,
 		matchedRules,
 		usage.InputTextBytes,
+		nullableString(s.nodeID),
 	).Scan(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 	)
@@ -606,7 +576,7 @@ func (s *Service) authorizeResolvedRequest(
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
 		authorization := &Authorization{releaseFinalization: releaseFinalization, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
-		releaseFinalization = nil // Ownership follows the accepted request through durable finalization.
+		releaseFinalization = nil // Ownership follows the accepted request through settlement.
 		if upstreamByok == "" {
 			return authorization, ErrByok
 		}

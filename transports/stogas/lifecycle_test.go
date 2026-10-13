@@ -62,7 +62,7 @@ func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx contex
 	return f.authorize(requestID)
 }
 
-func (f *fakeBillingAuthorizer) FinalizeRequest(ctx context.Context, authorization *billing.Authorization, event billing.RequestEvent, retain billing.RetainMemory) error {
+func (f *fakeBillingAuthorizer) FinalizeRequest(authorization *billing.Authorization, event billing.RequestEvent) error {
 	f.finalEvents = append(f.finalEvents, event)
 	return nil
 }

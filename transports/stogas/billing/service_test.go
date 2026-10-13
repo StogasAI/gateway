@@ -1,22 +1,18 @@
 package billing
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"github.com/maximhq/bifrost/transports/stogas/money"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
@@ -173,10 +169,10 @@ func TestParseDatabaseMoneyRejectsMissingOrMalformedValues(t *testing.T) {
 	}
 }
 
-func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
-	payload, err := encodeGatewayRequestEvent(RequestEvent{SchemaVersion: RequestLogSchemaVersion, RequestID: "request"})
+func TestEncodeRequestLogDefaultsPricing(t *testing.T) {
+	payload, err := encodeRequestLog(RequestEvent{SchemaVersion: RequestLogSchemaVersion, RequestID: "request"}, "")
 	if err != nil {
-		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
+		t.Fatalf("encodeRequestLog returned error: %v", err)
 	}
 
 	decoded := map[string]any{}
@@ -190,7 +186,7 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 		t.Fatal("pricing_input_sha256 must not duplicate the catalog-bound pricing record")
 	}
 	if _, exists := decoded["hold_params_hash"]; exists {
-		t.Fatal("the private reconciliation hash must not enter the public request-log payload")
+		t.Fatal("a rejection has no hold binding")
 	}
 	pricing, ok := decoded["usage"].(map[string]any)["meters"].(map[string]any)
 	if !ok || len(pricing) != 0 {
@@ -198,57 +194,29 @@ func TestEncodeGatewayRequestEventDefaultsPricing(t *testing.T) {
 	}
 }
 
+// Settlement checks the hold binding and removes it before storing the log.
+func TestEncodeRequestLogCarriesTheHoldBinding(t *testing.T) {
+	hash := strings.Repeat("a", 64)
+	payload, err := encodeRequestLog(testGatewayRequestEvent(), hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &wire); err != nil {
+		t.Fatal(err)
+	}
+	if string(wire["hold_params_hash"]) != `"`+hash+`"` || string(wire["request_id"]) != `"request-1"` {
+		t.Fatalf("settlement log lost its hold binding or event fields: %s", payload)
+	}
+}
+
 func TestRequestLogRejectsUnsupportedSchemaVersions(t *testing.T) {
 	for _, version := range []uint8{0, 2} {
 		event := testGatewayRequestEvent()
 		event.SchemaVersion = version
-		if _, err := encodeGatewayRequestEvent(event); err == nil {
+		if _, err := encodeRequestLog(event, ""); err == nil {
 			t.Fatalf("encoded unsupported version %d", version)
 		}
-		client := &RequestLogClient{}
-		if _, err := client.enqueueGatewayRequest(event); err == nil {
-			t.Fatalf("enqueued unsupported version %d", version)
-		}
-	}
-	for _, payload := range []string{`{}`, `{"schema_version":0}`, `{"schema_version":2}`, `{"schema_version":"1"}`} {
-		if _, err := decodeGatewayRequestEvent(payload); err == nil {
-			t.Fatalf("decoded unsupported payload %s", payload)
-		}
-	}
-}
-
-func TestDecodeGatewayRequestEventRestoresCanonicalEvidence(t *testing.T) {
-	event := testGatewayRequestEvent()
-	event.CatalogVersion = catalogVersion(39)
-	event.ProviderAttempts = []ProviderAttempt{{CatalogChainHash: "sha256:" + strings.Repeat("b", 64)}}
-	overhead := "29"
-	event.Usage.CacheWriteOverheadUSD = &overhead
-	event.Usage.Meters = EventMeters{
-		MeterCachedInputTokens: PricedMeter("300", RatePerMillionTokens, "0", "0"),
-		MeterInputTokens:       PricedMeter("17", "per_mill_tokens", "100", "2"),
-		MeterTotalInputTokens:  {Quantity: "317"},
-	}
-	event.Usage.StandardTextTokens = standardTextTokens(event.Usage.Meters)
-	payload, err := encodeGatewayRequestEvent(event)
-	if err != nil {
-		t.Fatalf("encodeGatewayRequestEvent returned error: %v", err)
-	}
-	decoded, err := decodeGatewayRequestEvent(payload)
-	if err != nil {
-		t.Fatalf("decodeGatewayRequestEvent returned error: %v", err)
-	}
-	if !reflect.DeepEqual(decoded, event) {
-		t.Fatalf("decoded event = %#v, want %#v", decoded, event)
-	}
-
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"meters":{"input_tokens":{"quantity":"invalid","rateKey":"per_mill_tokens","rateUsd":"1","usd":"1"}}}}`); err == nil {
-		t.Fatal("decodeGatewayRequestEvent accepted invalid canonical pricing")
-	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"cache_read_savings_usd":"-1","meters":{}}}`); err == nil {
-		t.Fatal("decodeGatewayRequestEvent accepted invalid cache read savings")
-	}
-	if _, err := decodeGatewayRequestEvent(`{"schema_version":1,"usage":{"cache_write_overhead_usd":"-1","meters":{}}}`); err == nil {
-		t.Fatal("decodeGatewayRequestEvent accepted invalid cache write overhead")
 	}
 }
 
@@ -588,10 +556,10 @@ func mustNewRequestEvent(t testing.TB, input EventInput) RequestEvent {
 	return event
 }
 
-func TestEncodeGatewayRequestEventRejectsOversizedPayload(t *testing.T) {
+func TestEncodeRequestLogRejectsOversizedPayload(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.GatewayVersion = strings.Repeat("v", requestLogMaxEventBytes)
-	if _, err := encodeGatewayRequestEvent(event); err == nil || !strings.Contains(err.Error(), "limit") {
+	if _, err := encodeRequestLog(event, ""); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("oversized gateway request event error = %v, want bounded-payload rejection", err)
 	}
 }
@@ -623,60 +591,6 @@ func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := requestHoldExpiresAt(now, tt.requestLifetime); !got.Equal(tt.want) {
 				t.Fatalf("request hold expiry = %s, want %s", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestTinybirdAppendRequiresCommittedSingleRowAcknowledgement(t *testing.T) {
-	tests := []struct {
-		name       string
-		status     int
-		body       string
-		wantErr    bool
-		errContain string
-	}{
-		{
-			name:   "single row",
-			status: http.StatusOK,
-			body:   `{"successful_rows":1,"quarantined_rows":0}`,
-		},
-		{
-			name:       "multiple rows",
-			status:     http.StatusOK,
-			body:       `{"successful_rows":2,"quarantined_rows":0}`,
-			wantErr:    true,
-			errContain: "did not commit every request log row",
-		},
-		{
-			name:       "missing acknowledgement",
-			status:     http.StatusOK,
-			body:       `{}`,
-			wantErr:    true,
-			errContain: "did not commit every request log row",
-		},
-		{
-			name:       "accepted async",
-			status:     http.StatusAccepted,
-			wantErr:    true,
-			errContain: "status 202",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			defer server.Close()
-
-			_, err := newTestRequestLogClient(t, server.URL).AppendGatewayRequest(context.Background(), testGatewayRequestEvent())
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("AppendGatewayRequest error = %v, wantErr=%t", err, tt.wantErr)
-			}
-			if err != nil && tt.errContain != "" && !strings.Contains(err.Error(), tt.errContain) {
-				t.Fatalf("AppendGatewayRequest error = %q, want to contain %q", err, tt.errContain)
 			}
 		})
 	}
@@ -758,7 +672,7 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, err := encodeGatewayRequestEvent(event)
+		payload, err := encodeRequestLog(event, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -783,23 +697,10 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 		if _, present := standardText["reasoning"]; present || standardText["output"] != "0" || standardText["input"] != item.tokens {
 			t.Fatalf("standard text JSON contains an unmeasured value or lost measured zero: %s", usage["standard_text_tokens"])
 		}
-		restored, err := decodeGatewayRequestEvent(payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		stt := restored.Usage.StandardTextTokens
-		if stt.Input == nil || *stt.Input != item.tokens || stt.Output == nil || *stt.Output != "0" || stt.Reasoning != nil {
-			t.Fatalf("standard text units changed presence or precision: %#v", stt)
-		}
-		restored.Usage.StandardTextTokens.Input = stringPtr("1.25")
-		invalid, _ := encodeGatewayRequestEvent(restored)
-		if _, err := decodeGatewayRequestEvent(invalid); err == nil {
-			t.Fatal("inconsistent standard text units accepted")
-		}
 	}
 	event := testGatewayRequestEvent()
 	event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{}, StogasExport: &plugins.StogasExportMetrics{}}
-	payload, err := encodeGatewayRequestEvent(event)
+	payload, err := encodeRequestLog(event, "")
 	if err != nil || !strings.Contains(payload, `"plugins":{"stogas_structured_pii_redaction":{"items_redacted":0,"duration_us":0},"stogas_export":{"capture_us":0}}`) {
 		t.Fatalf("configured plugins with measured zero disappeared: %s, %v", payload, err)
 	}
