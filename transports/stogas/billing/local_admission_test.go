@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -116,7 +118,7 @@ func TestVerifiedAPIKeyCacheCopiesClaims(t *testing.T) {
 	if !ok || second.KeyID != "019de515-eabf-7c0e-89bd-400629a79580" || second.GrantID == nil || *second.GrantID != expectedGrantID {
 		t.Fatalf("caller mutated cached claims: %#v", second)
 	}
-	if diagnostics := localAdmissionDiagnostics(nil, nil, nil, &cache); diagnostics.APIKeyCacheEntries != 1 || diagnostics.APIKeyCacheHits != 2 || diagnostics.APIKeyCacheLookups != 2 {
+	if diagnostics := localAdmissionDiagnostics(nil, nil, nil, nil, &cache); diagnostics.APIKeyCacheEntries != 1 || diagnostics.APIKeyCacheHits != 2 || diagnostics.APIKeyCacheLookups != 2 {
 		t.Fatalf("API key cache diagnostics = %#v", diagnostics)
 	}
 }
@@ -183,7 +185,7 @@ func TestParseVerifiedAPIKeyCachesOnlyValidClaims(t *testing.T) {
 	if !cachedByHash || cachedByRawSecret {
 		t.Fatalf("cache key storage: hash=%t raw=%t", cachedByHash, cachedByRawSecret)
 	}
-	diagnostics := localAdmissionDiagnostics(nil, nil, nil, &service.apiKeys)
+	diagnostics := localAdmissionDiagnostics(nil, nil, nil, nil, &service.apiKeys)
 	if diagnostics.APIKeyCacheEntries != 1 || diagnostics.APIKeyCacheHits != 1 || diagnostics.APIKeyCacheLookups != 2 {
 		t.Fatalf("API key cache diagnostics = %#v", diagnostics)
 	}
@@ -204,7 +206,7 @@ func TestLocalRequestLimiterBoundsBurstAndRefills(t *testing.T) {
 	if retryAfter := limiter.allow("key", now.Add(time.Second)); retryAfter != 0 {
 		t.Fatalf("refilled request was rejected for %s", retryAfter)
 	}
-	diagnostics := localAdmissionDiagnostics(&limiter, nil, nil, nil)
+	diagnostics := localAdmissionDiagnostics(&limiter, nil, nil, nil, nil)
 	if diagnostics.RequestAttempts != localRequestBurst+2 ||
 		diagnostics.RequestRejected != 1 ||
 		diagnostics.RequestLastRejectedAt == nil {
@@ -218,7 +220,7 @@ func TestAuthorizationActivityTracksBurstAndReleasesOnce(t *testing.T) {
 	for i := range finishes {
 		finishes[i] = activity.start()
 	}
-	stats := localAdmissionDiagnostics(nil, &activity, nil, nil)
+	stats := localAdmissionDiagnostics(nil, &activity, nil, nil, nil)
 	if stats.AuthorizationInFlight != 32 || stats.AuthorizationPeakInFlight != 32 {
 		t.Fatalf("burst was not tracked: %+v", stats)
 	}
@@ -229,9 +231,74 @@ func TestAuthorizationActivityTracksBurstAndReleasesOnce(t *testing.T) {
 		}
 	}
 	workers.Wait()
-	stats = localAdmissionDiagnostics(nil, &activity, nil, nil)
+	stats = localAdmissionDiagnostics(nil, &activity, nil, nil, nil)
 	if stats.AuthorizationInFlight != 0 || stats.AuthorizationAttempts != 32 {
 		t.Fatalf("duplicate completion corrupted activity: %+v", stats)
+	}
+}
+
+// The authorization path releases its slot twice; the second release must not
+// free the slot for a later authorization.
+func TestOrganizationSlotsRunOneAuthorizationPerOrganization(t *testing.T) {
+	var slots organizationSlots
+	var running [3]atomic.Int32
+	var workers sync.WaitGroup
+	for worker := range 24 {
+		organization := worker % len(running)
+		workers.Go(func() {
+			for range 200 {
+				release, err := slots.take(context.Background(), fmt.Sprintf("org-%d", organization))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if running[organization].Add(1) != 1 {
+					t.Error("two authorizations of one organization ran at once")
+				}
+				runtime.Gosched()
+				running[organization].Add(-1)
+				release()
+				release()
+			}
+		})
+	}
+	workers.Wait()
+	if slots.waits.Load() == 0 {
+		t.Fatal("no authorization waited for its organization")
+	}
+	assertNoOrganizationSlots(t, &slots)
+}
+
+func TestOrganizationSlotWaitEndsWithItsContext(t *testing.T) {
+	var slots organizationSlots
+	release, err := slots.take(context.Background(), "org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired, cancelExpired := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancelExpired()
+	if _, err := slots.take(expired, "org"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired wait = %v", err)
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := slots.take(canceled, "org"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled wait = %v", err)
+	}
+	// A request that ends early is not a timeout.
+	if waits, timeouts := slots.waits.Load(), slots.timeouts.Load(); waits != 2 || timeouts != 1 {
+		t.Fatalf("waits %d and timeouts %d, want 2 and 1", waits, timeouts)
+	}
+	release()
+	assertNoOrganizationSlots(t, &slots)
+}
+
+func assertNoOrganizationSlots(t *testing.T, slots *organizationSlots) {
+	t.Helper()
+	for index := range slots.shards {
+		if count := len(slots.shards[index].slots); count != 0 {
+			t.Fatalf("shard %d keeps %d organizations", index, count)
+		}
 	}
 }
 

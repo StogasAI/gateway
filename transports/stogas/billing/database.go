@@ -18,18 +18,22 @@ import (
 var ErrSchemaIncompatible = errors.New("database schema is incompatible with this gateway")
 
 const (
+	// Six connections serve about 750 authorizations a second. A transaction
+	// pooler shares its few server connections among all gateways, so more
+	// would add no database capacity. All six stay open: an idle client
+	// connection holds no server connection, and a burst then waits for no
+	// new ones.
+	poolConns                 = 6
 	poolHealthCheckPeriod     = 30 * time.Second
-	poolMaxConnIdleTime       = 5 * time.Minute
 	poolMaxConnLifetime       = 30 * time.Minute
 	poolMaxConnLifetimeJitter = 5 * time.Minute
+	// pgx pings a connection idle for over a second before handing it out,
+	// which adds a round trip to most requests on a quiet gateway. Network
+	// devices drop idle connections after minutes, such as AWS load balancers
+	// after 350 seconds, so a minute still checks every connection they may
+	// have dropped.
+	poolPingAfterIdle = time.Minute
 )
-
-type DatabasePoolConfig struct {
-	MaxConns      int32
-	MinConns      int32
-	MinIdleConns  int32
-	QueryExecMode string
-}
 
 type GatewayDB struct {
 	pool       *pgxpool.Pool
@@ -45,7 +49,6 @@ type DatabaseDiagnostics struct {
 	EmptyAcquireCount       int64 `json:"emptyAcquireCount"`
 	IdleConnections         int32 `json:"idleConnections"`
 	MaxConnections          int32 `json:"maxConnections"`
-	MaxIdleDestroyed        int64 `json:"maxIdleDestroyed"`
 	MaxLifetimeDestroyed    int64 `json:"maxLifetimeDestroyed"`
 	NewConnections          int64 `json:"newConnections"`
 	TotalConnections        int32 `json:"totalConnections"`
@@ -56,10 +59,7 @@ func ValidateDatabaseSchema(databaseSchema string) error {
 	return err
 }
 
-func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string, databasePool DatabasePoolConfig) (*GatewayDB, error) {
-	if err := databasePool.Validate(); err != nil {
-		return nil, err
-	}
+func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string) (*GatewayDB, error) {
 	schemaName, err := validatePgrollSchemaName(databaseSchema)
 	if err != nil {
 		return nil, err
@@ -84,14 +84,13 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 		}
 		poolConfig.ConnConfig.Fallbacks = fallbacks
 	}
-	poolConfig.MaxConns = databasePool.MaxConns
-	poolConfig.MinConns = databasePool.MinConns
-	poolConfig.MinIdleConns = databasePool.MinIdleConns
+	poolConfig.MaxConns, poolConfig.MinConns = poolConns, poolConns
 	poolConfig.HealthCheckPeriod = poolHealthCheckPeriod
-	poolConfig.MaxConnIdleTime = poolMaxConnIdleTime
 	poolConfig.MaxConnLifetime = poolMaxConnLifetime
 	poolConfig.MaxConnLifetimeJitter = poolMaxConnLifetimeJitter
-	poolConfig.ConnConfig.DefaultQueryExecMode = queryExecMode(databasePool.QueryExecMode)
+	poolConfig.ShouldPing = func(_ context.Context, params pgxpool.ShouldPingParams) bool {
+		return params.IdleDuration > poolPingAfterIdle
+	}
 	if poolConfig.ConnConfig.RuntimeParams == nil {
 		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
 	}
@@ -168,25 +167,9 @@ func (db *GatewayDB) Diagnostics() *DatabaseDiagnostics {
 		EmptyAcquireCount:       stats.EmptyAcquireCount(),
 		IdleConnections:         stats.IdleConns(),
 		MaxConnections:          stats.MaxConns(),
-		MaxIdleDestroyed:        stats.MaxIdleDestroyCount(),
 		MaxLifetimeDestroyed:    stats.MaxLifetimeDestroyCount(),
 		NewConnections:          stats.NewConnsCount(),
 		TotalConnections:        stats.TotalConns(),
-	}
-}
-
-func queryExecMode(mode string) pgx.QueryExecMode {
-	switch mode {
-	case "cache_describe":
-		return pgx.QueryExecModeCacheDescribe
-	case "describe_exec":
-		return pgx.QueryExecModeDescribeExec
-	case "exec":
-		return pgx.QueryExecModeExec
-	case "simple_protocol":
-		return pgx.QueryExecModeSimpleProtocol
-	default:
-		return pgx.QueryExecModeCacheStatement
 	}
 }
 
@@ -208,29 +191,4 @@ func validatePgrollSchemaName(databaseSchema string) (string, error) {
 		return "", fmt.Errorf("invalid DATABASE_SCHEMA: %s", schemaName)
 	}
 	return schemaName, nil
-}
-
-func (c DatabasePoolConfig) Validate() error {
-	if c.MaxConns <= 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MAX_CONNS must be positive")
-	}
-	if c.MinConns < 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be non-negative")
-	}
-	if c.MinIdleConns < 0 {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be non-negative")
-	}
-	if c.MinConns > c.MaxConns {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
-	}
-	if c.MinIdleConns > c.MaxConns {
-		return fmt.Errorf("STOGAS_DB_POOL_MIN_IDLE_CONNS must be less than or equal to STOGAS_DB_POOL_MAX_CONNS")
-	}
-
-	switch c.QueryExecMode {
-	case "cache_statement", "cache_describe", "describe_exec", "exec", "simple_protocol":
-		return nil
-	default:
-		return fmt.Errorf("STOGAS_DB_QUERY_EXEC_MODE must be one of cache_statement, cache_describe, describe_exec, exec, simple_protocol")
-	}
 }

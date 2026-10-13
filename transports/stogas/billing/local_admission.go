@@ -1,6 +1,8 @@
 package billing
 
 import (
+	"context"
+	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -15,19 +17,23 @@ const (
 )
 
 type LocalAdmissionDiagnostics struct {
-	APIKeyCacheEntries        int        `json:"apiKeyCacheEntries"`
-	APIKeyCacheHits           uint64     `json:"apiKeyCacheHits"`
-	APIKeyCacheLookups        uint64     `json:"apiKeyCacheLookups"`
-	AuthorizationAttempts     uint64     `json:"authorizationAttempts"`
-	AuthorizationInFlight     int64      `json:"authorizationInFlight"`
-	AuthorizationPeakInFlight int64      `json:"authorizationPeakInFlight"`
-	RejectionCacheHits        uint64     `json:"rejectionCacheHits"`
-	RejectionCacheLookups     uint64     `json:"rejectionCacheLookups"`
-	RequestAttempts           uint64     `json:"requestAttempts"`
-	RequestBurst              int        `json:"requestBurst"`
-	RequestLastRejectedAt     *time.Time `json:"requestLastRejectedAt,omitempty"`
-	RequestRatePerSecond      int        `json:"requestRatePerSecond"`
-	RequestRejected           uint64     `json:"requestRejected"`
+	APIKeyCacheEntries        int    `json:"apiKeyCacheEntries"`
+	APIKeyCacheHits           uint64 `json:"apiKeyCacheHits"`
+	APIKeyCacheLookups        uint64 `json:"apiKeyCacheLookups"`
+	AuthorizationAttempts     uint64 `json:"authorizationAttempts"`
+	AuthorizationInFlight     int64  `json:"authorizationInFlight"`
+	AuthorizationPeakInFlight int64  `json:"authorizationPeakInFlight"`
+	// Authorizations that waited for an earlier one of their organization, and
+	// those that waited until their deadline.
+	OrganizationWaits     uint64     `json:"organizationWaits"`
+	OrganizationTimeouts  uint64     `json:"organizationTimeouts"`
+	RejectionCacheHits    uint64     `json:"rejectionCacheHits"`
+	RejectionCacheLookups uint64     `json:"rejectionCacheLookups"`
+	RequestAttempts       uint64     `json:"requestAttempts"`
+	RequestBurst          int        `json:"requestBurst"`
+	RequestLastRejectedAt *time.Time `json:"requestLastRejectedAt,omitempty"`
+	RequestRatePerSecond  int        `json:"requestRatePerSecond"`
+	RequestRejected       uint64     `json:"requestRejected"`
 }
 
 type localRequestEntry struct {
@@ -89,8 +95,9 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 	return time.Duration(math.Ceil((1 - entry.tokens) / localRequestRatePerSecond * float64(time.Second)))
 }
 
-// Authorization work waits in pgxpool under its existing query deadline. The
-// request memory and organization rate gates bound admission before this point.
+// Authorization work waits for its organization slot and in pgxpool under its
+// query deadline. The request memory and organization rate gates bound
+// admission before this point.
 type authorizationActivity struct {
 	attempts     atomic.Uint64
 	inFlight     atomic.Int64
@@ -112,9 +119,75 @@ func (l *authorizationActivity) recordInFlight(value int64) {
 	}
 }
 
+// organizationSlots runs one authorization at a time for each organization.
+// An organization's authorizations wait for each other on its balance row, so
+// running more at once would only take more of the pool and of the database's
+// shared connections from every other organization. The rest wait in order,
+// holding nothing.
+type organizationSlots struct {
+	waits    atomic.Uint64
+	timeouts atomic.Uint64
+	shards   [localAdmissionShards]organizationSlotShard
+}
+
+type organizationSlotShard struct {
+	mu    sync.Mutex
+	slots map[string]*organizationSlot
+}
+
+// An entry lasts while its holder or a waiter needs it, so authorization
+// admission bounds the map.
+type organizationSlot struct {
+	held  chan struct{}
+	users int
+}
+
+// take waits for the organization's slot until ctx ends. Release is safe to
+// call more than once.
+func (o *organizationSlots) take(ctx context.Context, organizationID string) (func(), error) {
+	shard := &o.shards[localAdmissionShard(organizationID)]
+	shard.mu.Lock()
+	slot := shard.slots[organizationID]
+	if slot == nil {
+		if shard.slots == nil {
+			shard.slots = make(map[string]*organizationSlot)
+		}
+		slot = &organizationSlot{held: make(chan struct{}, 1)}
+		shard.slots[organizationID] = slot
+	}
+	slot.users++
+	shard.mu.Unlock()
+	leave := func() {
+		shard.mu.Lock()
+		if slot.users--; slot.users == 0 {
+			delete(shard.slots, organizationID)
+		}
+		shard.mu.Unlock()
+	}
+	select {
+	case slot.held <- struct{}{}:
+	default:
+		o.waits.Add(1)
+		select {
+		case slot.held <- struct{}{}:
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				o.timeouts.Add(1)
+			}
+			leave()
+			return nil, ctx.Err()
+		}
+	}
+	return sync.OnceFunc(func() {
+		<-slot.held
+		leave()
+	}), nil
+}
+
 func localAdmissionDiagnostics(
 	requests *localRequestLimiter,
 	authorizations *authorizationActivity,
+	organizations *organizationSlots,
 	rejections *callerFailureCache,
 	apiKeys *verifiedAPIKeyCache,
 ) LocalAdmissionDiagnostics {
@@ -131,6 +204,10 @@ func localAdmissionDiagnostics(
 		result.AuthorizationAttempts = authorizations.attempts.Load()
 		result.AuthorizationInFlight = authorizations.inFlight.Load()
 		result.AuthorizationPeakInFlight = authorizations.peakInFlight.Load()
+	}
+	if organizations != nil {
+		result.OrganizationWaits = organizations.waits.Load()
+		result.OrganizationTimeouts = organizations.timeouts.Load()
 	}
 	if rejections != nil {
 		result.RejectionCacheHits = rejections.hits.Load()

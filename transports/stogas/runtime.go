@@ -51,7 +51,6 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		config.APIKeyPepper,
 		config.BYOKEncryptionSecret,
 		config.InferenceTokenPublicKey,
-		config.DatabasePool,
 		nodeID,
 	)
 	if err != nil {

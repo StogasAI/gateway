@@ -3,7 +3,6 @@ package stogas
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +25,6 @@ const (
 	defaultFleetAPIURLProd      = "https://stogas.ai/api/fleet"
 
 	confidentialEntropyTimeout = 10 * time.Second
-
-	defaultDatabasePoolMaxConns     int32 = 6
-	defaultDatabasePoolMinConns     int32 = 1
-	defaultDatabasePoolMinIdleConns int32 = 1
-	defaultDatabaseQueryExecMode          = "cache_statement"
 )
 
 var confidentialRuntimeSecretNames = []string{
@@ -47,7 +41,6 @@ type Config struct {
 	APIKeyPepper                string
 	BYOKEncryptionSecret        string
 	Confidential                ConfidentialConfig
-	DatabasePool                billing.DatabasePoolConfig
 	DatabaseSchema              string
 	DatabaseURL                 string
 	DiagnosticsClientSPKISHA256 string
@@ -77,10 +70,6 @@ type ConfidentialConfig struct {
 }
 
 func LoadFromEnv() (Config, error) {
-	databasePool, err := loadDatabasePoolConfig()
-	if err != nil {
-		return Config{}, err
-	}
 	if strings.TrimSpace(os.Getenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE")) != "" {
 		return Config{}, fmt.Errorf("STOGAS_CONFIDENTIAL_ATTESTER_MODE is not supported; attester mode is derived from the gateway boot path")
 	}
@@ -96,7 +85,6 @@ func LoadFromEnv() (Config, error) {
 		APIKeyPepper:                strings.TrimSpace(os.Getenv("API_KEY_PEPPER")),
 		BYOKEncryptionSecret:        strings.TrimSpace(os.Getenv("BYOK_ENCRYPTION_SECRET")),
 		Confidential:                loadConfidentialConfigFromEnv(),
-		DatabasePool:                databasePool,
 		DatabaseSchema:              strings.TrimSpace(os.Getenv("DATABASE_SCHEMA")),
 		DatabaseURL:                 strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		Host:                        defaultHost,
@@ -258,9 +246,6 @@ func (c Config) Validate() error {
 	if c.InferenceTokenPublicKey == "" {
 		return fmt.Errorf("INFERENCE_TOKEN_PUBLIC_KEY is required")
 	}
-	if err := c.DatabasePool.Validate(); err != nil {
-		return err
-	}
 	if c.DatabaseURL == "" {
 		return fmt.Errorf("DATABASE_URL is required")
 	}
@@ -405,46 +390,6 @@ func (c ConfidentialConfig) WithRuntimeDefaults() ConfidentialConfig {
 		c.EntropyTimeout = confidentialEntropyTimeout
 	}
 	return c
-}
-
-func loadDatabasePoolConfig() (billing.DatabasePoolConfig, error) {
-	maxConns, err := envInt32("STOGAS_DB_POOL_MAX_CONNS", defaultDatabasePoolMaxConns)
-	if err != nil {
-		return billing.DatabasePoolConfig{}, err
-	}
-	minConns, err := envInt32("STOGAS_DB_POOL_MIN_CONNS", defaultDatabasePoolMinConns)
-	if err != nil {
-		return billing.DatabasePoolConfig{}, err
-	}
-	minIdleConns, err := envInt32("STOGAS_DB_POOL_MIN_IDLE_CONNS", defaultDatabasePoolMinIdleConns)
-	if err != nil {
-		return billing.DatabasePoolConfig{}, err
-	}
-
-	queryExecMode := strings.TrimSpace(os.Getenv("STOGAS_DB_QUERY_EXEC_MODE"))
-	if queryExecMode == "" {
-		queryExecMode = defaultDatabaseQueryExecMode
-	}
-
-	return billing.DatabasePoolConfig{
-		MaxConns:      maxConns,
-		MinConns:      minConns,
-		MinIdleConns:  minIdleConns,
-		QueryExecMode: queryExecMode,
-	}, nil
-}
-
-func envInt32(name string, defaultValue int32) (int32, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return defaultValue, nil
-	}
-
-	value, err := strconv.ParseInt(raw, 10, 32)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be a 32-bit integer", name)
-	}
-	return int32(value), nil
 }
 
 func splitCSV(value string) []string {

@@ -20,7 +20,12 @@ import (
 )
 
 const (
-	authorizeTimeout           = 1500 * time.Millisecond
+	authorizeTimeout = 1500 * time.Millisecond
+	// Waiting for an organization slot and a connection ends this long before
+	// the authorization deadline, so a statement that starts can finish. One
+	// cut off loses its connection and needs a close, which under overload
+	// costs the pool more than the requests it fails.
+	authorizeStatementReserve  = 250 * time.Millisecond
 	holdSettlementExpiryBuffer = 20 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference, so a hold that outlives it
@@ -164,6 +169,7 @@ type Service struct {
 	keyConfigs                 keyConfigCache
 	keyConfigFlights           singleflight.Group
 	authorizations             authorizationActivity
+	organizationSlots          organizationSlots
 	localRequests              localRequestLimiter
 	apiKeys                    verifiedAPIKeyCache
 	callerFailures             callerFailureCache
@@ -198,7 +204,6 @@ func NewService(
 	apiKeyPepper string,
 	byokEncryptionSecret string,
 	inferenceTokenPublicKey string,
-	databasePool DatabasePoolConfig,
 	nodeID string,
 ) (*Service, error) {
 	publicKey, err := parseInferenceTokenPublicKey(inferenceTokenPublicKey)
@@ -209,7 +214,7 @@ func NewService(
 	if err != nil {
 		return nil, err
 	}
-	db, err := NewGatewayDB(ctx, databaseURL, databaseSchema, databasePool)
+	db, err := NewGatewayDB(ctx, databaseURL, databaseSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +267,7 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		RedactionCache: s.keyConfigs.redactionDiagnostics(),
 		RejectionLogs:  s.rejectionLogs.snapshot(),
 		Database:       s.db.Diagnostics(),
-		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.callerFailures, &s.apiKeys),
+		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.organizationSlots, &s.callerFailures, &s.apiKeys),
 		Settlement:     s.settlementDiagnostics(),
 	}
 }
@@ -508,10 +513,17 @@ func (s *Service) authorizeResolvedRequest(
 	if apiKeyHash != "" {
 		apiKeyHashValue = &apiKeyHash
 	}
+	waitCtx, cancelWait := context.WithDeadline(queryCtx, authorizeBefore.Add(-authorizeStatementReserve))
+	defer cancelWait()
+	releaseSlot, err := s.organizationSlots.take(waitCtx, snapshot.Claims.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+	}
+	defer releaseSlot()
 	// A statement that never left the gateway cannot have created a hold, so it
 	// needs no close. An exhausted pool or an unreachable database then gets
 	// no extra calls from the requests it already failed.
-	conn, err := s.db.pool.Acquire(queryCtx)
+	conn, err := s.db.pool.Acquire(waitCtx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
@@ -544,6 +556,7 @@ func (s *Service) authorizeResolvedRequest(
 		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 	)
 	conn.Release()
+	releaseSlot()
 	if err != nil {
 		if !pgconn.SafeToRetry(err) {
 			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
