@@ -40,6 +40,12 @@ jobs:
         run: node --test stogas/release/scripts/*.test.mjs
 
       - name: Install pinned Guix bootstrap
+        # Guix takes packages from bordeaux.guix.gnu.org first by default. Where
+        # the two farms built a package differently, this build then uses the
+        # other farm's copy than a default rebuild, so matching release bytes
+        # show that neither copy changed the image.
+        env:
+          STOGAS_GUIX_SUBSTITUTE_URLS: https://ci.guix.gnu.org https://bordeaux.guix.gnu.org
         run: stogas/release/scripts/install-guix-bootstrap.sh
 
       - name: Build IGVM in pinned Guix environment
