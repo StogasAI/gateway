@@ -267,7 +267,7 @@ func (s *Server) prepareCandidate(
 	if err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}
-	state.Export.Input(resolution.RawBody())
+	state.Export.Input(resolution.RawBody(), resolution.Route == catalog.RouteResponses)
 	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 		return failBeforeHold(err, candidateFailureCatalog)
 	}

@@ -3,6 +3,7 @@ package inputfiles
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,48 @@ func TestExtractionPreservesOrderAndLeavesDocumentsOpaque(t *testing.T) {
 	}
 	if !strings.Contains(string(result[0]["role"]), "user") {
 		t.Fatal("attachment changed message role")
+	}
+}
+
+func TestDescribeReplacesOnlyInlineAttachments(t *testing.T) {
+	const digest = `"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"`
+	for _, tc := range []struct {
+		name, field, body, want string
+		responses              bool
+	}{
+		{
+			name:  "chat",
+			field: "messages",
+			body:  `[{"role":"user","content":[{"type":"text","text":"aGVsbG8="},{"type":"image_url","image_url":{"url":"data:image/PNG;base64,aGVsbG8=","detail":"low"}},{"type":"image_url","image_url":{"url":"https://example.com/a.png"}},{"type":"input_audio","input_audio":{"data":"aGVsbG8=","format":"wav"}},{"type":"file","file":{"file_data":"aGVsbG8=","filename":"a.pdf"}},{"type":"file","file":{"file_id":"file-1"}}]}]`,
+			want:  `[{"role":"user","content":[{"type":"text","text":"aGVsbG8="},{"type":"image_url","image_url":{"url":{"media_type":"image/png","size":5,` + digest + `},"detail":"low"}},{"type":"image_url","image_url":{"url":"https://example.com/a.png"}},{"type":"input_audio","input_audio":{"data":{"size":5,` + digest + `},"format":"wav"}},{"type":"file","file":{"file_data":{"size":5,` + digest + `},"filename":"a.pdf"}},{"type":"file","file":{"file_id":"file-1"}}]}]`,
+		},
+		{
+			name:      "responses",
+			field:     "input",
+			responses: true,
+			body:      `[{"role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":"data:image/jpeg;base64,aGVsbG8=","detail":"auto"},{"type":"input_file","file_data":"data:application/pdf;base64,aGVsbG8=","filename":"a.pdf"},{"type":"input_file","file_url":"https://example.com/a.pdf"}]},{"type":"function_call_output","call_id":"c","output":"data:image/png;base64,aGVsbG8="}]`,
+			want:      `[{"role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":{"media_type":"image/jpeg","size":5,` + digest + `},"detail":"auto"},{"type":"input_file","file_data":{"media_type":"application/pdf","size":5,` + digest + `},"filename":"a.pdf"},{"type":"input_file","file_url":"https://example.com/a.pdf"}]},{"type":"function_call_output","call_id":"c","output":"data:image/png;base64,aGVsbG8="}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fields := map[string]json.RawMessage{tc.field: json.RawMessage(tc.body), "model": json.RawMessage(`"m"`)}
+			described, err := Describe(fields, tc.responses)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want any
+			if err := json.Unmarshal(described[tc.field], &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("described %s", described[tc.field])
+			}
+			if string(fields[tc.field]) != tc.body || string(described["model"]) != `"m"` {
+				t.Fatal("description changed the request or dropped a field")
+			}
+		})
 	}
 }

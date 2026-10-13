@@ -3,15 +3,24 @@ package exporter
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
 )
 
-// Input copies the processed request before its pooled storage is released.
-// The transport has already removed policy and encryption credentials.
-func (c *Capture) Input(body map[string]json.RawMessage) {
+// Input copies the processed request before its pooled storage is released,
+// with each inline attachment replaced by its description. The transport has
+// already removed policy and encryption credentials.
+func (c *Capture) Input(body map[string]json.RawMessage, responses bool) {
 	if c == nil || c.reservation == nil {
 		return
 	}
 	defer c.recordCapture(time.Now())
+	body, err := inputfiles.Describe(body, responses)
+	if err != nil {
+		c.engine.failed.Add(uint64(len(c.destinations)))
+		c.Discard()
+		return
+	}
 	size := 2
 	for key, value := range body {
 		size += len(key)*6 + len(value) + 4
