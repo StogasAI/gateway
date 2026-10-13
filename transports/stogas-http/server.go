@@ -104,8 +104,10 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		return nil, classifyConfidentialRuntimeInitializationError(err)
 	}
 	var releasedSecrets stogas.ConfidentialSecretLookup
+	nodeID := ""
 	if secure != nil {
 		releasedSecrets = secure.Secrets
+		nodeID = secure.NodeID()
 	}
 	if err := stogas.ApplyConfidentialRuntimeSecrets(&config, releasedSecrets); err != nil {
 		if secure != nil {
@@ -113,7 +115,7 @@ func New(ctx context.Context, config stogas.Config, logger schemas.Logger) (*Ser
 		}
 		return nil, fmt.Errorf("%w: %w", ErrConfidentialRuntimeSecretApplication, err)
 	}
-	runtime, err := stogas.NewRuntime(ctx, config)
+	runtime, err := stogas.NewRuntime(ctx, config, nodeID)
 	if err != nil {
 		if secure != nil {
 			secure.Close()

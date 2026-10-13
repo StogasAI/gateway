@@ -58,7 +58,6 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
 	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
-	state.RetainMemory = ctx.memory.retain
 	state.SetDashboardCredential(credential.Dashboard)
 	state.EncryptionKeys = credential.EncryptionKeys
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))

@@ -37,7 +37,6 @@ type State struct {
 	EncryptionKeys          customerkey.Keys
 	Authorization           *billing.Authorization
 	BillingFinalized        bool
-	RetainMemory            billing.RetainMemory
 	RequestLifetime         time.Duration
 	RequestID               string
 	StartedAt               time.Time

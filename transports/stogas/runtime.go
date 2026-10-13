@@ -28,7 +28,9 @@ type Runtime struct {
 	cancel      context.CancelFunc
 }
 
-func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
+// NewRuntime starts the providers and billing. nodeID names the boot that owns
+// the holds this runtime creates, or is empty outside a confidential guest.
+func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -42,24 +44,6 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		cancel()
 		return nil, err
 	}
-	queueURL := ""
-	if config.RequestLogQueueToken != "" {
-		queueURL = strings.TrimRight(config.Confidential.ControlURL, "/") + "/request-logs"
-	}
-	requestLogs, err := billing.NewRequestLogClient(billing.RequestLogConfig{
-		QueueURL:                    queueURL,
-		QueueToken:                  config.RequestLogQueueToken,
-		AccessClientID:              config.Confidential.AccessClientID,
-		AccessClientSecret:          config.Confidential.AccessClientSecret,
-		TinybirdHost:                config.TinybirdHost,
-		TinybirdToken:               config.TinybirdToken,
-		AllowInsecurePrivateNetwork: config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
-	})
-	if err != nil {
-		chutesTransport.Close()
-		cancel()
-		return nil, fmt.Errorf("configure request log delivery: %w", err)
-	}
 	billingService, err := billing.NewService(
 		runtimeCtx,
 		config.DatabaseURL,
@@ -68,7 +52,7 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		config.BYOKEncryptionSecret,
 		config.InferenceTokenPublicKey,
 		config.DatabasePool,
-		requestLogs,
+		nodeID,
 	)
 	if err != nil {
 		chutesTransport.Close()

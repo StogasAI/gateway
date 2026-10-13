@@ -1,12 +1,8 @@
 package billing
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,37 +20,18 @@ func rejectionFixture() RejectionInput {
 	}
 }
 
-func rejectionTestClient(t *testing.T, handler http.HandlerFunc) *RequestLogClient {
-	t.Helper()
-	server := httptest.NewServer(handler)
-	t.Cleanup(server.Close)
-	client, err := NewRequestLogClient(RequestLogConfig{TinybirdHost: server.URL, TinybirdToken: "test", AllowInsecurePrivateNetwork: true})
-	if err != nil {
-		t.Fatal(err)
+// rejectionRows returns every rejection the database received, in order.
+func rejectionRows(db *fakeSettlementDatabase) []json.RawMessage {
+	var rows []json.RawMessage
+	for _, call := range db.recorded() {
+		rows = append(rows, call.rejections...)
 	}
-	client.fallback.circuitOpenDuration = time.Millisecond
-	return client
+	return rows
 }
 
 func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparate(t *testing.T) {
-	var rows []RequestEvent
-	var mu sync.Mutex
-	client := rejectionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		body, _ := io.ReadAll(r.Body)
-		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-		mu.Lock()
-		for _, line := range lines {
-			var row RequestEvent
-			if err := json.Unmarshal([]byte(line), &row); err != nil {
-				t.Error(err)
-			}
-			rows = append(rows, row)
-		}
-		mu.Unlock()
-		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, len(lines))
-	})
-	service := &Service{requestLogs: client}
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
 	input := rejectionFixture()
 	var callers sync.WaitGroup
 	for i := range 100 {
@@ -75,14 +52,17 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 	other.CreatedAt = input.CreatedAt.Add(time.Second)
 	other.RequestID = uuid.Must(uuid.NewV7()).String()
 	service.RecordRejection(other)
-	service.Close()
-	mu.Lock()
-	defer mu.Unlock()
+	drainSettlements(t, service)
+	rows := rejectionRows(db)
 	if len(rows) != rejectionLogIndividualLimit+4 {
 		t.Fatalf("stored %d rows, want first individual rejections, repeats, and three other groups", len(rows))
 	}
 	var total uint32
-	for _, row := range rows {
+	for _, raw := range rows {
+		var row RequestEvent
+		if err := json.Unmarshal(raw, &row); err != nil {
+			t.Fatal(err)
+		}
 		total += row.RequestCount
 		if row.RequestCount == 100-rejectionLogIndividualLimit {
 			if row.CreatedAt < input.CreatedAt.Format("2006-01-02T15:04:05.000Z") || row.LastRequestAt > input.CreatedAt.Add(99*time.Millisecond).Format("2006-01-02T15:04:05.000Z") || row.CreatedAt > row.LastRequestAt {
@@ -108,24 +88,8 @@ func TestRejectionLogsKeepFirstRequestsIndividualAndBoundDeliveryBatches(t *test
 		First string `json:"created_at"`
 		Last  string `json:"last_request_at"`
 	}
-	var rows []savedRow
-	client := rejectionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		r.Body.Close()
-		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
-		if len(lines) > rejectionLogBatchSize {
-			t.Errorf("delivery batch exceeds its row limit: %d", len(lines))
-		}
-		for _, line := range lines {
-			var row savedRow
-			if err := json.Unmarshal([]byte(line), &row); err != nil {
-				t.Error(err)
-			}
-			rows = append(rows, row)
-		}
-		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, len(lines))
-	})
-	service := &Service{requestLogs: client}
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
 	want := map[string]savedRow{}
 	var total uint64
 	// Enough distinct keys to cross the batch limit, including both sides of
@@ -163,11 +127,21 @@ func TestRejectionLogsKeepFirstRequestsIndividualAndBoundDeliveryBatches(t *test
 	if before.PendingGroups != len(counts) || before.OldestPendingAt == nil || before.OldestPendingAt.After(time.Now()) {
 		t.Fatalf("pending age must use queue arrival, not the request timestamp: %+v", before)
 	}
-	service.Close()
+	drainSettlements(t, service)
+	for _, call := range db.recorded() {
+		if len(call.rejections) > rejectionLogBatchSize {
+			t.Fatalf("settlement call exceeds its rejection limit: %d", len(call.rejections))
+		}
+	}
+	rows := rejectionRows(db)
 	if len(rows) != len(want) {
 		t.Fatalf("stored %d rows, want %d", len(rows), len(want))
 	}
-	for _, row := range rows {
+	for _, raw := range rows {
+		var row savedRow
+		if err := json.Unmarshal(raw, &row); err != nil {
+			t.Fatal(err)
+		}
 		if expected, ok := want[row.ID]; !ok || expected != row {
 			t.Fatalf("unexpected row: %+v, want %+v", row, expected)
 		}
@@ -191,31 +165,28 @@ func TestRejectionLogsNeverAcceptSuccessfulRequests(t *testing.T) {
 	}
 }
 
-func TestRejectionLogsFlushWhenTrafficStopsAndReplayAnAmbiguousBatchUnchanged(t *testing.T) {
-	bodies := make(chan string, 4)
-	client := rejectionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		r.Body.Close()
-		bodies <- string(body)
-		// Simulate an accepted write whose acknowledgement did not prove delivery.
-		w.Write([]byte(`{"successful_rows":0,"quarantined_rows":0}`))
-	})
-	service := &Service{requestLogs: client}
-	input := rejectionFixture()
-	service.RecordRejection(input)
-	var first string
-	select {
-	case first = <-bodies:
-	case <-time.After(3 * time.Second):
-		t.Fatal("quiet rejection was not flushed")
-	}
-	select {
-	case second := <-bodies:
-		if first != second {
-			t.Fatal("delivery retry changed the batch identity or count")
+// A batch whose connection broke may have committed. It runs again unchanged:
+// analytics keeps one row per request ID, so a repeat stores nothing new.
+func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *testing.T) {
+	var calls atomic.Int32
+	failing := make(chan struct{})
+	recovered := make(chan struct{})
+	db := newFakeSettlementDatabase(t, func(call settlementCall) settlementReply {
+		switch calls.Add(1) {
+		case 1:
+			return settlementReply{drop: true}
+		case 2:
+			close(failing)
+			<-recovered
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("unconfirmed batch was not retried")
+		return settleAll(call)
+	})
+	service := db.service
+	service.RecordRejection(rejectionFixture())
+	select {
+	case <-failing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("quiet rejection was not flushed and retried")
 	}
 	if got := service.Diagnostics().RejectionLogs; got.OldestPendingAt == nil || got.PendingGroups != 1 {
 		t.Fatalf("failed delivery lost its pending age: %+v", got)
@@ -223,9 +194,14 @@ func TestRejectionLogsFlushWhenTrafficStopsAndReplayAnAmbiguousBatchUnchanged(t 
 	if service.FinalizationReady() {
 		t.Fatal("failed rejection delivery left inference admission open")
 	}
-	service.Close()
-	if got := service.Diagnostics().RejectionLogs; got.StoredRequests != 0 || got.DroppedRequests != 1 || got.DeliveryFailures < 2 {
-		t.Fatalf("ambiguous delivery was treated as committed: %+v", got)
+	close(recovered)
+	drainSettlements(t, service)
+	recorded := db.recorded()
+	if len(recorded) != 2 || recorded[0].arrays != recorded[1].arrays {
+		t.Fatalf("retry changed the batch: %+v", recorded)
+	}
+	if got := service.Diagnostics().RejectionLogs; !service.FinalizationReady() || got.StoredRequests != 1 || got.DroppedRequests != 0 || got.PendingGroups != 0 || got.OldestPendingAt != nil {
+		t.Fatalf("recovery did not store the retained rejection: %+v", got)
 	}
 }
 
@@ -268,42 +244,11 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	}
 }
 
-func TestRejectionDeliveryRecoveryReopensAdmissionAfterRetainedGroupsDrain(t *testing.T) {
-	var recovered atomic.Bool
-	client := rejectionTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if !recovered.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		body, _ := io.ReadAll(r.Body)
-		rows := len(strings.Split(strings.TrimSpace(string(body)), "\n"))
-		fmt.Fprintf(w, `{"successful_rows":%d,"quarantined_rows":0}`, rows)
-	})
-	service := &Service{requestLogs: client}
-	defer service.Close()
-	service.RecordRejection(rejectionFixture())
-	deadline := time.Now().Add(5 * time.Second)
-	for !service.rejectionLogs.deliveryBlocked.Load() && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if service.FinalizationReady() {
-		t.Fatal("failed rejection delivery did not close admission")
-	}
-	recovered.Store(true)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := service.DrainFinalizations(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := service.Diagnostics().RejectionLogs; !service.FinalizationReady() || got.StoredRequests != 1 || got.DroppedRequests != 0 || got.PendingGroups != 0 {
-		t.Fatalf("recovery did not drain retained rejections: %+v", got)
-	}
-}
-
 func TestRejectionGroupsKeepDifferentPolicyVersionsSeparate(t *testing.T) {
 	s := &Service{}
-	defer s.closeRejectionLogs()
-	at := time.Now()
+	defer s.Close()
+	// A future window stays buffered until Close drops it.
+	at := time.Now().Add(time.Hour)
 	for i := 1; i <= 2; i++ {
 		s.RecordRejection(RejectionInput{Claims: &APIKeyClaims{KeyID: "key"}, RequestID: fmt.Sprint(i), Code: "policy_denied", StatusCode: 403, CreatedAt: at, PolicyVersions: &PolicyVersions{{Scope: "organization", ID: "org", Revision: i}, {Scope: "key", ID: "key", Revision: i}}})
 	}

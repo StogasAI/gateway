@@ -86,48 +86,6 @@ func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnvUsesGatewayRequestsTinybirdToken(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("TB_HOST_URL", "https://api.tinybird.co")
-	t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", "gateway-requests-rw-token")
-	t.Setenv("TB_APPEND_ONLY_GATEWAY_REQUESTS", "stale-append-token")
-
-	config, err := LoadFromEnv()
-	if err != nil {
-		t.Fatalf("LoadFromEnv returned error: %v", err)
-	}
-	if config.TinybirdHost != "https://api.tinybird.co" {
-		t.Fatalf("TinybirdHost = %s, want Tinybird host", config.TinybirdHost)
-	}
-	if config.TinybirdToken != "gateway-requests-rw-token" {
-		t.Fatalf("TinybirdToken = %s, want gateway requests token", config.TinybirdToken)
-	}
-}
-
-func TestLoadFromEnvRejectsUnsafeTinybirdConfiguration(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		host  string
-		token string
-	}{
-		{name: "host only", host: "https://api.tinybird.co"},
-		{name: "token only", token: "gateway-requests-rw-token"},
-		{name: "remote HTTP", host: "http://api.tinybird.co", token: "gateway-requests-rw-token"},
-		{name: "credentials", host: "https://user:password@api.tinybird.co", token: "gateway-requests-rw-token"},
-		{name: "path", host: "https://api.tinybird.co/private", token: "gateway-requests-rw-token"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			setRequiredEnv(t)
-			t.Setenv("TB_HOST_URL", test.host)
-			t.Setenv("TB_GATEWAY_REQUESTS_TOKEN", test.token)
-
-			if _, err := LoadFromEnv(); err == nil {
-				t.Fatal("LoadFromEnv returned nil error for unsafe Tinybird configuration")
-			}
-		})
-	}
-}
-
 func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
 	setRequiredEnv(t)
 
@@ -262,8 +220,6 @@ func TestLoadFromEnvRejectsStagingHostRuntimeSecrets(t *testing.T) {
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
 		"OPENAI_API_KEY",
-		"TB_GATEWAY_REQUESTS_TOKEN",
-		"TB_HOST_URL",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("STOGAS_ENVIRONMENT", "staging")
@@ -305,9 +261,6 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":                "public_0001_initial_schema",
 		"DATABASE_URL":                   "postgres://released:pass@localhost:5432/postgres",
-		"REQUEST_LOG_QUEUE_TOKEN":        "released-request-log-producer-token",
-		"TB_GATEWAY_REQUESTS_TOKEN":      "tinybird-token",
-		"TB_HOST_URL":                    "https://tinybird.example",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,9 +273,6 @@ func TestApplyConfidentialRuntimeSecretsInstallsReleasedRuntimeSecrets(t *testin
 	}
 	if config.DiagnosticsClientSPKISHA256 != strings.Repeat("d", 64) {
 		t.Fatal("diagnostics client pin was not installed from the confidential release")
-	}
-	if config.TinybirdHost != "https://tinybird.example" || config.TinybirdToken != "tinybird-token" {
-		t.Fatalf("runtime service secrets did not refresh from released secrets: %#v", config)
 	}
 }
 
@@ -379,9 +329,6 @@ func TestValidateProviderRuntimeSecretsReadyPassesAfterSecretRelease(t *testing.
 		"DRAIN_CLIENT_SPKI_SHA256":       strings.Repeat("e", 64),
 		"API_KEY_PEPPER":                 "released-api-key-pepper-0123456789",
 		"BYOK_ENCRYPTION_SECRET":         "released-byok-encryption-secret-at-least-32-characters",
-		"REQUEST_LOG_QUEUE_TOKEN":        "released-queue-token",
-		"TB_HOST_URL":                    "https://tinybird.example",
-		"TB_GATEWAY_REQUESTS_TOKEN":      "released-tinybird-token",
 		"CHUTES_API_KEY":                 "released-chutes",
 		"INFERENCE_TOKEN_PUBLIC_KEY":     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		"DATABASE_SCHEMA":                "public_0001_initial_schema",
@@ -411,11 +358,7 @@ func setRequiredEnvWithoutProviderKeys(t *testing.T) {
 
 func preserveConfidentialRuntimeEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range append(
-		append([]string{}, confidentialRuntimeSecretNames...),
-		"TB_GATEWAY_REQUESTS_TOKEN",
-		"TB_HOST_URL",
-	) {
+	for _, name := range confidentialRuntimeSecretNames {
 		t.Setenv(name, os.Getenv(name))
 	}
 }

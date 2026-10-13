@@ -508,10 +508,17 @@ func upstreamRequestID(resp *schemas.BifrostResponse) string {
 	return ""
 }
 
+// Provider names, reasons and request IDs are short printable ASCII. Other
+// values are dropped, which also keeps out NUL, which PostgreSQL JSON rejects.
 func boundedTelemetryValue(value string, maximum int) string {
 	value = strings.TrimSpace(value)
 	if len(value) > maximum {
 		return ""
+	}
+	for i := range len(value) {
+		if value[i] < 0x20 || value[i] > 0x7e {
+			return ""
+		}
 	}
 	return value
 }

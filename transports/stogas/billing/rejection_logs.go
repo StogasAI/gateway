@@ -1,11 +1,9 @@
 package billing
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -14,12 +12,10 @@ const (
 	rejectionLogIndividualLimit = 5
 	rejectionLogCapacity        = 4096
 	rejectionLogPerKeyCapacity  = 32
-	rejectionLogBatchSize       = 256
-	rejectionLogDeliveryTimeout = requestLogAppendWaitTimeout
+	rejectionLogBatchSize       = settlementMaxRejections
 )
 
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
-// A sealed batch stays immutable so an ambiguous write can safely be replayed.
 type RejectionInput struct {
 	PolicyVersions *PolicyVersions
 	Claims         *APIKeyClaims
@@ -45,7 +41,6 @@ type RejectionLogDiagnostics struct {
 	RecordedRequests uint64     `json:"recordedRequests"`
 	StoredRequests   uint64     `json:"storedRequests"`
 	DroppedRequests  uint64     `json:"droppedRequests"`
-	DeliveryFailures uint64     `json:"deliveryFailures"`
 	LastDroppedAt    *time.Time `json:"lastDroppedAt,omitempty"`
 }
 
@@ -61,17 +56,16 @@ type rejectionLogGroup struct {
 }
 
 type rejectionLogBuffer struct {
-	deliveryBlocked atomic.Bool
-	mu              sync.Mutex
-	groups          map[rejectionLogKey]*rejectionLogGroup
-	perKey          map[string]int
-	pending         []RequestEvent
-	pendingAt       time.Time
-	pendingGroups   int
-	diagnostics     RejectionLogDiagnostics
-	stop            chan struct{}
-	done            chan struct{}
-	closed          bool
+	mu     sync.Mutex
+	groups map[rejectionLogKey]*rejectionLogGroup
+	perKey map[string]int
+	// The batch being settled.
+	pendingAt     time.Time
+	pendingGroups int
+	diagnostics   RejectionLogDiagnostics
+	stop          chan struct{}
+	done          chan struct{}
+	closed        bool
 }
 
 // NewRejectionEvent gives authenticated pre-authorization failures the same
@@ -190,9 +184,7 @@ func (b *rejectionLogBuffer) snapshot() RejectionLogDiagnostics {
 func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.pending) > 0 {
-		return b.pending
-	}
+	var batch []RequestEvent
 	for key, group := range b.groups {
 		if !closing && key.window >= now.Truncate(rejectionLogWindow).Unix() {
 			continue
@@ -201,17 +193,17 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 		if group.RequestCount > 0 {
 			rows++
 		}
-		if len(b.pending)+rows > rejectionLogBatchSize {
+		if len(batch)+rows > rejectionLogBatchSize {
 			break
 		}
 		for _, request := range group.individual {
 			event := group.RequestEvent
 			event.RequestID, event.CreatedAt, event.LastRequestAt = request.id, request.at, request.at
 			event.RequestCount = 1
-			b.pending = append(b.pending, event)
+			batch = append(batch, event)
 		}
 		if group.RequestCount > 0 {
-			b.pending = append(b.pending, group.RequestEvent)
+			batch = append(batch, group.RequestEvent)
 		}
 		b.pendingGroups++
 		if b.pendingAt.IsZero() || group.queuedAt.Before(b.pendingAt) {
@@ -222,11 +214,11 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 		if b.perKey[key.keyID] == 0 {
 			delete(b.perKey, key.keyID)
 		}
-		if len(b.pending) == rejectionLogBatchSize {
+		if len(batch) == rejectionLogBatchSize {
 			break
 		}
 	}
-	return b.pending
+	return batch
 }
 
 func (s *Service) runRejectionLogs() {
@@ -246,64 +238,37 @@ func (s *Service) runRejectionLogs() {
 		for {
 			batch := b.nextBatch(time.Now(), closing)
 			if len(batch) == 0 {
-				b.mu.Lock()
-				if len(b.groups) == 0 && len(b.pending) == 0 {
-					b.deliveryBlocked.Store(false)
-				}
-				b.mu.Unlock()
 				break
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), rejectionLogDeliveryTimeout)
-			err := s.deliverRejectionLogs(ctx, batch)
-			cancel()
+			stored := s.settleRejections(batch)
 			b.mu.Lock()
-			if err == nil {
-				for _, event := range batch {
+			for i, event := range batch {
+				if stored[i] {
 					b.diagnostics.StoredRequests += uint64(event.RequestCount)
+				} else {
+					b.recordDropped(uint64(event.RequestCount))
 				}
-				b.pending = nil
-				b.pendingAt, b.pendingGroups = time.Time{}, 0
-			} else {
-				b.diagnostics.DeliveryFailures++
-				b.deliveryBlocked.Store(true)
 			}
-			b.mu.Unlock()
-			if err != nil {
-				break
-			}
-		}
-		if closing {
-			b.mu.Lock()
-			for _, event := range b.pending {
-				b.recordDropped(uint64(event.RequestCount))
-			}
-			for _, group := range b.groups {
-				b.recordDropped(uint64(len(group.individual)) + uint64(group.RequestCount))
-			}
-			b.pending, b.groups, b.perKey = nil, nil, nil
 			b.pendingAt, b.pendingGroups = time.Time{}, 0
 			b.mu.Unlock()
+		}
+		if closing {
 			return
 		}
 	}
 }
 
-func (s *Service) closeRejectionLogs() {
+// stopRejectionLogs settles every buffered rejection and returns a channel
+// that closes once that is done, or nil when none were recorded.
+func (s *Service) stopRejectionLogs() <-chan struct{} {
 	b := &s.rejectionLogs
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if !b.closed {
 		b.closed = true
 		if b.stop != nil {
 			close(b.stop)
 		}
 	}
-	done := b.done
-	b.mu.Unlock()
-	if done != nil {
-		<-done
-	}
-}
-
-func (s *Service) deliverRejectionLogs(ctx context.Context, events []RequestEvent) error {
-	return s.requestLogs.appendGatewayRequests(ctx, events)
+	return b.done
 }

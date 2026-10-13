@@ -181,8 +181,8 @@ func (s *Server) inference(ctx *requestContext) {
 			s.requests.end()
 			return
 		}
-		// Settlement waits on the request log and the wallet. The caller gets the
-		// response first; the request keeps its admission and memory until then.
+		// Settlement waits on the database. The caller gets the response first;
+		// the request keeps its admission and memory until then.
 		requestComplete = false
 		body := ctx.body
 		ctx.body = nil

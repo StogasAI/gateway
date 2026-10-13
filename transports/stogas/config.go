@@ -40,9 +40,6 @@ var confidentialRuntimeSecretNames = []string{
 	"DATABASE_URL",
 	"INFERENCE_TOKEN_PUBLIC_KEY",
 	"CHUTES_API_KEY",
-	"REQUEST_LOG_QUEUE_TOKEN",
-	"TB_HOST_URL",
-	"TB_GATEWAY_REQUESTS_TOKEN",
 }
 
 type Config struct {
@@ -66,9 +63,6 @@ type Config struct {
 	OpenAIBaseURL               string
 	Port                        string
 	PrivateReadinessPort        string
-	RequestLogQueueToken        string
-	TinybirdHost                string
-	TinybirdToken               string
 }
 
 type ConfidentialConfig struct {
@@ -116,9 +110,6 @@ func LoadFromEnv() (Config, error) {
 		OpenAIBaseURL:               strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")),
 		Port:                        defaultPort,
 		PrivateReadinessPort:        defaultPrivateReadinessPort,
-		RequestLogQueueToken:        strings.TrimSpace(os.Getenv("REQUEST_LOG_QUEUE_TOKEN")),
-		TinybirdHost:                strings.TrimSpace(os.Getenv("TB_HOST_URL")),
-		TinybirdToken:               strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN")),
 	}
 
 	if config.Confidential.ControlConfigured() {
@@ -205,9 +196,6 @@ func rejectUnsupportedConfidentialHostOverrides() error {
 		"DATABASE_SCHEMA",
 		"DATABASE_URL",
 		"OPENAI_API_KEY",
-		"REQUEST_LOG_QUEUE_TOKEN",
-		"TB_GATEWAY_REQUESTS_TOKEN",
-		"TB_HOST_URL",
 	} {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
 			return fmt.Errorf("%s is not supported in staging/prod confidential guests; runtime secrets are released by Control after attestation", name)
@@ -280,13 +268,6 @@ func (c Config) Validate() error {
 		return fmt.Errorf("DATABASE_SCHEMA is required")
 	}
 	if err := billing.ValidateDatabaseSchema(c.DatabaseSchema); err != nil {
-		return err
-	}
-	if err := validateTinybirdConfig(
-		c.TinybirdHost,
-		c.TinybirdToken,
-		c.Confidential.Environment == "local" && c.AllowPrivateProviderNetwork,
-	); err != nil {
 		return err
 	}
 	if !c.Confidential.ControlConfigured() && c.ChutesAPIKey == "" {
@@ -381,25 +362,6 @@ func validateProviderRuntimeSecretsReady(config Config) error {
 	if strings.TrimSpace(config.ChutesAPIKey) == "" {
 		return fmt.Errorf("CHUTES_API_KEY is required before provider runtime starts")
 	}
-	return validateTinybirdConfig(
-		config.TinybirdHost,
-		config.TinybirdToken,
-		config.Confidential.Environment == "local" && config.AllowPrivateProviderNetwork,
-	)
-}
-
-func validateTinybirdConfig(host string, token string, allowInsecurePrivateNetwork bool) error {
-	host = strings.TrimSpace(host)
-	token = strings.TrimSpace(token)
-	if host == "" && token == "" {
-		return nil
-	}
-	if host == "" || token == "" {
-		return fmt.Errorf("TB_HOST_URL and TB_GATEWAY_REQUESTS_TOKEN must be configured together")
-	}
-	if _, err := billing.NormalizeTinybirdHost(host, allowInsecurePrivateNetwork); err != nil {
-		return fmt.Errorf("invalid TB_HOST_URL: %w", err)
-	}
 	return nil
 }
 
@@ -410,9 +372,6 @@ func applyRuntimeSecretsFromEnv(config *Config) {
 	config.DatabaseURL = strings.TrimSpace(os.Getenv("DATABASE_URL"))
 	config.InferenceTokenPublicKey = strings.TrimSpace(os.Getenv("INFERENCE_TOKEN_PUBLIC_KEY"))
 	config.ChutesAPIKey = strings.TrimSpace(os.Getenv("CHUTES_API_KEY"))
-	config.RequestLogQueueToken = strings.TrimSpace(os.Getenv("REQUEST_LOG_QUEUE_TOKEN"))
-	config.TinybirdHost = strings.TrimSpace(os.Getenv("TB_HOST_URL"))
-	config.TinybirdToken = strings.TrimSpace(os.Getenv("TB_GATEWAY_REQUESTS_TOKEN"))
 }
 
 func (c ConfidentialConfig) Validate() error {
