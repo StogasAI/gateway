@@ -57,10 +57,6 @@
             (define (sha256 file)
               (car (string-split (output-of "sha256sum" file) #\space)))
 
-            (define (tree-sha256 directory)
-              (output-of "bash" #$(release-file "scripts/tree-sha256.sh")
-                         directory))
-
             ;; Canonical JSON sorts object keys.
             (define (canonical value)
               (cond
@@ -251,7 +247,7 @@
                       ("tz" . "UTC")
                       ("umask" . "022"))
                      ("go_vendor_tree_sha256"
-                      . ,(tree-sha256 (string-append source "/transports/vendor")))
+                      . #$(environment "STOGAS_RELEASE_VENDOR_SHA256"))
                      ("go_version" . ,(output-of "go" "version"))
                      ("guest_ca_bundle_path" . "/etc/ssl/certs/ca-certificates.crt")
                      ("guix_channel_commit" . #$%guix-commit)
@@ -273,7 +269,7 @@
                                ("stogas/release/snp-launch-policies.json"
                                 . ,launch-policies)))
                       ("verifier/source"
-                       . ,(tree-sha256 #$(package-source stogas-verifier))))
+                       . #$(environment "STOGAS_RELEASE_VERIFIER_SHA256")))
                      ("kernel_config_sha256" . ,(sha256 kernel-config))
                      ("kernel_version" . #$(package-version stogas-linux))
                      ("linux_bz_image_sha256" . ,(sha256 kernel))
@@ -302,8 +298,8 @@
                     ("source"
                      ("commit" . #$(environment "STOGAS_RELEASE_COMMIT"))
                      ("repository" . "https://github.com/StogasAI/gateway")
-                     ("tag" . #$%tag)
-                     ("tree" . #$(environment "STOGAS_RELEASE_TREE")))))
+                     ("sha256" . #$(environment "STOGAS_RELEASE_SOURCE_SHA256"))
+                     ("tag" . #$%tag))))
                  port)
                 (newline port))))))))
   (home-page "https://github.com/StogasAI/gateway")

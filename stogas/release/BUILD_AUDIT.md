@@ -4,7 +4,7 @@
 
 ## Inputs
 
-Everything that can change the image is in the tagged commit. Besides the tree, the build uses the tag, which the gateway reports as its version, and the commit time, which init uses as the earliest valid clock time:
+Everything that can change the image is in the tagged commit. Besides the files, the build uses the tag, which the gateway reports as its version, and the commit time, which init uses as the earliest valid clock time:
 
 | Input                                                          | Purpose                                                                                                                                                                                |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -25,7 +25,10 @@ Everything that can change the image is in the tagged commit. Besides the tree, 
 1. Copies the tracked files and any new files that Git does not ignore to a temporary directory, and builds only from that copy. It refuses uncommitted changes unless `STOGAS_RELEASE_ALLOW_DIRTY=1` is set for a local test build.
 2. Runs `scripts/verify-pins.mjs`, which checks the pins that Guix cannot check: a full Guix commit, the Go toolchain line in `transports/go.mod`, the commit of the Go verifier bindings, and full-commit GitHub Action pins.
 3. Downloads and vendors the Go modules with the pinned Go in a pure Guix environment. `go mod verify` checks every module against `go.sum`, and the build stops if vendoring changes `go.mod` or `go.sum`.
-4. Runs `guix build -f guix/release.scm`.
+4. Computes the source digests of the copy, the verifier source, and the vendored Go modules.
+5. Runs `guix build -f guix/release.scm`.
+
+A source digest identifies a directory with SHA-256 instead of Git's SHA-1. It is the SHA-256 of the canonical JSON array with one `{"mode","path","sha256"}` object per file, sorted by path: `mode` is `493` for an executable file and `420` otherwise, `path` is relative with `/` separators, and `sha256` is the file's SHA-256 in lowercase hex. `scripts/source-digest.mjs` computes it, and Stogas verifier and catalog releases use the same format.
 
 Guix builds each package without network access, and every download must match its pinned hash. Guix substitute servers do not carry the custom packages (Go, Linux, AmdSev OVMF, the systemd EFI stub and `ukify`, the IGVM tools, ntpd-rs, and the verifier), so Guix builds them from source. Unmodified Guix packages such as GCC and Rust can come from the Guix substitute servers, which build them through the Guix full-source bootstrap. To build them locally instead, run the Guix daemon with `--no-substitutes`.
 
@@ -64,7 +67,7 @@ Guix applies each patch with zero fuzz.
 | `gateway.init`, `gateway.kernel`, `gateway.initramfs.cpio.zst` | Local tests.                                              |
 | `kernel-config.txt`                                            | Review of the full kernel configuration.                  |
 
-The manifest records the image hash and size, the launch measurement and launch policies, the source commit and tree, the Guix commit, the hashes of the kernel, firmware, EFI stub, UKI, and measurement tool, and the hashes of the inputs above.
+The manifest records the image hash and size, the launch measurement and launch policies, the source commit and digest, the digests of the verifier source and the vendored Go modules, the Guix commit, the hashes of the kernel, firmware, EFI stub, UKI, and measurement tool, and the hashes of the inputs above.
 
 ## Reproducibility
 
