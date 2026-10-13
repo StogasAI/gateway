@@ -12,8 +12,24 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-// errCatalogIncompatible marks verified catalog bytes that this binary refused.
-var errCatalogIncompatible = errors.New("approved catalog is incompatible with this gateway")
+// Catalog failure classes double as readiness reasons. They are fixed text because
+// the fleet monitor discards reasons it does not recognize.
+var (
+	errCatalogUnapproved  = errors.New("no approved catalog is compatible with this gateway")
+	errCatalogUnavailable = errors.New("approved catalog could not be downloaded")
+	// errCatalogIncompatible marks verified catalog bytes that this binary refused.
+	errCatalogIncompatible = errors.New("approved catalog is incompatible with this gateway")
+)
+
+// catalogReason names the class of a catalog failure for readiness.
+func catalogReason(err error) string {
+	for _, class := range []error{errCatalogUnapproved, errCatalogUnavailable, errCatalogIncompatible} {
+		if errors.Is(err, class) {
+			return class.Error()
+		}
+	}
+	return "approved compatible catalog is not installed"
+}
 
 // catalogRejection identifies a refused catalog. Installation of verified bytes is
 // deterministic, so the same approval is not downloaded again by this process.
@@ -46,7 +62,7 @@ func (summary evidenceSummary) activeCatalogApproved(gatewayID string) bool {
 func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string) error {
 	approved, ok := e.summary.catalog(gatewayID)
 	if !ok {
-		return errors.New("no approved compatible catalog")
+		return errCatalogUnapproved
 	}
 	release := approved.Release
 	identity := catalog.Identity{Sequence: release.Sequence, Digest: release.RuntimeDigest}
@@ -61,11 +77,11 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	defer cancel()
 	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
 	if err != nil {
-		return err
+		return errors.Join(errCatalogUnavailable, err)
 	}
 	publicBytes, err := e.artifact(ctx, release.PublicDigest, release.PublicSizeBytes, catalog.MaxPublicBytes)
 	if err != nil {
-		return err
+		return errors.Join(errCatalogUnavailable, err)
 	}
 	if err := catalog.InstallApproved(runtimeBytes, publicBytes, identity, release.PublicDigest); err != nil {
 		e.rejectedCatalog = rejection

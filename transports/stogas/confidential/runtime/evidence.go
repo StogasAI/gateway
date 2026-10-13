@@ -42,8 +42,23 @@ type approvedCatalog struct {
 }
 
 type evidenceSummary struct {
+	Keys struct {
+		Document struct {
+			// The key manifest expiry ends every approval in the same evidence.
+			ExpiresAt time.Time `json:"expires_at"`
+		} `json:"document"`
+	} `json:"keys"`
 	Gateways []approvedGateway `json:"gateways"`
 	Catalogs []approvedCatalog `json:"catalogs"`
+}
+
+func summarize(snapshot *verifier.EvidenceSnapshot) (evidenceSummary, error) {
+	encoded, err := snapshot.Summary()
+	var summary evidenceSummary
+	if err == nil {
+		err = json.Unmarshal(encoded, &summary)
+	}
+	return summary, err
 }
 
 type evidenceOrigin struct {
@@ -99,33 +114,30 @@ func (e *currentEvidence) close() {
 	e.client.CloseIdleConnections()
 }
 
-// refresh asks every origin, so one stale or withholding origin cannot hide a
-// newer copy such as a withdrawal; the verifier rejects older and conflicting
-// copies. An unavailable origin alone preserves valid installed state. A complete
-// authenticated withdrawal remains installed even when check rejects this boot.
-// Invalid delivery cannot erase learned CRLs or root-key retirement.
+// refresh reads the origins in order and stops at the first one whose copy the
+// verifier accepts and check approves. The verifier rejects older and conflicting
+// copies, so a stale origin falls through to the next. An origin that withholds a
+// newer copy can keep an older one in use only until its key manifest expires,
+// at most a day. An unavailable origin alone preserves valid installed state. A
+// complete authenticated withdrawal remains installed even when check rejects
+// this boot. Invalid delivery cannot erase learned CRLs or root-key retirement.
 func (e *currentEvidence) refresh(parent context.Context, check func(*verifier.EvidenceSnapshot, evidenceSummary) error) error {
 	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
 	defer cancel()
 	var failures []error
-	var appraisal error
-	answered := false
 	for i := range e.origins {
-		if err := e.fetch(ctx, &e.origins[i]); err != nil {
-			failures = append(failures, err)
-		} else {
-			answered = true
-		}
-		// A rejected candidate can still authenticate a revocation or retired key.
-		// Appraise before asking the next origin so admission reacts immediately.
+		err := e.fetch(ctx, &e.origins[i])
+		// A rejected candidate can still authenticate a revocation or retired key,
+		// so the installed snapshot is appraised after every attempt.
 		if e.snapshot != nil {
-			appraisal = check(e.snapshot, e.summary)
+			err = errors.Join(err, check(e.snapshot, e.summary))
 		}
+		if err == nil {
+			return nil
+		}
+		failures = append(failures, err)
 	}
-	if answered && appraisal == nil {
-		return nil
-	}
-	return errors.Join(append(failures, appraisal)...)
+	return errors.Join(failures...)
 }
 
 func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) error {
@@ -175,11 +187,7 @@ func (e *currentEvidence) fetch(parent context.Context, origin *evidenceOrigin) 
 	if err != nil {
 		return err
 	}
-	summaryBytes, err := candidate.Summary()
-	var summary evidenceSummary
-	if err == nil {
-		err = json.Unmarshal(summaryBytes, &summary)
-	}
+	summary, err := summarize(candidate)
 	if err != nil {
 		_ = candidate.Close()
 		return err

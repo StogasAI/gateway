@@ -120,3 +120,27 @@ func TestRejectedCatalogIsNotDownloadedAgain(t *testing.T) {
 		t.Fatalf("refused catalog was downloaded again: %d reads", reads.Load())
 	}
 }
+
+func TestCatalogFailureNamesItsReadinessReason(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	e := fixtureEvidence(t, evidenceFixture(t), server.URL)
+	gateway := approvedGateway{ID: "gateway"}
+	gateway.Release.Sequence = 4
+	e.summary.Gateways = []approvedGateway{gateway}
+	if reason := catalogReason(e.updateCatalog(t.Context(), "gateway")); reason != errCatalogUnapproved.Error() {
+		t.Fatalf("missing approval reported as %q", reason)
+	}
+	approved := approvedCatalog{ID: "catalog"}
+	approved.Release.Sequence, approved.Release.MinimumGatewaySequence = 9, 4
+	digest := "sha256:" + strings.Repeat("0", 64)
+	approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest, 1
+	approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest, 1
+	e.summary.Catalogs = []approvedCatalog{approved}
+	if reason := catalogReason(e.updateCatalog(t.Context(), "gateway")); reason != errCatalogUnavailable.Error() {
+		t.Fatalf("failed download reported as %q", reason)
+	}
+	if reason := catalogReason(nil); reason != "approved compatible catalog is not installed" {
+		t.Fatalf("pending catalog reported as %q", reason)
+	}
+}

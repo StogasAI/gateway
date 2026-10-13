@@ -20,12 +20,21 @@ import (
 )
 
 type bootEvidenceFixture struct {
-	Root        verifier.TrustRoot `json:"root"`
-	Bundle      json.RawMessage    `json:"bundle"`
-	Boot        fixtureBoot        `json:"boot"`
-	Inclusion   json.RawMessage    `json:"inclusion"`
-	Now         int64              `json:"verified_at_ms"`
-	RotatedKeys json.RawMessage    `json:"rotated_keys"`
+	Root   verifier.TrustRoot `json:"root"`
+	Bundle json.RawMessage    `json:"bundle"`
+	// RotatedBundle makes a new online key active and retires the boot's key;
+	// PrunedBundle then omits it.
+	RotatedBundle json.RawMessage `json:"rotated_bundle"`
+	PrunedBundle  json.RawMessage `json:"pruned_bundle"`
+	// Expiring holds a copy of the first key manifest that expires while the
+	// AMD collateral is still valid, verified at its own time.
+	Expiring struct {
+		Bundle json.RawMessage `json:"bundle"`
+		Now    int64           `json:"verified_at_ms"`
+	} `json:"expiring"`
+	Boot      fixtureBoot     `json:"boot"`
+	Inclusion json.RawMessage `json:"inclusion"`
+	Now       int64           `json:"verified_at_ms"`
 }
 
 // fixtureBoot is a real logged boot whose report commits the fixture's seeded keys.
@@ -98,15 +107,20 @@ func fixtureAppraisal(t *testing.T, fixture bootEvidenceFixture) func(*verifier.
 	}
 }
 
-func TestEvidenceAsksEveryOriginWithOriginScopedConditionalReads(t *testing.T) {
+func TestEvidenceReadsOriginsInOrderWithOriginScopedConditionalReads(t *testing.T) {
 	fixture := evidenceFixture(t)
 	var mu sync.Mutex
 	conditional := map[string][]string{}
+	var primaryDown atomic.Bool
 	origin := func(name string) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			conditional[name] = append(conditional[name], r.Header.Get("If-None-Match"))
 			mu.Unlock()
+			if name == "primary" && primaryDown.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			etag := `"` + name + `"`
 			w.Header().Set("ETag", etag)
 			if r.Header.Get("If-None-Match") == etag {
@@ -133,19 +147,22 @@ func TestEvidenceAsksEveryOriginWithOriginScopedConditionalReads(t *testing.T) {
 		t.Fatalf("replica did not resolve an unresolved primary: %v", err)
 	}
 	snapshot := e.snapshot
-	for range 2 {
-		if err := e.refresh(t.Context(), appraise); err != nil {
-			t.Fatal(err)
-		}
+	if err := e.refresh(t.Context(), appraise); err != nil {
+		t.Fatal(err)
+	}
+	primaryDown.Store(true)
+	if err := e.refresh(t.Context(), appraise); err != nil {
+		t.Fatalf("replica did not replace an unavailable primary: %v", err)
 	}
 	if e.snapshot != snapshot {
 		t.Fatal("identical bytes from another origin replaced the snapshot")
 	}
 	mu.Lock()
 	defer mu.Unlock()
+	// The replica is read only when the primary's answer fails or is not approved.
 	if !slices.Equal(conditional["primary"], []string{"", `"primary"`, `"primary"`}) ||
-		!slices.Equal(conditional["replica"], []string{"", `"replica"`, `"replica"`}) {
-		t.Fatalf("conditional reads used the wrong retained representation: %q", conditional)
+		!slices.Equal(conditional["replica"], []string{"", `"replica"`}) {
+		t.Fatalf("reads used the wrong origin or retained representation: %q", conditional)
 	}
 }
 
@@ -209,7 +226,7 @@ func TestEvidenceFetchBoundsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
+func TestEvidenceRetirementOutlivesLaggingCopies(t *testing.T) {
 	fixture := evidenceFixture(t)
 	var candidate map[string]json.RawMessage
 	if err := json.Unmarshal(fixture.Bundle, &candidate); err != nil {
@@ -219,7 +236,15 @@ func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
 	if err := json.Unmarshal(candidate["body"], &body); err != nil {
 		t.Fatal(err)
 	}
-	body["keys"] = fixture.RotatedKeys
+	var rotated struct {
+		Body struct {
+			Keys json.RawMessage `json:"keys"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(fixture.RotatedBundle, &rotated); err != nil {
+		t.Fatal(err)
+	}
+	body["keys"] = rotated.Body.Keys
 	// The root validly retires the old key, but the rest of this delivery still
 	// uses that key. Candidate installation fails; its retirement must remain.
 	bodyBytes, err := json.Marshal(body)
@@ -236,8 +261,10 @@ func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The replica is read only when the primary fails. Either way, a lagging copy
+	// read afterwards must not restore the retired key.
 	for _, retiring := range []int{0, 1} {
-		t.Run([]string{"primary", "replica"}[retiring], func(t *testing.T) {
+		t.Run([]string{"primary", "replica after primary failure"}[retiring], func(t *testing.T) {
 			var deliveries [2]atomic.Value
 			deliveries[0].Store(fixture.Bundle)
 			deliveries[1].Store(fixture.Bundle)
@@ -248,6 +275,10 @@ func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
 					// A retirement on the primary closes admission before the replica answers.
 					if i == 1 && retiring == 0 && retired.Load() && !rejected.Load() {
 						t.Error("replica contacted before learned retirement closed admission")
+					}
+					if i == 0 && retiring == 1 && retired.Load() {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
 					}
 					_, _ = w.Write(deliveries[i].Load().(json.RawMessage))
 				}))
@@ -273,7 +304,9 @@ func TestEvidenceRetirementFromEitherOriginOutlivesLaggingCopies(t *testing.T) {
 			if !rejected.Load() || e.snapshot != previous {
 				t.Fatal("incomplete retirement delivery did not retain and reject old snapshot")
 			}
-			if err := appraisal(previous, e.summary); err == nil {
+			deliveries[retiring].Store(fixture.Bundle)
+			retired.Store(false)
+			if err := e.refresh(t.Context(), appraisal); err == nil {
 				t.Fatal("lagging origin restored retired trust")
 			}
 		})
