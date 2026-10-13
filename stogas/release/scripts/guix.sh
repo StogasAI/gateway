@@ -9,6 +9,12 @@ resolve_stogas_guix() {
   unset GUILE_LOAD_COMPILED_PATH GUILE_LOAD_PATH
   unset GUIX_BUILD_OPTIONS GUIX_EXTENSIONS_PATH GUIX_PACKAGE_PATH
 
+  # Take prebuilt Guix packages from one Guix build farm only. GitHub's release
+  # build names ci.guix.gnu.org and every other build uses bordeaux.guix.gnu.org,
+  # so a package that the farms built differently, or that one farm lacks,
+  # enters the two builds as different bytes or is built from source.
+  export GUIX_BUILD_OPTIONS="--substitute-urls=${STOGAS_GUIX_SUBSTITUTE_URL:-https://bordeaux.guix.gnu.org}"
+
   if [ "${STOGAS_GUIX_RESOLVED:-0}" = "1" ] && [ -x "${STOGAS_GUIX:-}" ]; then
     return
   fi

@@ -27,13 +27,12 @@ Everything that can change the image is in the tagged commit. Besides the files,
 3. Downloads and vendors the Go modules with the pinned Go in a pure Guix environment. `go mod verify` checks every module against `go.sum`, and the build stops if vendoring changes `go.mod` or `go.sum`.
 4. Computes the source digests of the copy, the verifier source, and the vendored Go modules.
 5. Runs `guix build -f guix/release.scm`.
-6. Compares the Guix packages that the build used with both Guix build farms, as described below.
 
 A source digest identifies a directory with SHA-256 instead of Git's SHA-1. It is the SHA-256 of the canonical JSON array with one `{"mode","path","sha256"}` object per file, sorted by path: `mode` is `493` for an executable file and `420` otherwise, `path` is relative with `/` separators, and `sha256` is the file's SHA-256 in lowercase hex. `scripts/source-digest.mjs` computes it, and Stogas verifier and catalog releases use the same format.
 
 Guix builds each package without network access, and every download must match its pinned hash. Guix substitute servers do not carry the custom packages (Go, Linux, AmdSev OVMF, the systemd EFI stub and `ukify`, the IGVM tools, ntpd-rs, and the verifier), so Guix builds them from source. Unmodified Guix packages such as GCC and Rust can come from the Guix substitute servers, which build them through the Guix full-source bootstrap. To build them locally instead, run the Guix daemon with `--no-substitutes`.
 
-Guix runs two build farms, `ci.guix.gnu.org` and `bordeaux.guix.gnu.org`. Each builds every package from source on its own and signs the hashes it publishes. `scripts/challenge-guix-farms.scm` compares the local copy of every Guix package that the build used with both farms' hashes, and lists the packages that the farms built differently or that only one farm publishes. The build fails if a local copy matches neither farm, if a farm's signature does not verify, or if neither farm answers. GitHub's build takes packages from `ci.guix.gnu.org` first, while Guix takes them from `bordeaux.guix.gnu.org` first by default. Where the farms disagree, GitHub's build and a default rebuild therefore use different copies, and matching release bytes show that neither copy changed the image.
+Guix runs two build farms, `ci.guix.gnu.org` and `bordeaux.guix.gnu.org`, and each builds every package from source on its own. The build takes prebuilt packages from one farm only: `bordeaux.guix.gnu.org`, or the farm that `STOGAS_GUIX_SUBSTITUTE_URL` names. GitHub's release build names `ci.guix.gnu.org`. A package that the farms built differently therefore enters GitHub's build and a default rebuild as different bytes, and a package that only one farm publishes is built from source on the other side. Matching release bytes then show that no single farm's package changed the image. Guix checks each downloaded package against the farm's signing key.
 
 `guix/release.scm`:
 

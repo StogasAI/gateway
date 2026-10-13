@@ -88,12 +88,6 @@ if [ "$key_count" -eq 0 ]; then
   exit 70
 fi
 
-daemon=("$guix_bin/guix-daemon" --build-users-group=guixbuild)
-# STOGAS_GUIX_SUBSTITUTE_URLS, when set, lists the substitute servers that the
-# daemon tries, in order.
-if [ -n "${STOGAS_GUIX_SUBSTITUTE_URLS:-}" ]; then
-  daemon+=("--substitute-urls=$STOGAS_GUIX_SUBSTITUTE_URLS")
-fi
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
   sudo tee /etc/systemd/system/guix-daemon.service >/dev/null <<EOF
 [Unit]
@@ -101,7 +95,7 @@ Description=GNU Guix build daemon
 After=network.target
 
 [Service]
-ExecStart=${daemon[*]@Q}
+ExecStart=$guix_bin/guix-daemon --build-users-group=guixbuild
 Restart=on-failure
 
 [Install]
@@ -112,7 +106,7 @@ EOF
   sudo systemctl restart guix-daemon.service
 else
   if ! "$guix_bin/guix" gc --list-roots >/dev/null 2>&1; then
-    sudo nohup "${daemon[@]}" >/dev/null 2>&1 &
+    sudo nohup "$guix_bin/guix-daemon" --build-users-group=guixbuild >/dev/null 2>&1 &
   fi
 fi
 if [[ -n "${GITHUB_PATH:-}" ]]; then
