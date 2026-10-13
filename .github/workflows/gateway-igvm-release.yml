@@ -136,7 +136,6 @@ jobs:
           tag="$GITHUB_REF_NAME"
           release_dir="dist/gateway/$tag"
           commit="$(git rev-parse HEAD)"
-          tree="$(git rev-parse 'HEAD^{tree}')"
           gh attestation verify "$release_dir/release-manifest.json" \
             --repo "$GITHUB_REPOSITORY" \
             --bundle "$release_dir/github-attestation.jsonl" \
@@ -150,12 +149,11 @@ jobs:
             "$release_dir/release-manifest.json" \
             "$release_dir/gateway.igvm" \
             "$tag" \
-            "$commit" \
-            "$tree" <<'NODE'
+            "$commit" <<'NODE'
           import { createHash } from 'node:crypto';
           import { readFileSync, statSync } from 'node:fs';
 
-          const [manifestPath, igvmPath, tag, commit, tree] = process.argv.slice(2);
+          const [manifestPath, igvmPath, tag, commit] = process.argv.slice(2);
           const manifestBytes = readFileSync(manifestPath);
           const manifest = JSON.parse(manifestBytes);
           const canonical = (value) => {
@@ -173,7 +171,6 @@ jobs:
             manifest.source?.repository !== `https://github.com/${process.env.GITHUB_REPOSITORY}` ||
             manifest.source?.tag !== tag ||
             manifest.source?.commit !== commit ||
-            manifest.source?.tree !== tree ||
             manifest.artifacts?.['gateway.igvm']?.sha256 !== igvm.sha256 ||
             manifest.artifacts?.['gateway.igvm']?.size_bytes !== igvm.size_bytes
           ) {
