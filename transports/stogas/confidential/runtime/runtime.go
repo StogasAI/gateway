@@ -223,7 +223,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		cleanupBatcher()
 		return nil, err
 	}
-	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, keys: keys, identity: checked}
+	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, keys: keys, identity: checked, evidenceExpires: evidence.summary.Keys.Document.ExpiresAt}
 	// A catalog delivery outage leaves this registered VM alive but unready; the
 	// same maintenance loop recovers it without a new quote or registration.
 	_ = maintenance.maintain(ctx)
@@ -330,8 +330,8 @@ func (r *Runtime) Diagnostics() *MaintenanceDiagnostics {
 	m := r.maintenance
 	m.mu.RLock()
 	result := &MaintenanceDiagnostics{Region: r.region, ConsecutiveFailures: m.failures, LastAttemptAt: timePointer(m.lastAttempt), LastSuccessAt: timePointer(m.lastSuccess), EvidenceReason: m.evidenceReason, CertificateRenewalFailed: m.renewalFailed}
-	if result.EvidenceReason == "" && (m.identity.NodeID == "" || m.evidence.now().UnixMilli() < m.identity.ValidFromUnixMS || m.evidence.now().UnixMilli() >= m.identity.ValidUntilUnixMS) {
-		result.EvidenceReason = "required collateral is not valid"
+	if result.EvidenceReason == "" {
+		result.EvidenceReason = m.validityReason(m.evidence.now())
 	}
 	m.mu.RUnlock()
 	result.Quotes = r.batcher.Diagnostics()

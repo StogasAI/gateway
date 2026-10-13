@@ -6,6 +6,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -57,20 +58,151 @@ func maintenanceCertificate(t *testing.T, fixtureNow time.Time) *identity.Certif
 	return store
 }
 
-func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T) {
-	fixture := evidenceFixture(t)
-	evidence := fixtureEvidence(t, fixture)
-	snapshot, err := evidence.verifier.RefreshAt(fixture.Bundle, evidence.now())
+// fixtureSnapshot verifies a sample bundle at the evidence clock, as refresh does.
+func fixtureSnapshot(t *testing.T, evidence *currentEvidence, bundle []byte) (*verifier.EvidenceSnapshot, evidenceSummary) {
+	t.Helper()
+	snapshot, err := evidence.verifier.RefreshAt(bundle, evidence.now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer snapshot.Close()
+	t.Cleanup(func() { _ = snapshot.Close() })
+	summary, err := summarize(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot, summary
+}
+
+// evidenceReasons is readiness apart from the catalog: the samples approve
+// catalogs without shipping their bytes, and catalog admission has its own tests.
+func evidenceReasons(m *bootMaintenance) []string {
+	return slices.DeleteFunc(m.readiness().Reasons, func(reason string) bool { return reason == catalogReason(nil) })
+}
+
+func sampleOrigin(t *testing.T, bundle json.RawMessage) (*httptest.Server, *atomic.Value, *atomic.Bool) {
+	t.Helper()
+	var delivery atomic.Value
+	delivery.Store(bundle)
+	var blocked atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if blocked.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write(delivery.Load().(json.RawMessage))
+	}))
+	t.Cleanup(server.Close)
+	return server, &delivery, &blocked
+}
+
+// An online key change publishes a key manifest that makes a new key active and
+// retires the boot's key, then one that omits it. Admission stays open through the
+// first while requests read it; the second closes it, so gateways are replaced in between.
+func TestMaintenanceKeyChangeKeepsAdmissionUntilTheOldKeyIsOmitted(t *testing.T) {
+	fixture := evidenceFixture(t)
+	server, delivery, _ := sampleOrigin(t, fixture.Bundle)
+	evidence := fixtureEvidence(t, fixture, server.URL)
+	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: fixture.Boot.document(t), Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now())}
+	if err := evidence.refresh(t.Context(), m.appraise); err != nil {
+		t.Fatal(err)
+	}
+	if reasons := evidenceReasons(m); len(reasons) != 0 {
+		t.Fatal(reasons)
+	}
+	var closed atomic.Value
+	stop := make(chan struct{})
+	var group sync.WaitGroup
+	for range 4 {
+		group.Go(func() {
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if reasons := evidenceReasons(m); len(reasons) != 0 {
+					closed.Store(reasons)
+				}
+			}
+		})
+	}
+	initial := evidence.snapshot
+	delivery.Store(fixture.RotatedBundle)
+	err := evidence.refresh(t.Context(), m.appraise)
+	close(stop)
+	group.Wait()
+	if err != nil || evidence.snapshot == initial {
+		t.Fatalf("the new key manifest was not installed: %v", err)
+	}
+	if reasons := closed.Load(); reasons != nil {
+		t.Fatalf("the key change closed admission: %v", reasons)
+	}
+	delivery.Store(fixture.PrunedBundle)
+	if err := evidence.refresh(t.Context(), m.appraise); err == nil || !slices.Equal(evidenceReasons(m), []string{"required evidence is not valid"}) {
+		t.Fatalf("omitting the boot's key kept admission open: %v %v", err, m.readiness().Reasons)
+	}
+}
+
+// Blocked downloads keep admission open until the key manifest expires, close it at
+// that instant without network I/O, and the next newer copy reopens it.
+func TestMaintenanceEvidenceExpiryClosesAdmissionUntilANewerCopyArrives(t *testing.T) {
+	fixture := evidenceFixture(t)
+	server, delivery, blocked := sampleOrigin(t, fixture.Expiring.Bundle)
+	evidence := fixtureEvidence(t, fixture, server.URL)
+	now := time.UnixMilli(fixture.Expiring.Now)
+	evidence.now = func() time.Time { return now }
+	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: fixture.Boot.document(t), Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, now)}
+	if err := evidence.refresh(t.Context(), m.appraise); err != nil {
+		t.Fatal(err)
+	}
+	expiry := evidence.summary.Keys.Document.ExpiresAt
+	if m.identity.ValidUntilUnixMS != expiry.UnixMilli() {
+		t.Fatal("the sample's AMD collateral expires before its key manifest; make the samples again")
+	}
+	if reasons := evidenceReasons(m); len(reasons) != 0 {
+		t.Fatal(reasons)
+	}
+	blocked.Store(true)
+	now = expiry.Add(-time.Millisecond)
+	if err := evidence.refresh(t.Context(), m.appraise); err == nil {
+		t.Fatal("a blocked download succeeded")
+	}
+	if reasons := evidenceReasons(m); len(reasons) != 0 {
+		t.Fatalf("blocked downloads closed admission before expiry: %v", reasons)
+	}
+	now = expiry
+	if reasons := evidenceReasons(m); !slices.Equal(reasons, []string{"current evidence has expired"}) {
+		t.Fatalf("expiry waited for a network refresh: %v", reasons)
+	}
+
+	// A gateway without newer evidence refuses the expired copy outright.
+	fresh := fixtureEvidence(t, fixture, server.URL)
+	fresh.now = evidence.now
+	blocked.Store(false)
+	var failure *verifier.VerificationError
+	if err := fresh.refresh(t.Context(), fixtureAppraisal(t, fixture)); !errors.As(err, &failure) || failure.Code != "expired_key_authorization" || fresh.snapshot != nil {
+		t.Fatalf("an expired copy was accepted: %v", err)
+	}
+
+	delivery.Store(fixture.RotatedBundle)
+	if err := evidence.refresh(t.Context(), m.appraise); err != nil {
+		t.Fatal(err)
+	}
+	if reasons := evidenceReasons(m); len(reasons) != 0 {
+		t.Fatalf("a newer copy did not reopen admission: %v", reasons)
+	}
+}
+
+func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T) {
+	fixture := evidenceFixture(t)
+	evidence := fixtureEvidence(t, fixture)
+	snapshot, summary := fixtureSnapshot(t, evidence, fixture.Bundle)
 	document := fixture.Boot.document(t)
 	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now())}
 	if m.readiness().Ready {
 		t.Fatal("unappraised node became ready")
 	}
-	if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
+	if err := m.appraise(snapshot, summary); err != nil {
 		t.Fatal(err)
 	}
 	// Artifact loading has separate hash/compatibility tests. This isolates admission
@@ -91,11 +223,11 @@ func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T)
 	}
 	evidence.synchronized = func() bool { return true }
 	m.boot.Inclusion = []byte(`{}`)
-	if err := m.appraise(snapshot, evidenceSummary{}); err == nil || m.readiness().Ready {
+	if err := m.appraise(snapshot, summary); err == nil || m.readiness().Ready {
 		t.Fatal("rejected boot did not close admission")
 	}
 	m.boot.Inclusion = fixture.Inclusion
-	if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
+	if err := m.appraise(snapshot, summary); err != nil {
 		t.Fatal(err)
 	}
 	m.catalogReady = true
@@ -103,7 +235,7 @@ func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T)
 		t.Fatal("policy recovery did not reopen admission")
 	}
 	m.drain()
-	if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
+	if err := m.appraise(snapshot, summary); err != nil {
 		t.Fatal(err)
 	}
 	m.catalogReady = true
@@ -115,11 +247,7 @@ func TestMaintenanceLocalExpiryClockPolicyRecoveryAndTerminalDrain(t *testing.T)
 func TestMaintenanceAdmissionReadsRaceSafelyWithAppraisalAndDrain(t *testing.T) {
 	fixture := evidenceFixture(t)
 	evidence := fixtureEvidence(t, fixture)
-	snapshot, err := evidence.verifier.RefreshAt(fixture.Bundle, evidence.now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer snapshot.Close()
+	snapshot, summary := fixtureSnapshot(t, evidence, fixture.Bundle)
 	document := fixture.Boot.document(t)
 	m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now())}
 	var group sync.WaitGroup
@@ -132,7 +260,7 @@ func TestMaintenanceAdmissionReadsRaceSafelyWithAppraisalAndDrain(t *testing.T) 
 	}
 	group.Go(func() {
 		for range 5 {
-			if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
+			if err := m.appraise(snapshot, summary); err != nil {
 				t.Error(err)
 			}
 		}
@@ -217,17 +345,13 @@ func TestCertificateRenewalRetainsInstalledStateAndRespectsTerminalDrain(t *test
 func TestRegistrationAcknowledgementRetriesWithoutChangingLocalAdmission(t *testing.T) {
 	fixture := evidenceFixture(t)
 	evidence := fixtureEvidence(t, fixture)
-	snapshot, err := evidence.verifier.RefreshAt(fixture.Bundle, evidence.now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer snapshot.Close()
+	snapshot, summary := fixtureSnapshot(t, evidence, fixture.Bundle)
 	document := fixture.Boot.document(t)
 	keys := testNodeKeys(t)
 	for _, terminal := range []bool{false, true} {
 		t.Run(map[bool]string{false: "retry recovers", true: "drain cancels retry"}[terminal], func(t *testing.T) {
 			m := &bootMaintenance{evidence: evidence, boot: attest.BootEvidence{Document: document, Inclusion: fixture.Inclusion}, certs: maintenanceCertificate(t, evidence.now()), keys: keys}
-			if err := m.appraise(snapshot, evidenceSummary{}); err != nil {
+			if err := m.appraise(snapshot, summary); err != nil {
 				t.Fatal(err)
 			}
 			m.catalogReady = true

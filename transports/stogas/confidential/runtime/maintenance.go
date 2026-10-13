@@ -26,9 +26,10 @@ type bootMaintenance struct {
 
 	mu                   sync.RWMutex
 	identity             verifier.BootIdentity
+	evidenceExpires      time.Time // key manifest expiry of the evidence that verified identity
 	evidenceReason       string
 	catalogReady         bool
-	catalogIncompatible  bool
+	catalogErr           error
 	terminal             bool
 	lastAttempt          time.Time
 	lastSuccess          time.Time
@@ -49,7 +50,7 @@ func (m *bootMaintenance) appraise(snapshot *verifier.EvidenceSnapshot, summary 
 		m.evidenceReason = "boot identity differs"
 		return errors.New(m.evidenceReason)
 	}
-	m.identity = checked
+	m.identity, m.evidenceExpires = checked, summary.Keys.Document.ExpiresAt
 	m.evidenceReason = ""
 	m.catalogReady = summary.activeCatalogApproved(checked.GatewayReleaseID)
 	return nil
@@ -69,7 +70,7 @@ func (m *bootMaintenance) maintain(ctx context.Context) error {
 		catalogErr := m.evidence.updateCatalog(ctx, gatewayID)
 		m.mu.Lock()
 		m.catalogReady = m.evidence.summary.activeCatalogApproved(gatewayID)
-		m.catalogIncompatible = errors.Is(catalogErr, errCatalogIncompatible)
+		m.catalogErr = catalogErr
 		m.mu.Unlock()
 		err = errors.Join(err, catalogErr)
 	}
@@ -98,19 +99,33 @@ func (m *bootMaintenance) readiness() readiness.Result {
 		reasons = append(reasons, "clock is not synchronized")
 	}
 	now := m.evidence.now()
-	if m.identity.NodeID == "" || now.UnixMilli() < m.identity.ValidFromUnixMS || now.UnixMilli() >= m.identity.ValidUntilUnixMS {
-		reasons = append(reasons, "required collateral is not valid")
+	if reason := m.validityReason(now); reason != "" {
+		reasons = append(reasons, reason)
 	}
-	if !m.catalogReady && m.catalogIncompatible {
-		reasons = append(reasons, errCatalogIncompatible.Error())
-	} else if !m.catalogReady {
-		reasons = append(reasons, "approved compatible catalog is not installed")
+	if !m.catalogReady {
+		reasons = append(reasons, catalogReason(m.catalogErr))
 	}
 	certificate := m.certs.State()
 	if certificate.NotBefore.IsZero() || now.Before(certificate.NotBefore) || !now.Before(certificate.ExpiresAt) {
 		reasons = append(reasons, "certificate is not valid")
 	}
 	return readiness.Result{Ready: len(reasons) == 0, Reasons: reasons}
+}
+
+// validityReason reports why the last appraisal no longer admits requests at now.
+// The identity's validity already ends at the key manifest expiry; naming that
+// case separately points operators at evidence delivery instead of AMD collateral.
+// The caller holds m.mu.
+func (m *bootMaintenance) validityReason(now time.Time) string {
+	switch {
+	case m.identity.NodeID == "":
+		return "required collateral is not valid"
+	case !now.Before(m.evidenceExpires):
+		return "current evidence has expired"
+	case now.UnixMilli() < m.identity.ValidFromUnixMS || now.UnixMilli() >= m.identity.ValidUntilUnixMS:
+		return "required collateral is not valid"
+	}
+	return ""
 }
 
 func (m *bootMaintenance) drain() {
