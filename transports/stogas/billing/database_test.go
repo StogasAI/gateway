@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,6 +67,65 @@ func TestAuthorizationClosesOnlyAfterSendingItsStatement(t *testing.T) {
 				t.Fatalf("closes = %d, want %d", closing, want)
 			}
 		})
+	}
+}
+
+// Waiting for an organization slot or a connection ends a statement reserve
+// before the authorization deadline, so a statement that starts can finish.
+func TestAuthorizationWaitsEndBeforeTheStatementReserve(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go acceptSilentPostgres(listener)
+	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+listener.Addr().String()+"/unused?sslmode=disable&connect_timeout=1&pool_max_conns=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	service := &Service{db: &GatewayDB{pool: pool}, authorizeHoldQuery: "select 1", closeRequestQuery: "select 1"}
+	defer service.Close()
+	conn, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	releaseSlot, err := service.organizationSlots.take(context.Background(), "busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseSlot()
+
+	// "busy" waits for its organization slot, and "idle" for the connection.
+	organizations := []string{"busy", "idle"}
+	errs := make([]error, len(organizations))
+	elapsed := make([]time.Duration, len(organizations))
+	var authorizations sync.WaitGroup
+	for index, organization := range organizations {
+		var cache keyConfigCache
+		snapshot := credentialPolicySnapshot(t, &cache, organization, json.RawMessage(`null`), nil)
+		prepared, err := service.PrepareCredential(snapshot, "chutes", 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorizations.Go(func() {
+			started := time.Now()
+			_, errs[index] = service.authorizeResolvedRequest(context.Background(), "hash", nil, snapshot.Claims, "request-"+organization, "chutes", "product", "0.01", UsageReservation{}, snapshot, prepared, nil, nil, nil, time.Minute)
+			elapsed[index] = time.Since(started)
+		})
+	}
+	authorizations.Wait()
+	for index, organization := range organizations {
+		if !errors.Is(errs[index], ErrGatewayUnavailable) || elapsed[index] < authorizeTimeout-authorizeStatementReserve || elapsed[index] >= authorizeTimeout {
+			t.Fatalf("%s failed with %v after %s", organization, errs[index], elapsed[index])
+		}
+	}
+	if waits, timeouts := service.organizationSlots.waits.Load(), service.organizationSlots.timeouts.Load(); waits != 1 || timeouts != 1 {
+		t.Fatalf("organization waits %d and timeouts %d, want 1 and 1", waits, timeouts)
+	}
+	if closing := service.finalizations.closing.Load(); closing != 0 {
+		t.Fatalf("closes = %d, want 0", closing)
 	}
 }
 

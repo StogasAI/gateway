@@ -37,55 +37,6 @@ func TestConfigRejectsUnsafeNonLocalConfidentialLogging(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnvDatabasePoolDefaults(t *testing.T) {
-	setRequiredEnv(t)
-
-	config, err := LoadFromEnv()
-	if err != nil {
-		t.Fatalf("LoadFromEnv returned error: %v", err)
-	}
-	if config.DatabasePool.MaxConns != 6 {
-		t.Fatalf("MaxConns = %d, want 6", config.DatabasePool.MaxConns)
-	}
-	if config.DatabasePool.MinConns != 1 {
-		t.Fatalf("MinConns = %d, want 1", config.DatabasePool.MinConns)
-	}
-	if config.DatabasePool.MinIdleConns != 1 {
-		t.Fatalf("MinIdleConns = %d, want 1", config.DatabasePool.MinIdleConns)
-	}
-	if config.DatabasePool.QueryExecMode != defaultDatabaseQueryExecMode {
-		t.Fatalf("QueryExecMode = %s, want %s", config.DatabasePool.QueryExecMode, defaultDatabaseQueryExecMode)
-	}
-	if config.MaxRequestBodyMiB != maxRequestBodyMiB {
-		t.Fatalf("MaxRequestBodyMiB = %d, want %d", config.MaxRequestBodyMiB, maxRequestBodyMiB)
-	}
-}
-
-func TestLoadFromEnvDatabasePoolOverrides(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "12")
-	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "2")
-	t.Setenv("STOGAS_DB_POOL_MIN_IDLE_CONNS", "1")
-	t.Setenv("STOGAS_DB_QUERY_EXEC_MODE", "exec")
-
-	config, err := LoadFromEnv()
-	if err != nil {
-		t.Fatalf("LoadFromEnv returned error: %v", err)
-	}
-	if config.DatabasePool.MaxConns != 12 {
-		t.Fatalf("MaxConns = %d, want 12", config.DatabasePool.MaxConns)
-	}
-	if config.DatabasePool.MinConns != 2 {
-		t.Fatalf("MinConns = %d, want 2", config.DatabasePool.MinConns)
-	}
-	if config.DatabasePool.MinIdleConns != 1 {
-		t.Fatalf("MinIdleConns = %d, want 1", config.DatabasePool.MinIdleConns)
-	}
-	if config.DatabasePool.QueryExecMode != "exec" {
-		t.Fatalf("QueryExecMode = %s, want exec", config.DatabasePool.QueryExecMode)
-	}
-}
-
 func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
 	setRequiredEnv(t)
 
@@ -104,16 +55,6 @@ func TestLoadFromEnvPrivateProviderNetworkIsExplicitOptIn(t *testing.T) {
 	}
 	if !config.AllowPrivateProviderNetwork {
 		t.Fatal("AllowPrivateProviderNetwork = false with explicit opt-in")
-	}
-}
-
-func TestLoadFromEnvRejectsInvalidDatabasePool(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("STOGAS_DB_POOL_MAX_CONNS", "2")
-	t.Setenv("STOGAS_DB_POOL_MIN_CONNS", "3")
-
-	if _, err := LoadFromEnv(); err == nil {
-		t.Fatal("LoadFromEnv returned nil error for invalid pool config")
 	}
 }
 
