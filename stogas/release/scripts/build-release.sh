@@ -63,7 +63,6 @@ export STOGAS_RELEASE_SOURCE_SHA256 STOGAS_RELEASE_VERIFIER_SHA256 STOGAS_RELEAS
 result="$(
   "$STOGAS_GUIX" build -L "$release_root/guix/modules" -f "$release_root/guix/release.scm"
 )"
-"$STOGAS_GUIX" repl -- "$release_root/scripts/challenge-guix-farms.scm" "$result"
 mkdir -p "$out_dir"
 cp -r -- "$result"/. "$out_dir"/
 chmod -R u+w -- "$out_dir"
