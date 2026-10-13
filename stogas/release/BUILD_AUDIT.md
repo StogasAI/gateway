@@ -1,6 +1,6 @@
 # Gateway IGVM Build Audit
 
-`scripts/build-release.sh <vX.Y.Z> <empty-out-dir>` builds the SEV-SNP gateway image from the tagged source. It runs on x86_64 Linux with Bash, Git, Node.js, GNU coreutils, and a running Guix daemon. `scripts/install-guix-bootstrap.sh` installs the pinned Guix release on hosts with sudo. Guix supplies every compiler and tool, so the host toolchain never reaches the image.
+`scripts/build-release.sh <vX.Y.Z> <empty-out-dir>` builds the SEV-SNP gateway image from the tagged source. It runs on x86_64 Linux with Bash, Git, Node.js, GNU coreutils, and a running Guix daemon. `scripts/install-guix-bootstrap.sh` installs the pinned Guix release on hosts with sudo and keeps the store of a host that already runs it. Guix supplies every compiler and tool, so the host toolchain never reaches the image.
 
 ## Inputs
 
