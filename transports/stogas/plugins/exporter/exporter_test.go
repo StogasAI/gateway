@@ -95,7 +95,7 @@ func TestFullJSONDeliveryAndDetachedOwnership(t *testing.T) {
 			config.Destinations[0].Headers["Authorization"] = "changed"
 			message, _ := json.Marshal(strings.Repeat("large prompt 世界 ", 65536))
 			body := map[string]json.RawMessage{"input": message, "temperature": json.RawMessage(`0.25`), "tools": json.RawMessage(`[{"type":"custom","name":"freeform"}]`)}
-			c.Input(body)
+			c.Input(body, true)
 			expectedInput, _ := json.Marshal(body)
 			clear(message)
 			responses := []string{`{"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"opaque"}}`, `{"type":"response.completed","response":{"output":[{"type":"custom_tool_call","input":"123","name":"freeform"},{"type":"reasoning","summary":[],"encrypted_content":"opaque"}],"usage":{"output_tokens":0}}}`}
@@ -152,7 +152,7 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 	e := New(context.Background(), testOptions(true, 8192+deliveryStateBytes))
 	defer e.Close()
 	c := e.Start(testConfig(receiver.URL))
-	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)})
+	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)}, false)
 	c.Event([]byte(`{"delta":"hello"}`))
 	c.Event([]byte(`{"delta":"` + strings.Repeat("x", 8192) + `"}`))
 	c.Finish("dropped", testRecord("dropped"), testMetadata())
@@ -275,7 +275,7 @@ func TestReclaimReleasesOldestRecordsFirst(t *testing.T) {
 	for i := range reserved {
 		before := e.Diagnostics().ReservedBytes
 		c := e.Start(testConfig(receiver.URL))
-		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("x", 16<<20) + `"`)})
+		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("x", 16<<20) + `"`)}, true)
 		c.Finish(fmt.Sprint(i), testRecord(fmt.Sprint(i)), testMetadata())
 		reserved[i] = e.Diagnostics().ReservedBytes - before
 		<-uploading

@@ -4,10 +4,13 @@ package inputfiles
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"strings"
 	"unicode/utf8"
@@ -28,17 +31,91 @@ type Stats struct {
 // expansion before decoding text or allocating its replacement containers.
 func Process(fields map[string]json.RawMessage, responses, extract bool, reserveExpansion func(int) error) (Stats, error) {
 	p := processor{extract: extract, reserve: reserveExpansion}
+	if err := replaceBlocks(fields, responses, func(block map[string]json.RawMessage) (json.RawMessage, error) {
+		return p.block(block, responses)
+	}); err != nil {
+		return Stats{}, err
+	}
+	return p.stats, nil
+}
+
+// Describe returns a copy of a validated request whose inline attachments are
+// replaced by their declared media type and the size and SHA-256 of their
+// decoded bytes. URLs, provider file IDs and other values are borrowed.
+func Describe(fields map[string]json.RawMessage, responses bool) (map[string]json.RawMessage, error) {
+	described := maps.Clone(fields)
+	err := replaceBlocks(described, responses, func(block map[string]json.RawMessage) (json.RawMessage, error) {
+		parent, key := "", ""
+		switch kind := stringField(block, "type"); {
+		case !responses && kind == "image_url":
+			parent, key = "image_url", "url"
+		case !responses && kind == "input_audio":
+			parent, key = "input_audio", "data"
+		case !responses && kind == "file":
+			parent, key = "file", "file_data"
+		case responses && kind == "input_image":
+			key = "image_url"
+		case responses && kind == "input_file":
+			key = "file_data"
+		default:
+			return nil, nil
+		}
+		holder := block
+		if parent != "" {
+			var err error
+			if holder, err = rawjson.Object(block[parent]); err != nil {
+				return nil, err
+			}
+		}
+		data := stringField(holder, key)
+		inline := key == "data" || key == "file_data" || strings.HasPrefix(data, "data:")
+		if data == "" || !inline {
+			return nil, nil
+		}
+		mediaType, payload, err := ParseInline(data, stringField(holder, "file_type"))
+		if err != nil {
+			return nil, err
+		}
+		digest := sha256.New()
+		size, err := io.Copy(digest, base64.NewDecoder(base64.StdEncoding.Strict(), strings.NewReader(payload)))
+		if err != nil {
+			return nil, errors.New("inline attachment has invalid base64")
+		}
+		holder[key], err = sonic.Marshal(struct {
+			MediaType string `json:"media_type,omitempty"`
+			Size      int64  `json:"size"`
+			SHA256    string `json:"sha256"`
+		}{mediaType, size, hex.EncodeToString(digest.Sum(nil))})
+		if err != nil {
+			return nil, err
+		}
+		if parent != "" {
+			if block[parent], err = sonic.Marshal(holder); err != nil {
+				return nil, err
+			}
+		}
+		return sonic.Marshal(block)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return described, nil
+}
+
+// replaceBlocks visits the content blocks of each message and re-encodes only
+// the containers whose blocks were replaced.
+func replaceBlocks(fields map[string]json.RawMessage, responses bool, replace func(map[string]json.RawMessage) (json.RawMessage, error)) error {
 	field := "messages"
 	if responses {
 		field = "input"
 	}
 	raw := bytes.TrimSpace(fields[field])
 	if len(raw) == 0 || raw[0] != '[' {
-		return p.stats, nil
+		return nil
 	}
 	items, err := rawjson.Array(raw)
 	if err != nil {
-		return Stats{}, err
+		return err
 	}
 	changed := false
 	for i, itemRaw := range items {
@@ -56,7 +133,7 @@ func Process(fields map[string]json.RawMessage, responses, extract bool, reserve
 		}
 		blocks, err := rawjson.Array(content)
 		if err != nil {
-			return Stats{}, err
+			return err
 		}
 		itemChanged := false
 		for j, raw := range blocks {
@@ -64,22 +141,20 @@ func Process(fields map[string]json.RawMessage, responses, extract bool, reserve
 			if err != nil {
 				continue
 			}
-			replacement, err := p.block(block, responses)
+			replacement, err := replace(block)
 			if err != nil {
-				return Stats{}, err
+				return err
 			}
 			if replacement != nil {
 				blocks[j], itemChanged = replacement, true
 			}
 		}
 		if itemChanged {
-			item["content"], err = sonic.Marshal(blocks)
-			if err != nil {
-				return Stats{}, err
+			if item["content"], err = sonic.Marshal(blocks); err != nil {
+				return err
 			}
-			items[i], err = sonic.Marshal(item)
-			if err != nil {
-				return Stats{}, err
+			if items[i], err = sonic.Marshal(item); err != nil {
+				return err
 			}
 			changed = true
 		}
@@ -87,11 +162,11 @@ func Process(fields map[string]json.RawMessage, responses, extract bool, reserve
 	if changed {
 		encoded, err := sonic.Marshal(items)
 		if err != nil {
-			return Stats{}, err
+			return err
 		}
 		fields[field] = encoded
 	}
-	return p.stats, nil
+	return nil
 }
 
 type processor struct {
@@ -259,9 +334,11 @@ func ParseInline(data, declared string) (string, string, error) {
 	return parsed, payload, nil
 }
 
+// Sonic reads a multi-megabyte base64 string about three times faster than
+// encoding/json. Values were already validated when they were borrowed.
 func stringField(fields map[string]json.RawMessage, key string) string {
 	var value string
-	_ = json.Unmarshal(fields[key], &value)
+	_ = sonic.Unmarshal(fields[key], &value)
 	return value
 }
 
