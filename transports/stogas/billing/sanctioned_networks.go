@@ -20,7 +20,7 @@ func (s *Service) SanctionedNetworksSource(ctx context.Context) (string, error) 
 	queryCtx, cancel := context.WithTimeout(ctx, sanctionedNetworksFetchTimeout)
 	defer cancel()
 	var source string
-	if err := s.db.pool.QueryRow(queryCtx, s.db.functionQuery("gateway_sanctioned_networks_source", "*", "")).Scan(&source); err != nil {
+	if err := s.db.pool.QueryRow(queryCtx, s.sanctionedSourceQuery).Scan(&source); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	return source, nil
@@ -33,7 +33,7 @@ func (s *Service) SanctionedNetworks(ctx context.Context) ([]NetworkRange, error
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, sanctionedNetworksFetchTimeout)
 	defer cancel()
-	rows, err := s.db.pool.Query(queryCtx, s.db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""))
+	rows, err := s.db.pool.Query(queryCtx, s.sanctionedNetworksQuery)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}

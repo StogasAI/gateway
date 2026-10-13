@@ -118,9 +118,11 @@ func (db *GatewayDB) functionQuery(functionName string, columns string, argument
 	return "select " + columns + " from " + pgx.Identifier{db.schemaName, functionName}.Sanitize() + "(\n" + arguments + "\n);"
 }
 
-// checkQueries parses each query without running it. Control chooses the schema
-// at boot, so a schema that lacks a function, argument type or result column this
-// release uses stops the gateway here instead of failing its requests.
+// checkQueries plans each query without running it. Control chooses the schema
+// at boot, so a schema that lacks a function, argument type, result column or
+// execute privilege this release uses stops the gateway here instead of failing
+// its requests. Preparing would miss the privilege, which PostgreSQL checks
+// only when a plan starts; EXPLAIN starts the plan and runs nothing.
 func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -130,7 +132,9 @@ func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error 
 	}
 	defer conn.Release()
 	for _, query := range queries {
-		if _, err := conn.Conn().Prepare(checkCtx, "", query); err != nil {
+		// GENERIC_PLAN accepts the parameter symbols without values, which only
+		// the simple query protocol sends.
+		if _, err := conn.Conn().PgConn().Exec(checkCtx, "explain (generic_plan) "+query).ReadAll(); err != nil {
 			// Class 42 covers missing routines, types, columns and privileges, and
 			// 3F000 a missing schema. Other errors, such as a lost connection, are
 			// not schema problems.
