@@ -23,7 +23,10 @@ import (
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
-const sessionIdleTimeout = 10 * time.Minute
+const (
+	sessionIdleTimeout = 10 * time.Minute
+	maxStartupWait     = 30 * time.Second
+)
 
 var (
 	ErrCertificateInstruction    = errors.New("confidential certificate installation failed")
@@ -137,10 +140,10 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 	// confirms that it expired unconsumed. Lost replies retry the exact boot and CSR.
 	for {
 		var challenge *provision.RegistrationChallenge
-		err = retryStartup(ctx, func() (bool, error) {
+		err = retryStartup(ctx, func() (time.Duration, error) {
 			var e error
 			challenge, e = client.RegistrationChallenge(ctx, config.InstanceID)
-			return e == nil, e
+			return 0, e
 		})
 		if err != nil {
 			return nil, err
@@ -149,10 +152,10 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		if e != nil {
 			return nil, e
 		}
-		err = retryStartup(ctx, func() (bool, error) {
+		err = retryStartup(ctx, func() (time.Duration, error) {
 			var e error
 			boot, e = quoted.prepare(ctx, evidence, environment, material, keys)
-			return e == nil, e
+			return 0, e
 		})
 		if err != nil {
 			return nil, err
@@ -165,10 +168,13 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 			return nil, e
 		}
 		request := provision.NewBootRegistration(config.InstanceID, boot.document, csr)
-		err = retryStartup(ctx, func() (bool, error) {
+		err = retryStartup(ctx, func() (time.Duration, error) {
 			var e error
 			response, e = client.RegisterBoot(ctx, request, boot.identity.NodeID)
-			return e == nil && response.Status == "ready", e
+			if e != nil {
+				return 0, e
+			}
+			return response.RetryAfter, nil
 		})
 		var rejected *provision.HTTPResponseError
 		if errors.As(err, &rejected) && rejected.Code == "challenge_expired" {
@@ -179,12 +185,11 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		}
 		break
 	}
-	err = retryStartup(ctx, func() (bool, error) {
-		err := evidence.refresh(ctx, func(snapshot *verifier.EvidenceSnapshot, _ evidenceSummary) error {
+	err = retryStartup(ctx, func() (time.Duration, error) {
+		return 0, evidence.refresh(ctx, func(snapshot *verifier.EvidenceSnapshot, _ evidenceSummary) error {
 			_, e := snapshot.VerifyLoggedBootAt(boot.document, response.Inclusion, evidence.now())
 			return e
 		})
-		return err == nil, err
 	})
 	if err != nil {
 		return nil, err
@@ -231,23 +236,30 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 
 // Startup retries are bounded in pace and memory, not by an arbitrary fleet
 // provisioning timeout. Cancellation and definitive Control rejection stop them.
-func retryStartup(ctx context.Context, attempt func() (bool, error)) error {
+// An attempt returns zero when it is done, or the wait Control asked for while
+// its work is pending. Failures back off instead.
+func retryStartup(ctx context.Context, attempt func() (time.Duration, error)) error {
 	delay := time.Second
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		done, err := attempt()
-		if done && err == nil {
+		wait, err := attempt()
+		if err == nil && wait == 0 {
 			return nil
 		}
 		if provision.IsAuthoritativeRejection(err) {
 			return err
 		}
-		if err := waitContext(ctx, jitter(delay)); err != nil {
+		if err == nil {
+			delay, wait = time.Second, min(wait, maxStartupWait)
+		} else {
+			wait = jitter(delay)
+			delay = min(delay*2, maxStartupWait)
+		}
+		if err := waitContext(ctx, wait); err != nil {
 			return err
 		}
-		delay = min(delay*2, 30*time.Second)
 	}
 }
 

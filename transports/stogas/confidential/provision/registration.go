@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	verifier "github.com/StogasAI/verifier/go"
@@ -27,11 +28,13 @@ type BootRegistration struct {
 }
 
 // Provisioning is Control's sealed envelope; the node keys check its binding when opening it.
+// RetryAfter is how long Control asks a pending boot to wait before asking again.
 type RegistrationResponse struct {
 	Status       string          `json:"status"`
 	NodeID       string          `json:"node_id"`
 	Inclusion    json.RawMessage `json:"inclusion,omitempty"`
 	Provisioning json.RawMessage `json:"provisioning,omitempty"`
+	RetryAfter   time.Duration   `json:"-"`
 }
 
 type BootCertificateResponse struct {
@@ -74,7 +77,7 @@ func (c Client) CompleteBootRegistration(ctx context.Context, nodeID string, boo
 		Status string `json:"status"`
 		NodeID string `json:"node_id"`
 	}
-	if err := c.registrationClient().postJSON(ctx, "/api/fleet/registration/complete", request, &response); err != nil {
+	if _, err := c.registrationClient().postJSON(ctx, "/api/fleet/registration/complete", request, &response); err != nil {
 		return err
 	}
 	if response.Status != "complete" || response.NodeID != nodeID {
@@ -101,7 +104,7 @@ func (c Client) RenewBootCertificate(ctx context.Context, nodeID string, boot at
 		c.MaxResponseBytes = 40 * 1024
 	}
 	var response BootCertificateResponse
-	if err := c.postJSON(ctx, "/api/fleet/registration/certificate", request, &response); err != nil {
+	if _, err := c.postJSON(ctx, "/api/fleet/registration/certificate", request, &response); err != nil {
 		return nil, err
 	}
 	if response.NodeID != nodeID {
@@ -130,7 +133,7 @@ func (c Client) RegistrationChallenge(ctx context.Context, instanceID string) (*
 	defer cancel()
 	c = c.registrationClient()
 	var response RegistrationChallenge
-	if err := c.postJSON(ctx, "/api/fleet/registration/challenge", map[string]string{"instance_id": instanceID}, &response); err != nil {
+	if _, err := c.postJSON(ctx, "/api/fleet/registration/challenge", map[string]string{"instance_id": instanceID}, &response); err != nil {
 		return nil, err
 	}
 	if !isLowerHash(response.Challenge) || !response.ExpiresAt.After(time.Now()) {
@@ -153,7 +156,8 @@ func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expe
 	defer cancel()
 	c = c.registrationClient()
 	var response RegistrationResponse
-	if err := c.postJSON(ctx, "/api/fleet/registration", request, &response); err != nil {
+	header, err := c.postJSON(ctx, "/api/fleet/registration", request, &response)
+	if err != nil {
 		return nil, err
 	}
 	if response.NodeID != expectedNodeID {
@@ -164,6 +168,11 @@ func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expe
 		if response.Provisioning != nil || len(response.Inclusion) != 0 {
 			return nil, errors.New("pending registration included completion material")
 		}
+		seconds, err := strconv.ParseInt(header.Get("Retry-After"), 10, 32)
+		if err != nil || seconds < 1 {
+			return nil, errors.New("pending registration omitted its retry delay")
+		}
+		response.RetryAfter = time.Duration(seconds) * time.Second
 	case "ready":
 		if absentJSON(response.Provisioning) || absentJSON(response.Inclusion) {
 			return nil, errors.New("registration omitted its boot-bound completion")

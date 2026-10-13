@@ -123,6 +123,7 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 		}
 		calls++
 		if calls == 1 {
+			w.Header().Set("Retry-After", "120")
 			w.WriteHeader(http.StatusAccepted)
 			json.NewEncoder(w).Encode(RegistrationResponse{Status: "pending", NodeID: node})
 			return
@@ -135,7 +136,7 @@ func TestRegistrationChallengeAndExactBootRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending, err := client.RegisterBoot(context.Background(), request, node)
-	if err != nil || pending.Status != "pending" {
+	if err != nil || pending.Status != "pending" || pending.RetryAfter != 2*time.Minute {
 		t.Fatalf("pending: %v, %v", pending, err)
 	}
 	ready, err := client.RegisterBoot(context.Background(), request, node)
@@ -213,6 +214,19 @@ func TestCertificateRenewalCompletion(t *testing.T) {
 func TestRegistrationRejectsInconsistentCompletionAndUntrustedNames(t *testing.T) {
 	request, node := registrationFixture(t)
 	sealed := json.RawMessage(`{"sealed":true}`)
+	for _, retryAfter := range []string{"", "0", "-1", "soon", "Wed, 21 Oct 2026 07:28:00 GMT", "4294967296"} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if retryAfter != "" {
+				w.Header().Set("Retry-After", retryAfter)
+			}
+			json.NewEncoder(w).Encode(RegistrationResponse{Status: "pending", NodeID: node})
+		}))
+		client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
+		if _, err := client.RegisterBoot(context.Background(), request, node); err == nil {
+			t.Fatalf("accepted pending reply with Retry-After %q", retryAfter)
+		}
+		server.Close()
+	}
 	for name, response := range map[string]RegistrationResponse{
 		"different node":   {Status: "pending", NodeID: node + "a"},
 		"unknown status":   {Status: "approved", NodeID: node},
@@ -223,7 +237,10 @@ func TestRegistrationRejectsInconsistentCompletionAndUntrustedNames(t *testing.T
 		"ready no secrets": {Status: "ready", NodeID: node, Inclusion: json.RawMessage(`{}`)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewEncoder(w).Encode(response) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Retry-After", "5")
+				json.NewEncoder(w).Encode(response)
+			}))
 			defer server.Close()
 			client := Client{BaseURL: server.URL, AllowInsecureLocal: true}
 			if _, err := client.RegisterBoot(context.Background(), request, node); err == nil {
