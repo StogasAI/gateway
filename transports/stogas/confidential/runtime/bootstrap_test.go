@@ -183,6 +183,7 @@ func TestBootRuntimeRetainsIdentityAcrossPolicyRejectionAndPendingRegistration(t
 				t.Error("registration changed its exact boot or CSR after policy rejection or pending reply")
 			}
 			if count == 2 {
+				w.Header().Set("Retry-After", "1")
 				_ = json.NewEncoder(w).Encode(provision.RegistrationResponse{Status: "pending", NodeID: nodeID})
 				return
 			}

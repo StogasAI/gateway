@@ -71,18 +71,18 @@ func IsAuthoritativeRejection(err error) bool {
 	}
 }
 
-func (c Client) postJSON(ctx context.Context, path string, body any, out any) error {
+func (c Client) postJSON(ctx context.Context, path string, body any, out any) (http.Header, error) {
 	endpoint, err := c.endpoint(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
@@ -101,7 +101,7 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	}
 	resp, err := safeClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -111,14 +111,14 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	}
 	bytes, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if int64(len(bytes)) > limit {
-		return fmt.Errorf("control response exceeded %d bytes", limit)
+		return nil, fmt.Errorf("control response exceeded %d bytes", limit)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		controlErr := parseControlError(bytes)
-		return &HTTPResponseError{
+		return nil, &HTTPResponseError{
 			Code:       controlErr.Code,
 			Message:    controlErr.Message,
 			Path:       path,
@@ -129,13 +129,13 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) er
 	decoder := json.NewDecoder(bytesReader(bytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(out); err != nil {
-		return fmt.Errorf("decode control %s response: %w", path, err)
+		return nil, fmt.Errorf("decode control %s response: %w", path, err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		return fmt.Errorf("decode control %s response: trailing data", path)
+		return nil, fmt.Errorf("decode control %s response: trailing data", path)
 	}
-	return nil
+	return resp.Header, nil
 }
 
 func (c Client) endpoint(path string) (string, error) {
