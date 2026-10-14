@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestAuthorizationClosesOnlyAfterSendingItsStatement(t *testing.T) {
 			address := listener.Addr().String()
 			if sent {
 				defer listener.Close()
-				go acceptSilentPostgres(listener)
+				go acceptPostgres(listener, nil)
 			} else {
 				listener.Close()
 			}
@@ -81,7 +82,7 @@ func TestAuthorizationWaitsEndBeforeTheStatementReserve(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	go acceptSilentPostgres(listener)
+	go acceptPostgres(listener, nil)
 	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+listener.Addr().String()+"/unused?sslmode=disable&connect_timeout=1&pool_max_conns=1")
 	if err != nil {
 		t.Fatal(err)
@@ -132,14 +133,63 @@ func TestAuthorizationWaitsEndBeforeTheStatementReserve(t *testing.T) {
 	}
 }
 
-// acceptSilentPostgres completes each connection's startup, then reads its
-// messages without answering them until the client terminates.
-func acceptSilentPostgres(listener net.Listener) {
+// Requests keep arriving while the database accepts statements and never
+// answers them. Each statement in flight costs one settlement place for its
+// close, so the pool bounds the places an outage takes and a short one leaves
+// every gateway ready. The places return once the database answers again.
+func TestUnansweredAuthorizationsTakeOnePlacePerConnectionUntilClosed(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var recovered atomic.Bool
+	go acceptPostgres(listener, &recovered)
+	pool, err := pgxpool.New(context.Background(), fmt.Sprintf("postgres://unused:unused@%s/unused?sslmode=disable&connect_timeout=1&pool_max_conns=%d", listener.Addr(), poolConns))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	service := &Service{db: &GatewayDB{pool: pool}, authorizeHoldQuery: "select 1", closeRequestQuery: "select 1"}
+	defer service.Close()
+
+	var authorizations sync.WaitGroup
+	for index := range 200 {
+		var cache keyConfigCache
+		snapshot := credentialPolicySnapshot(t, &cache, fmt.Sprint("organization-", index), json.RawMessage(`null`), nil)
+		prepared, err := service.PrepareCredential(snapshot, "chutes", 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorizations.Go(func() {
+			_, err := service.authorizeResolvedRequest(context.Background(), "hash", nil, snapshot.Claims, fmt.Sprint("request-", index), "chutes", "product", "0.01", UsageReservation{}, snapshot, prepared, nil, nil, nil, time.Minute)
+			if !errors.Is(err, ErrGatewayUnavailable) {
+				t.Errorf("authorization error = %v", err)
+			}
+		})
+	}
+	authorizations.Wait()
+	closing := service.finalizations.closing.Load()
+	if got := service.Diagnostics().Settlement; closing == 0 || closing > poolConns || int64(got.Reserved) != closing || !service.FinalizationReady() {
+		t.Fatalf("closes = %d and places taken = %d, want 1 to %d each", closing, got.Reserved, poolConns)
+	}
+	recovered.Store(true)
+	waitFor(t, func() bool {
+		return service.finalizations.closing.Load() == 0 && service.Diagnostics().Settlement.Reserved == 0
+	})
+}
+
+// acceptPostgres completes each connection's startup. A connection opened
+// before recovered is set reads messages without answering them until the
+// client terminates; a later one answers every statement with "closed", as a
+// close finds.
+func acceptPostgres(listener net.Listener, recovered *atomic.Bool) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
+		answering := recovered != nil && recovered.Load()
 		go func() {
 			defer conn.Close()
 			backend := pgproto3.NewBackend(conn, conn)
@@ -154,6 +204,34 @@ func acceptSilentPostgres(listener net.Listener) {
 			for {
 				message, err := backend.Receive()
 				if _, terminate := message.(*pgproto3.Terminate); err != nil || terminate {
+					return
+				}
+				if !answering {
+					continue
+				}
+				switch message := message.(type) {
+				case *pgproto3.Query: // pgxpool pings idle connections.
+					backend.Send(&pgproto3.EmptyQueryResponse{})
+					backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+				case *pgproto3.Parse:
+					backend.Send(&pgproto3.ParseComplete{})
+				case *pgproto3.Describe:
+					if message.ObjectType == 'S' {
+						// A close passes the request ID, key ID and authorization deadline.
+						backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: []uint32{25, 25, 1184}})
+					}
+					backend.Send(&pgproto3.RowDescription{Fields: []pgproto3.FieldDescription{
+						{Name: []byte("result"), DataTypeOID: 25, DataTypeSize: -1, TypeModifier: -1},
+					}})
+				case *pgproto3.Bind:
+					backend.Send(&pgproto3.BindComplete{})
+				case *pgproto3.Execute:
+					backend.Send(&pgproto3.DataRow{Values: [][]byte{[]byte("closed")}})
+					backend.Send(&pgproto3.CommandComplete{CommandTag: []byte("SELECT 1")})
+				case *pgproto3.Sync:
+					backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
+				}
+				if backend.Flush() != nil {
 					return
 				}
 			}
