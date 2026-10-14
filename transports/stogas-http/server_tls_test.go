@@ -32,32 +32,34 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 		config:   stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
 		secure:   &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
 		requests: newRequestDrain(),
+		// Room for exactly one socket and its request.
+		memory: &requestMemoryAdmission{budget: connectionRetainedBytes + requestRetainedBytes},
 	}
+	gateway.memory.reclaim = gateway.reclaimIdleMemory
 	if err := gateway.routes(); err != nil {
 		t.Fatal(err)
 	}
 	finish := make(chan struct{})
 	var finishOnce sync.Once
 	defer finishOnce.Do(func() { close(finish) })
-	gateway.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	gateway.server.Handler = requestHandler(gateway.publicRequests(func(ctx *requestContext) {
 		if !gateway.requests.begin() {
-			http.Error(w, "draining", http.StatusServiceUnavailable)
+			http.Error(ctx.writer, "draining", http.StatusServiceUnavailable)
 			return
 		}
 		defer gateway.requests.end()
-		writer := &responseWriter{writer: w, control: http.NewResponseController(w), idle: time.Second}
+		writer := &responseWriter{writer: ctx.writer, control: http.NewResponseController(ctx.writer), idle: time.Second}
 		_, _ = writer.Write([]byte("before"))
 		select {
 		case <-finish:
-		case <-r.Context().Done():
+		case <-ctx.request.Context().Done():
 			return
 		}
 		_, _ = writer.Write([]byte("after"))
-	})
+	}))
 	listener := testListener(t)
-	limited := &publicListener{Listener: listener, slots: make(chan struct{}, 1), idle: &gateway.idleConnections}
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- gateway.server.Serve(gateway.wrapListener(limited)) }()
+	go func() { serveDone <- gateway.server.Serve(gateway.wrapListener(listener)) }()
 	t.Cleanup(func() { _ = gateway.server.Close() })
 	raw, err := net.Dial("tcp", listener.Addr().String())
 	if err != nil {
@@ -108,9 +110,12 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 		}
 	}
 	shutdownContext, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	// Saturation cannot evict the connection carrying this unfinished H2 stream.
+	// Memory pressure cannot close the socket carrying this unfinished stream.
 	candidate, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxyproto.HeaderProxyFromAddrs(2, candidate.LocalAddr(), candidate.RemoteAddr()).WriteTo(candidate); err != nil {
 		t.Fatal(err)
 	}
 	_ = candidate.SetReadDeadline(time.Now().Add(time.Second))
@@ -118,13 +123,13 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 	_, rejectErr := candidate.Read(rejected[:])
 	_ = candidate.Close()
 	if !errors.Is(rejectErr, io.EOF) {
-		t.Fatalf("full active pool did not reject new socket: %v", rejectErr)
+		t.Fatalf("full memory admitted a new socket: %v", rejectErr)
 	}
 	gateway.idleConnections.mu.Lock()
-	evicted, refused := gateway.idleConnections.evicted, gateway.idleConnections.rejected
+	evicted := gateway.idleConnections.evicted
 	gateway.idleConnections.mu.Unlock()
-	if evicted != 0 || refused != 1 {
-		t.Fatalf("pressure evicted active work: %d/%d", evicted, refused)
+	if evicted != 0 || gateway.memory.diagnostics().ConfidentialReservationFailures != 1 {
+		t.Fatalf("pressure closed active work: %d evicted", evicted)
 	}
 	defer cancel()
 	shutdownDone := make(chan struct{})

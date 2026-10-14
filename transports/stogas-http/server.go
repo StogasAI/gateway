@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,9 +27,9 @@ import (
 )
 
 const (
-	// These explicit connection caps are starting values for the current guest,
-	// not CPU-derived capacity claims. Calibrate them from production load.
-	serverConcurrency       = 2048
+	// Public sockets have no count limit: each spends memory admission while it
+	// is open. The private listeners serve only load-balancer checks and the
+	// monitor.
 	readinessConcurrency    = 64
 	serverReadBufferSize    = 16 * 1024
 	readinessReadBufferSize = 4 * 1024
@@ -44,6 +45,8 @@ const (
 	guestShutdownHardCap     = billing.GatewayRequestLifetime + serverShutdownTimeout
 	serverTCPKeepalivePeriod = 30 * time.Second
 )
+
+var errInvalidIngressHeader = errors.New("invalid ingress PROXYv2 header")
 
 var (
 	ErrConfidentialCertificateProvisioning   = errors.New("confidential certificate provisioning failed")
@@ -71,6 +74,7 @@ type Server struct {
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections
+	waitingResponses      waitingResponses
 	jsonDecode            requestWorkActivity
 	preprocessing         requestWorkActivity
 	memory                *requestMemoryAdmission
@@ -219,13 +223,16 @@ func (s *Server) routes() error {
 			ErrorLog: connectionLogger,
 			HTTP2: &http.HTTP2Config{
 				MaxConcurrentStreams: 250, MaxDecoderHeaderTableSize: 4096, MaxEncoderHeaderTableSize: 4096,
-				MaxReadFrameSize: 1 << 20, MaxReceiveBufferPerConnection: 1 << 20, MaxReceiveBufferPerStream: 1 << 20,
+				// Go keeps a read buffer as large as the largest frame each connection
+				// has sent. TLS records carry at most 16 KiB, so larger frames save
+				// only frame headers.
+				MaxReadFrameSize: 16 << 10, MaxReceiveBufferPerConnection: 1 << 20, MaxReceiveBufferPerStream: 1 << 20,
 				WriteByteTimeout: downstreamWriteIdleTimeout,
 				CountError:       stogas.RecordHTTP2Error,
 			},
 		}
 	}
-	s.server = newServer(chain(dispatch, securityHeaders, s.ipRequestAdmission, cors, s.sessionTransport, s.publicAdmission, s.requestBodyAdmission, s.requestDecompression), false, &s.publicConnections)
+	s.server = newServer(chain(dispatch, s.publicRequests, securityHeaders, s.ipRequestAdmission, cors, s.sessionTransport, s.publicAdmission, s.requestBodyAdmission, s.requestDecompression), false, &s.publicConnections)
 	privateHandler := func(path string, handler requestHandler) http.Handler {
 		mux := http.NewServeMux()
 		mux.Handle("GET "+path, handler)
@@ -254,7 +261,6 @@ func (s *Server) Start() error {
 		s.shutdown()
 		return fmt.Errorf("listen for private readiness on %s: %w", readinessAddr, err)
 	}
-	listener = &publicListener{Listener: listener, slots: make(chan struct{}, serverConcurrency), idle: &s.idleConnections}
 	listener = s.wrapListener(listener)
 	readinessListener = netutil.LimitListener(readinessListener, readinessConcurrency)
 	var diagnosticsListener net.Listener
@@ -335,13 +341,13 @@ func (s *Server) wrapListener(listener net.Listener) net.Listener {
 	if s.memory == nil {
 		s.memory = newRequestMemoryAdmission()
 	}
-	listener = &confidentialListener{Listener: listener, memory: s.memory}
-	return &ingressTLSListener{Listener: proxyIngress(listener), config: s.confidentialTLSConfig()}
+	return &ingressTLSListener{Listener: proxyIngress(listener), config: s.confidentialTLSConfig(), admit: s.admitConnection}
 }
 
 type ingressTLSListener struct {
 	net.Listener
 	config *tls.Config
+	admit  func(*ingressTLSConn) error
 }
 
 func (l *ingressTLSListener) Accept() (net.Conn, error) {
@@ -353,20 +359,89 @@ func (l *ingressTLSListener) Accept() (net.Conn, error) {
 	// PROXY parsing remains lazy, in net/http's connection goroutine. Its
 	// deadline and TLS authentication share the same acceptance-time budget.
 	_ = conn.SetDeadline(deadline)
-	return &ingressTLSConn{Conn: tls.Server(conn, l.config), deadline: deadline}, nil
+	return &ingressTLSConn{Conn: tls.Server(conn, l.config), deadline: deadline, admit: l.admit}, nil
 }
 
+// The socket's memory stays charged until its transport closes, because
+// crypto/tls retains the certificate and handshake state after setup.
 type ingressTLSConn struct {
 	*tls.Conn
 	deadline time.Time
+	admit    func(*ingressTLSConn) error
+	mu       sync.Mutex
+	closed   bool
+	release  func()
 }
 
 func (c *ingressTLSConn) HandshakeContext(ctx context.Context) error {
+	if c.admit != nil {
+		if err := c.admit(c); err != nil {
+			return err
+		}
+	}
 	// net/http sets its TLS deadlines after RemoteAddr has parsed PROXY. A
 	// handshake-only context prevents that from renewing the setup allowance.
 	ctx, cancel := context.WithDeadline(ctx, c.deadline)
 	defer cancel()
 	return c.Conn.HandshakeContext(ctx)
+}
+
+// hold keeps the memory until the socket closes, or returns it at once if the
+// socket closed during admission.
+func (c *ingressTLSConn) hold(release func()) bool {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		release()
+		return false
+	}
+	c.release = release
+	c.mu.Unlock()
+	return true
+}
+
+func (c *ingressTLSConn) Close() error {
+	err := c.Conn.Close()
+	c.releaseMemory()
+	return err
+}
+
+// evict closes the transport directly: TLS close_notify could wait on a stalled
+// peer. net/http still runs its normal TLS cleanup afterwards.
+func (c *ingressTLSConn) evict() {
+	_ = c.NetConn().Close()
+	c.releaseMemory()
+}
+
+func (c *ingressTLSConn) releaseMemory() {
+	c.mu.Lock()
+	release := c.release
+	c.closed, c.release = true, nil
+	c.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
+// A socket spends its source's setup allowance as soon as the PROXY header
+// names the client, before TLS and before its memory charge. Sources over
+// their allowance therefore never make the gateway close other sockets.
+func (s *Server) admitConnection(c *ingressTLSConn) error {
+	proxied, ok := c.NetConn().(*proxyproto.Conn)
+	if !ok || proxied.ProxyHeader() == nil {
+		return errInvalidIngressHeader
+	}
+	if s.ipAdmission != nil {
+		if wait, err := s.ipAdmission.allow(proxied.RemoteAddr().String(), true, time.Now()); err != nil || wait > 0 {
+			return errIPAdmission
+		}
+	}
+	release, ok := s.memory.confidentialReservation(connectionRetainedBytes)()
+	if !ok || !c.hold(release) {
+		return errRequestMemoryCapacity
+	}
+	s.idleConnections.track(c)
+	return nil
 }
 
 // The deployment firewall restricts this listener to the load-balancer
@@ -381,7 +456,7 @@ func proxyIngress(listener net.Listener) net.Listener {
 		ValidateHeader: func(header *proxyproto.Header) error {
 			if header.Version != 2 || header.Command != proxyproto.PROXY ||
 				(header.TransportProtocol != proxyproto.TCPv4 && header.TransportProtocol != proxyproto.TCPv6) {
-				return errors.New("invalid ingress PROXYv2 header")
+				return errInvalidIngressHeader
 			}
 			return nil
 		},
@@ -435,25 +510,12 @@ func (s *Server) ordinaryTLSConfig() *tls.Config {
 
 func (s *Server) confidentialTLSConfig() *tls.Config {
 	base := s.ordinaryTLSConfig()
-	configured := base
-	if s.secure != nil && s.secure.NativeIssuer != nil {
-		var err error
-		configured, err = attest.ConfigureTLS(base, s.admissionReady, s.secure.NativeIssuer)
-		if err != nil {
-			panic(err)
-		} // All inputs are constructed locally above.
+	if s.secure == nil || s.secure.NativeIssuer == nil {
+		return base
 	}
-	selectConfig := configured.GetConfigForClient
-	configured.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
-		if s.ipAdmission != nil {
-			if wait, err := s.ipAdmission.allow(hello.Conn.RemoteAddr().String(), true, time.Now()); err != nil || wait > 0 {
-				return nil, errIPAdmission
-			}
-		}
-		if selectConfig != nil {
-			return selectConfig(hello)
-		}
-		return nil, nil
+	configured, err := attest.ConfigureTLS(base, s.admissionReady, s.secure.NativeIssuer)
+	if err != nil {
+		panic(err) // All inputs are constructed locally above.
 	}
 	return configured
 }

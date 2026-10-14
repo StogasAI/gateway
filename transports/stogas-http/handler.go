@@ -15,6 +15,7 @@ type requestContext struct {
 	body                  []byte
 	requestDigest         *[32]byte
 	memory                *requestMemoryLease
+	response              *publicResponse
 	credential            *apiCredential
 	claims                *billing.APIKeyClaims
 	policyVersions        *billing.PolicyVersions

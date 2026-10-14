@@ -1,151 +1,151 @@
 package stogashttp
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
 	"net"
 	"net/http"
-	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
+
+	stogas "github.com/maximhq/bifrost/transports/stogas"
+	confidentialruntime "github.com/maximhq/bifrost/transports/stogas/confidential/runtime"
+	proxyproto "github.com/pires/go-proxyproto"
 )
 
-func TestIdleConnectionReclamationPreservesRecentAndActiveSockets(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var idle idleConnections
-		pair := func() net.Conn {
-			a, b := net.Pipe()
-			t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
-			return a
+func TestMemoryPressureClosesOldestSocketWithoutRequest(t *testing.T) {
+	memory := &requestMemoryAdmission{budget: 3 * connectionRetainedBytes}
+	var idle idleConnections
+	open := func() (*ingressTLSConn, net.Conn) {
+		client, server := net.Pipe()
+		t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+		conn := &ingressTLSConn{Conn: tls.Server(server, &tls.Config{})}
+		release, ok := memory.confidentialReservation(connectionRetainedBytes)()
+		if !ok || !conn.hold(release) {
+			t.Fatal("socket admission failed")
 		}
-		old := pair()
-		active := pair()
-		idle.observe(old, http.StateIdle)
-		idle.observe(active, http.StateIdle)
-		idle.observe(active, http.StateActive)
-		if idle.reclaim() {
-			t.Fatal("recently idle connection evicted")
-		}
-		time.Sleep(serverIdleTimeout)
-		recent := pair()
-		idle.observe(recent, http.StateIdle)
-		// Duplicate notifications must neither add entries nor refresh recency.
-		idle.observe(old, http.StateIdle)
-		if !idle.reclaim() || idle.reclaim() {
-			t.Fatal("did not reclaim exactly the oldest eligible socket")
-		}
-		if err := old.SetDeadline(time.Now()); !errors.Is(err, io.ErrClosedPipe) {
-			t.Fatal("evicted socket still open", err)
-		}
-		if err := active.SetDeadline(time.Now()); err != nil {
-			t.Fatal("active socket closed", err)
-		}
-		idle.observe(old, http.StateClosed)
-		idle.observe(recent, http.StateHijacked)
-		if idle.oldest.Len() != 0 || len(idle.entries) != 0 || idle.evicted != 1 {
-			t.Fatal("stale connection tracking retained")
-		}
-	})
-}
-
-// A synchronous listener lets the test order real socket ownership without
-// kernel timing or sleeps; the returned connections are ordinary net.Pipe I/O.
-type candidateListener struct {
-	candidates chan net.Conn
-	done       chan struct{}
-	once       sync.Once
-}
-
-func (l *candidateListener) Accept() (net.Conn, error) {
-	select {
-	case conn := <-l.candidates:
-		return conn, nil
-	case <-l.done:
-		return nil, net.ErrClosed
+		idle.track(conn)
+		return conn, client
+	}
+	closed := func(peer net.Conn) bool {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		_, err := peer.Read(make([]byte, 1))
+		return errors.Is(err, io.EOF)
+	}
+	running, runningPeer := open()
+	reading, readingPeer := open()
+	waiting, waitingPeer := open()
+	idle.busy(withHTTPConnection(context.Background(), running))
+	// Request headers still arriving do not protect a socket.
+	idle.observe(reading, http.StateActive)
+	if idle.reclaim() != connectionRetainedBytes || !closed(readingPeer) {
+		t.Fatal("pressure did not close the oldest socket without a request")
+	}
+	if idle.reclaim() != connectionRetainedBytes || !closed(waitingPeer) {
+		t.Fatal("pressure skipped a socket without a request")
+	}
+	if idle.reclaim() != 0 || memory.reserved.Load() != connectionRetainedBytes {
+		t.Fatal("pressure closed a socket running a request")
+	}
+	idle.observe(running, http.StateIdle)
+	// A repeated idle report must not move the socket or add an entry.
+	idle.observe(running, http.StateIdle)
+	if idle.reclaim() != connectionRetainedBytes || !closed(runningPeer) || idle.reclaim() != 0 {
+		t.Fatal("finished request kept its socket from reclaim")
+	}
+	// net/http closes evicted sockets again later; memory returns only once.
+	for _, conn := range []*ingressTLSConn{running, reading, waiting} {
+		_ = conn.Close()
+		idle.observe(conn, http.StateClosed)
+	}
+	if memory.reserved.Load() != 0 || len(idle.tracked) != 0 || idle.oldest.Len() != 0 || idle.evicted != 3 {
+		t.Fatal("socket tracking or memory leaked")
 	}
 }
-func (l *candidateListener) Close() error   { l.once.Do(func() { close(l.done) }); return nil }
-func (l *candidateListener) Addr() net.Addr { return &net.TCPAddr{} }
 
-func TestPublicListenerReclaimsOnlyOnDemandAndReturnsSlotsOnce(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		base := &candidateListener{candidates: make(chan net.Conn, 4), done: make(chan struct{})}
-		defer base.Close()
-		listener := &publicListener{Listener: base, slots: make(chan struct{}, 1), idle: new(idleConnections)}
-		candidate := func() net.Conn {
-			a, b := net.Pipe()
-			t.Cleanup(func() { _ = a.Close(); _ = b.Close() })
-			base.candidates <- a
-			return b
+func TestStalledSocketsCannotKeepClientsOut(t *testing.T) {
+	gateway := &Server{
+		config:      stogas.Config{Confidential: stogas.ConfidentialConfig{Environment: "staging"}},
+		secure:      &confidentialruntime.Runtime{Certs: testCertificateStore(t)},
+		ipAdmission: newIPAdmission(),
+		// Room for two sockets and one request.
+		memory: &requestMemoryAdmission{budget: 2*connectionRetainedBytes + requestRetainedBytes},
+	}
+	gateway.memory.reclaim = gateway.reclaimIdleMemory
+	if err := gateway.routes(); err != nil {
+		t.Fatal(err)
+	}
+	gateway.server.Handler = requestHandler(gateway.publicRequests(func(ctx *requestContext) {
+		_, _ = io.WriteString(ctx.writer, "ok")
+	}))
+	listener := testListener(t)
+	t.Cleanup(func() { _ = gateway.server.Close() })
+	go func() { _ = gateway.server.Serve(gateway.wrapListener(listener)) }()
+	dial := func(ctx context.Context, source string) (net.Conn, error) {
+		conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", listener.Addr().String())
+		if err != nil {
+			return nil, err
 		}
-		candidate()
-		first, err := listener.Accept()
+		address, _ := net.ResolveTCPAddr("tcp", source)
+		if _, err := proxyproto.HeaderProxyFromAddrs(2, address, conn.RemoteAddr()).WriteTo(conn); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		return conn, nil
+	}
+	// Sockets that send their PROXY header and never start TLS.
+	stall := func(source string) net.Conn {
+		conn, err := dial(t.Context(), source)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Match the production TLS-over-admission wrapping. Pressure closes the
-		// transport, avoiding a blocking TLS close_notify under the state lock.
-		secured := &ingressTLSConn{Conn: tls.Server(first, &tls.Config{}), deadline: time.Now().Add(sessionSetupBudget)}
-		listener.idle.observe(secured, http.StateIdle)
-		failed := candidate()
-		accepted := make(chan net.Conn, 1)
-		go func() { conn, _ := listener.Accept(); accepted <- conn }()
-		synctest.Wait()
-		var byte [1]byte
-		if _, err := failed.Read(byte[:]); err == nil {
-			t.Fatal("full recent pool admitted a candidate")
+		t.Cleanup(func() { _ = conn.Close() })
+		return conn
+	}
+	open := func(conn net.Conn, wait time.Duration) bool {
+		_ = conn.SetReadDeadline(time.Now().Add(wait))
+		_, err := conn.Read(make([]byte, 1))
+		var timeout net.Error
+		return errors.As(err, &timeout) && timeout.Timeout()
+	}
+	oldest := stall("192.0.2.30:1000")
+	newer := stall("192.0.2.31:1000")
+	for start := time.Now(); gateway.memory.reserved.Load() != 2*connectionRetainedBytes; time.Sleep(time.Millisecond) {
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("stalled sockets were not charged")
 		}
-		if listener.idle.evicted != 0 || listener.idle.rejected != 1 {
-			t.Fatal("recent pool was displaced")
-		}
-		time.Sleep(serverIdleTimeout)
-		if listener.idle.evicted != 0 {
-			t.Fatal("capacity was reclaimed without new demand")
-		}
-		candidate()
-		second := <-accepted
-		if second == nil || listener.idle.evicted != 1 || len(listener.slots) != 1 {
-			t.Fatal("idle slot was not transferred")
-		}
-		_ = secured.Close()
-		_ = first.Close()
-		if len(listener.slots) != 1 {
-			t.Fatal("repeated old close released the replacement's slot")
-		}
-		_ = second.Close()
-		_ = second.Close()
-		if len(listener.slots) != 0 {
-			t.Fatal("slot leaked")
-		}
-		_ = listener.Close()
-		if _, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
-			t.Fatal("closed listener kept accepting")
-		}
-	})
-}
-
-func TestPublicListenerAcceptsBurstsWhenSlotsAreAvailable(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		base := &candidateListener{candidates: make(chan net.Conn, 1), done: make(chan struct{})}
-		defer base.Close()
-		listener := &publicListener{Listener: base, slots: make(chan struct{}, 1), idle: new(idleConnections)}
-		start := time.Now()
-		// A whole pool's worth of arrivals at the same instant must succeed
-		// when preceding sockets have closed. No hidden per-second quota.
-		for range serverConcurrency {
-			a, b := net.Pipe()
-			base.candidates <- a
-			conn, err := listener.Accept()
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = conn.Close()
-			_ = b.Close()
-		}
-		if !time.Now().Equal(start) || len(listener.slots) != 0 || listener.idle.rejected != 0 {
-			t.Fatal("available capacity was throttled or retained")
-		}
-	})
+	}
+	// A source over its setup allowance is refused before its memory charge,
+	// so it cannot make the gateway close anyone else's socket.
+	exhaustedAt := time.Now().Add(time.Hour)
+	for range ipSetupBurst {
+		_, _ = gateway.ipAdmission.allow("192.0.2.40:1000", true, exhaustedAt)
+	}
+	if refused := stall("192.0.2.40:1000"); open(refused, 2*time.Second) {
+		t.Fatal("source over its setup allowance was admitted")
+	}
+	if !open(oldest, 50*time.Millisecond) || !open(newer, 50*time.Millisecond) {
+		t.Fatal("refused source displaced another socket")
+	}
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, ForceAttemptHTTP2: true,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dial(ctx, "192.0.2.50:1000")
+		},
+	}
+	defer transport.CloseIdleConnections()
+	response, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Get("https://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("client behind stalled sockets: %d %q %v", response.StatusCode, body, err)
+	}
+	if open(oldest, 2*time.Second) || !open(newer, 50*time.Millisecond) {
+		t.Fatal("new client did not displace exactly the oldest stalled socket")
+	}
 }

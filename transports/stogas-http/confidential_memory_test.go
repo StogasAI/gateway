@@ -1,6 +1,7 @@
 package stogashttp
 
 import (
+	"crypto/tls"
 	"net"
 	"sync"
 	"testing"
@@ -63,7 +64,7 @@ func TestConfidentialMemoryConfigurationCanFitOneCompleteSession(t *testing.T) {
 	if err := memory.protectRequestMemory(bodyBytes); err != nil {
 		t.Fatal(err)
 	}
-	minimumBudget := memory.confidentialHeadroom + encryptedSessionRetainedBytes + sessionRetainedBytes + quoteRetainedBytes
+	minimumBudget := memory.confidentialHeadroom + encryptedSessionRetainedBytes + connectionRetainedBytes + quoteRetainedBytes
 	for _, budget := range []int64{minimumBudget - 1, minimumBudget} {
 		admission := &requestMemoryAdmission{budget: budget}
 		err := admission.protectRequestMemory(bodyBytes)
@@ -71,7 +72,7 @@ func TestConfidentialMemoryConfigurationCanFitOneCompleteSession(t *testing.T) {
 			t.Fatalf("budget %d: %v", budget, err)
 		}
 		if err == nil {
-			for _, size := range []int{encryptedSessionRetainedBytes, sessionRetainedBytes, quoteRetainedBytes} {
+			for _, size := range []int{encryptedSessionRetainedBytes, connectionRetainedBytes, quoteRetainedBytes} {
 				release, ok := admission.confidentialReservation(size)()
 				if !ok {
 					t.Fatal("valid configuration refused session setup")
@@ -93,8 +94,8 @@ func TestConfidentialMemoryConfigurationCanFitOneCompleteSession(t *testing.T) {
 }
 
 func TestConfidentialReservationsFollowConnectionAndSetupOwners(t *testing.T) {
-	memory := &requestMemoryAdmission{budget: sessionRetainedBytes + quoteRetainedBytes}
-	socketRelease, ok := memory.confidentialReservation(sessionRetainedBytes)()
+	memory := &requestMemoryAdmission{budget: connectionRetainedBytes + quoteRetainedBytes}
+	socketRelease, ok := memory.confidentialReservation(connectionRetainedBytes)()
 	if !ok {
 		t.Fatal("socket admission failed")
 	}
@@ -106,28 +107,37 @@ func TestConfidentialReservationsFollowConnectionAndSetupOwners(t *testing.T) {
 		t.Fatal("overcommitted confidential state")
 	}
 	stats := memory.diagnostics()
-	if stats.ConfidentialReservedBytes != sessionRetainedBytes+quoteRetainedBytes || stats.ConfidentialReservationFailures != 1 ||
+	if stats.ConfidentialReservedBytes != connectionRetainedBytes+quoteRetainedBytes || stats.ConfidentialReservationFailures != 1 ||
 		stats.StreamStateReservedBytes != 0 || stats.RequestReservedBytes != 0 || stats.ReservedBytes != stats.ConfidentialReservedBytes {
 		t.Fatalf("confidential owners mixed with inference reservations: %+v", stats)
 	}
 	quoteRelease()
 	quoteRelease()
-	if got := memory.reserved.Load(); got != sessionRetainedBytes {
+	if got := memory.reserved.Load(); got != connectionRetainedBytes {
 		t.Fatal("quote release freed socket state", got)
 	}
-	if got := memory.diagnostics().ConfidentialReservedBytes; got != sessionRetainedBytes {
+	if got := memory.diagnostics().ConfidentialReservedBytes; got != connectionRetainedBytes {
 		t.Fatal("quote release did not preserve the socket's diagnostic charge", got)
 	}
 	client, server := net.Pipe()
 	defer client.Close()
-	conn := &confidentialConn{Conn: server, release: socketRelease}
+	conn := &ingressTLSConn{Conn: tls.Server(server, &tls.Config{})}
+	if !conn.hold(socketRelease) {
+		t.Fatal("open socket refused its charge")
+	}
 	var group sync.WaitGroup
+	group.Go(conn.evict)
 	for range 8 {
 		group.Go(func() { _ = conn.Close() })
 	}
 	group.Wait()
 	if memory.reserved.Load() != 0 || memory.diagnostics().ConfidentialReservedBytes != 0 {
 		t.Fatal("closed socket leaked reservation")
+	}
+	// Eviction can close a socket while its admission is still charging it.
+	late, ok := memory.confidentialReservation(connectionRetainedBytes)()
+	if !ok || conn.hold(late) || memory.reserved.Load() != 0 {
+		t.Fatal("closed socket kept a late charge")
 	}
 	var absent *requestMemoryAdmission
 	if _, ok := absent.confidentialReservation(1)(); ok {

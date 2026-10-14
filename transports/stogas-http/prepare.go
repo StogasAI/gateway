@@ -281,6 +281,7 @@ func (s *Server) prepareCandidate(
 	err = stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state)
 	if state.Authorization != nil {
 		s.recordAdmission(ctx)
+		ctx.markPaid()
 	}
 	if err != nil {
 		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
