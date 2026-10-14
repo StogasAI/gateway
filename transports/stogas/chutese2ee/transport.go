@@ -231,7 +231,7 @@ func (t *Transport) Close() {
 
 func (t *Transport) Diagnostics() DiagnosticsSnapshot {
 	if t == nil || t.pools == nil || t.diagnostics == nil {
-		return DiagnosticsSnapshot{GeneratedAt: time.Now().UTC(), Chutes: []ChuteDiagnostic{}}
+		return DiagnosticsSnapshot{Chutes: []ChuteDiagnostic{}}
 	}
 	t.credentialsMu.Lock()
 	poolStates := make([]*poolState, 0, len(t.credentials)+1)

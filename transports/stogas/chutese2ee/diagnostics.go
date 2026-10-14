@@ -131,7 +131,6 @@ type DiagnosticsSnapshot struct {
 	EvidenceInFlight      int64             `json:"evidenceInFlight"`
 	EvidenceCapacity      int               `json:"evidenceCapacity"`
 	EvidenceRejected      uint64            `json:"evidenceRejected"`
-	GeneratedAt           time.Time         `json:"generatedAt"`
 	CredentialPools       int               `json:"credentialPools"`
 	ActiveCredentialPools int               `json:"activeCredentialPools"`
 	BYOKCredentialPools   int               `json:"byokCredentialPools"`
@@ -323,7 +322,7 @@ func (d *diagnostics) recordProtocolFailure(chuteID string) {
 }
 
 func (d *diagnostics) snapshot(health map[string]poolHealth) DiagnosticsSnapshot {
-	result := DiagnosticsSnapshot{GeneratedAt: time.Now().UTC(), Chutes: []ChuteDiagnostic{}}
+	result := DiagnosticsSnapshot{Chutes: []ChuteDiagnostic{}}
 	d.chutes.Range(func(key, value any) bool {
 		chuteID := key.(string)
 		metrics := value.(*chuteMetrics)
