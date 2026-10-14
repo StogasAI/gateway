@@ -92,7 +92,6 @@ func TestMemoryProfileServer(t *testing.T) {
 	}
 	public := httptest.NewUnstartedServer(server.server.Handler)
 	public.Config = server.server
-	public.Listener = &publicListener{Listener: public.Listener, slots: make(chan struct{}, serverConcurrency), idle: &server.idleConnections}
 	public.EnableHTTP2 = true
 	public.StartTLS()
 	defer public.Close()

@@ -85,10 +85,13 @@ func validHTTPFieldName(name string) bool {
 
 func closeUnreadRequest(ctx *requestContext) {
 	// Do not make HTTP/1 drain a rejected upload before returning its error.
-	// HTTP/2 closes only this request stream when the handler returns.
 	if ctx.request.ProtoMajor < 2 {
 		ctx.writer.Header().Set("Connection", "close")
+		return
 	}
+	// HTTP/2 otherwise keeps the stream's buffered upload until the response
+	// ends, which a client that stops reading can delay.
+	_ = ctx.request.Body.Close()
 }
 
 func (s *Server) requestBodyAdmission(next requestHandler) requestHandler {

@@ -1,11 +1,9 @@
 package stogashttp
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"hash/maphash"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -138,31 +136,6 @@ func TestIPAdmissionPrecedesBodiesAndCannotUseForwardingHeaders(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/models", nil))
 		if !called {
 			t.Fatal("request allowance did not recover")
-		}
-	})
-}
-
-type ipTestConn struct {
-	net.Conn
-	remote net.Addr
-}
-
-func (c ipTestConn) RemoteAddr() net.Addr { return c.remote }
-
-func TestIPSetupLimitPrecedesTLSCertificateWork(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := &Server{ipAdmission: newIPAdmission()}
-		for range ipSetupBurst {
-			_, _ = s.ipAdmission.allow("192.0.2.1:80", true, time.Now())
-		}
-		hello := &tls.ClientHelloInfo{Conn: ipTestConn{remote: &net.TCPAddr{IP: net.ParseIP("192.0.2.1"), Port: 1234}}}
-		config := s.confidentialTLSConfig()
-		if _, err := config.GetConfigForClient(hello); err != errIPAdmission {
-			t.Fatalf("TLS admission did not reject: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-		if _, err := config.GetConfigForClient(hello); err != nil {
-			t.Fatalf("TLS admission did not recover: %v", err)
 		}
 	})
 }

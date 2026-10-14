@@ -356,7 +356,7 @@ func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 		*process.GoCPUCapacitySeconds <= 0 || *process.GoGCCPUSeconds < *process.GoGCIdleCPUSeconds || *process.GoCPUCapacitySeconds < *process.GoGCCPUSeconds {
 		t.Fatalf("interval GC diagnostics are incomplete or inconsistent: %#v", process)
 	}
-	if payload.Node.Listeners.Public.MaximumConnections != serverConcurrency ||
+	if payload.Node.Listeners.Public.MaximumConnections != 0 ||
 		payload.Node.Listeners.Private.MaximumConnections != readinessConcurrency {
 		t.Fatalf("listener diagnostics are incomplete: %#v", payload.Node.Listeners)
 	}

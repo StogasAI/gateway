@@ -43,13 +43,16 @@ type listenerDiagnostics struct {
 	Diagnostics serverListenerDiagnostics `json:"diagnostics"`
 }
 
+// Public sockets have no maximum. MemoryEvictions counts public sockets closed
+// to free memory while they were not running a request; MemoryResets counts
+// unpaid responses ended while they waited on the client.
 type serverListenerDiagnostics struct {
 	AcceptedConnections uint64 `json:"acceptedConnections"`
-	MaximumConnections  int    `json:"maximumConnections"`
+	MaximumConnections  int    `json:"maximumConnections,omitempty"`
 	OpenConnections     int32  `json:"openConnections"`
 	ActiveHandlers      int64  `json:"activeHandlers"`
-	IdleEvictions       uint64 `json:"idleEvictions"`
-	CapacityRejected    uint64 `json:"capacityRejected"`
+	MemoryEvictions     uint64 `json:"memoryEvictions"`
+	MemoryResets        uint64 `json:"memoryResets"`
 }
 
 type processDiagnostics struct {
@@ -117,13 +120,15 @@ func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics
 	}
 	result.Listeners = listenerDiagnostics{
 		Private:     s.privateConnections.snapshot(readinessConcurrency),
-		Public:      s.publicConnections.snapshot(serverConcurrency),
+		Public:      s.publicConnections.snapshot(0),
 		Diagnostics: s.diagnosticConnections.snapshot(readinessConcurrency),
 	}
 	s.idleConnections.mu.Lock()
-	result.Listeners.Public.IdleEvictions = s.idleConnections.evicted
-	result.Listeners.Public.CapacityRejected = s.idleConnections.rejected
+	result.Listeners.Public.MemoryEvictions = s.idleConnections.evicted
 	s.idleConnections.mu.Unlock()
+	s.waitingResponses.mu.Lock()
+	result.Listeners.Public.MemoryResets = s.waitingResponses.reset
+	s.waitingResponses.mu.Unlock()
 	result.Requests = requestDiagnostics{
 		IPAdmission:   s.ipAdmission.diagnostics(),
 		Admission:     s.admission.diagnostics(),
