@@ -3,6 +3,8 @@ package billing
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/mldsa"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,7 +22,17 @@ const (
 	inferenceTokenScope       = "inference"
 	inferenceTokenMaxLifetime = 15 * time.Minute
 	inferenceTokenClockSkew   = 30 * time.Second
+	// Composite ML-DSA-65 and Ed25519 (draft-ietf-jose-pq-composite-sigs): both
+	// components sign one representative of the JWS input and both must verify.
+	inferenceTokenAlgorithm = "ML-DSA-65-Ed25519"
+	compositePrefix         = "CompositeAlgorithmSignatures2025"
+	compositeLabel          = "COMPSIG-MLDSA65-Ed25519-SHA512"
 )
+
+type inferenceTokenKey struct {
+	mldsa   *mldsa.PublicKey
+	ed25519 ed25519.PublicKey
+}
 
 type DashboardCredential struct {
 	ActorUserID string
@@ -49,17 +61,44 @@ type dashboardTokenClaims struct {
 	Subject   string `json:"sub"`
 }
 
-func parseInferenceTokenPublicKey(raw string) (ed25519.PublicKey, error) {
+// The encoding is the ML-DSA-65 public key, then the Ed25519 public key.
+func parseInferenceTokenPublicKey(raw string) (*inferenceTokenKey, error) {
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil || len(decoded) != ed25519.PublicKeySize {
+	if err != nil || len(decoded) != mldsa.MLDSA65PublicKeySize+ed25519.PublicKeySize {
 		return nil, errors.New("invalid inference-token public key")
 	}
-	return ed25519.PublicKey(decoded), nil
+	mldsaKey, err := mldsa.NewPublicKey(mldsa.MLDSA65(), decoded[:mldsa.MLDSA65PublicKeySize])
+	if err != nil {
+		return nil, errors.New("invalid inference-token public key")
+	}
+	return &inferenceTokenKey{
+		mldsa:   mldsaKey,
+		ed25519: ed25519.PublicKey(decoded[mldsa.MLDSA65PublicKeySize:]),
+	}, nil
+}
+
+func (k *inferenceTokenKey) verify(message []byte, signature []byte) bool {
+	if len(signature) != mldsa.MLDSA65SignatureSize+ed25519.SignatureSize {
+		return false
+	}
+	digest := sha512.Sum512(message)
+	// The empty application context is encoded as its zero length.
+	representative := make([]byte, 0, len(compositePrefix)+len(compositeLabel)+1+len(digest))
+	representative = append(representative, compositePrefix...)
+	representative = append(representative, compositeLabel...)
+	representative = append(representative, 0)
+	representative = append(representative, digest[:]...)
+	return mldsa.Verify(
+		k.mldsa,
+		representative,
+		signature[:mldsa.MLDSA65SignatureSize],
+		&mldsa.Options{Context: compositeLabel},
+	) == nil && ed25519.Verify(k.ed25519, representative, signature[mldsa.MLDSA65SignatureSize:])
 }
 
 func parseDashboardCredential(
 	raw string,
-	publicKey ed25519.PublicKey,
+	publicKey *inferenceTokenKey,
 	now time.Time,
 ) (*DashboardCredential, error) {
 	if !strings.HasPrefix(raw, dashboardCredentialPrefix) {
@@ -86,7 +125,7 @@ func parseDashboardCredential(
 
 func verifyDashboardToken(
 	token string,
-	publicKey ed25519.PublicKey,
+	publicKey *inferenceTokenKey,
 	now time.Time,
 ) (*dashboardTokenClaims, error) {
 	parts := strings.Split(token, ".")
@@ -99,12 +138,12 @@ func verifyDashboardToken(
 	}
 	var header dashboardTokenHeader
 	if err := decodeStrictJSON(headerBytes, &header); err != nil ||
-		header.Algorithm != "EdDSA" ||
+		header.Algorithm != inferenceTokenAlgorithm ||
 		header.Type != "JWT" {
 		return nil, ErrInvalidAPIKey
 	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || !ed25519.Verify(publicKey, []byte(parts[0]+"."+parts[1]), signature) {
+	if err != nil || !publicKey.verify([]byte(parts[0]+"."+parts[1]), signature) {
 		return nil, ErrInvalidAPIKey
 	}
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])

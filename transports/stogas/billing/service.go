@@ -3,7 +3,6 @@ package billing
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -184,7 +183,7 @@ type Service struct {
 	// holds of a boot that stopped.
 	nodeID                  string
 	apiKeyPepper            string
-	inferenceTokenPublicKey ed25519.PublicKey
+	inferenceTokenPublicKey *inferenceTokenKey
 	byok                    *byokDecryptor
 }
 
@@ -307,7 +306,7 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 }
 
 func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, error) {
-	if s == nil || len(s.inferenceTokenPublicKey) != ed25519.PublicKeySize {
+	if s == nil || s.inferenceTokenPublicKey == nil {
 		return nil, ErrInvalidAPIKey
 	}
 	credential, err := parseDashboardCredential(raw, s.inferenceTokenPublicKey, time.Now())

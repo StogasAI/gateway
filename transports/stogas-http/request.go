@@ -23,6 +23,9 @@ var (
 	errConflictingAPIKeyHeader = errors.New("conflicting API key headers")
 )
 
+// With its composite signature, a dashboard credential is about 4.9 KB, the longest valid value.
+const maximumCredentialLength = 8 << 10
+
 func authorizationToken(raw string) (string, bool) {
 	value := strings.TrimSpace(string(raw))
 	if value == "" {
@@ -77,7 +80,7 @@ func apiKeyToken(ctx *requestContext, route catalog.Route) (string, error) {
 }
 
 func validCredentialValue(value string) bool {
-	if len(value) == 0 || len(value) > 4096 {
+	if len(value) == 0 || len(value) > maximumCredentialLength {
 		return false
 	}
 	for index := range len(value) {
