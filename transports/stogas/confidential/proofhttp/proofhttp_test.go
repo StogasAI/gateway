@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	verifier "github.com/StogasAI/verifier/go"
-	"github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	"github.com/StogasAI/stogas/go/reference"
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"

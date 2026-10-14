@@ -3,7 +3,7 @@ package attest
 import (
 	"errors"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 )
 
 // MaxBatchLeaves bounds the channels committed by one hardware report.

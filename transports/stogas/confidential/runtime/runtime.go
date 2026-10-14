@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"

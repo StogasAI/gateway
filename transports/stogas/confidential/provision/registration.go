@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 	"github.com/google/uuid"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )

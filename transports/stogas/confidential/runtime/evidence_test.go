@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 )
 
 type bootEvidenceFixture struct {

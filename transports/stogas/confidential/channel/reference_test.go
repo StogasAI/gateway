@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
-	verifier "github.com/StogasAI/verifier/go"
-	ref "github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	ref "github.com/StogasAI/stogas/go/reference"
 	"testing"
 )
 

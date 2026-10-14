@@ -15,7 +15,7 @@ import (
 	"math/big"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 )
 
 // rustls bounds a certificate handshake to 64 KiB. Leave room for DER/TLS

@@ -19,7 +19,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	ref "github.com/StogasAI/verifier/go/reference"
+	ref "github.com/StogasAI/stogas/go/reference"
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
 	"github.com/google/uuid"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"

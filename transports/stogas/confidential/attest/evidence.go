@@ -1,6 +1,6 @@
 package attest
 
-import verifier "github.com/StogasAI/verifier/go"
+import verifier "github.com/StogasAI/stogas/go"
 
 // Leave space for the ML-DSA-65 key, certificate signature and TLS framing.
 const MaxSessionEvidenceBytes = 58 * 1024

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"hash"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 )
 

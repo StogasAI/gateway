@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
-	ref "github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	ref "github.com/StogasAI/stogas/go/reference"
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
