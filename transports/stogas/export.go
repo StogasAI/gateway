@@ -8,7 +8,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
-// FinalizeExportState reuses the canonical event that feeds billing and Tinybird.
+// FinalizeExportState reuses the canonical event that settlement stores as the
+// request log.
 // Content and contextual response metadata are the only export-specific fields.
 func FinalizeExportState(ctx context.Context, state *State) {
 	if state == nil || state.Export == nil {

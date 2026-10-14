@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"slices"
 	"strings"
@@ -57,12 +58,16 @@ func requestIDs(rows []json.RawMessage) []string {
 }
 
 // fakeSettlementDatabase speaks enough of the PostgreSQL protocol for pgx to
-// prepare and run the settlement query in the gateway's default mode.
+// prepare and run the settlement queries in the gateway's default mode.
 type fakeSettlementDatabase struct {
 	service *Service
 	answer  func(settlementCall) settlementReply
-	mu      sync.Mutex
-	calls   []settlementCall
+	// keepAnswer answers keep_failed_gateway_request_log; nil keeps every log.
+	keepAnswer func(requestID string) settlementReply
+	mu         sync.Mutex
+	calls      []settlementCall
+	// kept holds each log sent to keep_failed_gateway_request_log by request ID.
+	kept    map[string]string
 	active  int
 	overlap bool
 }
@@ -87,7 +92,11 @@ func newFakeSettlementDatabase(t *testing.T, answer func(settlementCall) settlem
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.service = &Service{db: &GatewayDB{pool: pool}, settleQuery: "select request_id, result from settle_gateway_request_logs($1::json, $2::json)"}
+	db.service = &Service{
+		db:                 &GatewayDB{pool: pool},
+		settleQuery:        "select request_id, result from settle_gateway_request_logs($1::json, $2::json)",
+		keepFailedLogQuery: "select * from keep_failed_gateway_request_log($1::uuid, $2::json)",
+	}
 	t.Cleanup(func() {
 		db.service.Close()
 		listener.Close()
@@ -118,6 +127,32 @@ func (db *fakeSettlementDatabase) call(parameters [][]byte) settlementReply {
 	return db.answer(call)
 }
 
+func (db *fakeSettlementDatabase) keep(parameters [][]byte) settlementReply {
+	if len(parameters) != 2 {
+		return settlementReply{code: "08P01"}
+	}
+	requestID := string(parameters[0])
+	if id, err := uuid.FromBytes(parameters[0]); err == nil {
+		requestID = id.String()
+	}
+	db.mu.Lock()
+	if db.kept == nil {
+		db.kept = map[string]string{}
+	}
+	db.kept[requestID] = string(parameters[1])
+	db.mu.Unlock()
+	if db.keepAnswer != nil {
+		return db.keepAnswer(requestID)
+	}
+	return settlementReply{rows: [][2]string{{"kept"}}}
+}
+
+func (db *fakeSettlementDatabase) keptLogs() map[string]string {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	return maps.Clone(db.kept)
+}
+
 func (db *fakeSettlementDatabase) serve(conn net.Conn) {
 	defer conn.Close()
 	backend := pgproto3.NewBackend(conn, conn)
@@ -133,9 +168,14 @@ func (db *fakeSettlementDatabase) serve(conn net.Conn) {
 		{Name: []byte("request_id"), DataTypeOID: 2950, DataTypeSize: 16, TypeModifier: -1},
 		{Name: []byte("result"), DataTypeOID: 25, DataTypeSize: -1, TypeModifier: -1},
 	}}
+	keepColumns := &pgproto3.RowDescription{Fields: []pgproto3.FieldDescription{
+		{Name: []byte("keep_failed_gateway_request_log"), DataTypeOID: 25, DataTypeSize: -1, TypeModifier: -1},
+	}}
+	// Prepared statements by name, true for keep_failed_gateway_request_log.
+	statements := map[string]bool{}
 	var parameters [][]byte
 	var formats []int16
-	failed := false
+	failed, keeping := false, false
 	for {
 		message, err := backend.Receive()
 		if err != nil {
@@ -147,20 +187,31 @@ func (db *fakeSettlementDatabase) serve(conn net.Conn) {
 			backend.Send(&pgproto3.ReadyForQuery{TxStatus: 'I'})
 		case *pgproto3.Parse:
 			if !failed {
+				statements[message.Name] = strings.Contains(message.Query, "keep_failed_gateway_request_log")
 				backend.Send(&pgproto3.ParseComplete{})
 			}
 		case *pgproto3.Describe:
 			if failed {
 				continue
 			}
+			keep := statements[message.Name]
 			if message.ObjectType == 'S' {
-				backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: []uint32{114, 114}})
+				oids := []uint32{114, 114}
+				if keep {
+					oids[0] = 2950
+				}
+				backend.Send(&pgproto3.ParameterDescription{ParameterOIDs: oids})
 			}
-			backend.Send(columns)
+			if keep {
+				backend.Send(keepColumns)
+			} else {
+				backend.Send(columns)
+			}
 		case *pgproto3.Bind:
 			if failed {
 				continue
 			}
+			keeping = statements[message.PreparedStatement]
 			parameters = parameters[:0]
 			for _, parameter := range message.Parameters {
 				parameters = append(parameters, bytes.Clone(parameter))
@@ -171,7 +222,11 @@ func (db *fakeSettlementDatabase) serve(conn net.Conn) {
 			if failed {
 				continue
 			}
-			reply := db.call(parameters)
+			answer := db.call
+			if keeping {
+				answer = db.keep
+			}
+			reply := answer(parameters)
 			if reply.drop {
 				return
 			}
@@ -181,6 +236,10 @@ func (db *fakeSettlementDatabase) serve(conn net.Conn) {
 				continue
 			}
 			for _, row := range reply.rows {
+				if keeping {
+					backend.Send(&pgproto3.DataRow{Values: [][]byte{[]byte(row[0])}})
+					continue
+				}
 				var id []byte
 				if row[0] != "" {
 					id = []byte(row[0])
@@ -335,8 +394,8 @@ func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 	}
 }
 
-// A log whose contents fail the call is found by splitting the batch. Only it
-// is abandoned; its hold waits for the boot to stop.
+// A log whose contents fail the call is found by splitting the batch. Its hold
+// keeps it for an operator, a rejection is dropped, and the others settle.
 func TestSettlementIsolatesTheLogThatFailsACall(t *testing.T) {
 	poisonLog, poisonRejection := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
 	release := make(chan struct{})
@@ -374,7 +433,7 @@ func TestSettlementIsolatesTheLogThatFailsACall(t *testing.T) {
 		err := <-result
 		if id == poisonLog {
 			var settlementErr *SettlementError
-			if !errors.As(err, &settlementErr) || settlementErr.Reason != "abandoned" || settlementErr.SQLState != "22P05" {
+			if !errors.As(err, &settlementErr) || settlementErr.Reason != "database_error" || settlementErr.SQLState != "22P05" {
 				t.Fatalf("poisoned log error = %v", err)
 			}
 		} else if err != nil {
@@ -384,10 +443,36 @@ func TestSettlementIsolatesTheLogThatFailsACall(t *testing.T) {
 	if got := <-stored; !slices.Equal(got, []bool{true, false, true}) {
 		t.Fatalf("rejections stored = %v", got)
 	}
+	// The hold keeps the log exactly as settlement received it.
+	var sent json.RawMessage
+	for _, call := range db.recorded() {
+		if index := slices.Index(requestIDs(call.logs), poisonLog); index >= 0 {
+			sent = call.logs[index]
+		}
+	}
+	if kept := db.keptLogs(); len(kept) != 1 || kept[poisonLog] != string(sent) {
+		t.Fatalf("kept logs = %v", kept)
+	}
 	// The batch is 8 logs, then 3 rejections. Halving fails 7 calls to find
-	// both, and no content error runs twice.
+	// both, no content error runs twice, and one call keeps the log.
 	got := s.Diagnostics().Settlement
-	if got.Abandoned != 1 || got.LastFailedAt == nil || got.Retrying || !s.FinalizationReady() || got.Calls != 12 || got.FailedCalls != 7 {
+	if got.Refused != 1 || got.Abandoned != 0 || got.LastFailedAt == nil || got.Retrying || !s.FinalizationReady() || got.Calls != 13 || got.FailedCalls != 7 {
+		t.Fatalf("diagnostics = %+v", got)
+	}
+}
+
+// A log the hold cannot keep either is abandoned; its hold waits for the boot
+// to stop.
+func TestSettlementAbandonsALogItsHoldCannotKeep(t *testing.T) {
+	db := newFakeSettlementDatabase(t, func(settlementCall) settlementReply { return settlementReply{code: "22P05"} })
+	db.keepAnswer = func(string) settlementReply { return settlementReply{rows: [][2]string{{"hold_not_found"}}} }
+	s := db.service
+	authorization, event := settlementRequest(t, s)
+	var settlementErr *SettlementError
+	if err := s.FinalizeRequest(authorization, event); !errors.As(err, &settlementErr) || settlementErr.Reason != "abandoned" || settlementErr.SQLState != "22P05" {
+		t.Fatalf("error = %v", err)
+	}
+	if got := s.Diagnostics().Settlement; got.Abandoned != 1 || got.Refused != 0 || got.Retrying {
 		t.Fatalf("diagnostics = %+v", got)
 	}
 }
