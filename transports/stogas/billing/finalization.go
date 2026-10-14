@@ -36,12 +36,13 @@ const (
 
 // SettlementError explains why a log did not settle.
 type SettlementError struct {
-	// Reason is a database refusal, such as payload_mismatch, after which the
-	// hold keeps the log for an operator. Otherwise it is abandoned, closed,
+	// Reason is a database refusal, such as payload_mismatch, or
+	// database_error when a call failed on this log alone. The hold then keeps
+	// the log for an operator. Otherwise it is abandoned, closed,
 	// encoding_failed or unknown_result, and the hold stays until this boot
 	// stops.
 	Reason string
-	// SQLState is the database error behind an abandoned log.
+	// SQLState is the database error behind a database_error or abandoned log.
 	SQLState string
 }
 
@@ -275,37 +276,66 @@ func dequeue(queue []*settlement, n int) []*settlement {
 }
 
 // settle stores the batch. A failure that one log's contents can cause splits
-// the batch until that log fails alone, and the gateway abandons it. Any other
-// failure runs the same call again, which is safe: settlement deletes each hold
-// it settles, so a repeated log finds no hold.
+// the batch until that log fails alone. Its hold then keeps it for an
+// operator, as settlement keeps a log it refuses; a rejection has no hold and
+// is dropped. Any other failure runs the same call again, which is safe:
+// settlement deletes each hold it settles, so a repeated log finds no hold.
 func (s *Service) settle(ctx context.Context, batch []*settlement) {
-	err := s.settleWithRetry(ctx, batch)
+	logs, rejections := settlementArrays(batch)
+	var results map[string]string
+	err := s.callWithRetry(ctx, func(ctx context.Context) (err error) {
+		results, err = s.callSettlement(ctx, logs, rejections)
+		return err
+	})
 	switch {
 	case err == nil:
+		s.resolveSettlements(batch, results)
 	case ctx.Err() != nil:
 		for _, item := range batch {
 			item.done <- &SettlementError{Reason: "closed"}
 		}
-	case len(batch) == 1:
-		if !batch[0].rejection {
-			s.finalizations.fail(&s.finalizations.abandoned)
-		}
-		batch[0].done <- &SettlementError{Reason: "abandoned", SQLState: sqlState(err)}
-	default:
+	case len(batch) > 1:
 		s.settle(ctx, batch[:len(batch)/2])
 		s.settle(ctx, batch[len(batch)/2:])
+	case batch[0].rejection:
+		batch[0].done <- &SettlementError{Reason: "abandoned", SQLState: sqlState(err)}
+	default:
+		s.keepFailedLog(ctx, batch[0], sqlState(err))
 	}
 }
 
-func (s *Service) settleWithRetry(ctx context.Context, batch []*settlement) error {
+// keepFailedLog stores a log that a settlement call failed on with its hold.
+// If that fails too, the log is abandoned and the hold stays until this boot
+// stops.
+func (s *Service) keepFailedLog(ctx context.Context, item *settlement, state string) {
 	f := &s.finalizations
-	logs, rejections := settlementArrays(batch)
+	var result string
+	err := s.callWithRetry(ctx, func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, settlementCallTimeout)
+		defer cancel()
+		return s.db.pool.QueryRow(ctx, s.keepFailedLogQuery, item.requestID, item.payload).Scan(&result)
+	})
+	switch {
+	case err == nil && result == "kept":
+		f.fail(&f.refused)
+		item.done <- &SettlementError{Reason: "database_error", SQLState: state}
+	case ctx.Err() != nil:
+		item.done <- &SettlementError{Reason: "closed"}
+	default:
+		f.fail(&f.abandoned)
+		item.done <- &SettlementError{Reason: "abandoned", SQLState: state}
+	}
+}
+
+// callWithRetry runs a settlement worker call until it succeeds, fails on
+// content, or the gateway stops. Admission waits while it retries.
+func (s *Service) callWithRetry(ctx context.Context, call func(context.Context) error) error {
+	f := &s.finalizations
 	for delay := retryInitialDelay; ; delay = min(retryMaxDelay, delay*2) {
-		results, err := s.callSettlement(ctx, logs, rejections)
+		err := call(ctx)
 		f.calls.Add(1)
 		if err == nil {
 			f.retrying.Store(false)
-			s.resolveSettlements(batch, results)
 			return nil
 		}
 		f.failedCalls.Add(1)

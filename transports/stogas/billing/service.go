@@ -177,6 +177,7 @@ type Service struct {
 	underReservedSettlements   atomic.Uint64
 	negativeBalanceSettlements atomic.Uint64
 	settleQuery                string
+	keepFailedLogQuery         string
 	sanctionedSourceQuery      string
 	sanctionedNetworksQuery    string
 	// Each hold records the boot that owns it, so Control can release the
@@ -224,6 +225,7 @@ func NewService(
 		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
 		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
 		settleQuery:             db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
+		keepFailedLogQuery:      db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
 		sanctionedSourceQuery:   db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
 		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
 		inferenceTokenPublicKey: publicKey,
@@ -237,6 +239,7 @@ func NewService(
 		service.closeRequestQuery,
 		service.keyConfigQuery,
 		service.settleQuery,
+		service.keepFailedLogQuery,
 		service.sanctionedSourceQuery,
 		service.sanctionedNetworksQuery,
 	); err != nil {
