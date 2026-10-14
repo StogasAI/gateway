@@ -50,14 +50,18 @@ func (s *Server) requireAdmission(ctx *requestContext) bool {
 	return false
 }
 
+// The LB stops sending new connections to an unready gateway, but clients keep
+// the ones they have. Closing them moves clients to ready gateways: HTTP/1
+// closes after this response, HTTP/2 sends GOAWAY and finishes its other
+// streams, and the SDK retires the encrypted session.
 func (s *Server) rejectAdmission(ctx *requestContext) {
-	closeUnreadRequest(ctx)
+	ctx.writer.Header().Set("Connection", "close")
+	if response, ok := ctx.writer.(*sessionResponse); ok {
+		response.closing = true
+	}
 	code, message := "gateway_unavailable", "Gateway is temporarily unavailable"
 	if s.requests.diagnostics().Draining {
 		code, message = "gateway_draining", "Gateway is draining"
-		if response, ok := ctx.writer.(*sessionResponse); ok {
-			response.closing = true
-		}
 	}
 	s.writeError(ctx, http.StatusServiceUnavailable, map[string]any{
 		"error": map[string]any{"message": message, "type": "service_unavailable", "code": code},

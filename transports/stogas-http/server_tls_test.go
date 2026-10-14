@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -172,6 +173,48 @@ func TestGatewayTLSNegotiatesHTTP2AndDrainsActiveResponse(t *testing.T) {
 	}
 	if err := <-serveDone; !errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("Serve = %v", err)
+	}
+}
+
+// The LB keeps existing sockets on an unready member, so only the gateway can
+// move their clients to a ready one.
+func TestUnreadyGatewayReleasesConnectionsAndSessions(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		gateway := &Server{secure: &confidentialruntime.Runtime{}, memory: newRequestMemoryAdmission(), requests: newRequestDrain()}
+		endpoint := httptest.NewUnstartedServer(gateway.publicAdmission(func(*requestContext) { t.Error("unready gateway dispatched a request") }))
+		closed := make(chan struct{}, 1)
+		endpoint.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+			if state == http.StateClosed {
+				select {
+				case closed <- struct{}{}:
+				default:
+				}
+			}
+		}
+		endpoint.EnableHTTP2 = http2
+		endpoint.StartTLS()
+		response, err := endpoint.Client().Post(endpoint.URL+"/v1/chat/completions", "application/json", strings.NewReader("{}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if (response.ProtoMajor == 2) != http2 || response.StatusCode != http.StatusServiceUnavailable || !bytes.Contains(body, []byte("gateway_unavailable")) {
+			t.Fatalf("HTTP/%d unready response %d %s", response.ProtoMajor, response.StatusCode, body)
+		}
+		select {
+		case <-closed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("HTTP/%d connection stayed on the unready gateway", response.ProtoMajor)
+		}
+		endpoint.Close()
+	}
+	f := newSessionHTTPFixture(t, func(*requestContext) { t.Error("unready gateway dispatched a session request") }, true)
+	f.server.secure = &confidentialruntime.Runtime{}
+	wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), []byte("{}"))
+	result, body := readSessionResponse(t, f.post(t, wire, true), decoder)
+	if result.Status != http.StatusServiceUnavailable || !result.Closing || !bytes.Contains(body, []byte("gateway_unavailable")) {
+		t.Fatal("unready gateway kept the encrypted session")
 	}
 }
 
