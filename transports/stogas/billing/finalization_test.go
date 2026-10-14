@@ -477,9 +477,8 @@ func TestSettlementAbandonsALogItsHoldCannotKeep(t *testing.T) {
 	}
 }
 
-// Any other failure runs the same call again and closes admission until a call
-// succeeds. A call whose connection broke may have committed; the repeat then
-// finds no hold.
+// Any other failure runs the same call again until one succeeds. A call whose
+// connection broke may have committed; the repeat then finds no hold.
 func TestSettlementRetriesTheSameCallUntilTheDatabaseRecovers(t *testing.T) {
 	var calls atomic.Int32
 	failing := make(chan struct{})
@@ -499,11 +498,8 @@ func TestSettlementRetriesTheSameCallUntilTheDatabaseRecovers(t *testing.T) {
 	authorization, event := settlementRequest(t, s)
 	result := finalizeAsync(s, authorization, event)
 	<-failing
-	if s.FinalizationReady() || !s.Diagnostics().Settlement.Retrying {
-		t.Fatal("a failing database left inference admission open")
-	}
-	if _, err := s.reserveFinalization(); !errors.Is(err, ErrGatewayUnavailable) {
-		t.Fatalf("reservation while retrying = %v", err)
+	if !s.Diagnostics().Settlement.Retrying {
+		t.Fatal("diagnostics do not show the failing call")
 	}
 	close(recovered)
 	if err := <-result; err != nil {
@@ -513,7 +509,59 @@ func TestSettlementRetriesTheSameCallUntilTheDatabaseRecovers(t *testing.T) {
 	if len(recorded) != 3 || recorded[1].arrays != recorded[0].arrays || recorded[2].arrays != recorded[0].arrays {
 		t.Fatalf("retries changed the call: %+v", recorded)
 	}
-	if got := s.Diagnostics().Settlement; got.Retrying || !s.FinalizationReady() || got.Calls != 3 || got.FailedCalls != 2 {
+	if got := s.Diagnostics().Settlement; got.Retrying || got.Calls != 3 || got.FailedCalls != 2 {
+		t.Fatalf("diagnostics after recovery = %+v", got)
+	}
+}
+
+// A failing database does not close admission, because every gateway would
+// close at once. Admission closes when the requests waiting for settlement
+// take every place, and reopens as each one settles.
+func TestSettlementAdmissionClosesOnlyWhenEveryPlaceIsTaken(t *testing.T) {
+	var calls atomic.Int32
+	recovered := make(chan struct{})
+	db := newFakeSettlementDatabase(t, func(call settlementCall) settlementReply {
+		if calls.Add(1) == 1 {
+			return settlementReply{code: "57P01"}
+		}
+		<-recovered
+		return settleAll(call)
+	})
+	s := db.service
+	authorization, event := settlementRequest(t, s)
+	first := finalizeAsync(s, authorization, event)
+	waitFor(t, func() bool { return s.Diagnostics().Settlement.Retrying })
+	if !s.FinalizationReady() {
+		t.Fatal("a failing settlement call closed admission")
+	}
+	// Requests in flight take all but one of the remaining places.
+	inFlight := make([]func(), 0, finalizationCapacity-2)
+	for range finalizationCapacity - 2 {
+		release, err := s.reserveFinalization()
+		if err != nil {
+			t.Fatal(err)
+		}
+		inFlight = append(inFlight, release)
+	}
+	authorization, event = settlementRequest(t, s)
+	if _, err := s.reserveFinalization(); !errors.Is(err, ErrGatewayUnavailable) || s.FinalizationReady() {
+		t.Fatal("a gateway with every place taken admitted a request")
+	}
+	// A release frees one place, however often it runs.
+	inFlight[0]()
+	inFlight[0]()
+	if _, err := s.reserveFinalization(); err != nil || s.FinalizationReady() {
+		t.Fatalf("a repeated release did not free exactly one place: %v", err)
+	}
+	last := finalizeAsync(s, authorization, event)
+	waitFor(t, func() bool { return s.Diagnostics().Settlement.Queued == 2 })
+	close(recovered)
+	for _, result := range []<-chan error{first, last} {
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := s.Diagnostics().Settlement; !s.FinalizationReady() || got.Retrying || got.Reserved != finalizationCapacity-2 {
 		t.Fatalf("diagnostics after recovery = %+v", got)
 	}
 }

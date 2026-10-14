@@ -105,12 +105,16 @@ type SettlementDiagnostics struct {
 }
 
 // Every admitted request reserves its place in settlement before touching the
-// wallet, which bounds the requests that wait for settlement.
+// wallet, which bounds the requests that wait for settlement. Failing database
+// calls do not close admission by themselves: every gateway shares the
+// database, so a short outage would make the whole fleet unready at once.
+// Requests then fail at authorization, and admission closes when the requests
+// waiting for the database fill every place.
 func (s *Service) reserveFinalization() (func(), error) {
 	f := &s.finalizations
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed || f.encodingFailed.Load() || f.retrying.Load() || f.reserved >= finalizationCapacity {
+	if f.closed || f.encodingFailed.Load() || f.reserved >= finalizationCapacity {
 		return nil, ErrGatewayUnavailable
 	}
 	f.reserved++
@@ -125,7 +129,7 @@ func (s *Service) FinalizationReady() bool {
 	f := &s.finalizations
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return !f.closed && !f.encodingFailed.Load() && !f.retrying.Load() && f.reserved < finalizationCapacity
+	return !f.closed && !f.encodingFailed.Load() && f.reserved < finalizationCapacity
 }
 
 // FinalizeRequest settles the request's hold with its log and returns once the
@@ -328,7 +332,7 @@ func (s *Service) keepFailedLog(ctx context.Context, item *settlement, state str
 }
 
 // callWithRetry runs a settlement worker call until it succeeds, fails on
-// content, or the gateway stops. Admission waits while it retries.
+// content, or the gateway stops.
 func (s *Service) callWithRetry(ctx context.Context, call func(context.Context) error) error {
 	f := &s.finalizations
 	for delay := retryInitialDelay; ; delay = min(retryMaxDelay, delay*2) {
@@ -474,8 +478,7 @@ func sleepContext(ctx context.Context, delay time.Duration) bool {
 // PostgreSQL can still commit a hold after authorization stopped waiting for
 // it, and the gateway never runs that request. Closing it releases any such
 // hold at zero charge once authorizeBefore passes. The request's finalization
-// reservation bounds these closes. They do not block admission: one slow
-// database would otherwise make every gateway unready at once.
+// reservation bounds these closes.
 func (s *Service) closeUnconfirmedAuthorization(requestID string, keyID string, authorizeBefore time.Time, release func()) {
 	f := &s.finalizations
 	f.mu.Lock()
