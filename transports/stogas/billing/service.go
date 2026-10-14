@@ -506,11 +506,14 @@ func (s *Service) authorizeResolvedRequest(
 	authorizeBefore := time.Now().Add(authorizeTimeout)
 	queryCtx, cancel := context.WithDeadline(ctx, authorizeBefore)
 	defer cancel()
-	var dashboardKeyID, dashboardActorUserID, dashboardSessionID *string
+	// SQL finds the key by the ID that the API key's MAC or the dashboard credential names.
+	var requestKeyID, dashboardActorUserID, dashboardSessionID *string
 	if dashboard != nil {
-		dashboardKeyID = &dashboard.KeyID
+		requestKeyID = &dashboard.KeyID
 		dashboardActorUserID = &dashboard.ActorUserID
 		dashboardSessionID = &dashboard.SessionID
+	} else if claims != nil {
+		requestKeyID = &claims.KeyID
 	}
 	var apiKeyHashValue *string
 	if apiKeyHash != "" {
@@ -534,7 +537,7 @@ func (s *Service) authorizeResolvedRequest(
 		queryCtx,
 		s.authorizeHoldQuery,
 		apiKeyHashValue,
-		dashboardKeyID,
+		requestKeyID,
 		dashboardActorUserID,
 		dashboardSessionID,
 		requestID,
@@ -649,8 +652,8 @@ func authorizationResultError(result string) error {
 	switch result {
 	case "invalid_key", "hold_missing":
 		return ErrInvalidAPIKey
-	case "key_exposed":
-		return ErrAPIKeyExposed
+	case "key_secret_replaced":
+		return ErrAPIKeyOldSecret
 	case "params_mismatch", "authorization_closed", "expired":
 		// The gateway's own parameters or clock failed these checks, not the caller.
 		return fmt.Errorf("%w: authorization %s", ErrGatewayUnavailable, result)

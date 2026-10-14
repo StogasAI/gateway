@@ -16,7 +16,7 @@ var (
 	ErrAPIKeyExpired       = &RequestError{"key_expired", "API key is expired", 403}
 	ErrGrantDisabled       = &RequestError{"grant_disabled", "Grant is disabled", 403}
 	ErrInvalidAPIKey       = &RequestError{"invalid_api_key", "Invalid API key", 401}
-	ErrAPIKeyExposed       = &RequestError{"key_exposed", "This API key secret was found in public and no longer works. Copy the new secret from the dashboard.", 401}
+	ErrAPIKeyOldSecret     = &RequestError{"key_secret_replaced", "This API key's secret was replaced. Copy the current secret from the dashboard.", 401}
 	ErrInsufficientBalance = &RequestError{"insufficient_balance", "Insufficient credit. Add funds to your organization to retry this request.", 402}
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
@@ -71,7 +71,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"byok_not_allowed", "byok_required", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
-		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_exposed", "policy_work_limit_exceeded",
+		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_secret_replaced", "policy_work_limit_exceeded",
 		"method_not_allowed",
 		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",

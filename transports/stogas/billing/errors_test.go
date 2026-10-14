@@ -19,7 +19,7 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 		{"key_token_limit", 429},
 		{"grant_disabled", 403},
 		{"key_configuration_too_large", 400},
-		{"key_exposed", 401},
+		{"key_secret_replaced", 401},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			var public *RequestError

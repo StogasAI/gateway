@@ -190,9 +190,8 @@ func (s *Service) fetchKeyConfig(
 	}
 	queryCtx, cancel := context.WithTimeout(ctx, keyConfigFetchTimeout)
 	defer cancel()
-	var dashboardKeyID, dashboardActorUserID, dashboardSessionID *string
+	var dashboardActorUserID, dashboardSessionID *string
 	if dashboard != nil {
-		dashboardKeyID = &dashboard.KeyID
 		dashboardActorUserID = &dashboard.ActorUserID
 		dashboardSessionID = &dashboard.SessionID
 	}
@@ -211,7 +210,7 @@ func (s *Service) fetchKeyConfig(
 		queryCtx,
 		s.keyConfigQuery,
 		hashedKey,
-		dashboardKeyID,
+		&expectedKeyID,
 		dashboardActorUserID,
 		dashboardSessionID,
 		pins.known,
