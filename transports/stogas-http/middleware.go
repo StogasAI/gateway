@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -246,6 +248,9 @@ func (s *Server) writeBodyReadError(ctx *requestContext, err error, maxBytes int
 		s.writeRequestBodyTooLarge(ctx, maxBytes)
 	case errors.Is(err, errRequestMemoryCapacity):
 		s.writeRequestMemoryCapacity(ctx)
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		message := fmt.Sprintf("The request body did not arrive within %d minutes.", serverReadTimeout/time.Minute)
+		s.writeError(ctx, http.StatusRequestTimeout, map[string]any{"error": map[string]any{"message": message, "type": "invalid_request_error", "code": "request_body_timeout"}})
 	default:
 		message := "Invalid request body"
 		if ctx.request.Header.Get("Content-Encoding") != "" {

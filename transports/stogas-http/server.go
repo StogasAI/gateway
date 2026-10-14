@@ -74,7 +74,7 @@ type Server struct {
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections
-	waitingResponses      waitingResponses
+	waitingClients        waitingClients
 	jsonDecode            requestWorkActivity
 	preprocessing         requestWorkActivity
 	memory                *requestMemoryAdmission

@@ -40,22 +40,26 @@ const (
 // Finished exports are best effort and yield first. Unpaid responses whose
 // clients stopped reading go next, then sockets that are not running a request,
 // oldest first; those clients only retry or reconnect. An idle session costs its
-// client a new handshake and attestation.
+// client a new handshake and attestation. The slowest upload goes last, because
+// its client must send the request again.
 func (s *Server) reclaimIdleMemory(needed int64) bool {
 	remaining := needed - s.exports.Reclaim(needed)
-	for _, reclaim := range []func() int64{s.waitingResponses.reclaim, s.idleConnections.reclaim} {
+	reclaimEach := func(reclaim func() int64) {
 		for remaining > 0 {
 			freed := reclaim()
 			if freed == 0 {
-				break
+				return
 			}
 			remaining -= freed
 		}
 	}
+	reclaimEach(s.waitingClients.reclaimWrite)
+	reclaimEach(s.idleConnections.reclaim)
 	if remaining > 0 && s.sessions != nil {
 		count := (remaining + encryptedSessionRetainedBytes - 1) / encryptedSessionRetainedBytes
 		remaining -= int64(s.sessions.ReclaimIdle(int(count))) * encryptedSessionRetainedBytes
 	}
+	reclaimEach(s.waitingClients.reclaimUpload)
 	return remaining < needed
 }
 
