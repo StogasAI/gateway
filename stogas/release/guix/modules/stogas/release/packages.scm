@@ -408,7 +408,7 @@ OUTPUTS files that BUILD leaves in TARGET."
    "stogas-verifier-ffi" "0"
    (if %verifier-snapshot
        (local-file %verifier-snapshot "stogas-verifier-source" #:recursive? #t)
-       (pinned-git-origin "stogasVerifier" "https://github.com/StogasAI/verifier"
+       (pinned-git-origin "stogasVerifier" "https://github.com/StogasAI/stogas"
                           #:name "stogas-verifier" #:version "0"))
    (if %verifier-snapshot
        (string-append %verifier-snapshot "/Cargo.lock")
@@ -421,7 +421,7 @@ OUTPUTS files that BUILD leaves in TARGET."
              "--no-default-features"
              "--features" "staging,stogas-verifier-ffi/gateway")
    '("libstogas_verifier_ffi.a")
-   "https://github.com/StogasAI/verifier"
+   "https://github.com/StogasAI/stogas"
    "Offline Stogas evidence verifier library for the gateway"
    license:asl2.0
    #:install-directory "lib"))

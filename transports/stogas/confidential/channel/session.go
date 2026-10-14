@@ -1,7 +1,7 @@
 package channel
 
 import (
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 	"sync"
 	"time"
 )

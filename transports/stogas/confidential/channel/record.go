@@ -4,7 +4,7 @@ package channel
 
 import (
 	"encoding/binary"
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 )
 
 const (

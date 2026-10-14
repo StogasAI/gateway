@@ -12,7 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	ref "github.com/StogasAI/verifier/go/reference"
+	ref "github.com/StogasAI/stogas/go/reference"
 	"io"
 	"net/http"
 	"net/http/httptest"

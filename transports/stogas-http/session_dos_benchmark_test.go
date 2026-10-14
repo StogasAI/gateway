@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	ref "github.com/StogasAI/verifier/go/reference"
+	ref "github.com/StogasAI/stogas/go/reference"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 )
 

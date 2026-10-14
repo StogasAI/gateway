@@ -10,7 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	ref "github.com/StogasAI/verifier/go/reference"
+	ref "github.com/StogasAI/stogas/go/reference"
 )
 
 func firstRecord(t *testing.T, client *ref.Session, number uint64) []byte {

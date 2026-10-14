@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	verifier "github.com/StogasAI/verifier/go"
-	ref "github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	ref "github.com/StogasAI/stogas/go/reference"
 )
 
 // A synthetic boot; this package checks binding and size, not hardware appraisal.

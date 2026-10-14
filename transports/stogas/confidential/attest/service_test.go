@@ -13,8 +13,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
-	ref "github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	ref "github.com/StogasAI/stogas/go/reference"
 )
 
 type quoteFunc func(context.Context, [64]byte) ([]byte, error)

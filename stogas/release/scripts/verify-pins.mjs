@@ -26,7 +26,7 @@ check(
 const required = new Map(
 	[...goMod.matchAll(/^\s*(\S+) (v\S+)$/gm)].map(([, module, version]) => [module, version])
 );
-for (const module of ['github.com/StogasAI/verifier/go', 'github.com/StogasAI/verifier/go/reference']) {
+for (const module of ['github.com/StogasAI/stogas/go', 'github.com/StogasAI/stogas/go/reference']) {
 	check(
 		required.get(module)?.endsWith(`-${pins.stogasVerifier.commit.slice(0, 12)}`),
 		`${module} must use the pinned verifier commit ${pins.stogasVerifier.commit}.`

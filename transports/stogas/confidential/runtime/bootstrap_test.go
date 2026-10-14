@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
-	ref "github.com/StogasAI/verifier/go/reference"
+	verifier "github.com/StogasAI/stogas/go"
+	ref "github.com/StogasAI/stogas/go/reference"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/identity"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/provision"

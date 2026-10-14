@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	verifier "github.com/StogasAI/verifier/go"
+	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 )
 

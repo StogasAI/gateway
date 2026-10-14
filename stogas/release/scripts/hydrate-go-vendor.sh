@@ -22,8 +22,8 @@ resolve_stogas_guix "$release_root"
     if [ -n "$2" ]; then
       verifier="$(realpath --relative-to=. "$2/go")"
       go mod edit \
-        -replace="github.com/StogasAI/verifier/go=$verifier" \
-        -replace="github.com/StogasAI/verifier/go/reference=$verifier/reference"
+        -replace="github.com/StogasAI/stogas/go=$verifier" \
+        -replace="github.com/StogasAI/stogas/go/reference=$verifier/reference"
     fi
     ledgers=(go.mod go.sum ../core/go.mod ../core/go.sum)
     before="$(sha256sum "${ledgers[@]}")"
