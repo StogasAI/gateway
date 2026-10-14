@@ -135,7 +135,7 @@ func New(ctx context.Context, options Options) *Engine {
 	if options.NewLease == nil {
 		panic("exporter requires shared memory admission")
 	}
-	e := &Engine{options: options, client: newDeliveryClient(options.Local)}
+	e := &Engine{options: options, client: newDeliveryClient(options.Local, options.NewLease)}
 	e.ctx, e.cancel = context.WithCancel(ctx)
 	return e
 }
@@ -276,15 +276,11 @@ func (e *Engine) start(r *record, destinations []exportconfig.Destination) {
 }
 
 func (e *Engine) deliver(r *record, d exportconfig.Destination) {
-	delivered := false
-	defer func() { e.finishDelivery(r, delivered) }()
+	var result attempt
+	defer func() { e.finishDelivery(r, result) }()
 	for attempts := 1; ; attempts++ {
-		result := e.client.send(r.ctx, d, r)
-		if result.delivered {
-			delivered = true
-			return
-		}
-		if !result.retryable || attempts == maxAttempts {
+		result = e.client.send(r.ctx, d, r)
+		if result.delivered || !result.retryable || attempts == maxAttempts {
 			return
 		}
 		delay := retryDelay/2 + rand.N(retryDelay)
@@ -305,12 +301,12 @@ func (e *Engine) deliver(r *record, d exportconfig.Destination) {
 	}
 }
 
-func (e *Engine) finishDelivery(r *record, delivered bool) {
+func (e *Engine) finishDelivery(r *record, result attempt) {
 	e.mu.Lock()
 	switch {
-	case delivered:
+	case result.delivered:
 		e.delivered.Add(1)
-	case r.reclaimed:
+	case r.reclaimed || result.memoryDropped:
 		e.memoryDropped.Add(1)
 	default:
 		e.failed.Add(1)
