@@ -41,7 +41,7 @@ func TestInitSupervisesGatewayAndClockDaemon(t *testing.T) {
 			gateway.Stdout = writer
 			shutdown := make(chan os.Signal, 1)
 			done := make(chan error, 1)
-			go func() { defer writer.Close(); done <- runGuest(clock, gateway, shutdown) }()
+			go func() { defer writer.Close(); done <- runGuest(clock, gateway, shutdown, synchronized) }()
 			scanner := bufio.NewScanner(output)
 			if !scanner.Scan() || scanner.Text() != "ready" {
 				t.Fatal("gateway did not start")
@@ -65,11 +65,41 @@ func TestInitSupervisesGatewayAndClockDaemon(t *testing.T) {
 
 func TestInitDoesNotStartTheGatewayWithoutTheClockDaemon(t *testing.T) {
 	gateway := lifecycleChild(t.Context(), "clean-exit")
-	err := runGuest(exec.Command(filepath.Join(t.TempDir(), "missing")), gateway, make(chan os.Signal))
+	err := runGuest(exec.Command(filepath.Join(t.TempDir(), "missing")), gateway, make(chan os.Signal), synchronized)
 	if !errors.Is(err, errClockDaemon) || gateway.Process != nil {
 		t.Fatal("gateway started without the clock daemon", err)
 	}
 }
+
+// A guest whose daemon never agrees on the time must still power off when the
+// daemon stops or the host asks.
+func TestInitStartsTheGatewayOnlyOnceTheClockIsSynchronized(t *testing.T) {
+	for _, mode := range []string{"synchronized", "shutdown", "clock-exit"} {
+		t.Run(mode, func(t *testing.T) {
+			daemonMode := "drain"
+			if mode == "clock-exit" {
+				daemonMode = "clean-exit"
+			}
+			gateway := lifecycleChild(t.Context(), "clean-exit")
+			shutdown := make(chan os.Signal, 1)
+			if mode == "shutdown" {
+				shutdown <- syscall.SIGTERM
+			}
+			checks, early := 0, false
+			err := runGuest(lifecycleChild(t.Context(), daemonMode), gateway, shutdown, func() bool {
+				checks++
+				early = early || gateway.Process != nil
+				return mode == "synchronized" && checks == 2
+			})
+			started := gateway.Process != nil
+			if early || started != (mode == "synchronized") || errors.Is(err, errClockDaemon) != (mode == "clock-exit") || (err != nil) != (mode == "clock-exit") {
+				t.Fatalf("started %v early %v after %d checks: %v", started, early, checks, err)
+			}
+		})
+	}
+}
+
+func synchronized() bool { return true }
 
 func TestInitRaisesAClockThatStartsBeforeTheRelease(t *testing.T) {
 	release := time.Unix(1_790_000_000, 0)

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
 )
 
 const (
@@ -80,8 +82,8 @@ func main() {
 	}
 	closeButtons := watchPowerButtons(shutdown)
 	defer closeButtons()
-	clock := exec.Command(clockDaemonPath, "--config", clockConfigPath)
-	clock.Stdout, clock.Stderr = os.Stdout, os.Stderr
+	daemon := exec.Command(clockDaemonPath, "--config", clockConfigPath)
+	daemon.Stdout, daemon.Stderr = os.Stdout, os.Stderr
 	command := exec.Command(args[0], args[1:]...)
 	// The host writes and reads this console, so the gateway reads no input
 	// from it, and a gateway crash must not print the registers and stack
@@ -90,7 +92,7 @@ func main() {
 	command.Env = append(os.Environ(), "GOTRACEBACK=none")
 	if err := raiseClock(os.Stderr, time.Now(), releaseTime, setClock); err != nil {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initClockSetFailed)
-	} else if err := runGuest(clock, command, shutdown); errors.Is(err, errClockDaemon) {
+	} else if err := runGuest(daemon, command, shutdown, clock.Synchronized); errors.Is(err, errClockDaemon) {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initClockDaemonFailed)
 	} else if err != nil {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
