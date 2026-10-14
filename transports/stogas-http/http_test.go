@@ -1417,7 +1417,7 @@ func TestAPIKeyTokenRejectsEmptyWhitespaceAndNonASCIICredentials(t *testing.T) {
 		"tab":          "sk-sto\ttwo",
 		"non ascii":    "sk-sto-é",
 		"control":      "sk-sto-\x1f",
-		"too long":     strings.Repeat("a", 4097),
+		"too long":     strings.Repeat("a", maximumCredentialLength+1),
 		"wrong scheme": "Basic c2stdGVzdA==",
 	} {
 		t.Run(name, func(t *testing.T) {

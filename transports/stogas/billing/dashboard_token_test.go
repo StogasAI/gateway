@@ -1,10 +1,13 @@
 package billing
 
 import (
+	"bytes"
 	"crypto/ed25519"
-	"crypto/rand"
+	"crypto/mldsa"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,10 +15,8 @@ import (
 )
 
 func TestParseDashboardCredential(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	privateKey := newInferenceTokenTestKey(t)
+	publicKey := privateKey.public
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	keyID := mustUUIDV7(t)
 	userID := mustUUIDV7(t)
@@ -47,14 +48,9 @@ func TestParseDashboardCredential(t *testing.T) {
 }
 
 func TestParseDashboardCredentialRejectsExpiredAndWrongSignature(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	otherPublicKey, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	privateKey := newInferenceTokenTestKey(t)
+	publicKey := privateKey.public
+	otherPublicKey := newInferenceTokenTestKey(t).public
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	token := signDashboardToken(t, privateKey, dashboardTokenClaims{
 		Audience:  inferenceTokenAudience,
@@ -76,11 +72,40 @@ func TestParseDashboardCredentialRejectsExpiredAndWrongSignature(t *testing.T) {
 	}
 }
 
-func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+func TestDashboardTokenRequiresBothSignatureComponents(t *testing.T) {
+	privateKey := newInferenceTokenTestKey(t)
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	token := signDashboardToken(t, privateKey, dashboardTokenClaims{
+		Audience:  inferenceTokenAudience,
+		ExpiresAt: now.Add(15 * time.Minute).Unix(),
+		IssuedAt:  now.Unix(),
+		Issuer:    inferenceTokenIssuer,
+		JWTID:     mustUUIDV7(t),
+		Scope:     inferenceTokenScope,
+		SessionID: mustUUIDV7(t),
+		Subject:   mustUUIDV7(t),
+	})
+	cut := strings.LastIndexByte(token, '.')
+	signature, err := base64.RawURLEncoding.DecodeString(token[cut+1:])
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := verifyDashboardToken(token, privateKey.public, now); err != nil {
+		t.Fatalf("valid token was rejected: %v", err)
+	}
+	for _, index := range []int{0, mldsa.MLDSA65SignatureSize} {
+		changed := bytes.Clone(signature)
+		changed[index] ^= 1
+		forged := token[:cut+1] + base64.RawURLEncoding.EncodeToString(changed)
+		if _, err := verifyDashboardToken(forged, privateKey.public, now); err == nil {
+			t.Fatalf("token with a changed signature byte %d was accepted", index)
+		}
+	}
+}
+
+func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
+	privateKey := newInferenceTokenTestKey(t)
+	publicKey := privateKey.public
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
 	token := signDashboardToken(t, privateKey, dashboardTokenClaims{
 		Audience:  inferenceTokenAudience,
@@ -146,9 +171,34 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 
 }
 
-func signDashboardToken(t *testing.T, privateKey ed25519.PrivateKey, claims dashboardTokenClaims) string {
+type inferenceTokenTestKey struct {
+	mldsa   *mldsa.PrivateKey
+	ed25519 ed25519.PrivateKey
+	public  *inferenceTokenKey
+}
+
+func newInferenceTokenTestKey(t *testing.T) inferenceTokenTestKey {
 	t.Helper()
-	header := dashboardTokenHeader{Algorithm: "EdDSA", Type: "JWT"}
+	mldsaKey, err := mldsa.GenerateKey(mldsa.MLDSA65())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ed25519Public, ed25519Key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, err := parseInferenceTokenPublicKey(
+		base64.RawURLEncoding.EncodeToString(append(mldsaKey.PublicKey().Bytes(), ed25519Public...)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inferenceTokenTestKey{mldsa: mldsaKey, ed25519: ed25519Key, public: public}
+}
+
+func signDashboardToken(t *testing.T, privateKey inferenceTokenTestKey, claims dashboardTokenClaims) string {
+	t.Helper()
+	header := dashboardTokenHeader{Algorithm: inferenceTokenAlgorithm, Type: "JWT"}
 	headerJSON, err := json.Marshal(header)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +209,13 @@ func signDashboardToken(t *testing.T, privateKey ed25519.PrivateKey, claims dash
 	}
 	unsigned := base64.RawURLEncoding.EncodeToString(headerJSON) + "." +
 		base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signature := ed25519.Sign(privateKey, []byte(unsigned))
+	digest := sha512.Sum512([]byte(unsigned))
+	representative := append([]byte(compositePrefix+compositeLabel+"\x00"), digest[:]...)
+	signature, err := privateKey.mldsa.Sign(nil, representative, &mldsa.Options{Context: compositeLabel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature = append(signature, ed25519.Sign(privateKey.ed25519, representative)...)
 	return unsigned + "." + base64.RawURLEncoding.EncodeToString(signature)
 }
 
