@@ -4,23 +4,3 @@
 // majority of independent sources agree. The kernel sets the flag again when
 // its error bound reaches 16 seconds, about nine hours without agreement.
 package clock
-
-import (
-	"context"
-	"fmt"
-	"time"
-)
-
-const pollInterval = time.Second
-
-// Wait returns once synchronized reports true or ctx ends.
-func Wait(ctx context.Context, synchronized func() bool) error {
-	for !synchronized() {
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("clock is not synchronized: %w", ctx.Err())
-		case <-time.After(pollInterval):
-		}
-	}
-	return nil
-}
