@@ -649,6 +649,8 @@ func authorizationResultError(result string) error {
 	switch result {
 	case "invalid_key", "hold_missing":
 		return ErrInvalidAPIKey
+	case "key_exposed":
+		return ErrAPIKeyExposed
 	case "params_mismatch", "authorization_closed", "expired":
 		// The gateway's own parameters or clock failed these checks, not the caller.
 		return fmt.Errorf("%w: authorization %s", ErrGatewayUnavailable, result)
