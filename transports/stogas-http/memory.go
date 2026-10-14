@@ -396,20 +396,27 @@ func (l *requestMemoryLease) shrink(bytes int) {
 	}
 }
 
-func (l *requestMemoryLease) release() {
+func (l *requestMemoryLease) release() { l.reclaim() }
+
+// reclaim releases the lease from any goroutine and returns the bytes it gave
+// back to admission. Its owner's later growth fails.
+func (l *requestMemoryLease) reclaim() int64 {
 	if l == nil || l.admission == nil {
-		return
+		return 0
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.released.CompareAndSwap(false, true) {
-		if l.parent != nil {
-			l.parent.unpin(l.class, l.weight-l.retained)
-		} else {
-			l.admission.release(l.class, l.weight-l.retained)
-		}
-		l.weight = l.retained
+	if !l.released.CompareAndSwap(false, true) {
+		return 0
 	}
+	freed := l.weight - l.retained
+	l.weight = l.retained
+	if l.parent != nil {
+		l.parent.unpin(l.class, freed)
+		return 0
+	}
+	l.admission.release(l.class, freed)
+	return freed
 }
 
 func (l *requestMemoryLease) pin(class memoryReservationClass, bytes int64) bool {

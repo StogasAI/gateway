@@ -88,7 +88,7 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 		}()
 		var prefix [6]byte
 		if _, err := io.ReadFull(outerBody, prefix[:]); err != nil {
-			ctx.writer.WriteHeader(http.StatusBadRequest)
+			writeSessionReadError(ctx, err)
 			return
 		}
 		input := io.MultiReader(bytes.NewReader(prefix[:]), outerBody)
@@ -114,12 +114,7 @@ func (s *Server) sessionTransport(next requestHandler) requestHandler {
 		incoming, encoded, err := channel.Accept(s.sessions, bufio.NewReaderSize(input, serverReadBufferSize))
 		if err != nil {
 			closeUnreadRequest(ctx)
-			if errors.Is(err, channel.ErrSessionCapacity) {
-				ctx.writer.Header().Set("Retry-After", "1")
-				ctx.writer.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			ctx.writer.WriteHeader(http.StatusBadRequest)
+			writeSessionReadError(ctx, err)
 			return
 		}
 		defer incoming.Close()
@@ -183,7 +178,7 @@ func (s *Server) openSession(ctx *requestContext, input io.Reader, deadline time
 	n, err := io.ReadFull(input, hello[:])
 	if n != channel.ClientSetupBytes || !errors.Is(err, io.ErrUnexpectedEOF) {
 		closeUnreadRequest(ctx)
-		ctx.writer.WriteHeader(http.StatusBadRequest)
+		writeSessionReadError(ctx, err)
 		return
 	}
 	id, response, err := s.sessions.Open(setupContext, hello[:n])
@@ -197,6 +192,17 @@ func (s *Server) openSession(ctx *requestContext, input io.Reader, deadline time
 	if _, err := boundedResponse(ctx).Write(response); err != nil {
 		s.sessions.Remove(id)
 	}
+}
+
+// Memory pressure can end an upload, and a full session store can refuse one;
+// the client may retry both. Other read failures are the client's.
+func writeSessionReadError(ctx *requestContext, err error) {
+	if errors.Is(err, errRequestMemoryCapacity) || errors.Is(err, channel.ErrSessionCapacity) {
+		ctx.writer.Header().Set("Retry-After", "1")
+		ctx.writer.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	ctx.writer.WriteHeader(http.StatusBadRequest)
 }
 
 func parseSessionMetadata(encoded []byte) (sessionRequestMetadata, error) {
