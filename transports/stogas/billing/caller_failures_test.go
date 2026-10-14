@@ -27,36 +27,30 @@ func TestTerminalBackoffUsesFinalOutcomeAndKeepsEventFacts(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Service{}
 			started := time.Now().Add(-time.Second)
-			a := &Authorization{KeyID: "key", OrganizationID: "org", dashboardAdmissionIdentity: "dashboard:actor:session", admissionStartedAt: started}
-			identities := []string{"key:key", "dashboard:actor:session"}
-			for _, key := range identities {
-				s.callerFailures.record(key, started.Add(-time.Second))
-			}
+			a := &Authorization{admissionKey: "api:secret", admissionStartedAt: started}
+			s.callerFailures.record(a.admissionKey, started.Add(-time.Second))
 			before := tc.event
 			before.ProviderAttempts = append([]ProviderAttempt(nil), tc.event.ProviderAttempts...)
 			s.recordRequestOutcome(a, tc.event)
 			if !reflect.DeepEqual(before, tc.event) {
 				t.Fatal("backoff changed logged outcome")
 			}
-			for _, key := range identities {
-				shard := &s.callerFailures.shards[localAdmissionShard(key)]
-				entry, exists := shard.entries[key]
-				if tc.clears && exists || !tc.clears && !exists {
-					t.Fatalf("%s: unexpected cache state", key)
-				}
-				if tc.unchanged && !entry.lastFailedAt.Equal(started.Add(-time.Second)) {
-					t.Fatal("cancellation changed failure state")
-				}
-				if !tc.clears && entry.failures != 1 {
-					t.Fatalf("%s failures: %d", key, entry.failures)
-				}
+			entry, exists := s.callerFailures.shards[localAdmissionShard(a.admissionKey)].entries[a.admissionKey]
+			if tc.clears && exists || !tc.clears && !exists {
+				t.Fatal("unexpected cache state")
+			}
+			if tc.unchanged && !entry.lastFailedAt.Equal(started.Add(-time.Second)) {
+				t.Fatal("cancellation changed failure state")
+			}
+			if !tc.clears && entry.failures != 1 {
+				t.Fatalf("failures: %d", entry.failures)
 			}
 		})
 	}
 	for _, status := range []string{"authentication_error", "permission_error", "over_budget", "rate_limited", "timeout", "connection_error", "provider_unavailable", "provider_overloaded", "provider_error", "invalid_response", "invalid_request", "model_unavailable", "context_length_exceeded", "request_too_large", "invalid_image", "content_filter", "unknown"} {
 		s := &Service{}
-		s.recordRequestOutcome(&Authorization{KeyID: "key", OrganizationID: "org"}, RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: status}}})
-		if len(s.callerFailures.shards[localAdmissionShard("key:key")].entries) != 1 {
+		s.recordRequestOutcome(&Authorization{admissionKey: "api:secret"}, RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: status}}})
+		if len(s.callerFailures.shards[localAdmissionShard("api:secret")].entries) != 1 {
 			t.Fatalf("%s did not back off", status)
 		}
 	}
@@ -183,20 +177,20 @@ func TestFailureCooldownUnderContinuousTraffic(t *testing.T) {
 func TestRejectedRetryFloodCannotExtendCooldown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := &Service{}
-		claims := &APIKeyClaims{KeyID: "key", OrganizationID: "org"}
+		claims := &APIKeyClaims{admissionKey: "api:secret"}
 		s.RecordCallerFailure(claims, nil, 503, "provider_unavailable")
 		for range 1000 {
-			if s.callerBackoff(claims, nil, time.Now()) == nil {
+			if s.callerBackoff(claims.admissionKey, time.Now()) == nil {
 				t.Fatal("cooldown allowed an early retry")
 			}
 			s.RecordCallerFailure(claims, nil, 429, ErrAbuseRateLimit.Code)
 		}
 		time.Sleep(25 * time.Millisecond)
-		if s.callerBackoff(claims, nil, time.Now()) != nil {
+		if s.callerBackoff(claims.admissionKey, time.Now()) != nil {
 			t.Fatal("rejected retries prolonged cooldown")
 		}
 		s.RecordCallerFailure(claims, nil, 503, "provider_unavailable")
-		if delay := s.callerFailures.get("key:key", time.Now()); delay != 25*time.Millisecond {
+		if delay := s.callerFailures.get(claims.admissionKey, time.Now()); delay != 25*time.Millisecond {
 			t.Fatalf("retry after cooldown retained penalty: %s", delay)
 		}
 	})

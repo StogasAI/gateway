@@ -29,6 +29,9 @@ type APIKeyClaims struct {
 	GrantID        *string
 	OrganizationID string
 	ResponsibleID  string
+	// admissionKey names the verified secret for caller backoff. Rotation keeps
+	// the key ID, so a replaced secret must not share the new secret's backoff.
+	admissionKey string
 }
 
 func parseSignedAPIKey(rawKey string, apiKeyPepper string) (*APIKeyClaims, error) {
