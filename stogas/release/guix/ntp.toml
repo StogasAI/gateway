@@ -8,7 +8,10 @@ single-step-panic-threshold = 1
 
 # A source counts only after eight measurements at the minimum interval, so a
 # four-second minimum gives the first agreed time about 30 seconds after boot.
-# Later polls keep the daemon defaults: 16 seconds at first, up to 1024.
+# Later polls keep the daemon defaults: 16 seconds at first, up to 1024. The
+# kernel also sets its unsynchronized flag when it changes clocksource, and the
+# daemon clears it at its next update, so gateway readiness ignores the flag
+# for up to the maximum interval (clock.maxPoll).
 [source-defaults]
 poll-interval-limits = { min = 2, max = 10 }
 initial-poll-interval = 4

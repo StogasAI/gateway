@@ -103,7 +103,7 @@ func newCurrentEvidence(environment string) (*currentEvidence, error) {
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("evidence redirects are not permitted")
 	}}
-	return &currentEvidence{verifier: core, client: client, origins: origins, now: time.Now, synchronized: clock.Synchronized}, nil
+	return &currentEvidence{verifier: core, client: client, origins: origins, now: time.Now, synchronized: clock.Tolerant(clock.Synchronized, time.Now)}, nil
 }
 
 func (e *currentEvidence) close() {
