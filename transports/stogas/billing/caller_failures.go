@@ -17,43 +17,35 @@ func (e *retryAfterError) Unwrap() error             { return ErrAbuseRateLimit 
 func (e *retryAfterError) StatusCode() int           { return 429 }
 func (e *retryAfterError) RetryAfter() time.Duration { return e.delay }
 
+// callerAdmissionKey names the credential that caller backoff applies to: the
+// verified API key secret, or the dashboard actor's session. Sibling keys, a
+// key's replaced secret and other sessions never share it; aggregate
+// organization admission is separate.
+func callerAdmissionKey(claims *APIKeyClaims, dashboard *DashboardCredential) string {
+	if dashboard != nil {
+		return dashboardAdmissionKey(dashboard)
+	}
+	if claims != nil {
+		return claims.admissionKey
+	}
+	return ""
+}
+
 // RecordCallerFailure accepts only locally verified identities. Failed work,
-// including dependency failures, consumes the same brief per-key backoff.
-// Sibling keys never inherit it; aggregate organization admission is separate.
-// Cancellation and rejected retries do not extend a cooldown.
+// including dependency failures, consumes the same brief backoff. Cancellation
+// and rejected retries do not extend a cooldown.
 func (s *Service) RecordCallerFailure(claims *APIKeyClaims, dashboard *DashboardCredential, status int, code string) {
 	if s == nil || status < 400 || status == 408 || status == 499 || code == ErrAbuseRateLimit.Code {
 		return
 	}
-	now := time.Now()
-	if claims != nil && claims.KeyID != "" && claims.OrganizationID != "" {
-		s.callerFailures.record("key:"+claims.KeyID, now)
-	}
-	if dashboard != nil {
-		s.callerFailures.record(dashboardAdmissionKey(dashboard), now)
-	}
+	s.callerFailures.record(callerAdmissionKey(claims, dashboard), time.Now())
 }
 
-func (s *Service) callerBackoff(claims *APIKeyClaims, dashboard *DashboardCredential, now time.Time) error {
-	var delay time.Duration
-	if claims != nil {
-		delay = s.callerFailures.get("key:"+claims.KeyID, now)
-	}
-	if dashboard != nil {
-		actorDelay := s.callerFailures.get(dashboardAdmissionKey(dashboard), now)
-		delay = max(delay, actorDelay)
-	}
-	if delay > 0 {
+func (s *Service) callerBackoff(admissionKey string, now time.Time) error {
+	if delay := s.callerFailures.get(admissionKey, now); delay > 0 {
 		return &retryAfterError{delay: delay}
 	}
 	return nil
-}
-
-func (s *Service) recordRequestSuccess(keyID, dashboardIdentity string, started time.Time) {
-	s.callerFailures.succeeded("key:"+keyID, started)
-	if dashboardIdentity != "" {
-		s.callerFailures.succeeded(dashboardIdentity, started)
-	}
 }
 
 // A successful hold is not a successful request: clearing here would let
@@ -63,16 +55,10 @@ func (s *Service) recordRequestOutcome(authorization *Authorization, event Reque
 		return
 	}
 	if event.GatewayError == nil && len(event.ProviderAttempts) > 0 && event.ProviderAttempts[len(event.ProviderAttempts)-1].Status == "success" {
-		s.recordRequestSuccess(authorization.KeyID, authorization.dashboardAdmissionIdentity, authorization.admissionStartedAt)
+		s.callerFailures.succeeded(authorization.admissionKey, authorization.admissionStartedAt)
 		return
 	}
-	now := time.Now()
-	if authorization.KeyID != "" && authorization.OrganizationID != "" {
-		s.callerFailures.record("key:"+authorization.KeyID, now)
-	}
-	if authorization.dashboardAdmissionIdentity != "" {
-		s.callerFailures.record(authorization.dashboardAdmissionIdentity, now)
-	}
+	s.callerFailures.record(authorization.admissionKey, time.Now())
 }
 
 type callerFailureEntry struct {

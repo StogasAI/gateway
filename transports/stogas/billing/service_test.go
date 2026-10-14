@@ -91,16 +91,9 @@ func TestParseSignedAPIKeyRejectsZeroIssuanceEntropy(t *testing.T) {
 		"019de516-b10f-786f-97f8-b95c71dfe1b6",
 		"",
 		apiKeyVersion)
-	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
-	if err != nil {
-		t.Fatalf("decode key: %v", err)
-	}
-	clear(body[68:84])
-	hasher := hmac.New(sha256.New, []byte(secret))
-	_, _ = hasher.Write(body[:apiKeyPayloadBytes])
-	copy(body[apiKeyPayloadBytes:], hasher.Sum(nil)[:apiKeyMACBytes])
+	rawKey = resignTestAPIKey(t, secret, rawKey, func(payload []byte) { clear(payload[68:84]) })
 
-	if _, err := parseSignedAPIKey(apiKeyPrefix+base64.RawURLEncoding.EncodeToString(body), secret); err == nil {
+	if _, err := parseSignedAPIKey(rawKey, secret); err == nil {
 		t.Fatal("expected zero issuance entropy to be rejected")
 	}
 }
@@ -122,10 +115,25 @@ func testSignedAPIKey(t testing.TB, secret string, keyID string, organizationID 
 	for index := 68; index < apiKeyPayloadBytes; index++ {
 		payload[index] = byte(index - 67)
 	}
+	return signTestAPIKeyPayload(secret, payload)
+}
+
+// resignTestAPIKey changes a signed key's payload and signs it again.
+func resignTestAPIKey(t testing.TB, secret string, rawKey string, change func(payload []byte)) string {
+	t.Helper()
+	body, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(rawKey, apiKeyPrefix))
+	if err != nil {
+		t.Fatalf("decode key: %v", err)
+	}
+	payload := body[:apiKeyPayloadBytes:apiKeyPayloadBytes]
+	change(payload)
+	return signTestAPIKeyPayload(secret, payload)
+}
+
+func signTestAPIKeyPayload(secret string, payload []byte) string {
 	hasher := hmac.New(sha256.New, []byte(secret))
 	_, _ = hasher.Write(payload)
-	body := append(payload, hasher.Sum(nil)[:apiKeyMACBytes]...)
-	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(body)
+	return apiKeyPrefix + base64.RawURLEncoding.EncodeToString(append(payload, hasher.Sum(nil)[:apiKeyMACBytes]...))
 }
 
 func TestParseUSDRejectsNoncanonicalOrOutOfRangeValues(t *testing.T) {

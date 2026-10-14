@@ -85,23 +85,23 @@ type authorizeRow struct {
 }
 
 type Authorization struct {
-	releaseFinalization        func()
-	admissionStartedAt         time.Time
-	dashboardAdmissionIdentity string
-	AuthorizedBilledCostUSD    *money.USD
-	AvailableBalanceUSD        *money.USD
-	CreatedAt                  time.Time
-	GrantID                    *string
-	KeyID                      string
-	OrganizationID             string
-	ProductKey                 string
-	ProviderKey                string
-	RequestID                  string
-	UserID                     string
-	UpstreamByok               string
-	UpstreamByokSecret         string
-	AzureBinding               *AzureBinding
-	UpstreamTargetJSON         string
+	releaseFinalization     func()
+	admissionStartedAt      time.Time
+	admissionKey            string
+	AuthorizedBilledCostUSD *money.USD
+	AvailableBalanceUSD     *money.USD
+	CreatedAt               time.Time
+	GrantID                 *string
+	KeyID                   string
+	OrganizationID          string
+	ProductKey              string
+	ProviderKey             string
+	RequestID               string
+	UserID                  string
+	UpstreamByok            string
+	UpstreamByokSecret      string
+	AzureBinding            *AzureBinding
+	UpstreamTargetJSON      string
 }
 
 type UpstreamTarget struct {
@@ -287,6 +287,7 @@ func (s *Service) parseVerifiedAPIKey(rawAPIKey string) (*APIKeyClaims, string, 
 	if err != nil {
 		return nil, "", cacheKey, err
 	}
+	claims.admissionKey = cacheKey
 	s.apiKeys.put(cacheKey, claims)
 	return claims, apiKeyHash, cacheKey, nil
 }
@@ -299,7 +300,7 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if err := s.callerBackoff(claims, nil, time.Now()); err != nil {
+	if err := s.callerBackoff(claims.admissionKey, time.Now()); err != nil {
 		return claims, err
 	}
 	if retryAfter := s.localRequests.allow("org:"+claims.OrganizationID, time.Now()); retryAfter > 0 {
@@ -320,7 +321,7 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), time.Now()); ok {
 		credential.Claims = snapshot.Claims
 	}
-	if err := s.callerBackoff(credential.Claims, credential, time.Now()); err != nil {
+	if err := s.callerBackoff(cacheKey, time.Now()); err != nil {
 		return credential, err
 	}
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
@@ -358,7 +359,7 @@ func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey st
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if err := s.callerBackoff(claims, nil, time.Now()); err != nil {
+	if err := s.callerBackoff(claims.admissionKey, time.Now()); err != nil {
 		return nil, err
 	}
 
@@ -398,7 +399,7 @@ func (s *Service) AuthorizeDashboardRequestWithDuration(
 	if credential == nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if err := s.callerBackoff(credential.Claims, credential, time.Now()); err != nil {
+	if err := s.callerBackoff(dashboardAdmissionKey(credential), time.Now()); err != nil {
 		return nil, err
 	}
 	return s.authorizeResolvedRequest(
@@ -602,7 +603,7 @@ func (s *Service) authorizeResolvedRequest(
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, admissionKey: callerAdmissionKey(claims, dashboard), AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		releaseFinalization = nil // Ownership follows the accepted request through settlement.
 		if upstreamByok == "" {
 			return authorization, ErrByok
@@ -635,9 +636,6 @@ func (s *Service) authorizeResolvedRequest(
 			return authorization, ErrByok
 		}
 		authorization.admissionStartedAt = started
-		if dashboard != nil {
-			authorization.dashboardAdmissionIdentity = dashboardAdmissionKey(dashboard)
-		}
 		return authorization, nil
 	default:
 		return nil, fmt.Errorf("unknown hold authorization result: %s", row.Result)
@@ -677,10 +675,6 @@ func authorizationResultError(result string) error {
 	default:
 		return nil
 	}
-}
-
-func apiKeyRejectionCacheKey(rawAPIKey string, apiKeyPepper string) string {
-	return "api:" + hashAPIKey(rawAPIKey, apiKeyPepper)
 }
 
 func dashboardAdmissionKey(credential *DashboardCredential) string {

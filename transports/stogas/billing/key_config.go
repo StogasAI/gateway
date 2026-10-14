@@ -114,7 +114,7 @@ func (s *Service) ConfigForDashboard(
 		return nil, err
 	}
 	credential.Claims = snapshot.Claims
-	if err := s.callerBackoff(snapshot.Claims, credential, time.Now()); err != nil {
+	if err := s.callerBackoff(dashboardAdmissionKey(credential), time.Now()); err != nil {
 		return snapshot, err
 	}
 	// Dashboard tokens sign the actor/session, not the caller-selected key ID.
