@@ -30,9 +30,12 @@ const (
 	// OpenTelemetry's initial retry interval and Fluent Bit's backoff base,
 	// randomized by half in either direction as OpenTelemetry does.
 	retryDelay = 5 * time.Second
-	// The previous delivery concurrency, now applied per receiver host and still
-	// unmeasured. HTTP/2 multiplexes deliveries within each connection.
-	maxConnsPerHost = 4
+	// An organization starts at most 60 requests a second, and HTTP/1.1 carries
+	// one delivery per connection, so 32 connections keep up while a receiver
+	// answers within about half a second, as one on another continent does.
+	// Go 1.27 measured about 45 KiB per open connection. HTTP/2 multiplexes
+	// deliveries within each connection.
+	maxConnsPerHost = 32
 	shutdownDrain   = 5 * time.Second
 	// Go 1.27 measured about 13 KiB per delivery waiting for an HTTP/1.1
 	// connection and 19 KiB per HTTP/2 stream, mostly goroutine stacks.
