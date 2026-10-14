@@ -38,8 +38,35 @@ func (l *testLease) Release() {
 	l.used = 0
 	l.mu.Unlock()
 }
+
+// Each lease, including each connection's, gets the same limit.
 func testOptions(local bool, limit int) Options {
 	return Options{Local: local, NewLease: func() Lease { return &testLease{limit: limit} }}
+}
+
+// budgetLease spends one budget shared by every lease.
+type budgetLease struct {
+	mu     sync.Mutex
+	spent  *atomic.Int64
+	budget int64
+	used   int64
+}
+
+func (l *budgetLease) Grow(n int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.spent.Add(int64(n)) > l.budget {
+		l.spent.Add(-int64(n))
+		return false
+	}
+	l.used += int64(n)
+	return true
+}
+func (l *budgetLease) Release() {
+	l.mu.Lock()
+	l.spent.Add(-l.used)
+	l.used = 0
+	l.mu.Unlock()
 }
 func testRecord(id string) map[string]any {
 	return map[string]any{"request_id": id, "billed_cost_usd": "0.001", "meters": map[string]any{}}
@@ -162,6 +189,37 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 	}
 }
 
+func TestConnectionsSpendSharedMemoryUntilClosed(t *testing.T) {
+	var received atomic.Int32
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		received.Add(1)
+	}))
+	defer receiver.Close()
+	var spent atomic.Int64
+	export := func(budget int64) Diagnostics {
+		e := New(context.Background(), Options{Local: true, NewLease: func() Lease { return &budgetLease{spent: &spent, budget: budget} }})
+		e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
+		await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
+		// The finished record is released; only the idle connection stays charged.
+		if budget > connectionBytes && spent.Load() != connectionBytes {
+			t.Fatalf("idle connection charge = %d", spent.Load())
+		}
+		e.Close()
+		if spent.Load() != 0 {
+			t.Fatalf("closed exporter kept %d bytes", spent.Load())
+		}
+		return e.Diagnostics()
+	}
+	// The record fits, but its connection does not.
+	if d := export(16384 + deliveryStateBytes); received.Load() != 0 || d.MemoryDropped != 1 || d.Failed != 0 {
+		t.Fatalf("connection opened without memory: %+v", d)
+	}
+	if d := export(1 << 20); received.Load() != 1 || d.Delivered != 1 {
+		t.Fatalf("charged connection did not deliver: %+v", d)
+	}
+}
+
 // Only OTLP's transient statuses and network failures earn the one retry.
 func TestRetryPolicyAndNoRedirect(t *testing.T) {
 	var redirected atomic.Int32
@@ -215,7 +273,7 @@ func retryCases(t *testing.T, target string) {
 				w.WriteHeader(status)
 			}))
 			defer receiver.Close()
-			e := New(context.Background(), testOptions(true, 16384+deliveryStateBytes))
+			e := New(context.Background(), testOptions(true, connectionBytes))
 			e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
 			e.Close()
@@ -303,7 +361,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 	}))
 	defer receiver.Close()
 	defer close(release)
-	e := New(context.Background(), testOptions(true, 16384+deliveryStateBytes))
+	e := New(context.Background(), testOptions(true, connectionBytes))
 	config := testConfig(receiver.URL)
 	var workers sync.WaitGroup
 	for w := range 6 {
@@ -427,7 +485,7 @@ func TestHostileReceiverResponsesStayBounded(t *testing.T) {
 				tc.respond(w)
 			}))
 			defer receiver.Close()
-			e := New(context.Background(), testOptions(true, 16384+deliveryStateBytes))
+			e := New(context.Background(), testOptions(true, connectionBytes))
 			defer e.Close()
 			e.Start(testConfig(receiver.URL)).Finish("id", testRecord("id"), testMetadata())
 			await(t, func() bool { return e.Diagnostics().PendingDeliveries == 0 })
@@ -442,7 +500,7 @@ func TestHostedDeliveryRejectsLoopbackHostnames(t *testing.T) {
 	var received atomic.Int32
 	receiver := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { received.Add(1) }))
 	defer receiver.Close()
-	e := New(context.Background(), testOptions(false, 16384+deliveryStateBytes))
+	e := New(context.Background(), testOptions(false, connectionBytes))
 	defer e.Close()
 	roots := x509.NewCertPool()
 	roots.AddCert(receiver.Certificate())
