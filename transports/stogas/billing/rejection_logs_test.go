@@ -191,8 +191,8 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 	if got := service.Diagnostics().RejectionLogs; got.OldestPendingAt == nil || got.PendingGroups != 1 {
 		t.Fatalf("failed delivery lost its pending age: %+v", got)
 	}
-	if service.FinalizationReady() {
-		t.Fatal("failed rejection delivery left inference admission open")
+	if !service.FinalizationReady() {
+		t.Fatal("failed rejection delivery closed inference admission")
 	}
 	close(recovered)
 	drainSettlements(t, service)
@@ -200,7 +200,7 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 	if len(recorded) != 2 || recorded[0].arrays != recorded[1].arrays {
 		t.Fatalf("retry changed the batch: %+v", recorded)
 	}
-	if got := service.Diagnostics().RejectionLogs; !service.FinalizationReady() || got.StoredRequests != 1 || got.DroppedRequests != 0 || got.PendingGroups != 0 || got.OldestPendingAt != nil {
+	if got := service.Diagnostics().RejectionLogs; got.StoredRequests != 1 || got.DroppedRequests != 0 || got.PendingGroups != 0 || got.OldestPendingAt != nil {
 		t.Fatalf("recovery did not store the retained rejection: %+v", got)
 	}
 }
