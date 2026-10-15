@@ -23,9 +23,11 @@ type LocalAdmissionDiagnostics struct {
 	AuthorizationAttempts     uint64 `json:"authorizationAttempts"`
 	AuthorizationInFlight     int64  `json:"authorizationInFlight"`
 	AuthorizationPeakInFlight int64  `json:"authorizationPeakInFlight"`
-	// Authorizations that waited for an earlier one of their organization, and
-	// those that waited until their deadline.
+	// Authorizations that waited for an earlier one of their organization in
+	// this gateway, those that PostgreSQL found it busy for, and those that
+	// waited until their deadline.
 	OrganizationWaits     uint64     `json:"organizationWaits"`
+	OrganizationBusy      uint64     `json:"organizationBusy"`
 	OrganizationTimeouts  uint64     `json:"organizationTimeouts"`
 	RejectionCacheHits    uint64     `json:"rejectionCacheHits"`
 	RejectionCacheLookups uint64     `json:"rejectionCacheLookups"`
@@ -120,12 +122,13 @@ func (l *authorizationActivity) recordInFlight(value int64) {
 }
 
 // organizationSlots runs one authorization at a time for each organization.
-// An organization's authorizations wait for each other on its balance row, so
-// running more at once would only take more of the pool and of the database's
-// shared connections from every other organization. The rest wait in order,
-// holding nothing.
+// An organization's authorizations wait for each other on its rows, so running
+// more at once would only take more of the pool and of the database's shared
+// connections from every other organization. The rest wait in order, holding
+// nothing. PostgreSQL bounds them across gateways in the same way.
 type organizationSlots struct {
 	waits    atomic.Uint64
+	busy     atomic.Uint64
 	timeouts atomic.Uint64
 	shards   [localAdmissionShards]organizationSlotShard
 }
@@ -207,6 +210,7 @@ func localAdmissionDiagnostics(
 	}
 	if organizations != nil {
 		result.OrganizationWaits = organizations.waits.Load()
+		result.OrganizationBusy = organizations.busy.Load()
 		result.OrganizationTimeouts = organizations.timeouts.Load()
 	}
 	if rejections != nil {

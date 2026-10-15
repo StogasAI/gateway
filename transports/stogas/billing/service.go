@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
+	"math/rand/v2"
 	"sync/atomic"
 	"time"
 
@@ -24,7 +25,12 @@ const (
 	// the authorization deadline, so a statement that starts can finish. One
 	// cut off loses its connection and needs a close, which under overload
 	// costs the pool more than the requests it fails.
-	authorizeStatementReserve  = 250 * time.Millisecond
+	authorizeStatementReserve = 250 * time.Millisecond
+	// An authorization that finds its organization busy runs again after a
+	// random pause below a limit that starts here and doubles each time up to
+	// organizationBusyMaxPause.
+	organizationBusyPause      = time.Millisecond
+	organizationBusyMaxPause   = 32 * time.Millisecond
 	holdSettlementExpiryBuffer = 20 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference, so a hold that outlives it
@@ -526,50 +532,68 @@ func (s *Service) authorizeResolvedRequest(
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	defer releaseSlot()
-	// A statement that never left the gateway cannot have created a hold, so it
-	// needs no close. An exhausted pool or an unreachable database then gets
-	// no extra calls from the requests it already failed.
-	conn, err := s.db.pool.Acquire(waitCtx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
-	}
-	err = conn.QueryRow(
-		queryCtx,
-		s.authorizeHoldQuery,
-		apiKeyHashValue,
-		requestKeyID,
-		dashboardActorUserID,
-		dashboardSessionID,
-		requestID,
-		holdID,
-		providerKey,
-		productKey,
-		estimatedUpstreamCostUSD,
-		expiresAt,
-		holdParamsHash,
-		nullableString(upstreamTargetJSON),
-		nullableString(credentialKeyID),
-		authorizeBefore,
-		usage.Tokens,
-		expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
-		snapshot.CredentialsGeneration,
-		string(selectionJSON),
-		selectedPolicy.Versions,
-		matchedRules,
-		usage.InputTextBytes,
-		nullableString(s.nodeID),
-	).Scan(
-		&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
-	)
-	conn.Release()
-	releaseSlot()
-	if err != nil {
-		if !pgconn.SafeToRetry(err) {
-			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
-			releaseFinalization = nil
+	// PostgreSQL runs only a few of an organization's authorizations at once,
+	// from all gateways together, and answers the rest that the organization is
+	// busy. Those run again after a pause, keeping the slot and no connection.
+	for limit := organizationBusyPause; ; limit = min(2*limit, organizationBusyMaxPause) {
+		// A statement that never left the gateway cannot have created a hold, so
+		// it needs no close. An exhausted pool or an unreachable database then
+		// gets no extra calls from the requests it already failed.
+		conn, err := s.db.pool.Acquire(waitCtx)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 		}
-		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+		err = conn.QueryRow(
+			queryCtx,
+			s.authorizeHoldQuery,
+			apiKeyHashValue,
+			requestKeyID,
+			dashboardActorUserID,
+			dashboardSessionID,
+			requestID,
+			holdID,
+			providerKey,
+			productKey,
+			estimatedUpstreamCostUSD,
+			expiresAt,
+			holdParamsHash,
+			nullableString(upstreamTargetJSON),
+			nullableString(credentialKeyID),
+			authorizeBefore,
+			usage.Tokens,
+			expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
+			snapshot.CredentialsGeneration,
+			string(selectionJSON),
+			selectedPolicy.Versions,
+			matchedRules,
+			usage.InputTextBytes,
+			nullableString(s.nodeID),
+		).Scan(
+			&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
+		)
+		conn.Release()
+		if err != nil {
+			releaseSlot()
+			if !pgconn.SafeToRetry(err) {
+				s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
+				releaseFinalization = nil
+			}
+			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+		}
+		if row.Result != "organization_busy" {
+			break
+		}
+		if limit == organizationBusyPause {
+			s.organizationSlots.busy.Add(1)
+		}
+		if !sleepContext(waitCtx, rand.N(limit)) {
+			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+				s.organizationSlots.timeouts.Add(1)
+			}
+			return nil, fmt.Errorf("%w: organization busy", ErrGatewayUnavailable)
+		}
 	}
+	releaseSlot()
 
 	if resultErr := authorizationResultError(row.Result); resultErr != nil {
 		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {
