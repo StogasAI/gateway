@@ -76,6 +76,7 @@ type State struct {
 	responsesNextSequence   int
 	chatToolCalls           map[uint16]providerChatToolCall
 	chatToolCallIDs         map[string]uint16
+	providerToolSet         *providerToolSet
 	responsesToolCallIDs    map[string]string
 	responsesToolCalls      int
 	responsesDeclaredCalls  int

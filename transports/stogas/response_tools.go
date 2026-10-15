@@ -23,7 +23,7 @@ func validProviderHTTPURL(value string) bool {
 
 func validProviderLogProb(token string, probability float64, bytes []int) bool {
 	if !utf8.ValidString(token) || math.IsNaN(probability) || math.IsInf(probability, 0) || probability > 0 ||
-		strings.ContainsRune(token, '\x00') || len(bytes) > 64 {
+		strings.ContainsRune(token, '\x00') {
 		return false
 	}
 	for _, value := range bytes {
@@ -1175,36 +1175,37 @@ func providerResponsesURLAllowed(state *State, wanted schemas.ResponsesToolType,
 		return false
 	}
 	hostname := strings.ToLower(parsed.Hostname())
-	enabled := make(map[schemas.ResponsesToolType]bool)
-	for _, rawType := range effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes()) {
-		enabled[canonicalResponsesToolType(rawType)] = true
-	}
-	for _, tool := range state.Resolution.RawTools() {
-		toolType := canonicalResponsesToolType(rawString(tool["type"]))
-		matches := toolType == wanted || wanted == schemas.ResponsesToolTypeWebSearch && toolType == schemas.ResponsesToolTypeWebSearchPreview
-		if !matches || !enabled[toolType] {
+	for _, tool := range state.providerTools().web {
+		if tool.kind != wanted && (wanted != schemas.ResponsesToolTypeWebSearch || tool.kind != schemas.ResponsesToolTypeWebSearchPreview) {
 			continue
 		}
-		filters, hasFilters := rawObject(tool["filters"])
-		if !hasFilters {
+		if !tool.filtered {
 			return true
 		}
-		allowed, allowedOK := providerResponseDomains(filters["allowed_domains"])
-		blocked, blockedOK := providerResponseDomains(filters["blocked_domains"])
-		if !allowedOK || !blockedOK {
+		if !tool.valid {
 			return false
 		}
-		if providerDomainMatches(hostname, blocked) {
+		if providerDomainMatches(hostname, tool.blocked) {
 			continue
 		}
-		if len(allowed) == 0 || providerDomainMatches(hostname, allowed) {
+		if len(tool.allowed) == 0 || providerDomainMatches(hostname, tool.allowed) {
 			return true
 		}
 	}
 	return false
 }
 
-func providerResponseDomains(raw json.RawMessage) ([]string, bool) {
+func readProviderWebTool(kind schemas.ResponsesToolType, raw json.RawMessage) providerWebTool {
+	filters, filtered := rawObject(raw)
+	if !filtered {
+		return providerWebTool{kind: kind}
+	}
+	allowed, allowedOK := providerResponseDomains(filters["allowed_domains"])
+	blocked, blockedOK := providerResponseDomains(filters["blocked_domains"])
+	return providerWebTool{kind: kind, filtered: true, valid: allowedOK && blockedOK, allowed: allowed, blocked: blocked}
+}
+
+func providerResponseDomains(raw json.RawMessage) (map[string]bool, bool) {
 	if len(raw) == 0 {
 		return nil, true
 	}
@@ -1212,19 +1213,25 @@ func providerResponseDomains(raw json.RawMessage) ([]string, bool) {
 	if json.Unmarshal(raw, &domains) != nil {
 		return nil, false
 	}
-	for index := range domains {
-		domains[index] = strings.ToLower(strings.TrimSpace(domains[index]))
+	set := make(map[string]bool, len(domains))
+	for _, domain := range domains {
+		set[strings.ToLower(strings.TrimSpace(domain))] = true
 	}
-	return domains, true
+	return set, true
 }
 
-func providerDomainMatches(hostname string, domains []string) bool {
-	for _, domain := range domains {
-		if hostname == domain || strings.HasSuffix(hostname, "."+domain) {
+// providerDomainMatches reports whether hostname is a listed domain or one of its subdomains.
+func providerDomainMatches(hostname string, domains map[string]bool) bool {
+	for {
+		if domains[hostname] {
 			return true
 		}
+		_, parent, found := strings.Cut(hostname, ".")
+		if !found {
+			return false
+		}
+		hostname = parent
 	}
-	return false
 }
 
 func validProviderRFC3339(value string) bool {
@@ -1677,11 +1684,8 @@ func validateProviderResponsesOutputText(state *State, output *schemas.Responses
 }
 
 func validateProviderResponsesLogProbs(values []schemas.ResponsesOutputMessageContentTextLogProb) error {
-	if len(values) > maxProviderResponseItems {
-		return ErrProviderResponseMalformed
-	}
 	for _, value := range values {
-		if !validProviderLogProb(value.Token, value.LogProb, value.Bytes) || len(value.TopLogProbs) > 20 {
+		if !validProviderLogProb(value.Token, value.LogProb, value.Bytes) {
 			return ErrProviderResponseMalformed
 		}
 		for _, top := range value.TopLogProbs {
@@ -1737,58 +1741,118 @@ func validProviderCacheControl(value *schemas.CacheControl) bool {
 	return value.TTL == nil || *value.TTL == "5m" || *value.TTL == "1h"
 }
 
+// providerToolSet records what a request lets the provider call. It is read once per
+// request, so checking an output event costs the same however many tools the request declares.
+type providerToolSet struct {
+	// types holds the canonical Responses tool types that tool_choice leaves enabled.
+	types map[schemas.ResponsesToolType]bool
+	// names holds the declared tools that tool_choice lets the provider call by name.
+	names map[providerToolName]bool
+	// web holds the enabled hosted web tools in request order.
+	web []providerWebTool
+}
+
+type providerToolName struct {
+	kind schemas.ResponsesToolType
+	name string
+}
+
+type providerWebTool struct {
+	kind schemas.ResponsesToolType
+	// filtered marks a tool with domain filters; valid is false when they cannot be read.
+	filtered, valid  bool
+	allowed, blocked map[string]bool
+}
+
+func (s *State) providerTools() *providerToolSet {
+	if s.providerToolSet == nil {
+		s.providerToolSet = readProviderTools(s.Resolution)
+	}
+	return s.providerToolSet
+}
+
+func readProviderTools(resolution *catalog.ResolvedRequest) *providerToolSet {
+	tools := &providerToolSet{types: map[schemas.ResponsesToolType]bool{}, names: map[providerToolName]bool{}}
+	if resolution == nil {
+		return tools
+	}
+	chat := resolution.Route == catalog.RouteChat
+	// An object tool_choice can limit named calls to selected tools; nil leaves all of them.
+	var selected map[providerToolName]bool
+	choice := resolution.RawBody()["tool_choice"]
+	if mode, ok := rawStringValue(choice); ok {
+		if mode == "none" {
+			return tools
+		}
+	} else if object, ok := rawObject(choice); ok {
+		selected = selectedProviderTools(chat, object)
+	}
+	if !chat {
+		for _, rawType := range effectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes()) {
+			tools.types[canonicalResponsesToolType(rawType)] = true
+		}
+	}
+	for _, tool := range resolution.RawTools() {
+		var name providerToolName
+		if chat {
+			function, ok := rawObject(tool["function"])
+			if !ok || rawString(tool["type"]) != "function" {
+				continue
+			}
+			name = providerToolName{schemas.ResponsesToolTypeFunction, rawString(function["name"])}
+		} else {
+			name = providerToolName{canonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}
+			switch name.kind {
+			case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebSearchPreview, schemas.ResponsesToolTypeWebFetch:
+				if tools.types[name.kind] {
+					tools.web = append(tools.web, readProviderWebTool(name.kind, tool["filters"]))
+				}
+				continue
+			}
+		}
+		if selected == nil || selected[name] {
+			tools.names[name] = true
+		}
+	}
+	return tools
+}
+
+func selectedProviderTools(chat bool, object map[string]json.RawMessage) map[providerToolName]bool {
+	if chat {
+		function, ok := rawObject(object["function"])
+		if !ok {
+			return nil
+		}
+		return map[providerToolName]bool{{schemas.ResponsesToolTypeFunction, rawString(function["name"])}: true}
+	}
+	if rawString(object["type"]) == "allowed_tools" {
+		selected := map[providerToolName]bool{}
+		var allowed []map[string]json.RawMessage
+		if json.Unmarshal(object["tools"], &allowed) == nil {
+			for _, tool := range allowed {
+				selected[providerToolName{canonicalResponsesToolType(rawString(tool["type"])), rawString(tool["name"])}] = true
+			}
+		}
+		return selected
+	}
+	kind := canonicalResponsesToolType(rawString(object["type"]))
+	if kind != schemas.ResponsesToolTypeFunction && kind != schemas.ResponsesToolTypeCustom {
+		return nil
+	}
+	return map[providerToolName]bool{{kind, rawString(object["name"])}: true}
+}
+
 func providerResponsesToolTypeAllowed(state *State, wanted schemas.ResponsesToolType) bool {
 	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteResponses {
 		return false
 	}
-	for _, rawType := range effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes()) {
-		if canonicalResponsesToolType(rawType) == wanted ||
-			wanted == schemas.ResponsesToolTypeWebSearch && canonicalResponsesToolType(rawType) == schemas.ResponsesToolTypeWebSearchPreview {
-			return true
-		}
-	}
-	return false
+	types := state.providerTools().types
+	return types[wanted] || wanted == schemas.ResponsesToolTypeWebSearch && types[schemas.ResponsesToolTypeWebSearchPreview]
 }
 
 func providerResponsesToolNameAllowed(state *State, kind schemas.ResponsesToolType, name string) bool {
-	if !validClientToolName(name) || !providerResponsesToolTypeAllowed(state, kind) {
-		return false
-	}
-	declared := false
-	for _, tool := range state.Resolution.RawTools() {
-		if canonicalResponsesToolType(rawString(tool["type"])) == kind && rawString(tool["name"]) == name {
-			declared = true
-			break
-		}
-	}
-	if !declared {
-		return false
-	}
-	choice := state.Resolution.RawBody()["tool_choice"]
-	if selected, ok := rawStringValue(choice); ok {
-		return selected != "none"
-	}
-	object, ok := rawObject(choice)
-	if !ok {
-		return true
-	}
-	if rawString(object["type"]) == "allowed_tools" {
-		var allowed []map[string]json.RawMessage
-		if err := json.Unmarshal(object["tools"], &allowed); err != nil {
-			return false
-		}
-		for _, tool := range allowed {
-			if canonicalResponsesToolType(rawString(tool["type"])) == kind && rawString(tool["name"]) == name {
-				return true
-			}
-		}
-		return false
-	}
-	selectedType := canonicalResponsesToolType(rawString(object["type"]))
-	if selectedType != schemas.ResponsesToolTypeFunction && selectedType != schemas.ResponsesToolTypeCustom {
-		return true
-	}
-	return selectedType == kind && rawString(object["name"]) == name
+	return validClientToolName(name) && providerResponsesToolTypeAllowed(state, kind) &&
+		state.providerTools().names[providerToolName{kind, name}]
 }
 
 func sameProviderResponsesItem(left, right providerResponsesItem) bool {

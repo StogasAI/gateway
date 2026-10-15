@@ -107,7 +107,7 @@ func providerReasoningMatchesDetails(reasoning *string, details []schemas.ChatRe
 }
 
 func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMessageToolCall, streaming bool) error {
-	if len(calls) > maxClientTools {
+	if len(calls) > maxProviderResponseItems {
 		return ErrProviderResponseMalformed
 	}
 	seen := make(map[uint16]struct{}, len(calls))
@@ -120,7 +120,7 @@ func validateProviderChatToolCalls(state *State, calls []schemas.ChatAssistantMe
 		if !streaming {
 			index = uint16(position)
 		}
-		if int(index) >= maxClientTools {
+		if int(index) >= maxProviderResponseItems {
 			return ErrProviderResponseMalformed
 		}
 		if _, duplicate := seen[index]; duplicate {
@@ -273,12 +273,11 @@ func validateProviderChatLogProbs(logProbs *schemas.BifrostLogProbs) error {
 	if logProbs == nil {
 		return nil
 	}
-	if logProbs.TextCompletionLogProb != nil || len(logProbs.Content) > maxProviderResponseItems ||
-		len(logProbs.Refusal) > maxProviderResponseItems {
+	if logProbs.TextCompletionLogProb != nil {
 		return ErrProviderResponseMalformed
 	}
 	for _, value := range logProbs.Content {
-		if !validProviderLogProb(value.Token, value.LogProb, value.Bytes) || len(value.TopLogProbs) > 20 {
+		if !validProviderLogProb(value.Token, value.LogProb, value.Bytes) {
 			return ErrProviderResponseMalformed
 		}
 		for _, top := range value.TopLogProbs {
@@ -357,31 +356,6 @@ func validProviderFinishReason(state *State, value string) bool {
 }
 
 func providerChatToolNameAllowed(state *State, name string) bool {
-	if state == nil || state.Resolution == nil || state.Resolution.Route != catalog.RouteChat {
-		return false
-	}
-	declared := false
-	for _, tool := range state.Resolution.RawTools() {
-		if rawString(tool["type"]) != "function" {
-			continue
-		}
-		function, ok := rawObject(tool["function"])
-		if ok && rawString(function["name"]) == name {
-			declared = true
-			break
-		}
-	}
-	if !declared {
-		return false
-	}
-	choice := state.Resolution.RawBody()["tool_choice"]
-	if selected, ok := rawStringValue(choice); ok {
-		return selected != "none"
-	}
-	object, ok := rawObject(choice)
-	if !ok {
-		return true
-	}
-	function, ok := rawObject(object["function"])
-	return !ok || rawString(function["name"]) == name
+	return state != nil && state.Resolution != nil && state.Resolution.Route == catalog.RouteChat &&
+		state.providerTools().names[providerToolName{schemas.ResponsesToolTypeFunction, name}]
 }
