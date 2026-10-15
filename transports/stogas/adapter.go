@@ -496,18 +496,6 @@ func responsesExplicitMaxToolCalls(state *State) (int, bool) {
 	return rawIntegerValue(state.Resolution.RawBody()["max_tool_calls"])
 }
 
-func resolutionUsesToolType(state *State, toolType schemas.ResponsesToolType) bool {
-	if state == nil || state.Resolution == nil {
-		return false
-	}
-	for _, candidate := range state.Resolution.ToolTypes() {
-		if strings.EqualFold(strings.TrimSpace(candidate), string(toolType)) {
-			return true
-		}
-	}
-	return false
-}
-
 func (DefaultAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
 	return invalidRequest("Only function, custom, and priced hosted web search tools are supported")
 }

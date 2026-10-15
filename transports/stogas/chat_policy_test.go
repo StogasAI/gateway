@@ -668,51 +668,6 @@ func TestChatPolicyAllowsDeclaredFunctionToolChoice(t *testing.T) {
 	}
 }
 
-func TestClientToolDefinitionLimits(t *testing.T) {
-	chatTools := make([]map[string]any, maxClientTools)
-	responsesTools := make([]map[string]any, maxClientTools)
-	for index := 0; index < maxClientTools; index++ {
-		name := fmt.Sprintf("tool_%d", index)
-		chatTools[index] = map[string]any{"type": "function", "function": map[string]any{"name": name}}
-		responsesTools[index] = map[string]any{"type": "function", "name": name}
-	}
-	chatRaw, err := json.Marshal(chatTools)
-	if err != nil {
-		t.Fatalf("marshal Chat tools: %v", err)
-	}
-	if _, err := validateChatTools(chatRaw); err != nil {
-		t.Fatalf("128 Chat tools should pass: %v", err)
-	}
-
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi"}`),
-	})
-	if err != nil {
-		t.Fatalf("ResolveRequest returned error: %v", err)
-	}
-	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	responsesRaw, err := json.Marshal(responsesTools)
-	if err != nil {
-		t.Fatalf("marshal Responses tools: %v", err)
-	}
-	if _, err := parseResponsesTools(state, responsesRaw); err != nil {
-		t.Fatalf("128 Responses tools should pass: %v", err)
-	}
-
-	chatTools = append(chatTools, map[string]any{"type": "function", "function": map[string]any{"name": "overflow"}})
-	chatRaw, _ = json.Marshal(chatTools)
-	if _, err := validateChatTools(chatRaw); err == nil || !strings.Contains(err.Error(), "at most 128") {
-		t.Fatalf("129 Chat tools should fail closed, got %v", err)
-	}
-	responsesTools = append(responsesTools, map[string]any{"type": "function", "name": "overflow"})
-	responsesRaw, _ = json.Marshal(responsesTools)
-	if _, err := parseResponsesTools(state, responsesRaw); err == nil || !strings.Contains(err.Error(), "at most 128") {
-		t.Fatalf("129 Responses tools should fail closed, got %v", err)
-	}
-}
-
 func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing.T) {
 	tests := []struct {
 		anthropicWire bool

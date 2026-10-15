@@ -21,8 +21,6 @@ const (
 	maxMetadataKeyBytes      = 64
 	maxMetadataValueBytes    = 512
 	maxPromptCacheKeyBytes   = 256
-	maxClientTools           = 128
-	maxToolDescriptionBytes  = 1024
 	maxPortableStopSequences = 16
 	maxStopSequenceBytes     = 1024
 )
@@ -1094,9 +1092,6 @@ func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 	if err := sonic.Unmarshal(raw, &tools); err != nil {
 		return nil, invalidRequest("tools must be an array")
 	}
-	if len(tools) > maxClientTools {
-		return nil, invalidRequest("tools must contain at most 128 definitions")
-	}
 	refs := make([]chatToolRef, 0, len(tools))
 	seenNames := make(map[string]bool, len(tools))
 	for index, tool := range tools {
@@ -1128,12 +1123,8 @@ func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 				return nil, invalidRequest(path + ".function.name duplicates another tool")
 			}
 			if description, ok := function["description"]; ok {
-				value, ok := rawStringValue(description)
-				if !ok {
+				if _, ok := rawStringValue(description); !ok {
 					return nil, invalidRequest(path + ".function.description must be a string")
-				}
-				if len(value) > maxToolDescriptionBytes {
-					return nil, invalidRequest(path + ".function.description exceeds 1024 bytes")
 				}
 			}
 			if parameters, ok := function["parameters"]; ok {

@@ -1888,3 +1888,118 @@ func TestReasoningStreamCompletionOwnsFinalEncryptedContent(t *testing.T) {
 		})
 	}
 }
+
+// Tool, description, domain and logprob counts follow each provider's own limits. The
+// gateway still binds every call and citation to the request.
+func TestToolAndLogprobScaleIsProviderOwned(t *testing.T) {
+	description := strings.Repeat("d", 4096)
+	var chatTools, responsesTools, allowed, domains []string
+	for index := range 300 {
+		chatTools = append(chatTools, fmt.Sprintf(`{"type":"function","function":{"name":"tool_%d","description":%q}}`, index, description))
+		responsesTools = append(responsesTools, fmt.Sprintf(`{"type":"function","name":"tool_%d","description":%q}`, index, description))
+	}
+	for index := range 200 {
+		allowed = append(allowed, fmt.Sprintf(`{"type":"function","name":"tool_%d"}`, index))
+		domains = append(domains, fmt.Sprintf(`"site%d.example"`, index))
+	}
+	domains = append(domains, `"example.com"`)
+	chatRequest := func(model, choice string) string {
+		return `{"model":"` + model + `","messages":[{"role":"user","content":"hi"}],"tools":[` + strings.Join(chatTools, ",") + `]` + choice + `}`
+	}
+	for _, model := range []string{"openai/gpt-5.6-luna", "anthropic-claude-sonnet-4-6"} {
+		if err := validateResolvedChat(t, chatRequest(model, "")); err != nil {
+			t.Fatalf("%s Chat tools rejected: %v", model, err)
+		}
+		if err := validateResolvedResponses(t, `{"model":"`+model+`","input":"hi","tools":[`+strings.Join(responsesTools, ",")+`]}`); err != nil {
+			t.Fatalf("%s Responses tools rejected: %v", model, err)
+		}
+	}
+
+	chatCalls := func(names ...string) *schemas.BifrostChatResponse {
+		response := validUnaryChatProviderResponse()
+		response.Choices[0].FinishReason = schemas.Ptr("tool_calls")
+		calls := make([]schemas.ChatAssistantMessageToolCall, len(names))
+		for index, name := range names {
+			calls[index] = schemas.ChatAssistantMessageToolCall{
+				Type: schemas.Ptr("function"), ID: schemas.Ptr(fmt.Sprintf("call_%d", index)),
+				Function: schemas.ChatAssistantMessageToolCallFunction{Name: schemas.Ptr(name), Arguments: `{}`},
+			}
+		}
+		response.Choices[0].ChatNonStreamResponseChoice.Message.ChatAssistantMessage = &schemas.ChatAssistantMessage{ToolCalls: calls}
+		return response
+	}
+	var parallel []string
+	for index := range 200 {
+		parallel = append(parallel, fmt.Sprintf("tool_%d", 299-index))
+	}
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("openai/gpt-5.6-luna", "")), chatCalls(parallel...), false); err != nil {
+		t.Fatalf("200 parallel calls to declared tools rejected: %v", err)
+	}
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, chatRequest("openai/gpt-5.6-luna", "")), chatCalls("tool_300"), false); !errors.Is(err, ErrProviderResponseMalformed) {
+		t.Fatalf("undeclared Chat tool error = %v, want malformed provider response", err)
+	}
+	named := chatRequest("openai/gpt-5.6-luna", `,"tool_choice":{"type":"function","function":{"name":"tool_250"}}`)
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, named), chatCalls("tool_250"), false); err != nil {
+		t.Fatalf("selected Chat tool rejected: %v", err)
+	}
+	if err := validateProviderChatResponse(resolvedChatValidationState(t, named), chatCalls("tool_251"), false); !errors.Is(err, ErrProviderResponseMalformed) {
+		t.Fatalf("unselected Chat tool error = %v, want malformed provider response", err)
+	}
+
+	responsesRequest := `{"model":"openai/gpt-5.6-luna","input":"hi","tools":[` + strings.Join(responsesTools, ",") +
+		`,{"type":"web_search","filters":{"allowed_domains":[` + strings.Join(domains, ",") + `]}}],` +
+		`"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[` + strings.Join(allowed, ",") + `,{"type":"web_search"}]}}`
+	for name, test := range map[string]struct {
+		item  schemas.ResponsesMessage
+		valid bool
+	}{
+		"allowed function":          {providerFunctionOutputItem("fc_1", "call_1", "tool_199"), true},
+		"declared but not allowed":  {providerFunctionOutputItem("fc_1", "call_1", "tool_200"), false},
+		"listed domain subdomain":   {providerWebSearchOutputItem("ws_1", "https://Docs.Example.COM/page"), true},
+		"domain with shared suffix": {providerWebSearchOutputItem("ws_1", "https://notexample.com/page"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := validUnaryResponsesProviderResponse("resp_scale")
+			response.Output = []schemas.ResponsesMessage{test.item}
+			err := validateProviderResponsesResponse(resolvedResponseValidationState(t, responsesRequest), response)
+			if test.valid && err != nil || !test.valid && !errors.Is(err, ErrProviderResponseMalformed) {
+				t.Fatalf("error = %v, want valid=%v", err, test.valid)
+			}
+		})
+	}
+
+	// OpenAI's tokenizers have tokens of up to 128 bytes, and one log probability per output token
+	// makes long answers carry thousands of entries.
+	long := strings.Repeat("=", 128)
+	longBytes := make([]int, len(long))
+	for index := range longBytes {
+		longBytes[index] = '='
+	}
+	top := make([]schemas.LogProb, 21)
+	for index := range top {
+		top[index] = schemas.LogProb{Token: long, LogProb: -2, Bytes: longBytes}
+	}
+	chatLogProbs := make([]schemas.ContentLogProb, 5000)
+	responsesLogProbs := make([]schemas.ResponsesOutputMessageContentTextLogProb, 5000)
+	for index := range chatLogProbs {
+		chatLogProbs[index] = schemas.ContentLogProb{Token: "a", LogProb: -0.1, Bytes: []int{'a'}}
+		responsesLogProbs[index] = schemas.ResponsesOutputMessageContentTextLogProb{Token: "a", LogProb: -0.1, Bytes: []int{'a'}}
+	}
+	chatLogProbs[0] = schemas.ContentLogProb{Token: long, LogProb: -1, Bytes: longBytes, TopLogProbs: top}
+	responsesLogProbs[0] = schemas.ResponsesOutputMessageContentTextLogProb{Token: long, LogProb: -1, Bytes: longBytes, TopLogProbs: top}
+	responsesState := resolvedResponseValidationState(t, `{"model":"openai/gpt-5.6-luna","input":"hi"}`)
+	if err := validateProviderChatLogProbs(&schemas.BifrostLogProbs{Content: chatLogProbs}); err != nil {
+		t.Fatalf("long Chat logprobs rejected: %v", err)
+	}
+	if err := validateProviderResponsesOutputText(responsesState, &schemas.ResponsesOutputMessageContentText{LogProbs: responsesLogProbs}); err != nil {
+		t.Fatalf("long Responses logprobs rejected: %v", err)
+	}
+	chatLogProbs[4999].LogProb = 0.5
+	if err := validateProviderChatLogProbs(&schemas.BifrostLogProbs{Content: chatLogProbs}); !errors.Is(err, ErrProviderResponseMalformed) {
+		t.Fatalf("positive Chat logprob error = %v, want malformed provider response", err)
+	}
+	responsesLogProbs[4999].Bytes = []int{256}
+	if err := validateProviderResponsesOutputText(responsesState, &schemas.ResponsesOutputMessageContentText{LogProbs: responsesLogProbs}); !errors.Is(err, ErrProviderResponseMalformed) {
+		t.Fatalf("out-of-range Responses byte error = %v, want malformed provider response", err)
+	}
+}

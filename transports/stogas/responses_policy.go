@@ -230,9 +230,6 @@ func parseResponsesTools(state *State, raw json.RawMessage) ([]schemas.Responses
 	if err := sonic.Unmarshal(raw, &rawTools); err != nil {
 		return nil, invalidRequest("tools must be an array")
 	}
-	if len(rawTools) > maxClientTools {
-		return nil, invalidRequest("tools must contain at most 128 definitions")
-	}
 	seenNames := make(map[string]bool, len(rawTools))
 	seenHostedTypes := make(map[schemas.ResponsesToolType]bool, len(rawTools))
 	for index, rawTool := range rawTools {
@@ -468,12 +465,8 @@ func validateResponsesToolDescription(raw json.RawMessage, path string) error {
 	if len(raw) == 0 {
 		return nil
 	}
-	value, ok := rawStringValue(raw)
-	if !ok {
+	if _, ok := rawStringValue(raw); !ok {
 		return invalidRequest(path + " must be a string")
-	}
-	if len(value) > maxToolDescriptionBytes {
-		return invalidRequest(path + " exceeds 1024 bytes")
 	}
 	return nil
 }
@@ -582,8 +575,8 @@ func validateResponsesDomainFilters(raw json.RawMessage, path string, allowBlock
 			continue
 		}
 		var domains []string
-		if err := sonic.Unmarshal(rawDomains, &domains); err != nil || len(domains) == 0 || len(domains) > 100 {
-			return invalidRequest(path + "." + key + " must contain 1 to 100 domains")
+		if err := sonic.Unmarshal(rawDomains, &domains); err != nil || len(domains) == 0 {
+			return invalidRequest(path + "." + key + " must be a non-empty array of domains")
 		}
 		for _, domain := range domains {
 			normalized := strings.ToLower(strings.TrimSpace(domain))
@@ -832,7 +825,7 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 		if !validClientToolName(name) {
 			return invalidRequest("tool_choice must name a " + string(selectedType) + " tool")
 		}
-		if !responsesNamedToolExists(tools, selectedType, name) {
+		if responsesNamedTools(tools)[name] != selectedType {
 			return invalidRequest("tool_choice selects an unknown " + string(selectedType) + " tool")
 		}
 		return nil
@@ -851,9 +844,10 @@ func validateResponsesToolChoice(state *State, raw json.RawMessage, tools []sche
 
 func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools []schemas.ResponsesTool) error {
 	var allowedTools []map[string]json.RawMessage
-	if err := sonic.Unmarshal(raw, &allowedTools); err != nil || len(allowedTools) == 0 || len(allowedTools) > maxClientTools {
-		return invalidRequest("tool_choice.allowed_tools requires 1 to 128 tools")
+	if err := sonic.Unmarshal(raw, &allowedTools); err != nil || len(allowedTools) == 0 {
+		return invalidRequest("tool_choice.allowed_tools requires at least one tool")
 	}
+	named := responsesNamedTools(tools)
 	seen := make(map[string]bool, len(allowedTools))
 	for index, allowed := range allowedTools {
 		path := fmt.Sprintf("tool_choice.tools[%d]", index)
@@ -870,7 +864,7 @@ func validateResponsesAllowedToolChoice(state *State, raw json.RawMessage, tools
 			if !validClientToolName(name) {
 				return invalidRequest("tool_choice.allowed_tools " + string(toolType) + " entries require name")
 			}
-			if !responsesNamedToolExists(tools, toolType, name) {
+			if named[name] != toolType {
 				return invalidRequest("tool_choice selects an unknown " + string(toolType) + " tool")
 			}
 			identity := string(toolType) + ":" + name
@@ -968,13 +962,16 @@ func responsesToolTypeExists(tools []schemas.ResponsesTool, toolType schemas.Res
 	return false
 }
 
-func responsesNamedToolExists(tools []schemas.ResponsesTool, toolType schemas.ResponsesToolType, name string) bool {
+// responsesNamedTools maps each function or custom tool name to its type. The two
+// types share one name space, so a name finds at most one declared tool.
+func responsesNamedTools(tools []schemas.ResponsesTool) map[string]schemas.ResponsesToolType {
+	named := make(map[string]schemas.ResponsesToolType, len(tools))
 	for _, tool := range tools {
-		if tool.Type == toolType && tool.Name != nil && *tool.Name == name {
-			return true
+		if tool.Name != nil && (tool.Type == schemas.ResponsesToolTypeFunction || tool.Type == schemas.ResponsesToolTypeCustom) {
+			named[*tool.Name] = tool.Type
 		}
 	}
-	return false
+	return named
 }
 
 func onlyRawKeys(object map[string]json.RawMessage, keys ...string) bool {
