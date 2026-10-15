@@ -76,6 +76,11 @@ func (l *ipAdmission) allow(remote string, setup bool, now time.Time) (time.Dura
 	if ip.IsUnspecified() || ip.IsMulticast() {
 		return 0, errIPAdmission
 	}
+	// A subscriber normally holds at least an IPv6 /64, so its addresses share
+	// one allowance instead of rotating through 2^64 of them.
+	if ip.Is6() {
+		ip = netip.PrefixFrom(ip, 64).Masked().Addr()
+	}
 	counters := &l.request
 	if setup {
 		counters = &l.setup

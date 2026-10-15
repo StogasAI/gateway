@@ -35,10 +35,18 @@ func TestIPAdmissionBudgetsCanonicalAddressesAndRefill(t *testing.T) {
 	if wait, err := l.allow("192.0.2.1:80", false, now.Add(time.Millisecond)); wait != 0 || err != nil {
 		t.Fatalf("refill: %v %v", wait, err)
 	}
-	for _, address := range []string{"192.0.2.2:80", "[2001:db8::1]:80", "[2001:db8::2]:80"} {
+	for _, address := range []string{"192.0.2.2:80", "[2001:db8::1]:80", "[2001:db8:0:1::1]:80"} {
 		if wait, err := l.allow(address, false, now); wait != 0 || err != nil {
 			t.Fatalf("independent address: %v %v", wait, err)
 		}
+	}
+	for i := range ipRequestBurst - 1 {
+		if wait, err := l.allow(fmt.Sprintf("[2001:db8::%x]:80", i+2), false, now); wait != 0 || err != nil {
+			t.Fatalf("IPv6 /64 burst %d: %v %v", i, wait, err)
+		}
+	}
+	if wait, err := l.allow("[2001:db8::ffff:ffff:ffff:ffff]:80", false, now); wait != time.Millisecond || err != nil {
+		t.Fatalf("another address in an exhausted /64: %v %v", wait, err)
 	}
 	for range ipSetupBurst {
 		if wait, err := l.allow("192.0.2.1:80", true, now); wait != 0 || err != nil {
