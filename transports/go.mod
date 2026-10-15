@@ -8,8 +8,8 @@ require (
 	cel.dev/cel-go v0.32.0
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.13.1
-	github.com/StogasAI/stogas/go v0.0.0-20261014200942-dd6f34ea7375
-	github.com/StogasAI/stogas/go/reference v0.0.0-20261014200942-dd6f34ea7375
+	github.com/StogasAI/stogas/go v0.0.0-20261015015354-ec1bf72c279b
+	github.com/StogasAI/stogas/go/reference v0.0.0-20261015015354-ec1bf72c279b
 	github.com/andybalholm/brotli v1.2.2
 	github.com/bytedance/sonic v1.15.3-0.20260730064818-2a36d6da63e2
 	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
