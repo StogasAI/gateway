@@ -33,6 +33,8 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 	db := newFakeSettlementDatabase(t, settleAll)
 	service := db.service
 	input := rejectionFixture()
+	// A future minute stays open until the drain, whenever the sender ticks.
+	input.CreatedAt = input.CreatedAt.Add(time.Hour).Truncate(rejectionLogWindow)
 	var callers sync.WaitGroup
 	for i := range 100 {
 		callers.Go(func() {
@@ -49,7 +51,7 @@ func TestRejectionLogsCountConcurrentRequestsAndKeepKeysReasonsAndWindowsSeparat
 	other = rejectionFixture()
 	service.RecordRejection(other)
 	other = input
-	other.CreatedAt = input.CreatedAt.Add(time.Second)
+	other.CreatedAt = input.CreatedAt.Add(rejectionLogWindow)
 	other.RequestID = uuid.Must(uuid.NewV7()).String()
 	service.RecordRejection(other)
 	drainSettlements(t, service)
@@ -124,7 +126,7 @@ func TestRejectionLogsKeepFirstRequestsIndividualAndBoundDeliveryBatches(t *test
 		}
 	}
 	before := service.Diagnostics().RejectionLogs
-	if before.PendingGroups != len(counts) || before.OldestPendingAt == nil || before.OldestPendingAt.After(time.Now()) {
+	if before.PendingGroups != len(counts) || before.OldestPendingAt != nil && before.OldestPendingAt.After(time.Now()) {
 		t.Fatalf("pending age must use queue arrival, not the request timestamp: %+v", before)
 	}
 	drainSettlements(t, service)
@@ -206,9 +208,10 @@ func TestRejectionLogsFlushWhenTrafficStopsAndRetryTheSameBatchUntilStored(t *te
 }
 
 func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
-	service := &Service{}
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
 	input := rejectionFixture()
-	input.CreatedAt = time.Now().Add(time.Hour).Truncate(time.Second)
+	input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow)
 	input.Code, input.RequestType = "secret-provider-message", "secret-client-path"
 	service.RecordRejection(input)
 	service.rejectionLogs.mu.Lock()
@@ -221,7 +224,7 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.rejectionLogs.mu.Unlock()
 	for i := 1; i <= rejectionLogPerKeyCapacity; i++ {
 		copy := input
-		copy.CreatedAt = input.CreatedAt.Add(time.Duration(i) * time.Second)
+		copy.CreatedAt = input.CreatedAt.Add(time.Duration(i) * rejectionLogWindow)
 		service.RecordRejection(copy)
 	}
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != rejectionLogPerKeyCapacity || got.DroppedRequests != 1 {
@@ -237,17 +240,16 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != rejectionLogCapacity || got.DroppedRequests != 2 {
 		t.Fatalf("process cap: %+v", got)
 	}
-	service.Close()
+	drainSettlements(t, service)
 	service.RecordRejection(input)
-	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.RecordedRequests != got.DroppedRequests {
+	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.DroppedRequests != 3 || got.StoredRequests != got.RecordedRequests-3 {
 		t.Fatalf("shutdown loss accounting: %+v", got)
 	}
 }
 
 func TestRejectionGroupsKeepDifferentPolicyVersionsSeparate(t *testing.T) {
-	s := &Service{}
-	defer s.Close()
-	// A future window stays buffered until Close drops it.
+	s := newFakeSettlementDatabase(t, settleAll).service
+	// A future window stays open until the end of the test.
 	at := time.Now().Add(time.Hour)
 	for i := 1; i <= 2; i++ {
 		s.RecordRejection(RejectionInput{Claims: &APIKeyClaims{KeyID: "key"}, RequestID: fmt.Sprint(i), Code: "policy_denied", StatusCode: 403, CreatedAt: at, PolicyVersions: &PolicyVersions{{Scope: "organization", ID: "org", Revision: i}, {Scope: "key", ID: "key", Revision: i}}})
@@ -256,5 +258,63 @@ func TestRejectionGroupsKeepDifferentPolicyVersionsSeparate(t *testing.T) {
 	defer s.rejectionLogs.mu.Unlock()
 	if len(s.rejectionLogs.groups) != 2 {
 		t.Fatal("different saved policies were counted as one rejection group")
+	}
+}
+
+// A repeating rejection adds its individual rows at once and one count when
+// its minute ends, whatever the traffic within the minute.
+func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *testing.T) {
+	service := &Service{}
+	b := &service.rejectionLogs
+	// Existing maps keep RecordRejection from starting the sender, so the test
+	// takes each batch itself.
+	b.groups, b.perKey = map[rejectionLogKey]*rejectionLogGroup{}, map[string]int{}
+	input := rejectionFixture()
+	record := func(at time.Time) {
+		copy := input
+		copy.RequestID, copy.CreatedAt = uuid.Must(uuid.NewV7()).String(), at
+		service.RecordRejection(copy)
+	}
+	settled := func() { b.pendingAt, b.pendingGroups = time.Time{}, 0 }
+	stamp := func(at time.Time) string { return at.Format("2006-01-02T15:04:05.000Z") }
+
+	minute := time.Now().UTC().Add(time.Hour).Truncate(rejectionLogWindow)
+	for i := range rejectionLogIndividualLimit + 2 {
+		record(minute.Add(time.Duration(i) * time.Second))
+	}
+	if got := b.snapshot(); got.OldestPendingAt == nil || got.OldestPendingAt.After(time.Now()) {
+		t.Fatalf("waiting individual rows must report their arrival: %+v", got)
+	}
+	if batch := b.nextBatch(minute.Add(10*time.Second), false); len(batch) != rejectionLogIndividualLimit {
+		t.Fatalf("sent %d rows inside the minute, want the %d individual rows", len(batch), rejectionLogIndividualLimit)
+	}
+	settled()
+	record(minute.Add(30 * time.Second))
+	if got := b.snapshot(); got.OldestPendingAt != nil || got.PendingGroups != 1 {
+		t.Fatalf("a count inside its minute must not look delayed: %+v", got)
+	}
+	if batch := b.nextBatch(minute.Add(59*time.Second), false); len(batch) != 0 {
+		t.Fatalf("sent %d rows before the minute ended", len(batch))
+	}
+	batch := b.nextBatch(minute.Add(rejectionLogWindow), false)
+	if len(batch) != 1 || batch[0].RequestCount != 3 || batch[0].CreatedAt != stamp(minute.Add(5*time.Second)) || batch[0].LastRequestAt != stamp(minute.Add(30*time.Second)) {
+		t.Fatalf("count row: %+v", batch)
+	}
+	settled()
+	if len(b.groups) != 0 || len(b.perKey) != 0 {
+		t.Fatal("an ended group kept its place")
+	}
+
+	// A rejection for a minute that has already ended ages from its arrival.
+	started := time.Now()
+	past := started.UTC().Add(-time.Hour).Truncate(rejectionLogWindow)
+	for range rejectionLogIndividualLimit + 1 {
+		record(past)
+	}
+	if got := b.snapshot(); got.OldestPendingAt == nil || got.OldestPendingAt.Before(started) {
+		t.Fatalf("a late rejection must age from its arrival, not its minute: %+v", got)
+	}
+	if batch := b.nextBatch(time.Now(), false); len(batch) != rejectionLogIndividualLimit+1 {
+		t.Fatalf("an ended minute sent %d rows, want its individual rows and count together", len(batch))
 	}
 }
