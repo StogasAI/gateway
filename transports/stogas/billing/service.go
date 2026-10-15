@@ -532,8 +532,8 @@ func (s *Service) authorizeResolvedRequest(
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	defer releaseSlot()
-	// PostgreSQL runs only a few of an organization's authorizations at once,
-	// from all gateways together, and answers the rest that the organization is
+	// PostgreSQL runs one of an organization's authorizations at a time, from
+	// all gateways together, and answers the others that the organization is
 	// busy. Those run again after a pause, keeping the slot and no connection.
 	for limit := organizationBusyPause; ; limit = min(2*limit, organizationBusyMaxPause) {
 		// A statement that never left the gateway cannot have created a hold, so
