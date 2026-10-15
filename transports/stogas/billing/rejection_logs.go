@@ -8,7 +8,12 @@ import (
 )
 
 const (
-	rejectionLogWindow          = time.Second
+	// Groups cover UTC minutes, the dashboard's smallest chart interval, so
+	// chart totals stay exact while a repeating rejection adds at most six
+	// rows a minute on each gateway.
+	rejectionLogWindow = time.Minute
+	// Individual rows and the counts of ended windows leave on the next tick.
+	rejectionLogInterval        = time.Second
 	rejectionLogIndividualLimit = 5
 	rejectionLogCapacity        = 4096
 	rejectionLogPerKeyCapacity  = 32
@@ -51,8 +56,13 @@ type rejectionLogRequest struct {
 type rejectionLogGroup struct {
 	// RequestEvent counts only repeats beyond the individual allowance.
 	RequestEvent
+	// Individual rows not yet handed to settlement, and how many the window
+	// has recorded. They leave at once; only the count waits for the window
+	// to end.
 	individual []rejectionLogRequest
-	queuedAt   time.Time
+	recorded   int
+	// When the oldest row in individual arrived.
+	queuedAt time.Time
 }
 
 type rejectionLogBuffer struct {
@@ -116,9 +126,10 @@ func (s *Service) RecordRejection(input RejectionInput) {
 		b.stop, b.done = make(chan struct{}), make(chan struct{})
 		go s.runRejectionLogs()
 	}
+	now := time.Now().UTC()
 	at := input.CreatedAt.UTC()
 	if at.IsZero() {
-		at = time.Now().UTC()
+		at = now
 	}
 	var versions [32]byte
 	if input.PolicyVersions != nil {
@@ -133,12 +144,16 @@ func (s *Service) RecordRejection(input RejectionInput) {
 			b.recordDropped(1)
 			return
 		}
-		group = &rejectionLogGroup{queuedAt: time.Now().UTC(), RequestEvent: NewRejectionEvent(input)}
+		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input)}
 		group.RequestCount = 0
 		b.groups[key] = group
 		b.perKey[input.Claims.KeyID]++
 	}
-	if len(group.individual) < rejectionLogIndividualLimit {
+	if group.recorded < rejectionLogIndividualLimit {
+		group.recorded++
+		if len(group.individual) == 0 {
+			group.queuedAt = now
+		}
 		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp})
 		return
 	}
@@ -169,10 +184,11 @@ func (b *rejectionLogBuffer) snapshot() RejectionLogDiagnostics {
 	defer b.mu.Unlock()
 	result := b.diagnostics
 	result.PendingGroups = len(b.groups) + b.pendingGroups
+	now := time.Now()
 	oldest := b.pendingAt
-	for _, group := range b.groups {
-		if oldest.IsZero() || group.queuedAt.Before(oldest) {
-			oldest = group.queuedAt
+	for key, group := range b.groups {
+		if at := group.readyAt(key, now); !at.IsZero() && (oldest.IsZero() || at.Before(oldest)) {
+			oldest = at
 		}
 	}
 	if !oldest.IsZero() {
@@ -181,20 +197,36 @@ func (b *rejectionLogBuffer) snapshot() RejectionLogDiagnostics {
 	return result
 }
 
+// readyAt reports when the group's oldest row that waits for settlement could
+// first be sent, or zero when none waits. A count waits for its window to end.
+// A group opened after its window ended holds individual rows until it leaves,
+// so its age follows their arrival.
+func (g *rejectionLogGroup) readyAt(key rejectionLogKey, now time.Time) time.Time {
+	if len(g.individual) > 0 {
+		return g.queuedAt
+	}
+	if ended := time.Unix(key.window, 0).Add(rejectionLogWindow); g.RequestCount > 0 && !ended.After(now) {
+		return ended
+	}
+	return time.Time{}
+}
+
 func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	current := now.Truncate(rejectionLogWindow).Unix()
 	var batch []RequestEvent
 	for key, group := range b.groups {
-		if !closing && key.window >= now.Truncate(rejectionLogWindow).Unix() {
-			continue
-		}
+		ended := closing || key.window < current
 		rows := len(group.individual)
-		if group.RequestCount > 0 {
+		if ended && group.RequestCount > 0 {
 			rows++
 		}
-		if len(batch)+rows > rejectionLogBatchSize {
+		if rows > 0 && len(batch)+rows > rejectionLogBatchSize {
 			break
+		}
+		if at := group.readyAt(key, now); !at.IsZero() && (b.pendingAt.IsZero() || at.Before(b.pendingAt)) {
+			b.pendingAt = at
 		}
 		for _, request := range group.individual {
 			event := group.RequestEvent
@@ -202,12 +234,15 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 			event.RequestCount = 1
 			batch = append(batch, event)
 		}
+		group.individual = nil
+		if !ended {
+			continue
+		}
 		if group.RequestCount > 0 {
 			batch = append(batch, group.RequestEvent)
 		}
-		b.pendingGroups++
-		if b.pendingAt.IsZero() || group.queuedAt.Before(b.pendingAt) {
-			b.pendingAt = group.queuedAt
+		if rows > 0 {
+			b.pendingGroups++
 		}
 		delete(b.groups, key)
 		b.perKey[key.keyID]--
@@ -224,7 +259,7 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 func (s *Service) runRejectionLogs() {
 	b := &s.rejectionLogs
 	defer close(b.done)
-	ticker := time.NewTicker(rejectionLogWindow)
+	ticker := time.NewTicker(rejectionLogInterval)
 	defer ticker.Stop()
 	closing := false
 	for {
