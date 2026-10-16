@@ -78,6 +78,8 @@ type finalizationState struct {
 	failedCalls atomic.Uint64
 	refused     atomic.Uint64
 	abandoned   atomic.Uint64
+	// Logs that a call left for the next one because their organization was busy.
+	deferred atomic.Uint64
 	// Unix nanoseconds of the last refused or abandoned log.
 	lastFailure    atomic.Int64
 	encodingFailed atomic.Bool
@@ -98,6 +100,7 @@ type SettlementDiagnostics struct {
 	FailedCalls     uint64     `json:"failedCalls"`
 	Refused         uint64     `json:"refused"`
 	Abandoned       uint64     `json:"abandoned"`
+	Deferred        uint64     `json:"deferred"`
 	LastFailedAt    *time.Time `json:"lastFailedAt,omitempty"`
 	UnderReserved   uint64     `json:"underReserved"`
 	NegativeBalance uint64     `json:"negativeBalance"`
@@ -402,6 +405,7 @@ func (s *Service) callSettlement(ctx context.Context, logs string, rejections st
 }
 
 func (s *Service) resolveSettlements(batch []*settlement, results map[string]string) {
+	var busy []*settlement
 	for _, item := range batch {
 		result, found := results[item.requestID]
 		if item.rejection {
@@ -415,6 +419,8 @@ func (s *Service) resolveSettlements(batch []*settlement, results map[string]str
 		switch result {
 		case "complete", "hold_not_found":
 			item.done <- nil
+		case "organization_busy":
+			busy = append(busy, item)
 		case "under_reserved":
 			s.underReservedSettlements.Add(1)
 			item.done <- nil
@@ -429,6 +435,20 @@ func (s *Service) resolveSettlements(batch []*settlement, results map[string]str
 			item.done <- &SettlementError{Reason: "unknown_result"}
 		}
 	}
+	s.finalizations.requeue(busy)
+}
+
+// requeue puts back the logs that settlement left because an authorization or
+// another call held their organization. They go first in the next call, which
+// starts after the usual interval.
+func (f *finalizationState) requeue(items []*settlement) {
+	if len(items) == 0 {
+		return
+	}
+	f.deferred.Add(uint64(len(items)))
+	f.mu.Lock()
+	f.logs = append(items, f.logs...)
+	f.mu.Unlock()
 }
 
 // contentError reports a database error that a log's contents can cause: a
@@ -601,6 +621,7 @@ func (s *Service) settlementDiagnostics() SettlementDiagnostics {
 	return SettlementDiagnostics{
 		Reserved: reserved, Capacity: finalizationCapacity, Queued: queued, Retrying: f.retrying.Load(),
 		Calls: f.calls.Load(), FailedCalls: f.failedCalls.Load(), Refused: f.refused.Load(), Abandoned: f.abandoned.Load(),
+		Deferred:      f.deferred.Load(),
 		LastFailedAt:  lastFailedAt,
 		UnderReserved: s.underReservedSettlements.Load(), NegativeBalance: s.negativeBalanceSettlements.Load(),
 		EncodingFailed: f.encodingFailed.Load(),
