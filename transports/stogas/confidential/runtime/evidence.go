@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"time"
 
 	verifier "github.com/StogasAI/stogas/go"
@@ -77,7 +78,7 @@ type currentEvidence struct {
 	client          *http.Client
 	origins         []evidenceOrigin
 	installed       [sha256.Size]byte
-	rejectedCatalog catalogRejection
+	refusedCatalogs []catalogRejection
 	now             func() time.Time
 	// now is trusted only while NTS keeps the guest clock synchronized.
 	synchronized func() bool
@@ -211,22 +212,19 @@ func (summary evidenceSummary) gateway(measurement string) (approvedGateway, boo
 	return selected, selected.ID != ""
 }
 
-func (summary evidenceSummary) catalog(gatewayID string) (approvedCatalog, bool) {
-	var gateway *approvedGateway
-	for i := range summary.Gateways {
-		if summary.Gateways[i].ID == gatewayID {
-			gateway = &summary.Gateways[i]
-			break
+// catalogs lists the approved catalogs compatible with an approved gateway release,
+// newest first. The verifier summary orders catalogs by increasing sequence.
+func (summary evidenceSummary) catalogs(gatewayID string) []approvedCatalog {
+	index := slices.IndexFunc(summary.Gateways, func(gateway approvedGateway) bool { return gateway.ID == gatewayID })
+	if index < 0 {
+		return nil
+	}
+	gateway := summary.Gateways[index].Release
+	var compatible []approvedCatalog
+	for _, catalog := range slices.Backward(summary.Catalogs) {
+		if catalog.Release.MinimumGatewaySequence <= gateway.Sequence {
+			compatible = append(compatible, catalog)
 		}
 	}
-	if gateway == nil {
-		return approvedCatalog{}, false
-	}
-	var selected approvedCatalog
-	for _, catalog := range summary.Catalogs {
-		if catalog.Release.MinimumGatewaySequence <= gateway.Release.Sequence && (selected.ID == "" || catalog.Release.Sequence > selected.Release.Sequence) {
-			selected = catalog
-		}
-	}
-	return selected, selected.ID != ""
+	return compatible
 }

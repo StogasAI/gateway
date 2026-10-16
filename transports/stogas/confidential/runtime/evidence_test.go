@@ -100,7 +100,7 @@ func fixtureAppraisal(t *testing.T, fixture bootEvidenceFixture) func(*verifier.
 		if identity.GatewayReleaseID != fixture.Boot.GatewayReleaseID || identity.NodeID == "" {
 			return errors.New("wrong boot identity")
 		}
-		if _, ok := summary.catalog(identity.GatewayReleaseID); !ok {
+		if len(summary.catalogs(identity.GatewayReleaseID)) == 0 {
 			return errors.New("no compatible catalog")
 		}
 		return nil

@@ -7,7 +7,7 @@ The open-source, OpenAI-compatible gateway that runs inside Stogas confidential 
 ## What it does
 
 - Serves Chat Completions and Responses over ordinary HTTPS, attested TLS, and end-to-end encryption over HTTPS.
-- Verifies the signed evidence for its environment before serving and loads the newest approved catalog for its release.
+- Verifies the signed evidence for its environment before serving and loads the newest approved catalog that its release can read.
 - Keeps credentials, decryption, provider calls, receipts, and response encryption inside the guest. `Stogas-Metadata: v1` returns a signed receipt for each request.
 - Applies organization policies, redaction, and opt-in plugins such as [export](https://stogas.ai/docs/plugins/export).
 
