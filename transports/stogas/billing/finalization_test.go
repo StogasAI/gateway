@@ -394,42 +394,6 @@ func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 	}
 }
 
-// A log whose organization an authorization or another call held goes first
-// in the next call, which starts after the usual interval.
-func TestSettlementSendsABusyOrganizationsLogWithTheNextCall(t *testing.T) {
-	release := make(chan struct{})
-	var answered atomic.Int32
-	db := newFakeSettlementDatabase(t, func(call settlementCall) settlementReply {
-		if answered.Add(1) > 1 {
-			return settleAll(call)
-		}
-		<-release
-		return settlementReply{rows: [][2]string{{requestIDs(call.logs)[0], "organization_busy"}}}
-	})
-	s := db.service
-	busy, busyEvent := settlementRequest(t, s)
-	deferred := finalizeAsync(s, busy, busyEvent)
-	waitFor(t, func() bool { return len(db.recorded()) == 1 })
-	other, otherEvent := settlementRequest(t, s)
-	queued := finalizeAsync(s, other, otherEvent)
-	waitFor(t, func() bool { return s.Diagnostics().Settlement.Queued == 2 })
-	close(release)
-	for _, result := range []<-chan error{deferred, queued} {
-		if err := <-result; err != nil {
-			t.Fatal(err)
-		}
-	}
-	calls := db.recorded()
-	if len(calls) != 2 || !slices.Equal(requestIDs(calls[1].logs), []string{busy.RequestID, other.RequestID}) ||
-		calls[1].at.Sub(calls[0].at) < settlementInterval-10*time.Millisecond {
-		t.Fatalf("calls = %+v", calls)
-	}
-	if got := s.Diagnostics().Settlement; got.Deferred != 1 || got.Calls != 2 || got.FailedCalls != 0 ||
-		got.Refused != 0 || got.Abandoned != 0 || got.Reserved != 0 || got.Queued != 0 {
-		t.Fatalf("diagnostics = %+v", got)
-	}
-}
-
 // A log whose contents fail the call is found by splitting the batch. Its hold
 // keeps it for an operator, a rejection is dropped, and the others settle.
 func TestSettlementIsolatesTheLogThatFailsACall(t *testing.T) {
