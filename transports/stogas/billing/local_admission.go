@@ -12,8 +12,8 @@ import (
 const (
 	localAdmissionShards          = 64
 	localAdmissionEntriesPerShard = 512
-	localRequestRatePerSecond     = 120
-	localRequestBurst             = 120
+	localRequestRatePerSecond     = 240
+	localRequestBurst             = 240
 )
 
 type LocalAdmissionDiagnostics struct {

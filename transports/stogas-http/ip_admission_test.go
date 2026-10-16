@@ -151,10 +151,10 @@ func TestIPAdmissionPrecedesBodiesAndCannotUseForwardingHeaders(t *testing.T) {
 func TestIPRequestBudgetAllowsSharedNetworkBurst(t *testing.T) {
 	l := newIPAdmission()
 	now := time.Unix(100, 0)
-	// Sixteen organizations at the platform's 60-RPS rate share one IP.
+	// Eight organizations at the platform's 120-RPS rate share one IP.
 	for second := range 5 {
-		for account := range 16 {
-			for range 60 {
+		for account := range 8 {
+			for range 120 {
 				wait, err := l.allow(fmt.Sprintf("192.0.2.1:%d", 1000+account), false, now.Add(time.Duration(second)*time.Second))
 				if wait != 0 || err != nil {
 					t.Fatalf("shared network denied: %v %v", wait, err)
