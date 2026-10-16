@@ -54,8 +54,9 @@ func TestStoreReclaimOrdersIdleSessionsAndProtectsOwnedState(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer store.Close()
+		grace := time.Duration(store.setup.idleSeconds) * time.Second
 		expired, _, _ := openStoredSession(t, store)
-		time.Sleep(time.Duration(store.setup.idleSeconds) * time.Second)
+		time.Sleep(grace + deliveryAllowance)
 		old, oldRoot, oldPublic := openStoredSession(t, store)
 		active, root, initialPublic := openStoredSession(t, store)
 		request, _, err := store.AcceptStart(active, 0, storedStart(t, root, active, initialPublic, 0))
@@ -71,7 +72,7 @@ func TestStoreReclaimOrdersIdleSessionsAndProtectsOwnedState(t *testing.T) {
 		pinned, _, _ := openStoredSession(t, store)
 		// Model the interval between pinning and first-record authentication.
 		store.sessions[pinned].pins++
-		time.Sleep(time.Minute)
+		time.Sleep(grace)
 		fresh, _, _ := openStoredSession(t, store)
 		invalid := storedStart(t, oldRoot, old, oldPublic, 0)
 		invalid[len(invalid)-1] ^= 1
@@ -99,7 +100,7 @@ func TestStoreReclaimOrdersIdleSessionsAndProtectsOwnedState(t *testing.T) {
 		if store.ReclaimIdle(10) != 1 {
 			t.Fatal("failed authentication must not refresh an idle session")
 		}
-		time.Sleep(time.Minute)
+		time.Sleep(grace)
 		if store.ReclaimIdle(10) != 2 || retained.Load() != 0 || store.idle.Len() != 0 {
 			t.Fatal("idle cleanup leaked memory or duplicate list entries")
 		}
@@ -122,7 +123,7 @@ func TestStoreReclamationRacingWithStartsNeverDestroysAnAdmittedRequest(t *testi
 	for range 10 {
 		store, retained := storeFixture(t, &setupReporter{})
 		id, root, initialPublic := openStoredSession(t, store)
-		store.sessions[id].lastUsed = time.Now().Add(-time.Minute)
+		store.sessions[id].lastUsed = time.Now().Add(-time.Duration(store.setup.idleSeconds) * time.Second)
 		start := make(chan struct{})
 		var workers sync.WaitGroup
 		for number := range uint64(16) {

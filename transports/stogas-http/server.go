@@ -233,12 +233,13 @@ func (s *Server) routes() error {
 		}
 	}
 	s.server = newServer(chain(dispatch, s.publicRequests, securityHeaders, s.ipRequestAdmission, cors, s.sessionTransport, s.publicAdmission, s.requestBodyAdmission, s.requestDecompression), false, &s.publicConnections)
-	privateHandler := func(path string, handler requestHandler) http.Handler {
-		mux := http.NewServeMux()
-		mux.Handle("GET "+path, handler)
-		return mux
-	}
-	s.readinessServer = newServer(privateHandler("/ready", s.readiness), true, &s.privateConnections)
+	// Shared pools check /ready. The pool that routes a node's encryption
+	// sessions checks /live, so it keeps delivering their requests while the
+	// node refuses them during a drain or pause.
+	checks := http.NewServeMux()
+	checks.Handle("GET /ready", requestHandler(s.readiness))
+	checks.Handle("GET /live", requestHandler(func(ctx *requestContext) { ctx.writer.WriteHeader(http.StatusNoContent) }))
+	s.readinessServer = newServer(checks, true, &s.privateConnections)
 	management := http.NewServeMux()
 	management.Handle("GET /diagnostics/v1", requestHandler(s.diagnostics))
 	management.Handle("POST /drain", requestHandler(s.drain))

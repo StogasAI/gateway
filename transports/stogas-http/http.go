@@ -51,13 +51,17 @@ func (s *Server) requireAdmission(ctx *requestContext) bool {
 }
 
 // The LB stops sending new connections to an unready gateway, but clients keep
-// the ones they have. Closing them moves clients to ready gateways: HTTP/1
-// closes after this response, HTTP/2 sends GOAWAY and finishes its other
-// streams, and the SDK retires the encrypted session.
+// the ones they have. A refusal tells the SDK that this gateway did not process
+// the request, so it retires the session or connection and sends the request
+// again through a new one. An encrypted response carries the mark inside the
+// session, where no proxy can add it. Otherwise HTTP/1 closes after this
+// response and HTTP/2 sends GOAWAY and finishes its other streams.
 func (s *Server) rejectAdmission(ctx *requestContext) {
-	ctx.writer.Header().Set("Connection", "close")
 	if response, ok := ctx.writer.(*sessionResponse); ok {
-		response.closing = true
+		response.refused = true
+	} else {
+		ctx.writer.Header().Set("Connection", "close")
+		ctx.writer.Header().Set("Stogas-Refused", "?1")
 	}
 	code, message := "gateway_unavailable", "Gateway is temporarily unavailable"
 	if s.requests.diagnostics().Draining {

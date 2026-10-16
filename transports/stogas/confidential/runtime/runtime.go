@@ -23,7 +23,9 @@ import (
 )
 
 const (
-	sessionIdleTimeout = 10 * time.Minute
+	// A drain waits for every session to expire, so this bounds how long an
+	// idle client keeps a draining VM. A new session costs one setup request.
+	sessionIdleTimeout = time.Minute
 	maxStartupWait     = 30 * time.Second
 )
 
@@ -352,7 +354,7 @@ func (r *Runtime) Drain() {
 			r.maintenance.drain()
 		}
 		if r.Sessions != nil {
-			r.Sessions.Close()
+			r.Sessions.Seal()
 		}
 		if r.shutdown != nil {
 			close(r.shutdown)

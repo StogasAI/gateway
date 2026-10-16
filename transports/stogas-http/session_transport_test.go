@@ -78,7 +78,7 @@ func newSessionHTTPFixtureWithReporter(t *testing.T, next requestHandler, http2 
 	}
 	t.Cleanup(func() { _ = batcher.Close(context.Background()) })
 	boot := attest.BootEvidence{Document: []byte(`{"fixture":"HTTP adapter only"}`), Inclusion: []byte(`{}`)}
-	setup, err := channel.NewServerSetup(attest.Production, boot, 10*time.Minute, batcher)
+	setup, err := channel.NewServerSetup(attest.Production, boot, time.Minute, batcher)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,7 +574,7 @@ func TestSessionHTTPCompletedUploadRejectedBeforeReadDoesNotCancelNextRequest(t 
 	}
 }
 
-func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testing.T) {
+func TestSessionHTTPRejectsBodyBeforeDispatch(t *testing.T) {
 	var dispatched atomic.Int64
 	f := newSessionHTTPFixture(t, func(ctx *requestContext) {
 		if _, err := io.ReadAll(ctx.request.Body); err != nil {
@@ -604,16 +604,48 @@ func TestSessionHTTPRejectsBodyBeforeDispatchAndAllowsCloseDuringDrain(t *testin
 	if dispatched.Load() != 0 {
 		t.Fatal("invalid input reached dispatch")
 	}
-	f.server.requests.start()
-	wire, decoder := f.request(t, metadata, []byte("undispatched request body"))
-	result, unavailable := readSessionResponse(t, f.post(t, wire, true), decoder)
-	if result.Status != 503 || !result.Closing || !bytes.Contains(unavailable, []byte("gateway_draining")) || dispatched.Load() != 0 {
-		t.Fatal("draining admitted work")
-	}
-	wire, decoder = f.request(t, []byte(`{"method":"DELETE","path":"/v1/session","headers":{}}`), nil)
-	result, _ = readSessionResponse(t, f.post(t, wire, true), decoder)
-	if result.Status != 204 {
-		t.Fatal("draining prevented authenticated cleanup")
+}
+
+// A request on a session must reach the gateway that owns it, which refuses it
+// inside the session. A closed listener would leave only an unauthenticated
+// proxy error, which the SDK cannot safely act on.
+func TestPublicDrainRefusesSessionRequestsUntilSessionsEnd(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		f := newSessionHTTPFixture(t, func(*requestContext) { t.Error("draining gateway dispatched a session request") }, http2)
+		f.server.server = f.endpoint.Config
+		f.server.sessions.Seal()
+		drained := make(chan struct{})
+		go func() { f.server.drainPublic(); close(drained) }()
+		for !f.server.requests.diagnostics().Draining {
+			time.Sleep(time.Millisecond)
+		}
+		_, hello := sessionTestHello(t)
+		setup := f.post(t, hello, false)
+		_, _ = io.Copy(io.Discard, setup.Body)
+		setup.Body.Close()
+		if setup.StatusCode != http.StatusServiceUnavailable || setup.Header.Get("Stogas-Refused") != "?1" {
+			t.Fatalf("draining gateway answered setup with %d", setup.StatusCode)
+		}
+		time.Sleep(1500 * time.Millisecond)
+		wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), []byte("undispatched request body"))
+		result, body := readSessionResponse(t, f.post(t, wire, true), decoder)
+		if result.Status != http.StatusServiceUnavailable || !result.Refused || !bytes.Contains(body, []byte("gateway_draining")) {
+			t.Fatal("draining gateway did not refuse inside the session")
+		}
+		select {
+		case <-drained:
+			t.Fatal("drain closed the listener while a session remained")
+		default:
+		}
+		wire, decoder = f.request(t, []byte(`{"method":"DELETE","path":"/v1/session","headers":{}}`), nil)
+		if result, _ := readSessionResponse(t, f.post(t, wire, true), decoder); result.Status != http.StatusNoContent {
+			t.Fatal("draining prevented authenticated cleanup")
+		}
+		select {
+		case <-drained:
+		case <-time.After(5 * time.Second):
+			t.Fatal("drain outlived its last session")
+		}
 	}
 }
 

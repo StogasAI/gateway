@@ -32,7 +32,7 @@ type sessionRequestMetadata struct {
 type sessionResponseMetadata struct {
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
-	Closing bool              `json:"closing,omitempty"`
+	Refused bool              `json:"refused,omitempty"`
 }
 
 // The ordinary request pipeline owns authorization, buffering and provider work.
@@ -251,7 +251,7 @@ type sessionResponse struct {
 	header  http.Header
 	status  int
 	started bool
-	closing bool
+	refused bool
 	err     error
 	input   *channel.Incoming
 	http1   bool
@@ -295,7 +295,7 @@ func (w *sessionResponse) start() error {
 			headers[name] = value
 		}
 	}
-	encoded, err := json.Marshal(sessionResponseMetadata{Status: w.status, Headers: headers, Closing: w.closing})
+	encoded, err := json.Marshal(sessionResponseMetadata{Status: w.status, Headers: headers, Refused: w.refused})
 	if err != nil || len(encoded) > serverReadBufferSize {
 		w.err = channel.ErrRecord
 		return w.err
