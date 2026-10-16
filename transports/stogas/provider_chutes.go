@@ -25,6 +25,7 @@ var chutesAllowedChatFields = map[string]bool{
 	"response_format":       true,
 	"safety_identifier":     true,
 	"seed":                  true,
+	"session_id":            true,
 	"stop":                  true,
 	"stream":                true,
 	"stream_options":        true,
