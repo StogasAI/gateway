@@ -73,6 +73,7 @@ func TestApprovedCatalogSelectionRespectsGatewayCompatibility(t *testing.T) {
 	var summary evidenceSummary
 	gateway := approvedGateway{ID: "gateway"}
 	gateway.Release.Sequence = 4
+	gateway.Release.MinimumCatalogSequence = 2
 	summary.Gateways = []approvedGateway{gateway}
 	makeCatalog := func(id string, sequence, minimum uint64) approvedCatalog {
 		value := approvedCatalog{ID: id}
@@ -91,6 +92,10 @@ func TestApprovedCatalogSelectionRespectsGatewayCompatibility(t *testing.T) {
 	}
 	if summary.catalogs("unapproved") != nil {
 		t.Fatal("selected catalog for unapproved gateway")
+	}
+	summary.Gateways[0].Release.MinimumCatalogSequence = 3
+	if catalogs := summary.catalogs("gateway"); len(catalogs) != 1 || catalogs[0].ID != "compatible" {
+		t.Fatalf("selected %v, want only catalogs the gateway reads", catalogs)
 	}
 	summary.Catalogs = summary.Catalogs[2:]
 	if len(summary.catalogs("gateway")) != 0 {

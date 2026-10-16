@@ -97,6 +97,15 @@
                               (string-append
                                (scm->json-string launch-policies-value) "\n"))
               (error "snp-launch-policies.json is not canonical JSON"))
+            ;; The oldest catalog release that this gateway's catalog loader reads.
+            (define minimum-catalog-sequence
+              (match (call-with-input-file #$(release-file "release-policy.json")
+                       json->scm)
+                ((("minimum_catalog_sequence" . (? exact-integer? sequence)))
+                 (unless (<= 1 sequence 9007199254740991)
+                   (error "minimum_catalog_sequence is outside the safe integer range"))
+                 sequence)
+                (_ (error "release-policy.json must contain only minimum_catalog_sequence"))))
 
             (setenv "PATH"
                     (string-join
@@ -276,6 +285,7 @@
                      ("ovmf_sha256" . ,(sha256 ovmf))
                      ("systemd_stub_sha256" . ,(sha256 stub))
                      ("uki_sha256" . ,(sha256 uki)))
+                    ("minimum_catalog_sequence" . ,minimum-catalog-sequence)
                     ("schema" . "stogas.gateway.release.v1")
                     ("sequence" . #$(string->number
                                      (environment "STOGAS_RELEASE_SEQUENCE")))
