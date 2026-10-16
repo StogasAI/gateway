@@ -122,8 +122,9 @@ type compiledGraph struct {
 }
 
 type compiledAuthor struct {
-	Aliases []string `json:"aliases"`
-	Name    string   `json:"name"`
+	Aliases              []string `json:"aliases"`
+	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
+	Name                 string   `json:"name"`
 }
 
 type compiledDeployment struct {
@@ -193,9 +194,10 @@ type compiledModel struct {
 }
 
 type compiledProvider struct {
-	Aliases         []string `json:"aliases"`
-	CredentialModes []string `json:"credentialModes"`
-	Name            string   `json:"name"`
+	Aliases              []string `json:"aliases"`
+	CredentialModes      []string `json:"credentialModes"`
+	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
+	Name                 string   `json:"name"`
 }
 
 type compiledRoute struct {

@@ -46,6 +46,8 @@ type CELExpression struct {
 	// candidate is set on checked expressions that read a candidate's author,
 	// model, deployment, route or provider. Request facts are the same for all.
 	candidate bool
+	// random marks a sort criterion that is one random(weight) call.
+	random bool
 }
 
 var celEnvironment = sync.OnceValues(newCELEnvironment)
@@ -98,7 +100,7 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 		if err != nil {
 			return nil, configError("cannot normalize CEL expression: %v", err)
 		}
-		expression := &CELExpression{Source: source, normalized: normalized}
+		expression := &CELExpression{Source: source, normalized: normalized, random: randomCall(parsed.NativeRep().Expr())}
 		c.expressions[source] = expression
 		return expression, nil
 	}
@@ -120,7 +122,8 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 	}
 	var validationErr error
 	candidate := false
-	ast.PostOrderVisit(checked.NativeRep().Expr(), ast.NewExprVisitor(func(expression ast.Expr) {
+	root := checked.NativeRep().Expr()
+	ast.PostOrderVisit(root, ast.NewExprVisitor(func(expression ast.Expr) {
 		if validationErr != nil {
 			return
 		}
@@ -172,6 +175,10 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 			if args[0].AsLiteral().(types.Int)+args[1].AsLiteral().(types.Int) == 0 {
 				validationErr = configError("price weights must have a positive total")
 			}
+		case "random":
+			if condition || expression.ID() != root.ID() {
+				validationErr = configError("random() can only be a whole sort criterion")
+			}
 		}
 	}))
 	if validationErr != nil {
@@ -187,9 +194,13 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 	if err != nil {
 		return nil, configError("cannot normalize CEL expression: %v", err)
 	}
-	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512), candidate: candidate}
+	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512), candidate: candidate, random: randomCall(root)}
 	c.expressions[source] = expression
 	return expression, nil
+}
+
+func randomCall(expression ast.Expr) bool {
+	return expression.Kind() == ast.CallKind && expression.AsCall().FunctionName() == "random" && !expression.AsCall().IsMemberFunction()
 }
 
 // Evaluate preserves CEL's unknown value during early catalog filtering. A
@@ -269,6 +280,13 @@ func newCELEnvironment() (*cel.Env, error) {
 				}
 				return celDecimal{decimal.Decimal}
 			}))),
+		// random(weight) evaluates to its weight, and random() to 1. Query.Sort
+		// draws the random keys, so every program stays deterministic.
+		cel.Function("random",
+			cel.Overload("policy_random", []*cel.Type{}, cel.IntType,
+				cel.FunctionBinding(func(...ref.Val) ref.Val { return types.Int(1) })),
+			cel.Overload("policy_random_weight", []*cel.Type{cel.IntType}, cel.IntType,
+				cel.UnaryBinding(func(weight ref.Val) ref.Val { return weight }))),
 	}
 	for _, name := range []string{"author", "model", "deployment", "route", "provider", "request"} {
 		options = append(options, cel.Variable(name, cel.ObjectType(celNodeTypeName(name))))

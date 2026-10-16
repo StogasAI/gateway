@@ -160,7 +160,7 @@ type sourceBody struct {
 		Allowed   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 		Filter    *string              `json:"filter"`
 		Sort      []Sort               `json:"sort"`
-		Selection *Selection           `json:"selection"`
+		Order     []string             `json:"order"`
 		Retries   *int                 `json:"retries"`
 		Fallbacks *int                 `json:"fallbacks"`
 	} `json:"routing"`
@@ -390,7 +390,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 			}
 		}
 		config.Routing.AllowedCatalogNodes = doc.Routing.Allowed
-		config.Routing.Selection = doc.Routing.Selection
+		config.Routing.Order = doc.Routing.Order
 		if doc.Routing.Retries != nil {
 			config.Routing.Retries = *doc.Routing.Retries
 		}
@@ -719,7 +719,11 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	}
 	hasRequestPermission := false
 	var filters []*CELExpression
+	// routing.order and routing.sort form one ordering, which every policy
+	// that sets one must share.
+	var order []string
 	sorts := []Sort{}
+	ordered := false
 	// The smallest value among the policies that set one applies.
 	var retries, fallbacks *int
 	seenPlugins := map[*Plugins]bool{}
@@ -744,7 +748,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			return nil, err
 		}
 		if scope == CredentialScope && source.plans() {
-			return nil, configError("credential policies cannot set routing.sort, routing.selection or routing.fallbacks")
+			return nil, configError("credential policies cannot set routing.order, routing.sort or routing.fallbacks")
 		}
 		config := source.Config
 		allowed := requestPermissions
@@ -791,21 +795,19 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if set&permissionFallbacks != 0 && (fallbacks == nil || *fallbacks > config.Routing.Fallbacks) {
 			fallbacks = &config.Routing.Fallbacks
 		}
-		if selection := config.Routing.Selection; allowed&permissionSelection != 0 && selection != nil {
-			if out.Routing.Selection != nil && !out.Routing.Selection.Same(selection) {
-				return nil, configError("applicable policies require different routing selections")
-			}
-			out.Routing.Selection = selection
+		if q := config.Routing.Query; q != nil && allowed&permissionFilter != 0 {
+			filters = append(filters, q.Filters...)
 		}
-		if q := config.Routing.Query; q != nil {
-			if allowed&permissionFilter != 0 {
-				filters = append(filters, q.Filters...)
+		if allowed&orderingPermissions != 0 {
+			own := []Sort{}
+			if q := config.Routing.Query; q != nil {
+				own = q.OrderBy
 			}
-			if allowed&permissionSort != 0 && len(q.OrderBy) > 0 {
-				if len(sorts) > 0 && !(&Query{OrderBy: sorts}).SameOrder(q) {
-					return nil, configError("applicable policies require different routing sort orders")
+			if len(config.Routing.Order) > 0 || len(own) > 0 {
+				if ordered && (!slices.Equal(order, config.Routing.Order) || !(&Query{OrderBy: sorts}).SameOrder(&Query{OrderBy: own})) {
+					return nil, configError("applicable policies require different routing orders")
 				}
-				sorts = q.OrderBy
+				ordered, order, sorts = true, config.Routing.Order, own
 			}
 		}
 		if allowed&pluginPermissions != 0 && config.Plugins != nil && !seenPlugins[config.Plugins] {
@@ -822,6 +824,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if fallbacks != nil {
 		out.Routing.Fallbacks = *fallbacks
 	}
+	out.Routing.Order = order
 	if len(filters) > 0 || len(sorts) > 0 {
 		out.Routing.Query = &Query{OrderBy: sorts, Filters: filters}
 	}
@@ -871,9 +874,6 @@ func (c *Config) ValidatePlugins() error {
 }
 
 func (c *Config) validateCombined() error {
-	if err := c.Routing.validateSelection(); err != nil {
-		return err
-	}
 	if err := c.ValidatePlugins(); err != nil {
 		return err
 	}

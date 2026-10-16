@@ -93,12 +93,14 @@ func (t *Timeouts) OutputIdle() time.Duration {
 
 // Retries repeat a call to the same deployment and credential. Fallbacks move
 // to the next pair in routing order, so a request calls at most three pairs.
+// Order lists deployments that come first, in list order. It never adds a
+// deployment that selectors, filters or credentials exclude.
 type Routing struct {
 	AllowedCatalogNodes *AllowedCatalogNodes `json:"allowedCatalogNodes"`
 	Fallbacks           int                  `json:"fallbacks"`
+	Order               []string             `json:"order,omitempty"`
 	Query               *Query               `json:"query"`
 	Retries             int                  `json:"retries"`
-	Selection           *Selection           `json:"selection,omitempty"`
 }
 
 type AllowedCatalogNodes struct {
@@ -149,7 +151,7 @@ func (c *Config) validate() error {
 	if c.Routing.Fallbacks < 0 || c.Routing.Fallbacks > MaxFallbacks {
 		return configError("routing.fallbacks must be an integer from 0 to 2")
 	}
-	if err := c.Routing.validateSelection(); err != nil {
+	if err := c.Routing.validateOrder(); err != nil {
 		return err
 	}
 	if c.Timeouts != nil {
@@ -197,6 +199,23 @@ func (a *AllowedCatalogNodes) validate() error {
 			}
 			seen[value] = struct{}{}
 		}
+	}
+	return nil
+}
+
+func (r *Routing) validateOrder() error {
+	if r.Order == nil {
+		return nil
+	}
+	if len(r.Order) == 0 {
+		return configError("routing.order must list deployment IDs")
+	}
+	seen := make(map[string]bool, len(r.Order))
+	for _, id := range r.Order {
+		if !nodeIDPattern.MatchString(id) || seen[id] {
+			return configError("routing.order must list unique deployment IDs")
+		}
+		seen[id] = true
 	}
 	return nil
 }
@@ -440,7 +459,7 @@ func configError(format string, arguments ...any) error {
 }
 
 var exactFieldTypes = map[string]string{
-	"author.aliases": "string_list", "author.name": "string", "author.id": "string",
+	"author.aliases": "string_list", "author.headquarteredCountry": "string", "author.name": "string", "author.id": "string",
 	"deployment.approvalRequired": "boolean", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.retentionDays": "integer", "deployment.dataHandling.storageLocation": "string",
@@ -462,7 +481,7 @@ var exactFieldTypes = map[string]string{
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
-	"provider.aliases": "string_list", "provider.credentialModes": "string_list",
+	"provider.aliases": "string_list", "provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.model": "string", "request.route": "string", "request.time": "timestamp",
 	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",

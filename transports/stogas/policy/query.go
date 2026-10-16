@@ -1,9 +1,11 @@
 package policy
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"math/rand/v2"
 	"sort"
 	"strings"
 	"time"
@@ -19,9 +21,10 @@ type Query struct {
 	OrderBy []Sort           `json:"orderBy"`
 }
 
+// Sort is one criterion. Direction defaults to asc; a random() criterion has none.
 type Sort struct {
 	By         string `json:"by"`
-	Direction  string `json:"direction"`
+	Direction  string `json:"direction,omitempty"`
 	expression *CELExpression
 }
 
@@ -82,14 +85,24 @@ func compileRouting(filter string, order []Sort, compiler *celCompiler) (*Query,
 		query.Filters[i] = expression
 	}
 	for i := range query.OrderBy {
-		expression, err := compiler.compile(query.OrderBy[i].By, false)
+		criterion := &query.OrderBy[i]
+		expression, err := compiler.compile(criterion.By, false)
 		if err != nil {
 			return nil, err
 		}
-		if compiler.prepare && !expression.candidate {
+		// A key that is the same for every candidate would order nothing.
+		// random() differs per deployment without reading a field.
+		switch {
+		case expression.random && i != len(query.OrderBy)-1:
+			return nil, configError("random() must be the last sort criterion")
+		case expression.random && criterion.Direction != "":
+			return nil, configError("random() takes no sort direction")
+		case !expression.random && compiler.prepare && !expression.candidate:
 			return nil, configError("routing.sort expressions must read author, model, deployment, route or provider fields")
+		case !expression.random && criterion.Direction == "":
+			criterion.Direction = "asc"
 		}
-		query.OrderBy[i].expression = expression
+		criterion.expression = expression
 	}
 	return query, nil
 }
@@ -138,7 +151,7 @@ func (q *Query) validate() error {
 	seen := map[string]bool{}
 	for i := range q.OrderBy {
 		item := &q.OrderBy[i]
-		if item.Direction != "asc" && item.Direction != "desc" {
+		if item.Direction != "" && item.Direction != "asc" && item.Direction != "desc" {
 			return configError("sort direction must be asc or desc")
 		}
 		if seen[strings.TrimSpace(item.By)] {
@@ -187,21 +200,31 @@ func (q *Query) SameOrder(other *Query) bool {
 	return true
 }
 
-// Sort returns indexes in order. Missing values sort last in either direction;
-// deployment IDs break final ties. Evaluation errors reject the whole ordering.
+// Sort returns indexes in order. Missing values sort last in either direction,
+// and candidates with equal keys keep their input order. Evaluation errors
+// reject the whole ordering.
+//
+// random(weight) draws one key per deployment, Exp(1) / weight, and sorts it
+// ascending (Efraimidis and Spirakis). Each deployment then comes first with
+// probability weight / total weight, and the rest follow as weighted sampling
+// without replacement. A weight below 1 counts as missing.
 func (q *Query) Sort(candidates []Values) ([]int, error) {
 	order := make([]int, len(candidates))
+	for i := range order {
+		order[i] = i
+	}
+	if q == nil || len(q.OrderBy) == 0 {
+		return order, nil
+	}
 	type item struct {
 		value   Value
+		draw    float64
 		present bool
 	}
 	keys := make([][]item, len(candidates))
+	draws := map[string]float64{}
 	for i, candidate := range candidates {
-		order[i] = i
-		if q == nil || len(q.OrderBy) == 0 {
-			continue
-		}
-		keys[i] = make([]item, len(q.OrderBy)+1)
+		keys[i] = make([]item, len(q.OrderBy))
 		for j, criterion := range q.OrderBy {
 			if criterion.expression == nil {
 				return nil, configError("routing sort has not been compiled")
@@ -211,6 +234,23 @@ func (q *Query) Sort(candidates []Values) ([]int, error) {
 				return nil, fmt.Errorf("routing sort evaluation failed: %w", err)
 			}
 			if types.IsUnknown(result) {
+				continue
+			}
+			if criterion.expression.random {
+				weight, ok := result.(types.Int)
+				if !ok {
+					return nil, configError("routing sort returned an invalid value")
+				}
+				id, present := candidate.PolicyValue("deployment.id")
+				if weight < 1 || !present {
+					continue
+				}
+				draw, drawn := draws[id.String]
+				if !drawn {
+					draw = rand.ExpFloat64()
+					draws[id.String] = draw
+				}
+				keys[i][j] = item{draw: draw / float64(weight), present: true}
 				continue
 			}
 			value := Value{Type: criterion.expression.kind}
@@ -228,26 +268,26 @@ func (q *Query) Sort(candidates []Values) ([]int, error) {
 			}
 			keys[i][j] = item{value: value, present: true}
 		}
-		id, present := candidate.PolicyValue("deployment.id")
-		keys[i][len(q.OrderBy)] = item{value: id, present: present}
-	}
-	if q == nil || len(q.OrderBy) == 0 {
-		return order, nil
 	}
 	sort.SliceStable(order, func(a, b int) bool {
 		left, right := keys[order[a]], keys[order[b]]
-		for i := range left {
+		for i, criterion := range q.OrderBy {
 			if left[i].present != right[i].present {
 				return left[i].present
 			}
 			if !left[i].present {
 				continue
 			}
-			comparison := compareValues(left[i].value, right[i].value)
+			var comparison int
+			if criterion.expression.random {
+				comparison = cmp.Compare(left[i].draw, right[i].draw)
+			} else {
+				comparison = compareValues(left[i].value, right[i].value)
+			}
 			if comparison == 0 {
 				continue
 			}
-			if i < len(q.OrderBy) && q.OrderBy[i].Direction == "desc" {
+			if criterion.Direction == "desc" {
 				return comparison > 0
 			}
 			return comparison < 0

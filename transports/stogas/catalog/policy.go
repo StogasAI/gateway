@@ -323,8 +323,14 @@ func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPoli
 	r.values[candidate] = values
 }
 
-// Credential policies and rules whose conditions read candidate fields cannot
-// set an order, so every survivor carries the same one.
+// finish returns the candidates in routing order, grouped by deployment and
+// provider. A group request keeps its newest models. Without a policy order or
+// sort, candidates of several models make the request ambiguous. Otherwise
+// candidates follow routing.order, then the policy sort, then the default
+// order: newest model, model ID, the request's provider order, the cheapest
+// blended price and deployment ID. Credential policies and rules whose
+// conditions read candidate fields cannot set an order or sort, so every
+// candidate carries the same ones.
 func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
 	filtered, values := r.filtered, r.values
 	if len(filtered) == 0 {
@@ -334,43 +340,15 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	if config := filtered[0].policy; config != nil {
 		ordering = config.Routing
 	}
-	if ordering.Selection != nil {
-		return selectRoutingTargets(filtered, ordering.Selection)
+	if filtered[0].RequestedModel != "" {
+		filtered = newestModelCandidates(filtered)
 	}
-
-	// An explicit sort supplies a total order; its stable deployment-ID tie
-	// breaker is used only after at least one user-defined criterion.
-	if query := ordering.Query; query != nil && len(query.OrderBy) > 0 {
-		candidates := make([]policy.Values, len(filtered))
-		for i, candidate := range filtered {
-			candidates[i] = values[candidate]
-		}
-		order, err := query.Sort(candidates)
-		if err != nil {
-			return nil, policyEvaluationError(err)
-		}
-		groups := make([][]*ResolvedRequest, 0, len(order))
-		for _, index := range order {
-			candidate := filtered[index]
-			if len(groups) > 0 {
-				last := groups[len(groups)-1]
-				if last[0].Deployment.ID == candidate.Deployment.ID && last[0].Provider == candidate.Provider {
-					groups[len(groups)-1] = append(last, candidate)
-					continue
-				}
-			}
-			groups = append(groups, []*ResolvedRequest{candidate})
-		}
-		return groups, nil
+	query := ordering.Query
+	if query != nil && len(query.OrderBy) == 0 {
+		query = nil
 	}
-	// A group names its newest model, so neither a price nor a provider order chooses among
-	// the group's models.
-	if filtered[0].RequestedModel != "" && spansModels(filtered) {
-		newest, err := newestModelCandidates(filtered)
-		if err != nil {
-			return nil, err
-		}
-		filtered = newest
+	if len(ordering.Order) == 0 && query == nil && spansModels(filtered) {
+		return nil, ambiguousModelError(filtered)
 	}
 	snap := activeState()
 	if snap == nil {
@@ -380,40 +358,52 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	if err != nil {
 		return nil, err
 	}
-	ranked := make([][]*ResolvedRequest, len(requestedOrder)+1)
-	for _, candidate := range filtered {
-		rank := len(requestedOrder)
-		for index, provider := range requestedOrder {
-			if provider == candidate.Provider {
-				rank = index
-				break
-			}
+	providerRank := make(map[schemas.ModelProvider]int, len(requestedOrder))
+	for index, provider := range requestedOrder {
+		if _, ranked := providerRank[provider]; !ranked {
+			providerRank[provider] = index
 		}
-		ranked[rank] = append(ranked[rank], candidate)
 	}
-	// Within each provider rank, the default order is the cheapest deployment
-	// at a 3:1 input-to-output blend, then the lower deployment ID. Neither a
-	// price nor a provider order may choose a model the request did not name, so
-	// such a group stays whole and is rejected as ambiguous if it is reached.
-	groups := make([][]*ResolvedRequest, 0, len(filtered))
-	for _, group := range ranked {
-		if len(group) == 0 {
-			continue
+	// Each stable sort keeps the earlier order among its own ties, so the
+	// last sort applies the first key.
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return defaultOrderLess(filtered[i], filtered[j], providerRank, values)
+	})
+	if query != nil {
+		candidates := make([]policy.Values, len(filtered))
+		for i, candidate := range filtered {
+			candidates[i] = values[candidate]
 		}
-		if group[0].RequestedModel == "" && spansModels(group) {
-			groups = append(groups, group)
-			continue
+		indexes, err := query.Sort(candidates)
+		if err != nil {
+			return nil, policyEvaluationError(err)
 		}
-		sort.SliceStable(group, func(i, j int) bool {
-			return defaultOrderLess(group[i], group[j], values)
-		})
-		for _, candidate := range group {
-			if last := len(groups) - 1; last >= 0 && groups[last][0].Deployment.ID == candidate.Deployment.ID {
-				groups[last] = append(groups[last], candidate)
-				continue
+		sorted := make([]*ResolvedRequest, len(filtered))
+		for i, index := range indexes {
+			sorted[i] = filtered[index]
+		}
+		filtered = sorted
+	}
+	if len(ordering.Order) > 0 {
+		listed := make(map[string]int, len(ordering.Order))
+		for index, id := range ordering.Order {
+			listed[id] = index
+		}
+		rank := func(candidate *ResolvedRequest) int {
+			if index, found := listed[candidate.Deployment.ID]; found {
+				return index
 			}
-			groups = append(groups, []*ResolvedRequest{candidate})
+			return len(ordering.Order)
 		}
+		sort.SliceStable(filtered, func(i, j int) bool { return rank(filtered[i]) < rank(filtered[j]) })
+	}
+	groups := make([][]*ResolvedRequest, 0, len(filtered))
+	for _, candidate := range filtered {
+		if last := len(groups) - 1; last >= 0 && groups[last][0].Deployment.ID == candidate.Deployment.ID && groups[last][0].Provider == candidate.Provider {
+			groups[last] = append(groups[last], candidate)
+			continue
+		}
+		groups = append(groups, []*ResolvedRequest{candidate})
 	}
 	return groups, nil
 }
@@ -422,9 +412,26 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 // blended model price. A deployment without both prices sorts last.
 var defaultOrderBlend = policy.BlendedPrice{InputWeight: 3, OutputWeight: 1}
 
-func defaultOrderLess(left, right *ResolvedRequest, values map[*ResolvedRequest]*resolvedPolicyValues) bool {
+// defaultOrderLess ends every routing order. Candidates of one deployment are
+// equal, so they keep their credential order.
+func defaultOrderLess(left, right *ResolvedRequest, providerRank map[schemas.ModelProvider]int, values map[*ResolvedRequest]*resolvedPolicyValues) bool {
 	if left.Deployment.ID == right.Deployment.ID {
 		return false
+	}
+	if left.Deployment.ModelID != right.Deployment.ModelID {
+		leftReleased, rightReleased := releaseDate(left), releaseDate(right)
+		if leftReleased != rightReleased {
+			return leftReleased > rightReleased
+		}
+		return left.Deployment.ModelID < right.Deployment.ModelID
+	}
+	leftRank, leftRanked := providerRank[left.Provider]
+	rightRank, rightRanked := providerRank[right.Provider]
+	if leftRanked != rightRanked {
+		return leftRanked
+	}
+	if leftRank != rightRank {
+		return leftRank < rightRank
 	}
 	leftPrice, leftOK := values[left].PolicyBlendedPrice(defaultOrderBlend)
 	rightPrice, rightOK := values[right].PolicyBlendedPrice(defaultOrderBlend)
@@ -439,13 +446,18 @@ func defaultOrderLess(left, right *ResolvedRequest, values map[*ResolvedRequest]
 	return left.Deployment.ID < right.Deployment.ID
 }
 
-// newestModelCandidates keeps the candidates of the most recently released model. Models
-// released on the same day make the request ambiguous.
-func newestModelCandidates(candidates []*ResolvedRequest) ([]*ResolvedRequest, error) {
+// The loader accepts only YYYY-MM-DD release dates, which sort as text.
+func releaseDate(candidate *ResolvedRequest) string {
+	return candidate.Deployment.snapshot.graph.Models[candidate.Deployment.ModelID].ReleaseDate
+}
+
+// newestModelCandidates keeps the candidates of the most recently released
+// models. Models released on the same day all stay.
+func newestModelCandidates(candidates []*ResolvedRequest) []*ResolvedRequest {
 	newest := ""
 	var kept []*ResolvedRequest
 	for _, candidate := range candidates {
-		released := candidate.Deployment.snapshot.graph.Models[candidate.Deployment.ModelID].ReleaseDate
+		released := releaseDate(candidate)
 		if released < newest {
 			continue
 		}
@@ -454,10 +466,7 @@ func newestModelCandidates(candidates []*ResolvedRequest) ([]*ResolvedRequest, e
 		}
 		kept = append(kept, candidate)
 	}
-	if spansModels(kept) {
-		return nil, ambiguousModelError(kept)
-	}
-	return kept, nil
+	return kept
 }
 
 func spansModels(group []*ResolvedRequest) bool {

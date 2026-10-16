@@ -317,6 +317,9 @@ func validateCompiledAuthors(graph compiledGraph) error {
 		if err := validateQualifierAliases(authorQualifiers, "author", authorID, author.Aliases); err != nil {
 			return err
 		}
+		if !validHeadquarters(author.HeadquarteredCountry) {
+			return fmt.Errorf("author %s has an invalid headquarters country", authorID)
+		}
 	}
 	return nil
 }
@@ -330,8 +333,16 @@ func validateCompiledProviders(graph compiledGraph) error {
 		if !validCredentialModes(provider.CredentialModes) {
 			return fmt.Errorf("provider %s has invalid credential modes", providerID)
 		}
+		if !validHeadquarters(provider.HeadquarteredCountry) {
+			return fmt.Errorf("provider %s has an invalid headquarters country", providerID)
+		}
 	}
 	return nil
+}
+
+// validHeadquarters accepts an absent value or an ISO country code.
+func validHeadquarters(country string) bool {
+	return country == "" || len(country) == 2 && strings.Contains(isoCountryCodes, "|"+country+"|")
 }
 
 func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) error {

@@ -64,9 +64,6 @@ type requestPlan struct {
 	variants *requestVariants
 	choices  []pairChoice
 	slots    int
-	// end is the ambiguity that stopped the order, reported only when no pair
-	// could be prepared.
-	end      error
 	firstErr error
 	resolve  func(routingSelection, RequestPolicy) (*ResolvedRequest, error)
 }
@@ -185,13 +182,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		plan.slots = 1 + config.Routing.Fallbacks
 	}
 	for _, group := range ordered {
-		if len(group) == 0 {
-			continue
-		}
-		if spansDeployments(group) {
-			plan.end = ambiguousModelError(group)
-			break
-		}
 		// Equal policies share routing work. Merge their credential choices
 		// back into the original preference order for this deployment.
 		start := len(plan.choices)
@@ -209,15 +199,6 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		}
 	}
 	return plan, nil
-}
-
-func spansDeployments(group []*ResolvedRequest) bool {
-	for _, candidate := range group[1:] {
-		if candidate.Deployment.ID != group[0].Deployment.ID || candidate.Provider != group[0].Provider {
-			return true
-		}
-	}
-	return false
 }
 
 // take resolves the next pair, recording failure as the previous pair's local
@@ -258,8 +239,6 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 	switch {
 	case p.firstErr != nil:
 		return nil, p.firstErr
-	case p.end != nil:
-		return nil, p.end
 	default:
 		return nil, ErrModelUnavailable
 	}

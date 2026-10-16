@@ -756,7 +756,7 @@
     }
   },
   {
-    "name": "required selection replaces default sort within the smallest fallback count",
+    "name": "required order replaces default sort within the smallest fallback count",
     "sources": [
       {
         "routing": {
@@ -779,13 +779,10 @@
       null,
       {
         "routing": {
-          "selection": {
-            "mode": "ordered",
-            "targets": [
-              "deployment-b",
-              "deployment-a"
-            ]
-          },
+          "order": [
+            "deployment-b",
+            "deployment-a"
+          ],
           "fallbacks": 2
         }
       }
@@ -796,20 +793,17 @@
       "plugins": null,
       "routing": {
         "allowedCatalogNodes": null,
+        "order": [
+          "deployment-b",
+          "deployment-a"
+        ],
         "query": null,
-        "selection": {
-          "mode": "ordered",
-          "targets": [
-            "deployment-b",
-            "deployment-a"
-          ]
-        },
         "retries": 0,
         "fallbacks": 1
       },
       "requestPermission": false,
       "schema": "stogas.key-config.compiled.v1"
     },
-    "digest": "6981c969075a5a8f58fe5c2c2d3ea3f107967c33f90bf41116323bf0b43aa8ac"
+    "digest": "45b7a0b19563ac2df5323b57aed73d69e74e4a534b59231dd85dd11eb27b5c6a"
   }
 ]

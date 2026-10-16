@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"testing"
@@ -149,4 +150,51 @@ func TestCELProgramsAreConcurrentAndCostBounded(t *testing.T) {
 		})
 	}
 	wait.Wait()
+}
+
+// random(weight) draws once per deployment. A deployment comes first in
+// proportion to its weight, and a weight below 1 or unknown sorts last.
+func TestRandomSortWeighsDeploymentsAndKeepsEachTogether(t *testing.T) {
+	candidate := func(id string, weight int64, known bool) Values {
+		values := testValues{"deployment.id": {Type: "string", String: id}, "provider.id": {Type: "string", String: "openai"}}
+		if known {
+			values["deployment.contextWindowTokens"] = Value{Type: "integer", Integer: big.NewInt(weight)}
+		}
+		return values
+	}
+	// Two candidates share deployment a, as credentials with different policies do.
+	candidates := []Values{
+		candidate("zero", 0, true), candidate("a", 3, true), candidate("unknown", 0, false),
+		candidate("b", 1, true), candidate("a", 3, true),
+	}
+	query, err := CompileRouting("", []Sort{{By: "provider.id"}, {By: "random(deployment.contextWindowTokens)"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.OrderBy[0].Direction != "asc" || query.OrderBy[1].Direction != "" {
+		t.Fatalf("directions = %q, %q", query.OrderBy[0].Direction, query.OrderBy[1].Direction)
+	}
+	const runs = 4000
+	first := 0
+	for range runs {
+		order, err := query.Sort(candidates)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case order[0] == 1 && order[1] == 4 && order[2] == 3:
+			first++
+		case order[0] == 3 && order[1] == 1 && order[2] == 4:
+		default:
+			t.Fatalf("order = %v", order)
+		}
+		// Missing weights keep their input order at the end.
+		if order[3] != 0 || order[4] != 2 {
+			t.Fatalf("weights below 1 or unknown did not sort last: %v", order)
+		}
+	}
+	// Expect 3000 of 4000; the band is about six standard deviations.
+	if first < 2830 || first > 3170 {
+		t.Fatalf("weight 3 of 4 came first %d of %d times", first, runs)
+	}
 }
