@@ -390,6 +390,43 @@ func metadataText(text string) bool {
 	return utf8.ValidString(text) && !strings.ContainsFunc(text, func(r rune) bool { return r < 0x20 })
 }
 
+// RequestSessionID reads the ID that groups a request with others in its
+// organization's logs, as OpenRouter does: the body's session_id or else the
+// X-Session-Id header. Codex sends its own Session-Id header, which counts
+// only when nothing else names a session and its value is valid, so a change
+// in Codex never fails its requests. Providers never receive the ID.
+func RequestSessionID(body map[string]json.RawMessage, header http.Header) (string, error) {
+	if raw, ok := body["session_id"]; ok {
+		id, ok := rawStringValue(raw)
+		if !ok || !validSessionID(id) {
+			return "", invalidRequest("session_id must be a string up to 256 bytes without control characters")
+		}
+		if id != "" {
+			return id, nil
+		}
+	}
+	values := header.Values("X-Session-Id")
+	if len(values) > 1 {
+		return "", invalidRequest("X-Session-Id must appear at most once")
+	}
+	if len(values) == 1 {
+		if !validSessionID(values[0]) {
+			return "", invalidRequest("X-Session-Id must be up to 256 bytes without control characters")
+		}
+		if values[0] != "" {
+			return values[0], nil
+		}
+	}
+	if values := header.Values("Session-Id"); len(values) == 1 && validSessionID(values[0]) {
+		return values[0], nil
+	}
+	return "", nil
+}
+
+func validSessionID(id string) bool {
+	return len(id) <= billing.MaxSessionIDBytes && metadataText(id)
+}
+
 func validateModalities(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil

@@ -22,6 +22,8 @@ var routeSpecs = map[Route]routeSpec{
 			"content-type",
 			"accept",
 			"stogas-metadata",
+			"x-session-id",
+			"session-id",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -63,6 +65,7 @@ var routeSpecs = map[Route]routeSpec{
 			"safety_identifier",
 			"seed",
 			"service_tier",
+			"session_id",
 			"speed",
 			"stream_options",
 			"stop",
@@ -91,6 +94,8 @@ var routeSpecs = map[Route]routeSpec{
 			"content-type",
 			"accept",
 			"stogas-metadata",
+			"x-session-id",
+			"session-id",
 		},
 		AuthHeaders: []string{"authorization", "api-key", "x-api-key", "x-goog-api-key"},
 		Parameters: []string{
@@ -121,6 +126,7 @@ var routeSpecs = map[Route]routeSpec{
 			"reasoning",
 			"safety_identifier",
 			"service_tier",
+			"session_id",
 			"speed",
 			"provider",
 			"stream_options",

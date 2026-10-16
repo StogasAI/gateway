@@ -64,6 +64,7 @@ type RequestEvent struct {
 	StogasOrganizationID string             `json:"stogas_organization_id"`
 	RequestType          string             `json:"request_type"`
 	RequestSettings      RequestSettings    `json:"request_settings"`
+	SessionID            string             `json:"session_id"`
 	Metadata             map[string]string  `json:"metadata"`
 	Transport            string             `json:"transport"`
 	Cancelled            bool               `json:"cancelled"`
@@ -111,11 +112,13 @@ type RequestSettings struct {
 }
 
 // A request's metadata follows OpenAI's: up to 16 pairs, with keys up to 64
-// bytes and values up to 512 bytes.
+// bytes and values up to 512 bytes. A session ID follows OpenRouter's limit of
+// 256 characters, counted in bytes.
 const (
 	MaxMetadataEntries    = 16
 	MaxMetadataKeyBytes   = 64
 	MaxMetadataValueBytes = 512
+	MaxSessionIDBytes     = 256
 )
 
 const (

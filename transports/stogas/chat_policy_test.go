@@ -1287,6 +1287,83 @@ func TestMetadataReachesRequestRecordsButNotProviders(t *testing.T) {
 	}
 }
 
+func TestRequestSessionIDPrefersTheBodyThenXSessionID(t *testing.T) {
+	long := strings.Repeat("é", billing.MaxSessionIDBytes/2)
+	cases := []struct {
+		name    string
+		body    string
+		headers map[string][]string
+		want    string
+		err     string
+	}{
+		{name: "none", body: `{}`},
+		{name: "body", body: `{"session_id":"conv-1"}`, headers: map[string][]string{"X-Session-Id": {"header"}, "Session-Id": {"codex"}}, want: "conv-1"},
+		{name: "empty body", body: `{"session_id":""}`, headers: map[string][]string{"X-Session-Id": {"header"}}, want: "header"},
+		{name: "header", body: `{}`, headers: map[string][]string{"X-Session-Id": {"header"}, "Session-Id": {"codex"}}, want: "header"},
+		{name: "Codex", body: `{}`, headers: map[string][]string{"Session-Id": {"019a1b2c-codex"}}, want: "019a1b2c-codex"},
+		{name: "longest", body: `{"session_id":"` + long + `"}`, want: long},
+		{name: "body too long", body: `{"session_id":"` + long + `e"}`, err: "session_id must be a string up to 256 bytes"},
+		{name: "body number", body: `{"session_id":7}`, err: "session_id must be a string"},
+		{name: "body control character", body: `{"session_id":"a\nb"}`, err: "without control characters"},
+		{name: "header twice", body: `{}`, headers: map[string][]string{"X-Session-Id": {"a", "b"}}, err: "X-Session-Id must appear at most once"},
+		{name: "header too long", body: `{}`, headers: map[string][]string{"X-Session-Id": {long + "e"}}, err: "X-Session-Id must be up to 256 bytes"},
+		{name: "invalid Codex header", body: `{}`, headers: map[string][]string{"Session-Id": {long + "e"}}},
+		{name: "repeated Codex header", body: `{}`, headers: map[string][]string{"Session-Id": {"a", "b"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(tc.body), &body); err != nil {
+				t.Fatal(err)
+			}
+			got, err := RequestSessionID(body, tc.headers)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("RequestSessionID() error = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("RequestSessionID() = (%q, %v), want %q", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSessionIDNeverReachesProviders(t *testing.T) {
+	for _, tc := range []struct{ path, body string }{
+		{"/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},
+		{"/v1/chat/completions", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},
+		{"/v1/responses", `{"model":"openai/gpt-5.5","input":"hi","session_id":"conv-1"}`},
+	} {
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: tc.path, Body: []byte(tc.body)})
+		if err != nil {
+			t.Fatalf("ResolveRequest(%s) returned error: %v", tc.body, err)
+		}
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		if err := state.Adapter.ValidateRequest(state); err != nil {
+			t.Fatalf("ValidateRequest(%s) returned error: %v", tc.body, err)
+		}
+		if err := state.Adapter.SanitizeRequest(state); err != nil {
+			t.Fatalf("SanitizeRequest(%s) returned error: %v", tc.body, err)
+		}
+		request, err := resolution.ToBifrost(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline))
+		if err != nil {
+			t.Fatalf("ToBifrost(%s) returned error: %v", tc.body, err)
+		}
+		var extra map[string]any
+		if request.ChatRequest != nil && request.ChatRequest.Params != nil {
+			extra = request.ChatRequest.Params.ExtraParams
+		}
+		if request.ResponsesRequest != nil && request.ResponsesRequest.Params != nil {
+			extra = request.ResponsesRequest.Params.ExtraParams
+		}
+		if _, ok := extra["session_id"]; ok {
+			t.Fatalf("provider request for %s carries session_id: %#v", tc.body, extra)
+		}
+	}
+}
+
 func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",

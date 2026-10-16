@@ -88,7 +88,7 @@ type rejectionLogBuffer struct {
 
 // NewRejectionEvent gives authenticated pre-authorization failures the same
 // customer-visible representation in telemetry and optional content exports.
-// Rejections share records, so none keeps a request's metadata.
+// Rejections share records, so none keeps a request's session ID or metadata.
 func NewRejectionEvent(input RejectionInput) RequestEvent {
 	at := input.CreatedAt.UTC()
 	if at.IsZero() {

@@ -584,7 +584,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 			PresencePenalty: &number, RepetitionPenalty: &number, Seed: &integer, Logprobs: &flag, TopLogprobs: &integer, Verbosity: setting,
 			ResponseFormat: setting, Include: include, ToolChoice: setting, ParallelToolCalls: &flag, MaxToolCalls: &integer, Truncation: setting,
 		},
-		Metadata: map[string]string{}, Transport: TransportAttestedTLS, Cancelled: true, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
+		SessionID: quotes(MaxSessionIDBytes), Metadata: map[string]string{}, Transport: TransportAttestedTLS, Cancelled: true, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
 		PolicyVersions: &PolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
 		Performance: RequestPerformance{TotalMS: count, ProviderMS: count, ProviderStartMS: &count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},

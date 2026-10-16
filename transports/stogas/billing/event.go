@@ -37,6 +37,7 @@ type EventInput struct {
 	GatewayVersion        string
 	RequestType           string
 	RequestSettings       RequestSettings
+	SessionID             string
 	Metadata              map[string]string
 	Transport             string
 	StartedAt             time.Time
@@ -133,6 +134,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		StogasOrganizationID: authorization.OrganizationID,
 		RequestType:          normalizeRequestType(input.RequestType),
 		RequestSettings:      input.RequestSettings,
+		SessionID:            input.SessionID,
 		Metadata:             requestMetadata(input.Metadata),
 		Transport:            input.Transport,
 		Cancelled:            input.Cancelled,
