@@ -32,6 +32,17 @@ type requestContext struct {
 	finalize func()
 }
 
+// transport names how the client reached the gateway.
+func (ctx *requestContext) transport() string {
+	if ctx.encrypted {
+		return billing.TransportE2EE
+	}
+	if conn, ok := ctx.request.Context().Value(httpConnectionKey{}).(*ingressTLSConn); ok && conn.attested {
+		return billing.TransportAttestedTLS
+	}
+	return billing.TransportHTTPS
+}
+
 type requestHandler func(*requestContext)
 
 func (handler requestHandler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {

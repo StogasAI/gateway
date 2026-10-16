@@ -333,6 +333,8 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 		GatewayVersion:        state.GatewayVersion,
 		RequestType:           state.RequestType,
 		RequestSettings:       state.RequestSettings,
+		Metadata:              state.Metadata,
+		Transport:             state.Transport,
 		StartedAt:             state.StartedAt,
 	})
 	if err != nil {
@@ -355,6 +357,8 @@ func PrepareFinalState(state *State) *gatewaybilling.RequestEvent {
 			GatewayVersion:      state.GatewayVersion,
 			RequestType:         state.RequestType,
 			RequestSettings:     state.RequestSettings,
+			Metadata:            state.Metadata,
+			Transport:           state.Transport,
 			StartedAt:           state.StartedAt,
 		})
 		if err != nil {

@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -250,6 +251,52 @@ func TestNativeTLSIsStrictAndOrdinaryTLSKeepsItsCertificate(t *testing.T) {
 	}
 	if base.GetConfigForClient != nil || base.SessionTicketsDisabled || len(base.Certificates) != 1 {
 		t.Fatal("mutated shared base TLS config")
+	}
+}
+
+func TestPresentsEvidenceOnlyAfterNativeHandshake(t *testing.T) {
+	key, err := mldsa.GenerateKey(mldsa.MLDSA65())
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		ExtraExtensions: []pkix.Extension{{Id: cmwExtensionOID, Value: []byte("evidence")}}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &tls.Config{Certificates: []tls.Certificate{*testCertificateWithKey(t, ordinaryKey)}, NextProtos: []string{"h2", "http/1.1"}}
+	config, err := ConfigureTLS(base, func() bool { return true }, func(context.Context, [32]byte) (*tls.Certificate, error) {
+		return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary := testNativeClient()
+	ordinary.NextProtos = []string{"h2"}
+	for _, test := range []struct {
+		client *tls.Config
+		want   bool
+	}{{testNativeClient(), true}, {ordinary, false}} {
+		clientWire, serverWire := net.Pipe()
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		server := tls.Server(serverWire, config)
+		serverResult := make(chan error, 1)
+		go func() { serverResult <- server.HandshakeContext(ctx) }()
+		clientErr := tls.Client(clientWire, test.client).HandshakeContext(ctx)
+		if serverErr := <-serverResult; clientErr != nil || serverErr != nil {
+			t.Fatal(clientErr, serverErr)
+		}
+		if PresentsEvidence(server.ConnectionState()) != test.want {
+			t.Fatalf("native ALPN %v: evidence presented = %v", test.want, !test.want)
+		}
+		cancel()
+		clientWire.Close()
+		serverWire.Close()
 	}
 }
 

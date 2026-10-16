@@ -13,6 +13,7 @@ import (
 	"errors"
 	"io"
 	"math/big"
+	"slices"
 	"time"
 
 	verifier "github.com/StogasAI/stogas/go"
@@ -89,6 +90,19 @@ func NewNativeIssuer(environment Environment, hostname string, boot BootEvidence
 		}
 		return &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, SupportedSignatureAlgorithms: []tls.SignatureScheme{tls.MLDSA65}}, nil
 	}, nil
+}
+
+// PresentsEvidence reports whether a finished server handshake sent a native
+// certificate, which carries the attestation evidence. Native handshakes never
+// resume, and a resumed handshake records no local certificate.
+func PresentsEvidence(state tls.ConnectionState) bool {
+	if len(state.LocalCertificate) == 0 {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(state.LocalCertificate[0])
+	return err == nil && slices.ContainsFunc(leaf.Extensions, func(extension pkix.Extension) bool {
+		return extension.Id.Equal(cmwExtensionOID)
+	})
 }
 
 // tlsSigner adapts a fresh Rust ML-DSA-65 key to the crypto.Signer used by Go's

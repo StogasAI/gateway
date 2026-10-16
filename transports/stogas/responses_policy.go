@@ -70,9 +70,11 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateIntegerRange(raw, "max_tool_calls", 1, maxResponsesToolCalls); err != nil {
 		return err
 	}
-	if err := validateMetadata(raw["metadata"]); err != nil {
+	metadata, err := parseMetadata(raw["metadata"])
+	if err != nil {
 		return err
 	}
+	state.Metadata = metadata
 	if err := validateResponsesTextConfig(state, raw["text"]); err != nil {
 		return err
 	}
