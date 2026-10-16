@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -338,11 +339,51 @@ func TestRulesRequiredSortsMustAgree(t *testing.T) {
 	}
 }
 
+// routing.order and routing.sort form one ordering. Another policy may repeat
+// it but not add to it, and a required ordering replaces a default one.
+func TestPoliciesThatSetAnOrderingMustSetTheSameOne(t *testing.T) {
+	ordered := `"order":["deployment-b","deployment-a"]`
+	sorted := `"sort":[{"by":"provider.id"}]`
+	org := ruleSource(t, `{"routing":{`+ordered+`,`+sorted+`}}`)
+	for _, raw := range []string{
+		`{"routing":{` + ordered + `,"sort":[{"by":"provider.id","direction":"asc"}]}}`,
+		`{"routing":{"filter":"provider.id != 'x'"}}`,
+		`{"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
+	} {
+		combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}})
+		if err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if combined, err = combined.Activate(ruleValues{}); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if !slices.Equal(combined.Routing.Order, []string{"deployment-b", "deployment-a"}) || len(combined.Routing.Query.OrderBy) != 1 {
+			t.Fatalf("%s: ordering = %v %+v", raw, combined.Routing.Order, combined.Routing.Query)
+		}
+	}
+	for _, raw := range []string{
+		`{"routing":{"order":["deployment-a","deployment-b"],` + sorted + `}}`,
+		`{"routing":{` + ordered + `}}`,
+		`{"routing":{` + sorted + `}}`,
+		`{"routing":{` + ordered + `,"sort":[{"by":"provider.id"},{"by":"random()"}]}}`,
+		`{"rules":{"r":{"routing":{"order":["deployment-c"]}}}}`,
+	} {
+		combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}})
+		if err == nil {
+			_, err = combined.Activate(ruleValues{})
+		}
+		if err == nil || !strings.Contains(err.Error(), "different routing orders") {
+			t.Fatalf("%s: conflicting ordering accepted: %v", raw, err)
+		}
+	}
+}
+
 func TestRoutingOrderCannotDependOnTheCandidate(t *testing.T) {
 	sort := `"sort":[{"by":"provider.id","direction":"asc"}]`
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"has(deployment.weightPrecision)","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"rules":{"r":{"when":"has(deployment.weightPrecision)","routing":{"order":["deployment-a"]}}}}`,
+		`{"rules":{"r":{"when":"author.id == 'openai'","routing":{"sort":[{"by":"random()"}]}}}}`,
 		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","mode":"default","routing":{` + sort + `}}}}`,
 		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"sort":[]}}}}`,
 		`{"rules":{"r":{"when":"model.id.startsWith('gpt') || route.id == 'chat'","routing":{` + sort + `}}}}`,
@@ -354,7 +395,8 @@ func TestRoutingOrderCannotDependOnTheCandidate(t *testing.T) {
 	}
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"sort":[{"by":"random()"}]}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"order":["deployment-a"]}}}}`,
 		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2}}}}`,
 		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0}}}}`,
 	} {
@@ -367,9 +409,9 @@ func TestRoutingOrderCannotDependOnTheCandidate(t *testing.T) {
 	for _, raw := range []string{
 		`{"routing":{` + sort + `}}`,
 		`{"routing":{"sort":[]}}`,
-		`{"routing":{"selection":{"mode":"random"}}}`,
+		`{"routing":{"order":["deployment-a"]}}`,
 		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`,
 		`{"routing":{"fallbacks":1}}`,
 	} {
 		if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), "credential policies cannot") {

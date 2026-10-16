@@ -1,5 +1,6 @@
 {
 	"author.aliases": "string_list",
+	"author.headquarteredCountry": "string",
 	"author.id": "string",
 	"author.name": "string",
 	"deployment.approvalRequired": "boolean",
@@ -66,6 +67,7 @@
 	"model.releaseDate": "string",
 	"provider.aliases": "string_list",
 	"provider.credentialModes": "string_list",
+	"provider.headquarteredCountry": "string",
 	"provider.id": "string",
 	"provider.name": "string",
 	"request.bodyBytes": "integer",

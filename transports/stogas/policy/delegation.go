@@ -28,8 +28,8 @@ const (
 	permissionExport
 	permissionTotalTimeout
 	permissionOutputIdleTimeout
-	permissionSelection
-	allPermissions     = permissionSelection | (permissionSelection - 1)
+	permissionOrder
+	allPermissions     = permissionOrder | (permissionOrder - 1)
 	requestPermissions = allPermissions &^ (permissionLimits | permissionDelegation | permissionEncryption)
 )
 
@@ -42,10 +42,10 @@ var permissionSections = map[string]Permission{
 	"plugins.stogasExport":         permissionExport,
 	"plugins.stogasTextExtraction": permissionTextExtraction,
 	"plugins.stogasRedaction":      permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionSelection,
+	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionOrder,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
 	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
-	"routing.fallbacks": permissionFallbacks, "routing.selection": permissionSelection,
+	"routing.fallbacks": permissionFallbacks, "routing.order": permissionOrder,
 	"delegation": permissionDelegation, "encryption": permissionEncryption,
 }
 

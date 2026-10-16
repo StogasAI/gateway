@@ -205,8 +205,8 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if compiled.Routing.AllowedCatalogNodes != nil {
 		routing["allowedCatalogNodes"] = sortedAllowedNodes(compiled.Routing.AllowedCatalogNodes)
 	}
-	if compiled.Routing.Selection != nil {
-		routing["selection"] = compiled.Routing.Selection
+	if len(compiled.Routing.Order) > 0 {
+		routing["order"] = compiled.Routing.Order
 	}
 	if compiled.Routing.Query != nil {
 		if len(compiled.Routing.Query.Filters) > 0 {

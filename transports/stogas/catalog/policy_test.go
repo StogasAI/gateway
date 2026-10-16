@@ -346,11 +346,13 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 	}{
 		{path: "author.id", fieldType: "string", value: "openai"},
 		{path: "author.name", fieldType: "string", value: "OpenAI"},
+		{path: "author.headquarteredCountry", fieldType: "string", value: "US"},
 		{path: "model.id", fieldType: "string", value: "gpt-5.6-sol"},
 		{path: "model.name", fieldType: "string", value: "GPT-5.6 Sol"},
 		{path: "deployment.id", fieldType: "string", value: "openai-gpt-5.6-sol"},
 		{path: "provider.id", fieldType: "string", value: "openai"},
 		{path: "provider.name", fieldType: "string", value: "OpenAI"},
+		{path: "provider.headquarteredCountry", fieldType: "string", value: "US"},
 		{path: "route.id", fieldType: "string", value: "openai-chat-completions"},
 		{path: "route.providerId", fieldType: "string", value: "openai"},
 		{path: "request.model", fieldType: "string", value: "gpt-5.6-sol"},
@@ -425,6 +427,10 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 	precision, exists := precisionValues.PolicyValue("deployment.weightPrecision")
 	if !exists || precision.Type != "string" || precision.String != "nvfp4" {
 		t.Fatalf("deployment precision = %#v, %t", precision, exists)
+	}
+	// Chutes states no headquarters, so filters see a missing value.
+	if value, exists := precisionValues.PolicyValue("provider.headquarteredCountry"); exists {
+		t.Fatalf("absent headquarters resolved as %#v", value)
 	}
 	for _, path := range []string{"", "provider.__proto__", "deployment.pricing.unknown.per_mill_tokens"} {
 		if value, exists := values.PolicyValue(path); exists {
