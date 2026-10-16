@@ -18,36 +18,33 @@ const (
 )
 
 type EventInput struct {
-	PolicyVersions           *PolicyVersions
-	UpstreamCostUSD          string
-	Authorization            *Authorization
-	Cancelled                bool
-	ClientStoppedAt          time.Time
-	CatalogVersion           uint64
-	CatalogChainHash         string
-	SelectedCatalogChainHash string
-	Error                    *schemas.BifrostError
-	Meters                   EventMeters
-	Plugins                  plugins.Metrics
-	ProviderAttempts         []ProviderAttemptInput
-	ProviderCompletedAt      time.Time
-	ProviderStartedAt        time.Time
-	TTFTMS                   *uint32
-	FirstOutputAt            time.Time
-	ProviderOutputObserved   bool
-	CacheReadSavingsUSD      *string
-	CacheWriteOverheadUSD    *string
-	NodeID                   string
-	GatewayVersion           string
-	RequestType              string
-	Response                 *schemas.BifrostResponse
-	StartedAt                time.Time
+	PolicyVersions        *PolicyVersions
+	UpstreamCostUSD       string
+	Authorization         *Authorization
+	Cancelled             bool
+	ClientStoppedAt       time.Time
+	CatalogVersion        uint64
+	Meters                EventMeters
+	Plugins               plugins.Metrics
+	ProviderAttempts      []ProviderAttemptInput
+	ProviderCompletedAt   time.Time
+	ProviderStartedAt     time.Time
+	TTFTMS                *uint32
+	FirstOutputAt         time.Time
+	CacheReadSavingsUSD   *string
+	CacheWriteOverheadUSD *string
+	NodeID                string
+	GatewayVersion        string
+	RequestType           string
+	RequestSettings       RequestSettings
+	StartedAt             time.Time
 }
 
 type ProviderAttemptInput struct {
 	CatalogChainHash         string
-	SelectedCatalogChainHash string
+	ResolvedCatalogChainHash string
 	Provider                 string
+	Byok                     string
 	StartedAt                time.Time
 	CompletedAt              time.Time
 	OutputObserved           bool
@@ -72,19 +69,6 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		createdAt = authorization.CreatedAt
 	}
 	totalTimeMS := uint32Duration(finishedAt.Sub(startedAt))
-	upstreamTimeMS := totalTimeMS
-	if !input.ProviderStartedAt.IsZero() && !input.ProviderStartedAt.Before(startedAt) {
-		providerCompletedAt := input.ProviderCompletedAt
-		if providerCompletedAt.IsZero() || providerCompletedAt.Before(input.ProviderStartedAt) {
-			providerCompletedAt = finishedAt
-		}
-		upstreamTimeMS = uint32Duration(providerCompletedAt.Sub(input.ProviderStartedAt))
-	} else if extra := responseExtraFields(input.Response); extra != nil && extra.Latency > 0 {
-		upstreamTimeMS = uint32FromInt64(extra.Latency)
-	}
-	if upstreamTimeMS > totalTimeMS {
-		upstreamTimeMS = totalTimeMS
-	}
 	var clientStopMS *uint32
 	if !input.ClientStoppedAt.IsZero() && !input.ClientStoppedAt.Before(startedAt) {
 		value := uint32Duration(input.ClientStoppedAt.Sub(startedAt))
@@ -126,7 +110,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 	if err != nil {
 		return RequestEvent{}, err
 	}
-	providerAttempts := requestProviderAttempts(input, authorization, upstreamTimeMS)
+	providerAttempts := requestProviderAttempts(input, startedAt, totalTimeMS)
 	if len(providerAttempts) == 0 {
 		// A request that reached no provider has no usage. Settlement rejects
 		// meters without an attempt, including request-side counts.
@@ -146,6 +130,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		StogasUserID:         authorization.UserID,
 		StogasOrganizationID: authorization.OrganizationID,
 		RequestType:          normalizeRequestType(input.RequestType),
+		RequestSettings:      input.RequestSettings,
 		Cancelled:            input.Cancelled,
 		ClientStopMS:         clientStopMS,
 		CatalogVersion:       catalogVersion(input.CatalogVersion),
@@ -202,52 +187,32 @@ func requestProviderTiming(input EventInput, startedAt time.Time, finishedAt tim
 	)
 }
 
-func requestProviderAttempts(input EventInput, authorization *Authorization, fallbackLatencyMS uint32) []ProviderAttempt {
-	if len(input.ProviderAttempts) == 0 {
-		if input.ProviderStartedAt.IsZero() {
-			return []ProviderAttempt{}
-		}
-		return []ProviderAttempt{{
-			Provider:                 authorization.ProviderKey,
-			CatalogChainHash:         input.CatalogChainHash,
-			SelectedCatalogChainHash: changedCatalogSelection(input.SelectedCatalogChainHash, input.CatalogChainHash),
-			Status:                   providerAttemptStatus(input.Error, input.Response),
-			StatusCode:               providerStatusCode(input.Error),
-			LatencyMS:                fallbackLatencyMS,
-			OutputObserved:           input.ProviderOutputObserved,
-			ProviderRequestID:        upstreamRequestID(input.Response),
-			FinishReason:             finishReason(input.Response),
-			Byok:                     loggedCredentialID(authorization),
-		}}
-	}
-
+func requestProviderAttempts(input EventInput, startedAt time.Time, totalTimeMS uint32) []ProviderAttempt {
 	attempts := make([]ProviderAttempt, len(input.ProviderAttempts))
 	for index, observed := range input.ProviderAttempts {
-		provider := boundedTelemetryValue(observed.Provider, maxProviderNameBytes)
-		if provider == "" {
-			provider = authorization.ProviderKey
-		}
+		startMS := min(uint32Duration(observed.StartedAt.Sub(startedAt)), totalTimeMS)
 		attempts[index] = ProviderAttempt{
-			Provider:                 provider,
+			Provider:                 boundedTelemetryValue(observed.Provider, maxProviderNameBytes),
 			CatalogChainHash:         observed.CatalogChainHash,
-			SelectedCatalogChainHash: changedCatalogSelection(observed.SelectedCatalogChainHash, observed.CatalogChainHash),
+			ResolvedCatalogChainHash: changedCatalogResolution(observed.ResolvedCatalogChainHash, observed.CatalogChainHash),
 			Status:                   providerAttemptStatus(observed.Error, observed.Response),
 			StatusCode:               providerStatusCode(observed.Error),
-			LatencyMS:                uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)),
+			StartMS:                  startMS,
+			LatencyMS:                min(uint32Duration(observed.CompletedAt.Sub(observed.StartedAt)), totalTimeMS-startMS),
 			OutputObserved:           observed.OutputObserved,
 			ProviderRequestID:        upstreamRequestID(observed.Response),
 			FinishReason:             finishReason(observed.Response),
-			Byok:                     loggedCredentialID(authorization),
+			Byok:                     loggedCredentialID(observed.Byok),
 		}
 	}
 	return attempts
 }
 
-func changedCatalogSelection(selected, settled string) string {
-	if selected == settled {
+func changedCatalogResolution(resolved, settled string) string {
+	if resolved == settled {
 		return ""
 	}
-	return selected
+	return resolved
 }
 
 func providerAttemptStatus(bifrostErr *schemas.BifrostError, response *schemas.BifrostResponse) string {
@@ -297,23 +262,17 @@ func cloneUint32Pointer(value *uint32) *uint32 {
 	return &copy
 }
 
-func normalizedUpstreamByok(authorization *Authorization) string {
-	if authorization == nil || strings.TrimSpace(authorization.UpstreamByok) == "" {
-		return "stogas"
-	}
-	return strings.TrimSpace(authorization.UpstreamByok)
-}
-
-func loggedCredentialID(authorization *Authorization) *string {
-	id := normalizedUpstreamByok(authorization)
-	if id == ManagedUpstreamByok {
+// loggedCredentialID returns the customer's credential ID, or nil for ours.
+func loggedCredentialID(upstreamByok string) *string {
+	id := strings.TrimSpace(upstreamByok)
+	if id == "" || id == ManagedUpstreamByok {
 		return nil
 	}
 	return &id
 }
 
 func calculateBilledCostUSD(authorization *Authorization, upstreamCostUSD *money.USD) *money.USD {
-	if normalizedUpstreamByok(authorization) == "stogas" {
+	if loggedCredentialID(authorization.UpstreamByok) == nil {
 		return new(money.USD).Set(upstreamCostUSD)
 	}
 	return new(money.USD).MulRatioCeil(upstreamCostUSD, big.NewInt(2), 100)
@@ -326,13 +285,6 @@ func isStreamingRequest(requestType string) bool {
 	default:
 		return false
 	}
-}
-
-func responseExtraFields(resp *schemas.BifrostResponse) *schemas.BifrostResponseExtraFields {
-	if resp == nil {
-		return nil
-	}
-	return resp.GetExtraFields()
 }
 
 func providerStatusCode(bifrostErr *schemas.BifrostError) *int {
@@ -383,7 +335,7 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "over_budget"
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
-	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal"):
+	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"):
 		return "content_filter"
 	case statusCode == 401:
 		return "authentication_error"

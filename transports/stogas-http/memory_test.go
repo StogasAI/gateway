@@ -1,15 +1,23 @@
 package stogashttp
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/maximhq/bifrost/core/schemas"
+	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
 )
 
 func TestJSONStructureRejectionFitsAlreadyAdmittedScanMemory(t *testing.T) {
@@ -364,5 +372,182 @@ func TestRequestMemoryDiagnosticsSeparateReservationClasses(t *testing.T) {
 	delivery.release()
 	if got := admission.reserved.Load(); got != 0 {
 		t.Fatalf("reservation release left %d bytes", got)
+	}
+}
+
+func TestRequestPreparationIsChargedBeforeWork(t *testing.T) {
+	server := &Server{memory: &requestMemoryAdmission{}}
+	ctx := newTestRequest(t)
+	ctx.memory.release()
+	ctx.request.Method = http.MethodPost
+	testRequestURI(ctx, "/v1/chat/completions")
+	testRequestBody(ctx, `{"messages":[{"role":"user","content":"`+strings.Repeat("a", 1<<20)+`"}]}`)
+	server.memory.budget = requestMemoryWeight(cap(ctx.body), 0) + requestPreparationWeight(len(ctx.body), cap(ctx.body)) - 1
+	ctx.memory, _ = server.memory.acquire(cap(ctx.body))
+	ctx.credential = &apiCredential{Raw: "authenticated-fixture"}
+	// No runtime or database is installed: reaching configuration fetch instead
+	// of admission would fail this test.
+	server.inference(ctx)
+	if testResponse(ctx).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(ctx).Body.String(), "gateway_capacity_exceeded") {
+		t.Fatalf("preparation started without its memory charge: %d, %s", testResponse(ctx).Code, testResponse(ctx).Body.String())
+	}
+	if server.memory.reserved.Load() != 0 {
+		t.Fatal("rejected preparation retained memory")
+	}
+}
+
+// Admission charges preparation at its peak until the input is released, and the
+// request weight afterward. Measure the live heap of complete local preparation
+// for the shapes that hold the most copies, so that a decoder or Bifrost change
+// that adds one fails here instead of overcommitting guest memory. Stop-the-world
+// collection runs at the allocation that crosses each trigger, so the samples
+// include short overlaps such as buffer growth. The race detector changes
+// allocation, so the test runner measures this in a separate process.
+func TestRequestPreparationFitsItsMemoryCharges(t *testing.T) {
+	if !strings.Contains(os.Getenv("GODEBUG"), "gcstoptheworld=1") {
+		t.Skip("measured separately with GODEBUG=gcstoptheworld=1 and without the race detector")
+	}
+	matcher, err := redaction.CompilePolicy(redaction.Options{CustomPatterns: []redaction.CustomPattern{{Expression: "PRIVATE-[0-9]+"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const size = 16 << 20
+	text := strings.Repeat("hello world ", size/12)
+	message := `{"role":"user","content":[{"type":"input_text","text":"` + text[:1260] + `"}]},`
+	shapes := []struct {
+		route catalog.Route
+		body  func(model, text string, messages int) string
+	}{
+		{catalog.RouteChat, func(model, text string, _ int) string {
+			return `{"model":"` + model + `","messages":[{"role":"user","content":"PRIVATE-1 ` + text + `"}]}`
+		}},
+		{catalog.RouteResponses, func(model, text string, _ int) string {
+			return `{"model":"` + model + `","input":[{"role":"user","content":[{"type":"input_text","text":"PRIVATE-1 ` + text + `"}]}]}`
+		}},
+		// Small strings in each message keep that message's decoder copy alive.
+		{catalog.RouteResponses, func(model, _ string, messages int) string {
+			return `{"model":"` + model + `","input":[` + strings.Repeat(message, messages) + `{"role":"user","content":"PRIVATE-1"}]}`
+		}},
+	}
+	type prepared struct {
+		lease      *requestMemoryLease
+		resolution *catalog.ResolvedRequest
+		state      *stogas.State
+		// The context keeps the provider body until dispatch.
+		ctx     *schemas.BifrostContext
+		request *schemas.BifrostRequest
+	}
+	admission := &requestMemoryAdmission{}
+	prepare := func(route catalog.Route, body []byte) prepared {
+		t.Helper()
+		lease, ok := admission.acquire(cap(body))
+		if !ok {
+			t.Fatal("request was not admitted")
+		}
+		fields, err := catalog.DecodeRequestBody(body, lease.admitJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+			Body: body, Fields: fields, Method: http.MethodPost, Path: mustCatalogPath(t, route), RedactionPolicy: matcher,
+			ReserveBody: func(bytes int) error {
+				if !lease.resize(max(cap(body), bytes)) {
+					return errRequestMemoryCapacity
+				}
+				return nil
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state := stogas.NewState(resolution, "sk-test", nil, stogas.AdapterFor(resolution.Provider))
+		for _, step := range []func(*stogas.State) error{state.Adapter.ValidateRequest, state.Adapter.SanitizeRequest, state.Adapter.EstimateHold} {
+			if err := step(state); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
+		request, err := resolution.ToBifrost(ctx)
+		if err == nil {
+			err = stogas.PrepareProviderRequest(ctx, state, request)
+		}
+		// Azure learns its deployment name at authorization and prepares again.
+		if err == nil && resolution.Provider == schemas.Azure {
+			if err = resolution.SetWireModel("deployment"); err == nil {
+				request, err = resolution.ToBifrost(ctx)
+			}
+			if err == nil {
+				err = stogas.PrepareProviderRequest(ctx, state, request)
+			}
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return prepared{lease, resolution, state, ctx, request}
+	}
+	liveHeap := func() int64 {
+		sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+		metrics.Read(sample)
+		return int64(sample[0].Value.Uint64())
+	}
+	// Collect after every 2% of heap growth.
+	defer debug.SetGCPercent(debug.SetGCPercent(2))
+	for _, shape := range shapes {
+		for _, model := range []string{"openai-gpt-5.6-sol", "azure-gpt-5.6-luna", "anthropic-claude-sonnet-4-6"} {
+			// One-time state, such as tokenizer tables, is not request memory.
+			prepare(shape.route, []byte(shape.body(model, "warm", 1))).lease.release()
+			body := []byte(shape.body(model, text, size/len(message)))
+			bodyBytes := int64(len(body))
+			var request prepared
+			var base, peak int64
+			// A collection the sampler did not read could hide the peak. On a
+			// busy machine the sampler can fall behind, so measure again.
+			for attempt := 1; ; attempt++ {
+				runtime.GC()
+				base, peak = liveHeap(), 0
+				missed := false
+				stop, stopped := make(chan struct{}), make(chan struct{})
+				go func() {
+					defer close(stopped)
+					samples := []metrics.Sample{{Name: "/gc/cycles/total:gc-cycles"}, {Name: "/gc/heap/live:bytes"}}
+					metrics.Read(samples)
+					for cycles := samples[0].Value.Uint64(); ; cycles = samples[0].Value.Uint64() {
+						metrics.Read(samples)
+						missed = missed || samples[0].Value.Uint64() > cycles+1
+						peak = max(peak, int64(samples[1].Value.Uint64()))
+						select {
+						case <-stop:
+							return
+						default:
+						}
+					}
+				}()
+				request = prepare(shape.route, body)
+				close(stop)
+				<-stopped
+				if !missed {
+					break
+				}
+				if attempt == 3 {
+					t.Fatalf("%s %s: the live heap sampler missed a collection in each of %d measurements", model, shape.route, attempt)
+				}
+				request.lease.release()
+				request = prepared{}
+			}
+			weight := request.lease.weight
+			charge := weight + requestPreparationWeight(len(body), cap(body))
+			request.resolution.ReleaseInput()
+			body = nil
+			runtime.GC()
+			if peaked := peak - base + bodyBytes; peaked > charge {
+				t.Errorf("%s %s: preparation peaked at %.2f times the body, above its %.2f charge", model, shape.route, float64(peaked)/float64(bodyBytes), float64(charge)/float64(bodyBytes))
+			}
+			if retained := liveHeap() - base + bodyBytes; retained > weight {
+				t.Errorf("%s %s: request kept %.2f times the body after releasing its input, above its %.2f charge", model, shape.route, float64(retained)/float64(bodyBytes), float64(weight)/float64(bodyBytes))
+			}
+			runtime.KeepAlive(request)
+			request.lease.release()
+		}
 	}
 }

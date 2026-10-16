@@ -97,6 +97,10 @@ func (v conditionalPolicyValues) PolicyValue(path string) (policy.Value, bool) {
 	return value, ok
 }
 
+func (v conditionalPolicyValues) PolicyTokenPrice(meter string, _ int64) (policy.Value, bool) {
+	return v.PolicyValue("deployment.pricing." + meter + ".per_mill_tokens")
+}
+
 func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 	raw, org, keys := encryptedPolicyFixture(t)
 	var fields map[string]json.RawMessage
@@ -189,6 +193,34 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 	}
 	if s.keyConfigs.bytes != 0 {
 		t.Fatal("temporary validation retained secret plans")
+	}
+}
+
+func TestPolicyValidationChecksEveryRuleAgainstCombinedLimits(t *testing.T) {
+	plugins := func(prefix string) map[string]any {
+		literals := make([]string, 600)
+		for i := range literals {
+			literals[i] = fmt.Sprintf("%s-%04d", prefix, i)
+		}
+		return map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}
+	}
+	rule := func(name string) map[string]any {
+		return map[string]any{"when": `provider.id == "` + name + `"`, "plugins": plugins(name)}
+	}
+	base, _ := json.Marshal(map[string]any{"plugins": plugins("base")})
+	one, _ := json.Marshal(map[string]any{"rules": map[string]any{"azure": rule("azure")}})
+	two, _ := json.Marshal(map[string]any{"rules": map[string]any{"azure": rule("azure"), "openai": rule("openai")}})
+	empty, none := json.RawMessage(`{}`), json.RawMessage(`null`)
+	s := &Service{}
+	for _, raw := range [][]json.RawMessage{{base, none, empty}, {empty, none, one}} {
+		if _, err := s.ValidatePolicySources(validationSources(raw), "org", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, raw := range [][]json.RawMessage{{base, none, one}, {empty, none, two}} {
+		if _, err := s.ValidatePolicySources(validationSources(raw), "org", nil); err == nil {
+			t.Fatal("rules that exceed the combined literal limit together were accepted")
+		}
 	}
 }
 

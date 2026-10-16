@@ -145,17 +145,17 @@ func TestOpenAIAdapterNormalizesOutputCapsBelowProviderMinimum(t *testing.T) {
 		{
 			name: "chat max_completion_tokens",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`,
 		},
 		{
 			name: "chat max_tokens alias",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`,
 		},
 		{
 			name: "responses max_output_tokens",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":15}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":15}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -212,12 +212,12 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 		{
 			name: "chat max_completion_tokens",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`,
 		},
 		{
 			name: "responses max_output_tokens",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":0}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":0}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {

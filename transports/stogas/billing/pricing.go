@@ -2,7 +2,9 @@ package billing
 
 import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
+	"math"
 	"math/big"
+	"strconv"
 	"strings"
 )
 
@@ -29,15 +31,45 @@ const (
 	MeterOutputTokens            = "output_tokens"
 	MeterReasoningTokens         = "reasoning_tokens"
 
-	RatePerMillionTokens         = "per_mill_tokens"
-	RatePerMillionContextLTE272K = "per_mill_context_lte_272k"
-	RatePerMillionContextGT272K  = "per_mill_context_gt_272k"
-	RatePerThousandCalls         = "per_1k_calls"
+	RatePerMillionTokens = "per_mill_tokens"
+	RatePerThousandCalls = "per_1k_calls"
 
-	LongContextThresholdTokens = 272000
-	MillionTokens              = 1000000
-	ThousandCalls              = 1000
+	MillionTokens = 1000000
+	ThousandCalls = 1000
+
+	// A per_mill_context_gt_<N>k rate replaces per_mill_tokens for every token
+	// of its meter when the prompt, counting cached and cache write tokens, has
+	// more than N thousand tokens. The largest cutoff below the prompt applies.
+	contextRatePrefix = "per_mill_context_gt_"
 )
+
+// ContextCutoff returns the prompt size above which a context rate applies.
+func ContextCutoff(rateKey string) (int, bool) {
+	digits, ok := strings.CutPrefix(rateKey, contextRatePrefix)
+	if !ok {
+		return 0, false
+	}
+	digits, ok = strings.CutSuffix(digits, "k")
+	if !ok || digits == "" || digits[0] < '1' || digits[0] > '9' {
+		return 0, false
+	}
+	thousands, err := strconv.Atoi(digits)
+	if err != nil || thousands > math.MaxInt/1000 {
+		return 0, false
+	}
+	return thousands * 1000, true
+}
+
+// TokenRateKey returns the rate that a prompt of promptTokens pays.
+func TokenRateKey(rates map[string]string, promptTokens int) string {
+	rateKey, rateCutoff := RatePerMillionTokens, 0
+	for key := range rates {
+		if cutoff, ok := ContextCutoff(key); ok && cutoff < promptTokens && cutoff > rateCutoff {
+			rateKey, rateCutoff = key, cutoff
+		}
+	}
+	return rateKey
+}
 
 type Pricing map[string]map[string]string
 
@@ -65,13 +97,21 @@ type MeterEstimate struct {
 	HoldRequired bool
 }
 
-type TokenRateMode int
+// TokenRateMode selects token rates for a known prompt size, or the highest
+// rate for holds placed before the prompt size is known.
+type TokenRateMode struct {
+	promptTokens int
+	highest      bool
+}
 
-const (
-	TokenRateStandard TokenRateMode = iota
-	TokenRateLongContext
-	TokenRateHighest
+var (
+	TokenRateStandard = TokenRateMode{}
+	TokenRateHighest  = TokenRateMode{highest: true}
 )
+
+func TokenRateForPrompt(promptTokens int) TokenRateMode {
+	return TokenRateMode{promptTokens: promptTokens}
+}
 
 func AppendTokenMeterCost(meters []MeterEstimate, pricing Pricing, meterKey string, quantity int, holdRequired bool, mode TokenRateMode) []MeterEstimate {
 	if quantity <= 0 {
@@ -117,27 +157,16 @@ func appendMeterCost(meters []MeterEstimate, meterKey string, rateKey string, ra
 }
 
 func PricingRate(pricing Pricing, meterKey string, mode TokenRateMode) (string, *money.USD, bool) {
-	if len(pricing) == 0 {
+	meter := pricing[meterKey]
+	if len(meter) == 0 {
 		return "", nil, false
 	}
-	meter, ok := pricing[meterKey]
-	if !ok || len(meter) == 0 {
-		return "", nil, false
-	}
-	if mode == TokenRateHighest {
+	if mode.highest {
 		return HighestRate(meter)
 	}
-	if mode == TokenRateLongContext {
-		if rate, ok := ParseRate(meter[RatePerMillionContextGT272K]); ok {
-			return RatePerMillionContextGT272K, rate, true
-		}
-		return HighestRate(meter)
-	}
-	if rate, ok := ParseRate(meter[RatePerMillionTokens]); ok {
-		return RatePerMillionTokens, rate, true
-	}
-	if rate, ok := ParseRate(meter[RatePerMillionContextLTE272K]); ok {
-		return RatePerMillionContextLTE272K, rate, true
+	rateKey := TokenRateKey(meter, mode.promptTokens)
+	if rate, ok := ParseRate(meter[rateKey]); ok {
+		return rateKey, rate, true
 	}
 	return HighestRate(meter)
 }

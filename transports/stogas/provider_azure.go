@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"encoding/json"
-	"strings"
 
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
@@ -32,7 +31,7 @@ func (a AzureAdapter) ValidateRequest(state *State) error {
 		return validateAnthropicResponsesPolicy(state)
 	}
 	state.Resolution.NormalizeMinimumOutputTokenLimit(openaiprovider.MinMaxCompletionTokens)
-	if err := validateAzurePromptCaching(state); err != nil {
+	if err := validateOpenAIPromptCaching(state); err != nil {
 		return err
 	}
 	if err := validateOpenAIWireChatPolicy(state); err != nil {
@@ -64,45 +63,18 @@ func (a AzureAdapter) EstimateHold(state *State) error {
 	return nil
 }
 
+func (a AzureAdapter) CalculateUpstreamCost(state *State) error {
+	if azureDeploymentUsesAnthropicWire(state) && anthropicRefusalUnbilled(state) {
+		settleUnbilledRefusal(state)
+		return nil
+	}
+	return a.DefaultAdapter.CalculateUpstreamCost(state)
+}
+
 func azureDeploymentUsesAnthropicWire(state *State) bool {
 	return state != nil &&
 		state.Resolution != nil &&
-		strings.EqualFold(strings.TrimSpace(state.Resolution.Deployment.Upstream.ModelFormat), "Anthropic")
-}
-
-func validateAzurePromptCaching(state *State) error {
-	if state == nil || state.Resolution == nil {
-		return catalog.ErrUnsupportedRequest
-	}
-	raw := state.Resolution.RawBody()
-	if err := validatePromptCacheKey(raw["prompt_cache_key"], "prompt_cache_key"); err != nil {
-		return err
-	}
-	if rawJSONValueSet(raw["prompt_cache_options"]) {
-		return invalidRequest("prompt_cache_options is not supported for Azure deployments")
-	}
-	breakpoints, err := validatePromptCacheBreakpoints(
-		rawPromptContent(state.Resolution.Route, raw),
-		state.Resolution.Route,
-	)
-	if err != nil {
-		return err
-	}
-	if breakpoints > 0 {
-		return invalidRequest("prompt_cache_breakpoint is not supported for Azure deployments")
-	}
-	retentionRaw := raw["prompt_cache_retention"]
-	if !rawJSONValueSet(retentionRaw) {
-		return nil
-	}
-	retention, ok := rawStringValue(retentionRaw)
-	if !ok {
-		return invalidRequest("prompt_cache_retention must be a string")
-	}
-	if retention != "24h" {
-		return invalidRequest("prompt_cache_retention must be 24h for Azure GPT-5.6 deployments")
-	}
-	return nil
+		schemas.IsAnthropicModel(state.Resolution.Deployment.ModelID)
 }
 
 func (AzureAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {

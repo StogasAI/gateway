@@ -27,7 +27,7 @@ var (
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}
 	ErrDashboardKeyDenied  = &RequestError{"dashboard_key_denied", "API key is not available to this dashboard session", 403}
-	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "Stogas is temporarily unavailable. Retry the request later.", 503}
+	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "The gateway is temporarily unavailable. Retry the request later.", 503}
 
 	errByokNotAllowed = &RequestError{"byok_not_allowed", "The credential is not allowed by this API key", 400}
 )

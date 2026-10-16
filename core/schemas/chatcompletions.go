@@ -43,6 +43,7 @@ type BifrostChatResponse struct {
 	Speed             *string                    `json:"speed,omitempty"`         // "fast" | "standard" — speed actually served (Anthropic fast mode); drives fast-mode billing
 	InferenceGeo      *string                    `json:"inference_geo,omitempty"` // "us" | "global" — inference geography served (Anthropic data residency); drives the 1.1x US multiplier
 	Diagnostics       *CacheDiagnostics          `json:"diagnostics,omitempty"`   // Anthropic cache diagnostics (cache-diagnosis-2026-04-07); first prompt-cache prefix divergence point
+	StopDetails       *ResponsesStopDetails      `json:"-"`                       // Anthropic refusal detail, kept because Chat has no wire field; its category decides whether a refusal before any output is billed
 	SystemFingerprint string                     `json:"system_fingerprint"`
 	Usage             *BifrostLLMUsage           `json:"usage"`
 	ExtraFields       BifrostResponseExtraFields `json:"extra_fields"`

@@ -56,7 +56,7 @@ func TestAuthorizationClosesOnlyAfterSendingItsStatement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = service.authorizeResolvedRequest(context.Background(), "hash", nil, snapshot.Claims, "request", "chutes", "product", "0.01", UsageReservation{}, snapshot, prepared, nil, nil, nil, time.Minute)
+			_, err = service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: "request", ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
 			if !errors.Is(err, ErrGatewayUnavailable) {
 				t.Fatalf("authorization error = %v", err)
 			}
@@ -115,7 +115,7 @@ func TestAuthorizationWaitsEndBeforeTheStatementReserve(t *testing.T) {
 		}
 		authorizations.Go(func() {
 			started := time.Now()
-			_, errs[index] = service.authorizeResolvedRequest(context.Background(), "hash", nil, snapshot.Claims, "request-"+organization, "chutes", "product", "0.01", UsageReservation{}, snapshot, prepared, nil, nil, nil, time.Minute)
+			_, errs[index] = service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: "request-" + organization, ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
 			elapsed[index] = time.Since(started)
 		})
 	}
@@ -162,7 +162,7 @@ func TestUnansweredAuthorizationsTakeOnePlacePerConnectionUntilClosed(t *testing
 			t.Fatal(err)
 		}
 		authorizations.Go(func() {
-			_, err := service.authorizeResolvedRequest(context.Background(), "hash", nil, snapshot.Claims, fmt.Sprint("request-", index), "chutes", "product", "0.01", UsageReservation{}, snapshot, prepared, nil, nil, nil, time.Minute)
+			_, err := service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: fmt.Sprint("request-", index), ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
 			if !errors.Is(err, ErrGatewayUnavailable) {
 				t.Errorf("authorization error = %v", err)
 			}

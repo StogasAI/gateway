@@ -11,7 +11,6 @@ import (
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
 	"github.com/maximhq/bifrost/transports/stogas/providerio"
 )
 
@@ -37,7 +36,7 @@ func inferenceRequestID(ctx *requestContext) (string, error) {
 	return value, nil
 }
 
-func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *catalog.ResolvedRequest, credential apiCredential, adapter stogas.Adapter, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
+func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *catalog.ResolvedRequest, credential apiCredential, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
 	timeouts := resolution.RequestTimeouts()
 	responseDeadline := startedAt.Add(timeouts.Total())
 	if !time.Now().Before(responseDeadline) {
@@ -57,9 +56,11 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	bifrostCtx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
 	bifrostCtx.SetValue(schemas.BifrostContextKeyIntegrationType, "openai")
 	bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
-	state := stogas.NewState(resolution, credential.Raw, credential.Claims, adapter)
+	// Core's idle timer ends provider reads. The caller's idle limit ends only
+	// delivery, so a silent provider stream may last the request lifetime.
+	bifrostCtx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, billing.GatewayRequestLifetime)
+	state := stogas.NewState(resolution, credential.Raw, credential.Claims, stogas.AdapterFor(resolution.Provider))
 	state.SetDashboardCredential(credential.Dashboard)
-	state.EncryptionKeys = credential.EncryptionKeys
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
 	state.StartedAt = startedAt
@@ -78,12 +79,6 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	wait := newResponseDeadline(startedAt, timeouts.Total(), timeouts.OutputIdle())
 	ctx.responseWait = wait
 	client := ctx.request.Context()
-	if resolution.Provider == catalog.ProviderChutes {
-		chutese2ee.SetInvocationBudget(bifrostCtx, resolution.ProviderAttemptLimit(), func() bool {
-			cancelled, _ := state.ClientStatus()
-			return !cancelled && wait.waiting() && client.Err() == nil
-		})
-	}
 	observed := make(chan struct{})
 	stopObserver := context.AfterFunc(client, func() {
 		state.MarkClientStopped()
@@ -121,16 +116,6 @@ func (ctx *requestContext) inferenceWaitError() error {
 		return context.DeadlineExceeded
 	}
 	return ctx.request.Context().Err()
-}
-
-func configureProviderStreamIdleTimeout(
-	ctx *schemas.BifrostContext,
-	state *stogas.State,
-) {
-	if ctx == nil || state == nil || state.RequestLifetime <= 0 {
-		return
-	}
-	ctx.SetValue(schemas.BifrostContextKeyStreamIdleTimeout, state.RequestLifetime)
 }
 
 func metadataHeader(ctx *requestContext) (bool, error) {

@@ -7,11 +7,12 @@ import (
 )
 
 // Keep cold, retained state from consuming the space needed to admit a maximum
-// configured request plus a byte-weighted maximum response. Additional response
-// structure and codec scratch still require admission. Request work can use the
-// full shared budget; this is a watermark, not a separate memory pool.
+// configured request through preparation, or afterward with a byte-weighted
+// maximum response. Additional response structure and codec scratch still
+// require admission. Request work can use the full shared budget; this is a
+// watermark, not a separate memory pool.
 func (a *requestMemoryAdmission) protectRequestMemory(maxBodyBytes int) error {
-	headroom := requestMemoryWeight(maxBodyBytes, catalog.MaxRequestJSONValues*requestJSONValueBytes) + maxInferenceStreamResponseBytes*requestBodyReservationFactor
+	headroom := requestMemoryWeight(maxBodyBytes, catalog.MaxRequestJSONValues*requestJSONValueBytes) + max(requestPreparationWeight(maxBodyBytes, maxBodyBytes), maxInferenceStreamResponseBytes*requestBodyReservationFactor)
 	// Fail at startup if even one complete session cannot coexist with this
 	// request. Silently clamping would remove the protection on smaller guests.
 	if headroom+encryptedSessionRetainedBytes+connectionRetainedBytes+quoteRetainedBytes > a.budgetBytes() {

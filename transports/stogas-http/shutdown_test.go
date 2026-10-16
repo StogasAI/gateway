@@ -11,6 +11,7 @@ import (
 	"errors"
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"net/http"
 )
 
@@ -23,10 +24,10 @@ func TestBlockedSSESendEndsWhenRequestContextCloses(t *testing.T) {
 	if !drain.begin() {
 		t.Fatal("request drain rejected work before draining")
 	}
-	state := &stogas.State{}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 	responseCtx := newTestRequest(t)
 
-	streamBodyReader := server.startSSEStream(responseCtx, requestCtx, state, stream, true, false, cancel, drain.end)
+	streamBodyReader := startTestStream(server, responseCtx, requestCtx, state, stream, cancel, drain.end)
 	t.Cleanup(func() {
 		cancel()
 		_ = streamBodyReader.Close()

@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"time"
+
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
@@ -27,10 +29,9 @@ type Deployment struct {
 	ModelID             string
 	Upstream            Upstream
 	Capabilities        Capabilities
-	FileInputs          FileInputs
+	NativeFileInputs    NativeFileInputs
 	ContextWindowTokens int
 	MaxInputTokens      int
-	ImpliedServiceTier  *schemas.BifrostServiceTier
 	MaxOutputTokens     int
 	Pricing             Pricing
 	RouteIDs            []string
@@ -39,8 +40,12 @@ type Deployment struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens
 	ReasoningSupported  bool
 	DataHandling        DataHandling
+	ApprovalRequired    bool
 	WeightPrecision     string
-	snapshot            *snapshot
+	// snapshot is the catalog state in effect when the request started, so the hold and the
+	// charge use the same facts.
+	snapshot  *snapshot
+	startedAt time.Time
 }
 
 type DataHandling struct {
@@ -59,11 +64,10 @@ type Upstream struct {
 	ModelFormat    string
 	ModelVersion   string
 	ChuteID        string
-	GPUCount       int
+	GPUCount       *int
 	InferenceGeo   string
 	ReasoningMode  string
 	ServiceTier    string
-	Speed          string
 	Hosting        string
 	DeploymentType string
 }
@@ -76,21 +80,37 @@ type ReasoningMaxTokens struct {
 type Pricing = billing.Pricing
 type MeterEstimate = billing.MeterEstimate
 
+// A snapshot is one catalog state of a release. The base state also holds the dated states
+// that follow it.
 type snapshot struct {
-	deploymentSelectors map[string]string
-	graph               compiledGraph
-	identity            Identity
-	modelSelectors      map[string]string
-	publicDigest        string
-	publicRaw           []byte
-	raw                 []byte
-	routeDeployments    map[string][]string
+	graph compiledGraph
+	// groups holds every model group. Each is a request selector for its newest model.
+	groups         map[string]bool
+	identity       Identity
+	modelSelectors map[string]string
+	publicDigest   string
+	publicRaw      []byte
+	raw            []byte
+	schedule       []datedState
+}
+
+type datedState struct {
+	start time.Time
+	state *snapshot
 }
 
 type compiledCatalog struct {
-	Schema       string        `json:"schema"`
-	PublicDigest string        `json:"publicDigest"`
-	Graph        compiledGraph `json:"graph"`
+	Schema       string          `json:"schema"`
+	PublicDigest string          `json:"publicDigest"`
+	Graph        compiledGraph   `json:"graph"`
+	Schedule     []scheduleEntry `json:"schedule"`
+}
+
+// A schedule entry lists every node that differs from the base graph from Start until the
+// next entry starts.
+type scheduleEntry struct {
+	Start time.Time     `json:"start"`
+	Graph compiledGraph `json:"graph"`
 }
 
 type compiledGraph struct {
@@ -107,26 +127,26 @@ type compiledAuthor struct {
 }
 
 type compiledDeployment struct {
-	Aliases             []string                                   `json:"aliases"`
-	ChainHashes         map[string]string                          `json:"chainHashes"`
-	Capabilities        Capabilities                               `json:"capabilities"`
-	ContextWindowTokens int                                        `json:"contextWindowTokens"`
-	MaxInputTokens      int                                        `json:"maxInputTokens"`
-	InputModalities     []string                                   `json:"inputModalities"`
-	FileInputsByRoute   map[string]FileInputs                      `json:"fileInputsByRoute"`
-	MaxOutputTokens     int                                        `json:"maxOutputTokens"`
-	ModelID             string                                     `json:"modelId"`
-	OutputModalities    []string                                   `json:"outputModalities"`
-	Pricing             Pricing                                    `json:"pricing"`
-	Reasoning           string                                     `json:"reasoning"`
-	ReasoningEfforts    []string                                   `json:"reasoningEfforts"`
-	ReasoningMaxTokens  *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
-	RouteOverrides      map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
-	DeprecationDate     *string                                    `json:"deprecationDate"`
-	RouteIDs            []string                                   `json:"routeIds"`
-	DataHandlingByRoute map[string]DataHandling                    `json:"dataHandlingByRoute"`
-	Upstream            compiledUpstream                           `json:"upstream"`
-	WeightPrecision     string                                     `json:"weightPrecision,omitempty"`
+	ChainHashes             map[string]string                          `json:"chainHashes"`
+	Capabilities            Capabilities                               `json:"capabilities"`
+	ContextWindowTokens     int                                        `json:"contextWindowTokens"`
+	MaxInputTokens          int                                        `json:"maxInputTokens"`
+	InputModalities         []string                                   `json:"inputModalities"`
+	NativeFileInputsByRoute map[string]NativeFileInputs                `json:"nativeFileInputsByRoute"`
+	MaxOutputTokens         int                                        `json:"maxOutputTokens"`
+	ModelID                 string                                     `json:"modelId"`
+	OutputModalities        []string                                   `json:"outputModalities"`
+	Pricing                 Pricing                                    `json:"pricing"`
+	Reasoning               string                                     `json:"reasoning"`
+	ReasoningEfforts        []string                                   `json:"reasoningEfforts"`
+	ReasoningMaxTokens      *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
+	RouteOverrides          map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
+	DeprecationDate         *string                                    `json:"deprecationDate"`
+	RouteIDs                []string                                   `json:"routeIds"`
+	DataHandlingByRoute     map[string]DataHandling                    `json:"dataHandlingByRoute"`
+	Upstream                compiledUpstream                           `json:"upstream"`
+	ApprovalRequired        bool                                       `json:"approvalRequired,omitempty"`
+	WeightPrecision         string                                     `json:"weightPrecision,omitempty"`
 }
 
 type compiledDeploymentRouteOverride struct {
@@ -152,11 +172,10 @@ type compiledUpstream struct {
 	ModelFormat    string `json:"modelFormat,omitempty"`
 	ModelVersion   string `json:"modelVersion,omitempty"`
 	ChuteID        string `json:"chuteId,omitempty"`
-	GPUCount       int    `json:"gpuCount,omitempty"`
+	GPUCount       *int   `json:"gpuCount,omitempty"`
 	InferenceGeo   string `json:"inferenceGeo,omitempty"`
 	ReasoningMode  string `json:"reasoningMode,omitempty"`
-	ServiceTier    string `json:"serviceTier,omitempty"`
-	Speed          string `json:"speed,omitempty"`
+	ServiceTier    string `json:"serviceTier"`
 	Hosting        string `json:"hosting,omitempty"`
 	DeploymentType string `json:"deploymentType,omitempty"`
 }
@@ -164,6 +183,7 @@ type compiledUpstream struct {
 type compiledModel struct {
 	Aliases            []string            `json:"aliases"`
 	AuthorID           string              `json:"authorId"`
+	GroupIDs           []string            `json:"groupIds"`
 	MaxOutputTokens    int                 `json:"maxOutputTokens"`
 	Name               string              `json:"name"`
 	Reasoning          string              `json:"reasoning"`

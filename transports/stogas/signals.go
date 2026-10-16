@@ -6,6 +6,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 var (
@@ -29,18 +30,16 @@ type SearchUsageSignals interface {
 }
 
 type StandardSignals struct {
-	Prompt            int
-	Completion        int
-	Reasoning         int
-	Cached            int
-	CacheWrite        int
-	CacheWrite5m      int
-	CacheWrite1h      int
-	WebSearch         int
-	ActualServiceTier *schemas.BifrostServiceTier
-	ActualSpeed       string
-	inputKnown        bool
-	outputKnown       bool
+	Prompt       int
+	Completion   int
+	Reasoning    int
+	Cached       int
+	CacheWrite   int
+	CacheWrite5m int
+	CacheWrite1h int
+	WebSearch    int
+	inputKnown   bool
+	outputKnown  bool
 
 	webSearchCallIDs map[string]struct{}
 	webSearchEvents  map[string]struct{}
@@ -167,48 +166,40 @@ func UpstreamProtocolError(err error) *schemas.BifrostError {
 	}
 }
 
-func validateActualExecutionReport(state *State, tier *schemas.BifrostServiceTier, speed *string, inferenceGeo *string) error {
+func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostServiceTier, speed *string, inferenceGeo *string) error {
 	if state == nil || state.Resolution == nil {
 		return nil
 	}
-	tierValue := ""
-	if tier != nil {
-		tierValue = strings.ToLower(strings.TrimSpace(string(*tier)))
-	}
-	speedValue := ""
-	if speed != nil {
-		speedValue = strings.ToLower(strings.TrimSpace(*speed))
-	}
-	allowedTier, allowedSpeed := permittedActualExecution(
-		state.Resolution.Provider,
-		state.Resolution.Deployment,
-		tier,
-		speedValue,
-	)
-	if tierValue != "" && executionTierClass(state.Resolution.Provider, tier) != "" && allowedTier == nil {
-		return ErrProviderExecutionMismatch
-	}
-	if speedValue != "" && executionSpeedClass(state.Resolution.Provider, speedValue) != "" && allowedSpeed == "" {
-		return ErrProviderExecutionMismatch
-	}
-	// Only a deployment pinned to one geography can be contradicted. Other
-	// reports, including new provider values, stay within what was selected.
-	if pinnedGeo := state.Resolution.Deployment.Upstream.InferenceGeo; inferenceGeo != nil && pinnedGeo != "" && pinnedGeo != "global" {
-		if reportedGeo := strings.ToLower(strings.TrimSpace(*inferenceGeo)); reportedGeo != "" && reportedGeo != pinnedGeo {
+	// Fast may run at Standard: OpenAI and Azure fall back above the Fast ramp rate and bill
+	// Standard. Every other tier must run as selected, and every report must agree.
+	if reported := catalog.ReportedTier(state.Resolution.Provider, serviceTier, speed); reported != "" {
+		selected := state.Resolution.Deployment.Upstream.ServiceTier
+		if reported != selected && (selected != catalog.TierFast || reported != catalog.TierStandard) ||
+			state.ActualTier != "" && state.ActualTier != reported {
 			return ErrProviderExecutionMismatch
 		}
 	}
-	reportedTierClass := executionTierClass(state.Resolution.Provider, tier)
-	if reportedTierClass != "" && executionTierClass(state.Resolution.Provider, state.ActualServiceTier) != "" &&
-		reportedTierClass != executionTierClass(state.Resolution.Provider, state.ActualServiceTier) {
-		return ErrProviderExecutionMismatch
-	}
-	reportedSpeedClass := executionSpeedClass(state.Resolution.Provider, speedValue)
-	if reportedSpeedClass != "" && executionSpeedClass(state.Resolution.Provider, state.ActualSpeed) != "" &&
-		reportedSpeedClass != executionSpeedClass(state.Resolution.Provider, state.ActualSpeed) {
-		return ErrProviderExecutionMismatch
+	// A reported geography must stay within the processing location the catalog
+	// promises on the route. A value the gateway cannot place satisfies only a
+	// promise that names no narrower location.
+	if inferenceGeo != nil {
+		if reported := strings.ToLower(strings.TrimSpace(*inferenceGeo)); reported != "" &&
+			!catalog.DataLocationWithin(reportedInferenceLocation(reported), state.Resolution.Deployment.DataHandling.ProcessingLocation) {
+			return ErrProviderExecutionMismatch
+		}
 	}
 	return nil
+}
+
+// reportedInferenceLocation maps Anthropic's usage.inference_geo to a catalog location.
+func reportedInferenceLocation(reported string) string {
+	switch reported {
+	case "us":
+		return "US"
+	case "global":
+		return "world"
+	}
+	return "unknown"
 }
 
 // ValidateCompletedExecution checks stream topology. Missing optional provider
@@ -226,43 +217,6 @@ func ValidateCompletedExecution(state *State) error {
 // conflicts before a chunk reaches the client; omitted metadata is compatible.
 func ValidateStreamExecutionBeforeOutput(state *State) error {
 	return nil
-}
-
-func executionTierClass(provider schemas.ModelProvider, tier *schemas.BifrostServiceTier) string {
-	if tier == nil {
-		return ""
-	}
-	value := strings.ToLower(strings.TrimSpace(string(*tier)))
-	switch provider {
-	case schemas.OpenAI, schemas.Azure:
-		switch value {
-		case "fast", "priority":
-			return "priority"
-		case "flex":
-			return "flex"
-		case "auto", "default", "standard", "standard_only":
-			return "standard"
-		}
-	case schemas.Anthropic:
-		if stringInSet(value, "auto", "default", "standard", "standard_only") {
-			return "standard"
-		}
-	}
-	return ""
-}
-
-func executionSpeedClass(provider schemas.ModelProvider, speed string) string {
-	if provider != schemas.Anthropic {
-		return ""
-	}
-	switch strings.ToLower(strings.TrimSpace(speed)) {
-	case "fast":
-		return "fast"
-	case "standard":
-		return "standard"
-	default:
-		return ""
-	}
 }
 
 func (s *StandardSignals) PromptTokens() int {
@@ -559,30 +513,15 @@ func mergeUsageSignals(current, next *StandardSignals) {
 	if next.WebSearch > current.WebSearch {
 		current.WebSearch = next.WebSearch
 	}
-	if next.ActualServiceTier != nil {
-		tier := *next.ActualServiceTier
-		current.ActualServiceTier = &tier
-	}
-	if next.ActualSpeed != "" {
-		current.ActualSpeed = next.ActualSpeed
-	}
 	normalizeUsagePartitions(current)
 }
 
-func observeActualExecution(state *State, tier *schemas.BifrostServiceTier, speed *string) {
-	if state == nil {
+func observeActualExecution(state *State, serviceTier *schemas.BifrostServiceTier, speed *string) {
+	if state == nil || state.Resolution == nil {
 		return
 	}
-	provider := schemas.ModelProvider("")
-	if state.Resolution != nil {
-		provider = state.Resolution.Provider
-	}
-	if tier != nil && executionTierClass(provider, tier) != "" {
-		value := schemas.BifrostServiceTier(strings.ToLower(strings.TrimSpace(string(*tier))))
-		state.ActualServiceTier = &value
-	}
-	if speed != nil && executionSpeedClass(provider, *speed) != "" {
-		state.ActualSpeed = strings.ToLower(strings.TrimSpace(*speed))
+	if reported := catalog.ReportedTier(state.Resolution.Provider, serviceTier, speed); reported != "" {
+		state.ActualTier = reported
 	}
 }
 

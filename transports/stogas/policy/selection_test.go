@@ -42,17 +42,17 @@ func TestRoutingSelectionCompositionAndDefaults(t *testing.T) {
 	}
 }
 
-func TestRoutingSelectionPermissionAndAttemptMinimum(t *testing.T) {
-	base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, `{"delegation":{"request":["routing.selection","routing.maxAttempts"]},"routing":{"maxAttempts":2,"allowedCatalogNodes":{"providers":["openai"]}}}`)}})
+func TestRoutingSelectionPermissionAndSmallestRetries(t *testing.T) {
+	base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, `{"delegation":{"request":["routing.selection","routing.retries","routing.fallbacks"]},"routing":{"retries":1,"fallbacks":1,"allowedCatalogNodes":{"providers":["openai"]}}}`)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := CompileRequest([]byte(`{"routing":{"maxAttempts":3,"selection":{"mode":"random"}}}`), "org", nil)
+	request, err := CompileRequest([]byte(`{"routing":{"retries":3,"fallbacks":2,"selection":{"mode":"random"}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	combined, err := ApplyRequest(base, request)
-	if err != nil || combined.Routing.MaxAttempts != 2 || combined.Routing.Selection.Mode != "random" || len(combined.Routing.AllowedCatalogNodes.Providers) != 1 {
+	if err != nil || combined.Routing.Retries != 1 || combined.Routing.Fallbacks != 1 || combined.Routing.Selection.Mode != "random" || len(combined.Routing.AllowedCatalogNodes.Providers) != 1 {
 		t.Fatalf("request weakened inherited restrictions: %+v, %v", combined, err)
 	}
 	for _, raw := range []string{`{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`, `{"rules":{"widen":{"routing":{"allowedCatalogNodes":{}}}}}`} {
@@ -64,7 +64,7 @@ func TestRoutingSelectionPermissionAndAttemptMinimum(t *testing.T) {
 			t.Fatalf("selection permission granted unrelated authority: %v", err)
 		}
 	}
-	if base.Routing.Selection != nil || base.Routing.MaxAttempts != 2 {
+	if base.Routing.Selection != nil || base.Routing.Retries != 1 || base.Routing.Fallbacks != 1 {
 		t.Fatal("request mutated the cached parent")
 	}
 }

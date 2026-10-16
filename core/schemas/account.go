@@ -426,8 +426,8 @@ func GetResolvedAlias(ctx *BifrostContext) *ResolvedAlias {
 // ResolveFamily returns the model family for the current attempt, walking
 // the precedence: explicit alias ModelFamily → alias ModelName → alias
 // ModelID → alias Key. When no alias matched, falls back to substring
-// matching against fallbackModel (typically request.Model), preserving
-// pre-refactor behavior.
+// matching against the request-scoped canonical model, or fallbackModel
+// (typically request.Model) when none is installed.
 //
 // Returns an empty ModelFamily if nothing matches.
 func ResolveFamily(ctx *BifrostContext, fallbackModel string) ModelFamily {
@@ -442,7 +442,7 @@ func ResolveFamily(ctx *BifrostContext, fallbackModel string) ModelFamily {
 		}
 		candidates = append(candidates, ra.Config.ModelID, ra.Key)
 	} else {
-		candidates = append(candidates, fallbackModel)
+		candidates = append(candidates, requestCanonicalModel(ctx, fallbackModel))
 	}
 	for _, s := range candidates {
 		switch {

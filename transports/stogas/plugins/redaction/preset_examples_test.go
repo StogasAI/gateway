@@ -2,7 +2,7 @@ package redaction
 
 import "testing"
 
-func TestPresetDocumentationExamples(t *testing.T) {
+func TestEachPresetAloneRedactsItsExample(t *testing.T) {
 	t.Parallel()
 	for _, example := range []struct {
 		preset   Pattern
@@ -10,7 +10,7 @@ func TestPresetDocumentationExamples(t *testing.T) {
 		output   string
 		negative string
 	}{
-		{PatternEmailAddress, "Email qa.fixture+redaction@stogas.ai", "Email <EMAIL_ADDRESS>", "Email qa.fixture+redaction@example.com"},
+		{PatternEmailAddress, "Email ana.silva+orders@contoso.com", "Email <EMAIL_ADDRESS>", "Email ana.silva+orders@example.com"},
 		{PatternPhoneNumber, "Call +44 7700 900123", "Call <PHONE_NUMBER>", "Call +0 7700 900123"},
 		{PatternSocialSecurityNumber, "SSN: 856-45-6789", "SSN: <US_SSN>", "SSN: 123-45-6789"},
 		{PatternCreditCardNumber, "Card: 4532 0151 1283 0366", "Card: <PAYMENT_CARD>", "Card: 4242 4242 4242 4242"},

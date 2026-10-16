@@ -23,7 +23,6 @@ var chutesAllowedChatFields = map[string]bool{
 	"reasoning":             true,
 	"reasoning_effort":      true,
 	"response_format":       true,
-	"rules":                 true,
 	"safety_identifier":     true,
 	"seed":                  true,
 	"stop":                  true,

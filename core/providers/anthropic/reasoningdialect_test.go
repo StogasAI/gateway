@@ -139,6 +139,9 @@ func TestToAnthropicChatRequest_BetweenToolsThinking(t *testing.T) {
 		// Opus 5 accepts "disabled" only at effort high or below.
 		{"opus5_disabled_at_medium", "claude-opus-5", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("medium")}, "disabled", "medium"},
 		{"opus5_omits_thinking_at_xhigh", "claude-opus-5", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("xhigh")}, "", "xhigh"},
+		// Haiku 5.5 has the same effort limit as Opus 5.
+		{"haiku55_disabled_at_medium", "claude-haiku-5-5", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("medium")}, "disabled", "medium"},
+		{"haiku55_omits_thinking_at_xhigh", "claude-haiku-5-5", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("xhigh")}, "", "xhigh"},
 		{"haiku45_disabled_without_effort", "claude-haiku-4-5", &schemas.ChatReasoning{Type: schemas.Ptr("between_tools"), Effort: schemas.Ptr("medium")}, "disabled", ""},
 	}
 	for _, tc := range cases {
@@ -182,6 +185,19 @@ func TestToAnthropicChatRequest_EffortNoneOnSonnet55OmitsThinking(t *testing.T) 
 		&schemas.ChatReasoning{Effort: schemas.Ptr("none")}, schemas.Ptr(2048)))
 	require.NoError(t, err)
 	assert.Nil(t, req.Thinking, "Sonnet 5.5 rejects thinking:{type:\"disabled\"}")
+}
+
+// Haiku 5.5 rejects budget_tokens, so effort must reach it as adaptive thinking.
+func TestToAnthropicChatRequest_Haiku55EffortUsesAdaptiveThinking(t *testing.T) {
+	req, err := ToAnthropicChatRequest(testCtx(), chatReq("claude-haiku-5-5",
+		&schemas.ChatReasoning{Effort: schemas.Ptr("high")}, schemas.Ptr(2048)))
+	require.NoError(t, err)
+	require.NotNil(t, req.Thinking)
+	assert.Equal(t, "adaptive", req.Thinking.Type)
+	assert.Nil(t, req.Thinking.BudgetTokens)
+	require.NotNil(t, req.OutputConfig)
+	require.NotNil(t, req.OutputConfig.Effort)
+	assert.Equal(t, "high", *req.OutputConfig.Effort)
 }
 
 // Anthropic's spelling on the unified route (thinking in extra params) was

@@ -233,8 +233,12 @@ func (v *Inspector) Finish() (*Inspection, error) {
 			limit["config"] = raw
 			limits = append(limits, limit)
 		}
-		if sources[i].Value.HasAttempts {
-			routing["maxAttempts"] = compiled.Routing.MaxAttempts
+		settings := sources[i].Value.settings
+		if settings&permissionRetries != 0 {
+			routing["retries"] = compiled.Routing.Retries
+		}
+		if settings&permissionFallbacks != 0 {
+			routing["fallbacks"] = compiled.Routing.Fallbacks
 		}
 		if document.Encrypted() {
 			if !customerkey.Registered(compiled.EncryptionKeys, document.encrypted.KeyID) {

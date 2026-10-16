@@ -37,9 +37,7 @@ func scaleCatalogBytes(b *testing.B, count int) []byte {
 	}
 	for n := len(ids); n < count; n++ {
 		id := eligible[n%len(eligible)]
-		variant := original[id]
-		variant.Aliases = nil
-		source.Graph.Deployments[fmt.Sprintf("%s-bench-%06d", id, n)] = variant
+		source.Graph.Deployments[fmt.Sprintf("%s-bench-%06d", id, n)] = original[id]
 	}
 	data, err := json.Marshal(source)
 	if err != nil {

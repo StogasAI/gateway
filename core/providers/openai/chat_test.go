@@ -489,26 +489,36 @@ func TestToOpenAIChatRequest_VertexDropsNoneReasoningEffort(t *testing.T) {
 
 // TestToOpenAIChatRequest_StripsUnsupportedSamplingParams pins that sampling fields
 // OpenAI rejects at the effective reasoning effort are dropped for OpenAI and Azure.
+// Stogas: sampling fields reach the provider unless a datasheet row marks them
+// unsupported.
 func TestToOpenAIChatRequest_StripsUnsupportedSamplingParams(t *testing.T) {
+	conditional := &schemas.ModelCapabilities{ConditionallyUnsupportedFields: map[string]string{
+		schemas.FieldTopP:        schemas.ConditionWhenEffortNone,
+		schemas.FieldTemperature: schemas.ConditionWhenEffortNone,
+		schemas.FieldTopLogprobs: schemas.ConditionWhenEffortNone,
+		schemas.FieldLogprobs:    schemas.ConditionWhenEffortNone,
+	}}
 	tests := []struct {
 		name     string
 		provider schemas.ModelProvider
 		model    string
 		effort   string
+		record   *schemas.ModelCapabilities
 		stripped bool
 	}{
-		{name: "gpt-6-astra always strips", model: "gpt-6-astra", stripped: true},
-		{name: "azure gpt-6-astra always strips", provider: schemas.Azure, model: "gpt-6-astra", effort: "low", stripped: true},
-		{name: "o3 strips", model: "o3", effort: "high", stripped: true},
-		{name: "gpt-5.5 omitted effort defaults to medium", model: "gpt-5.5", stripped: true},
-		{name: "gpt-5.4 omitted effort defaults to none", model: "gpt-5.4", stripped: false},
-		{name: "gpt-5.6 keeps while effort none", model: "gpt-5.6", effort: "none", stripped: false},
-		{name: "gpt-5.6 strips once reasoning is on", model: "gpt-5.6", effort: "low", stripped: true},
-		{name: "non-reasoning model keeps", model: "gpt-4o", stripped: false},
+		{name: "gpt-6-sol keeps while effort none", model: "gpt-6-sol", effort: "none"},
+		{name: "azure gpt-6-astra keeps without a datasheet row", provider: schemas.Azure, model: "gpt-6-astra", effort: "low"},
+		{name: "gpt-5.5 keeps without a datasheet row", model: "gpt-5.5"},
+		{name: "datasheet row keeps while effort none", model: "gpt-5.6", effort: "none", record: conditional},
+		{name: "datasheet row strips once reasoning is on", model: "gpt-5.6", effort: "low", record: conditional, stripped: true},
+		{name: "datasheet row strips when the omitted effort reasons", model: "gpt-5.5", record: conditional, stripped: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.record != nil {
+				installCapabilityRecord(t, tt.model, tt.record)
+			}
 			provider := tt.provider
 			if provider == "" {
 				provider = schemas.OpenAI

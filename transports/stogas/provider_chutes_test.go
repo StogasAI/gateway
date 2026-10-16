@@ -89,7 +89,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	if err := sonic.Unmarshal(body["stop"], &stops); err != nil || len(stops) != 1 || stops[0] != "DONE" {
 		t.Fatalf("stop = %s, want [DONE]", body["stop"])
 	}
-	for _, name := range []string{"max_completion_tokens", "metadata", "provider", "rules", "store", "extra_params"} {
+	for _, name := range []string{"max_completion_tokens", "metadata", "provider", "store", "extra_params"} {
 		if _, exists := body[name]; exists {
 			t.Fatalf("Chutes wire contains private or gateway-only field %q: %s", name, encoded)
 		}
@@ -98,31 +98,6 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 		if !rawJSONValueSet(body[name]) {
 			t.Fatalf("Chutes wire omitted %s: %s", name, encoded)
 		}
-	}
-}
-
-func TestChutesRulesSelectTheProviderWithoutReachingItsWire(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"qwen3-32b","rules":{"only":["chutes"]},"messages":[{"role":"user","content":"hi"}]}`)
-	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("ValidateRequest returned error: %v", err)
-	}
-	if err := state.Adapter.SanitizeRequest(state); err != nil {
-		t.Fatalf("SanitizeRequest returned error: %v", err)
-	}
-	request, err := state.Resolution.ToBifrost(&schemas.BifrostContext{})
-	if err != nil {
-		t.Fatalf("ToBifrost returned error: %v", err)
-	}
-	encoded, bifrostErr := prepareChutesChatBody(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), request.ChatRequest, false)
-	if bifrostErr != nil {
-		t.Fatalf("prepareChutesChatBody returned error: %v", bifrostErr)
-	}
-	var body map[string]json.RawMessage
-	if err := sonic.Unmarshal(encoded, &body); err != nil {
-		t.Fatalf("decode Chutes wire request: %v", err)
-	}
-	if _, exists := body["rules"]; exists {
-		t.Fatalf("gateway routing rules reached Chutes wire: %s", encoded)
 	}
 }
 
@@ -640,7 +615,7 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 				billing.MeterOutputTokens,
 				billing.MeterReasoningTokens,
 			} {
-				rateKey, rate, ok := billing.PricingRate(pricing, meterKey, billing.TokenRateLongContext)
+				rateKey, rate, ok := billing.PricingRate(pricing, meterKey, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
 				if !ok || rate.Sign() <= 0 {
 					t.Fatalf("catalog omitted positive %s pricing: %#v", meterKey, deployment.Pricing)
 				}
@@ -658,8 +633,8 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 				t.Fatalf("upstream cost = %s, want exact meter sum %s", state.UpstreamCostUSD, wantTotal)
 			}
 
-			_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateLongContext)
-			_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateLongContext)
+			_, inputRate, _ := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
+			_, cachedRate, _ := billing.PricingRate(pricing, billing.MeterCachedInputTokens, billing.TokenRateForPrompt(state.Signals.PromptTokens()))
 			if new(money.USD).MulRatioCeil(cachedRate, big.NewInt(10), 1).Cmp(inputRate) != 0 {
 				t.Fatalf("cached input rate %s is not 10%% of input rate %s", cachedRate, inputRate)
 			}

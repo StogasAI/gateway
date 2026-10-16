@@ -29,6 +29,10 @@ jobs:
       - name: Test Stogas packages with race detection
         working-directory: transports
         run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 ./...
+      # The race detector changes allocation; stop-the-world collection exposes short heap peaks.
+      - name: Measure request preparation memory
+        working-directory: transports
+        run: GOWORK=off GODEBUG=gcstoptheworld=1 go test -tags=stogas_gateway -count=1 -run '^TestRequestPreparationFitsItsMemoryCharges$' ./stogas-http
       - name: Test deterministic retained core packages
         working-directory: core
         run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas

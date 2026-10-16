@@ -26,7 +26,6 @@ type requestContext struct {
 	admissionCounted      bool
 	startedAt             time.Time
 	deliveryDeadline      time.Time
-	pendingStream         <-chan providerStreamStart
 	responseWait          *responseDeadline
 	stopClientObservation func()
 	// finalize settles a finished inference after its response is complete.

@@ -68,14 +68,17 @@ func TestEncryptedProviderWaitPreservesStatusAndTransfersPendingWork(t *testing.
 					}
 					ctx.responseWait = newResponseDeadline(time.Now(), wait, time.Hour)
 					defer ctx.responseWait.stop()
-					state := &stogas.State{}
+					state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}
+					request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+					defer cancel()
+					run := testRun(&Server{}, ctx, request, state, cancel)
 					finish := make(chan struct{})
 					returned := make(chan struct{})
 					settled := make(chan struct{})
 					go func() {
 						response := `{"error":"later rejection"}`
 						expected := &schemas.BifrostError{StatusCode: schemas.Ptr(http.StatusTooManyRequests)}
-						value, failure, pending := awaitProviderResult(ctx, state.MarkClientStopped, func() (string, *schemas.BifrostError) {
+						result, pending := runProvider(ctx, run, func(*schemas.BifrostContext, *schemas.BifrostRequest) (string, *schemas.BifrostError) {
 							<-finish
 							return response, expected
 						}, streaming)
@@ -88,7 +91,7 @@ func TestEncryptedProviderWaitPreservesStatusAndTransfersPendingWork(t *testing.
 								close(settled)
 							}()
 						} else {
-							if value != response || failure != expected {
+							if result.response != response || result.failure != expected {
 								t.Error("provider rejection was changed")
 							}
 							close(settled)
@@ -167,31 +170,22 @@ func TestOrdinaryUnaryWaitLeavesHTTPResponseUncommitted(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		writer := httptest.NewRecorder()
 		ctx := &requestContext{writer: writer, request: httptest.NewRequest(http.MethodPost, "/v1/responses", nil)}
-		result, failure, pending := awaitProviderResult(ctx, func() { t.Fatal("unexpected cancellation") }, func() (string, *schemas.BifrostError) {
+		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
+		defer cancel()
+		run := testRun(&Server{}, ctx, request, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, cancel)
+		result, pending := runProvider(ctx, run, func(*schemas.BifrostContext, *schemas.BifrostRequest) (string, *schemas.BifrostError) {
 			time.Sleep(2 * responseKeepaliveInterval)
 			if writer.Flushed || writer.Body.Len() != 0 || len(writer.Header()) != 0 {
-				t.Fatal("ordinary JSON response gained progress framing")
+				t.Error("ordinary JSON response gained progress framing")
 			}
 			return "failure", nil
 		}, false)
 		writer.WriteHeader(http.StatusTooManyRequests)
-		_, _ = writer.Write([]byte(result))
-		if pending != nil || failure != nil || writer.Result().StatusCode != 429 || writer.Body.String() != "failure" {
+		_, _ = writer.Write([]byte(result.response))
+		if pending != nil || result.failure != nil || writer.Result().StatusCode != 429 || writer.Body.String() != "failure" {
 			t.Fatal("ordinary HTTP status or response changed")
 		}
 	})
-}
-
-func TestEncryptedUnaryWaitPreservesHandlerPanicBoundary(t *testing.T) {
-	ctx := &requestContext{writer: &sessionResponse{}, request: httptest.NewRequest(http.MethodPost, "/v1/responses", nil)}
-	defer func() {
-		if recover() != http.ErrAbortHandler {
-			t.Fatal("provider panic did not reach the handler's recovery boundary")
-		}
-	}()
-	_, _, _ = awaitProviderResult(ctx, func() {}, func() (string, *schemas.BifrostError) {
-		panic(http.ErrAbortHandler)
-	}, false)
 }
 
 func TestRequestContextDisconnectPolicyAndCleanup(t *testing.T) {
@@ -202,7 +196,7 @@ func TestRequestContextDisconnectPolicyAndCleanup(t *testing.T) {
 				client, disconnect := context.WithCancel(t.Context())
 				defer disconnect()
 				ctx.request = ctx.request.WithContext(client)
-				provider, state, cleanup, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{}, nil, "")
+				provider, state, cleanup, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{}, "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -228,13 +222,13 @@ func TestClientDisconnectDrainsFinalUsage(t *testing.T) {
 	ctx := newTestRequest(t)
 	provider, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer cancel()
-	state := &stogas.State{Resolution: testResolution(), Adapter: stogas.DefaultAdapter{}}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution(), Adapter: stogas.DefaultAdapter{}}}
 	stream := make(chan *schemas.BifrostStreamChunk, 1)
 	var closeOnce sync.Once
 	closeStream := func() { closeOnce.Do(func() { close(stream) }) }
 	defer closeStream()
 	finished := make(chan struct{})
-	reader := server.startSSEStream(ctx, provider, state, stream, true, false, cancel, func() { close(finished) })
+	reader := startTestStream(server, ctx, provider, state, stream, cancel, func() { close(finished) })
 	if err := reader.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,9 @@ const (
 	CompilerVersion          = 1
 	MaxCompiledBytes         = 512 << 10
 	MaxSorts                 = 3
-	MaxAttempts              = 3
+	MaxRetries               = 3
+	MaxFallbacks             = 2
+	DefaultFallbacks         = 2
 	MaxRequestTimeout        = time.Hour
 	DefaultOutputIdleTimeout = 5 * time.Minute
 	MaxCustomPatterns        = 3
@@ -89,26 +91,14 @@ func (t *Timeouts) OutputIdle() time.Duration {
 	return time.Duration(*t.OutputIdleSeconds) * time.Second
 }
 
+// Retries repeat a call to the same deployment and credential. Fallbacks move
+// to the next pair in routing order, so a request calls at most three pairs.
 type Routing struct {
 	AllowedCatalogNodes *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-	MaxAttempts         int                  `json:"maxAttempts"`
+	Fallbacks           int                  `json:"fallbacks"`
 	Query               *Query               `json:"query"`
+	Retries             int                  `json:"retries"`
 	Selection           *Selection           `json:"selection,omitempty"`
-	OrderDefault        bool                 `json:"orderDefault"`
-}
-
-func (r *Routing) HasOrder() bool {
-	return r != nil && (r.Selection != nil || r.Query != nil && len(r.Query.OrderBy) > 0)
-}
-
-func (r *Routing) SameOrder(other *Routing) bool {
-	if !r.HasOrder() || !other.HasOrder() {
-		return r.HasOrder() == other.HasOrder()
-	}
-	if r.Selection != nil || other.Selection != nil {
-		return r.Selection.Same(other.Selection)
-	}
-	return r.Query.SameOrder(other.Query)
 }
 
 type AllowedCatalogNodes struct {
@@ -153,8 +143,11 @@ func (c *Config) validate() error {
 	if c == nil || c.Schema != "stogas.key-config.compiled.v1" || c.CompilerVersion != CompilerVersion {
 		return configError("unsupported schema or compiler version")
 	}
-	if c.Routing.MaxAttempts < 1 || c.Routing.MaxAttempts > MaxAttempts {
-		return configError("routing.maxAttempts must be an integer from 1 to 3")
+	if c.Routing.Retries < 0 || c.Routing.Retries > MaxRetries {
+		return configError("routing.retries must be an integer from 0 to 3")
+	}
+	if c.Routing.Fallbacks < 0 || c.Routing.Fallbacks > MaxFallbacks {
+		return configError("routing.fallbacks must be an integer from 0 to 2")
 	}
 	if err := c.Routing.validateSelection(); err != nil {
 		return err
@@ -355,6 +348,9 @@ type Value struct {
 
 type Values interface {
 	PolicyValue(path string) (Value, bool)
+	// PolicyTokenPrice returns the price per million tokens of a token meter
+	// for a request whose prompt has promptTokens tokens.
+	PolicyTokenPrice(meter string, promptTokens int64) (Value, bool)
 }
 
 func compareValues(left, right Value) int {
@@ -445,13 +441,13 @@ func configError(format string, arguments ...any) error {
 
 var exactFieldTypes = map[string]string{
 	"author.aliases": "string_list", "author.name": "string", "author.id": "string",
-	"deployment.aliases": "string_list", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
+	"deployment.approvalRequired": "boolean", "deployment.contextWindowTokens": "integer", "deployment.maxInputTokens": "integer",
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.retentionDays": "integer", "deployment.dataHandling.storageLocation": "string",
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
 	"deployment.dataHandling.trainingUse":       "boolean",
 	"deployment.dataHandling.zeroDataRetention": "boolean", "deployment.deprecationDate": "string",
-	"deployment.fileInputs.extensions": "string_list", "deployment.fileInputs.mediaTypes": "string_list",
+	"deployment.nativeFileInputs.extensions": "string_list", "deployment.nativeFileInputs.mediaTypes": "string_list",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
 	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",
@@ -461,9 +457,8 @@ var exactFieldTypes = map[string]string{
 	"deployment.upstream.hosting": "string", "deployment.upstream.inferenceGeo": "string",
 	"deployment.upstream.model": "string", "deployment.upstream.modelFormat": "string",
 	"deployment.upstream.modelVersion": "string", "deployment.upstream.reasoningMode": "string",
-	"deployment.upstream.serviceTier": "string", "deployment.upstream.speed": "string",
-	"deployment.weightPrecision": "string",
-	"deployment.id":              "string", "model.aliases": "string_list", "model.authorId": "string",
+	"deployment.upstream.serviceTier": "string", "deployment.weightPrecision": "string",
+	"deployment.id": "string", "model.aliases": "string_list", "model.authorId": "string", "model.groupIds": "string_list",
 	"model.maxOutputTokens": "integer", "model.name": "string", "model.reasoning": "string",
 	"model.reasoningEfforts": "string_list", "model.reasoningMaxTokens.maximum": "integer",
 	"model.reasoningMaxTokens.minimum": "integer", "model.releaseDate": "string", "model.id": "string",
@@ -481,30 +476,19 @@ func init() {
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}
+	// Long prompt prices vary by deployment; blended_price reads them for a
+	// stated prompt size.
+	for _, meter := range []string{
+		"cache_write_1h_input_tokens", "cache_write_5m_input_tokens", "cache_write_input_tokens",
+		"cached_input_tokens", "input_tokens", "output_tokens", "reasoning_tokens",
+	} {
+		exactFieldTypes["deployment.pricing."+meter+".per_mill_tokens"] = "decimal"
+	}
 }
 
-var tokenPricingMeters = stringSet(
-	"cache_write_1h_input_tokens", "cache_write_5m_input_tokens", "cache_write_input_tokens",
-	"cached_input_tokens", "input_tokens", "output_tokens", "reasoning_tokens",
-)
-
-var tokenPricingRates = stringSet(
-	"per_mill_context_gt_272k", "per_mill_context_lte_272k", "per_mill_tokens",
-)
-
 func FieldType(path string) (string, bool) {
-	if fieldType, ok := exactFieldTypes[path]; ok {
-		return fieldType, true
-	}
-	parts := strings.Split(path, ".")
-	if len(parts) != 4 || parts[0] != "deployment" || parts[1] != "pricing" {
-		return "", false
-	}
-	meter, rate := parts[2], parts[3]
-	if tokenPricingMeters[meter] && tokenPricingRates[rate] {
-		return "decimal", true
-	}
-	return "", false
+	fieldType, ok := exactFieldTypes[path]
+	return fieldType, ok
 }
 
 func FieldPaths() []string {

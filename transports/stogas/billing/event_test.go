@@ -197,6 +197,7 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 		{identifier: "content_filter", want: "content_filter"},
 		{identifier: "content_filter_error", want: "content_filter"},
 		{identifier: "safety_error", want: "content_filter"},
+		{identifier: "cyber_policy", want: "content_filter"},
 		{identifier: "invalid_request", want: "invalid_request", generic: true},
 		{identifier: "invalid_request_error", want: "invalid_request", generic: true},
 		{identifier: "bad_request_error", want: "invalid_request", generic: true},
@@ -465,11 +466,11 @@ func TestProviderTelemetryCannotExpandTheRequestLog(t *testing.T) {
 			FinishReason: &finishReason,
 		}},
 	}}
-	attempts := requestProviderAttempts(EventInput{
-		ProviderStartedAt: time.Unix(1, 0),
-		Response:          response,
-	}, &Authorization{ProviderKey: "openai"}, 1)
-	if len(attempts) != 1 || attempts[0].ProviderRequestID != "" || attempts[0].FinishReason != "" {
+	attempts := requestProviderAttempts(EventInput{ProviderAttempts: []ProviderAttemptInput{{
+		Provider: strings.Repeat("p", maxProviderNameBytes+1),
+		Response: response,
+	}}}, time.Unix(1, 0), 1)
+	if len(attempts) != 1 || attempts[0].Provider != "" || attempts[0].ProviderRequestID != "" || attempts[0].FinishReason != "" {
 		t.Fatalf("oversized provider telemetry was retained: %#v", attempts)
 	}
 
@@ -536,13 +537,8 @@ func TestUnavailableProviderHasNoInventedFinishReason(t *testing.T) {
 	status := 503
 	upstreamError := &schemas.BifrostError{StatusCode: &status}
 	at := time.Unix(1, 0)
-	for _, input := range []EventInput{
-		{ProviderStartedAt: at, Error: upstreamError},
-		{ProviderAttempts: []ProviderAttemptInput{{Provider: "openai", StartedAt: at, CompletedAt: at, Error: upstreamError}}},
-	} {
-		attempts := requestProviderAttempts(input, &Authorization{ProviderKey: "openai"}, 0)
-		if len(attempts) != 1 || attempts[0].Status != "provider_unavailable" || attempts[0].FinishReason != "" {
-			t.Fatalf("provider failure invented a terminal: %+v", attempts)
-		}
+	attempts := requestProviderAttempts(EventInput{ProviderAttempts: []ProviderAttemptInput{{Provider: "openai", StartedAt: at, CompletedAt: at, Error: upstreamError}}}, at, 0)
+	if len(attempts) != 1 || attempts[0].Status != "provider_unavailable" || attempts[0].FinishReason != "" {
+		t.Fatalf("provider failure invented a terminal: %+v", attempts)
 	}
 }

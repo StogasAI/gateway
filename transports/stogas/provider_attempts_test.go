@@ -63,17 +63,19 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 	t.Cleanup(client.Shutdown)
 
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Route:       catalog.RouteChat,
-			RequestType: schemas.ChatCompletionRequest,
-			Provider:    schemas.OpenAI,
-			Model:       "gpt-5",
-		},
-		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: new(money.USD),
-			AvailableBalanceUSD:     new(money.USD),
-			ProviderKey:             "openai",
-			RequestID:               "request-real-retry",
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route:       catalog.RouteChat,
+				RequestType: schemas.ChatCompletionRequest,
+				Provider:    schemas.OpenAI,
+				Model:       "gpt-5",
+			},
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: new(money.USD),
+				AvailableBalanceUSD:     new(money.USD),
+				ProviderKey:             "openai",
+				RequestID:               "request-real-retry",
+			},
 		},
 		StartedAt:       time.Now().UTC(),
 		RequestType:     string(schemas.ChatCompletionRequest),
@@ -147,17 +149,19 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 		Error:      &schemas.ErrorField{Message: "upstream unavailable"},
 	}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Route:       catalog.RouteChat,
-			RequestType: schemas.ChatCompletionRequest,
-			Provider:    schemas.OpenAI,
-			Model:       "gpt-5",
-		},
-		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: new(money.USD),
-			AvailableBalanceUSD:     new(money.USD),
-			ProviderKey:             "openai",
-			RequestID:               "request-1",
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route:       catalog.RouteChat,
+				RequestType: schemas.ChatCompletionRequest,
+				Provider:    schemas.OpenAI,
+				Model:       "gpt-5",
+			},
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: new(money.USD),
+				AvailableBalanceUSD:     new(money.USD),
+				ProviderKey:             "openai",
+				RequestID:               "request-1",
+			},
 		},
 		StartedAt:           base,
 		RequestType:         string(schemas.ChatCompletionRequest),
@@ -263,13 +267,13 @@ func TestProviderAttemptTracerRetainsDeferredStreamingAttempt(t *testing.T) {
 	}
 }
 
-func TestProviderAttemptInputsKeepFallbackErrorsOnTheirAttempts(t *testing.T) {
+func TestProviderAttemptInputsKeepEarlierErrorsAndProjectTheFinalFailure(t *testing.T) {
 	base := time.Now().UTC().Add(-time.Second)
 	primaryStatus := 503
 	fallbackStatus := 429
 	primaryError := &schemas.BifrostError{StatusCode: &primaryStatus, Error: &schemas.ErrorField{Message: "primary unavailable"}}
 	fallbackError := &schemas.BifrostError{StatusCode: &fallbackStatus, Error: &schemas.ErrorField{Message: "fallback rate limited"}}
-	state := &State{BifrostError: primaryError}
+	state := &State{}
 	primary := state.beginProviderAttempt(base)
 	state.setProviderAttemptProvider(primary, "openai")
 	state.finishProviderAttempt(primary, base.Add(20*time.Millisecond), nil, primaryError)
@@ -279,14 +283,14 @@ func TestProviderAttemptInputsKeepFallbackErrorsOnTheirAttempts(t *testing.T) {
 
 	attempts := state.providerAttemptInputs()
 	if len(attempts) != 2 || attempts[0].Error != primaryError || attempts[1].Error != fallbackError {
-		t.Fatalf("fallback errors were reassigned: %#v", attempts)
+		t.Fatalf("attempt errors were reassigned: %#v", attempts)
 	}
 
 	protocolStatus := 502
 	protocolError := &schemas.BifrostError{StatusCode: &protocolStatus, Error: &schemas.ErrorField{Message: "missing usage"}}
 	state.BifrostError = protocolError
 	attempts = state.providerAttemptInputs()
-	if attempts[1].Error != protocolError {
+	if attempts[0].Error != primaryError || attempts[1].Error != protocolError {
 		t.Fatalf("final protocol failure was not projected onto the final attempt: %#v", attempts)
 	}
 }
@@ -296,7 +300,7 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 	tracer := newProviderAttemptTracer(schemas.DefaultTracer())
 	now := base
 	tracer.now = func() time.Time { return now }
-	state := &State{Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes}}
+	state := &State{Pair: Pair{Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes}}}
 	ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
 	defer ctx.Cancel()
 	SetState(ctx, state)

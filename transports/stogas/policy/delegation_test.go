@@ -3,7 +3,10 @@ package policy
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 )
 
 func TestDelegationChecksSectionsAndExactResourceIDs(t *testing.T) {
@@ -88,6 +91,55 @@ func TestDelegationFollowsResourceOwnershipAndRequestPermissionsIntersect(t *tes
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil {
 			t.Fatalf("accepted invalid permission: %s", raw)
+		}
+	}
+}
+
+func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
+	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Root, OrganizationID string
+		Envelope             customerkey.Envelope
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	key, err := customerkey.Parse(fixture.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer key.Clear()
+	plugins := map[string]any{"encrypted": fixture.Envelope}
+	for _, permission := range [][]string{{"plugins.stogasRedaction", "plugins.encrypted"}, {"plugins"}} {
+		// The ciphertext can hold an export that the parent did not allow.
+		allowed := len(permission) == 1
+		parent, _ := json.Marshal(map[string]any{
+			"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
+			"delegation": map[string]any{"keys": permission, "request": permission},
+		})
+		for _, child := range []map[string]any{{"plugins": plugins}, {"rules": map[string]any{"private": map[string]any{"plugins": plugins}}}} {
+			config, _ := json.Marshal(child)
+			entries := []InspectionSource{{Scope: OrganizationScope, Config: parent}, {Scope: KeyScope, Config: config}}
+			_, err := InspectSources(entries, &InspectionEdit{Scope: KeyScope, Previous: json.RawMessage(`{}`)})
+			if allowed && err != nil || !allowed && !errors.Is(err, ErrPolicyEditForbidden) {
+				t.Fatalf("saved %s with %v: %v", config, permission, err)
+			}
+		}
+		base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, string(parent))}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, _ := json.Marshal(map[string]any{"plugins": plugins})
+		request, err := CompileRequest(config, fixture.OrganizationID, customerkey.Keys{"test": key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ApplyRequest(base, request)
+		if allowed && err != nil || !allowed && !errors.Is(err, ErrRequestPolicyDenied) {
+			t.Fatalf("request with %v: %v", permission, err)
 		}
 	}
 }

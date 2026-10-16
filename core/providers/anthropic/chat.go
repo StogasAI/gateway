@@ -1412,6 +1412,7 @@ func (response *AnthropicMessageResponse) ToBifrostChatResponse(ctx *schemas.Bif
 	if response.Diagnostics != nil {
 		bifrostResponse.Diagnostics = response.Diagnostics
 	}
+	bifrostResponse.StopDetails = stopDetailsToBifrost(response.StopDetails)
 
 	return bifrostResponse
 }

@@ -1120,6 +1120,17 @@ func IsSonnet55Plus(model string) bool {
 	return strings.Contains(m, "sonnet-5-5") || strings.Contains(m, "sonnet-5.5")
 }
 
+// IsHaiku55Plus returns true for Claude Haiku 5.5, matching the
+// Bedrock/Vertex/date-suffixed forms. It takes the Claude 5 request surface:
+// adaptive thinking with effort, no budget_tokens, no temperature/top_p/top_k,
+// and thinking:{type:"disabled"} only at effort "high" or below.
+//
+// Source: https://platform.claude.com/docs/en/build-with-claude/thinking
+func IsHaiku55Plus(model string) bool {
+	m := strings.ToLower(model)
+	return strings.Contains(m, "haiku-5-5") || strings.Contains(m, "haiku-5.5")
+}
+
 // IsFableFamily returns true for Claude Fable / Mythos models (Fable 5,
 // Mythos 5, Mythos Preview). These share Opus 4.7+'s request surface
 // (adaptive-only thinking, temperature/top_p/top_k removed) AND additionally
@@ -1177,10 +1188,10 @@ func RejectsEnabledThinking(caps schemas.ModelCaps) bool {
 //	"budget_tokens" for extended thinking.
 //
 // Fable 5, Mythos 5, Mythos Preview and Opus 5.5 are always-on and reject it
-// outright. Opus 5 accepts it only at effort "high" or below - pairing it with
-// "xhigh" or "max" is rejected, and that is enforced per request, which is why
-// effort has to be passed in rather than inferred from the model alone. Opus
-// 4.7/4.8 and Sonnet 5 accept "disabled" at any effort.
+// outright. Opus 5 and Haiku 5.5 accept it only at effort "high" or below -
+// pairing it with "xhigh" or "max" is rejected, and that is enforced per
+// request, which is why effort has to be passed in rather than inferred from the
+// model alone. Opus 4.7/4.8 and Sonnet 5 accept "disabled" at any effort.
 //
 // The unconditional half reads caps.CanDisableReasoning so the datasheet's
 // supports_reasoning_disable drives this passthrough gate and the converter's
@@ -1194,7 +1205,7 @@ func RejectsDisabledThinking(caps schemas.ModelCaps, effort *string) bool {
 	if !caps.CanDisableReasoning(DefaultCanDisableReasoning(model)) {
 		return true
 	}
-	if IsOpus5Plus(model) && effort != nil {
+	if (IsOpus5Plus(model) || IsHaiku55Plus(model)) && effort != nil {
 		switch strings.ToLower(*effort) {
 		case "xhigh", "max":
 			return true
@@ -1338,9 +1349,9 @@ func ApplyDefaultEagerInputStreamingToRawBody(jsonBody []byte, provider schemas.
 }
 
 // DefaultSupportsAdaptiveThinking: thinking.type "adaptive" is accepted on Opus
-// 4.6, Sonnet 4.6, Sonnet 5+, Opus 4.7+ and the Fable/Mythos family.
+// 4.6, Sonnet 4.6, Sonnet 5+, Opus 4.7+, Haiku 5.5 and the Fable/Mythos family.
 func DefaultSupportsAdaptiveThinking(model string) bool {
-	if IsOpus47Plus(model) || IsSonnet5Plus(model) || IsFableFamily(model) {
+	if IsOpus47Plus(model) || IsSonnet5Plus(model) || IsFableFamily(model) || IsHaiku55Plus(model) {
 		return true
 	}
 	m := strings.ToLower(model)
@@ -1353,7 +1364,7 @@ func DefaultSupportsAdaptiveThinking(model string) bool {
 // DefaultAdaptiveOnlyThinking: models where budget_tokens thinking is removed
 // and temperature/top_p/top_k are rejected — adaptive is the only thinking mode.
 func DefaultAdaptiveOnlyThinking(model string) bool {
-	return IsOpus47Plus(model) || IsSonnet5Plus(model) || IsFableFamily(model)
+	return IsOpus47Plus(model) || IsSonnet5Plus(model) || IsFableFamily(model) || IsHaiku55Plus(model)
 }
 
 // DefaultCanDisableReasoning: the Fable/Mythos family, Opus 5.5 and Sonnet 5.5
@@ -1401,7 +1412,8 @@ func SupportsNativeEffort(caps schemas.ModelCaps) bool {
 // SupportsEffortParameter returns true if the model accepts the
 // output_config.effort parameter. Supported models: Claude Fable 5,
 // Claude Mythos 5, Claude Mythos Preview, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6,
-// Sonnet 5, Sonnet 4.6, and Opus 4.5. All other models reject effort with a 400:
+// Sonnet 5, Sonnet 4.6, Opus 4.5, and Haiku 5.5. All other models reject effort
+// with a 400:
 //
 //	"This model does not support the effort parameter."
 //
@@ -1416,7 +1428,7 @@ func SupportsNativeEffort(caps schemas.ModelCaps) bool {
 // Source: https://platform.claude.com/docs/en/build-with-claude/effort
 func DefaultSupportsNativeEffort(model string) bool {
 	m := strings.ToLower(model)
-	if IsFableFamily(m) || IsSonnet5Plus(m) || IsOpus5Plus(m) {
+	if IsFableFamily(m) || IsSonnet5Plus(m) || IsOpus5Plus(m) || IsHaiku55Plus(m) {
 		return true
 	}
 	if strings.Contains(m, "haiku") {
@@ -1605,8 +1617,8 @@ func inlineMidConversationSystem(content *AnthropicContent) *AnthropicMessage {
 // supports role:"system" entries inside the messages array (mid-conversation
 // system messages). Available on the Anthropic API only — not on Bedrock or
 // Vertex. Supported on Claude Opus 4.8+ (including Opus 5 and 5.5), Claude
-// Sonnet 5.5 (not Sonnet 5), and the Claude Fable/Mythos family. No beta header
-// is required.
+// Sonnet 5.5 (not Sonnet 5), Claude Haiku 5.5, and the Claude Fable/Mythos
+// family. No beta header is required.
 //
 // Override-aware on the MODEL gate only: after the hardcoded Anthropic provider
 // gate, prefers the datasheet's supports_mid_conversation_system_messages
@@ -1619,7 +1631,7 @@ func DefaultSupportsMidConversationSystem(provider schemas.ModelProvider, model 
 		return false
 	}
 	m := strings.ToLower(model)
-	if IsFableFamily(m) || IsOpus5Plus(m) || IsSonnet55Plus(m) {
+	if IsFableFamily(m) || IsOpus5Plus(m) || IsSonnet55Plus(m) || IsHaiku55Plus(m) {
 		return true
 	}
 	return strings.Contains(m, "opus") &&
@@ -1630,8 +1642,8 @@ func DefaultSupportsMidConversationSystem(provider schemas.ModelProvider, model 
 // accepts output_config.effort on a role:"system" message inside messages (per-message
 // effort, beta mid-conversation-output-config-2026-07-01). Claude API direct only: the
 // Bedrock and Vertex converters have no native mid-conversation system role to carry it.
-// Documented on Claude Fable 5.1 / Mythos 5.1, Claude Opus 5 and 5.5, and Claude Sonnet
-// 5.5. Every other model, Claude Fable 5 and Opus 4.8 included, returns 400
+// Documented on Claude Fable 5.1 / Mythos 5.1, Claude Opus 5 and 5.5, Claude Sonnet 5.5,
+// and Claude Haiku 5.5. Every other model, Claude Fable 5 and Opus 4.8 included, returns 400
 // "output_config.effort requires a model that supports per-turn effort", so callers drop
 // the override fail-soft when this is false instead of forwarding a guaranteed rejection.
 //
@@ -1641,7 +1653,7 @@ func DefaultSupportsMidConversationOutputConfig(provider schemas.ModelProvider, 
 		return false
 	}
 	m := strings.ToLower(model)
-	return schemas.IsFable51(m) || IsOpus5Plus(m) || IsSonnet55Plus(m)
+	return schemas.IsFable51(m) || IsOpus5Plus(m) || IsSonnet55Plus(m) || IsHaiku55Plus(m)
 }
 
 // SupportsFastMode reports fast-mode support for a single (provider, model)

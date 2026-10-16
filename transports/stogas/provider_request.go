@@ -8,6 +8,7 @@ import (
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
@@ -15,7 +16,8 @@ import (
 // provider's complete local converter and serializer, and installs those bytes
 // for dispatch. It has no client or transport dependency and cannot perform
 // network I/O. A later operation that can change the wire body must invalidate
-// the prepared descriptor so Bifrost performs its normal conversion.
+// the prepared descriptor so Bifrost performs its normal conversion. The request
+// log records the settings of the last body prepared.
 func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *schemas.BifrostRequest) error {
 	if ctx == nil || request == nil {
 		return catalog.ErrUnsupportedRequest
@@ -54,6 +56,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 	var (
 		body       []byte
 		bifrostErr *schemas.BifrostError
+		settings   billing.RequestSettings
 	)
 	switch {
 	case request.ChatRequest != nil && request.ResponsesRequest == nil:
@@ -64,6 +67,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		sanitizeChatProviderFields(ctx, chat)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
 		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest)
+		settings = billing.ChatRequestSettings(chat.Params)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
 		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.Provider || responses.Model != resolution.Model {
@@ -72,6 +76,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		sanitizeResponsesProviderFields(ctx, responses)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest)
+		settings = billing.ResponsesRequestSettings(responses.Params)
 	default:
 		return catalog.ErrUnsupportedRequest
 	}
@@ -83,6 +88,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		return catalog.ErrUnsupportedRequest
 	}
 	prepared = true
+	state.RequestSettings = settings
 	return nil
 }
 

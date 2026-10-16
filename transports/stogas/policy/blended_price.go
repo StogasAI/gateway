@@ -6,14 +6,16 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 )
 
-// BlendedPrice reads one explicit catalog rate; token estimates never select a tier.
+// BlendedPrice weighs input and output token prices at the rates that a prompt
+// of PromptTokens pays. The policy states the prompt size because request token
+// estimates are too rough to select a rate.
 type BlendedPrice struct {
-	InputWeight  int64  `json:"inputWeight"`
-	OutputWeight int64  `json:"outputWeight"`
-	Rate         string `json:"rate"`
+	InputWeight  int64
+	OutputWeight int64
+	PromptTokens int64
 }
 
-const maxPriceWeight = int64(9007199254740991) // Exact JSON integer shared with JavaScript.
+const maxPriceArgument = int64(9007199254740991) // Exact JSON integer shared with JavaScript.
 
 // Decimal is an immutable ratio of fixed-precision USD units. Comparisons do
 // not need reduced fractions: ordinary prices share divisor 1, and blends
@@ -48,9 +50,9 @@ func priceWeightGCD(a, b int64) int64 {
 }
 
 func (b *BlendedPrice) valid() bool {
-	return b.InputWeight >= 0 && b.OutputWeight >= 0 &&
-		b.InputWeight <= maxPriceWeight && b.OutputWeight <= maxPriceWeight &&
-		priceWeightGCD(b.InputWeight, b.OutputWeight) == 1 && tokenPricingRates[b.Rate]
+	return b.InputWeight >= 0 && b.OutputWeight >= 0 && b.PromptTokens >= 0 &&
+		b.InputWeight <= maxPriceArgument && b.OutputWeight <= maxPriceArgument && b.PromptTokens <= maxPriceArgument &&
+		priceWeightGCD(b.InputWeight, b.OutputWeight) == 1
 }
 
 func blendedPriceValue(b *BlendedPrice, values Values) (Value, bool) {
@@ -63,13 +65,13 @@ func blendedPriceValue(b *BlendedPrice, values Values) (Value, bool) {
 }
 
 // Value computes an exact catalog price. Values may retain this result for the
-// lifetime of their immutable catalog view; it never depends on request tokens.
+// lifetime of their immutable catalog view; it never depends on the request.
 func (b BlendedPrice) Value(values Values) (Value, bool) {
 	if !b.valid() {
 		return Value{}, false
 	}
 	price := func(meter string) (*Decimal, bool) {
-		value, ok := values.PolicyValue("deployment.pricing." + meter + "." + b.Rate)
+		value, ok := values.PolicyTokenPrice(meter, b.PromptTokens)
 		return value.Decimal, ok && value.Type == "decimal" && value.Decimal != nil
 	}
 	if b.InputWeight == 0 || b.OutputWeight == 0 {

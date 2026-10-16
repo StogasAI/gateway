@@ -3,6 +3,8 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"os"
 	"testing"
 	"time"
 )
@@ -28,7 +30,7 @@ func TestDenyPeriodsUseTheSourceBudgetAndShareTimeZones(t *testing.T) {
 }
 
 func validCompiledConfig() Config {
-	return Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{MaxAttempts: 1}}
+	return Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{Fallbacks: DefaultFallbacks}}
 }
 func parseCompiledConfig(t *testing.T, config Config) *Config {
 	t.Helper()
@@ -48,6 +50,14 @@ func mustRawJSON(value any) json.RawMessage {
 type testValues map[string]Value
 
 func (v testValues) PolicyValue(path string) (Value, bool) { value, ok := v[path]; return value, ok }
+
+// PolicyTokenPrice reads a long prompt price from deployment.pricing.<meter>.<promptTokens>.
+func (v testValues) PolicyTokenPrice(meter string, promptTokens int64) (Value, bool) {
+	if value, ok := v[fmt.Sprintf("deployment.pricing.%s.%d", meter, promptTokens)]; ok {
+		return value, true
+	}
+	return v.PolicyValue("deployment.pricing." + meter + ".per_mill_tokens")
+}
 
 func TestDenyWindowsAreTimeZoneAwareAndHalfOpen(t *testing.T) {
 	config := validCompiledConfig()
@@ -116,17 +126,9 @@ func TestPolicyFieldRegistryIsClosed(t *testing.T) {
 			t.Fatalf("registered field %q did not resolve", path)
 		}
 	}
-	validDynamic := []string{
-		"deployment.pricing.input_tokens.per_mill_tokens",
-		"deployment.pricing.output_tokens.per_mill_context_gt_272k",
-	}
-	for _, path := range validDynamic {
-		if fieldType, ok := FieldType(path); !ok || fieldType != "decimal" {
-			t.Fatalf("dynamic field %q = %q, %t", path, fieldType, ok)
-		}
-	}
 	for _, path := range []string{
 		"pricing.input_tokens.per_mill_tokens",
+		"deployment.pricing.output_tokens.per_mill_context_gt_272k",
 		"deployment.pricing.input_tokens.per_1k_calls",
 		"deployment.pricing.unknown.per_mill_tokens",
 		"deployment.pricing.anthropic_web_search_calls.per_mill_tokens",
@@ -137,6 +139,22 @@ func TestPolicyFieldRegistryIsClosed(t *testing.T) {
 		if fieldType, ok := FieldType(path); ok || fieldType != "" {
 			t.Fatalf("unregistered field %q resolved as %q", path, fieldType)
 		}
+	}
+}
+
+// testdata/fields.json gives other implementations the registry as data.
+func TestPolicyFieldRegistryMatchesTestdata(t *testing.T) {
+	raw, err := os.ReadFile("testdata/fields.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(got, exactFieldTypes) {
+		expected, _ := json.MarshalIndent(exactFieldTypes, "", "\t")
+		t.Fatalf("testdata/fields.json differs from the registry; want:\n%s", expected)
 	}
 }
 

@@ -228,12 +228,12 @@ func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
 		RequestTimeout:          billing.GatewayRequestLifetime,
 		ResolveModel: func(upstreamModel string) (chutese2ee.ModelTarget, bool) {
 			deployment, ok := catalog.DeploymentForUpstreamModel(catalog.ProviderChutes, upstreamModel, catalog.RouteChat)
-			if !ok || deployment.Upstream.ChuteID == "" || deployment.Upstream.GPUCount < 1 {
+			if !ok || deployment.Upstream.ChuteID == "" || deployment.Upstream.GPUCount == nil {
 				return chutese2ee.ModelTarget{}, false
 			}
 			return chutese2ee.ModelTarget{
 				ChuteID:  deployment.Upstream.ChuteID,
-				GPUCount: deployment.Upstream.GPUCount,
+				GPUCount: *deployment.Upstream.GPUCount,
 			}, true
 		},
 	})
@@ -256,9 +256,9 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
 		NetworkConfig:            schemas.DefaultNetworkConfig,
 	}
-	// A transport failure does not prove that the provider did not start work.
-	// Stogas never replays an inference request after provider dispatch.
 	config.NetworkConfig.DefaultRequestTimeoutInSeconds = int(billing.GatewayRequestLifetime.Seconds())
+	// Core never retries. The gateway makes each retry and fallback itself, so
+	// every provider call is an attempt in the request log.
 	config.NetworkConfig.MaxRetries = 0
 	if baseURL != "" {
 		config.NetworkConfig.BaseURL = baseURL

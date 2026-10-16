@@ -26,125 +26,125 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		body string
 		want string
 	}{
-		{"audio", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"audio":{}}`, "audio is not supported"},
-		{"empty messages", `{"model":"gpt-5.5","messages":[]}`, "messages must contain at least one message"},
-		{"null message", `{"model":"gpt-5.5","messages":[null]}`, "messages must contain only objects"},
-		{"missing role", `{"model":"gpt-5.5","messages":[{"content":"hi"}]}`, "messages[0].role must be a string"},
-		{"unknown role", `{"model":"gpt-5.5","messages":[{"role":"owner","content":"hi"}]}`, "messages[0].role is not supported"},
-		{"unknown message field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","future":true}]}`, "messages[0].future is not supported"},
-		{"unknown text block field", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","future":true}]}]}`, "messages[0].content[0].future is not supported"},
-		{"orphan tool result", `{"model":"gpt-5.5","messages":[{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "must match an unresolved preceding assistant tool call"},
-		{"tool call without result", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}]}`, "require one matching tool result each"},
-		{"intervening message before tool result", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"user","content":"skip it"},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "must be a tool result"},
-		{"duplicate tool call id", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"one","arguments":"{}"}},{"id":"call_1","type":"function","function":{"name":"two","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "duplicates another assistant tool call"},
-		{"duplicate tool result", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"},{"role":"tool","tool_call_id":"call_1","content":"again"}]}`, "must match an unresolved preceding assistant tool call"},
-		{"tool call unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","future":true,"function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].future is not supported"},
-		{"tool call non-string arguments", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":{}}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "Invalid JSON body"},
-		{"tool call malformed arguments", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"not-json"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
-		{"tool call array arguments", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"[]"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
-		{"tool call duplicate argument key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":1,\"key\":2}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
-		{"oversized tool call id", fmt.Sprintf(`{"model":"gpt-5.5","messages":[{"role":"assistant","tool_calls":[{"id":%q,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
+		{"audio", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"audio":{}}`, "audio is not supported"},
+		{"empty messages", `{"model":"openai/gpt-5.5","messages":[]}`, "messages must contain at least one message"},
+		{"null message", `{"model":"openai/gpt-5.5","messages":[null]}`, "messages must contain only objects"},
+		{"missing role", `{"model":"openai/gpt-5.5","messages":[{"content":"hi"}]}`, "messages[0].role must be a string"},
+		{"unknown role", `{"model":"openai/gpt-5.5","messages":[{"role":"owner","content":"hi"}]}`, "messages[0].role is not supported"},
+		{"unknown message field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","future":true}]}`, "messages[0].future is not supported"},
+		{"unknown text block field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","future":true}]}]}`, "messages[0].content[0].future is not supported"},
+		{"orphan tool result", `{"model":"openai/gpt-5.5","messages":[{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "must match an unresolved preceding assistant tool call"},
+		{"tool call without result", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}]}`, "require one matching tool result each"},
+		{"intervening message before tool result", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"user","content":"skip it"},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "must be a tool result"},
+		{"duplicate tool call id", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"one","arguments":"{}"}},{"id":"call_1","type":"function","function":{"name":"two","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "duplicates another assistant tool call"},
+		{"duplicate tool result", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"},{"role":"tool","tool_call_id":"call_1","content":"again"}]}`, "must match an unresolved preceding assistant tool call"},
+		{"tool call unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","future":true,"function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].future is not supported"},
+		{"tool call non-string arguments", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":{}}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "Invalid JSON body"},
+		{"tool call malformed arguments", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"not-json"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
+		{"tool call array arguments", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"[]"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
+		{"tool call duplicate argument key", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{\"key\":1,\"key\":2}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "arguments must encode a JSON object"},
+		{"oversized tool call id", fmt.Sprintf(`{"model":"openai/gpt-5.5","messages":[{"role":"assistant","tool_calls":[{"id":%q,"type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":%q,"content":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
 		{"Anthropic unsafe tool call id", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","tool_calls":[{"id":"call:1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call:1","content":"done"}]}`, "only letters, digits, underscores, or hyphens"},
-		{"stream-only tool call index", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].index is not supported"},
-		{"empty assistant", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
-		{"empty annotations", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
-		{"citation reversed range", `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
-		{"reasoning details on OpenAI", `{"model":"gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "supported only for Anthropic-format deployments"},
+		{"stream-only tool call index", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"done"}]}`, "tool_calls[0].index is not supported"},
+		{"empty assistant", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":null}]}`, "must contain content, refusal, reasoning history, annotations, or tool calls"},
+		{"empty annotations", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"},{"role":"assistant","annotations":[]}]}`, "annotations must be a non-empty array"},
+		{"citation reversed range", `{"model":"openai/gpt-5.5","messages":[{"role":"assistant","content":"answer","annotations":[{"type":"url_citation","url_citation":{"start_index":5,"end_index":2,"title":"source","url":"https://example.com"}}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
+		{"reasoning details on OpenAI", `{"model":"openai/gpt-5.5","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "supported only for Anthropic-format deployments"},
 		{"unsigned Anthropic reasoning", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"thought"},{"role":"user","content":"continue"}]}`, "requires signed reasoning_details"},
 		{"Anthropic reasoning detail index gap", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":1,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "must match its array position"},
 		{"Anthropic reasoning detail missing signature", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought"}]},{"role":"user","content":"continue"}]}`, "signature is required"},
 		{"Anthropic reasoning detail unknown field", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning_details":[{"index":0,"type":"reasoning.encrypted","data":"opaque","future":true}]},{"role":"user","content":"continue"}]}`, "reasoning_details[0].future is not supported"},
 		{"Anthropic reasoning text mismatch", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","content":"answer","reasoning":"different","reasoning_details":[{"index":0,"type":"reasoning.text","text":"thought","signature":"sig"}]},{"role":"user","content":"continue"}]}`, "reasoning must match the visible text"},
-		{"message audio", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","audio":{"data":"abc"}}]}`, "Only text message content"},
-		{"empty prompt", `{"model":"gpt-5.5","messages":[{"role":"user","content":"  "}]}`, "messages[0].content must contain non-empty text"},
-		{"Unicode whitespace prompt", `{"model":"gpt-5.5","messages":[{"role":"user","content":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}]}`, "messages[0].content must contain non-empty text"},
-		{"message file id", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_id":"file_123"}]}`, "file_id inputs are not supported"},
-		{"message file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_url":"https://example.com/a.pdf"}]}`, "file_url inputs are not supported"},
-		{"message file data", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","file_data":"data:text/plain;base64,aGk="}]}`, "file inputs are not supported"},
-		{"message image url", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi","image_url":"https://example.com/x.png"}]}`, "Only text message content"},
-		{"input file content block", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
-		{"text block file id", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_id":"file_123"}]}]}`, "file_id inputs are not supported"},
-		{"text block file url", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_url":"https://example.com/a.pdf"}]}]}`, "file_url inputs are not supported"},
-		{"text block file data", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
-		{"text block file object", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file":{"file_data":"data:text/plain;base64,aGk="}}]}]}`, "file inputs are not supported"},
-		{"text block image url", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/x.png"}}]}]}`, "Only text message content"},
-		{"text block input image", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","input_image":{"image_url":"https://example.com/x.png"}}]}]}`, "Only text message content"},
-		{"text block input audio", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","input_audio":{"data":"abc","format":"mp3"}}]}]}`, "Only text message content"},
-		{"modalities", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"modalities":["text","audio"]}`, "modalities"},
-		{"n", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"n":2}`, "n must be 1"},
-		{"hosted tool", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
-		{"local shell tool", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"local_shell"}]}`, "Only function tools"},
-		{"apply patch tool", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"apply_patch"}]}`, "Only function tools"},
-		{"fallbacks", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"fallbacks":["openai-gpt-5.5-2026-04-23-flex"]}`, "Fallbacks are not supported"},
-		{"tool choice any string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"any"}`, "tool_choice must be auto, none, required"},
-		{"tool choice required without tools", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"required"}`, "tool_choice requires supported tools"},
-		{"tool choice without tools", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, "tool_choice requires supported tools"},
-		{"tool choice unknown function", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"other"}}}`, "tool_choice selects an unknown function tool"},
-		{"custom tool", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported"},
-		{"function tool missing name", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{}}]}`, "tools[0].function.name is required"},
-		{"function tool shorthand", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","name":"lookup"}]}`, "tools[0].name is not supported"},
-		{"function tool unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","defer_loading":true}}]}`, "tools[0].function.defer_loading is not supported"},
-		{"function tool invalid name", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup tool"}}]}`, "must contain 1 to 64"},
-		{"duplicate function tool", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}},{"type":"function","function":{"name":"lookup"}}]}`, "duplicates another tool"},
-		{"function parameters array", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":[]}}]}`, "Invalid JSON body"},
-		{"function strict string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","strict":"true"}}]}`, "Invalid JSON body"},
-		{"tool choice shorthand", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","name":"lookup"}}`, "tool_choice.name is not supported"},
-		{"tool choice unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup","future":true}}}`, "tool_choice.function.future is not supported"},
+		{"message audio", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","audio":{"data":"abc"}}]}`, "Only text message content"},
+		{"empty prompt", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"  "}]}`, "messages[0].content must contain non-empty text"},
+		{"Unicode whitespace prompt", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}]}`, "messages[0].content must contain non-empty text"},
+		{"message file id", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","file_id":"file_123"}]}`, "file_id inputs are not supported"},
+		{"message file url", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","file_url":"https://example.com/a.pdf"}]}`, "file_url inputs are not supported"},
+		{"message file data", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","file_data":"data:text/plain;base64,aGk="}]}`, "file inputs are not supported"},
+		{"message image url", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi","image_url":"https://example.com/x.png"}]}`, "Only text message content"},
+		{"input file content block", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"input_file","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
+		{"text block file id", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_id":"file_123"}]}]}`, "file_id inputs are not supported"},
+		{"text block file url", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_url":"https://example.com/a.pdf"}]}]}`, "file_url inputs are not supported"},
+		{"text block file data", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file_data":"data:text/plain;base64,aGk="}]}]}`, "file inputs are not supported"},
+		{"text block file object", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","file":{"file_data":"data:text/plain;base64,aGk="}}]}]}`, "file inputs are not supported"},
+		{"text block image url", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","image_url":{"url":"https://example.com/x.png"}}]}]}`, "Only text message content"},
+		{"text block input image", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","input_image":{"image_url":"https://example.com/x.png"}}]}]}`, "Only text message content"},
+		{"text block input audio", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","input_audio":{"data":"abc","format":"mp3"}}]}]}`, "Only text message content"},
+		{"modalities", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"modalities":["text","audio"]}`, "modalities"},
+		{"n", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"n":2}`, "n must be 1"},
+		{"hosted tool", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
+		{"local shell tool", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"local_shell"}]}`, "Only function tools"},
+		{"apply patch tool", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"apply_patch"}]}`, "Only function tools"},
+		{"fallbacks", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"fallbacks":["openai-gpt-5.5-2026-04-23-flex"]}`, "Fallbacks are not supported"},
+		{"tool choice any string", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"any"}`, "tool_choice must be auto, none, required"},
+		{"tool choice required without tools", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"required"}`, "tool_choice requires supported tools"},
+		{"tool choice without tools", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`, "tool_choice requires supported tools"},
+		{"tool choice unknown function", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"other"}}}`, "tool_choice selects an unknown function tool"},
+		{"custom tool", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported"},
+		{"function tool missing name", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{}}]}`, "tools[0].function.name is required"},
+		{"function tool shorthand", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","name":"lookup"}]}`, "tools[0].name is not supported"},
+		{"function tool unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","defer_loading":true}}]}`, "tools[0].function.defer_loading is not supported"},
+		{"function tool invalid name", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup tool"}}]}`, "must contain 1 to 64"},
+		{"duplicate function tool", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}},{"type":"function","function":{"name":"lookup"}}]}`, "duplicates another tool"},
+		{"function parameters array", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":[]}}]}`, "Invalid JSON body"},
+		{"function strict string", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","strict":"true"}}]}`, "Invalid JSON body"},
+		{"tool choice shorthand", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","name":"lookup"}}`, "tool_choice.name is not supported"},
+		{"tool choice unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup","future":true}}}`, "tool_choice.function.future is not supported"},
 		{"anthropic hosted tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"web_search"}]}`, "Only function tools"},
 		{"anthropic custom tool", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","name":"custom_tool"}]}`, "custom tools are not supported for the selected Chat deployment"},
 		{"anthropic custom tool choice", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"custom","name":"custom_tool"}}`, "custom tool_choice is not supported for the selected Chat deployment"},
 		{"anthropic message name", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","name":"alice","content":"hi"}]}`, "name is not supported for Anthropic-format history"},
-		{"azure claude tool result name", `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
+		{"azure claude tool result name", `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","name":"lookup","tool_call_id":"call_1","content":"done"}]}`, "name is not supported for Anthropic-format history"},
 		{"anthropic refusal history", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"assistant","refusal":"no"},{"role":"user","content":"continue"}]}`, "refusal is not supported for Anthropic-format history"},
 		{"anthropic trailing assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"complete this"},{"role":"assistant","content":"answer: "}]}`, "must not end in whitespace"},
 		{"Anthropic reordered system message", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
-		{"Azure Claude reordered developer message", `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
+		{"Azure Claude reordered developer message", `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"first"},{"role":"developer","content":"new policy"},{"role":"assistant","content":"answer"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
-		{"metadata non-string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
-		{"anthropic-only cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
-		{"nested cache control on openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
+		{"metadata non-string", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
+		{"anthropic-only cache control on openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
+		{"nested cache control on openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
 		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic cache control bad type", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"persisted","ttl":"1h"}}`, "cache_control.type must be ephemeral"},
-		{"openai task budget", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
-		{"openai context management", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
+		{"openai task budget", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
+		{"openai context management", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
 		{"anthropic frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
 		{"anthropic logit bias", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logit_bias":{"123":1}}`, "logit_bias is only supported for OpenAI"},
 		{"anthropic logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"logprobs":true}`, "logprobs is only supported for OpenAI"},
 		{"anthropic prediction", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"hi"}}`, "prediction is only supported for OpenAI"},
 		{"anthropic presence penalty", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
 		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
-		{"prompt cache isolation key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
-		{"speed", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`, "speed is not supported"},
-		{"inference geo", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`, "inference_geo is not supported"},
+		{"prompt cache isolation key", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_isolation_key":"tenant-a"}`, "prompt_cache_isolation_key is not supported"},
+		{"speed", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"speed":"fast"}`, `speed is not supported; use service_tier "fast"`},
+		{"inference geo", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"inference_geo":"us"}`, "inference_geo is not supported; use a regional deployment ID or a routing filter"},
 		{"anthropic seed", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"seed":1}`, "seed is only supported for OpenAI"},
 		{"anthropic top logprobs", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"top_logprobs":1}`, "top_logprobs is only supported for OpenAI"},
 		{"anthropic verbosity", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"verbosity":"medium"}`, "verbosity is only supported for OpenAI"},
 		{"anthropic web search options", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`, "web_search_options is only supported for OpenAI"},
-		{"openai repetition penalty", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"repetition_penalty":1.1}`, "only supported for Chutes"},
-		{"empty stop sequence", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":[""]}`, "stop sequences must be non-empty"},
+		{"openai repetition penalty", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"repetition_penalty":1.1}`, "only supported for Chutes"},
+		{"empty stop sequence", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":[""]}`, "stop sequences must be non-empty"},
 		{"duplicate stop sequence", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["END","END"]}`, "stop must not contain duplicate values"},
 		{"too many portable stop sequences", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop contains too many items"},
 		{"oversized stop sequence", fmt.Sprintf(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["%s"]}`, strings.Repeat("x", maxStopSequenceBytes+1)), "stop values must not exceed"},
 		{"NUL stop sequence", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["END\u0000"]}`, "stop values must not contain NUL"},
-		{"prediction unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"answer","future":true}}`, "prediction must contain only type and content"},
-		{"prediction non-text part", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":[{"type":"image_url","text":"answer"}]}}`, "must contain only type=text and text"},
-		{"response format unknown field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object","future":true}}`, "supports only type"},
-		{"response format invalid schema name", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"bad name","schema":{"type":"object"}}}}`, "name must contain 1 to 64"},
-		{"openai reasoning display", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_display":"summarized"}`, "only supported for Anthropic-format"},
+		{"prediction unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"answer","future":true}}`, "prediction must contain only type and content"},
+		{"prediction non-text part", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":[{"type":"image_url","text":"answer"}]}}`, "must contain only type=text and text"},
+		{"response format unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object","future":true}}`, "supports only type"},
+		{"response format invalid schema name", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"bad name","schema":{"type":"object"}}}}`, "name must contain 1 to 64"},
+		{"openai reasoning display", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_display":"summarized"}`, "only supported for Anthropic-format"},
 		{"anthropic empty stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":[""]}`, "stop_sequences must contain non-empty strings"},
 		{"anthropic duplicate stop sequence", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END","END"]}`, "stop_sequences must not contain duplicate values"},
 		{"anthropic too many stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop_sequences":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop_sequences contains too many items"},
 		{"anthropic json object response format", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`, "must be json_schema for Anthropic-format"},
-		{"top k openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"top_k":40}`, "top_k is only supported for Anthropic"},
-		{"stop sequences openai", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
+		{"top k openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"top_k":40}`, "top_k is only supported for Anthropic"},
+		{"stop sequences openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
 		{"anthropic stop conflicts with stop sequences", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"stop":["DONE"],"stop_sequences":["END"]}`, "stop conflicts with stop_sequences"},
-		{"conflicting reasoning alias", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"minimal"},"reasoning_effort":"minimal"}`, "conflicts"},
-		{"bad reasoning object", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":"low"}`, "reasoning must be an object"},
-		{"bad reasoning max tokens", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
-		{"bad nested reasoning max tokens", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
-		{"unsupported manual reasoning limit", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
+		{"conflicting reasoning alias", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"minimal"},"reasoning_effort":"minimal"}`, "conflicts"},
+		{"bad reasoning object", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":"low"}`, "reasoning must be an object"},
+		{"bad reasoning max tokens", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_max_tokens":0}`, "reasoning_max_tokens is outside the supported range"},
+		{"bad nested reasoning max tokens", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":"many"}}`, "reasoning.max_tokens must be an integer"},
+		{"unsupported manual reasoning limit", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
 		{"manual reasoning budget above deployment maximum", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":128000,"reasoning":{"max_tokens":128000}}`, "exceeds the deployment maximum"},
@@ -152,18 +152,18 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"manual reasoning limit on Chutes", `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"conflicting reasoning controls", `{"model":"anthropic-claude-opus-4-6","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":4096,"reasoning":{"effort":"high","max_tokens":1024}}`, "reasoning effort conflicts"},
-		{"bad reasoning enabled type", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
-		{"unknown reasoning effort", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"ultra"}`, "must be one of"},
-		{"chat reasoning summary", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
-		{"unknown reasoning field", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
-		{"store true", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":true}`, "store=true is not supported"},
-		{"store string", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":"false"}`, "Invalid JSON body"},
+		{"bad reasoning enabled type", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":"yes"}}`, "reasoning.enabled must be a boolean"},
+		{"unknown reasoning effort", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"ultra"}`, "must be one of"},
+		{"chat reasoning summary", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"summary":"auto"}}`, "reasoning.summary is not supported"},
+		{"unknown reasoning field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"effort":"low","unknown":true}}`, "reasoning.unknown is not supported"},
+		{"store true", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":true}`, "store=true is not supported"},
+		{"store string", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":"false"}`, "Invalid JSON body"},
 		{"anthropic parallel tool calls", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
-		{"stream options without stream", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":false}}`, "stream_options requires stream=true"},
-		{"stream options unknown key", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"unknown":true}}`, "stream_options.unknown is not supported"},
-		{"chat stream obfuscation", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_obfuscation":true}}`, "stream_options.include_obfuscation is not supported for Chat Completions"},
+		{"stream options without stream", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream_options":{"include_usage":false}}`, "stream_options requires stream=true"},
+		{"stream options unknown key", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"unknown":true}}`, "stream_options.unknown is not supported"},
+		{"chat stream obfuscation", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_obfuscation":true}}`, "stream_options.include_obfuscation is not supported for Chat Completions"},
 		{"anthropic mcp toolset", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "provider execution cannot be bounded"},
-		{"openai mcp toolset", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "Only function tools"},
+		{"openai mcp toolset", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"mcp_toolset","mcp_server_name":"remote"}]}`, "Only function tools"},
 	}
 
 	for _, tc := range cases {
@@ -182,11 +182,11 @@ func TestStoreFalseIsAcceptedAcrossProvidersAndInterfaces(t *testing.T) {
 		responses bool
 		body      string
 	}{
-		{"OpenAI Chat", false, `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":false}`},
+		{"OpenAI Chat", false, `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"store":false}`},
 		{"Azure Chat", false, `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"store":false}`},
 		{"Anthropic Chat", false, `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"store":false}`},
 		{"Chutes Chat", false, `{"model":"chutes-glm-5.2","messages":[{"role":"user","content":"hi"}],"store":false}`},
-		{"OpenAI Responses", true, `{"model":"gpt-5.5","input":"hi","store":false}`},
+		{"OpenAI Responses", true, `{"model":"openai/gpt-5.5","input":"hi","store":false}`},
 		{"Azure Responses", true, `{"model":"azure-gpt-5.6-sol","input":"hi","store":false}`},
 		{"Anthropic Responses", true, `{"model":"anthropic-claude-sonnet-4-6","input":"hi","store":false}`},
 	} {
@@ -211,7 +211,7 @@ func TestOpenAIProviderOwnedScalarsReachTheWireUnchanged(t *testing.T) {
 	if err := validateInteger(rawJSON(t, `{"top_logprobs":"many"}`), "top_logprobs"); err == nil || !strings.Contains(err.Error(), "top_logprobs must be an integer") {
 		t.Fatalf("expected top_logprobs shape error, got %v", err)
 	}
-	body := `{"model":"gpt-5.5","reasoning_effort":"none","messages":[{"role":"user","content":"hi"}],"temperature":2.01,"top_p":1.01,"frequency_penalty":-2.01,"presence_penalty":2.01,"logprobs":false,"top_logprobs":21,"logit_bias":{"future-token":100.1},"verbosity":"future-verbosity","stop":["a","b","c","d","e"]}`
+	body := `{"model":"openai/gpt-5.5","reasoning_effort":"none","messages":[{"role":"user","content":"hi"}],"temperature":2.01,"top_p":1.01,"frequency_penalty":-2.01,"presence_penalty":2.01,"logprobs":false,"top_logprobs":21,"logit_bias":{"future-token":100.1},"verbosity":"future-verbosity","stop":["a","b","c","d","e"]}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -277,20 +277,17 @@ func TestAnthropicTaskBudgetValidation(t *testing.T) {
 		want                string
 		chatSchemaRejection bool
 	}{
-		{name: "minimum", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000}`},
+		{name: "budget", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000}`},
+		{name: "provider decides model and minimum", model: "anthropic-claude-sonnet-4-6", taskBudget: `{"type":"tokens","total":1000,"remaining":2000}`},
 		{name: "remaining zero", model: "anthropic-claude-opus-4-8", taskBudget: `{"type":"tokens","total":20000,"remaining":0}`},
 		{name: "fable", model: "anthropic-claude-fable-5", taskBudget: `{"type":"tokens","total":20000,"remaining":19000}`},
-		{name: "unsupported model", model: "anthropic-claude-sonnet-4-6", taskBudget: `{"type":"tokens","total":20000}`, want: "not supported for this Anthropic model"},
 		{name: "not object", model: "anthropic-claude-opus-4-7", taskBudget: `[]`, want: "must be an object", chatSchemaRejection: true},
 		{name: "unknown field", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"future":true}`, want: "supports only type, total, and remaining"},
 		{name: "missing type", model: "anthropic-claude-opus-4-7", taskBudget: `{"total":20000}`, want: "type must be tokens"},
 		{name: "wrong type", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"future","total":20000}`, want: "type must be tokens"},
 		{name: "missing total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens"}`, want: "total is required"},
 		{name: "fractional total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000.5}`, want: "total must be an integer", chatSchemaRejection: true},
-		{name: "small total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":19999}`, want: "below the provider minimum"},
 		{name: "fractional remaining", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":1.5}`, want: "remaining must be an integer", chatSchemaRejection: true},
-		{name: "negative remaining", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":-1}`, want: "remaining must be between zero"},
-		{name: "remaining above total", model: "anthropic-claude-opus-4-7", taskBudget: `{"type":"tokens","total":20000,"remaining":20001}`, want: "remaining must be between zero"},
 	}
 	for _, route := range []struct {
 		name       string
@@ -355,7 +352,6 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 		{name: "missing edit type", payload: `{"edits":[{}]}`, want: "type is required"},
 		{name: "unknown edit type", payload: `{"edits":[{"type":"future_edit"}]}`, want: "type is not supported"},
 		{name: "duplicate edit", payload: `{"edits":[{"type":"clear_tool_uses_20250919"},{"type":"clear_tool_uses_20250919"}]}`, want: "must be unique"},
-		{name: "clear thinking not first", payload: `{"edits":[{"type":"clear_tool_uses_20250919"},{"type":"clear_thinking_20251015"}]}`, want: "must be the first"},
 		{name: "clear thinking unknown field", payload: `{"edits":[{"type":"clear_thinking_20251015","future":true}]}`, want: "supports only type and keep"},
 		{name: "clear thinking null keep", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":null}]}`, want: "must be all or an object"},
 		{name: "clear thinking wrong string", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":"recent"}]}`, want: "must be all or an object"},
@@ -365,16 +361,14 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 		{name: "clear thinking fractional turns", payload: `{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":1.5}}]}`},
 		{name: "clear tool unknown field", payload: `{"edits":[{"type":"clear_tool_uses_20250919","future":true}]}`, want: "contains unsupported fields"},
 		{name: "clear at least wrong type", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"tool_uses","value":1}}]}`, want: "type is not supported"},
-		{name: "clear at least missing value", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens"}}]}`, want: "below the provider minimum"},
+		{name: "clear at least missing value", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens"}}]}`, want: "non-negative integer"},
 		{name: "clear inputs wrong type", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_tool_inputs":{"lookup":true}}]}`, want: "boolean or an array"},
 		{name: "clear inputs empty name", payload: `{"edits":[{"type":"clear_tool_uses_20250919","clear_tool_inputs":[""]}]}`, want: "boolean or an array"},
 		{name: "exclude tools duplicate", payload: `{"edits":[{"type":"clear_tool_uses_20250919","exclude_tools":["lookup","lookup"]}]}`, want: "must not contain duplicate"},
 		{name: "clear tool keep null", payload: `{"edits":[{"type":"clear_tool_uses_20250919","keep":null}]}`, want: "must be an object"},
 		{name: "clear tool trigger fractional", payload: `{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"tool_uses","value":1.5}}]}`},
 		{name: "compaction unknown field", payload: `{"edits":[{"type":"compact_20260112","future":true}]}`, want: "contains unsupported fields"},
-		{name: "compaction unsupported model", model: "anthropic-claude-haiku-4-5-20251001", payload: `{"edits":[{"type":"compact_20260112"}]}`, want: "not supported for this Anthropic model"},
 		{name: "compaction trigger wrong type", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"tool_uses","value":50000}}]}`, want: "type is not supported"},
-		{name: "compaction trigger below minimum", payload: `{"edits":[{"type":"compact_20260112","trigger":{"type":"input_tokens","value":49999}}]}`, want: "below the provider minimum"},
 		{name: "compaction instructions wrong type", payload: `{"edits":[{"type":"compact_20260112","instructions":true}]}`, want: "must be a string or null"},
 	}
 
@@ -408,173 +402,6 @@ func TestAnthropicContextManagementValidation(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-func TestEveryAnthropicDeploymentEnforcesTaskBudgetModelSupport(t *testing.T) {
-	type matrixDeployment struct {
-		RouteIDs []string `json:"routeIds"`
-	}
-	type matrixRoute struct {
-		Interfaces []string `json:"interfaces"`
-		ProviderID string   `json:"providerId"`
-	}
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
-	deployments := map[string]matrixDeployment{}
-	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
-		t.Fatalf("decode catalog deployments: %v", err)
-	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
-		t.Fatalf("decode catalog routes: %v", err)
-	}
-
-	allowed := 0
-	rejected := 0
-	for deploymentID, deploymentSpec := range deployments {
-		for _, routeID := range deploymentSpec.RouteIDs {
-			routeSpec := routes[routeID]
-			if routeSpec.ProviderID != string(schemas.Anthropic) {
-				continue
-			}
-			for _, interfaceName := range routeSpec.Interfaces {
-				var (
-					body  string
-					path  string
-					route catalog.Route
-				)
-				switch interfaceName {
-				case "chat_completions":
-					path = "/v1/chat/completions"
-					route = catalog.RouteChat
-					body = fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"task_budget":{"type":"tokens","total":20000}}`, deploymentID)
-				case "responses":
-					path = "/v1/responses"
-					route = catalog.RouteResponses
-					body = fmt.Sprintf(`{"model":%q,"input":"hi","max_output_tokens":16,"task_budget":{"type":"tokens","total":20000}}`, deploymentID)
-				default:
-					t.Fatalf("%s: unsupported Anthropic interface %q", routeID, interfaceName)
-				}
-				resolvedDeployment, active := testDeploymentForRoute(schemas.Anthropic, deploymentID, route)
-				if !active {
-					continue
-				}
-				model := strings.ToLower(resolvedDeployment.Upstream.Model)
-				wantAllowed := strings.Contains(model, "opus-4-7") ||
-					strings.Contains(model, "opus-4-8") ||
-					strings.Contains(model, "opus-5") ||
-					strings.Contains(model, "fable") ||
-					strings.Contains(model, "mythos")
-				t.Run(deploymentID+"/"+interfaceName, func(t *testing.T) {
-					resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
-					if err != nil {
-						t.Fatalf("ResolveRequest returned error: %v", err)
-					}
-					state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-					err = state.Adapter.ValidateRequest(state)
-					if wantAllowed {
-						allowed++
-						if err != nil {
-							t.Fatalf("supported task budget model %q was rejected: %v", model, err)
-						}
-						return
-					}
-					rejected++
-					if err == nil || !strings.Contains(err.Error(), "task_budget is not supported for this Anthropic model") {
-						t.Fatalf("unsupported task budget model %q was not rejected correctly: %v", model, err)
-					}
-				})
-			}
-		}
-	}
-	if allowed == 0 || rejected == 0 {
-		t.Fatalf("incomplete task budget model matrix: allowed=%d rejected=%d", allowed, rejected)
-	}
-}
-
-func TestEveryAnthropicWireDeploymentEnforcesCompactionModelSupport(t *testing.T) {
-	type matrixDeployment struct {
-		RouteIDs []string `json:"routeIds"`
-	}
-	type matrixRoute struct {
-		Interfaces []string `json:"interfaces"`
-		ProviderID string   `json:"providerId"`
-	}
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
-	deployments := map[string]matrixDeployment{}
-	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
-		t.Fatalf("decode catalog deployments: %v", err)
-	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
-		t.Fatalf("decode catalog routes: %v", err)
-	}
-
-	allowed := 0
-	rejected := 0
-	for deploymentID, deploymentSpec := range deployments {
-		for _, routeID := range deploymentSpec.RouteIDs {
-			routeSpec := routes[routeID]
-			provider := schemas.ModelProvider(routeSpec.ProviderID)
-			if provider != schemas.Anthropic && routeID != "azure-anthropic-messages" {
-				continue
-			}
-			for _, interfaceName := range routeSpec.Interfaces {
-				var (
-					body  string
-					path  string
-					route catalog.Route
-				)
-				switch interfaceName {
-				case "chat_completions":
-					path = "/v1/chat/completions"
-					route = catalog.RouteChat
-					body = fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"context_management":{"edits":[{"type":"compact_20260112"}]}}`, deploymentID)
-				case "responses":
-					path = "/v1/responses"
-					route = catalog.RouteResponses
-					body = fmt.Sprintf(`{"model":%q,"input":"hi","max_output_tokens":16,"context_management":{"edits":[{"type":"compact_20260112"}]}}`, deploymentID)
-				default:
-					t.Fatalf("%s: unsupported Anthropic-family interface %q", routeID, interfaceName)
-				}
-				resolvedDeployment, active := testDeploymentForRoute(provider, deploymentID, route)
-				if !active {
-					continue
-				}
-				if provider == schemas.Azure && !strings.EqualFold(resolvedDeployment.Upstream.ModelFormat, "Anthropic") {
-					t.Fatalf("%s unexpectedly uses %q wire format on %s", deploymentID, resolvedDeployment.Upstream.ModelFormat, routeID)
-				}
-				wantAllowed := anthropicModelSupportsCompaction(resolvedDeployment.Upstream.Model)
-				t.Run(deploymentID+"/"+interfaceName, func(t *testing.T) {
-					resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
-					if err != nil {
-						t.Fatalf("ResolveRequest returned error: %v", err)
-					}
-					state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-					err = state.Adapter.ValidateRequest(state)
-					if wantAllowed {
-						allowed++
-						if err != nil {
-							t.Fatalf("supported compaction model %q was rejected: %v", resolvedDeployment.Upstream.Model, err)
-						}
-						return
-					}
-					rejected++
-					if err == nil || !strings.Contains(err.Error(), "compact_20260112 is not supported for this Anthropic model") {
-						t.Fatalf("unsupported compaction model %q was not rejected correctly: %v", resolvedDeployment.Upstream.Model, err)
-					}
-				})
-			}
-		}
-	}
-	if allowed == 0 || rejected == 0 {
-		t.Fatalf("incomplete compaction model matrix: allowed=%d rejected=%d", allowed, rejected)
 	}
 }
 
@@ -653,13 +480,13 @@ func TestAnthropicContextManagementReachesBothProviderWireFormatsExactly(t *test
 
 func TestChatPolicyAllowsDeclaredFunctionToolChoice(t *testing.T) {
 	for _, body := range []string{
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"none"}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"auto"}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tool_choice":"none"}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
 		`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"required"}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false,"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
-		`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"parallel_tool_calls":false,"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
+		`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 		`{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object","properties":{"cache_control":{"type":"string"}}}}}],"tool_choice":{"type":"function","function":{"name":"lookup"}}}`,
 	} {
 		if err := validateResolvedChat(t, body); err != nil {
@@ -674,10 +501,10 @@ func TestChatClientToolContinuationReachesEveryProviderWireLosslessly(t *testing
 		model         string
 		name          string
 	}{
-		{name: "OpenAI", model: "gpt-5.5"},
+		{name: "OpenAI", model: "openai/gpt-5.5"},
 		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
-		{name: "Azure Claude", model: "azure-claude-sonnet-4-6-anthropic-hosted", anthropicWire: true},
+		{name: "Azure Claude", model: "azure-claude-opus-4-8-anthropic-hosted", anthropicWire: true},
 		{name: "Chutes", model: "chutes-glm-5.2"},
 	}
 	for _, tc := range tests {
@@ -772,7 +599,7 @@ func TestChatSignedReasoningHistoryReachesAnthropicFamilyWireLosslessly(t *testi
 		name  string
 	}{
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6"},
-		{name: "Azure Claude", model: "azure-claude-sonnet-4-6-anthropic-hosted"},
+		{name: "Azure Claude", model: "azure-claude-opus-4-8-anthropic-hosted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"first"},{"role":"assistant","content":"answer","reasoning":"visible thought\n","reasoning_details":[{"index":0,"type":"reasoning.text","text":"visible thought","signature":"signed-thought"},{"index":1,"type":"reasoning.encrypted","data":"opaque-redacted"}]},{"role":"user","content":"continue"}],"reasoning":{"effort":"high"}}`, tc.model)
@@ -872,7 +699,7 @@ func TestChatStopStringShorthandNormalizesToBifrostStopArray(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":"END"}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":"END"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -898,7 +725,7 @@ func TestChatResponseFormatReachesProviderWireRequest(t *testing.T) {
 	}{
 		{
 			name: "openai json schema",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
 		},
 		{
 			name: "anthropic json schema",
@@ -1004,6 +831,67 @@ func TestAnthropicCacheControlRejectsUnknownKeys(t *testing.T) {
 				t.Fatalf("unknown cache control was accepted: %v", err)
 			}
 		})
+	}
+}
+
+// Anthropic accepts cache_control on image and document blocks, so the gateway
+// passes it through and holds the requested write TTL.
+func TestAnthropicResponsesCacheControlOnImageAndFileReachesTheWire(t *testing.T) {
+	cacheControl := `"cache_control":{"type":"ephemeral","ttl":"1h"}`
+	body := `{"model":"anthropic-claude-sonnet-4-6","max_output_tokens":16,"input":[{"role":"user","content":[` +
+		`{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8=",` + cacheControl + `},` +
+		`{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,aGVsbG8=",` + cacheControl + `},` +
+		`{"type":"input_text","text":"Say ok"}]}]}`
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
+	if err != nil {
+		t.Fatalf("ResolveRequest returned error: %v", err)
+	}
+	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatalf("ValidateRequest returned error: %v", err)
+	}
+	if err := state.Adapter.SanitizeRequest(state); err != nil {
+		t.Fatalf("SanitizeRequest returned error: %v", err)
+	}
+	if err := state.Adapter.EstimateHold(state); err != nil {
+		t.Fatalf("EstimateHold returned error: %v", err)
+	}
+	if findMeterEstimate(state.Hold.Meters, billing.MeterCacheWrite1hInputTokens) == nil {
+		t.Fatalf("hold does not cover one hour cache writes: %#v", state.Hold.Meters)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolution.RequestType)
+	request, err := resolution.ToBifrost(ctx)
+	if err != nil {
+		t.Fatalf("ToBifrost returned error: %v", err)
+	}
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatalf("PrepareProviderRequest returned error: %v", err)
+	}
+	var wire struct {
+		Messages []struct {
+			Content []struct {
+				Type         string `json:"type"`
+				CacheControl *struct {
+					TTL string `json:"ttl"`
+				} `json:"cache_control"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	wireBody := preparedProviderBody(t, ctx, request.ResponsesRequest)
+	if err := json.Unmarshal(wireBody, &wire); err != nil {
+		t.Fatalf("decode provider request: %v\n%s", err, wireBody)
+	}
+	cached := map[string]bool{}
+	for _, message := range wire.Messages {
+		for _, block := range message.Content {
+			if block.CacheControl != nil && block.CacheControl.TTL == "1h" {
+				cached[block.Type] = true
+			}
+		}
+	}
+	if !cached["image"] || !cached["document"] {
+		t.Fatalf("cache_control did not reach image and document blocks: %s", wireBody)
 	}
 }
 
@@ -1119,7 +1007,7 @@ func TestZeroOutputTokensRequireAllowedAnthropicCacheControl(t *testing.T) {
 func TestAnthropicFastDeploymentUsesModelSlugAndStandardTier(t *testing.T) {
 	for _, body := range []string{
 		`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}]}`,
-		`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`,
+		`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"fast"}`,
 	} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
@@ -1213,7 +1101,7 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			path:       "/v1/chat/completions",
 			deployment: "openai-gpt-5.5-2026-04-23",
 			outputCap:  "max_completion_tokens",
-			body:       `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"extra_params":{"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}]}}`,
+			body:       `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"extra_params":{"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}]}}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1278,9 +1166,15 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 		want string
 	}{
 		{
-			name: "chat auto",
+			name: "chat omitted",
 			path: "/v1/chat/completions",
 			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}`,
+			want: "standard_only",
+		},
+		{
+			name: "chat auto",
+			path: "/v1/chat/completions",
+			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"auto"}`,
 			want: "standard_only",
 		},
 		{
@@ -1296,13 +1190,7 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 			want: "standard_only",
 		},
 		{
-			name: "chat standard only",
-			path: "/v1/chat/completions",
-			body: `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"standard_only"}`,
-			want: "standard_only",
-		},
-		{
-			name: "responses auto",
+			name: "responses omitted",
 			path: "/v1/responses",
 			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_output_tokens":16}`,
 			want: "standard_only",
@@ -1311,12 +1199,6 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 			name: "responses default",
 			path: "/v1/responses",
 			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
-			want: "standard_only",
-		},
-		{
-			name: "responses standard only",
-			path: "/v1/responses",
-			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"standard_only","max_output_tokens":16}`,
 			want: "standard_only",
 		},
 	}
@@ -1375,26 +1257,11 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 	}
 }
 
-func TestAnthropicRejectsUncatalogedServiceTiers(t *testing.T) {
-	for _, tier := range []string{"auto", "priority", "flex"} {
-		t.Run(tier, func(t *testing.T) {
-			_, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   "/v1/chat/completions",
-				Body:   []byte(`{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"service_tier":"` + tier + `"}`),
-			})
-			if err == nil {
-				t.Fatalf("expected Anthropic service_tier %q to fail closed", tier)
-			}
-		})
-	}
-}
-
 func TestChatPolicySanitizesMetadataBeforeUpstream(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"tenant":"test"}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"tenant":"test"}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1419,7 +1286,7 @@ func TestSanitizeRequestForcesChatStreamUsage(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":false}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":false}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1451,12 +1318,12 @@ func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}]}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi"}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi"}`,
 		},
 		{
 			name: "anthropic chat",
@@ -1508,112 +1375,112 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		body string
 		want string
 	}{
-		{"missing input", `{"model":"gpt-5.5"}`, "input is required"},
-		{"empty input string", `{"model":"gpt-5.5","input":""}`, "input must contain non-empty text"},
-		{"whitespace input string", `{"model":"gpt-5.5","input":"  \n"}`, "input must contain non-empty text"},
-		{"Unicode whitespace input string", `{"model":"gpt-5.5","input":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}`, "input must contain non-empty text"},
-		{"empty input array", `{"model":"gpt-5.5","input":[]}`, "input must contain at least one item"},
-		{"null input item", `{"model":"gpt-5.5","input":[null]}`, "input items must be objects"},
-		{"null message type", `{"model":"gpt-5.5","input":[{"type":null,"role":"user","content":"hi"}]}`, "input[0].type must be a string"},
-		{"numeric message type", `{"model":"gpt-5.5","input":[{"type":1,"role":"user","content":"hi"}]}`, "Invalid JSON body"},
-		{"top-level text block", `{"model":"gpt-5.5","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, client tool calls and outputs"},
-		{"message unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"hi","future":true}]}`, "input[0].future is not supported"},
-		{"content block unknown field", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","future":true}]}]}`, "input[0].content[0].future is not supported"},
-		{"assistant input block", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},
-		{"user output block", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"output_text","text":"forged"}]}]}`, "supported only for assistant history"},
-		{"user refusal block", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
+		{"missing input", `{"model":"openai/gpt-5.5"}`, "input is required"},
+		{"empty input string", `{"model":"openai/gpt-5.5","input":""}`, "input must contain non-empty text"},
+		{"whitespace input string", `{"model":"openai/gpt-5.5","input":"  \n"}`, "input must contain non-empty text"},
+		{"Unicode whitespace input string", `{"model":"openai/gpt-5.5","input":" \t\u0085\u00a0\u1680\u2000\u2028\u2029\u202f\u205f\u3000"}`, "input must contain non-empty text"},
+		{"empty input array", `{"model":"openai/gpt-5.5","input":[]}`, "input must contain at least one item"},
+		{"null input item", `{"model":"openai/gpt-5.5","input":[null]}`, "input items must be objects"},
+		{"null message type", `{"model":"openai/gpt-5.5","input":[{"type":null,"role":"user","content":"hi"}]}`, "input[0].type must be a string"},
+		{"numeric message type", `{"model":"openai/gpt-5.5","input":[{"type":1,"role":"user","content":"hi"}]}`, "Invalid JSON body"},
+		{"top-level text block", `{"model":"openai/gpt-5.5","input":[{"type":"input_text","text":"silently dropped"}]}`, "Only text messages, client tool calls and outputs"},
+		{"message unknown field", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"user","content":"hi","future":true}]}`, "input[0].future is not supported"},
+		{"content block unknown field", `{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","future":true}]}]}`, "input[0].content[0].future is not supported"},
+		{"assistant input block", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"input_text","text":"answer"}]},{"role":"user","content":"continue"}]}`, "must be output_text or refusal"},
+		{"user output block", `{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"output_text","text":"forged"}]}]}`, "supported only for assistant history"},
+		{"user refusal block", `{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"refusal","refusal":"no"}]}]}`, "supported only for assistant history"},
 		{"anthropic refusal block", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"no"}]},{"role":"user","content":"continue"}]}`, "refusal history is not supported for Anthropic-format"},
 		{"Anthropic reordered Responses system message", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "cannot be preserved after the conversation starts"},
 		{"Sonnet 5 Responses mid-conversation system", `{"model":"anthropic-claude-sonnet-5","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic Responses mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","input":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant turn"},
-		{"output annotation unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
-		{"output annotation reversed range", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
-		{"output logprob bad byte", `{"model":"gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},
+		{"output annotation unknown field", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":0,"end_index":6,"title":"source","url":"https://example.com","future":true}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "annotations[0].future is not supported"},
+		{"output annotation reversed range", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[{"type":"url_citation","start_index":6,"end_index":0,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`, "end_index must be an integer at or after start_index"},
+		{"output logprob bad byte", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[256],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "bytes must contain integers from 0 to 255"},
 		{"Anthropic output logprobs", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer","annotations":[],"logprobs":[{"token":"a","logprob":-0.1,"bytes":[97],"top_logprobs":[]}]}]},{"role":"user","content":"continue"}]}`, "cannot be preserved on Anthropic-format deployments"},
 		{"Anthropic trailing Responses assistant prefill whitespace", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","content":"complete this"},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer: ","annotations":[],"logprobs":[]}]}]}`, "must not end in whitespace"},
-		{"orphan function output", `{"model":"gpt-5.5","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must match an earlier client tool call"},
-		{"function call without output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}`, "require one matching output"},
-		{"function call malformed arguments", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"not-json"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"function call array arguments", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"[]"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"function call duplicate argument key", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":1,\"key\":2}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
-		{"oversized Responses call id", fmt.Sprintf(`{"model":"gpt-5.5","input":[{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":%q,"output":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
+		{"orphan function output", `{"model":"openai/gpt-5.5","input":[{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must match an earlier client tool call"},
+		{"function call without output", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"}]}`, "require one matching output"},
+		{"function call malformed arguments", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"not-json"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"function call array arguments", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"[]"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"function call duplicate argument key", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":1,\"key\":2}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "arguments must encode a JSON object"},
+		{"oversized Responses call id", fmt.Sprintf(`{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":%q,"name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":%q,"output":"done"}]}`, strings.Repeat("a", 65), strings.Repeat("a", 65)), "at most 64 bytes"},
 		{"Anthropic unsafe Responses call id", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call:1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call:1","output":"done"}]}`, "only letters, digits, underscores, or hyphens"},
-		{"function call invalid name", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "name must contain 1 to 64"},
-		{"message before function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"message","role":"user","content":"skip it"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must resolve the preceding client tool calls"},
-		{"duplicate function call id", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"other","arguments":"{}"}]}`, "duplicates another client tool call"},
-		{"duplicate function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"one"},{"type":"function_call_output","call_id":"call_1","output":"two"}]}`, "duplicates a client tool output"},
-		{"non-text function output", `{"model":"gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"done"}]}]}`, "input[1].output must be a string"},
+		{"function call invalid name", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup tool","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "name must contain 1 to 64"},
+		{"message before function output", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"message","role":"user","content":"skip it"},{"type":"function_call_output","call_id":"call_1","output":"done"}]}`, "must resolve the preceding client tool calls"},
+		{"duplicate function call id", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call","call_id":"call_1","name":"other","arguments":"{}"}]}`, "duplicates another client tool call"},
+		{"duplicate function output", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":"one"},{"type":"function_call_output","call_id":"call_1","output":"two"}]}`, "duplicates a client tool output"},
+		{"non-text function output", `{"model":"openai/gpt-5.5","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"done"}]}]}`, "input[1].output must be a string"},
 		{"custom call on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}]}`, "supported only for OpenAI-format deployments"},
-		{"reasoning item unknown field", `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":"continue"},{"type":"reasoning","encrypted_content":"opaque","future":true}]}`, "input[1].future is not supported"},
-		{"background", `{"model":"gpt-5.5","input":"hi","background":true}`, "background is not supported"},
-		{"conversation", `{"model":"gpt-5.5","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
-		{"fallbacks", `{"model":"gpt-5.5","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
-		{"previous response", `{"model":"gpt-5.5","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
-		{"speed", `{"model":"anthropic-claude-opus-4-8","input":"hi","speed":"fast"}`, "speed is not supported"},
-		{"inference geo", `{"model":"anthropic-claude-opus-4-8","input":"hi","inference_geo":"us"}`, "inference_geo is not supported"},
-		{"reasoning input item without encrypted content", `{"model":"gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
+		{"reasoning item unknown field", `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"user","content":"continue"},{"type":"reasoning","encrypted_content":"opaque","future":true}]}`, "input[1].future is not supported"},
+		{"background", `{"model":"openai/gpt-5.5","input":"hi","background":true}`, "background is not supported"},
+		{"conversation", `{"model":"openai/gpt-5.5","input":"hi","conversation":"conv_123"}`, "conversation is not supported"},
+		{"fallbacks", `{"model":"openai/gpt-5.5","input":"hi","fallbacks":["openai-gpt-5-nano-2025-08-07-flex"]}`, "Fallbacks are not supported"},
+		{"previous response", `{"model":"openai/gpt-5.5","input":"hi","previous_response_id":"resp_123"}`, "previous_response_id is not supported"},
+		{"speed", `{"model":"anthropic-claude-opus-4-8","input":"hi","speed":"fast"}`, `speed is not supported; use service_tier "fast"`},
+		{"inference geo", `{"model":"anthropic-claude-opus-4-8","input":"hi","inference_geo":"us"}`, "inference_geo is not supported; use a regional deployment ID or a routing filter"},
+		{"reasoning input item without encrypted content", `{"model":"openai/gpt-5.5","input":[{"type":"reasoning","summary":[]}]}`, "reasoning input items require encrypted_content"},
 		{"reasoning input item on Anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"reasoning","encrypted_content":"opaque"}]}`, "reasoning input items are only supported for OpenAI reasoning deployments"},
 		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
-		{"openai cache control", `{"model":"gpt-5.5","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
-		{"openai input cache control", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
-		{"openai tool cache control", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`, "cache_control is only supported for Anthropic"},
+		{"openai cache control", `{"model":"openai/gpt-5.5","input":"hi","cache_control":{"type":"ephemeral"}}`, "cache_control is only supported for Anthropic"},
+		{"openai input cache control", `{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
+		{"openai tool cache control", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","cache_control":{"type":"ephemeral"}}]}`, "cache_control is only supported for Anthropic"},
 		{"anthropic cache control bad ttl", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","cache_control":{"type":"ephemeral","ttl":"24h"}}`, "cache_control.ttl must be 5m or 1h"},
 		{"anthropic message cache control unsupported", `{"model":"anthropic-claude-sonnet-4-6","input":[{"role":"user","cache_control":{"type":"ephemeral"},"content":"hi"}]}`, "input[0].cache_control is not supported"},
 		{"anthropic responses frequency penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","frequency_penalty":0.1}`, "frequency_penalty is only supported for OpenAI"},
 		{"anthropic responses include", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","include":["message.output_text.logprobs"]}`, "include is only supported for OpenAI"},
 		{"anthropic responses presence penalty", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","presence_penalty":0.1}`, "presence_penalty is only supported for OpenAI"},
-		{"responses include unknown value", `{"model":"gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the current response contract"},
-		{"responses duplicate include", `{"model":"gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
-		{"responses text unknown field", `{"model":"gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
-		{"responses text format unknown field", `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
-		{"responses text format missing schema", `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
+		{"responses include unknown value", `{"model":"openai/gpt-5.5","input":"hi","include":["file_search_call.results"]}`, "not supported by the current response contract"},
+		{"responses duplicate include", `{"model":"openai/gpt-5.5","input":"hi","include":["reasoning.encrypted_content","reasoning.encrypted_content"]}`, "must not contain duplicate values"},
+		{"responses text unknown field", `{"model":"openai/gpt-5.5","input":"hi","text":{"future":true}}`, "text must contain only format and verbosity"},
+		{"responses text format unknown field", `{"model":"openai/gpt-5.5","input":"hi","text":{"format":{"type":"text","future":true}}}`, "supports only type"},
+		{"responses text format missing schema", `{"model":"openai/gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer"}}}`, "schema must be an object"},
 		{"anthropic responses verbosity", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"verbosity":"medium"}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic responses json object format", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","text":{"format":{"type":"json_object"}}}`, "must be json_schema for Anthropic-format"},
 		{"anthropic responses stream obfuscation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`, "cannot be preserved on Anthropic-format"},
 		{"anthropic detailed reasoning summary", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"summary":"detailed"}}`, "must be auto or none for Anthropic-format"},
 		{"anthropic truncation", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","truncation":"auto"}`, "truncation is not supported for Anthropic-format"},
 		{"anthropic prompt cache key", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","prompt_cache_key":"tenant-a"}`, "prompt caching is not supported for the selected deployment"},
-		{"top k openai", `{"model":"gpt-5.5","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
-		{"stop sequences openai", `{"model":"gpt-5.5","input":"hi","stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
+		{"top k openai", `{"model":"openai/gpt-5.5","input":"hi","top_k":40}`, "top_k is only supported for Anthropic"},
+		{"stop sequences openai", `{"model":"openai/gpt-5.5","input":"hi","stop_sequences":["END"]}`, "stop_sequences is only supported for Anthropic"},
 		{"responses stop unsupported before stop sequences conflict", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","stop":["DONE"],"stop_sequences":["END"]}`, "stop is not supported"},
-		{"openai task budget", `{"model":"gpt-5.5","input":"hi","task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
-		{"openai context management", `{"model":"gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
-		{"reasoning effort bad type", `{"model":"gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
-		{"responses bad reasoning object", `{"model":"gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
-		{"responses bad reasoning max tokens", `{"model":"gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
+		{"openai task budget", `{"model":"openai/gpt-5.5","input":"hi","task_budget":{"type":"tokens","total":20000}}`, "task_budget is only supported for Anthropic"},
+		{"openai context management", `{"model":"openai/gpt-5.5","input":"hi","context_management":{"edits":[{"type":"compact_20260112"}]}}`, "context_management is only supported for Anthropic"},
+		{"reasoning effort bad type", `{"model":"openai/gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
+		{"responses bad reasoning object", `{"model":"openai/gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
+		{"responses bad reasoning max tokens", `{"model":"openai/gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
 		{"client reasoning mode", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"mode":"pro"}}`, "reasoning.mode is not supported"},
 		{"responses unsupported manual reasoning limit", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"responses manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
 		{"responses manual reasoning limit on adaptive-only Anthropic model", `{"model":"anthropic-claude-opus-4-7","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses manual reasoning limit on Azure", `{"model":"azure-gpt-5.6-sol","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
-		{"responses reasoning display", `{"model":"gpt-5.5","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
-		{"responses unknown reasoning field", `{"model":"gpt-5.5","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
-		{"reasoning effort conflict", `{"model":"gpt-5.5","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
-		{"stream options without stream", `{"model":"gpt-5.5","input":"hi","stream_options":{"include_obfuscation":true}}`, "stream_options requires stream=true"},
-		{"responses include usage stream option", `{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_usage":true}}`, "stream_options.include_usage is not supported for Responses"},
-		{"store true", `{"model":"gpt-5.5","input":"hi","store":true}`, "store=true is not supported"},
-		{"store string", `{"model":"gpt-5.5","input":"hi","store":"false"}`, "Invalid JSON body"},
-		{"metadata non-string", `{"model":"gpt-5.5","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
+		{"responses reasoning display", `{"model":"openai/gpt-5.5","input":"hi","reasoning":{"display":"summarized"}}`, "reasoning.display is not supported"},
+		{"responses unknown reasoning field", `{"model":"openai/gpt-5.5","input":"hi","reasoning":{"unknown":true}}`, "reasoning.unknown is not supported"},
+		{"reasoning effort conflict", `{"model":"openai/gpt-5.5","input":"hi","reasoning":{"effort":"low"},"reasoning.effort":"medium"}`, "reasoning.effort conflicts"},
+		{"stream options without stream", `{"model":"openai/gpt-5.5","input":"hi","stream_options":{"include_obfuscation":true}}`, "stream_options requires stream=true"},
+		{"responses include usage stream option", `{"model":"openai/gpt-5.5","input":"hi","stream":true,"stream_options":{"include_usage":true}}`, "stream_options.include_usage is not supported for Responses"},
+		{"store true", `{"model":"openai/gpt-5.5","input":"hi","store":true}`, "store=true is not supported"},
+		{"store string", `{"model":"openai/gpt-5.5","input":"hi","store":"false"}`, "Invalid JSON body"},
+		{"metadata non-string", `{"model":"openai/gpt-5.5","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
 		{"anthropic parallel tool calls", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
 		{"anthropic max tool calls function only", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":2}`, "max_tool_calls is only supported for Anthropic hosted tools"},
-		{"max tool calls without tools", `{"model":"gpt-5.5","input":"hi","max_tool_calls":2}`, "max_tool_calls requires supported tools"},
-		{"max tool calls too large", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":129}`, "max_tool_calls is outside the supported range"},
-		{"max tool calls with function only", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
-		{"parallel tools without tools", `{"model":"gpt-5.5","input":"hi","parallel_tool_calls":true}`, "parallel_tool_calls requires supported tools"},
-		{"tool choice without tools", `{"model":"gpt-5.5","input":"hi","tool_choice":"auto"}`, "tool_choice requires supported tools"},
-		{"openai file search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"file_search"}]}`, "hosted retrieval and file storage have separate pricing"},
-		{"openai code interpreter", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`, "hosted containers have separate pricing and lifecycle"},
-		{"openai hosted shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
-		{"openai local shell", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
-		{"openai apply patch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
-		{"openai computer", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "not supported"},
-		{"openai image generation", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "not supported"},
-		{"openai tool search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"tool_search"}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai namespace", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai memory", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "tool-loading or provider-state lifecycle"},
-		{"openai remote mcp URL", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
-		{"openai remote mcp connector", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
+		{"max tool calls without tools", `{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":2}`, "max_tool_calls requires supported tools"},
+		{"max tool calls too large", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":129}`, "max_tool_calls is outside the supported range"},
+		{"max tool calls with function only", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":1}`, "supported only for priced hosted Responses tools"},
+		{"parallel tools without tools", `{"model":"openai/gpt-5.5","input":"hi","parallel_tool_calls":true}`, "parallel_tool_calls requires supported tools"},
+		{"tool choice without tools", `{"model":"openai/gpt-5.5","input":"hi","tool_choice":"auto"}`, "tool_choice requires supported tools"},
+		{"openai file search", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"file_search"}]}`, "hosted retrieval and file storage have separate pricing"},
+		{"openai code interpreter", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"code_interpreter"}]}`, "hosted containers have separate pricing and lifecycle"},
+		{"openai hosted shell", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"shell","environment":{"type":"container_auto"}}]}`, "hosted execution needs a container lifecycle"},
+		{"openai local shell", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"local_shell"}]}`, "local execution requires provider-state continuation"},
+		{"openai apply patch", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"apply_patch"}]}`, "local execution requires provider-state continuation"},
+		{"openai computer", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"computer_use_preview"}]}`, "not supported"},
+		{"openai image generation", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"image_generation"}]}`, "not supported"},
+		{"openai tool search", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"tool_search"}]}`, "tool loading or provider-held state"},
+		{"openai namespace", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"namespace","name":"crm","tools":[{"type":"function","name":"lookup"}]}]}`, "tool loading or provider-held state"},
+		{"openai memory", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"memory"}]}`, "tool loading or provider-held state"},
+		{"openai remote mcp URL", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"],"require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
+		{"openai remote mcp connector", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar","require_approval":"never"}]}`, "provider execution cannot be bounded or approved"},
 		{"anthropic remote mcp", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"mcp","server_label":"remote","server_url":"https://example.com/mcp","allowed_tools":["search"]}]}`, "provider execution cannot be bounded or approved"},
 		{"anthropic custom", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"custom","name":"shell"}]}`, "free-form input formats are not preserved"},
 		{"anthropic local shell", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"local_shell"}]}`, "Only function, web_fetch"},
@@ -1629,36 +1496,36 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"anthropic multiple hosted tools", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260318","name":"web_search","max_uses":2},{"type":"web_fetch_20260318","name":"web_fetch","max_uses":2}]}`, "one hosted tool per request"},
 		{"anthropic code execution", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"code_execution_20250825","name":"code_execution"}],"max_tool_calls":1}`, "Only function, web_fetch, and priced hosted web search tools are supported"},
 		{"anthropic computer use", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"computer_20251124","name":"computer"}],"max_tool_calls":1}`, "Only function, web_fetch"},
-		{"openai web fetch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai code execution version", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
-		{"openai empty web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai separator-only web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai empty preview web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai separator-only preview web search suffix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview__"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai malformed preview web search prefix", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_previewfoo"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai unknown dated web search", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2026_01_01"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"openai unknown web search alias", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_latest"}],"max_tool_calls":1}`, "Only function, custom"},
-		{"responses function unknown field", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","eager_input_streaming":true}]}`, "eager_input_streaming is not supported"},
-		{"responses function parameters array", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","parameters":[]}]}`, "Invalid JSON body"},
-		{"responses duplicate tool names", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"custom","name":"lookup"}]}`, "duplicates another client tool"},
-		{"responses duplicate hosted type", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_2025_08_26"}]}`, "duplicates another hosted tool"},
-		{"responses custom grammar missing syntax", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD"}}]}`, "format.syntax is required"},
-		{"responses custom bad grammar syntax", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD","syntax":"peg"}}]}`, "format.syntax must be lark or regex"},
-		{"openai web search unknown field", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
-		{"openai preview filters", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
-		{"openai web search invalid domain", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
-		{"openai web search bad location country", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
-		{"unsupported tool choice", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
-		{"hosted tool choice not declared", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
-		{"hosted selector version mismatch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
-		{"allowed tools missing mode", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"lookup"}]}}`, "tool_choice.mode is required"},
-		{"allowed hosted tool choice not declared", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
-		{"allowed hosted selector version mismatch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
-		{"allowed tools web fetch", `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20260309"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"openai web fetch", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_fetch_20260309"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai code execution version", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"code_execution_20250825"}],"max_tool_calls":1}`, "hosted containers have separate pricing and lifecycle"},
+		{"openai empty web search suffix", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai separator-only web search suffix", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search__"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai empty preview web search suffix", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai separator-only preview web search suffix", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview__"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai malformed preview web search prefix", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_previewfoo"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai unknown dated web search", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_2026_01_01"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"openai unknown web search alias", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_latest"}],"max_tool_calls":1}`, "Only function, custom"},
+		{"responses function unknown field", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","eager_input_streaming":true}]}`, "eager_input_streaming is not supported"},
+		{"responses function parameters array", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup","parameters":[]}]}`, "Invalid JSON body"},
+		{"responses duplicate tool names", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"custom","name":"lookup"}]}`, "duplicates another client tool"},
+		{"responses duplicate hosted type", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_2025_08_26"}]}`, "duplicates another hosted tool"},
+		{"responses custom grammar missing syntax", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD"}}]}`, "format.syntax is required"},
+		{"responses custom bad grammar syntax", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD","syntax":"peg"}}]}`, "format.syntax must be lark or regex"},
+		{"openai web search unknown field", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
+		{"openai preview filters", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
+		{"openai web search invalid domain", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
+		{"openai web search bad location country", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
+		{"unsupported tool choice", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
+		{"hosted tool choice not declared", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"hosted selector version mismatch", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
+		{"allowed tools missing mode", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"function","name":"lookup"}]}}`, "tool_choice.mode is required"},
+		{"allowed hosted tool choice not declared", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
+		{"allowed hosted selector version mismatch", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search"}]},"max_tool_calls":1}`, "tool_choice selects an undeclared hosted tool version"},
+		{"allowed tools web fetch", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_fetch_20260309"}]},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
 		{"anthropic hosted selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"web_search_20250305"}}`, "only string tool_choice modes or named function selectors"},
 		{"anthropic allowed tools selector", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_20250305"}]}}`, "allowed_tools is supported only for OpenAI-format"},
-		{"image input", `{"model":"gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
-		{"file id input", `{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "Provider file IDs require BYOK"},
+		{"image input", `{"model":"openai/gpt-5.5","input":[{"type":"input_image","image_url":"https://example.com/a.png"}]}`, "Only text input"},
+		{"file id input", `{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}]}`, "Provider file IDs require BYOK"},
 	}
 
 	for _, tc := range cases {
@@ -1675,7 +1542,7 @@ func TestResponsesReasoningEffortAliasIsAdmittedBeforeProviderConversion(t *test
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","reasoning.effort":"high"}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","reasoning.effort":"high"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -1730,19 +1597,19 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 		{
 			name: "OpenAI maps minimal to nearest low effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal"}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"minimal"}`,
 			want: "low",
 		},
 		{
 			name: "OpenAI enabled maps to nearest medium effort",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":true}}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":true}}`,
 			want: "medium",
 		},
 		{
 			name: "OpenAI disabled maps to none",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`,
 			want: "none",
 		},
 		{
@@ -1812,9 +1679,9 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		Upstream struct {
 			InferenceGeo  string `json:"inferenceGeo"`
 			Model         string `json:"model"`
+			ModelFormat   string `json:"modelFormat"`
 			ReasoningMode string `json:"reasoningMode"`
 			ServiceTier   string `json:"serviceTier"`
-			Speed         string `json:"speed"`
 		} `json:"upstream"`
 	}
 	type matrixModel struct {
@@ -2011,11 +1878,15 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						}
 						switch provider {
 						case schemas.OpenAI:
-							if wire.ServiceTier != source.Upstream.ServiceTier {
-								t.Fatalf("wire service_tier = %q, want %q", wire.ServiceTier, source.Upstream.ServiceTier)
+							wantTier := map[string]string{"standard": "default", "flex": "flex", "fast": "fast", "ultrafast": "ultrafast"}[source.Upstream.ServiceTier]
+							if wire.ServiceTier != wantTier {
+								t.Fatalf("wire service_tier = %q, want %q", wire.ServiceTier, wantTier)
 							}
 						case schemas.Azure:
-							wantTier := source.Upstream.ServiceTier
+							wantTier := ""
+							if source.Upstream.ModelFormat == "OpenAI" {
+								wantTier = map[string]string{"standard": "default", "flex": "flex", "fast": "priority"}[source.Upstream.ServiceTier]
+							}
 							if wire.ServiceTier != wantTier || wire.InferenceGeo != "" || wire.Speed != "" {
 								t.Fatalf("wire Azure axes = tier:%q geo:%q speed:%q, want tier:%q", wire.ServiceTier, wire.InferenceGeo, wire.Speed, wantTier)
 							}
@@ -2031,7 +1902,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 								)
 							}
 							wantSpeed := ""
-							if source.Upstream.Speed == "fast" {
+							if source.Upstream.ServiceTier == "fast" {
 								wantSpeed = "fast"
 							}
 							if wire.Speed != wantSpeed {
@@ -2287,26 +2158,26 @@ func TestResponsesInputTextOnlyRejectsMultimodalAliases(t *testing.T) {
 
 func TestResponsesPolicyAllowsTextFunctionAndPricedWebSearch(t *testing.T) {
 	for _, body := range []string{
-		`{"model":"gpt-5.5","input":"hi","stream":false,"instructions":"be brief","temperature":2.01,"top_p":1.01,"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"},"strict":true},"verbosity":"future-verbosity"},"truncation":"future","prompt_cache_key":"tenant-cache"}`,
-		`{"model":"gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+		`{"model":"openai/gpt-5.5","input":"hi","stream":false,"instructions":"be brief","temperature":2.01,"top_p":1.01,"text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object"},"strict":true},"verbosity":"future-verbosity"},"truncation":"future","prompt_cache_key":"tenant-cache"}`,
+		`{"model":"openai/gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com","text":"source","encrypted_index":"opaque"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
-		`{"model":"gpt-5.5","input":"hi","reasoning":{"summary":"future-summary","generate_summary":"future-generate-summary"}}`,
-		`{"model":"gpt-5.5","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":3}`,
-		`{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`,
-		`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"parallel_tool_calls":false}`,
-		`{"model":"gpt-5.5","input":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","id":"fco_1","status":"completed","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
+		`{"model":"openai/gpt-5.5","input":"hi","reasoning":{"summary":"future-summary","generate_summary":"future-generate-summary"}}`,
+		`{"model":"openai/gpt-5.5","input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":3}`,
+		`{"model":"openai/gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`,
+		`{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"},"parallel_tool_calls":false}`,
+		`{"model":"openai/gpt-5.5","input":[{"type":"function_call","id":"fc_1","status":"completed","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","id":"fco_1","status":"completed","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":[{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"key\":\"value\"}"},{"type":"function_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"function","name":"lookup"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"}}`,
-		`{"model":"gpt-5.5","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"custom","name":"lookup"}]}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26","filters":{"allowed_domains":["example.com"]},"search_context_size":"high","user_location":{"type":"approximate","city":"Paris","country":"FR","region":"Ile-de-France","timezone":"Europe/Paris"}}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11","search_context_size":"low","user_location":{"type":"approximate","country":"US"}}],"tool_choice":"auto","max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview_2025_03_11"},"max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":2}`,
-		`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":128}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom","name":"lookup"}}`,
+		`{"model":"openai/gpt-5.5","input":[{"type":"custom_tool_call","call_id":"call_1","name":"lookup","input":"query"},{"type":"custom_tool_call_output","call_id":"call_1","output":"done"}],"tools":[{"type":"custom","name":"lookup"}]}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_2025_08_26","filters":{"allowed_domains":["example.com"]},"search_context_size":"high","user_location":{"type":"approximate","city":"Paris","country":"FR","region":"Ile-de-France","timezone":"Europe/Paris"}}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11","search_context_size":"low","user_location":{"type":"approximate","country":"US"}}],"tool_choice":"auto","max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"web_search_preview_2025_03_11"},"max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview"}]},"max_tool_calls":2}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto","max_tool_calls":128}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto","max_tool_calls":2}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
 		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]},"user_location":{"type":"approximate","country":"US","timezone":"America/New_York"}}],"tool_choice":"required","max_tool_calls":2}`,
@@ -2330,7 +2201,7 @@ func TestResponsesClientToolContinuationReachesProviderWireLosslessly(t *testing
 		name          string
 		anthropicWire bool
 	}{
-		{name: "OpenAI", model: "gpt-5.5"},
+		{name: "OpenAI", model: "openai/gpt-5.5"},
 		{name: "Azure OpenAI", model: "azure-gpt-5.6-sol"},
 		{name: "Anthropic", model: "anthropic-claude-sonnet-4-6", anthropicWire: true},
 	}
@@ -2425,7 +2296,7 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 		{
 			name:            "OpenAI output item",
 			wantAnnotations: true,
-			body:            `{"model":"gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
+			body:            `{"model":"openai/gpt-5.5","input":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"answer https://example.com","annotations":[{"type":"url_citation","start_index":7,"end_index":26,"title":"source","url":"https://example.com"}],"logprobs":[]}]},{"role":"user","content":"continue"}]}`,
 		},
 		{
 			name: "Anthropic citation",
@@ -2487,7 +2358,7 @@ func TestResponsesAssistantOutputHistoryReachesProviderWireLosslessly(t *testing
 }
 
 func TestResponsesCustomToolContinuationReachesOpenAIWireLosslessly(t *testing.T) {
-	body := `{"model":"gpt-5.5","input":[{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"shell","input":"printf safe"},{"type":"custom_tool_call_output","id":"ctco_1","status":"completed","call_id":"call_1","output":"safe"}],"tools":[{"type":"custom","name":"shell"}]}`
+	body := `{"model":"openai/gpt-5.5","input":[{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"shell","input":"printf safe"},{"type":"custom_tool_call_output","id":"ctco_1","status":"completed","call_id":"call_1","output":"safe"}],"tools":[{"type":"custom","name":"shell"}]}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2521,7 +2392,7 @@ func TestResponsesCustomToolContinuationReachesOpenAIWireLosslessly(t *testing.T
 }
 
 func TestOpenAIAllowedToolsChoiceReachesProviderWireExactly(t *testing.T) {
-	body := `{"model":"gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`
+	body := `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"required","tools":[{"type":"function","name":"lookup"},{"type":"web_search_preview_2025_03_11"}]},"max_tool_calls":2}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2564,7 +2435,7 @@ func TestResponsesPolicyPreservesStreamObfuscationOption(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","stream":true,"stream_options":{"include_obfuscation":false}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -2656,7 +2527,7 @@ func TestResponsesPolicyPreservesAllowedOpenAIInclude(t *testing.T) {
 		"message.output_text.logprobs",
 		"reasoning.encrypted_content",
 	}
-	body := `{"model":"gpt-5.5","reasoning":{"effort":"none"},"input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
+	body := `{"model":"openai/gpt-5.5","reasoning":{"effort":"none"},"input":"hi","include":["web_search_call.action.sources","web_search_call.results","message.output_text.logprobs","reasoning.encrypted_content"],"top_logprobs":21}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -2719,7 +2590,7 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 	}{
 		{
 			name:        "standard reasoning model",
-			body:        `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
+			body:        `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]},{"type":"reasoning","id":"rs_123","summary":[],"encrypted_content":"opaque-ciphertext"}],"max_output_tokens":16}`,
 			wantContext: 1050000,
 		},
 		{
@@ -2729,7 +2600,7 @@ func TestOpenAIResponsesEncryptedReasoningSharesInputEstimate(t *testing.T) {
 		},
 		{
 			name:          "hosted tool content is reserved per call",
-			body:          `{"model":"gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
+			body:          `{"model":"openai/gpt-5.5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"search and continue"}]},{"type":"reasoning","encrypted_content":"opaque-ciphertext"}],"tools":[{"type":"web_search"}],"max_tool_calls":3,"max_output_tokens":16}`,
 			wantContext:   1050000,
 			wantSearchCap: true,
 		},
@@ -2819,7 +2690,7 @@ func TestResponsesTextFormatReachesProviderWireRequest(t *testing.T) {
 	}{
 		{
 			name: "openai json schema",
-			body: `{"model":"gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","text":{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","properties":{"ok":{"type":"boolean"}}},"strict":true}}}`,
 		},
 		{
 			name: "anthropic json schema",
@@ -2885,20 +2756,40 @@ func TestResponsesTextFormatReachesProviderWireRequest(t *testing.T) {
 }
 
 func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
+	// Upstream accepted each shape on Oct 10, 2026, including more than four
+	// breakpoints and breakpoints on image and file blocks.
+	breakpoint := `"prompt_cache_breakpoint":{"mode":"explicit"}`
+	textBlocks := strings.Repeat(`{"type":"input_text","text":"hi",`+breakpoint+`},`, 5)
+	options := `"prompt_cache_options":{"mode":"explicit","ttl":"30m"}`
 	tests := []struct {
-		name string
-		path string
-		body string
+		name      string
+		path      string
+		body      string
+		retention string
 	}{
 		{
-			name: "chat",
-			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
+			name:      "chat",
+			path:      "/v1/chat/completions",
+			body:      `{"model":"openai/gpt-5.6-luna","messages":[{"role":"user","content":[{"type":"text","text":"hi",` + breakpoint + `},{"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="},` + breakpoint + `}]}],` + options + `,"prompt_cache_retention":"24h"}`,
+			retention: "24h",
 		},
 		{
-			name: "responses",
-			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit","ttl":"30m"},"prompt_cache_retention":"24h"}`,
+			name:      "responses",
+			path:      "/v1/responses",
+			body:      `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[` + textBlocks + `{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8=",` + breakpoint + `},{"type":"input_file","filename":"a.pdf","file_data":"data:application/pdf;base64,aGVsbG8=",` + breakpoint + `}]}],` + options + `,"prompt_cache_retention":"24h"}`,
+			retention: "24h",
+		},
+		{
+			name:      "azure chat",
+			path:      "/v1/chat/completions",
+			body:      `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":[{"type":"text","text":"hi",` + breakpoint + `}]}],` + options + `,"prompt_cache_retention":"in_memory"}`,
+			retention: "in_memory",
+		},
+		{
+			name:      "azure responses",
+			path:      "/v1/responses",
+			body:      `{"model":"azure-gpt-5.6-sol","provider":"azure","input":[{"role":"user","content":[` + strings.TrimSuffix(textBlocks, ",") + `]}],` + options + `,"prompt_cache_retention":"in_memory"}`,
+			retention: "in_memory",
 		},
 	}
 	for _, tc := range tests {
@@ -2930,7 +2821,7 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 					options.TTL == nil || *options.TTL != "30m" {
 					t.Fatalf("expected typed chat prompt_cache_options, got %#v", options)
 				}
-				if retention := bifrostReq.ChatRequest.Params.PromptCacheRetention; retention == nil || *retention != "24h" {
+				if retention := bifrostReq.ChatRequest.Params.PromptCacheRetention; retention == nil || *retention != tc.retention {
 					t.Fatalf("expected typed chat prompt_cache_retention, got %#v", retention)
 				}
 				wire = openaiprovider.ToOpenAIChatRequest(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), bifrostReq.ChatRequest)
@@ -2940,7 +2831,7 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 					options.TTL == nil || *options.TTL != "30m" {
 					t.Fatalf("expected typed Responses prompt_cache_options, got %#v", options)
 				}
-				if retention := bifrostReq.ResponsesRequest.Params.PromptCacheRetention; retention == nil || *retention != "24h" {
+				if retention := bifrostReq.ResponsesRequest.Params.PromptCacheRetention; retention == nil || *retention != tc.retention {
 					t.Fatalf("expected typed Responses prompt_cache_retention, got %#v", retention)
 				}
 				wire = openaiprovider.ToOpenAIResponsesRequest(
@@ -2952,9 +2843,9 @@ func TestOpenAIPromptCacheOptionsAndBreakpointsReachWireRequest(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal OpenAI wire request: %v", err)
 			}
-			if !strings.Contains(string(wireBytes), `"prompt_cache_options":{"mode":"explicit","ttl":"30m"}`) ||
-				!strings.Contains(string(wireBytes), `"prompt_cache_breakpoint":{"mode":"explicit"}`) ||
-				!strings.Contains(string(wireBytes), `"prompt_cache_retention":"24h"`) {
+			if !strings.Contains(string(wireBytes), options) ||
+				strings.Count(string(wireBytes), breakpoint) != strings.Count(tc.body, breakpoint) ||
+				!strings.Contains(string(wireBytes), `"prompt_cache_retention":"`+tc.retention+`"`) {
 				t.Fatalf("wire prompt cache fields were not preserved: %s", wireBytes)
 			}
 		})
@@ -3034,7 +2925,7 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			name:          "explicit controls on implicit-only model",
 			resolveReject: true,
 			path:          "/v1/responses",
-			body:          `{"model":"gpt-5.5","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
+			body:          `{"model":"openai/gpt-5.5","input":"hi","prompt_cache_options":{"mode":"explicit"}}`,
 			want:          "explicit prompt caching is not supported",
 		},
 		{
@@ -3060,12 +2951,6 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 			path:          "/v1/responses",
 			body:          `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"hi","prompt_cache_breakpoint":{"mode":1}}]}]}`,
 			resolveReject: true,
-		},
-		{
-			name: "too many breakpoints",
-			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.6-luna","input":[{"role":"user","content":[{"type":"input_text","text":"one","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"two","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"three","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"four","prompt_cache_breakpoint":{"mode":"explicit"}},{"type":"input_text","text":"five","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"prompt_cache_options":{"mode":"explicit"}}`,
-			want: "at most four prompt blocks",
 		},
 		{
 			name: "anthropic breakpoint",
@@ -3105,7 +2990,7 @@ func TestOpenAIPromptCachingRejectsUnrepresentableShapes(t *testing.T) {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`),
+			Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a"}`),
 		})
 		if err != nil {
 			t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3340,25 +3225,25 @@ func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) 
 	}{
 		{
 			name:     "openai top-level max_tool_calls",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai required hosted tool",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai versioned allowed tool_choice",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview_2025_03_11"}]}}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"web_search_preview_2025_03_11"}]}}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai stable version",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":"auto"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview_2025_03_11"}],"tool_choice":"auto"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
@@ -3372,6 +3257,12 @@ func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) 
 			name:     "anthropic required hosted tool",
 			body:     `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"required"}`,
 			provider: schemas.Anthropic,
+			meterKey: meterAnthropicWebSearchCalls,
+		},
+		{
+			name:     "azure claude hosted tool",
+			body:     `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`,
+			provider: schemas.Azure,
 			meterKey: meterAnthropicWebSearchCalls,
 		},
 	}
@@ -3554,7 +3445,7 @@ func TestResponsesHostedToolsDoNotInjectCapWhenToolChoicePrecludesHostedCalls(t 
 	}{
 		{
 			name:     "openai",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"none"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"none"}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
@@ -3566,7 +3457,7 @@ func TestResponsesHostedToolsDoNotInjectCapWhenToolChoicePrecludesHostedCalls(t 
 		},
 		{
 			name:     "openai selected function",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function","name":"lookup"}}`,
 			provider: schemas.OpenAI,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
@@ -3670,22 +3561,22 @@ func TestResponsesToolChoiceRequiresNamedFunctionSelectors(t *testing.T) {
 	}{
 		{
 			name: "function selector missing name",
-			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function"}}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"function"}}`,
 			want: "tool_choice must name a function tool",
 		},
 		{
 			name: "custom selector missing name",
-			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom"}}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"custom"}}`,
 			want: "tool_choice must name a custom tool",
 		},
 		{
 			name: "allowed function missing name",
-			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function"}]}}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"function","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"function"}]}}`,
 			want: "tool_choice.allowed_tools function entries require name",
 		},
 		{
 			name: "allowed custom missing name",
-			body: `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"custom"}]}}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"},{"type":"custom","name":"lookup"}],"tool_choice":{"type":"allowed_tools","mode":"auto","tools":[{"type":"custom"}]}}`,
 			want: "tool_choice.allowed_tools custom entries require name",
 		},
 	} {
@@ -3715,12 +3606,12 @@ func TestResponsesOmittedHostedToolCapCoversAllowance(t *testing.T) {
 	}{
 		{
 			name:     "openai",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"auto"}`,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
 			name:     "openai required",
-			body:     `{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
+			body:     `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"tool_choice":"required"}`,
 			meterKey: MeterOpenAIResponsesWebSearchPreviewCalls,
 		},
 		{
@@ -3817,7 +3708,7 @@ func TestResponsesPolicySanitizesMetadataBeforeUpstream(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","metadata":{"tenant":"test"}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","metadata":{"tenant":"test"}}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3842,7 +3733,7 @@ func TestResponsesPolicyMaxToolCallsScalesWebSearchHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":3}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":3}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3872,7 +3763,7 @@ func TestOpenAIResponsesPricesActualHostedToolUsageAboveHold(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":1}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview"}],"max_tool_calls":1}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3907,7 +3798,7 @@ func TestOpenAIResponsesPricesActualNonPreviewSearchContentAboveHold(t *testing.
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hi","tools":[{"type":"web_search"}],"max_tool_calls":1}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search"}],"max_tool_calls":1}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -4441,14 +4332,14 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 			"cache_control":{"type":"ephemeral","ttl":"1h"},
 			"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":2}],
 			"max_output_tokens":64,
-			"service_tier":"standard_only"
+			"service_tier":"fast"
 		}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
 	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" {
-		t.Fatalf("expected fast standard-only US deployment, got %s", resolution.Deployment.ID)
+		t.Fatalf("expected fast US deployment, got %s", resolution.Deployment.ID)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 	if err := state.Adapter.ValidateRequest(state); err != nil {
@@ -4469,12 +4360,12 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 		t.Fatalf("expected capped Anthropic web-search hold meter for two calls, got %#v in %#v", holdSearch, state.Hold.Meters)
 	}
 
+	state.ActualTier = catalog.TierFast
 	state.Signals = &StandardSignals{
 		Prompt:       resolution.InputTokenLimit(),
 		Completion:   resolution.OutputTokenLimit(),
 		CacheWrite1h: resolution.InputTokenLimit() / 2,
 		WebSearch:    2,
-		ActualSpeed:  "fast",
 	}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
@@ -4500,14 +4391,16 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 
 func TestAnthropicCalculateUpstreamCostUsesCacheWriteMeters(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
-				billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
-				billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
-				billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
-				billing.MeterOutputTokens:            {billing.RatePerMillionTokens: "3000000"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
+					billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
+					billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
+					billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
+					billing.MeterOutputTokens:            {billing.RatePerMillionTokens: "3000000"},
+				}},
+			},
 		},
 		Signals: &StandardSignals{
 			Prompt:       1000,
@@ -4532,14 +4425,16 @@ func TestAnthropicCalculateUpstreamCostUsesCacheWriteMeters(t *testing.T) {
 
 func TestResponsesIngestionPreservesCacheWriteMeters(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
-				billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
-				billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
-				billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
-				billing.MeterOutputTokens:            {billing.RatePerMillionTokens: "3000000"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
+					billing.MeterCachedInputTokens:       {billing.RatePerMillionTokens: "100000"},
+					billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
+					billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
+					billing.MeterOutputTokens:            {billing.RatePerMillionTokens: "3000000"},
+				}},
+			},
 		},
 	}
 	resp := &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
@@ -4669,7 +4564,7 @@ func TestSavedSelectionReachesProviderValidationWithoutRequestModel(t *testing.T
 				body = []byte(`{"input":"hi"}`)
 			}
 			explicit, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST", Path: path, Body: []byte(`{"model":"gpt-5.5",` + string(body[1:])),
+				Method: "POST", Path: path, Body: []byte(`{"model":"openai/gpt-5.5",` + string(body[1:])),
 			})
 			if err != nil {
 				t.Fatal(err)

@@ -21,9 +21,11 @@ func TestCELConditionsUseTypedCatalogFactsAndExactPrices(t *testing.T) {
 		`model.id == "model-a" && "image" in deployment.inputModalities`,
 		`deployment.inputModalities.exists(m, m == "text")`,
 		`deployment.pricing.input_tokens.per_mill_tokens > decimal("1")`,
-		`blended_price(1, 1, "per_mill_tokens") > decimal("1.5")`,
+		`blended_price(1, 1) > decimal("1.5")`,
 		`request.time.getHours("UTC") == 12`,
+		`request.time.getHours("-05:30") == 6 && request.time.getDayOfWeek("Asia/Tokyo") == 3`,
 		`!has(deployment.deprecationDate)`,
+		`has(deployment.pricing.input_tokens) && !has(deployment.reasoningMaxTokens)`,
 	} {
 		t.Run(source, func(t *testing.T) {
 			program, err := CompileCEL(source)
@@ -54,11 +56,18 @@ func TestCELMissingFactsNeverWeakenConditions(t *testing.T) {
 func TestCELRejectsUnknownFieldsWrongTypesAndInvalidPriceConstants(t *testing.T) {
 	for _, source := range []string{
 		`model.misspelled == "x"`, `model.id < 4`, `42`,
-		`blended_price(0, 0, "per_mill_tokens") < decimal("1")`,
-		`blended_price(-1, 1, "per_mill_tokens") < decimal("1")`,
-		`blended_price(1, 1, "unknown") < decimal("1")`,
+		`blended_price(0, 0) < decimal("1")`,
+		`blended_price(-1, 1) < decimal("1")`,
+		`blended_price(1, 1, -1) < decimal("1")`,
+		`blended_price(1, 1, 9007199254740992) < decimal("1")`,
+		`blended_price(1, 1, deployment.maxInputTokens) < decimal("1")`,
+		`blended_price(1, 1, "per_mill_tokens") < decimal("1")`,
+		`blended_price(1) < decimal("1")`,
+		`blended_price(1, 1, 1, 1) < decimal("1")`,
 		`decimal("NaN") > decimal("0")`, `decimal(model.id) > decimal("0")`,
 		`decimal("1") < 1.0`, `decimal("1") * decimal("2") > decimal("1")`,
+		`request.time.getHours("Mars/Base") == 1`, `request.time.getHours("+24:00") == 1`,
+		`request.time.getHours("Local") == 1`, `request.time.getHours(model.id) == 1`,
 		strings.Repeat(" ", MaxCELBytes+1),
 	} {
 		if _, err := CompileCEL(source); err == nil {
@@ -81,7 +90,7 @@ func TestCELRejectsUnknownFieldsWrongTypesAndInvalidPriceConstants(t *testing.T)
 
 func BenchmarkCELConditions(b *testing.B) {
 	for _, size := range []int{1, 64, 256} {
-		source := strings.Repeat(`model.id == "model-a" && `, size-1) + `blended_price(3, 1, "per_mill_tokens") < decimal("2")`
+		source := strings.Repeat(`model.id == "model-a" && `, size-1) + `blended_price(3, 1) < decimal("2")`
 		b.Run(fmt.Sprintf("compile/%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {

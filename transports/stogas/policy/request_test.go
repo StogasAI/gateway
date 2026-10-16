@@ -111,7 +111,7 @@ func TestRequestPolicyPermissionsAndClosedDocument(t *testing.T) {
 func TestRequiredSortingAllowsFiltersAndRejectsDifferentRequestSorts(t *testing.T) {
 	parent := requestParent(t, `{"delegation":{"request":true},"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
 	before, _ := json.Marshal(parent)
-	for _, sortBy := range []string{"model.id", "blended_price(3, 1, 'per_mill_tokens')"} {
+	for _, sortBy := range []string{"model.id", "blended_price(3, 1)"} {
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"sort": []Sort{{By: sortBy, Direction: "desc"}}}})
 		if _, err := applyRequestJSON(parent, raw); err == nil {
 			t.Fatal("accepted conflicting required sort")
@@ -131,7 +131,7 @@ func TestRequiredSortingAllowsFiltersAndRejectsDifferentRequestSorts(t *testing.
 }
 
 func FuzzSourceQuery(f *testing.F) {
-	for _, seed := range []string{"provider.id == 'openai'", "!has(provider.id)", "blended_price(0,0,'per_mill_tokens') < decimal('5')", "(", strings.Repeat("!", 64)} {
+	for _, seed := range []string{"provider.id == 'openai'", "!has(provider.id)", "blended_price(0,0) < decimal('5')", "blended_price(1,1,300000) < decimal('5')", "(", strings.Repeat("!", 64)} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, source string) {

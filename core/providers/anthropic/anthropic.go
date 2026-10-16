@@ -964,6 +964,9 @@ func HandleAnthropicChatCompletionStreaming(
 		// iterations, and the neutral chat usage drops iterations before pricing —
 		// so the final chunk's RoutingInfo is the only place it can survive.
 		var servedFallbackModel *string
+		// Refusal detail from the terminal message_delta; its category decides
+		// whether a refusal before any output is billed.
+		var stopDetails *schemas.ResponsesStopDetails
 		// Register the accumulating usage handle so a mid-stream cancel/timeout
 		// can bill for tokens already processed Mutated in place below;
 		// the deferred HandleStreamCancellation/Timeout reads it from context.
@@ -1135,6 +1138,9 @@ func HandleAnthropicChatCompletionStreaming(
 			}
 
 			// Extract finish reason from event delta
+			if event.Delta != nil && event.Delta.StopDetails != nil {
+				stopDetails = stopDetailsToBifrost(event.Delta.StopDetails)
+			}
 			if event.Delta != nil && event.Delta.StopReason != nil {
 				mappedReason := ConvertAnthropicFinishReasonToBifrost(*event.Delta.StopReason)
 				finishReason = &mappedReason
@@ -1308,6 +1314,7 @@ func HandleAnthropicChatCompletionStreaming(
 		if servedFallbackModel != nil {
 			response.ExtraFields.RoutingInfo.ServerSideFallbackModel = servedFallbackModel
 		}
+		response.StopDetails = stopDetails
 		// Set raw request if enabled
 		if sendBackRawRequest {
 			providerUtils.ParseAndSetRawRequest(&response.ExtraFields, jsonBody)

@@ -125,6 +125,9 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 type ruleValues map[string]Value
 
 func (v ruleValues) PolicyValue(path string) (Value, bool) { value, ok := v[path]; return value, ok }
+func (v ruleValues) PolicyTokenPrice(meter string, _ int64) (Value, bool) {
+	return v.PolicyValue("deployment.pricing." + meter + ".per_mill_tokens")
+}
 
 type budgetRuleValues struct {
 	ruleValues
@@ -162,7 +165,7 @@ func ruleSource(t *testing.T, raw string) *Source {
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"rules":{"openai":{"when":"provider.id == 'openai'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}},"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}}}`)
+	role := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}},"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{OrganizationScope, org}, {RoleScope, role}, {RoleScope, other}},
@@ -172,23 +175,23 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, provider := range []string{"openai", "anthropic"} {
-			active, err := combined.Activate(ruleValues{"provider.id": {Type: "string", String: provider}})
+		for _, route := range []string{"chat", "responses"} {
+			active, err := combined.Activate(ruleValues{"request.route": {Type: "string", String: route}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if active.Input != nil && active.Input.ASCIIOnly != (provider == "anthropic") {
-				t.Fatalf("wrong input requirement for %s", provider)
+			if active.Input != nil && active.Input.ASCIIOnly != (route == "responses") {
+				t.Fatalf("wrong input requirement for %s", route)
 			}
-			if provider == "anthropic" && active.Input == nil {
+			if route == "responses" && active.Input == nil {
 				t.Fatal("default input requirement disappeared")
 			}
 			preset, sortBy := "email_address", "provider.id"
-			if provider == "openai" {
+			if route == "chat" {
 				preset, sortBy = "credit_card_number", "deployment.id"
 			}
 			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != sortBy {
-				t.Fatalf("wrong settings for %s: %+v", provider, active)
+				t.Fatalf("wrong settings for %s: %+v", route, active)
 			}
 			if len(active.Routing.Query.Filters) != 1 {
 				t.Fatal("required filter was lost while replacing defaults")
@@ -272,9 +275,9 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"maxAttempts": 2}`
+	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"maxAttempts": 1}}`)
+	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -296,8 +299,9 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			if (active.Input != nil && active.Input.ASCIIOnly) != withRequired || (len(active.Access.Deny) > 0) != withRequired || (len(active.Routing.Query.OrderBy) > 0) != withRequired {
 				t.Fatalf("required=%v: wrong active restrictions: %+v", withRequired, active)
 			}
-			if !active.HasRequiredOrder() || active.Routing.MaxAttempts != 1 {
-				t.Fatal("empty required settings did not suppress defaults")
+			// The smallest required value applies; the default rule's never does.
+			if want := map[bool][2]int{false: {3, 2}, true: {1, 0}}[withRequired]; active.Routing.Retries != want[0] || active.Routing.Fallbacks != want[1] {
+				t.Fatalf("required=%v: retries=%d fallbacks=%d, want %v", withRequired, active.Routing.Retries, active.Routing.Fallbacks, want)
 			}
 			if (len(active.Routing.AllowedCatalogNodes.Providers) > 0) != withRequired {
 				t.Fatal("wrong catalog restriction")
@@ -331,6 +335,53 @@ func TestRulesRequiredSortsMustAgree(t *testing.T) {
 		if _, err := ComposeSources(values); err == nil {
 			t.Fatal("conflicting required sorts were accepted")
 		}
+	}
+}
+
+func TestRoutingOrderCannotDependOnTheCandidate(t *testing.T) {
+	sort := `"sort":[{"by":"provider.id","direction":"asc"}]`
+	for _, raw := range []string{
+		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"has(deployment.weightPrecision)","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","mode":"default","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"sort":[]}}}}`,
+		`{"rules":{"r":{"when":"model.id.startsWith('gpt') || route.id == 'chat'","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
+	} {
+		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route or provider fields") {
+			t.Fatalf("candidate-dependent order accepted: %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0}}}}`,
+	} {
+		if _, err := CompileSource([]byte(raw)); err != nil {
+			t.Fatalf("stable order rejected: %s: %v", raw, err)
+		}
+	}
+	// A credential policy applies only to that credential's candidates.
+	org := ruleSource(t, `{}`)
+	for _, raw := range []string{
+		`{"routing":{` + sort + `}}`,
+		`{"routing":{"sort":[]}}`,
+		`{"routing":{"selection":{"mode":"random"}}}`,
+		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{"selection":{"mode":"random"}}}}}`,
+		`{"routing":{"fallbacks":1}}`,
+	} {
+		if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), "credential policies cannot") {
+			t.Fatalf("credential order accepted: %s: %v", raw, err)
+		}
+		if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}}); err != nil {
+			t.Fatalf("key order rejected: %s: %v", raw, err)
+		}
+	}
+	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
+	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, allowed}}); err != nil {
+		t.Fatalf("credential restriction rejected: %v", err)
 	}
 }
 

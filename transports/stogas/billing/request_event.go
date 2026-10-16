@@ -3,17 +3,21 @@ package billing
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"slices"
 	"strconv"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
 )
 
 type ProviderAttempt struct {
 	CatalogChainHash         string  `json:"catalog_chain_hash"`
-	SelectedCatalogChainHash string  `json:"selected_catalog_chain_hash,omitempty"`
+	ResolvedCatalogChainHash string  `json:"resolved_catalog_chain_hash,omitempty"`
 	Provider                 string  `json:"provider"`
 	Status                   string  `json:"status"`
 	StatusCode               *int    `json:"status_code"`
+	StartMS                  uint32  `json:"start_ms"`
 	LatencyMS                uint32  `json:"latency_ms"`
 	OutputObserved           bool    `json:"output_observed"`
 	ProviderRequestID        string  `json:"provider_request_id"`
@@ -50,6 +54,7 @@ type RequestEvent struct {
 	StogasUserID         string             `json:"stogas_user_id"`
 	StogasOrganizationID string             `json:"stogas_organization_id"`
 	RequestType          string             `json:"request_type"`
+	RequestSettings      RequestSettings    `json:"request_settings"`
 	Cancelled            bool               `json:"cancelled"`
 	ClientStopMS         *uint32            `json:"client_stop_ms"`
 	CatalogVersion       *uint64            `json:"catalog_version"`
@@ -60,6 +65,206 @@ type RequestEvent struct {
 	Usage                RequestUsage       `json:"usage"`
 	Plugins              plugins.Metrics    `json:"plugins,omitzero"`
 	GatewayVersion       string             `json:"gateway_version"`
+}
+
+// RequestSettings records the settings that control what the model generates,
+// as the gateway prepared them for the provider. It never holds content, tool
+// definitions, identifiers or metadata. The request type records streaming, the
+// deployment chain records service tier, speed, region and reasoning mode, and
+// usage records caching. Clients choose these values, so the log leaves out a
+// value that is long, not printable ASCII, or an integer JavaScript would round.
+type RequestSettings struct {
+	MaxOutputTokens    *int     `json:"max_output_tokens,omitempty"`
+	ReasoningEnabled   *bool    `json:"reasoning_enabled,omitempty"`
+	ReasoningEffort    string   `json:"reasoning_effort,omitempty"`
+	ReasoningMaxTokens *int     `json:"reasoning_max_tokens,omitempty"`
+	ReasoningSummary   string   `json:"reasoning_summary,omitempty"`
+	ReasoningDisplay   string   `json:"reasoning_display,omitempty"`
+	TaskBudgetTokens   *int     `json:"task_budget_tokens,omitempty"`
+	Temperature        *float64 `json:"temperature,omitempty"`
+	TopP               *float64 `json:"top_p,omitempty"`
+	TopK               *int     `json:"top_k,omitempty"`
+	FrequencyPenalty   *float64 `json:"frequency_penalty,omitempty"`
+	PresencePenalty    *float64 `json:"presence_penalty,omitempty"`
+	RepetitionPenalty  *float64 `json:"repetition_penalty,omitempty"`
+	Seed               *int     `json:"seed,omitempty"`
+	Logprobs           *bool    `json:"logprobs,omitempty"`
+	TopLogprobs        *int     `json:"top_logprobs,omitempty"`
+	Verbosity          string   `json:"verbosity,omitempty"`
+	ResponseFormat     string   `json:"response_format,omitempty"`
+	Include            []string `json:"include,omitempty"`
+	ToolChoice         string   `json:"tool_choice,omitempty"`
+	ParallelToolCalls  *bool    `json:"parallel_tool_calls,omitempty"`
+	MaxToolCalls       *int     `json:"max_tool_calls,omitempty"`
+	Truncation         string   `json:"truncation,omitempty"`
+}
+
+const (
+	// Provider settings are short words, and an include list names a few
+	// response parts, so these bounds keep the settings far below the log limit.
+	maxSettingBytes  = 64
+	maxSettingValues = 16
+	// maxExactJSONInteger is the largest integer that JavaScript reads exactly.
+	maxExactJSONInteger = 1<<53 - 1
+)
+
+func ChatRequestSettings(params *schemas.ChatParameters) RequestSettings {
+	if params == nil {
+		return RequestSettings{}
+	}
+	settings := RequestSettings{
+		MaxOutputTokens:   settingInt(params.MaxCompletionTokens),
+		Temperature:       settingValue(params.Temperature),
+		TopP:              settingValue(params.TopP),
+		TopK:              settingInt(params.TopK),
+		FrequencyPenalty:  settingValue(params.FrequencyPenalty),
+		PresencePenalty:   settingValue(params.PresencePenalty),
+		Seed:              settingInt(params.Seed),
+		Logprobs:          settingValue(params.LogProbs),
+		TopLogprobs:       settingInt(params.TopLogProbs),
+		Verbosity:         settingText(derefString(params.Verbosity)),
+		ParallelToolCalls: settingValue(params.ParallelToolCalls),
+	}
+	if reasoning := params.Reasoning; reasoning != nil {
+		settings.ReasoningEnabled = settingValue(reasoning.Enabled)
+		settings.ReasoningEffort = settingText(derefString(reasoning.Effort))
+		settings.ReasoningMaxTokens = settingInt(reasoning.MaxTokens)
+		settings.ReasoningDisplay = settingText(derefString(reasoning.Display))
+	}
+	if params.TaskBudget != nil {
+		settings.TaskBudgetTokens = settingInt(&params.TaskBudget.Total)
+	}
+	if params.ResponseFormat != nil {
+		format, _ := (*params.ResponseFormat).(map[string]any)
+		formatType, _ := format["type"].(string)
+		settings.ResponseFormat = settingText(formatType)
+	}
+	if choice := params.ToolChoice; choice != nil {
+		if choice.ChatToolChoiceStruct != nil {
+			settings.ToolChoice = settingText(string(choice.ChatToolChoiceStruct.Type))
+		} else {
+			settings.ToolChoice = settingText(derefString(choice.ChatToolChoiceStr))
+		}
+	}
+	addExtraSettings(&settings, params.ExtraParams)
+	return settings
+}
+
+func ResponsesRequestSettings(params *schemas.ResponsesParameters) RequestSettings {
+	if params == nil {
+		return RequestSettings{}
+	}
+	settings := RequestSettings{
+		MaxOutputTokens:   settingInt(params.MaxOutputTokens),
+		Temperature:       settingValue(params.Temperature),
+		TopP:              settingValue(params.TopP),
+		FrequencyPenalty:  settingValue(params.FrequencyPenalty),
+		PresencePenalty:   settingValue(params.PresencePenalty),
+		TopLogprobs:       settingInt(params.TopLogProbs),
+		Include:           settingTexts(params.Include),
+		ParallelToolCalls: settingValue(params.ParallelToolCalls),
+		MaxToolCalls:      settingInt(params.MaxToolCalls),
+		Truncation:        settingText(derefString(params.Truncation)),
+	}
+	if reasoning := params.Reasoning; reasoning != nil {
+		settings.ReasoningEffort = settingText(derefString(reasoning.Effort))
+		settings.ReasoningMaxTokens = settingInt(reasoning.MaxTokens)
+		summary := reasoning.Summary
+		if summary == nil {
+			summary = reasoning.GenerateSummary
+		}
+		settings.ReasoningSummary = settingText(derefString(summary))
+	}
+	if text := params.Text; text != nil {
+		settings.Verbosity = settingText(derefString(text.Verbosity))
+		if text.Format != nil {
+			settings.ResponseFormat = settingText(text.Format.Type)
+		}
+	}
+	if choice := params.ToolChoice; choice != nil {
+		if choice.ResponsesToolChoiceStruct != nil {
+			settings.ToolChoice = settingText(string(choice.ResponsesToolChoiceStruct.Type))
+		} else {
+			settings.ToolChoice = settingText(derefString(choice.ResponsesToolChoiceStr))
+		}
+	}
+	addExtraSettings(&settings, params.ExtraParams)
+	return settings
+}
+
+// addExtraSettings reads the settings that Bifrost keeps as extra parameters:
+// top_k and task_budget on Responses, and the output limit, reasoning and
+// repetition penalty that the gateway sends to Chutes in its own fields.
+func addExtraSettings(settings *RequestSettings, extra map[string]any) {
+	if limit := extraInt(extra["max_tokens"]); limit != nil {
+		settings.MaxOutputTokens = limit
+	}
+	if effort, ok := extra["reasoning_effort"].(string); ok {
+		settings.ReasoningEffort = settingText(effort)
+	}
+	if template, ok := extra["chat_template_kwargs"].(map[string]any); ok {
+		if thinking, ok := template["enable_thinking"].(bool); ok {
+			settings.ReasoningEnabled = &thinking
+		}
+	}
+	if budget, ok := extra["task_budget"].(map[string]any); ok {
+		settings.TaskBudgetTokens = extraInt(budget["total"])
+	}
+	if topK := extraInt(extra["top_k"]); topK != nil {
+		settings.TopK = topK
+	}
+	if penalty, ok := extra["repetition_penalty"].(float64); ok {
+		settings.RepetitionPenalty = &penalty
+	}
+}
+
+// extraInt reads an integer extra parameter: decoded JSON holds float64, and
+// values the gateway sets hold int.
+func extraInt(value any) *int {
+	switch value := value.(type) {
+	case float64:
+		if value != math.Trunc(value) || math.Abs(value) > maxExactJSONInteger {
+			return nil
+		}
+		number := int(value)
+		return &number
+	case int:
+		return settingInt(&value)
+	}
+	return nil
+}
+
+// settingValue copies a setting, so later changes to the request never reach
+// the log.
+func settingValue[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
+}
+
+func settingInt(value *int) *int {
+	if value == nil || *value > maxExactJSONInteger || *value < -maxExactJSONInteger {
+		return nil
+	}
+	return settingValue(value)
+}
+
+func settingText(value string) string {
+	return boundedTelemetryValue(value, maxSettingBytes)
+}
+
+func settingTexts(values []string) []string {
+	if len(values) > maxSettingValues {
+		return nil
+	}
+	for _, value := range values {
+		if value == "" || settingText(value) != value {
+			return nil
+		}
+	}
+	return slices.Clone(values)
 }
 
 type RequestUsage struct {

@@ -32,7 +32,7 @@ func TestFinalMetadataKeepsCanonicalRequestTiming(t *testing.T) {
 			BilledCostUSD: "2"},
 	}
 
-	timing := stogas.FinalMetadata(context.Background(), &stogas.State{Resolution: testResolution(), FinalEvent: event}).Timing
+	timing := stogas.FinalMetadata(context.Background(), &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}, FinalEvent: event}).Timing
 	if timing.TotalMS != 180 || timing.ProviderMS != 140 {
 		t.Fatalf("proof timing = %#v, want total=180 provider=140", timing)
 	}

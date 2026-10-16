@@ -17,10 +17,7 @@ import (
 func keyConfigSnapshot(credentialsGeneration int, digest string) *KeyConfigSnapshot {
 	return &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
-		Routing: policy.Routing{
-			MaxAttempts: 1,
-		},
-		Schema: "stogas.key-config.compiled.v1",
+		Schema:          "stogas.key-config.compiled.v1",
 	},
 		Digest: digest}, CredentialsGeneration: credentialsGeneration,
 	}

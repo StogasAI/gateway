@@ -264,11 +264,6 @@ func (s *Server) writeRequestBodyTooLarge(ctx *requestContext, maxBytes int) {
 	s.writeError(ctx, http.StatusRequestEntityTooLarge, map[string]any{"error": map[string]any{"message": fmt.Sprintf("Decompressed request body exceeds max allowed size of %d bytes", maxBytes), "type": "invalid_request_error"}})
 }
 
-func (s *Server) writeRequestMemoryCapacity(ctx *requestContext) {
-	ctx.writer.Header().Set("Retry-After", "1")
-	s.writeError(ctx, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"}})
-}
-
 func (s *Server) requestDecompression(next requestHandler) requestHandler {
 	return func(ctx *requestContext) {
 		encoding := strings.ToLower(strings.TrimSpace(ctx.request.Header.Get("Content-Encoding")))
