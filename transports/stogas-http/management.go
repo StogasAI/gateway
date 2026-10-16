@@ -48,8 +48,10 @@ func (s *Server) drain(ctx *requestContext) {
 // stops this instance. Admitted provider work still owns its normal deadline.
 // The listener stays open until every encryption session has expired, so each
 // request sent on one gets an authenticated refusal rather than a proxy error.
-// Without keep-alives, HTTP/1 connections close after their next response and
-// HTTP/2 connections send GOAWAY when their last stream ends.
+// Disabling keep-alives closes idle HTTP/1 connections at once, as nginx and
+// HAProxy do, and busy ones after their response. HTTP/2 connections send
+// GOAWAY when their last stream ends. A request written while an idle HTTP/1
+// connection closes gets no reply; RFC 9112 tells clients to expect that.
 func (s *Server) drainPublic() {
 	s.requests.start()
 	ctx, cancel := context.WithTimeout(context.Background(), guestShutdownHardCap)
