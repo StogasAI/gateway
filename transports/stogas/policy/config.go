@@ -55,6 +55,8 @@ type Config struct {
 	hasRules               bool
 	activated              bool
 	requiredSettings       Permission
+	orderScope             Scope
+	orderDefault           bool
 	EncryptionKeys         map[string]string `json:"-"`
 	RequiredEncryptionKeys []string          `json:"-"`
 	PluginSources          []*Plugins        `json:"-"`

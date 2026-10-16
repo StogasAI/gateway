@@ -86,6 +86,10 @@ func (p Permission) MarshalJSON() ([]byte, error) {
 	if p == allPermissions {
 		return []byte("true"), nil
 	}
+	return json.Marshal(p.sectionNames())
+}
+
+func (p Permission) sectionNames() []string {
 	sections := make([]string, 0, len(permissionSections))
 	for section, mask := range permissionSections {
 		if section == "routing" || section == "plugins" || section == "timeouts" {
@@ -96,7 +100,7 @@ func (p Permission) MarshalJSON() ([]byte, error) {
 		}
 	}
 	sort.Strings(sections)
-	return json.Marshal(sections)
+	return sections
 }
 
 type DelegationRule struct {
@@ -211,22 +215,57 @@ func (d *SourceDocument) sections() Permission {
 
 func (d *SourceDocument) ownSections() Permission {
 	var sections Permission
+	d.eachSection(func(_ string, _ json.RawMessage, section Permission) { sections |= section })
+	return sections
+}
+
+// eachSection visits the document's own sections with their canonical values.
+func (d *SourceDocument) eachSection(visit func(name string, value json.RawMessage, section Permission)) {
 	for name, raw := range d.fields {
-		if name == "plugins" && d.Encrypted() {
+		switch {
+		case name == "plugins" && d.Encrypted():
 			// Ciphertext can hold any plugin setting, so it needs every plugin permission.
-			sections |= pluginPermissions
-			continue
-		}
-		if name == "routing" || name == "plugins" || name == "timeouts" {
+			visit(name, raw, pluginPermissions)
+		case name == "routing" || name == "plugins" || name == "timeouts":
 			var settings map[string]json.RawMessage
 			if json.Unmarshal(raw, &settings) == nil {
-				for option := range settings {
-					sections |= permissionSections[name+"."+option]
+				for option, value := range settings {
+					visit(name+"."+option, value, permissionSections[name+"."+option])
 				}
 			}
-		} else {
-			sections |= permissionSections[name]
+		default:
+			visit(name, raw, permissionSections[name])
 		}
 	}
-	return sections
+}
+
+// changedSections returns the sections a proposal adds or changes. A rule's
+// name, condition and mode belong to each of its settings, because they decide
+// where the settings apply. Canonical JSON never contains a raw NUL byte.
+func changedSections(proposal, previous *SourceDocument) Permission {
+	values := func(document *SourceDocument, visit func(key string, section Permission)) {
+		if document == nil {
+			return
+		}
+		place := func(prefix string) func(string, json.RawMessage, Permission) {
+			return func(name string, value json.RawMessage, section Permission) {
+				if section != 0 {
+					visit(prefix+"\x00"+name+"\x00"+string(value), section)
+				}
+			}
+		}
+		document.eachSection(place(""))
+		for name, rule := range document.rules {
+			rule.source.eachSection(place(name + "\x00" + string(rule.fields["when"]) + "\x00" + string(rule.fields["mode"])))
+		}
+	}
+	kept := map[string]bool{}
+	values(previous, func(key string, _ Permission) { kept[key] = true })
+	var changed Permission
+	values(proposal, func(key string, section Permission) {
+		if !kept[key] {
+			changed |= section
+		}
+	})
+	return changed
 }

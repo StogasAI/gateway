@@ -395,3 +395,34 @@ func BenchmarkInspectionOpaqueRules(b *testing.B) {
 		}
 	}
 }
+
+func TestInspectionShowsWhichPolicyOrdersRequests(t *testing.T) {
+	required := func(by string) string { return `{"routing":{"sort":[{"by":"` + by + `"}]}}` }
+	preferred := func(by string) string {
+		return `{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"` + by + `"}]}}}}`
+	}
+	replaced := []InspectionNote{{Kind: "order", Scope: OrganizationScope}}
+	for _, test := range []struct {
+		org, key string
+		from     map[string]any
+		notes    []InspectionNote
+	}{
+		{required("provider.id"), required("model.id"), map[string]any{"scope": OrganizationScope, "mode": "required"}, replaced},
+		{required("provider.id"), preferred("model.id"), map[string]any{"scope": OrganizationScope, "mode": "required"}, replaced},
+		{preferred("provider.id"), preferred("model.id"), map[string]any{"scope": KeyScope, "id": "key", "mode": "default"}, nil},
+		{preferred("provider.id"), `{}`, map[string]any{"scope": OrganizationScope, "mode": "default"}, nil},
+		{`{}`, `{"routing":{"sort":[]}}`, map[string]any{"scope": KeyScope, "id": "key", "mode": "required"}, nil},
+	} {
+		inspection, err := InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, Config: json.RawMessage(test.org)},
+			{Scope: KeyScope, ID: "key", Config: json.RawMessage(test.key)},
+		}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: json.RawMessage(test.key)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		routing, _ := inspection.Effective["routing"].(map[string]any)
+		if !reflect.DeepEqual(routing["orderFrom"], test.from) || !reflect.DeepEqual(inspection.Notes, test.notes) {
+			t.Fatalf("%s + %s: from %v, notes %+v", test.org, test.key, routing["orderFrom"], inspection.Notes)
+		}
+	}
+}

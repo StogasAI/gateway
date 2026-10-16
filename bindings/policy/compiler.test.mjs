@@ -65,6 +65,11 @@ test('the JavaScript binding returns combined policies and typed edit failures',
 		inspectPolicy({ sources, edit: { scope: 'key', id: 'key', previous: {} } }).error.status,
 		403
 	);
+	const kept = inspectPolicy({
+		sources,
+		edit: { scope: 'key', id: 'key', previous: sources[1].config }
+	});
+	assert.deepEqual(kept.notes, [{ kind: 'kept', scope: 'organization', sections: ['input'] }]);
 });
 
 test('conditional opaque rules preserve their source identity without retaining output aliases', () => {

@@ -461,7 +461,7 @@
     }
   },
   {
-    "name": "required complete orders agree",
+    "name": "the broadest required order applies",
     "sources": [
       {
         "routing": {
@@ -481,12 +481,8 @@
         "routing": {
           "sort": [
             {
-              "by": "provider.id",
-              "direction": "asc"
-            },
-            {
               "by": "model.id",
-              "direction": "desc"
+              "direction": "asc"
             }
           ]
         }
@@ -495,18 +491,14 @@
         "routing": {
           "sort": [
             {
-              "by": "provider.id",
-              "direction": "asc"
-            },
-            {
-              "by": "model.id",
+              "by": "deployment.id",
               "direction": "desc"
             }
           ]
         }
       }
     ],
-    "digest": "00a86cfc2a777b2356a109a7538f791ea60548bafa984d619b9ac0b68665c3ba",
+    "digest": "7067d54c2150317573aed4dfb2c17d86e326c3ff12f05b26d225070fd1a2d9ad",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -533,7 +525,7 @@
     }
   },
   {
-    "name": "default order waits for request facts",
+    "name": "a default order applies without a required one",
     "sources": [
       {
         "rules": {
@@ -564,7 +556,18 @@
       "plugins": null,
       "routing": {
         "allowedCatalogNodes": null,
-        "query": null,
+        "query": {
+          "orderBy": [
+            {
+              "by": "provider.id",
+              "direction": "asc"
+            },
+            {
+              "by": "model.id",
+              "direction": "desc"
+            }
+          ]
+        },
         "retries": 0,
         "fallbacks": 2
       },
@@ -573,7 +576,7 @@
     }
   },
   {
-    "name": "required order and deferred defaults",
+    "name": "a required order replaces closer default orders",
     "sources": [
       {
         "rules": {
@@ -637,6 +640,60 @@
         },
         "retries": 0,
         "fallbacks": 2
+      },
+      "requestPermission": false,
+      "schema": "stogas.key-config.compiled.v1"
+    }
+  },
+  {
+    "name": "the closest default order applies",
+    "sources": [
+      {
+        "rules": {
+          "baseline": {
+            "mode": "default",
+            "routing": {
+              "sort": [
+                {
+                  "by": "provider.id",
+                  "direction": "asc"
+                },
+                {
+                  "by": "model.id",
+                  "direction": "desc"
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "rules": {
+          "baseline": {
+            "mode": "default",
+            "routing": {
+              "order": [
+                "deployment-a"
+              ]
+            }
+          }
+        }
+      },
+      {}
+    ],
+    "digest": "bb9d1da883b18e46aac79fbe985f2ebbd997ed56403d4f0c108599da99ae97a1",
+    "compiled": {
+      "access": null,
+      "compilerVersion": 1,
+      "plugins": null,
+      "routing": {
+        "allowedCatalogNodes": null,
+        "query": null,
+        "retries": 0,
+        "fallbacks": 2,
+        "order": [
+          "deployment-a"
+        ]
       },
       "requestPermission": false,
       "schema": "stogas.key-config.compiled.v1"

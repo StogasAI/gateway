@@ -328,9 +328,9 @@ func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPoli
 // sort, candidates of several models make the request ambiguous. Otherwise
 // candidates follow routing.order, then the policy sort, then the default
 // order: newest model, model ID, the request's provider order, the cheapest
-// blended price and deployment ID. Credential policies and rules whose
-// conditions read candidate fields cannot set an order or sort, so every
-// candidate carries the same ones.
+// blended price and deployment ID. Only the organization, folder, grant, key
+// and request policies set an order or sort, never in a conditional rule, so
+// every candidate carries the same ones.
 func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
 	filtered, values := r.filtered, r.values
 	if len(filtered) == 0 {

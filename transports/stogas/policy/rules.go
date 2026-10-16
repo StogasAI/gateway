@@ -111,10 +111,14 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 		if err != nil {
 			return nil, err
 		}
-		// One order and fallback count apply to every candidate. A condition that
-		// differs between candidates would plan them by a setting only some carry.
-		if rule.When != nil && rule.When.candidate && rule.Value.settings&planPermissions != 0 {
-			return nil, configError("rule %q cannot set routing.order, routing.sort or routing.fallbacks because its condition reads author, model, deployment, route or provider fields", name)
+		// One ordering applies to every request and candidate; sort expressions
+		// can read request fields instead. One fallback count applies to every
+		// candidate, so only a condition on the request may set it.
+		if rule.Value.settings&orderingPermissions != 0 && (!rule.Default || rule.When != nil) {
+			return nil, configError("rule %q can set routing.order or routing.sort only with mode default and no when", name)
+		}
+		if rule.When != nil && rule.When.candidate && rule.Value.settings&permissionFallbacks != 0 {
+			return nil, configError("rule %q cannot set routing.fallbacks because its condition reads author, model, deployment, route or provider fields", name)
 		}
 		if document.source.Encrypted() {
 			// Its condition and readable settings can be evaluated without the
@@ -226,6 +230,11 @@ func (s *Source) ExpressionBytes() int64 {
 		}
 	}
 	s.Config.visitExpressions(add)
+	if s.defaultOrdering != nil {
+		for _, criterion := range s.defaultOrdering.sorts {
+			add(criterion.expression)
+		}
+	}
 	for _, rule := range s.Rules {
 		add(rule.When)
 		rule.Value.Config.visitExpressions(add)

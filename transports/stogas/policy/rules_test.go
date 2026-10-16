@@ -166,7 +166,7 @@ func ruleSource(t *testing.T, raw string) *Source {
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}},"routing":{"sort":[{"by":"deployment.id","direction":"desc"}]}}}}`)
+	role := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{OrganizationScope, org}, {RoleScope, role}, {RoleScope, other}},
@@ -187,11 +187,11 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 			if route == "responses" && active.Input == nil {
 				t.Fatal("default input requirement disappeared")
 			}
-			preset, sortBy := "email_address", "provider.id"
+			preset := "email_address"
 			if route == "chat" {
-				preset, sortBy = "credit_card_number", "deployment.id"
+				preset = "credit_card_number"
 			}
-			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != sortBy {
+			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != "provider.id" {
 				t.Fatalf("wrong settings for %s: %+v", route, active)
 			}
 			if len(active.Routing.Query.Filters) != 1 {
@@ -221,6 +221,21 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 	active, err := combined.Activate(ruleValues{"provider.id": {Type: "string", String: "openai"}})
 	if err != nil || active.Routing.Query.OrderBy[0].By != "deployment.id" || len(active.Routing.Query.Filters) != 1 {
 		t.Fatalf("request composition failed: %+v, %v", active, err)
+	}
+	preferred, err := CompileRequest([]byte(`{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"model.id"}]}}}}`), "org", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined, err = ApplyRequest(base, preferred); err != nil || combined.Routing.Query.OrderBy[0].By != "model.id" {
+		t.Fatalf("request default did not replace the saved default: %+v, %v", combined, err)
+	}
+	strict := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"sort":[{"by":"provider.id"}]}}`)
+	required, err := ComposeSources([]ScopedSource{{OrganizationScope, strict}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if combined, err = ApplyRequest(required, preferred); err != nil || combined.Routing.Query.OrderBy[0].By != "provider.id" {
+		t.Fatalf("request default replaced a saved requirement: %+v, %v", combined, err)
 	}
 	denied, err := CompileRequest([]byte(`{"rules":{"nested":{"routing":{"filter":"true"}}}}`), "org", nil)
 	if err != nil {
@@ -282,9 +297,10 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
-			sources := []ScopedSource{{OrganizationScope, org}, {RoleScope, empty}}
+			// The grant's required sort is broader than the key's empty one.
+			sources := []ScopedSource{{OrganizationScope, org}, {KeyScope, empty}}
 			if withRequired {
-				sources = append(sources, ScopedSource{RoleScope, required})
+				sources = append(sources, ScopedSource{GrantScope, required})
 				if reverse {
 					sources[1], sources[2] = sources[2], sources[1]
 				}
@@ -322,104 +338,133 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 	}
 }
 
-func TestRulesRequiredSortsMustAgree(t *testing.T) {
-	org := ruleSource(t, `{"routing":{"sort":[{"by":" provider.id ","direction":"asc"}]}}`)
-	same := ruleSource(t, `{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`)
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {RoleScope, same}}); err != nil {
-		t.Fatalf("equivalent sorts conflict: %v", err)
+// One ordering applies to a request: the required one from the broadest scope,
+// or else the default one from the closest scope.
+func TestOneRoutingOrderingApplies(t *testing.T) {
+	required := func(by string) string { return `{"routing":{"sort":[{"by":"` + by + `"}]}}` }
+	preferred := func(by string) string {
+		return `{"rules":{"d":{"mode":"default","routing":{"sort":[{"by":"` + by + `"}]}}}}`
 	}
-	conflict := ruleSource(t, `{"routing":{"sort":[{"by":"provider.id","direction":"desc"}]}}`)
-	for _, values := range [][]ScopedSource{
-		{{OrganizationScope, org}, {RoleScope, conflict}, {RoleScope, same}},
-		{{OrganizationScope, org}, {RoleScope, same}, {RoleScope, conflict}},
+	scopes := []Scope{OrganizationScope, FolderScope, GrantScope, KeyScope}
+	for _, test := range []struct {
+		name      string
+		sources   [4]string
+		sortBy    string
+		from      Scope
+		isDefault bool
+	}{
+		{"broadest required", [4]string{required("provider.id"), required("model.id"), "", required("deployment.id")}, "provider.id", OrganizationScope, false},
+		{"required before closer defaults", [4]string{preferred("provider.id"), required("model.id"), preferred("route.id"), preferred("deployment.id")}, "model.id", FolderScope, false},
+		{"closest default", [4]string{preferred("provider.id"), "", preferred("route.id"), `{}`}, "route.id", GrantScope, true},
+		{"explicit empty requirement", [4]string{preferred("provider.id"), "", "", `{"routing":{"sort":[]}}`}, "", KeyScope, false},
+		{"none", [4]string{`{}`, "", "", `{}`}, "", "", false},
 	} {
-		if _, err := ComposeSources(values); err == nil {
-			t.Fatal("conflicting required sorts were accepted")
-		}
+		t.Run(test.name, func(t *testing.T) {
+			var sources []ScopedSource
+			for i, raw := range test.sources {
+				if raw != "" {
+					sources = append(sources, ScopedSource{scopes[i], ruleSource(t, raw)})
+				}
+			}
+			combined, err := ComposeSources(sources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, err := combined.Activate(ruleValues{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, config := range []*Config{combined, active} {
+				sortBy := ""
+				if config.Routing.Query != nil && len(config.Routing.Query.OrderBy) > 0 {
+					sortBy = config.Routing.Query.OrderBy[0].By
+				}
+				if sortBy != test.sortBy || config.orderScope != test.from || config.orderDefault != test.isDefault {
+					t.Fatalf("ordering = %q from %s (default %v)", sortBy, config.orderScope, config.orderDefault)
+				}
+			}
+		})
+	}
+	// routing.order and routing.sort form one ordering from one policy.
+	org := ruleSource(t, `{"routing":{"order":["deployment-b"],"sort":[{"by":"provider.id"}]}}`)
+	key := ruleSource(t, `{"routing":{"order":["deployment-a"]}}`)
+	combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, key}})
+	if err != nil || !slices.Equal(combined.Routing.Order, []string{"deployment-b"}) || len(combined.Routing.Query.OrderBy) != 1 {
+		t.Fatalf("ordering mixed policies: %+v, %v", combined, err)
 	}
 }
 
-// routing.order and routing.sort form one ordering. Another policy may repeat
-// it but not add to it, and a required ordering replaces a default one.
-func TestPoliciesThatSetAnOrderingMustSetTheSameOne(t *testing.T) {
-	ordered := `"order":["deployment-b","deployment-a"]`
-	sorted := `"sort":[{"by":"provider.id"}]`
-	org := ruleSource(t, `{"routing":{`+ordered+`,`+sorted+`}}`)
-	for _, raw := range []string{
-		`{"routing":{` + ordered + `,"sort":[{"by":"provider.id","direction":"asc"}]}}`,
-		`{"routing":{"filter":"provider.id != 'x'"}}`,
-		`{"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
-	} {
-		combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}})
-		if err != nil {
-			t.Fatalf("%s: %v", raw, err)
-		}
-		if combined, err = combined.Activate(ruleValues{}); err != nil {
-			t.Fatalf("%s: %v", raw, err)
-		}
-		if !slices.Equal(combined.Routing.Order, []string{"deployment-b", "deployment-a"}) || len(combined.Routing.Query.OrderBy) != 1 {
-			t.Fatalf("%s: ordering = %v %+v", raw, combined.Routing.Order, combined.Routing.Query)
-		}
-	}
-	for _, raw := range []string{
-		`{"routing":{"order":["deployment-a","deployment-b"],` + sorted + `}}`,
-		`{"routing":{` + ordered + `}}`,
-		`{"routing":{` + sorted + `}}`,
-		`{"routing":{` + ordered + `,"sort":[{"by":"provider.id"},{"by":"random()"}]}}`,
-		`{"rules":{"r":{"routing":{"order":["deployment-c"]}}}}`,
-	} {
-		combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}})
-		if err == nil {
-			_, err = combined.Activate(ruleValues{})
-		}
-		if err == nil || !strings.Contains(err.Error(), "different routing orders") {
-			t.Fatalf("%s: conflicting ordering accepted: %v", raw, err)
-		}
-	}
-}
-
-func TestRoutingOrderCannotDependOnTheCandidate(t *testing.T) {
+func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 	sort := `"sort":[{"by":"provider.id","direction":"asc"}]`
 	for _, raw := range []string{
-		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"has(deployment.weightPrecision)","routing":{"order":["deployment-a"]}}}}`,
-		`{"rules":{"r":{"when":"author.id == 'openai'","routing":{"sort":[{"by":"random()"}]}}}}`,
-		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","mode":"default","routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"sort":[]}}}}`,
-		`{"rules":{"r":{"when":"model.id.startsWith('gpt') || route.id == 'chat'","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"mode":"required","routing":{"order":["deployment-a"]}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'openai'","mode":"default","routing":{"sort":[]}}}}`,
+		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"sort":[{"by":"random()"}]}}}}`,
+	} {
+		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "only with mode default and no when") {
+			t.Fatalf("conditional or required rule ordering accepted: %s: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		`{"routing":{` + sort + `},"rules":{"r":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
+		`{"rules":{"a":{"mode":"default","routing":{` + sort + `}},"b":{"mode":"default","routing":{"order":["deployment-a"]}}}}`,
+	} {
+		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "once per policy") {
+			t.Fatalf("second ordering accepted: %s: %v", raw, err)
+		}
+	}
+	source := ruleSource(t, `{"rules":{"r":{"mode":"default","routing":{"filter":"provider.id != 'x'","order":["deployment-a"],`+sort+`}}}}`)
+	if source.defaultOrdering == nil || len(source.defaultOrdering.sorts) != 1 || source.Rules[0].Value.orders() || len(source.Rules[0].Value.Config.Routing.Query.Filters) != 1 {
+		t.Fatalf("default ordering did not move to its policy: %+v", source)
+	}
+}
+
+func TestFallbacksCannotDependOnTheCandidate(t *testing.T) {
+	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
+		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route or provider fields") {
-			t.Fatalf("candidate-dependent order accepted: %s: %v", raw, err)
+			t.Fatalf("candidate-dependent fallbacks accepted: %s: %v", raw, err)
 		}
 	}
 	for _, raw := range []string{
-		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"sort":[{"by":"random()"}]}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"order":["deployment-a"]}}}}`,
-		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2}}}}`,
 		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
-			t.Fatalf("stable order rejected: %s: %v", raw, err)
+			t.Fatalf("stable setting rejected: %s: %v", raw, err)
 		}
 	}
-	// A credential policy applies only to that credential's candidates.
+}
+
+// Orderings come from one chain: organization, folder, grant, key and request.
+// A credential policy applies to only some candidates, and role and member
+// policies apply beside the chain.
+func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 	org := ruleSource(t, `{}`)
 	for _, raw := range []string{
-		`{"routing":{` + sort + `}}`,
+		`{"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}`,
 		`{"routing":{"sort":[]}}`,
 		`{"routing":{"order":["deployment-a"]}}`,
-		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`,
-		`{"routing":{"fallbacks":1}}`,
+		`{"rules":{"r":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`,
 	} {
-		if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), "credential policies cannot") {
-			t.Fatalf("credential order accepted: %s: %v", raw, err)
+		for _, scope := range []Scope{CredentialScope, RoleScope, MemberScope} {
+			if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {scope, ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), string(scope)+" policies cannot") {
+				t.Fatalf("%s ordering accepted: %s: %v", scope, raw, err)
+			}
 		}
-		if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, ruleSource(t, raw)}}); err != nil {
-			t.Fatalf("key order rejected: %s: %v", raw, err)
+		for _, scope := range []Scope{FolderScope, GrantScope, KeyScope} {
+			if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {scope, ruleSource(t, raw)}}); err != nil {
+				t.Fatalf("%s ordering rejected: %s: %v", scope, raw, err)
+			}
 		}
+	}
+	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, ruleSource(t, `{"routing":{"fallbacks":1}}`)}}); err == nil {
+		t.Fatal("credential fallbacks accepted")
 	}
 	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
 	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, allowed}}); err != nil {
