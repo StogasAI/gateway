@@ -124,7 +124,6 @@ type UpstreamTarget struct {
 }
 
 type AzureBinding struct {
-	AccountLocation    string `json:"accountLocation"`
 	DeploymentName     string `json:"deploymentName"`
 	DeploymentType     string `json:"deploymentType"`
 	Endpoint           string `json:"endpoint"`
@@ -153,7 +152,6 @@ func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 		return azureBoundBinding{}, errors.New("invalid Azure binding: trailing JSON")
 	}
 	if value.Schema != "stogas.azure-binding.v1" ||
-		value.Binding.AccountLocation == "" ||
 		value.Binding.DeploymentName == "" ||
 		value.Binding.DeploymentType == "" ||
 		value.Binding.Endpoint == "" ||
