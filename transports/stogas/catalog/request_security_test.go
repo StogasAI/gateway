@@ -106,12 +106,12 @@ func TestRawRequestBodyRejectsAmbiguousOrMalformedJSON(t *testing.T) {
 		name string
 		body []byte
 	}{
-		{name: "duplicate route field", body: []byte(`{"model":"gpt-5.5","model":"gpt-5-nano"}`)},
-		{name: "escaped duplicate route field", body: []byte(`{"model":"gpt-5.5","\u006dodel":"gpt-5-nano"}`)},
-		{name: "nested duplicate tool field", body: []byte(`{"model":"gpt-5.5","tool":{"type":"function","type":"mcp"}}`)},
-		{name: "trailing object", body: []byte(`{"model":"gpt-5.5"}{}`)},
-		{name: "trailing scalar", body: []byte(`{"model":"gpt-5.5"} true`)},
-		{name: "truncated object", body: []byte(`{"model":"gpt-5.5"`)},
+		{name: "duplicate route field", body: []byte(`{"model":"openai/gpt-5.5","model":"gpt-5-nano"}`)},
+		{name: "escaped duplicate route field", body: []byte(`{"model":"openai/gpt-5.5","\u006dodel":"gpt-5-nano"}`)},
+		{name: "nested duplicate tool field", body: []byte(`{"model":"openai/gpt-5.5","tool":{"type":"function","type":"mcp"}}`)},
+		{name: "trailing object", body: []byte(`{"model":"openai/gpt-5.5"}{}`)},
+		{name: "trailing scalar", body: []byte(`{"model":"openai/gpt-5.5"} true`)},
+		{name: "truncated object", body: []byte(`{"model":"openai/gpt-5.5"`)},
 		{name: "invalid UTF-8 in string", body: []byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'}},
 		{name: "invalid UTF-8 in key", body: []byte{'{', '"', 0xff, '"', ':', '1', '}'}},
 		{name: "lone high surrogate", body: []byte(`{"x":"\ud800"}`)},
@@ -140,7 +140,7 @@ func TestRawRequestBodyAcceptsBoundaryDepthAndOpaqueHostilePromptText(t *testing
 		}
 	}
 
-	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"data: [DONE]\r\nAuthorization: Bearer injected {\"service_tier\":\"priority\"} 💩"}],"metadata":{"__proto__":{"polluted":true}},"supplementary":"\ud83d\udca9"}`)
+	body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"data: [DONE]\r\nAuthorization: Bearer injected {\"service_tier\":\"priority\"} 💩"}],"metadata":{"__proto__":{"polluted":true}},"supplementary":"\ud83d\udca9"}`)
 	raw, err := DecodeRequestBody(body, nil)
 	if err != nil {
 		t.Fatalf("opaque prompt text or valid surrogate pair was rejected: %v", err)
@@ -185,7 +185,7 @@ func TestProviderRoutingPreferenceIsBoundedBeforeCatalogLookup(t *testing.T) {
 		"too long": tooLongJSON,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := providerStringList("provider", raw); err == nil {
+			if _, err := providerStringList(raw); err == nil {
 				t.Fatal("unbounded provider routing preference was accepted")
 			}
 		})
@@ -200,7 +200,7 @@ func FuzzValidateRequestJSONNeverPanics(f *testing.F) {
 	for _, seed := range [][]byte{
 		{},
 		[]byte(`{}`),
-		[]byte(`{"model":"gpt-5.5","messages":[]}`),
+		[]byte(`{"model":"openai/gpt-5.5","messages":[]}`),
 		[]byte(`{"x":"\ud83d\udca9"}`),
 		[]byte(`{"x":"\ud800"}`),
 		[]byte(`{"x":1e9999999999}`),

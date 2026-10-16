@@ -11,6 +11,7 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/operators"
+	"cel.dev/cel-go/common/overloads"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
 	"cel.dev/cel-go/common/types/traits"
@@ -42,6 +43,9 @@ type CELExpression struct {
 	program    cel.Program
 	kind       string
 	bytes      int64
+	// candidate is set on checked expressions that read a candidate's author,
+	// model, deployment, route or provider. Request facts are the same for all.
+	candidate bool
 }
 
 var celEnvironment = sync.OnceValues(newCELEnvironment)
@@ -115,9 +119,15 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 		return nil, configError("CEL sort expression must return a boolean, integer, string, or exact decimal")
 	}
 	var validationErr error
+	candidate := false
 	ast.PostOrderVisit(checked.NativeRep().Expr(), ast.NewExprVisitor(func(expression ast.Expr) {
 		if validationErr != nil {
 			return
+		}
+		// A comprehension variable may reuse a policy variable's name, but
+		// not its type, so the checked type identifies a candidate read.
+		if expression.Kind() == ast.IdentKind && candidateCELType(checked.NativeRep().GetType(expression.ID())) {
+			candidate = true
 		}
 		if expression.Kind() == ast.SelectKind {
 			selection := expression.AsSelect()
@@ -132,6 +142,12 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 		call := expression.AsCall()
 		args := call.Args()
 		switch call.FunctionName() {
+		case overloads.TimeGetFullYear, overloads.TimeGetMonth, overloads.TimeGetDayOfYear, overloads.TimeGetDate,
+			overloads.TimeGetDayOfMonth, overloads.TimeGetDayOfWeek, overloads.TimeGetHours, overloads.TimeGetMinutes,
+			overloads.TimeGetSeconds, overloads.TimeGetMilliseconds:
+			if len(args) == 1 && !validCELTimeZone(call.FunctionName(), args[0]) {
+				validationErr = configError("time zone must be a quoted IANA name or UTC offset")
+			}
 		case "decimal":
 			if len(args) != 1 || args[0].Kind() != ast.LiteralKind {
 				validationErr = configError("decimal requires a quoted constant")
@@ -142,26 +158,19 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 				validationErr = configError("invalid exact decimal")
 			}
 		case "blended_price":
-			const count = 3
-			if len(args) < count {
+			if len(args) != 2 && len(args) != 3 {
 				validationErr = configError("invalid price expression")
 				return
 			}
-			for _, arg := range args[:count] {
-				if arg.Kind() != ast.LiteralKind {
-					validationErr = configError("price weights and rate must be constants")
+			for _, arg := range args {
+				number, ok := arg.AsLiteral().(types.Int)
+				if !ok || number < 0 || number > types.Int(maxPriceArgument) {
+					validationErr = configError("price weights and prompt size must be nonnegative safe integer constants")
 					return
 				}
 			}
-			rate, ok := args[count-1].AsLiteral().(types.String)
-			if !ok || !tokenPricingRates[string(rate)] {
-				validationErr = configError("unknown token pricing rate")
-				return
-			}
-			a, aOK := args[0].AsLiteral().(types.Int)
-			b, bOK := args[1].AsLiteral().(types.Int)
-			if !aOK || !bOK || a < 0 || b < 0 || a > types.Int(maxPriceWeight) || b > types.Int(maxPriceWeight) || a+b == 0 {
-				validationErr = configError("price weights must be nonnegative safe integers with a positive total")
+			if args[0].AsLiteral().(types.Int)+args[1].AsLiteral().(types.Int) == 0 {
+				validationErr = configError("price weights must have a positive total")
 			}
 		}
 	}))
@@ -178,7 +187,7 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 	if err != nil {
 		return nil, configError("cannot normalize CEL expression: %v", err)
 	}
-	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512)}
+	expression := &CELExpression{Source: source, normalized: normalized, program: program, kind: kind, bytes: int64(nodes*384 + 512), candidate: candidate}
 	c.expressions[source] = expression
 	return expression, nil
 }
@@ -232,6 +241,17 @@ func (e *CELExpression) evaluate(values Values, now time.Time) (ref.Val, uint64,
 	return result, cost, err
 }
 
+// CEL resolves time zones only during evaluation. Checking the constant with
+// CEL's own parser at save keeps a misspelled zone from failing every request.
+// Local depends on the host, so it is not a portable choice.
+func validCELTimeZone(function string, arg ast.Expr) bool {
+	if arg.Kind() != ast.LiteralKind {
+		return false
+	}
+	zone, ok := arg.AsLiteral().(types.String)
+	return ok && zone != "Local" && !types.IsError(types.Timestamp{}.Receive(function, "", []ref.Val{zone}))
+}
+
 func newCELEnvironment() (*cel.Env, error) {
 	provider := newCELFieldProvider()
 	options := []cel.EnvOption{
@@ -258,22 +278,31 @@ func newCELEnvironment() (*cel.Env, error) {
 			[]*cel.Type{decimalCELType, decimalCELType}, cel.BoolType)))
 	}
 	deploymentType := cel.ObjectType(celNodeTypeName("deployment"))
+	blendedPrice := cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+		var numbers [3]int64
+		for index, arg := range args[1:] {
+			numbers[index] = int64(arg.(types.Int))
+			if numbers[index] < 0 || numbers[index] > maxPriceArgument {
+				return types.NewErr("invalid price arguments")
+			}
+		}
+		divisor := priceWeightGCD(numbers[0], numbers[1])
+		if divisor == 0 {
+			return types.NewErr("invalid price arguments")
+		}
+		blend := &BlendedPrice{InputWeight: numbers[0] / divisor, OutputWeight: numbers[1] / divisor, PromptTokens: numbers[2]}
+		value, ok := blendedPriceValue(blend, args[0].(*celPolicyNode).values)
+		return celPolicyValue(value, ok, "blended_price")
+	})
 	options = append(options,
-		cel.Macros(cel.GlobalMacro("blended_price", 3, func(factory cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *cel.Error) {
+		cel.Macros(cel.GlobalVarArgMacro("blended_price", func(factory cel.MacroExprFactory, _ ast.Expr, args []ast.Expr) (ast.Expr, *cel.Error) {
 			return factory.NewMemberCall("blended_price", factory.NewIdent("deployment"), args...), nil
 		})),
-		cel.Function("blended_price", cel.MemberOverload("policy_blended_price",
-			[]*cel.Type{deploymentType, cel.IntType, cel.IntType, cel.StringType}, decimalCELType,
-			cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-				a, b := int64(args[1].(types.Int)), int64(args[2].(types.Int))
-				divisor := priceWeightGCD(a, b)
-				if a < 0 || b < 0 || a > maxPriceWeight || b > maxPriceWeight || divisor == 0 {
-					return types.NewErr("invalid price weights")
-				}
-				blend := &BlendedPrice{InputWeight: a / divisor, OutputWeight: b / divisor, Rate: string(args[3].(types.String))}
-				value, ok := blendedPriceValue(blend, args[0].(*celPolicyNode).values)
-				return celPolicyValue(value, ok, "blended_price")
-			}))),
+		cel.Function("blended_price",
+			cel.MemberOverload("policy_blended_price",
+				[]*cel.Type{deploymentType, cel.IntType, cel.IntType}, decimalCELType, blendedPrice),
+			cel.MemberOverload("policy_blended_price_prompt",
+				[]*cel.Type{deploymentType, cel.IntType, cel.IntType, cel.IntType}, decimalCELType, blendedPrice)),
 	)
 	return cel.NewEnv(options...)
 }
@@ -317,18 +346,15 @@ func (d celDecimal) Compare(other ref.Val) ref.Val {
 type celFieldProvider struct {
 	types.Provider
 	fields map[string]map[string]*cel.Type
+	// leaves lists the fields beneath each object. An object is present when
+	// the candidate states at least one of them.
+	leaves map[string][]string
 }
 
 func newCELFieldProvider() *celFieldProvider {
 	registry, _ := types.NewRegistry()
-	provider := &celFieldProvider{Provider: registry, fields: map[string]map[string]*cel.Type{}}
-	paths := FieldPaths()
-	for meter := range tokenPricingMeters {
-		for rate := range tokenPricingRates {
-			paths = append(paths, "deployment.pricing."+meter+"."+rate)
-		}
-	}
-	for _, path := range paths {
+	provider := &celFieldProvider{Provider: registry, fields: map[string]map[string]*cel.Type{}, leaves: map[string][]string{}}
+	for _, path := range FieldPaths() {
 		kind, _ := FieldType(path)
 		valueType := map[string]*cel.Type{"boolean": cel.BoolType, "integer": cel.IntType, "decimal": decimalCELType, "string": cel.StringType, "string_list": cel.ListType(cel.StringType), "timestamp": cel.TimestampType}[kind]
 		parts := strings.Split(path, ".")
@@ -339,7 +365,9 @@ func newCELFieldProvider() *celFieldProvider {
 			}
 			fieldType := valueType
 			if i < len(parts)-1 {
-				fieldType = cel.ObjectType(celNodeTypeName(strings.Join(parts[:i+1], ".")))
+				object := strings.Join(parts[:i+1], ".")
+				fieldType = cel.ObjectType(celNodeTypeName(object))
+				provider.leaves[object] = append(provider.leaves[object], path)
 			}
 			provider.fields[parent][parts[i]] = fieldType
 		}
@@ -348,6 +376,14 @@ func newCELFieldProvider() *celFieldProvider {
 }
 
 func celNodeTypeName(path string) string { return "stogas.policy." + path }
+
+func candidateCELType(value *cel.Type) bool {
+	switch value.TypeName() {
+	case celNodeTypeName("author"), celNodeTypeName("model"), celNodeTypeName("deployment"), celNodeTypeName("route"), celNodeTypeName("provider"):
+		return true
+	}
+	return false
+}
 func (p *celFieldProvider) FindStructType(name string) (*types.Type, bool) {
 	if _, ok := p.fields[name]; ok {
 		return types.NewTypeTypeWithParam(cel.ObjectType(name)), true
@@ -374,10 +410,19 @@ func (p *celFieldProvider) FindStructFieldType(name, field string) (*types.Field
 	_, nested := p.fields[fieldType.TypeName()]
 	return &types.FieldType{Type: fieldType,
 		IsSet: func(target any) bool {
-			if nested || path == "request.time" {
+			if path == "request.time" {
 				return true
 			}
-			_, ok := target.(*celPolicyNode).values.PolicyValue(path)
+			values := target.(*celPolicyNode).values
+			if nested {
+				for _, leaf := range p.leaves[path] {
+					if _, ok := values.PolicyValue(leaf); ok {
+						return true
+					}
+				}
+				return false
+			}
+			_, ok := values.PolicyValue(path)
 			return ok
 		},
 		GetFrom: func(target any) (any, error) {

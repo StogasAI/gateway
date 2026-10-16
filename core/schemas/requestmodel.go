@@ -36,6 +36,17 @@ func GetRequestModelInfo(ctx *BifrostContext, provider ModelProvider, wireModel 
 	return info, true
 }
 
+// requestCanonicalModel returns the canonical model installed for wireModel, or
+// wireModel itself. Fallbacks clear the metadata, so no provider check is needed.
+func requestCanonicalModel(ctx *BifrostContext, wireModel string) string {
+	if ctx != nil {
+		if info, ok := ctx.Value(BifrostContextKeyRequestModelInfo).(RequestModelInfo); ok && info.WireModel == wireModel {
+			return info.CanonicalModel
+		}
+	}
+	return wireModel
+}
+
 // ResolveCanonicalModelForProvider uses exact request-scoped catalog metadata
 // before the ordinary Bifrost alias resolution path.
 func ResolveCanonicalModelForProvider(ctx *BifrostContext, provider ModelProvider, fallbackModel string) string {

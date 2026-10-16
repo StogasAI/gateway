@@ -204,28 +204,64 @@
     "valid": true
   },
   {
-    "filter": "blended_price(3, 1, 'per_mill_tokens') < decimal(\"5\")",
+    "filter": "blended_price(3, 1) < decimal(\"5\")",
     "valid": true
   },
   {
-    "filter": "(has(deployment.pricing.output_tokens.per_mill_context_gt_272k))",
+    "filter": "(has(deployment.pricing.output_tokens))",
     "valid": true
   },
   {
     "sort": [
       {
-        "by": "blended_price(3, 1, 'per_mill_tokens')",
+        "by": "blended_price(3, 1, 272001)",
         "direction": "desc"
       }
     ],
     "valid": true
   },
   {
-    "filter": "!(blended_price(1, 2, 'per_mill_context_lte_272k') in [decimal(\"0\"), decimal(\"0.5\")])",
+    "sort": [
+      {
+        "by": "request.bodyBytes",
+        "direction": "asc"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "sort": [
+      {
+        "by": "1",
+        "direction": "asc"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "sort": [
+      {
+        "by": "[1].map(provider, provider)[0]",
+        "direction": "asc"
+      }
+    ],
+    "valid": false
+  },
+  {
+    "sort": [
+      {
+        "by": "request.bodyBytes + deployment.contextWindowTokens",
+        "direction": "asc"
+      }
+    ],
     "valid": true
   },
   {
-    "filter": "blended_price(9007199254740991, 1, 'per_mill_tokens') > decimal(\"0\")",
+    "filter": "!(blended_price(1, 2, 300000) in [decimal(\"0\"), decimal(\"0.5\")])",
+    "valid": true
+  },
+  {
+    "filter": "blended_price(9007199254740991, 1, 9007199254740991) > decimal(\"0\")",
     "valid": true
   },
   {
@@ -233,63 +269,63 @@
     "valid": false
   },
   {
-    "filter": "where blended_price(0, 0, 'per_mill_tokens') < 5",
+    "filter": "blended_price(0, 0) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(-1, 1, 'per_mill_tokens') < 5",
+    "filter": "blended_price(-1, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1.5, 1, 'per_mill_tokens') < 5",
+    "filter": "blended_price(1.5, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1.0, 1, 'per_mill_tokens') < 5",
+    "filter": "blended_price(1, 1, 1.0) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(-0, 1, 'per_mill_tokens') < 5",
+    "filter": "blended_price(1, 1, -1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(9007199254740992, 1, 'per_mill_tokens') < 5",
+    "filter": "blended_price(9007199254740992, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, per_mill_tokens) < 5",
+    "filter": "blended_price(1, 1, per_mill_tokens) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, 'per_1k_calls') < 5",
+    "filter": "blended_price(1, 1, 'per_mill_tokens') < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, 'per_mill_tokens', 1) < 5",
+    "filter": "blended_price(1, 1, 1, 1) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, 'per_mill_tokens') < '5'",
+    "filter": "blended_price(1, 1) < '5'",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, 'per_mill_tokens') contains '5'",
+    "filter": "blended_price(1, 1, deployment.maxInputTokens) < decimal(\"5\")",
     "valid": false
   },
   {
-    "filter": "where provider.id == blended_price(1, 1, 'per_mill_tokens')",
+    "filter": "provider.id == blended_price(1, 1)",
     "valid": false
   },
   {
-    "filter": "order by blended_price(3, 1, 'per_mill_tokens'), blended_price(6, 2, 'per_mill_tokens')",
+    "filter": "order by blended_price(3, 1), blended_price(6, 2)",
     "valid": false
   },
   {
-    "filter": "where blended_price(1, 1, 'per_mill_tokens') < 5 + 1",
+    "filter": "blended_price(1, 1) < 5",
     "valid": false
   },
   {
-    "filter": "where BLENDED_PRICE(1, 1, 'per_mill_tokens') < 5",
+    "filter": "BLENDED_PRICE(1, 1) < decimal(\"5\")",
     "valid": false
   },
   {

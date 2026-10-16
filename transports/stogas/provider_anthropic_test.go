@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -96,9 +97,11 @@ func TestHostedToolHoldQuantity(t *testing.T) {
 func TestAnthropicResponsesToolAdmission(t *testing.T) {
 	adapter := AnthropicAdapter{}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{
-				Pricing: testPricing(),
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{
+					Pricing: testPricing(),
+				},
 			},
 		},
 	}
@@ -126,6 +129,12 @@ func TestAnthropicResponsesToolAdmission(t *testing.T) {
 		if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, raw)); err == nil {
 			t.Fatalf("expected Anthropic tool %s to reject", raw)
 		}
+	}
+	unpriced := testPricing()
+	delete(unpriced, meterAnthropicWebSearchCalls)
+	state.Resolution.Deployment.Pricing = unpriced
+	if err := adapter.ValidateRawResponsesToolType(state, mustObject(t, `{"type":"web_search"}`)); err == nil {
+		t.Fatal("expected web search on a route without a search price to reject")
 	}
 }
 
@@ -477,6 +486,7 @@ func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
 	for model, want := range map[string]int{
 		"claude-fable-5":             804,
 		"claude-haiku-4-5-20251001":  588,
+		"claude-haiku-5-5":           406,
 		"claude-mythos-5":            804,
 		"claude-mythos-preview":      804,
 		"claude-opus-4-1-20250805":   315,
@@ -485,9 +495,11 @@ func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
 		"claude-opus-4-7":            804,
 		"claude-opus-4.8":            410,
 		"claude-opus-5":              406,
+		"claude-opus-5-5":            286,
 		"claude-sonnet-4-5-20250929": 588,
 		"claude-sonnet-4-6":          589,
 		"claude-sonnet-5":            474,
+		"claude-sonnet-5-5":          286,
 	} {
 		t.Run(model, func(t *testing.T) {
 			got, known := anthropicToolSystemPromptTokensForModel(model)
@@ -506,10 +518,10 @@ func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
 
 func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
 	type matrixDeployment struct {
+		ModelID  string   `json:"modelId"`
 		RouteIDs []string `json:"routeIds"`
 		Upstream struct {
-			Model       string `json:"model"`
-			ModelFormat string `json:"modelFormat"`
+			Model string `json:"model"`
 		} `json:"upstream"`
 	}
 	type matrixRoute struct {
@@ -529,7 +541,7 @@ func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
 	}
 	checked := 0
 	for deploymentID, deployment := range deployments {
-		anthropicWire := deployment.Upstream.ModelFormat == "Anthropic"
+		anthropicWire := schemas.IsAnthropicModel(deployment.ModelID)
 		for _, routeID := range deployment.RouteIDs {
 			anthropicWire = anthropicWire || routes[routeID].ProviderID == "anthropic"
 		}

@@ -14,9 +14,9 @@ func TestRequestPluginMetricsDistinguishDisabledAndCleanRedaction(t *testing.T) 
 	}
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		for _, policy := range []*redaction.Policy{nil, configured} {
-			body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`)
+			body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}]}`)
 			if path == "/v1/responses" {
-				body = []byte(`{"model":"gpt-5.5","input":"hello"}`)
+				body = []byte(`{"model":"openai/gpt-5.5","input":"hello"}`)
 			}
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: body, RedactionPolicy: policy})
 			if err != nil {

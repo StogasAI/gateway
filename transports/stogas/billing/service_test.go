@@ -240,6 +240,7 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 			"input_tokens": PricedMeter("1", "per_mill_tokens", "2000000", "2"),
 		},
 		Plugins:           plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
+		ProviderAttempts:  []ProviderAttemptInput{{Provider: "openai", StartedAt: startedAt}},
 		ProviderStartedAt: startedAt,
 		StartedAt:         startedAt,
 	})
@@ -324,6 +325,7 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	event := mustNewRequestEvent(t, EventInput{
 		Authorization:       &Authorization{RequestID: "request-1"},
 		ClientStoppedAt:     now.Add(-55 * time.Millisecond),
+		ProviderAttempts:    []ProviderAttemptInput{{Provider: "openai", StartedAt: providerStartedAt, CompletedAt: providerCompletedAt}},
 		ProviderCompletedAt: providerCompletedAt,
 		ProviderStartedAt:   providerStartedAt,
 		StartedAt:           startedAt,
@@ -335,8 +337,8 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 		t.Fatalf("provider start must share the request clock: %#v", event.Performance)
 	}
 	providerTime := event.ProviderAttempts[0].LatencyMS
-	if providerTime < 35 || providerTime > 45 {
-		t.Fatalf("provider time should end at observed provider completion, got %dms", providerTime)
+	if providerTime < 35 || providerTime > 45 || event.ProviderAttempts[0].StartMS != 40 {
+		t.Fatalf("provider attempt should use the request clock, got %#v", event.ProviderAttempts[0])
 	}
 	if event.ClientStopMS == nil || *event.ClientStopMS < 40 || *event.ClientStopMS > 50 {
 		t.Fatalf("client stop time should use the request clock, got %#v", event.ClientStopMS)
@@ -347,28 +349,9 @@ func TestNewRequestEventUsesProviderClockAndClampsItToTotal(t *testing.T) {
 	}
 
 	event = mustNewRequestEvent(t, EventInput{
-		Authorization:       &Authorization{RequestID: "request-provider-clock"},
-		ProviderCompletedAt: providerCompletedAt,
-		ProviderStartedAt:   providerStartedAt,
-		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
-			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 2},
-		}},
-		StartedAt: startedAt,
-	})
-	if event.ProviderAttempts[0].LatencyMS < 35 || event.ProviderAttempts[0].LatencyMS > 45 {
-		t.Fatalf(
-			"provider metadata must not replace the gateway provider clock, got %dms",
-			event.ProviderAttempts[0].LatencyMS,
-		)
-	}
-
-	event = mustNewRequestEvent(t, EventInput{
 		Authorization: &Authorization{RequestID: "request-2"},
 		Meters:        EventMeters{"input_text_bytes": {Quantity: "12"}},
-		Response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
-			ExtraFields: schemas.BifrostResponseExtraFields{Latency: 500},
-		}},
-		StartedAt: startedAt,
+		StartedAt:     startedAt,
 	})
 	if len(event.ProviderAttempts) != 0 {
 		t.Fatalf("a request that never started a provider has attempts: %#v", event.ProviderAttempts)
@@ -499,6 +482,7 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 		ProviderAttempts: []ProviderAttemptInput{
 			{
 				Provider:    "openai",
+				Byok:        ManagedUpstreamByok,
 				StartedAt:   base.Add(10 * time.Millisecond),
 				CompletedAt: base.Add(40 * time.Millisecond),
 				Error: &schemas.BifrostError{
@@ -508,6 +492,7 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 			},
 			{
 				Provider:    "anthropic",
+				Byok:        "0198f4cc-6c25-8000-8000-000000000001",
 				StartedAt:   base.Add(55 * time.Millisecond),
 				CompletedAt: base.Add(145 * time.Millisecond),
 				Response:    response,
@@ -516,7 +501,6 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 		ProviderStartedAt:   base.Add(5 * time.Millisecond),
 		ProviderCompletedAt: base.Add(150 * time.Millisecond),
 		RequestType:         string(schemas.ChatCompletionStreamRequest),
-		Response:            response,
 		StartedAt:           base,
 		TTFTMS:              &ttftMS,
 	})
@@ -524,8 +508,13 @@ func TestNewRequestEventProjectsSequentialProviderAttempts(t *testing.T) {
 	if len(event.ProviderAttempts) != 2 {
 		t.Fatalf("provider attempts = %#v, want two attempts", event.ProviderAttempts)
 	}
-	if event.ProviderAttempts[0].LatencyMS != 30 || event.ProviderAttempts[1].LatencyMS != 90 {
-		t.Fatalf("provider attempt latencies = %#v", event.ProviderAttempts)
+	if event.ProviderAttempts[0].StartMS != 10 || event.ProviderAttempts[0].LatencyMS != 30 ||
+		event.ProviderAttempts[1].StartMS != 55 || event.ProviderAttempts[1].LatencyMS != 90 {
+		t.Fatalf("provider attempt timings = %#v", event.ProviderAttempts)
+	}
+	if event.ProviderAttempts[0].Byok != nil || event.ProviderAttempts[1].Byok == nil ||
+		*event.ProviderAttempts[1].Byok != "0198f4cc-6c25-8000-8000-000000000001" {
+		t.Fatalf("provider attempt credentials = %#v", event.ProviderAttempts)
 	}
 	if event.ProviderAttempts[0].Status != "provider_error" || event.ProviderAttempts[1].Status != "success" {
 		t.Fatalf("provider attempt statuses = %#v", event.ProviderAttempts)
@@ -676,7 +665,7 @@ func TestMetersDistinguishFreeUnpricedAndAggregateCounts(t *testing.T) {
 
 func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 	for _, item := range []struct{ bytes, tokens string }{{"0", "0"}, {"6", "1.5"}, {"7", "1.75"}, {"18446744073709551615", "4611686018427387903.75"}} {
-		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0"), ProviderStartedAt: time.Now()})
+		event, err := NewRequestEvent(EventInput{Meters: EventMeters{MeterInputTextBytes: {Quantity: item.bytes}, MeterOutputTextBytes: {Quantity: "0"}}, CacheReadSavingsUSD: stringPtr("0"), ProviderAttempts: []ProviderAttemptInput{{Provider: "openai"}}})
 		if err != nil {
 			t.Fatal(err)
 		}

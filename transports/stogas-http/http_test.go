@@ -38,7 +38,7 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	ctx := newTestRequest(t)
 	ctx.request.Header.Set("x-request-id", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx.request.Header.Set("Authorization", "Bearer sk-secret")
 	ctx.request.Header.Set("X-OpenAI-Agents-SDK", "client-controlled")
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -105,13 +105,22 @@ func mustResolvedRequest(t *testing.T, path, body string) *catalog.ResolvedReque
 	return resolution
 }
 
+// startTestStream delivers a stream whose provider call has succeeded.
+func startTestStream(server *Server, ctx *requestContext, request *schemas.BifrostContext, state *stogas.State, stream chan *schemas.BifrostStreamChunk, cancel context.CancelFunc, completion func()) io.ReadCloser {
+	if completion == nil {
+		completion = func() {}
+	}
+	run := &providerRun{server: server, client: ctx, request: request, state: state, cancel: cancel}
+	return server.startSSEStream(ctx, run, providerStreamStart{response: stream, ctx: request, called: true}, nil, nil, completion)
+}
+
 func TestNewRequestContextUsesSharedInferenceLifetime(t *testing.T) {
 	ctx := newTestRequest(t)
 	resolution := testResolution()
 	resolution.Route = catalog.RouteResponses
 	resolution.RequestType = schemas.ResponsesStreamRequest
 
-	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "sk-test"}, stogas.AdapterFor(schemas.OpenAI), "")
+	bifrostCtx, _, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "sk-test"}, "")
 	if err != nil {
 		t.Fatalf("newRequestContext returned error: %v", err)
 	}
@@ -128,34 +137,8 @@ func TestNewRequestContextUsesSharedInferenceLifetime(t *testing.T) {
 	if !ok || state.RequestLifetime != billing.GatewayRequestLifetime {
 		t.Fatalf("expected response request state lifetime %s, got %#v", billing.GatewayRequestLifetime, state)
 	}
-}
-
-func TestProviderStreamIdleTimeoutUsesRequestLifetime(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		route catalog.Route
-	}{
-		{
-			name:  "Chat Completions",
-			route: catalog.RouteChat,
-		},
-		{
-			name:  "Responses",
-			route: catalog.RouteResponses,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			ctx := schemas.NewBifrostContext(t.Context(), schemas.NoDeadline)
-			state := &stogas.State{
-				RequestLifetime: billing.GatewayRequestLifetime,
-				Resolution:      &catalog.ResolvedRequest{Route: test.route},
-			}
-			configureProviderStreamIdleTimeout(ctx, state)
-			got, ok := ctx.Value(schemas.BifrostContextKeyStreamIdleTimeout).(time.Duration)
-			if !ok || got != billing.GatewayRequestLifetime {
-				t.Fatalf("provider stream idle timeout = %s, want %s", got, billing.GatewayRequestLifetime)
-			}
-		})
+	if idle, ok := bifrostCtx.Value(schemas.BifrostContextKeyStreamIdleTimeout).(time.Duration); !ok || idle != billing.GatewayRequestLifetime {
+		t.Fatalf("provider stream idle timeout = %s, want %s", idle, billing.GatewayRequestLifetime)
 	}
 }
 
@@ -650,10 +633,10 @@ func TestWriteInferenceJSONAddsContentReceipt(t *testing.T) {
 	service, publicKey, boot := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"gpt-5.5"}`)
+	testRequestBody(ctx, `{"model":"openai/gpt-5.5"}`)
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasMetadataKey, true)
-	state := &stogas.State{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)), RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))}, RequestID: "req_1", FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}}}
 	state.FinalEvent.Usage.Meters = billing.EventMeters{
 		"input_tokens":        billing.PricedMeter("1000", "per_mill_tokens", "2", "0.002"),
 		"cached_input_tokens": billing.PricedMeter("300", "per_mill_tokens", "0", "0"),
@@ -702,9 +685,11 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	state := &stogas.State{
-		Resolution:        testResolution(),
+		Pair: stogas.Pair{
+			Resolution:    testResolution(),
+			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD)},
+		},
 		FinalEvent:        &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
-		Authorization:     &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD)},
 		StartedAt:         time.Now().Add(-time.Second),
 		ProviderStartedAt: time.Now().Add(-time.Millisecond),
 		UpstreamCostUSD:   "0",
@@ -725,10 +710,12 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	if state.FinalEvent != nil {
 		t.Fatalf("proof failure retained a prepared success event: %#v", state.FinalEvent)
 	}
-	event := stogas.PrepareFinalState(state)
-	if event == nil || event.GatewayError == nil || len(event.ProviderAttempts) != 1 || event.ProviderAttempts[0].Status != "success" ||
-		event.ProviderAttempts[0].StatusCode == nil || *event.ProviderAttempts[0].StatusCode != 200 {
-		t.Fatalf("proof failure overwrote the successful provider result: %#v", event)
+	if state.BifrostError != nil || state.ProcessingError == nil || state.ProcessingError.Error == nil ||
+		state.ProcessingError.Error.Code == nil || *state.ProcessingError.Error.Code != responseProofErrorCode {
+		t.Fatalf("proof failure overwrote the successful provider result: %#v", state.BifrostError)
+	}
+	if event := stogas.PrepareFinalState(state); event == nil || event.GatewayError == nil {
+		t.Fatalf("proof failure is missing from the request event: %#v", event)
 	}
 }
 
@@ -740,20 +727,11 @@ func TestWriteSSEStreamCompletesDrainTrackingWhenProofCannotBeBuilt(t *testing.T
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	completed := make(chan struct{})
-	state := &stogas.State{Resolution: testResolution()}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}
 	stream := make(chan *schemas.BifrostStreamChunk)
 	close(stream)
 
-	_ = server.startSSEStream(
-		ctx,
-		bifrostCtx,
-		state,
-		stream,
-		true,
-		false,
-		cancel,
-		func() { close(completed) },
-	)
+	_ = startTestStream(server, ctx, bifrostCtx, state, stream, cancel, func() { close(completed) })
 
 	if testResponse(ctx).Code != http.StatusInternalServerError {
 		t.Fatalf("expected proof failure to return 500, got %d", testResponse(ctx).Code)
@@ -773,18 +751,20 @@ func TestWriteSSEStreamRetainsProofFailureAtCompletion(t *testing.T) {
 	service, _, _ := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	testRequestBody(ctx, `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)),
+		Pair: stogas.Pair{
+			Resolution: mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body)),
+		},
 		RequestID:  "", // Invalid final metadata must not become a successful receipt.
 		NodeID:     strings.Repeat("3", 64),
 		FinalEvent: &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}}},
 	}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	close(stream)
 	body := readResponseBodyStream(t, streamBodyReader)
 	payload := requireSSEErrorPayload(t, body)
@@ -1021,6 +1001,29 @@ func TestPublicBifrostErrorClassifiesProviderDependencyFailures(t *testing.T) {
 			}
 			if errorObject["code"] != tt.wantCode {
 				t.Fatalf("expected code %q, got %#v", tt.wantCode, errorObject["code"])
+			}
+		})
+	}
+}
+
+func TestPublicBifrostErrorRoutesOtherProviderAuthStatusesByIdentifier(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		status     int
+		code       string
+		wantStatus int
+	}{
+		{name: "content filter on 403", status: http.StatusForbidden, code: "content_policy_violation", wantStatus: http.StatusBadRequest},
+		{name: "context length on 401", status: http.StatusUnauthorized, code: "context_length_exceeded", wantStatus: http.StatusBadRequest},
+		{name: "invalid image on 402", status: http.StatusPaymentRequired, code: "invalid_image", wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			status, payload := publicBifrostError(testBifrostError(tt.status, "provider detail", "", tt.code))
+			if status != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", status, tt.wantStatus)
+			}
+			if code := publicErrorObject(t, payload)["code"]; status < 500 && code != tt.code {
+				t.Fatalf("code = %#v, want %q", code, tt.code)
 			}
 		})
 	}
@@ -1870,12 +1873,16 @@ func TestPrepareProviderRequestCoversPublicProvidersAndRoutes(t *testing.T) {
 			defer cancel()
 			bifrostCtx.SetValue(schemas.BifrostContextKeyHTTPRequestType, tt.req.RequestType)
 			provider, model, _ := tt.req.GetRequestFields()
-			state := &stogas.State{Resolution: &catalog.ResolvedRequest{
-				Provider:    provider,
-				Model:       model,
-				RequestType: tt.req.RequestType,
-				Deployment:  catalog.Deployment{},
-			}}
+			state := &stogas.State{
+				Pair: stogas.Pair{
+					Resolution: &catalog.ResolvedRequest{
+						Provider:    provider,
+						Model:       model,
+						RequestType: tt.req.RequestType,
+						Deployment:  catalog.Deployment{},
+					},
+				},
+			}
 
 			if err := stogas.PrepareProviderRequest(bifrostCtx, state, tt.req); err != nil {
 				t.Fatalf("PrepareProviderRequest returned error: %v", err)
@@ -1955,7 +1962,7 @@ func TestWriteSSEStreamUsesExistingReservationAtSaturation(t *testing.T) {
 	}}
 	close(stream)
 	complete := make(chan struct{})
-	reader := server.startSSEStream(ctx, bifrostCtx, &stogas.State{}, stream, true, false, cancel, func() { lease.release(); close(complete) })
+	reader := startTestStream(server, ctx, bifrostCtx, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, stream, cancel, func() { lease.release(); close(complete) })
 	body := readResponseBodyStream(t, reader)
 	<-complete
 	if !strings.Contains(body, "chatcmpl_capacity") || !strings.Contains(body, "[DONE]") || strings.Contains(body, "gateway_capacity_exceeded") {
@@ -1982,7 +1989,7 @@ func TestWriteSSEStreamKeepsMemoryReservedUntilBodyDrain(t *testing.T) {
 	}}
 	close(stream)
 	completed := make(chan struct{})
-	reader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel, func() { lease.release(); close(completed) })
+	reader := startTestStream(server, ctx, bifrostCtx, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, stream, cancel, func() { lease.release(); close(completed) })
 	defer reader.Close()
 	// Consume the model frame so the producer can queue its terminal frame and
 	// finish. The final delivery must keep its own pin after request completion.
@@ -2010,7 +2017,7 @@ func TestWriteSSEStreamEmitsOpenAIFramesFromBodyStream(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, nil, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, stream, cancel, nil)
 	defer streamBodyReader.Close()
 
 	if !(streamBodyReader != nil) {
@@ -2056,18 +2063,20 @@ func TestWriteSSEStreamKeepsForcedUsagePrivateUnlessClientRequestedIt(t *testing
 		{name: "true", streamOptions: `,"stream_options":{"include_usage":true}`, wantUsage: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true` + tc.streamOptions + `}`
+			body := `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true` + tc.streamOptions + `}`
 			server := &Server{}
 			ctx := newTestRequest(t)
 			bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 			stream := make(chan *schemas.BifrostStreamChunk)
 			state := &stogas.State{
-				Adapter:    stogas.DefaultAdapter{},
-				Resolution: mustResolvedRequest(t, "/v1/chat/completions", body),
-				StartedAt:  time.Now().Add(-5 * time.Millisecond),
+				Pair: stogas.Pair{
+					Adapter:    stogas.DefaultAdapter{},
+					Resolution: mustResolvedRequest(t, "/v1/chat/completions", body),
+				},
+				StartedAt: time.Now().Add(-5 * time.Millisecond),
 			}
 
-			streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+			streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 			defer streamBodyReader.Close()
 
 			go func() {
@@ -2138,9 +2147,11 @@ func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk, 3)
 	state := &stogas.State{
-		Adapter: stogas.DefaultAdapter{},
-		Resolution: mustResolvedRequest(t, "/v1/chat/completions",
-			`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`),
+		Pair: stogas.Pair{
+			Adapter: stogas.DefaultAdapter{},
+			Resolution: mustResolvedRequest(t, "/v1/chat/completions",
+				`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}`),
+		},
 	}
 	role := string(schemas.ChatMessageRoleAssistant)
 	content := "hello"
@@ -2167,7 +2178,7 @@ func TestWriteSSEStreamIgnoresFramesAfterBillableTerminal(t *testing.T) {
 		ID: "late_invalid_frame", Object: "not-a-chat-chunk",
 	}}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer streamBodyReader.Close()
 	body := readResponseBodyStream(t, streamBodyReader)
 	if !strings.Contains(body, "chatcmpl_terminal") || !strings.Contains(body, "data: [DONE]\n\n") {
@@ -2184,11 +2195,13 @@ func TestWriteSSEStreamCompletesWithoutTerminalTokenUsage(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Adapter:    stogas.DefaultAdapter{},
-		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		Pair: stogas.Pair{
+			Adapter:    stogas.DefaultAdapter{},
+			Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		},
 	}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer streamBodyReader.Close()
 
 	go func() {
@@ -2235,11 +2248,13 @@ func TestWriteSSEStreamIgnoresUnusableUsageWithoutFailingOutput(t *testing.T) {
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Adapter:    stogas.DefaultAdapter{},
-		Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		Pair: stogas.Pair{
+			Adapter:    stogas.DefaultAdapter{},
+			Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		},
 	}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer streamBodyReader.Close()
 	go func() {
 		role := string(schemas.ChatMessageRoleAssistant)
@@ -2295,16 +2310,18 @@ func TestWriteSSEStreamEmitsFinalConfidentialProof(t *testing.T) {
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
-		Adapter:    stogas.DefaultAdapter{},
-		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
-		NodeID:     strings.Repeat("3", 64),
+		Pair: stogas.Pair{
+			Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+			Adapter:    stogas.DefaultAdapter{},
+		},
+		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf613",
+		NodeID:    strings.Repeat("3", 64),
 		FinalEvent: &billing.RequestEvent{
 			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
 		},
 	}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer streamBodyReader.Close()
 
 	go func() {
@@ -2374,21 +2391,23 @@ func TestWriteSSEStreamEmitsReceiptBeforeResponsesTerminalEvent(t *testing.T) {
 	service, publicKey, boot := testProofService(t)
 	server := &Server{proofs: service}
 	ctx := newTestRequest(t)
-	testRequestBody(ctx, `{"model":"gpt-5.5","input":"hi","stream":true}`)
+	testRequestBody(ctx, `{"model":"openai/gpt-5.5","input":"hi","stream":true}`)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 	bifrostCtx.SetValue(stogasMetadataKey, true)
 	stream := make(chan *schemas.BifrostStreamChunk)
 	state := &stogas.State{
-		Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"gpt-5.5","input":"hi","stream":true}`),
-		Adapter:    stogas.DefaultAdapter{},
-		RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
-		NodeID:     strings.Repeat("5", 64),
+		Pair: stogas.Pair{
+			Resolution: mustResolvedRequest(t, "/v1/responses", `{"model":"openai/gpt-5.5","input":"hi","stream":true}`),
+			Adapter:    stogas.DefaultAdapter{},
+		},
+		RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf615",
+		NodeID:    strings.Repeat("5", 64),
 		FinalEvent: &billing.RequestEvent{
 			CreatedAt: "2026-08-24T12:34:56.789Z", Usage: billing.RequestUsage{BilledCostUSD: "0", UpstreamCostUSD: "0", Meters: billing.EventMeters{}},
 		},
 	}
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, false, true, cancel)
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 	defer streamBodyReader.Close()
 	go func() {
 		inProgress := schemas.ResponsesResponseStatusInProgress
@@ -2477,13 +2496,15 @@ func TestWriteSSEStreamDoesNotProofMalformedStream(t *testing.T) {
 			bifrostCtx.SetValue(stogasMetadataKey, true)
 			stream := make(chan *schemas.BifrostStreamChunk)
 			state := &stogas.State{
-				Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
-				Adapter:    stogas.DefaultAdapter{},
-				RequestID:  "018f4f70-7c88-7b9a-baf8-31a93d2cf614",
-				NodeID:     strings.Repeat("4", 64),
+				Pair: stogas.Pair{
+					Resolution: mustResolvedRequest(t, "/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stream":true}`),
+					Adapter:    stogas.DefaultAdapter{},
+				},
+				RequestID: "018f4f70-7c88-7b9a-baf8-31a93d2cf614",
+				NodeID:    strings.Repeat("4", 64),
 			}
 
-			streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, cancel)
+			streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, cancel, nil)
 			defer streamBodyReader.Close()
 			go func() {
 				tc.send(stream, state)
@@ -2508,13 +2529,13 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, StartedAt: time.Now()}
+	state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}, StartedAt: time.Now()}
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, func() {
 		once.Do(func() { close(cancelled) })
-	})
+	}, nil)
 
 	closer, ok := streamBodyReader.(io.Closer)
 	if !ok {
@@ -2548,6 +2569,12 @@ func TestWriteSSEStreamDrainsUpstreamAfterBodyStreamClose(t *testing.T) {
 	default:
 	}
 
+	stream <- &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{
+		ID: "chatcmpl_finish", Object: "chat.completion.chunk", Model: "gpt-4o-mini",
+		Choices: []schemas.BifrostResponseChoice{{FinishReason: schemas.Ptr("stop"), ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+			Delta: &schemas.ChatStreamResponseChoiceDelta{},
+		}}},
+	}}
 	stream <- &schemas.BifrostStreamChunk{
 		BifrostChatResponse: &schemas.BifrostChatResponse{
 			ID:     "chatcmpl_final_usage",
@@ -2579,13 +2606,13 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := &stogas.State{Adapter: stogas.DefaultAdapter{}}
+	state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, func() {
 		once.Do(func() { close(cancelled) })
-	})
+	}, nil)
 
 	closer, ok := streamBodyReader.(io.Closer)
 	if !ok {
@@ -2596,10 +2623,12 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	go func() {
 		stream <- &schemas.BifrostStreamChunk{
 			BifrostChatResponse: &schemas.BifrostChatResponse{
-				ID:      "chatcmpl_first",
-				Object:  "chat.completion.chunk",
-				Model:   "gpt-4o-mini",
-				Choices: []schemas.BifrostResponseChoice{},
+				ID:     "chatcmpl_first",
+				Object: "chat.completion.chunk",
+				Model:  "gpt-4o-mini",
+				Choices: []schemas.BifrostResponseChoice{{ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+					Delta: &schemas.ChatStreamResponseChoiceDelta{Role: schemas.Ptr("assistant")},
+				}}},
 			},
 		}
 		close(firstSent)
@@ -2614,10 +2643,12 @@ func TestWriteSSEStreamDrainsUpstreamAfterBlockedSendClose(t *testing.T) {
 	go func() {
 		stream <- &schemas.BifrostStreamChunk{
 			BifrostChatResponse: &schemas.BifrostChatResponse{
-				ID:      "chatcmpl_second",
-				Object:  "chat.completion.chunk",
-				Model:   "gpt-4o-mini",
-				Choices: []schemas.BifrostResponseChoice{},
+				ID:     "chatcmpl_second",
+				Object: "chat.completion.chunk",
+				Model:  "gpt-4o-mini",
+				Choices: []schemas.BifrostResponseChoice{{FinishReason: schemas.Ptr("stop"), ChatStreamResponseChoice: &schemas.ChatStreamResponseChoice{
+					Delta: &schemas.ChatStreamResponseChoiceDelta{},
+				}}},
 			},
 		}
 		close(secondSent)
@@ -2675,13 +2706,13 @@ func TestWriteSSEStreamStopsAtRequestLifetime(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithTimeout(t.Context(), 10*time.Millisecond)
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteResponses}}
+	state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteResponses}}}
 	completed := make(chan struct{})
 	var once sync.Once
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, false, true, func() {
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, func() {
 		once.Do(func() { close(completed) })
-	})
+	}, nil)
 
 	body := readResponseBodyStream(t, streamBodyReader)
 	close(stream)
@@ -2705,13 +2736,13 @@ func TestWriteSSEStreamAllowsQuietChatStream(t *testing.T) {
 	bifrostCtx, bifrostCancel := schemas.NewBifrostContextWithCancel(t.Context())
 	defer bifrostCancel()
 	stream := make(chan *schemas.BifrostStreamChunk)
-	state := &stogas.State{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+	state := &stogas.State{Pair: stogas.Pair{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 	cancelled := make(chan struct{})
 	var once sync.Once
 
-	streamBodyReader := server.startSSEStream(ctx, bifrostCtx, state, stream, true, false, func() {
+	streamBodyReader := startTestStream(server, ctx, bifrostCtx, state, stream, func() {
 		once.Do(func() { close(cancelled) })
-	})
+	}, nil)
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)
@@ -2866,10 +2897,10 @@ func TestSilentStreamKeepaliveDoesNotCountAsOutput(t *testing.T) {
 		ctx := newTestRequest(t)
 		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 		defer cancel()
-		state := &stogas.State{}
+		state := &stogas.State{Pair: stogas.Pair{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 		provider := make(chan *schemas.BifrostStreamChunk)
 		finished := make(chan struct{})
-		reader := server.startSSEStream(ctx, request, state, provider, true, false, cancel, func() { close(finished) })
+		reader := startTestStream(server, ctx, request, state, provider, cancel, func() { close(finished) })
 		defer reader.Close()
 		time.Sleep(responseKeepaliveInterval)
 		keepalive := make([]byte, len(": STOGAS PROCESSING\n\n"))
@@ -2941,7 +2972,7 @@ func TestHTTP2DisconnectRetainsInferenceAdmissionUntilProviderEnds(t *testing.T)
 		}
 		ctx.memory = lease
 		request, cancel := schemas.NewBifrostContextWithTimeout(context.Background(), time.Minute)
-		reader := server.startSSEStream(ctx, request, &stogas.State{}, provider, true, false, cancel, func() { lease.release(); server.requests.end(); close(providerDone) })
+		reader := startTestStream(server, ctx, request, &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}, provider, cancel, func() { lease.release(); server.requests.end(); close(providerDone) })
 		server.writeStream(ctx, reader)
 	}))
 	httpServer.EnableHTTP2 = true
@@ -2989,24 +3020,20 @@ func TestKeepaliveWhileProviderStartupIsSilent(t *testing.T) {
 		server := &Server{memory: newRequestMemoryAdmission()}
 		ctx := newTestRequest(t)
 		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
-		state := &stogas.State{}
+		state := &stogas.State{Pair: stogas.Pair{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
+		run := testRun(server, ctx, request, state, cancel)
 		open := make(chan struct{})
 		provider := make(chan *schemas.BifrostStreamChunk)
-		prepared := make(chan chan *schemas.BifrostStreamChunk, 1)
-		go func() {
-			stream, failure := awaitProviderStream(ctx, cancel, func() (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) { <-open; return provider, nil })
-			if failure != nil {
-				t.Error("unexpected startup failure")
-			}
-			prepared <- stream
-		}()
-		time.Sleep(responseKeepaliveInterval)
-		stream := <-prepared
-		if stream != nil || ctx.pendingStream == nil {
+		call := func(*schemas.BifrostContext, *schemas.BifrostRequest) (chan *schemas.BifrostStreamChunk, *schemas.BifrostError) {
+			<-open
+			return provider, nil
+		}
+		started, pending := runProvider(ctx, run, call, true)
+		if pending == nil || started.called {
 			t.Fatal("silent startup was not retained")
 		}
 		finished := make(chan struct{})
-		reader := server.startSSEStream(ctx, request, state, stream, true, false, cancel, func() { close(finished) })
+		reader := server.startSSEStream(ctx, run, started, pending, call, func() { close(finished) })
 		comment := make([]byte, len(": STOGAS PROCESSING\n\n"))
 		if _, err := io.ReadFull(reader, comment); err != nil || string(comment) != ": STOGAS PROCESSING\n\n" {
 			t.Fatalf("startup keepalive=%q, %v", comment, err)

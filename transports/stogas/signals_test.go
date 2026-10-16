@@ -293,10 +293,14 @@ func TestDefaultAdapterKeepsLargestUsableCumulativeStreamUsage(t *testing.T) {
 }
 
 func TestUsageAboveHoldRetainsActualCumulativeUsage(t *testing.T) {
-	state := &State{Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
-		{MeterKey: billing.MeterInputTokens, Quantity: "10", HoldRequired: true},
-		{MeterKey: billing.MeterOutputTokens, Quantity: "5", HoldRequired: true},
-	}}}
+	state := &State{
+		Pair: Pair{
+			Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
+				{MeterKey: billing.MeterInputTokens, Quantity: "10", HoldRequired: true},
+				{MeterKey: billing.MeterOutputTokens, Quantity: "5", HoldRequired: true},
+			}},
+		},
+	}
 	first := &schemas.BifrostStreamChunk{BifrostChatResponse: &schemas.BifrostChatResponse{Usage: &schemas.BifrostLLMUsage{
 		PromptTokens: 10, CompletionTokens: 5, TotalTokens: 15,
 	}}}
@@ -359,7 +363,7 @@ func TestProviderUsageIsIndependentOfHeldTokenEstimates(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			state := &State{Hold: HoldEstimate{Meters: tc.meters}}
+			state := &State{Pair: Pair{Hold: HoldEstimate{Meters: tc.meters}}}
 			err := (DefaultAdapter{}).IngestResponse(state, &schemas.BifrostResponse{
 				ChatResponse: &schemas.BifrostChatResponse{Usage: tc.usage},
 			}, nil)
@@ -383,7 +387,7 @@ func TestOpenAIExplicitCacheWriteUsageIsOnePromptPartition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
 	}
-	state := &State{Resolution: resolution}
+	state := &State{Pair: Pair{Resolution: resolution}}
 	usage := &schemas.BifrostLLMUsage{
 		PromptTokens:        100,
 		CompletionTokens:    1,
@@ -402,7 +406,7 @@ func TestOpenAIExplicitCacheWriteUsageIsOnePromptPartition(t *testing.T) {
 	}
 
 	usage.PromptTokensDetails.CachedWriteTokens = 101
-	rejectedState := &State{Resolution: resolution}
+	rejectedState := &State{Pair: Pair{Resolution: resolution}}
 	rejectedResponse := validUnaryChatProviderResponse()
 	rejectedResponse.Usage = usage
 	if err := (DefaultAdapter{}).IngestResponse(rejectedState, &schemas.BifrostResponse{
@@ -422,12 +426,12 @@ func TestAnthropicWireCacheWriteTTLReconciliation(t *testing.T) {
 		billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
 	}
 	providers := []struct {
-		name        string
-		provider    schemas.ModelProvider
-		modelFormat string
+		name     string
+		provider schemas.ModelProvider
+		modelID  string
 	}{
 		{name: "direct Anthropic", provider: schemas.Anthropic},
-		{name: "Azure Claude", provider: schemas.Azure, modelFormat: "Anthropic"},
+		{name: "Azure Claude", provider: schemas.Azure, modelID: "claude-opus-5"},
 	}
 	cases := []struct {
 		name         string
@@ -457,13 +461,17 @@ func TestAnthropicWireCacheWriteTTLReconciliation(t *testing.T) {
 	for _, provider := range providers {
 		for _, tc := range cases {
 			t.Run(provider.name+"/"+tc.name, func(t *testing.T) {
-				state := &State{Resolution: &catalog.ResolvedRequest{
-					Provider: provider.provider,
-					Deployment: catalog.Deployment{
-						Pricing:  pricing,
-						Upstream: catalog.Upstream{ModelFormat: provider.modelFormat},
+				state := &State{
+					Pair: Pair{
+						Resolution: &catalog.ResolvedRequest{
+							Provider: provider.provider,
+							Deployment: catalog.Deployment{
+								Pricing: pricing,
+								ModelID: provider.modelID,
+							},
+						},
 					},
-				}}
+				}
 				usage := &schemas.BifrostLLMUsage{
 					PromptTokens: 100,
 					PromptTokensDetails: &schemas.ChatPromptTokensDetails{
@@ -511,7 +519,7 @@ func TestCumulativeCacheSnapshotsDoNotDoubleCountReclassification(t *testing.T) 
 	tests := []struct {
 		name        string
 		provider    schemas.ModelProvider
-		modelFormat string
+		modelID     string
 		first       *schemas.ChatPromptTokensDetails
 		second      *schemas.ChatPromptTokensDetails
 		wantRead    int
@@ -548,10 +556,10 @@ func TestCumulativeCacheSnapshotsDoNotDoubleCountReclassification(t *testing.T) 
 			want1h: 6,
 		},
 		{
-			name:        "Anthropic unspecified write becomes authoritative TTL split",
-			provider:    schemas.Azure,
-			modelFormat: "Anthropic",
-			first:       &schemas.ChatPromptTokensDetails{CachedWriteTokens: 10},
+			name:     "Anthropic unspecified write becomes authoritative TTL split",
+			provider: schemas.Azure,
+			modelID:  "claude-opus-5",
+			first:    &schemas.ChatPromptTokensDetails{CachedWriteTokens: 10},
 			second: &schemas.ChatPromptTokensDetails{
 				CachedWriteTokens: 10,
 				CachedWriteTokenDetails: &schemas.ChatCachedWriteTokenDetails{
@@ -612,12 +620,14 @@ func TestCumulativeCacheSnapshotsDoNotDoubleCountReclassification(t *testing.T) 
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			state := &State{Resolution: &catalog.ResolvedRequest{
-				Provider: test.provider,
-				Deployment: catalog.Deployment{Upstream: catalog.Upstream{
-					ModelFormat: test.modelFormat,
-				}},
-			}}
+			state := &State{
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{
+						Provider:   test.provider,
+						Deployment: catalog.Deployment{ModelID: test.modelID},
+					},
+				},
+			}
 			setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
 				PromptTokens:        100,
 				PromptTokensDetails: test.first,
@@ -639,13 +649,13 @@ func TestCumulativeCacheSnapshotsDoNotDoubleCountReclassification(t *testing.T) 
 func TestCacheUsageNormalizationExhaustsSupportedProviderStateSpace(t *testing.T) {
 	providers := []struct {
 		provider          schemas.ModelProvider
-		modelFormat       string
+		modelID           string
 		unspecifiedIsFive bool
 	}{
 		{provider: schemas.OpenAI},
 		{provider: schemas.Anthropic, unspecifiedIsFive: true},
-		{provider: schemas.Azure, modelFormat: "OpenAI"},
-		{provider: schemas.Azure, modelFormat: "  aNtHrOpIc  ", unspecifiedIsFive: true},
+		{provider: schemas.Azure, modelID: "gpt-5.6-sol"},
+		{provider: schemas.Azure, modelID: "claude-opus-5", unspecifiedIsFive: true},
 		{provider: catalog.ProviderChutes},
 	}
 	values := []int{-1, 0, 1, 2}
@@ -669,12 +679,14 @@ func TestCacheUsageNormalizationExhaustsSupportedProviderStateSpace(t *testing.T
 										CachedWriteTokens1h: write1h,
 									}
 								}
-								state := &State{Resolution: &catalog.ResolvedRequest{
-									Provider: provider.provider,
-									Deployment: catalog.Deployment{Upstream: catalog.Upstream{
-										ModelFormat: provider.modelFormat,
-									}},
-								}}
+								state := &State{
+									Pair: Pair{
+										Resolution: &catalog.ResolvedRequest{
+											Provider:   provider.provider,
+											Deployment: catalog.Deployment{ModelID: provider.modelID},
+										},
+									},
+								}
 								setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
 									PromptTokens:        prompt,
 									PromptTokensDetails: details,
@@ -684,10 +696,10 @@ func TestCacheUsageNormalizationExhaustsSupportedProviderStateSpace(t *testing.T
 								got, _ := state.Signals.(*StandardSignals)
 								if want == nil {
 									if got != nil {
-										t.Fatalf("provider=%s format=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want nil", provider.provider, provider.modelFormat, prompt, read, write, write5m, write1h, withTTLDetails, got)
+										t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want nil", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, withTTLDetails, got)
 									}
 								} else if got == nil || got.Prompt != want.Prompt || got.Cached != want.Cached || got.CacheWrite != want.CacheWrite || got.CacheWrite5m != want.CacheWrite5m || got.CacheWrite1h != want.CacheWrite1h {
-									t.Fatalf("provider=%s format=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want %#v", provider.provider, provider.modelFormat, prompt, read, write, write5m, write1h, withTTLDetails, got, want)
+									t.Fatalf("provider=%s model=%q prompt=%d read=%d write=%d 5m=%d 1h=%d details=%t: got %#v, want %#v", provider.provider, provider.modelID, prompt, read, write, write5m, write1h, withTTLDetails, got, want)
 								}
 								cases++
 							}
@@ -764,22 +776,24 @@ func FuzzProviderUsageNormalization(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, prompt int, completion int, total int, reasoning int, read int, write int, write5m int, write1h int, providerIndex uint8, withTTL bool, withHold bool, hold int) {
 		providers := []struct {
-			provider    schemas.ModelProvider
-			modelFormat string
+			provider schemas.ModelProvider
+			modelID  string
 		}{
 			{provider: schemas.OpenAI},
 			{provider: schemas.Anthropic},
-			{provider: schemas.Azure, modelFormat: "OpenAI"},
-			{provider: schemas.Azure, modelFormat: "Anthropic"},
+			{provider: schemas.Azure, modelID: "gpt-5.6-sol"},
+			{provider: schemas.Azure, modelID: "claude-opus-5"},
 			{provider: catalog.ProviderChutes},
 		}
 		provider := providers[int(providerIndex)%len(providers)]
-		state := &State{Resolution: &catalog.ResolvedRequest{
-			Provider: provider.provider,
-			Deployment: catalog.Deployment{Upstream: catalog.Upstream{
-				ModelFormat: provider.modelFormat,
-			}},
-		}}
+		state := &State{
+			Pair: Pair{
+				Resolution: &catalog.ResolvedRequest{
+					Provider:   provider.provider,
+					Deployment: catalog.Deployment{ModelID: provider.modelID},
+				},
+			},
+		}
 		if withHold {
 			state.Hold.Meters = []catalog.MeterEstimate{{
 				HoldRequired: true,
@@ -826,7 +840,7 @@ func FuzzProviderUsageNormalization(f *testing.F) {
 		if got.Reasoning > got.Completion {
 			t.Fatalf("reasoning partition exceeds completion: %#v", got)
 		}
-		if provider.provider == schemas.Anthropic || provider.modelFormat == "Anthropic" {
+		if provider.provider == schemas.Anthropic || schemas.IsAnthropicModel(provider.modelID) {
 			if got.CacheWrite != 0 {
 				t.Fatalf("Anthropic-wire generic cache write was not normalized: %#v", got)
 			}
@@ -845,53 +859,57 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		name          string
 		provider      schemas.ModelProvider
 		selectedTier  string
-		selectedSpeed string
-		selectedGeo   string
+		processing    string
 		currentTier   string
-		currentSpeed  string
 		reportedTier  string
 		reportedSpeed string
 		reportedGeo   string
 		wantError     bool
 	}{
-		{name: "OpenAI Standard cannot become Priority", provider: schemas.OpenAI, reportedTier: "priority", wantError: true},
-		{name: "OpenAI Fast can fall back to Standard", provider: schemas.OpenAI, selectedTier: "priority", reportedTier: "default"},
-		{name: "OpenAI Flex remains Flex", provider: schemas.OpenAI, selectedTier: "flex", reportedTier: "flex"},
-		{name: "Azure Priority can fall back to Standard", provider: schemas.Azure, selectedTier: "priority", reportedTier: "default"},
-		{name: "Anthropic Fast cannot silently become Standard", provider: schemas.Anthropic, selectedSpeed: "fast", reportedSpeed: "standard", wantError: true},
-		{name: "OpenAI Flex cannot become Priority", provider: schemas.OpenAI, selectedTier: "flex", reportedTier: "priority", wantError: true},
-		{name: "Azure Standard cannot become Priority", provider: schemas.Azure, reportedTier: "priority", wantError: true},
+		{name: "OpenAI Standard cannot become Fast", provider: schemas.OpenAI, reportedTier: "priority", wantError: true},
+		{name: "OpenAI Fast can fall back to Standard", provider: schemas.OpenAI, selectedTier: catalog.TierFast, reportedTier: "default"},
+		{name: "OpenAI Flex remains Flex", provider: schemas.OpenAI, selectedTier: catalog.TierFlex, reportedTier: "flex"},
+		{name: "OpenAI Flex cannot become Fast", provider: schemas.OpenAI, selectedTier: catalog.TierFlex, reportedTier: "priority", wantError: true},
+		{name: "OpenAI Ultrafast cannot fall back", provider: schemas.OpenAI, selectedTier: catalog.TierUltrafast, reportedTier: "default", wantError: true},
+		{name: "Azure Fast can fall back to Standard", provider: schemas.Azure, selectedTier: catalog.TierFast, reportedTier: "default"},
+		{name: "Azure Standard cannot become Fast", provider: schemas.Azure, reportedTier: "priority", wantError: true},
+		{name: "Anthropic Fast can fall back to Standard", provider: schemas.Anthropic, selectedTier: catalog.TierFast, reportedSpeed: "standard"},
 		{name: "Anthropic Standard cannot become Fast", provider: schemas.Anthropic, reportedSpeed: "fast", wantError: true},
+		{name: "Anthropic Priority Tier capacity is not Fast", provider: schemas.Anthropic, reportedTier: "priority"},
 		{name: "unknown OpenAI tier is ignored", provider: schemas.OpenAI, reportedTier: "scale"},
-		{name: "unknown OpenAI speed is ignored", provider: schemas.OpenAI, reportedSpeed: "fast"},
-		{name: "unknown Chutes tier is ignored", provider: catalog.ProviderChutes, reportedTier: "priority"},
-		{name: "equivalent OpenAI Priority labels", provider: schemas.OpenAI, selectedTier: "priority", currentTier: "priority", reportedTier: "fast"},
-		{name: "OpenAI tier changes during response", provider: schemas.OpenAI, selectedTier: "priority", currentTier: "priority", reportedTier: "default", wantError: true},
-		{name: "Anthropic speed changes during response", provider: schemas.Anthropic, selectedSpeed: "fast", currentSpeed: "fast", reportedSpeed: "standard", wantError: true},
-		{name: "Anthropic Global may run in the US", provider: schemas.Anthropic, selectedGeo: "global", reportedGeo: "us"},
-		{name: "Anthropic US geography", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "us"},
-		{name: "Anthropic US cannot run globally", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "global", wantError: true},
-		{name: "Anthropic US cannot become unavailable", provider: schemas.Anthropic, selectedGeo: "us", reportedGeo: "not_available", wantError: true},
-		{name: "new Anthropic geography without a pinned geography", provider: schemas.Anthropic, reportedGeo: "eu"},
-		{name: "OpenAI geography report", provider: schemas.OpenAI, reportedGeo: "global"},
+		{name: "OpenAI speed is ignored", provider: schemas.OpenAI, reportedSpeed: "fast"},
+		{name: "Chutes tier is ignored", provider: catalog.ProviderChutes, reportedTier: "priority"},
+		{name: "equivalent OpenAI Fast names", provider: schemas.OpenAI, selectedTier: catalog.TierFast, currentTier: catalog.TierFast, reportedTier: "fast"},
+		{name: "OpenAI tier changes during response", provider: schemas.OpenAI, selectedTier: catalog.TierFast, currentTier: catalog.TierFast, reportedTier: "default", wantError: true},
+		{name: "Anthropic speed changes during response", provider: schemas.Anthropic, selectedTier: catalog.TierFast, currentTier: catalog.TierFast, reportedSpeed: "standard", wantError: true},
+		{name: "Anthropic world may run in the US", provider: schemas.Anthropic, processing: "world", reportedGeo: "us"},
+		{name: "Anthropic US geography", provider: schemas.Anthropic, processing: "US", reportedGeo: "us"},
+		{name: "Anthropic US rejects a global report", provider: schemas.Anthropic, processing: "US", reportedGeo: "global", wantError: true},
+		{name: "Anthropic US cannot become unavailable", provider: schemas.Anthropic, processing: "US", reportedGeo: "not_available", wantError: true},
+		{name: "new Anthropic geography within world", provider: schemas.Anthropic, processing: "world", reportedGeo: "eu"},
+		{name: "Azure US Data Zone Claude geography", provider: schemas.Azure, processing: "US", reportedGeo: "us"},
+		{name: "Azure US Data Zone Claude rejects a global report", provider: schemas.Azure, processing: "US", reportedGeo: "global", wantError: true},
+		{name: "OpenAI geography report", provider: schemas.OpenAI, processing: "world", reportedGeo: "global"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			state := &State{Resolution: &catalog.ResolvedRequest{
-				Provider: tc.provider,
-				Deployment: catalog.Deployment{Upstream: catalog.Upstream{
-					ServiceTier:  tc.selectedTier,
-					Speed:        tc.selectedSpeed,
-					InferenceGeo: tc.selectedGeo,
-				}},
-			}}
-			if tc.currentTier != "" {
-				value := schemas.BifrostServiceTier(tc.currentTier)
-				state.ActualServiceTier = &value
+			selectedTier := tc.selectedTier
+			if selectedTier == "" {
+				selectedTier = catalog.TierStandard
 			}
-			state.ActualSpeed = tc.currentSpeed
-
+			state := &State{
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{
+						Provider: tc.provider,
+						Deployment: catalog.Deployment{
+							Upstream:     catalog.Upstream{ServiceTier: selectedTier},
+							DataHandling: catalog.DataHandling{ProcessingLocation: tc.processing},
+						},
+					},
+				},
+				ActualTier: tc.currentTier,
+			}
 			var tier *schemas.BifrostServiceTier
 			if tc.reportedTier != "" {
 				value := schemas.BifrostServiceTier(tc.reportedTier)
@@ -919,10 +937,14 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 }
 
 func TestStreamingExecutionObservationCannotBeErased(t *testing.T) {
-	state := &State{Resolution: &catalog.ResolvedRequest{
-		Provider:   schemas.OpenAI,
-		Deployment: catalog.Deployment{Upstream: catalog.Upstream{ServiceTier: "priority"}},
-	}}
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Provider:   schemas.OpenAI,
+				Deployment: catalog.Deployment{Upstream: catalog.Upstream{ServiceTier: catalog.TierFast}},
+			},
+		},
+	}
 	priority := schemas.BifrostServiceTierPriority
 	if err := (DefaultAdapter{}).IngestChunk(state, &schemas.BifrostStreamChunk{
 		BifrostChatResponse: &schemas.BifrostChatResponse{ServiceTier: &priority},
@@ -936,21 +958,24 @@ func TestStreamingExecutionObservationCannotBeErased(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("blank execution metadata was rejected: %v", err)
 	}
-	if state.ActualServiceTier == nil || *state.ActualServiceTier != schemas.BifrostServiceTierPriority {
-		t.Fatalf("blank terminal metadata erased Priority execution: %#v", state.ActualServiceTier)
+	if state.ActualTier != catalog.TierFast {
+		t.Fatalf("blank terminal metadata erased Fast execution: %q", state.ActualTier)
 	}
 }
 
 func TestOptionalExecutionMetadataCanBeOmitted(t *testing.T) {
-	state := &State{Resolution: &catalog.ResolvedRequest{
-		Model:    "claude-opus-4-8",
-		Provider: schemas.Anthropic,
-		Deployment: catalog.Deployment{Upstream: catalog.Upstream{
-			ServiceTier:  "default",
-			Speed:        "fast",
-			InferenceGeo: "us",
-		}},
-	}}
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Model:    "claude-opus-4-8",
+				Provider: schemas.Anthropic,
+				Deployment: catalog.Deployment{Upstream: catalog.Upstream{
+					ServiceTier:  catalog.TierFast,
+					InferenceGeo: "us",
+				}},
+			},
+		},
+	}
 	if err := ValidateStreamExecutionBeforeOutput(state); err != nil {
 		t.Fatalf("missing optional stream metadata was rejected: %v", err)
 	}
@@ -960,20 +985,20 @@ func TestOptionalExecutionMetadataCanBeOmitted(t *testing.T) {
 }
 
 func TestUnknownExecutionMetadataCannotRetargetPricing(t *testing.T) {
-	state := &State{Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI}}
+	state := &State{Pair: Pair{Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI}}}
 	unknownTier := schemas.BifrostServiceTier("future-tier")
 	unknownSpeed := "future-speed"
 	if err := validateActualExecutionReport(state, &unknownTier, &unknownSpeed, nil); err != nil {
 		t.Fatalf("unknown additive execution metadata was rejected: %v", err)
 	}
 	observeActualExecution(state, &unknownTier, &unknownSpeed)
-	if state.ActualServiceTier != nil || state.ActualSpeed != "" {
-		t.Fatalf("unknown metadata changed pricing selection: tier=%v speed=%q", state.ActualServiceTier, state.ActualSpeed)
+	if state.ActualTier != "" {
+		t.Fatalf("unknown metadata changed pricing selection: tier=%q", state.ActualTier)
 	}
 }
 
 func TestValidUsageSurvivesLaterResponseShapeFailure(t *testing.T) {
-	state := &State{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+	state := &State{Pair: Pair{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 	err := (DefaultAdapter{}).IngestResponse(state, &schemas.BifrostResponse{
 		ChatResponse: &schemas.BifrostChatResponse{Usage: &schemas.BifrostLLMUsage{
 			PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5,
@@ -990,16 +1015,18 @@ func TestValidUsageSurvivesLaterResponseShapeFailure(t *testing.T) {
 func TestProviderErrorBilledUsageIsValidatedAndSettledExactly(t *testing.T) {
 	statusCode := 500
 	state := &State{
-		Adapter: OpenAIAdapter{},
-		Resolution: &catalog.ResolvedRequest{
-			Provider: schemas.OpenAI,
-			Route:    catalog.RouteResponses,
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1000000"},
-				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
-				billing.MeterOutputTokens:      {billing.RatePerMillionTokens: "2000000"},
-				billing.MeterReasoningTokens:   {billing.RatePerMillionTokens: "3000000"},
-			}},
+		Pair: Pair{
+			Adapter: OpenAIAdapter{},
+			Resolution: &catalog.ResolvedRequest{
+				Provider: schemas.OpenAI,
+				Route:    catalog.RouteResponses,
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1000000"},
+					billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+					billing.MeterOutputTokens:      {billing.RatePerMillionTokens: "2000000"},
+					billing.MeterReasoningTokens:   {billing.RatePerMillionTokens: "3000000"},
+				}},
+			},
 		},
 	}
 	providerErr := &schemas.BifrostError{
@@ -1025,8 +1052,8 @@ func TestProviderErrorBilledUsageIsValidatedAndSettledExactly(t *testing.T) {
 	if !HasMeasuredUsage(state) {
 		t.Fatalf("provider billed usage was not retained: %#v", state.Signals)
 	}
-	if state.ActualSpeed != "" || state.ActualModel != "" {
-		t.Fatalf("actual execution metadata was not retained: speed=%q model=%q", state.ActualSpeed, state.ActualModel)
+	if state.ActualTier != "" || state.ActualModel != "" {
+		t.Fatalf("provider error metadata changed the execution: tier=%q model=%q", state.ActualTier, state.ActualModel)
 	}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
@@ -1038,11 +1065,15 @@ func TestProviderErrorBilledUsageIsValidatedAndSettledExactly(t *testing.T) {
 
 func TestProviderUsageRejectsUnauthorizedFallbackModel(t *testing.T) {
 	fallbackModel := "gpt-5.6-terra"
-	state := &State{Resolution: &catalog.ResolvedRequest{
-		Route:      catalog.RouteChat,
-		Provider:   schemas.OpenAI,
-		Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: "gpt-5.5-2026-04-23"}},
-	}}
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route:      catalog.RouteChat,
+				Provider:   schemas.OpenAI,
+				Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: "gpt-5.5-2026-04-23"}},
+			},
+		},
+	}
 	response := validUnaryChatProviderResponse()
 	response.Usage = &schemas.BifrostLLMUsage{
 		PromptTokens:            1,
@@ -1082,12 +1113,16 @@ func TestProviderResponseRejectsModelSubstitutionAndRoutingFallback(t *testing.T
 			validShape := validUnaryChatProviderResponse()
 			response.Object = validShape.Object
 			response.Choices = validShape.Choices
-			state := &State{Resolution: &catalog.ResolvedRequest{
-				Route:      catalog.RouteChat,
-				Model:      expectedModel,
-				Provider:   schemas.OpenAI,
-				Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: expectedModel}},
-			}}
+			state := &State{
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{
+						Route:      catalog.RouteChat,
+						Model:      expectedModel,
+						Provider:   schemas.OpenAI,
+						Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: expectedModel}},
+					},
+				},
+			}
 			err := (DefaultAdapter{}).IngestResponse(state, &schemas.BifrostResponse{ChatResponse: response}, nil)
 			if !errors.Is(err, ErrProviderExecutionMismatch) {
 				t.Fatalf("model substitution error = %v, want execution mismatch", err)
@@ -1120,12 +1155,16 @@ func TestProviderModelRevisionCompatibility(t *testing.T) {
 
 func TestProviderStreamModelCannotChangeAfterFirstChunk(t *testing.T) {
 	expectedModel := "gpt-5.5-2026-04-23"
-	state := &State{Resolution: &catalog.ResolvedRequest{
-		Route:      catalog.RouteChat,
-		Model:      expectedModel,
-		Provider:   schemas.OpenAI,
-		Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: expectedModel}},
-	}}
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route:      catalog.RouteChat,
+				Model:      expectedModel,
+				Provider:   schemas.OpenAI,
+				Deployment: catalog.Deployment{Upstream: catalog.Upstream{Model: expectedModel}},
+			},
+		},
+	}
 	if err := (DefaultAdapter{}).IngestChunk(state, &schemas.BifrostStreamChunk{
 		BifrostChatResponse: func() *schemas.BifrostChatResponse {
 			response := validChatProviderChunk("chatcmpl_model_guard", false)

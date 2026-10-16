@@ -25,7 +25,7 @@ func TestAttachmentsHoldFullInputAndPreserveProviderPayload(t *testing.T) {
 					block = `{"type":"input_image","image_url":"` + source + `"}`
 					field = "input"
 				}
-				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route, Body: []byte(`{"model":"gpt-5.5","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
+				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route, Body: []byte(`{"model":"openai/gpt-5.5","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -115,7 +115,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 				if route == "responses" {
 					block, field = `{"type":"input_file",`+file+`}`, "input"
 				}
-				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route, Policy: config, Body: []byte(`{"model":"gpt-5.5","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
+				resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + route, Policy: config, Body: []byte(`{"model":"openai/gpt-5.5","` + field + `":[{"role":"user","content":[` + block + `]}]}`)})
 				if tc.reject {
 					if err == nil {
 						t.Fatal("inspection policy bypassed")
@@ -151,7 +151,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 }
 
 func TestProviderFileIDReservesFullInputAndRejectsWithoutBYOK(t *testing.T) {
-	resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-owned-by-someone-else"}]}]}`)})
+	resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_file","file_id":"file-owned-by-someone-else"}]}]}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
 	defer prepared.Clear()
 	for _, kind := range []string{"input_file", "input_image"} {
 		t.Run(kind, func(t *testing.T) {
-			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"gpt-5.5","max_output_tokens":100,"input":[{"role":"user","content":[{"type":"` + kind + `","file_id":"file-customer-owned"}]}]}`)})
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"openai/gpt-5.5","max_output_tokens":100,"input":[{"role":"user","content":[{"type":"` + kind + `","file_id":"file-customer-owned"}]}]}`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -313,7 +313,7 @@ func TestAnthropicAttachmentLoopHoldAndProviderToolCaps(t *testing.T) {
 }
 
 func TestNativeDocumentsPreserveProviderContent(t *testing.T) {
-	for _, model := range []string{"gpt-5.5", "anthropic/anthropic-claude-opus-4-8-fast-us"} {
+	for _, model := range []string{"openai/gpt-5.5", "anthropic/anthropic-claude-opus-4-8-fast-us"} {
 		for _, route := range []string{"chat/completions", "responses"} {
 			for _, file := range []struct{ name, fields, expected string }{
 				{"PDF", `"file_data":"data:application/pdf;base64,JVBERi0xLjcK","filename":"note.pdf"`, "JVBERi0xLjcK"},
@@ -330,7 +330,7 @@ func TestNativeDocumentsPreserveProviderContent(t *testing.T) {
 					}
 					state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
 					err = state.Adapter.ValidateRequest(state)
-					if model == "gpt-5.5" && route == "chat/completions" && file.name == "URL" {
+					if model == "openai/gpt-5.5" && route == "chat/completions" && file.name == "URL" {
 						if err == nil {
 							t.Fatal("OpenAI Chat admitted a URL requiring gateway fetch")
 						}

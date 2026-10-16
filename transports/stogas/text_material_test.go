@@ -25,7 +25,7 @@ func TestChatTextMaterialSeparatesReasoningAndToolArguments(t *testing.T) {
 	}
 	for _, provider := range []schemas.ModelProvider{schemas.Anthropic, schemas.Azure} {
 		state.Resolution.Provider = provider
-		state.Resolution.Deployment.Upstream.ModelFormat = "Anthropic"
+		state.Resolution.Deployment.ModelID = "claude-opus-5"
 		if _, known := state.reasoningTextBytes(); known {
 			t.Fatalf("%s native thinking summary counted as complete reasoning", provider)
 		}

@@ -18,7 +18,7 @@ func BenchmarkAttachmentPreparation(b *testing.B) {
 	for _, size := range []int{1 << 20, 128 << 20} {
 		b.Run(strconv.Itoa(size), func(b *testing.B) {
 			const parallel = 6
-			prefix := `{"model":"gpt-5.5","max_output_tokens":100,"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,`
+			prefix := `{"model":"openai/gpt-5.5","max_output_tokens":100,"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,`
 			suffix := `"}]}]}`
 			payload := (size - len(prefix) - len(suffix)) / 4 * 4
 			bytes := len(prefix) + payload + len(suffix)

@@ -17,7 +17,6 @@ type Adapter interface {
 	IngestChunk(*State, *schemas.BifrostStreamChunk) error
 	IngestResponse(*State, *schemas.BifrostResponse, *schemas.BifrostError) error
 	CalculateUpstreamCost(*State) error
-	SanitizeResponse(*State)
 }
 
 type DefaultAdapter struct{}
@@ -326,20 +325,6 @@ func (DefaultAdapter) CalculateUpstreamCost(state *State) error {
 	}
 	state.UpstreamCostUSD = upstreamCostUSD
 	return nil
-}
-
-func (DefaultAdapter) SanitizeResponse(state *State) {
-	if state == nil {
-		return
-	}
-	state.ProviderResponseHeaders = nil
-	if state.Response == nil {
-		return
-	}
-	extra := state.Response.GetExtraFields()
-	if extra != nil {
-		state.ProviderResponseHeaders = extra.ProviderResponseHeaders
-	}
 }
 
 func responsesStreamHasWebSearchCall(resp *schemas.BifrostResponsesStreamResponse) bool {

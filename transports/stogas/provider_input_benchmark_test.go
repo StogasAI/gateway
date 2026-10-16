@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
 func BenchmarkTextPresence(b *testing.B) {
@@ -44,7 +42,7 @@ func BenchmarkOpenAIInputScan(b *testing.B) {
 			run  func() error
 		}{
 			{"cache_breakpoints", func() error {
-				found, err := validatePromptCacheBreakpoints(raw, catalog.RouteChat)
+				found, err := validatePromptCacheBreakpoints(raw)
 				if found != 0 {
 					b.Fatalf("found unexpected cache breakpoints: %d", found)
 				}

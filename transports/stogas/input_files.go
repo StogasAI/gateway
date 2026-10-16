@@ -111,7 +111,7 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		if rawJSONValueSet(file["file_type"]) && !responsesUsesAnthropicWire(state) {
 			return invalidRequest(path + " native files must declare MIME type in a base64 data URL, not file_type")
 		}
-		formats := state.Resolution.Deployment.FileInputs
+		formats := state.Resolution.Deployment.NativeFileInputs
 		if len(formats.MediaTypes) == 0 {
 			return invalidRequest(path + " native files are not supported by this deployment")
 		}

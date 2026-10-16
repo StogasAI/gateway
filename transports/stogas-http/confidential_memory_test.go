@@ -46,6 +46,11 @@ func TestColdStateCannotConsumeRequestAdmissionHeadroom(t *testing.T) {
 	if err := request.admitJSON(catalog.MaxRequestJSONValues); err != nil {
 		t.Fatal("idle state prevented structural admission", err)
 	}
+	preparation := memory.newLease(requestLifetimeMemory)
+	if !preparation.grow(int(requestPreparationWeight(bodyBytes, bodyBytes))) {
+		t.Fatal("idle state prevented request preparation")
+	}
+	preparation.release()
 	response := memory.newLease(downstreamDeliveryMemory)
 	if !response.grow(maxInferenceStreamResponseBytes) {
 		t.Fatal("idle state prevented a bounded response")
@@ -84,6 +89,11 @@ func TestConfidentialMemoryConfigurationCanFitOneCompleteSession(t *testing.T) {
 				t.Fatal("valid configuration refused maximum request")
 			}
 			defer request.release()
+			preparation := admission.newLease(requestLifetimeMemory)
+			if !preparation.grow(int(requestPreparationWeight(bodyBytes, bodyBytes))) {
+				t.Fatal("valid configuration refused maximum request preparation")
+			}
+			preparation.release()
 			response := admission.newLease(downstreamDeliveryMemory)
 			if !response.grow(maxInferenceStreamResponseBytes) {
 				t.Fatal("valid configuration refused bounded response")

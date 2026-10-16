@@ -2650,6 +2650,8 @@ func TestSupportsAdaptiveThinking(t *testing.T) {
 		{"claude-mythos-5", true},
 		{"claude-mythos-preview", true},
 		{"global.anthropic.claude-fable-5", true},
+		// Haiku 5.5: adaptive thinking is on by default.
+		{"claude-haiku-5-5", true},
 		{"claude-opus-4-5-20241022", false},
 		{"claude-sonnet-4-5-20241022", false},
 		{"claude-haiku-4-6-20250514", false}, // haiku does not support adaptive
@@ -2792,6 +2794,9 @@ func TestIsAdaptiveOnlyThinkingModel(t *testing.T) {
 		{"claude-fable-5", true},
 		{"claude-mythos-5", true},
 		{"claude-mythos-preview", true},
+		// Haiku 5.5.
+		{"claude-haiku-5-5", true},
+		{"global.anthropic.claude-haiku-5-5", true},
 		// Adaptive-capable but NOT adaptive-only (budget_tokens still accepted).
 		{"claude-opus-4-6", false},
 		{"claude-sonnet-4-6", false},
@@ -2936,6 +2941,7 @@ func TestSupportsEffortParameter(t *testing.T) {
 		{"claude-opus-4-5", true},
 		{"claude-opus-4.5-20251101", true},
 		{"claude-opus-4-5-20251101", true},
+		{"claude-haiku-5-5", true},
 		// Bedrock + Vertex IDs for supported models keep the substring shape.
 		{"anthropic.claude-opus-4-8-v1", true},
 		{"anthropic.claude-opus-4-7-v1", true},
@@ -5450,6 +5456,7 @@ func TestDefaultSupportsMidConversationSystem_ModelList(t *testing.T) {
 		{"claude-opus-5-5", true},
 		{"claude-sonnet-5-5", true},
 		{"claude-fable-5-1", true},
+		{"claude-haiku-5-5", true},
 		{"claude-sonnet-5", false},
 		{"claude-opus-4-7", false},
 		{"claude-haiku-4-5", false},
@@ -5467,5 +5474,8 @@ func TestDefaultSupportsMidConversationSystem_ModelList(t *testing.T) {
 	}
 	if !DefaultSupportsMidConversationOutputConfig(schemas.Anthropic, "claude-sonnet-5-5") {
 		t.Error("Sonnet 5.5 must report per-message effort support")
+	}
+	if !DefaultSupportsMidConversationOutputConfig(schemas.Anthropic, "claude-haiku-5-5") {
+		t.Error("Haiku 5.5 must report per-message effort support")
 	}
 }

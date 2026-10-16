@@ -136,7 +136,7 @@ func (s *Server) admitLocation(ctx *requestContext) bool {
 	ctx.writer.Header().Set("Cache-Control", "no-store")
 	ctx.writer.Header().Set("Access-Control-Allow-Origin", "*")
 	s.writeError(ctx, http.StatusUnavailableForLegalReasons, map[string]any{"error": map[string]any{
-		"type": "permission_denied", "code": "region_unavailable", "message": "Stogas is not available in your region",
+		"type": "permission_denied", "code": "region_unavailable", "message": "Our service is not available in your region",
 	}})
 	return false
 }

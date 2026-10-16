@@ -6,21 +6,15 @@ import (
 	"time"
 )
 
-const PublicCatalogVersion = "stogas.gateway.catalog.v1"
-
+// PublicCatalog is the public catalog artifact with the identity of its release.
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`
-	Archive       json.RawMessage            `json:"archive"`
 	Sequence      uint64                     `json:"sequence"`
 	RuntimeDigest string                     `json:"runtimeDigest"`
 	PublicDigest  string                     `json:"publicDigest"`
 	Graph         map[string]json.RawMessage `json:"graph"`
-}
-
-type publicBundle struct {
-	Schema  string                     `json:"schema"`
-	Archive json.RawMessage            `json:"archive"`
-	Graph   map[string]json.RawMessage `json:"graph"`
+	Schedule      json.RawMessage            `json:"schedule"`
+	Periods       json.RawMessage            `json:"periods"`
 }
 
 type PublicModelsResponse struct {
@@ -40,18 +34,12 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 	if snap == nil || len(snap.publicRaw) == 0 {
 		return PublicCatalog{}, false
 	}
-	bundle := publicBundle{}
-	if err := json.Unmarshal(snap.publicRaw, &bundle); err != nil || bundle.Schema != publicSchema {
+	payload := PublicCatalog{}
+	if err := json.Unmarshal(snap.publicRaw, &payload); err != nil || payload.Schema != publicSchema {
 		return PublicCatalog{}, false
 	}
-	return PublicCatalog{
-		Schema:        PublicCatalogVersion,
-		Archive:       bundle.Archive,
-		Sequence:      snap.identity.Sequence,
-		RuntimeDigest: snap.identity.Digest,
-		PublicDigest:  snap.publicDigest,
-		Graph:         bundle.Graph,
-	}, true
+	payload.Sequence, payload.RuntimeDigest, payload.PublicDigest = snap.identity.Sequence, snap.identity.Digest, snap.publicDigest
+	return payload, true
 }
 
 func ActiveIdentity() (Identity, bool) {
@@ -62,27 +50,48 @@ func ActiveIdentity() (Identity, bool) {
 	return snap.identity, true
 }
 
+// PublicModelsPayload lists the selectors that reach an available deployment. Each entry shows
+// the release date and author of the model it names. A group names its newest model, so a group
+// whose newest models share a release date is left out.
 func PublicModelsPayload() (PublicModelsResponse, bool) {
-	snap := active.Load()
+	snap := activeState()
 	if snap == nil {
 		return PublicModelsResponse{}, false
 	}
-	modelIDsBySelector := make(map[string]string, len(snap.modelSelectors)+len(snap.deploymentSelectors))
-	availableModelIDs := make(map[string]bool)
-	for _, deployment := range snap.graph.Deployments {
-		if deploymentAvailableNow(deployment) {
-			availableModelIDs[deployment.ModelID] = true
+	modelIDsBySelector := make(map[string]string)
+	available := make(map[string]bool)
+	type newestModel struct {
+		id   string
+		tied bool
+	}
+	groups := make(map[string]newestModel)
+	for deploymentID, deployment := range snap.graph.Deployments {
+		if !deploymentAvailableNow(deployment) {
+			continue
+		}
+		modelIDsBySelector[deploymentID] = deployment.ModelID
+		available[deployment.ModelID] = true
+		if deployment.ApprovalRequired {
+			continue
+		}
+		released := snap.graph.Models[deployment.ModelID].ReleaseDate
+		for _, groupID := range snap.graph.Models[deployment.ModelID].GroupIDs {
+			newest, listed := groups[groupID]
+			if !listed || snap.graph.Models[newest.id].ReleaseDate < released {
+				groups[groupID] = newestModel{id: deployment.ModelID}
+			} else if newest.id != deployment.ModelID && snap.graph.Models[newest.id].ReleaseDate == released {
+				groups[groupID] = newestModel{id: newest.id, tied: true}
+			}
 		}
 	}
 	for selector, modelID := range snap.modelSelectors {
-		if availableModelIDs[modelID] {
+		if available[modelID] {
 			modelIDsBySelector[selector] = modelID
 		}
 	}
-	for selector, deploymentID := range snap.deploymentSelectors {
-		if deployment, ok := snap.graph.Deployments[deploymentID]; ok &&
-			deploymentAvailableNow(deployment) {
-			modelIDsBySelector[selector] = deployment.ModelID
+	for groupID, newest := range groups {
+		if !newest.tied {
+			modelIDsBySelector[groupID] = newest.id
 		}
 	}
 	ids := make([]string, 0, len(modelIDsBySelector))
@@ -93,14 +102,12 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 	models := make([]PublicModel, 0, len(ids))
 	for _, id := range ids {
 		model := snap.graph.Models[modelIDsBySelector[id]]
-		created := int64(1)
-		if released, err := time.Parse("2006-01-02", model.ReleaseDate); err == nil {
-			created = released.Unix()
-		}
+		// The loader accepts only valid release dates.
+		released, _ := time.Parse(time.DateOnly, model.ReleaseDate)
 		models = append(models, PublicModel{
 			ID:      id,
 			Object:  "model",
-			Created: created,
+			Created: released.Unix(),
 			OwnedBy: model.AuthorID,
 		})
 	}

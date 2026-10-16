@@ -12,8 +12,6 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-const longContextThresholdTokens = billing.LongContextThresholdTokens
-
 func baseHoldEstimate(state *State) (HoldEstimate, error) {
 	if state == nil || state.Resolution == nil {
 		return HoldEstimate{}, nil
@@ -76,10 +74,7 @@ func calculateBaseUpstreamCost(state *State, extraMeters []catalog.MeterEstimate
 		cacheWrite5mTokens = state.Signals.CacheWrite5mInputTokens()
 		cacheWrite1hTokens = state.Signals.CacheWrite1hInputTokens()
 	}
-	rateMode := billing.TokenRateStandard
-	if promptTokens > longContextThresholdTokens {
-		rateMode = billing.TokenRateLongContext
-	}
+	rateMode := billing.TokenRateForPrompt(promptTokens)
 	pricing := catalog.Pricing{}
 	if state.Resolution != nil {
 		pricing = effectivePricingForState(state)
@@ -234,8 +229,8 @@ func ordinaryInputMarginalCost(state *State, quantity *big.Int) (*money.USD, err
 		return new(money.USD), nil
 	}
 	mode := billing.TokenRateStandard
-	if state.Signals != nil && state.Signals.PromptTokens() > longContextThresholdTokens {
-		mode = billing.TokenRateLongContext
+	if state.Signals != nil {
+		mode = billing.TokenRateForPrompt(state.Signals.PromptTokens())
 	}
 	rateKey, rate, ok := billing.PricingRate(
 		effectivePricingForState(state),
@@ -289,15 +284,11 @@ func highestInputHoldMeter(pricing catalog.Pricing, alternatives ...string) stri
 func openAICacheWriteHoldMeter(state *State) string {
 	if state == nil ||
 		state.Resolution == nil ||
-		(state.Resolution.Provider != schemas.OpenAI && state.Resolution.Provider != schemas.Azure) ||
-		!strings.HasPrefix(state.Resolution.Deployment.Upstream.Model, "gpt-5.6-") {
+		(state.Resolution.Provider != schemas.OpenAI && state.Resolution.Provider != schemas.Azure) {
 		return ""
 	}
 	raw := state.Resolution.RawBody()
-	breakpoints, err := validatePromptCacheBreakpoints(
-		rawPromptContent(state.Resolution.Route, raw),
-		state.Resolution.Route,
-	)
+	breakpoints, err := validatePromptCacheBreakpoints(rawPromptContent(state.Resolution.Route, raw))
 	if err != nil {
 		return billing.MeterCacheWriteInputTokens
 	}
@@ -317,7 +308,7 @@ func effectivePricingForState(state *State) catalog.Pricing {
 	if state == nil || state.Resolution == nil {
 		return nil
 	}
-	return effectivePricingForDeployment(pricingDeploymentForState(state))
+	return effectivePricingForDeployment(ExecutionDeployment(state))
 }
 
 func effectivePricingForDeployment(deployment catalog.Deployment) catalog.Pricing {
@@ -368,96 +359,21 @@ func copyRates(rates map[string]string) map[string]string {
 	return copied
 }
 
-func pricingDeploymentForState(state *State) catalog.Deployment {
+// ExecutionDeployment returns the deployment that prices the request. A Fast request that the
+// provider ran at Standard gets the Standard price; any other report keeps the authorized
+// deployment, so provider metadata cannot raise the price or retarget the request.
+func ExecutionDeployment(state *State) catalog.Deployment {
 	if state == nil || state.Resolution == nil {
 		return catalog.Deployment{}
 	}
-	deployment := state.Resolution.Deployment
-	actualTier := state.ActualServiceTier
-	actualSpeed := state.ActualSpeed
-	if signals, ok := state.Signals.(*StandardSignals); ok && signals != nil {
-		if actualTier == nil {
-			actualTier = signals.ActualServiceTier
-		}
-		if actualSpeed == "" {
-			actualSpeed = signals.ActualSpeed
-		}
+	selected := state.Resolution.Deployment
+	if selected.Upstream.ServiceTier != catalog.TierFast || state.ActualTier != catalog.TierStandard {
+		return selected
 	}
-	actualTier, actualSpeed = permittedActualExecution(state.Resolution.Provider, deployment, actualTier, actualSpeed)
-	if actualTier == nil && actualSpeed == "" {
-		return deployment
+	if standard, ok := catalog.StandardTierDeployment(state.Resolution.Provider, state.Resolution.Route, selected); ok {
+		return standard
 	}
-	// A provider-reported fallback model is diagnostic metadata. It cannot
-	// change the deployment, price, or receipt authorized for this request.
-	actual, ok := catalog.DeploymentForActualExecution(state.Resolution.Provider, state.Resolution.Route, deployment, actualTier, actualSpeed)
-	if !ok {
-		return deployment
-	}
-	return actual
-}
-
-func permittedActualExecution(
-	provider schemas.ModelProvider,
-	selected catalog.Deployment,
-	actualTier *schemas.BifrostServiceTier,
-	actualSpeed string,
-) (*schemas.BifrostServiceTier, string) {
-	selectedTier := strings.ToLower(strings.TrimSpace(selected.Upstream.ServiceTier))
-	actualTierClass := executionTierClass(provider, actualTier)
-	if actualTierClass == "" {
-		actualTier = nil
-	}
-	actualSpeed = strings.ToLower(strings.TrimSpace(actualSpeed))
-
-	switch provider {
-	case schemas.OpenAI:
-		switch selectedTier {
-		case "flex":
-			if actualTierClass != "flex" {
-				actualTier = nil
-			}
-		case "priority":
-			if actualTierClass != "priority" && actualTierClass != "standard" {
-				actualTier = nil
-			}
-		default:
-			if actualTierClass != "standard" {
-				actualTier = nil
-			}
-		}
-		actualSpeed = ""
-	case schemas.Azure:
-		if selectedTier == "priority" {
-			if actualTierClass != "priority" && actualTierClass != "standard" {
-				actualTier = nil
-			}
-		} else if actualTierClass != "standard" {
-			actualTier = nil
-		}
-		actualSpeed = ""
-	case schemas.Anthropic:
-		if actualTierClass != "standard" {
-			actualTier = nil
-		}
-		selectedSpeed := strings.ToLower(strings.TrimSpace(selected.Upstream.Speed))
-		if selectedSpeed == "fast" {
-			if !stringInSet(actualSpeed, "fast", "") {
-				actualSpeed = ""
-			}
-		} else if actualSpeed != "standard" {
-			actualSpeed = ""
-		}
-	default:
-		actualTier = nil
-		actualSpeed = ""
-	}
-	return actualTier, actualSpeed
-}
-
-// ExecutionDeployment returns an allowed concrete execution variant for the
-// authorized deployment. Unrecognized provider metadata cannot retarget it.
-func ExecutionDeployment(state *State) catalog.Deployment {
-	return pricingDeploymentForState(state)
+	return selected
 }
 
 func canonicalizeMeters(meters []catalog.MeterEstimate, pricing catalog.Pricing) ([]catalog.MeterEstimate, string, error) {

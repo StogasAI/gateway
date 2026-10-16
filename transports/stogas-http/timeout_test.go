@@ -45,13 +45,13 @@ func TestResponseDeadlinePreservesProviderLifetimeAndFinalUsage(t *testing.T) {
 				ctx.responseWait.startOutput()
 				cancel := func() { ctx.responseWait.stop(); cancelRequest() }
 				defer cancel()
-				state := &stogas.State{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+				state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 				provider := make(chan *schemas.BifrostStreamChunk)
 				releaseProvider := make(chan struct{})
 				release := sync.OnceFunc(func() { close(releaseProvider) })
 				defer release()
 				finished := make(chan struct{})
-				reader := server.startSSEStream(ctx, request, state, provider, true, false, cancel, func() { close(finished) })
+				reader := startTestStream(server, ctx, request, state, provider, cancel, func() { close(finished) })
 				defer reader.Close()
 				startedAt := time.Now()
 				go func() {
@@ -119,14 +119,14 @@ func TestRequestTimeoutIncludesPreparationAndRejectsExpiredAdmission(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`), Policy: config})
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}]}`), Policy: config})
 		if err != nil {
 			t.Fatal(err)
 		}
 		startedAt := time.Now()
 		time.Sleep(3 * time.Second)
 		ctx := newTestRequest(t)
-		request, state, cancel, err := newRequestContext(ctx, startedAt, resolution, apiCredential{}, nil, "")
+		request, state, cancel, err := newRequestContext(ctx, startedAt, resolution, apiCredential{}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,7 +140,7 @@ func TestRequestTimeoutIncludesPreparationAndRejectsExpiredAdmission(t *testing.
 		if !ctx.responseWait.timedOut() || request.Err() != nil || ctx.responseWait.startOutput() {
 			t.Fatal("expired preparation permitted dispatch or canceled the provider lifetime")
 		}
-		request, state, cancel, err = newRequestContext(newTestRequest(t), startedAt, resolution, apiCredential{}, nil, "")
+		request, state, cancel, err = newRequestContext(newTestRequest(t), startedAt, resolution, apiCredential{}, "")
 		if !errors.Is(err, context.DeadlineExceeded) || request != nil || state != nil || cancel != nil {
 			t.Fatal("expired preparation created an inference context")
 		}
@@ -159,9 +159,11 @@ func TestOutputTimeoutPreservesUsageOnProviderStartupFailure(t *testing.T) {
 		if request.Err() != nil {
 			t.Fatal("caller timeout canceled the upstream request")
 		}
-		state := &stogas.State{Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}
+		state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
 		failure := &schemas.BifrostError{Type: schemas.Ptr(schemas.RequestCancelled), Error: &schemas.ErrorField{Message: "provider canceled"}, ExtraFields: schemas.BifrostErrorExtraFields{BilledUsage: &schemas.BifrostLLMUsage{PromptTokens: 7, CompletionTokens: 3, TotalTokens: 10}}}
-		(&Server{}).failStreamStart(ctx, request, state, stogas.DefaultAdapter{}, failure, cancel)
+		run := testRun(&Server{}, ctx, request, state, cancel)
+		run.called, run.last, run.lastCtx = run.pair, failure, request
+		(&Server{}).failRun(ctx, run, true)
 		if response := testResponse(ctx); response.Code != 504 || !strings.Contains(response.Body.String(), `"request_timeout"`) {
 			t.Fatalf("output timeout became a provider cancellation: %d %s", response.Code, response.Body.String())
 		}
@@ -179,7 +181,7 @@ func TestClientObservationFinishesBeforeSettlement(t *testing.T) {
 			client, disconnect := context.WithCancel(ctx.request.Context())
 			defer disconnect()
 			ctx.request = ctx.request.WithContext(client)
-			provider, state, cleanup, err := newRequestContext(ctx, time.Now(), &catalog.ResolvedRequest{Route: catalog.RouteChat}, apiCredential{}, nil, "")
+			provider, state, cleanup, err := newRequestContext(ctx, time.Now(), &catalog.ResolvedRequest{Route: catalog.RouteChat}, apiCredential{}, "")
 			if err != nil {
 				t.Fatal(err)
 			}

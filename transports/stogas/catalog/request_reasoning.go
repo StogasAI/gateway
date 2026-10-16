@@ -283,7 +283,7 @@ func validateRawReasoningParameters(rawData map[string]json.RawMessage, allowedF
 	if hasReasoning {
 		for name := range reasoning {
 			if !allowedFields[name] {
-				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning." + name + " is not supported by Stogas API"}
+				return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning." + name + " is not supported"}
 			}
 		}
 	}

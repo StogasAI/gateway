@@ -41,8 +41,7 @@ func BenchmarkRoutingCredentialAlternatives(b *testing.B) {
 				for b.Loop() {
 					variants := &requestVariants{base: RequestPolicy{Config: config}, selections: selections}
 					input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), Policy: config, AvailableCredentials: map[string][]int{"openai": indexes}}
-					_, _, err := selectRequestCandidate(input, RouteChat, base.RequestedModel, ProviderRoutingPreference{}, variants)
-					if deployments == 1 && err != nil || deployments > 1 && PublicError(err).Code != "model_ambiguous" {
+					if err := planFirstPair(input, base.RequestedModel, variants); err != nil {
 						b.Fatalf("unexpected routing result: %v", err)
 					}
 				}
@@ -92,7 +91,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 			return RequestPolicy{Config: configs[index]}, nil
 		}}
 		input := RequestInput{now: time.Now(), policyBudget: policy.NewCELBudget(), AvailableCredentials: map[string][]int{"openai": indexes}}
-		if _, _, err := selectRequestCandidate(input, RouteChat, base.RequestedModel, ProviderRoutingPreference{}, variants); PublicError(err).Code != "model_ambiguous" {
+		if err := planFirstPair(input, base.RequestedModel, variants); err != nil {
 			b.Fatalf("unexpected routing result: %v", err)
 		}
 	}
@@ -111,7 +110,7 @@ func BenchmarkRoutingSingleBlend(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	source, err := policy.CompileSource([]byte(`{"routing":{"filter": "blended_price(1, 3, 'per_mill_tokens') < decimal(\"100\")", "sort": [{"by":"blended_price(1, 3, 'per_mill_tokens')","direction":"asc"}]}}`))
+	source, err := policy.CompileSource([]byte(`{"routing":{"filter": "blended_price(1, 3) < decimal(\"100\")", "sort": [{"by":"blended_price(1, 3)","direction":"asc"}]}}`))
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -174,10 +173,10 @@ func BenchmarkRoutingBlendedPrices(b *testing.B) {
 						if unique {
 							weight -= scope*len(predicates) + i
 						}
-						predicates[i] = fmt.Sprintf("blended_price(%d, 9007199254740990, 'per_mill_tokens') < decimal('1000000000000')", weight)
+						predicates[i] = fmt.Sprintf("blended_price(%d, 9007199254740990) < decimal('1000000000000')", weight)
 					}
 					filter := strings.Join(predicates, " && ")
-					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3, 'per_mill_tokens')", Direction: "asc"}}, "maxAttempts": 3}})
+					raw, err := json.Marshal(map[string]any{"routing": map[string]any{"filter": filter, "sort": []policy.Sort{{By: "blended_price(1, 3)", Direction: "asc"}}, "fallbacks": 2}})
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -222,4 +221,35 @@ func BenchmarkRoutingBlendedPrices(b *testing.B) {
 			})
 		}
 	}
+}
+
+// planFirstPair plans routing and takes the first pair without preparing a body.
+func planFirstPair(input RequestInput, model string, variants *requestVariants) error {
+	plan, err := planRequest(input, RouteChat, model, ProviderRoutingPreference{}, variants)
+	if err == nil {
+		plan.resolve = func(routingSelection, RequestPolicy) (*ResolvedRequest, error) { return &ResolvedRequest{}, nil }
+		_, err = plan.take(nil)
+	}
+	return err
+}
+
+// Filters and orders candidates that share one activated configuration, as
+// planRequest does after credential policies are applied.
+func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Config, preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
+	var result routingCandidates
+	for _, candidate := range resolved {
+		values, ok := newResolvedPolicyValues(candidate)
+		if !ok {
+			continue
+		}
+		matched, err := policyMatches(config, values)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			candidate.policy = config
+			result.add(candidate, values)
+		}
+	}
+	return result.finish(preference)
 }

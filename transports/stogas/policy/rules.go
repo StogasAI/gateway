@@ -111,6 +111,11 @@ func compileRules(documents map[string]ruleDocument, plugins map[[32]byte]*Plugi
 		if err != nil {
 			return nil, err
 		}
+		// One order and fallback count apply to every candidate. A condition that
+		// differs between candidates would plan them by a setting only some carry.
+		if rule.When != nil && rule.When.candidate && rule.Value.settings&planPermissions != 0 {
+			return nil, configError("rule %q cannot set routing.sort, routing.selection or routing.fallbacks because its condition reads author, model, deployment, route or provider fields", name)
+		}
 		if document.source.Encrypted() {
 			// Its condition and readable settings can be evaluated without the
 			// root. Open only the active, selected request's encrypted plugins.
@@ -195,12 +200,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 
 const pluginPermissions = permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport
 const orderingPermissions = permissionSort | permissionSelection
-
-// HasRequiredOrder includes an explicit empty ordering, which suppresses
-// defaults without removing any other applicable required ordering.
-func (c *Config) HasRequiredOrder() bool {
-	return c != nil && c.requiredSettings&orderingPermissions != 0
-}
+const planPermissions = orderingPermissions | permissionFallbacks
 
 func settingsMask(value Permission) Permission {
 	if value&pluginPermissions != 0 {

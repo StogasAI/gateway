@@ -80,10 +80,8 @@ func validateAnthropicTaskBudget(state *State) error {
 	if !rawJSONValueSet(raw) {
 		return nil
 	}
-	model := state.Resolution.Deployment.Upstream.Model
-	if !anthropicprovider.IsOpus47Plus(model) && !anthropicprovider.IsFableFamily(model) {
-		return invalidRequest("task_budget is not supported for this Anthropic model")
-	}
+	// task_budget is advisory and never changes the hold, so the provider owns
+	// which models accept it and its minimum.
 	taskBudget, ok := rawObject(raw)
 	if !ok {
 		return invalidRequest("task_budget must be an object")
@@ -94,24 +92,13 @@ func validateAnthropicTaskBudget(state *State) error {
 	if rawString(taskBudget["type"]) != "tokens" {
 		return invalidRequest("task_budget.type must be tokens")
 	}
-	total, exists, err := rawInteger(taskBudget["total"], "task_budget.total")
-	if err != nil {
+	if _, exists, err := rawInteger(taskBudget["total"], "task_budget.total"); err != nil {
 		return err
-	}
-	if !exists {
+	} else if !exists {
 		return invalidRequest("task_budget.total is required")
 	}
-	if total < 20_000 {
-		return invalidRequest("task_budget.total is below the provider minimum")
-	}
-	remaining, exists, err := rawInteger(taskBudget["remaining"], "task_budget.remaining")
-	if err != nil {
-		return err
-	}
-	if exists && (remaining < 0 || remaining > total) {
-		return invalidRequest("task_budget.remaining must be between zero and task_budget.total")
-	}
-	return nil
+	_, _, err := rawInteger(taskBudget["remaining"], "task_budget.remaining")
+	return err
 }
 
 func validateAnthropicContextManagement(state *State) error {
@@ -134,7 +121,7 @@ func validateAnthropicContextManagement(state *State) error {
 		return invalidRequest("context_management.edits must be a non-empty array")
 	}
 	seen := make(map[string]struct{}, len(rawEdits))
-	for index, rawEdit := range rawEdits {
+	for _, rawEdit := range rawEdits {
 		edit, ok := rawObject(rawEdit)
 		if !ok || edit == nil {
 			return invalidRequest("context_management.edits[] must be an object")
@@ -157,17 +144,11 @@ func validateAnthropicContextManagement(state *State) error {
 				return err
 			}
 		case string(anthropicprovider.ContextManagementEditTypeCompact):
-			if !anthropicModelSupportsCompaction(state.Resolution.Deployment.Upstream.Model) {
-				return invalidRequest("compact_20260112 is not supported for this Anthropic model")
-			}
 			if err := validateAnthropicCompactEdit(edit); err != nil {
 				return err
 			}
 		default:
 			return invalidRequest("context_management.edits[].type is not supported")
-		}
-		if index > 0 && editType == string(anthropicprovider.ContextManagementEditTypeClearThinking) {
-			return invalidRequest("clear_thinking_20251015 must be the first context management edit")
 		}
 	}
 	return nil
@@ -216,7 +197,7 @@ func validateAnthropicClearToolUsesEdit(edit map[string]json.RawMessage) error {
 		return invalidRequest("clear_tool_uses_20250919 contains unsupported fields")
 	}
 	if raw, exists := edit["clear_at_least"]; exists && !rawJSONIsNull(raw) {
-		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.clear_at_least", 0, "input_tokens"); err != nil {
+		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.clear_at_least", "input_tokens"); err != nil {
 			return err
 		}
 	}
@@ -234,12 +215,12 @@ func validateAnthropicClearToolUsesEdit(edit map[string]json.RawMessage) error {
 		}
 	}
 	if raw, exists := edit["keep"]; exists {
-		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.keep", 0, "tool_uses"); err != nil {
+		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.keep", "tool_uses"); err != nil {
 			return err
 		}
 	}
 	if raw, exists := edit["trigger"]; exists {
-		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.trigger", 0, "input_tokens", "tool_uses"); err != nil {
+		if err := validateAnthropicTypeCount(raw, "clear_tool_uses_20250919.trigger", "input_tokens", "tool_uses"); err != nil {
 			return err
 		}
 	}
@@ -262,14 +243,14 @@ func validateAnthropicCompactEdit(edit map[string]json.RawMessage) error {
 		}
 	}
 	if raw, exists := edit["trigger"]; exists && !rawJSONIsNull(raw) {
-		if err := validateAnthropicTypeCount(raw, "compact_20260112.trigger", 50_000, "input_tokens"); err != nil {
+		if err := validateAnthropicTypeCount(raw, "compact_20260112.trigger", "input_tokens"); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateAnthropicTypeCount(raw json.RawMessage, name string, minimum int, allowedTypes ...string) error {
+func validateAnthropicTypeCount(raw json.RawMessage, name string, allowedTypes ...string) error {
 	object, ok := rawObject(raw)
 	if !ok || object == nil {
 		return invalidRequest(name + " must be an object")
@@ -289,8 +270,8 @@ func validateAnthropicTypeCount(raw json.RawMessage, name string, minimum int, a
 	if err != nil {
 		return err
 	}
-	if !exists || value < minimum {
-		return invalidRequest(name + ".value is below the provider minimum")
+	if !exists || value < 0 {
+		return invalidRequest(name + ".value must be a non-negative integer")
 	}
 	return nil
 }
@@ -312,26 +293,6 @@ func validateAnthropicToolNameArray(raw json.RawMessage, name string) error {
 		seen[nameValue] = struct{}{}
 	}
 	return nil
-}
-
-func anthropicModelSupportsCompaction(model string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	for _, prefix := range []string{
-		"claude-fable-5",
-		"claude-mythos-5",
-		"claude-mythos-preview",
-		"claude-opus-4-6",
-		"claude-opus-4-7",
-		"claude-opus-4-8",
-		"claude-opus-5",
-		"claude-sonnet-4-6",
-		"claude-sonnet-5",
-	} {
-		if strings.HasPrefix(normalized, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func rawJSONIsNull(raw json.RawMessage) bool {
@@ -383,7 +344,7 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	); err != nil {
 		return err
 	}
-	if count, err := validatePromptCacheBreakpoints(raw["messages"], catalog.RouteChat); err != nil {
+	if count, err := validatePromptCacheBreakpoints(raw["messages"]); err != nil {
 		return err
 	} else if count > 0 {
 		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
@@ -442,7 +403,7 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	); err != nil {
 		return err
 	}
-	if count, err := validatePromptCacheBreakpoints(raw["input"], catalog.RouteResponses); err != nil {
+	if count, err := validatePromptCacheBreakpoints(raw["input"]); err != nil {
 		return err
 	} else if count > 0 {
 		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
@@ -506,7 +467,7 @@ func validateAnthropicChatMessageCacheControls(raw json.RawMessage) error {
 	}
 	for _, message := range messages {
 		if _, ok := message["cache_control"]; ok {
-			return invalidRequest("messages[].cache_control is not supported by Stogas API")
+			return invalidRequest("messages[].cache_control is not supported")
 		}
 		for _, block := range rawChatMessageContentBlocks(message) {
 			if cacheControl, ok := block["cache_control"]; ok {
@@ -549,14 +510,10 @@ func walkAnthropicResponsesInputCacheControls(raw json.RawMessage, path string) 
 		if !ok {
 			return nil
 		}
+		// Input validation owns which blocks may carry cache_control.
 		if cacheControl, ok := object["cache_control"]; ok {
-			switch rawString(object["type"]) {
-			case "input_text", "output_text":
-				if err := validateAnthropicCacheControl(cacheControl, path+".cache_control"); err != nil {
-					return err
-				}
-			default:
-				return invalidRequest(path + ".cache_control is not supported by Stogas API")
+			if err := validateAnthropicCacheControl(cacheControl, path+".cache_control"); err != nil {
+				return err
 			}
 		}
 		if content, ok := object["content"]; ok {
@@ -664,7 +621,7 @@ func (a AnthropicAdapter) SanitizeRequest(state *State) error {
 		return catalog.ErrUnsupportedRequest
 	}
 	state.Resolution.ApplyProviderSamplingParameters()
-	if strings.EqualFold(strings.TrimSpace(state.Resolution.Deployment.Upstream.Speed), "fast") {
+	if state.Resolution.Deployment.Upstream.ServiceTier == catalog.TierFast {
 		state.Resolution.SetSpeed("fast")
 	} else {
 		state.Resolution.SetSpeed("standard")
@@ -734,16 +691,11 @@ func (AnthropicAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	// Anthropic documents usage on a streaming-classifier refusal as
-	// informational when the provider emitted no output. Keep this provider
-	// billing rule separate from public delivery telemetry: a disconnected
-	// caller can miss output that Anthropic still generated and billed.
-	if anthropicResponseRefused(state.Response) && !state.providerOutputEmitted {
-		state.FinalMeters = nil
-		state.UpstreamCostUSD = billing.ZeroChargeUSD
+	if anthropicRefusalUnbilled(state) {
+		settleUnbilledRefusal(state)
 		return nil
 	}
-	upstreamCostUSD, err := calculateBaseUpstreamCost(state, anthropicFinalMeters(anthropicAdapterContextForUpstreamCost(state)))
+	upstreamCostUSD, err := calculateBaseUpstreamCost(state, anthropicFinalMeters(anthropicAdapterContextForState(state)))
 	if err != nil {
 		return err
 	}
@@ -751,24 +703,52 @@ func (AnthropicAdapter) CalculateUpstreamCost(state *State) error {
 	return nil
 }
 
-func anthropicResponseRefused(response *schemas.BifrostResponse) bool {
-	if response == nil {
+// anthropicBilledRefusalCategories lists the refusal categories that Anthropic
+// bills even when the refusal arrives before any output. Usage reported on any
+// other refusal before output, including one without a category, is
+// informational. The rule covers every platform that serves Claude, Azure included.
+var anthropicBilledRefusalCategories = map[string]bool{
+	"bio":                  true,
+	"frontier_llm":         true,
+	"reasoning_extraction": true,
+}
+
+// anthropicRefusalUnbilled keeps the provider billing rule separate from public
+// delivery telemetry: a disconnected caller can miss output that Anthropic
+// still generated and billed.
+func anthropicRefusalUnbilled(state *State) bool {
+	details, refused := anthropicRefusal(state.Response)
+	if !refused || state.providerOutputEmitted {
 		return false
 	}
-	if response.ChatResponse != nil {
-		for _, choice := range response.ChatResponse.Choices {
+	return details == nil || details.Category == nil || !anthropicBilledRefusalCategories[*details.Category]
+}
+
+func settleUnbilledRefusal(state *State) {
+	state.FinalMeters = nil
+	state.UpstreamCostUSD = billing.ZeroChargeUSD
+}
+
+func anthropicRefusal(response *schemas.BifrostResponse) (*schemas.ResponsesStopDetails, bool) {
+	if response == nil {
+		return nil, false
+	}
+	if chat := response.ChatResponse; chat != nil {
+		for _, choice := range chat.Choices {
 			if choice.FinishReason != nil && *choice.FinishReason == "refusal" {
-				return true
+				return chat.StopDetails, true
 			}
 		}
-		return false
+		return nil, false
 	}
-	if response.ResponsesResponse != nil {
-		return response.ResponsesResponse.StopReason != nil && *response.ResponsesResponse.StopReason == "refusal"
+	result := response.ResponsesResponse
+	if result == nil && response.ResponsesStreamResponse != nil {
+		result = response.ResponsesStreamResponse.Response
 	}
-	return response.ResponsesStreamResponse != nil && response.ResponsesStreamResponse.Response != nil &&
-		response.ResponsesStreamResponse.Response.StopReason != nil &&
-		*response.ResponsesStreamResponse.Response.StopReason == "refusal"
+	if result == nil || result.StopReason == nil || *result.StopReason != "refusal" {
+		return nil, false
+	}
+	return result.StopDetails, true
 }
 
 func (AnthropicAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
@@ -817,13 +797,7 @@ func ensureAnthropicResponsesHostedToolCap(state *State) {
 }
 
 func anthropicAdapterContextForState(state *State) anthropicAdapterContext {
-	return anthropicAdapterContextForDeployment(state, pricingDeploymentForState(state))
-}
-
-func anthropicAdapterContextForUpstreamCost(state *State) anthropicAdapterContext {
-	req := anthropicAdapterContextForDeployment(state, pricingDeploymentForState(state))
-	req.ActualWebSearchCalls = actualWebSearchCalls(state)
-	return req
+	return anthropicAdapterContextForDeployment(state, ExecutionDeployment(state))
 }
 
 func anthropicAdapterContextForDeployment(state *State, deployment catalog.Deployment) anthropicAdapterContext {
@@ -1190,6 +1164,8 @@ func anthropicToolSystemPromptHoldTokens(model string, toolTypes []string) int {
 func anthropicToolSystemPromptTokensForModel(model string) (int, bool) {
 	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(model)), ".", "-")
 	switch {
+	case strings.HasPrefix(normalized, "claude-opus-5-5"):
+		return 286, true
 	case strings.HasPrefix(normalized, "claude-opus-5"):
 		return 406, true
 	case strings.HasPrefix(normalized, "claude-opus-4-8"):
@@ -1202,12 +1178,16 @@ func anthropicToolSystemPromptTokensForModel(model string) (int, bool) {
 		return 588, true
 	case strings.HasPrefix(normalized, "claude-opus-4-1"):
 		return 315, true
+	case strings.HasPrefix(normalized, "claude-sonnet-5-5"):
+		return 286, true
 	case strings.HasPrefix(normalized, "claude-sonnet-5"):
 		return 474, true
 	case strings.HasPrefix(normalized, "claude-sonnet-4-6"):
 		return 589, true
 	case strings.HasPrefix(normalized, "claude-sonnet-4-5"):
 		return 588, true
+	case strings.HasPrefix(normalized, "claude-haiku-5-5"):
+		return 406, true
 	case strings.HasPrefix(normalized, "claude-haiku-4-5"):
 		return 588, true
 	case strings.HasPrefix(normalized, "claude-haiku-3-5"):

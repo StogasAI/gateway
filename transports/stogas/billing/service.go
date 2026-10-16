@@ -11,6 +11,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
 	"math/rand/v2"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -63,7 +64,8 @@ const authorizeHoldArguments = `
   $19::jsonb,
   $20::jsonb,
   $21::numeric,
-  $22::text
+  $22::text,
+  $23::uuid
 `
 
 const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, available_balance_usd, upstream_byok, upstream_byok_binding, config_current"
@@ -94,6 +96,7 @@ type Authorization struct {
 	releaseFinalization     func()
 	admissionStartedAt      time.Time
 	admissionKey            string
+	holdID                  string
 	AuthorizedBilledCostUSD *money.USD
 	AvailableBalanceUSD     *money.USD
 	CreatedAt               time.Time
@@ -343,115 +346,84 @@ type UsageReservation struct {
 	InputTextBytes int64
 }
 
-func (s *Service) AuthorizeRequestWithEncryptionKeys(
-	ctx context.Context,
-	rawAPIKey string,
-	requestID string,
-	providerKey string,
-	productKey string,
-	estimatedUpstreamCostUSD string, usage UsageReservation,
-	snapshot *KeyConfigSnapshot,
-	prepared *PreparedCredential,
-	activeRules []policy.RuleMatch,
-	encryptionKeys customerkey.Keys,
-	upstreamTarget *UpstreamTarget,
-	requestLifetime time.Duration,
-) (*Authorization, error) {
-	return s.authorizeRequestWithDuration(ctx, rawAPIKey, requestID, providerKey, productKey, estimatedUpstreamCostUSD, usage, snapshot, prepared, activeRules, encryptionKeys, upstreamTarget, requestLifetime)
+// HoldRequest authorizes one deployment and credential pair. Previous is the
+// request's hold when a provider failure moves the request to this pair: one
+// statement releases that hold and holds this pair, and a refused move leaves
+// the previous hold as it was.
+type HoldRequest struct {
+	RawAPIKey                string
+	Dashboard                *DashboardCredential
+	RequestID                string
+	ProviderKey              string
+	ProductKey               string
+	EstimatedUpstreamCostUSD string
+	Usage                    UsageReservation
+	Snapshot                 *KeyConfigSnapshot
+	Prepared                 *PreparedCredential
+	ActiveRules              []policy.RuleMatch
+	EncryptionKeys           customerkey.Keys
+	UpstreamTarget           *UpstreamTarget
+	RequestLifetime          time.Duration
+	Previous                 *Authorization
 }
 
-func (s *Service) authorizeRequestWithDuration(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage UsageReservation, snapshot *KeyConfigSnapshot, prepared *PreparedCredential, activeRules []policy.RuleMatch, encryptionKeys customerkey.Keys, upstreamTarget *UpstreamTarget, requestLifetime time.Duration) (*Authorization, error) {
-	claims, apiKeyHash, _, err := s.parseVerifiedAPIKey(rawAPIKey)
-	if err != nil {
-		return nil, ErrInvalidAPIKey
-	}
-	if err := s.callerBackoff(claims.admissionKey, time.Now()); err != nil {
-		return nil, err
-	}
-
-	return s.authorizeResolvedRequest(
-		ctx,
-		apiKeyHash,
-		nil,
-		claims,
-		requestID,
-		providerKey,
-		productKey,
-		estimatedUpstreamCostUSD,
-		usage,
-		snapshot,
-		prepared,
-		activeRules,
-		encryptionKeys,
-		upstreamTarget,
-		requestLifetime,
-	)
-}
-
-func (s *Service) AuthorizeDashboardRequestWithDuration(
-	ctx context.Context,
-	credential *DashboardCredential,
-	requestID string,
-	providerKey string,
-	productKey string,
-	estimatedUpstreamCostUSD string, usage UsageReservation,
-	snapshot *KeyConfigSnapshot,
-	prepared *PreparedCredential,
-	activeRules []policy.RuleMatch,
-	encryptionKeys customerkey.Keys,
-	upstreamTarget *UpstreamTarget,
-	requestLifetime time.Duration,
-) (*Authorization, error) {
-	if credential == nil {
-		return nil, ErrInvalidAPIKey
-	}
-	if err := s.callerBackoff(dashboardAdmissionKey(credential), time.Now()); err != nil {
-		return nil, err
-	}
-	return s.authorizeResolvedRequest(
-		ctx,
-		"",
-		credential,
-		nil,
-		requestID,
-		providerKey,
-		productKey,
-		estimatedUpstreamCostUSD,
-		usage,
-		snapshot,
-		prepared,
-		activeRules,
-		encryptionKeys,
-		upstreamTarget,
-		requestLifetime,
-	)
-}
-
-func (s *Service) authorizeResolvedRequest(
-	ctx context.Context,
-	apiKeyHash string,
-	dashboard *DashboardCredential,
-	claims *APIKeyClaims,
-	requestID string,
-	providerKey string,
-	productKey string,
-	estimatedUpstreamCostUSD string, usage UsageReservation,
-	snapshot *KeyConfigSnapshot,
-	prepared *PreparedCredential,
-	activeRules []policy.RuleMatch,
-	encryptionKeys customerkey.Keys,
-	upstreamTarget *UpstreamTarget,
-	requestLifetime time.Duration,
-) (*Authorization, error) {
-	releaseFinalization, err := s.reserveFinalization()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if releaseFinalization != nil {
-			releaseFinalization()
+// Authorize places the hold that admits a request to its pair's provider.
+func (s *Service) Authorize(ctx context.Context, request HoldRequest) (*Authorization, error) {
+	var claims *APIKeyClaims
+	apiKeyHash := ""
+	if request.Dashboard == nil {
+		var err error
+		claims, apiKeyHash, _, err = s.parseVerifiedAPIKey(request.RawAPIKey)
+		if err != nil {
+			return nil, ErrInvalidAPIKey
 		}
-	}()
+	}
+	// A move continues a request that caller backoff already admitted.
+	if request.Previous == nil {
+		if err := s.callerBackoff(callerAdmissionKey(claims, request.Dashboard), time.Now()); err != nil {
+			return nil, err
+		}
+	}
+	return s.authorizeResolvedRequest(ctx, apiKeyHash, claims, request)
+}
+
+// PairRefused reports a refusal that another deployment and credential pair
+// can pass: its credential is unusable, disabled or expired, or its cost,
+// tokens or matched rules reach a limit or the balance.
+func PairRefused(err error) bool {
+	var refusal *RequestError
+	if !errors.As(err, &refusal) {
+		return false
+	}
+	switch refusal {
+	case ErrInsufficientBalance, ErrByok, ErrByokRequired, ErrByokTarget, errByokNotAllowed:
+		return true
+	}
+	// Other policy results are limits, except a disabled or expired scope that
+	// every pair shares.
+	code := refusal.Code
+	return policyResultErrors[code] == refusal && (strings.HasPrefix(code, "credential_") ||
+		!strings.HasSuffix(code, "_disabled") && !strings.HasSuffix(code, "_expired"))
+}
+
+func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash string, claims *APIKeyClaims, request HoldRequest) (*Authorization, error) {
+	dashboard, requestID, providerKey, productKey := request.Dashboard, request.RequestID, request.ProviderKey, request.ProductKey
+	snapshot, prepared, encryptionKeys, usage := request.Snapshot, request.Prepared, request.EncryptionKeys, request.Usage
+	previous := request.Previous
+	// A request keeps one settlement place through every pair it moves to.
+	var releaseFinalization func()
+	if previous == nil {
+		var err error
+		releaseFinalization, err = s.reserveFinalization()
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if releaseFinalization != nil {
+				releaseFinalization()
+			}
+		}()
+	}
 	if snapshot == nil || snapshot.Config == nil || snapshot.Claims == nil || snapshot.CredentialsGeneration < 1 || snapshot.Versions == nil {
 		return nil, ErrGatewayUnavailable
 	}
@@ -473,8 +445,8 @@ func (s *Service) authorizeResolvedRequest(
 		Scope policy.Scope `json:"scope"`
 		ID    string       `json:"id"`
 		Rule  string       `json:"rule"`
-	}, len(activeRules))
-	for i, match := range activeRules {
+	}, len(request.ActiveRules))
+	for i, match := range request.ActiveRules {
 		if match.Source < 0 || match.Source >= len(*selectedPolicy.Versions) {
 			return nil, ErrGatewayUnavailable
 		}
@@ -489,14 +461,14 @@ func (s *Service) authorizeResolvedRequest(
 		return nil, ErrGatewayUnavailable
 	}
 	started := time.Now()
-	expiresAt := requestHoldExpiresAt(started.UTC(), requestLifetime)
+	expiresAt := requestHoldExpiresAt(started.UTC(), request.RequestLifetime)
 	holdID, err := newUUIDV7String()
 	if err != nil {
 		return nil, fmt.Errorf("generate hold id: %w", err)
 	}
 	upstreamTargetJSON := ""
-	if upstreamTarget != nil {
-		encoded, marshalErr := json.Marshal(upstreamTarget)
+	if request.UpstreamTarget != nil {
+		encoded, marshalErr := json.Marshal(request.UpstreamTarget)
 		if marshalErr != nil {
 			return nil, ErrByokTarget
 		}
@@ -521,9 +493,12 @@ func (s *Service) authorizeResolvedRequest(
 	} else if claims != nil {
 		requestKeyID = &claims.KeyID
 	}
-	var apiKeyHashValue *string
+	var apiKeyHashValue, previousHoldID *string
 	if apiKeyHash != "" {
 		apiKeyHashValue = &apiKeyHash
+	}
+	if previous != nil {
+		previousHoldID = &previous.holdID
 	}
 	waitCtx, cancelWait := context.WithDeadline(queryCtx, authorizeBefore.Add(-authorizeStatementReserve))
 	defer cancelWait()
@@ -554,7 +529,7 @@ func (s *Service) authorizeResolvedRequest(
 			holdID,
 			providerKey,
 			productKey,
-			estimatedUpstreamCostUSD,
+			request.EstimatedUpstreamCostUSD,
 			expiresAt,
 			holdParamsHash,
 			nullableString(upstreamTargetJSON),
@@ -568,13 +543,16 @@ func (s *Service) authorizeResolvedRequest(
 			matchedRules,
 			usage.InputTextBytes,
 			nullableString(s.nodeID),
+			previousHoldID,
 		).Scan(
 			&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
 		)
 		conn.Release()
 		if err != nil {
 			releaseSlot()
-			if !pgconn.SafeToRetry(err) {
+			// A move that may have committed leaves either hold for settlement,
+			// which accepts the previous pair's log without usage.
+			if !pgconn.SafeToRetry(err) && previous == nil {
 				s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
 				releaseFinalization = nil
 			}
@@ -630,7 +608,10 @@ func (s *Service) authorizeResolvedRequest(
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, admissionKey: callerAdmissionKey(claims, dashboard), AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, admissionStartedAt: started, admissionKey: callerAdmissionKey(claims, dashboard), holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		if previous != nil {
+			authorization.releaseFinalization, authorization.admissionStartedAt = previous.releaseFinalization, previous.admissionStartedAt
+		}
 		releaseFinalization = nil // Ownership follows the accepted request through settlement.
 		if upstreamByok == "" {
 			return authorization, ErrByok
@@ -662,7 +643,6 @@ func (s *Service) authorizeResolvedRequest(
 		} else if upstreamByok != ManagedUpstreamByok || row.UpstreamByokBinding != nil {
 			return authorization, ErrByok
 		}
-		authorization.admissionStartedAt = started
 		return authorization, nil
 	default:
 		return nil, fmt.Errorf("unknown hold authorization result: %s", row.Result)
@@ -678,7 +658,7 @@ func authorizationResultError(result string) error {
 		return ErrInvalidAPIKey
 	case "key_secret_replaced":
 		return ErrAPIKeyOldSecret
-	case "params_mismatch", "authorization_closed", "expired":
+	case "params_mismatch", "authorization_closed", "expired", "hold_not_found":
 		// The gateway's own parameters or clock failed these checks, not the caller.
 		return fmt.Errorf("%w: authorization %s", ErrGatewayUnavailable, result)
 	case "insufficient_balance":

@@ -130,7 +130,7 @@ func TestExpandedBodyMemoryDenialDoesNotRestartSelection(t *testing.T) {
 }
 
 func TestReleaseInputPreservesIndependentResponseParameters(t *testing.T) {
-	body := []byte(`{"model":"gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}],"instructions":"Keep answers short","parallel_tool_calls":false,"tools":[{"type":"function","name":"check","parameters":{"type":"object","properties":{}}}]}`)
+	body := []byte(`{"model":"openai/gpt-5.5","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="}]}],"instructions":"Keep answers short","parallel_tool_calls":false,"tools":[{"type":"function","name":"check","parameters":{"type":"object","properties":{}}}]}`)
 	resolved, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: body})
 	if err != nil {
 		t.Fatal(err)

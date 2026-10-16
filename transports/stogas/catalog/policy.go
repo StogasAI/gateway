@@ -4,25 +4,26 @@ import (
 	"errors"
 	"math/big"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 type routingSelection struct {
-	deployment       Deployment
-	provider         schemas.ModelProvider
-	credential       int
-	providerAttempts int
+	deployment Deployment
+	provider   schemas.ModelProvider
+	credential int
 }
 
 type policyDeploymentData struct {
-	Aliases             []string            `json:"aliases"`
+	ApprovalRequired    bool                `json:"approvalRequired"`
 	Capabilities        Capabilities        `json:"capabilities"`
-	FileInputs          FileInputs          `json:"fileInputs"`
+	NativeFileInputs    NativeFileInputs    `json:"nativeFileInputs"`
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        DataHandling        `json:"dataHandling"`
@@ -47,11 +48,12 @@ type policyRequestData struct {
 }
 
 type resolvedPolicyValues struct {
-	now    time.Time
-	budget *policy.CELBudget
-	root   map[string]policyNode
-	fields map[string]cachedPolicyValue
-	blends map[policy.BlendedPrice]cachedPolicyValue
+	now     time.Time
+	budget  *policy.CELBudget
+	pricing Pricing
+	root    map[string]policyNode
+	fields  map[string]cachedPolicyValue
+	blends  map[policy.BlendedPrice]cachedPolicyValue
 }
 
 type cachedPolicyValue struct {
@@ -67,78 +69,48 @@ type policyNode struct {
 func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
-	requestedTier *schemas.BifrostServiceTier,
+	requestedTier string,
 	config *policy.Config,
 	availableCredentials map[string][]int,
 ) ([]routingSelection, error) {
-	snap := active.Load()
+	snap := activeState()
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
 	if requestedModel == "" {
-		return routingSelectionsWithoutModel(snap, route, requestedTier, availableCredentials)
+		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, nil, "")
+	}
+	if qualifier, selector := splitQualifiedModel(requestedModel); snap.groups[selector] {
+		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, qualifier, selector)
 	}
 	providers := snap.routeModelProviders(route, requestedModel, availableCredentials)
 	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, providers, config)
 	if len(providers) == 0 {
 		return nil, ErrModelUnavailable
 	}
-
-	groups := make([][]routingSelection, 0, len(providers))
-	var firstTierErr error
-	validatedTier := false
+	selections := make([]routingSelection, 0)
 	for _, provider := range providers {
-		if err := validateRequestedServiceTier(provider, requestedTier); err != nil {
-			if firstTierErr == nil {
-				firstTierErr = err
-			}
-			continue
-		}
-		validatedTier = true
-		candidates := routingDeploymentsForProvider(
-			snap,
-			route,
-			provider,
-			requestedModel,
-			requestedTier,
-		)
-		if len(candidates) == 0 {
-			continue
-		}
-		groups = append(groups, candidates)
+		selections = append(selections, routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)...)
 	}
-	if len(groups) == 0 {
-		if requestedTier != nil && strings.TrimSpace(string(*requestedTier)) != "" {
-			if !validatedTier {
-				if len(providers) == 1 && firstTierErr != nil {
-					return nil, firstTierErr
-				}
-				if isKnownServiceTierValue(requestedTier) {
-					return nil, ErrServiceTierUnavailable
-				}
-				if firstTierErr != nil {
-					return nil, firstTierErr
-				}
-			}
+	if len(selections) == 0 {
+		if requestedTier != "" {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
 	}
-
-	selections := make([]routingSelection, 0)
-	for _, group := range groups {
-		selections = append(selections, group...)
-	}
 	return selections, nil
 }
 
-// An omitted selector leaves model selection to the intersected routing filters
-// and ordering. Enumerate the catalog once, before request parsing and token work.
-func routingSelectionsWithoutModel(snap *snapshot, route Route, requestedTier *schemas.BifrostServiceTier, availableCredentials map[string][]int) ([]routingSelection, error) {
-	selections := make([]routingSelection, 0)
-	if !isKnownServiceTierValue(requestedTier) {
-		return nil, ErrUnsupportedServiceTier
+// An omitted selector or a group leaves model selection to the intersected routing filters and
+// ordering. The pool holds every model, or the group's models; deployments that need approval
+// join it only through exact selectors. Enumerate the catalog once, before request parsing and
+// token work.
+func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, availableCredentials map[string][]int, qualifier []string, group string) ([]routingSelection, error) {
+	tier := requestedTier
+	if tier == "" {
+		tier = TierStandard
 	}
+	selections := make([]routingSelection, 0)
 	for _, routeNode := range snap.graph.Routes {
 		if !routeSupportsInterface(routeNode, route) {
 			continue
@@ -147,14 +119,13 @@ func routingSelectionsWithoutModel(snap *snapshot, route Route, requestedTier *s
 		if availableCredentials != nil && len(availableCredentials[routeNode.ProviderID]) == 0 {
 			continue
 		}
-		if err := validateRequestedServiceTier(provider, requestedTier); err != nil {
-			continue
-		}
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := snap.graph.Deployments[id]
-			if !deploymentAvailableNow(compiled) || deploymentIsFast(compiled) || compiled.Upstream.ReasoningMode != "" ||
-				(requestedTier == nil && impliedServiceTierForDeployment(provider, compiled) != nil) ||
-				(requestedTier != nil && !deploymentMatchesRequestedTier(provider, compiled, requestedTier)) {
+			if !deploymentAvailableNow(compiled) || compiled.ApprovalRequired || compiled.Upstream.ReasoningMode != "" || compiled.Upstream.ServiceTier != tier {
+				continue
+			}
+			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
+				!snap.qualifierMatches(qualifier, routeNode.ProviderID, compiled.ModelID)) {
 				continue
 			}
 			deployment, ok := snap.deploymentFromCompiled(id, routeNode)
@@ -164,7 +135,7 @@ func routingSelectionsWithoutModel(snap *snapshot, route Route, requestedTier *s
 		}
 	}
 	if len(selections) == 0 {
-		if requestedTier != nil {
+		if requestedTier != "" {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
@@ -191,7 +162,6 @@ func filterRoutingProvidersByAllowedNodes(
 	if snap == nil || config == nil || config.Routing.AllowedCatalogNodes == nil {
 		return providers
 	}
-	allowed := config.Routing.AllowedCatalogNodes
 	filtered := make([]schemas.ModelProvider, 0, len(providers))
 	for _, provider := range providers {
 		matched := false
@@ -213,8 +183,7 @@ func filterRoutingProvidersByAllowedNodes(
 				if !ok {
 					continue
 				}
-				ids := candidatePolicyIDs(&ResolvedRequest{Provider: provider, Deployment: deployment})
-				if allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) {
+				if policyAllowsSelection(config, routingSelection{deployment: deployment}) {
 					matched = true
 					break
 				}
@@ -233,7 +202,7 @@ func filterRoutingProvidersByAllowedNodes(
 // Strict provider choices are eligibility filters. Ordering is applied after
 // every candidate's credential policy has been intersected.
 func filterProviderSelections(selections []routingSelection, preference ProviderRoutingPreference) ([]routingSelection, error) {
-	snap := active.Load()
+	snap := activeState()
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
@@ -259,29 +228,22 @@ func filterProviderSelections(selections []routingSelection, preference Provider
 	return kept, nil
 }
 
-type policyRequestContext struct {
-	now       time.Time
-	budget    *policy.CELBudget
-	model     string
-	route     Route
-	bodyBytes int
-}
-
-func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config, context policyRequestContext) ([]routingSelection, error) {
-	if len(selections) == 0 || config == nil {
-		return selections, nil
-	}
-	allowed := config.Routing.AllowedCatalogNodes
+func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config) []routingSelection {
 	filtered := selections[:0]
 	for _, selection := range selections {
-		candidate := &ResolvedRequest{Provider: selection.provider, Deployment: selection.deployment, policyTime: context.now, policyBudget: context.budget, policyBodyBytes: context.bodyBytes, RequestedModel: context.model, Route: context.route}
-		ids := candidatePolicyIDs(candidate)
-		if !allowed.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider) {
-			continue
+		if policyAllowsSelection(config, selection) {
+			filtered = append(filtered, selection)
 		}
-		filtered = append(filtered, selection)
 	}
-	return filtered, nil
+	return filtered
+}
+
+func policyAllowsSelection(config *policy.Config, selection routingSelection) bool {
+	if config == nil || config.Routing.AllowedCatalogNodes == nil {
+		return true
+	}
+	ids := candidatePolicyIDs(&ResolvedRequest{Deployment: selection.deployment})
+	return config.Routing.AllowedCatalogNodes.Allows(ids.author, ids.model, ids.deployment, ids.route, ids.provider)
 }
 
 func policyEvaluationError(err error) error {
@@ -297,9 +259,9 @@ func routingDeploymentsForProvider(
 	route Route,
 	provider schemas.ModelProvider,
 	requestedModel string,
-	requestedTier *schemas.BifrostServiceTier,
+	requestedTier string,
 ) []routingSelection {
-	base, ok := DeploymentForRouteServiceTier(provider, requestedModel, route, requestedTier)
+	base, ok := snap.deploymentForRouteTier(provider, requestedModel, route, requestedTier)
 	if !ok || len(base.RouteIDs) != 1 {
 		return nil
 	}
@@ -316,7 +278,6 @@ func routingDeploymentsForProvider(
 	if !ok {
 		return nil
 	}
-	baseTier := normalizedDeploymentServiceTier(provider, baseCompiled.Upstream.ServiceTier)
 	for _, deploymentID := range routeNode.DeploymentIDs {
 		if deploymentID == base.ID {
 			continue
@@ -326,14 +287,7 @@ func routingDeploymentsForProvider(
 			!deploymentAvailableNow(candidate) ||
 			candidate.ModelID != base.ModelID ||
 			candidate.Upstream.ReasoningMode != baseCompiled.Upstream.ReasoningMode ||
-			deploymentIsFast(candidate) != deploymentIsFast(baseCompiled) {
-			continue
-		}
-		if requestedTier == nil {
-			if normalizedDeploymentServiceTier(provider, candidate.Upstream.ServiceTier) != baseTier {
-				continue
-			}
-		} else if !deploymentMatchesRequestedTier(provider, candidate, requestedTier) {
+			candidate.Upstream.ServiceTier != baseCompiled.Upstream.ServiceTier {
 			continue
 		}
 		resolved, exists := snap.deploymentFromCompiled(deploymentID, routeNode)
@@ -346,39 +300,19 @@ func routingDeploymentsForProvider(
 }
 
 type routingCandidates struct {
-	filtered                          []*ResolvedRequest
-	values                            map[*ResolvedRequest]*resolvedPolicyValues
-	requiredOrder, defaultOrder       *policy.Routing
-	requiredConflict, defaultConflict bool
-	hasRequiredOrder                  bool
+	filtered []*ResolvedRequest
+	values   map[*ResolvedRequest]*resolvedPolicyValues
 }
 
-// Every surviving policy participates in order agreement, including credentials
-// beyond the fallback allowance. Only reachable choices need retained requests.
-func (r *routingCandidates) consider(config *policy.Config, values *resolvedPolicyValues) (bool, error) {
-	var query *policy.Query
-	if config != nil {
-		query = config.Routing.Query
+func policyMatches(config *policy.Config, values *resolvedPolicyValues) (bool, error) {
+	if config == nil || config.Routing.Query == nil {
+		return true, nil
 	}
-	if query != nil {
-		matches, err := query.Matches(values)
-		if err != nil {
-			return false, policyEvaluationError(err)
-		}
-		if !matches {
-			return false, nil
-		}
+	matches, err := config.Routing.Query.Matches(values)
+	if err != nil {
+		return false, policyEvaluationError(err)
 	}
-	if config != nil && config.Routing.HasOrder() {
-		prior, conflict := &r.requiredOrder, &r.requiredConflict
-		if config.Routing.OrderDefault {
-			prior, conflict = &r.defaultOrder, &r.defaultConflict
-		}
-		*conflict = *conflict || *prior != nil && !(*prior).SameOrder(&config.Routing)
-		*prior = &config.Routing
-	}
-	r.hasRequiredOrder = r.hasRequiredOrder || config.HasRequiredOrder()
-	return true, nil
+	return matches, nil
 }
 
 func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPolicyValues) {
@@ -389,66 +323,24 @@ func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPoli
 	r.values[candidate] = values
 }
 
-func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Config, preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
-	var result routingCandidates
-	for _, candidate := range resolved {
-		candidateConfig := candidate.policy
-		if candidateConfig == nil {
-			candidateConfig = config
-		}
-		var values *resolvedPolicyValues
-		if candidateConfig != nil && candidateConfig.Routing.Query != nil {
-			var ok bool
-			values, ok = newResolvedPolicyValues(candidate)
-			if !ok {
-				continue
-			}
-		}
-		matched, err := result.consider(candidateConfig, values)
-		if err != nil {
-			return nil, err
-		}
-		if matched {
-			result.add(candidate, values)
-		}
-	}
-	return result.finish(preference)
-}
-
+// Credential policies and rules whose conditions read candidate fields cannot
+// set an order, so every survivor carries the same one.
 func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*ResolvedRequest, error) {
-	ordering, conflict := r.requiredOrder, r.requiredConflict
-	if ordering == nil && !r.hasRequiredOrder {
-		ordering, conflict = r.defaultOrder, r.defaultConflict
-	}
-	if conflict {
-		return nil, APIError{StatusCode: 400, Type: ErrorTypeInvalidRequest, Code: "invalid_request", Message: "Candidate policies require different routing orders"}
-	}
-	var query *policy.Query
-	if ordering != nil {
-		query = ordering.Query
-	}
 	filtered, values := r.filtered, r.values
-	if query != nil {
-		for _, candidate := range filtered {
-			if values[candidate] == nil {
-				value, ok := newResolvedPolicyValues(candidate)
-				if !ok {
-					return nil, ErrModelUnavailable
-				}
-				values[candidate] = value
-			}
-		}
-	}
 	if len(filtered) == 0 {
 		return nil, ErrModelUnavailable
 	}
-	if ordering != nil && ordering.Selection != nil {
+	var ordering policy.Routing
+	if config := filtered[0].policy; config != nil {
+		ordering = config.Routing
+	}
+	if ordering.Selection != nil {
 		return selectRoutingTargets(filtered, ordering.Selection)
 	}
 
 	// An explicit sort supplies a total order; its stable deployment-ID tie
 	// breaker is used only after at least one user-defined criterion.
-	if query != nil && len(query.OrderBy) > 0 {
+	if query := ordering.Query; query != nil && len(query.OrderBy) > 0 {
 		candidates := make([]policy.Values, len(filtered))
 		for i, candidate := range filtered {
 			candidates[i] = values[candidate]
@@ -471,7 +363,16 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 		}
 		return groups, nil
 	}
-	snap := active.Load()
+	// A group names its newest model, so neither a price nor a provider order chooses among
+	// the group's models.
+	if filtered[0].RequestedModel != "" && spansModels(filtered) {
+		newest, err := newestModelCandidates(filtered)
+		if err != nil {
+			return nil, err
+		}
+		filtered = newest
+	}
+	snap := activeState()
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
@@ -479,9 +380,7 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 	if err != nil {
 		return nil, err
 	}
-	// A provider order cannot choose between its regions or models. Keep equal
-	// priorities together so ambiguity is rejected only if that group is reached.
-	groups := make([][]*ResolvedRequest, len(requestedOrder)+1)
+	ranked := make([][]*ResolvedRequest, len(requestedOrder)+1)
 	for _, candidate := range filtered {
 		rank := len(requestedOrder)
 		for index, provider := range requestedOrder {
@@ -490,26 +389,101 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 				break
 			}
 		}
-		groups[rank] = append(groups[rank], candidate)
+		ranked[rank] = append(ranked[rank], candidate)
+	}
+	// Within each provider rank, the default order is the cheapest deployment
+	// at a 3:1 input-to-output blend, then the lower deployment ID. Neither a
+	// price nor a provider order may choose a model the request did not name, so
+	// such a group stays whole and is rejected as ambiguous if it is reached.
+	groups := make([][]*ResolvedRequest, 0, len(filtered))
+	for _, group := range ranked {
+		if len(group) == 0 {
+			continue
+		}
+		if group[0].RequestedModel == "" && spansModels(group) {
+			groups = append(groups, group)
+			continue
+		}
+		sort.SliceStable(group, func(i, j int) bool {
+			return defaultOrderLess(group[i], group[j], values)
+		})
+		for _, candidate := range group {
+			if last := len(groups) - 1; last >= 0 && groups[last][0].Deployment.ID == candidate.Deployment.ID {
+				groups[last] = append(groups[last], candidate)
+				continue
+			}
+			groups = append(groups, []*ResolvedRequest{candidate})
+		}
 	}
 	return groups, nil
 }
 
-func ambiguousModelError(resolved []*ResolvedRequest) APIError {
-	selectors := make([]string, 0, len(resolved))
-	seen := map[string]bool{}
-	for _, candidate := range resolved {
-		selector := candidate.Deployment.ID
-		if selector != "" && !seen[selector] {
-			seen[selector] = true
-			selectors = append(selectors, selector)
+// defaultOrderBlend weighs input three times output, the usual ratio for a
+// blended model price. A deployment without both prices sorts last.
+var defaultOrderBlend = policy.BlendedPrice{InputWeight: 3, OutputWeight: 1}
+
+func defaultOrderLess(left, right *ResolvedRequest, values map[*ResolvedRequest]*resolvedPolicyValues) bool {
+	if left.Deployment.ID == right.Deployment.ID {
+		return false
+	}
+	leftPrice, leftOK := values[left].PolicyBlendedPrice(defaultOrderBlend)
+	rightPrice, rightOK := values[right].PolicyBlendedPrice(defaultOrderBlend)
+	if leftOK != rightOK {
+		return leftOK
+	}
+	if leftOK {
+		if compared := leftPrice.Decimal.Cmp(rightPrice.Decimal); compared != 0 {
+			return compared < 0
 		}
 	}
-	sort.Strings(selectors)
+	return left.Deployment.ID < right.Deployment.ID
+}
+
+// newestModelCandidates keeps the candidates of the most recently released model. Models
+// released on the same day make the request ambiguous.
+func newestModelCandidates(candidates []*ResolvedRequest) ([]*ResolvedRequest, error) {
+	newest := ""
+	var kept []*ResolvedRequest
+	for _, candidate := range candidates {
+		released := candidate.Deployment.snapshot.graph.Models[candidate.Deployment.ModelID].ReleaseDate
+		if released < newest {
+			continue
+		}
+		if released > newest {
+			newest, kept = released, kept[:0]
+		}
+		kept = append(kept, candidate)
+	}
+	if spansModels(kept) {
+		return nil, ambiguousModelError(kept)
+	}
+	return kept, nil
+}
+
+func spansModels(group []*ResolvedRequest) bool {
+	for _, candidate := range group[1:] {
+		if candidate.Deployment.ModelID != group[0].Deployment.ModelID {
+			return true
+		}
+	}
+	return false
+}
+
+func ambiguousModelError(resolved []*ResolvedRequest) APIError {
+	models := make([]string, 0, len(resolved))
+	seen := map[string]bool{}
+	for _, candidate := range resolved {
+		model := candidate.Deployment.ModelID
+		if model != "" && !seen[model] {
+			seen[model] = true
+			models = append(models, model)
+		}
+	}
+	sort.Strings(models)
 	message := ErrModelAmbiguous.Message
-	// Error output stays bounded when the caller leaves the model unspecified.
-	if len(selectors) <= 8 {
-		message += "; matching deployments: " + strings.Join(selectors, ", ")
+	// Error output stays bounded when many models remain.
+	if len(models) <= 8 {
+		message += "; matching models: " + strings.Join(models, ", ")
 	}
 	return APIError{Code: ErrModelAmbiguous.Code, StatusCode: ErrModelAmbiguous.StatusCode, Type: ErrModelAmbiguous.Type, Message: message}
 }
@@ -560,14 +534,13 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		return nil, false
 	}
 	deployment := candidate.Deployment
-	return &resolvedPolicyValues{now: candidate.policyTime, budget: candidate.policyBudget, root: map[string]policyNode{
+	return &resolvedPolicyValues{now: candidate.policyTime, budget: candidate.policyBudget, pricing: deployment.Pricing, root: map[string]policyNode{
 		"author": {id: ids.author, fields: author},
 		"deployment": {
 			id: ids.deployment,
 			fields: policyDeploymentData{
-				Aliases:             compiledDeployment.Aliases,
 				Capabilities:        deployment.Capabilities,
-				FileInputs:          deployment.FileInputs,
+				NativeFileInputs:    deployment.NativeFileInputs,
 				ContextWindowTokens: deployment.ContextWindowTokens,
 				MaxInputTokens:      deployment.MaxInputTokens,
 				DataHandling:        deployment.DataHandling,
@@ -582,6 +555,7 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				ReasoningMaxTokens:  deployment.ReasoningMaxTokens,
 				RouteIDs:            deployment.RouteIDs,
 				Upstream:            compiledDeployment.Upstream,
+				ApprovalRequired:    deployment.ApprovalRequired,
 				WeightPrecision:     deployment.WeightPrecision,
 			},
 		},
@@ -626,6 +600,11 @@ func (v *resolvedPolicyValues) PolicyBlendedPrice(blend policy.BlendedPrice) (po
 	}
 	v.blends[blend] = cachedPolicyValue{value, ok}
 	return value, ok
+}
+
+func (v *resolvedPolicyValues) PolicyTokenPrice(meter string, promptTokens int64) (policy.Value, bool) {
+	rates := v.pricing[meter]
+	return policy.DecimalValue(rates[billing.TokenRateKey(rates, int(promptTokens))])
 }
 
 func (v *resolvedPolicyValues) resolveField(path string) (policy.Value, bool) {
@@ -709,9 +688,6 @@ func typedPolicyValue(value reflect.Value, fieldType string, path string) (polic
 		var integer *big.Int
 		switch value.Kind() {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			if path == "deployment.upstream.gpuCount" && value.Int() == 0 {
-				return policy.Value{}, false
-			}
 			integer = big.NewInt(value.Int())
 		case reflect.String:
 			var valid bool

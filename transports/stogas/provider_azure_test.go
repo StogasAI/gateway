@@ -3,11 +3,15 @@ package stogas
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/bytedance/sonic"
+	bifrost "github.com/maximhq/bifrost/core"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
@@ -70,9 +74,8 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 		"non-string key":       `"prompt_cache_key":1`,
 		"oversized key":        `"prompt_cache_key":"` + longKey + `"`,
 		"non-string retention": `"prompt_cache_retention":{"ttl":"24h"}`,
-		"in-memory retention":  `"prompt_cache_retention":"in_memory"`,
 		"other retention":      `"prompt_cache_retention":"30m"`,
-		"explicit options":     `"prompt_cache_options":{"mode":"explicit","ttl":"30m"}`,
+		"unpriced ttl":         `"prompt_cache_options":{"mode":"explicit","ttl":"1h"}`,
 	}
 	for name, field := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -88,14 +91,6 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 		})
 	}
 
-	breakpointBody := `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":[{"type":"text","text":"hi","prompt_cache_breakpoint":{"mode":"explicit"}}]}],"max_completion_tokens":64}`
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(breakpointBody), Method: "POST", Path: "/v1/chat/completions"})
-	if err == nil {
-		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-		if err := state.Adapter.ValidateRequest(state); err == nil {
-			t.Fatal("Azure explicit prompt cache breakpoint was accepted")
-		}
-	}
 }
 
 func TestAzureAllowsClientExecutedToolsAndRejectsRemoteMCP(t *testing.T) {
@@ -160,11 +155,11 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 	}{
 		{
 			path: "/v1/chat/completions",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_completion_tokens":64,"stop_sequences":["END"],"top_k":40}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_completion_tokens":64,"stop_sequences":["END"],"top_k":40}`,
 		},
 		{
 			path: "/v1/responses",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_output_tokens":64,"stop_sequences":["END"],"top_k":40}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","cache_control":{"type":"ephemeral","ttl":"1h"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":{"type":"thinking_turns","value":2}},{"type":"clear_tool_uses_20250919","clear_at_least":{"type":"input_tokens","value":5000},"clear_tool_inputs":true,"exclude_tools":["preserve"],"keep":{"type":"tool_uses","value":3},"trigger":{"type":"tool_uses","value":4}},{"type":"compact_20260112","instructions":"keep summary","pause_after_compaction":true,"trigger":{"type":"input_tokens","value":50000}}]},"max_output_tokens":64,"stop_sequences":["END"],"top_k":40}`,
 		},
 	}
 
@@ -198,7 +193,7 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 			if err := sonic.Unmarshal(body, &wire); err != nil {
 				t.Fatalf("decode Azure Claude wire request: %v", err)
 			}
-			if wire["model"] != "claude-sonnet-4-6" || wire["max_tokens"] != float64(64) || wire["top_k"] != float64(40) {
+			if wire["model"] != "claude-opus-4-8" || wire["max_tokens"] != float64(64) || wire["top_k"] != float64(40) {
 				t.Fatalf("Azure Claude wire fields were not preserved: %s", body)
 			}
 			stops, ok := wire["stop_sequences"].([]any)
@@ -240,6 +235,58 @@ func TestAzureClaudeUsesAnthropicPolicyAndExactMessagesWireFormat(t *testing.T) 
 	}
 }
 
+// Customers name their Azure deployments, so core must take the wire format from the catalog model.
+func TestAzureClaudeWithCustomDeploymentNameUsesAnthropicEndpoint(t *testing.T) {
+	const deploymentName = "sonnet-prod"
+	var path, model string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		path, model = r.URL.Path, body.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	state := resolveAzureState(t, "/v1/chat/completions", `{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64}`)
+	if err := state.Resolution.SetWireModel(deploymentName); err != nil {
+		t.Fatal(err)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
+	request, err := state.Resolution.ToBifrost(ctx)
+	if err != nil {
+		t.Fatalf("ToBifrost returned error: %v", err)
+	}
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatalf("PrepareProviderRequest returned error: %v", err)
+	}
+	client, err := bifrost.Init(t.Context(), schemas.BifrostConfig{
+		Account: &account{
+			keys: map[schemas.ModelProvider]schemas.Key{schemas.Azure: {
+				ID: "test", Name: "test", Value: *schemas.NewSecretVar("test-key"),
+				Models: schemas.WhiteList{deploymentName}, Weight: 1, Enabled: schemas.Ptr(true),
+				AzureKeyConfig: &schemas.AzureKeyConfig{Endpoint: *schemas.NewSecretVar(server.URL)},
+			}},
+			providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{schemas.Azure: newProviderConfig(server.URL, true, false)},
+		},
+		InitialPoolSize: 1,
+		Logger:          bifrost.NewDefaultLogger(schemas.LogLevelError),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(client.Shutdown)
+	if _, bifrostErr := client.ChatCompletionRequest(ctx, request.ChatRequest); bifrostErr != nil {
+		t.Fatalf("Azure Claude request failed: %v", bifrostErr.Error)
+	}
+	if path != "/anthropic/v1/messages" || model != deploymentName {
+		t.Fatalf("Azure Claude request went to %s for model %q", path, model)
+	}
+}
+
 func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -247,27 +294,27 @@ func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 	}{
 		{
 			name: "prompt cache key",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","prompt_cache_key":"tenant","max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_key":"tenant","max_output_tokens":64}`,
 		},
 		{
 			name: "prompt cache options",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","prompt_cache_options":{"mode":"explicit"},"max_output_tokens":64}`,
 		},
 		{
 			name: "task budget",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","task_budget":{"type":"tokens","total":20000},"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP connector",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar"}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"calendar","connector_id":"connector_googlecalendar"}],"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP headers",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","headers":{"authorization":"secret"}}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","headers":{"authorization":"secret"}}],"max_output_tokens":64}`,
 		},
 		{
 			name: "MCP approval",
-			body: `{"model":"azure-claude-sonnet-4-6-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}],"max_output_tokens":64}`,
+			body: `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","tools":[{"type":"mcp","server_label":"docs","server_url":"https://example.com","require_approval":"never"}],"max_output_tokens":64}`,
 		},
 	}
 
@@ -289,7 +336,7 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	state := resolveAzureState(
 		t,
 		"/v1/chat/completions",
-		`{"model":"azure-claude-sonnet-4-6-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":64,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
+		`{"model":"azure-claude-opus-4-8-anthropic-hosted","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral","ttl":"1h"},"max_completion_tokens":64,"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`,
 	)
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)

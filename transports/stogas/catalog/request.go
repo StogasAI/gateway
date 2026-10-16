@@ -29,17 +29,18 @@ const (
 var (
 	ErrCatalogUnavailable     = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
 	ErrInvalidJSON            = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous         = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Multiple deployments match; specify a deployment or a routing sort order"}
+	ErrModelAmbiguous         = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing sort or selection"}
 	ErrModelUnavailable       = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
 	ErrProviderUnavailable    = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrScheduleDenied         = APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
 	ErrRouteUnavailable       = APIError{Code: "route_not_found", StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
 	ErrUnsupportedMethod      = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
 	ErrUnsupportedRequest     = APIError{Code: "unsupported_request", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
 	ErrParameterTooLarge      = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
 	ErrProviderSelection      = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
 	ErrServiceTierUnavailable = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
-	ErrUnsupportedTool        = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Tool is not supported by Stogas pricing"}
-	ErrUnsupportedServiceTier = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier is not supported by Stogas"}
+	ErrUnsupportedTool        = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "We cannot price this tool"}
+	ErrUnsupportedServiceTier = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier must be auto, default, standard, flex, fast, priority, or ultrafast"}
 )
 
 type APIError struct {
@@ -114,19 +115,20 @@ type ResolvedRequest struct {
 	Deployment      Deployment
 	ExportConfig    *exportconfig.Config
 
-	chat                 *openaiprovider.OpenAIChatRequest
-	inputTokenLimit      int
-	inputTokenEstimate   *int
-	inputTextBytes       *int
-	inputFiles           inputfiles.Stats
-	outputTokenLimit     int
-	pricing              requestPricingContext
-	redactionSummary     *redaction.Summary
-	responses            *openaiprovider.OpenAIResponsesRequest
-	policy               *policy.Config
-	activePolicyRules    []policy.RuleMatch
-	providerAttemptLimit int
-	policyTimeouts       *policy.Timeouts
+	chat               *openaiprovider.OpenAIChatRequest
+	inputTokenLimit    int
+	inputTokenEstimate *int
+	inputTextBytes     *int
+	inputFiles         inputfiles.Stats
+	outputTokenLimit   int
+	pricing            requestPricingContext
+	redactionSummary   *redaction.Summary
+	responses          *openaiprovider.OpenAIResponsesRequest
+	policy             *policy.Config
+	activePolicyRules  []policy.RuleMatch
+	retries            int
+	policyTimeouts     *policy.Timeouts
+	plan               *requestPlan
 }
 
 // ActivePolicyRules carries only matched counter names into the financial hold.
@@ -144,7 +146,19 @@ func (r *ResolvedRequest) retainPolicyDecision(config *policy.Config) {
 	if config != nil {
 		r.activePolicyRules = append([]policy.RuleMatch(nil), config.ActiveRules...)
 		r.policyTimeouts = config.Timeouts
+		r.retries = config.Routing.Retries
 	}
+}
+
+func (r *ResolvedRequest) retainVariant(variant *requestBodyVariant, config *policy.Config, input RequestInput) {
+	textBytes := variant.textBytes
+	r.inputTextBytes = &textBytes
+	r.inputFiles = variant.files
+	r.redactionSummary = variant.summary
+	r.ExportConfig = variant.exports
+	r.retainPolicyDecision(config)
+	r.policyTime, r.policyBudget = input.now, input.policyBudget
+	r.policyBodyBytes = len(input.Body)
 }
 
 type requestPricingContext struct {
@@ -216,9 +230,6 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 			}
 		}()
 	}
-	if ctx != nil && r.Provider == ProviderChutes {
-		ctx.SetValue(schemas.BifrostContextKeyPassthroughExtraParams, true)
-	}
 	switch {
 	case r.chat != nil:
 		body := r.chat.ToBifrostChatRequest(ctx)
@@ -245,20 +256,45 @@ func (r *ResolvedRequest) ToBifrost(ctx *schemas.BifrostContext) (*schemas.Bifro
 	}
 }
 
-func (r *ResolvedRequest) attemptLimit() int {
-	if r == nil || r.policy == nil {
-		return 1
+// Retries is how many more times this pair may be called after a failure
+// another call can fix.
+func (r *ResolvedRequest) Retries() int {
+	if r == nil {
+		return 0
 	}
-	return max(1, r.policy.Routing.MaxAttempts)
+	return r.retries
 }
 
-// ProviderAttemptLimit includes the first invocation. Failed local credential
-// preparations have already consumed their slots in the shared request budget.
-func (r *ResolvedRequest) ProviderAttemptLimit() int {
-	if r == nil {
-		return 1
+// NextPair resolves the next deployment and credential pair. failure is the
+// local error that stopped this pair before its provider call, or nil after a
+// provider failure. With no pair left, it returns the request's first local
+// error, or an error no other pair can avoid.
+func (r *ResolvedRequest) NextPair(failure error) (*ResolvedRequest, error) {
+	if r == nil || r.plan == nil {
+		if failure == nil {
+			failure = ErrModelUnavailable
+		}
+		return nil, failure
 	}
-	return max(1, r.providerAttemptLimit)
+	activationMu.RLock()
+	defer activationMu.RUnlock()
+	return r.plan.take(failure)
+}
+
+// HasNextPair reports whether NextPair can still resolve another pair. Only
+// the request's owner calls NextPair, so the answer holds until it does.
+func (r *ResolvedRequest) HasNextPair() bool {
+	return r != nil && r.plan != nil && r.plan.slots > 0 && len(r.plan.choices) > 0
+}
+
+// ReleasePlan drops the decoded input and routing state kept for later pairs.
+// Every pair from the same plan shares it.
+func (r *ResolvedRequest) ReleasePlan() {
+	if r == nil || r.plan == nil {
+		return
+	}
+	*r.plan = requestPlan{}
+	r.plan = nil
 }
 
 func (r *ResolvedRequest) RequestTimeouts() *policy.Timeouts {
@@ -715,19 +751,16 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	selections, err := routingSelectionsForRequest(
 		route,
 		base.Model,
-		base.ServiceTier,
+		base.Tier,
 		config,
 		input.AvailableCredentials,
 	)
 	if err != nil {
 		return nil, err
 	}
-	selections, err = filterRoutingSelectionsByPolicy(selections, config, policyRequestContext{input.now, input.policyBudget, base.Model, route, len(input.Body)})
-	if err != nil {
-		return nil, err
-	}
+	selections = filterRoutingSelectionsByPolicy(selections, config)
 	if len(selections) == 0 {
-		if base.ServiceTier != nil {
+		if base.Tier != "" {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
@@ -744,58 +777,54 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 		base: RequestPolicy{Config: config, RedactionPolicy: redactionPolicy, LoadRedactionPolicy: loadRedactionPolicy},
 		load: credentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
 	}
-	selection, candidatePolicy, err := selectRequestCandidate(input, route, base.Model, providerPreference, &variants)
+	plan, err := planRequest(input, route, base.Model, providerPreference, &variants)
 	if err != nil {
 		return nil, err
 	}
-	variant, bodyErr := variants.bodyFor(candidatePolicy)
-	if bodyErr != nil {
-		return nil, bodyErr
-	}
-	candidateRaw := copyRawRequestData(variant.fields)
-	request := *variant.chat
-	if request.Reasoning != nil {
-		reasoning := *request.Reasoning
-		request.Reasoning = &reasoning
-	}
-	requestType := schemas.ChatCompletionRequest
-	if request.IsStreamingRequested() {
-		requestType = schemas.ChatCompletionStreamRequest
-	}
-	resolution, resolveErr := resolveOpenAIRequest(
-		variant.body,
-		candidateRaw,
-		route,
-		requestType,
-		request.Model,
-		&request.Model,
-		&request.ChatParameters.ServiceTier,
-		func() { applyChatAliases(&request) },
-		func() *int { return request.ChatParameters.MaxCompletionTokens },
-		&request,
-		selection,
-		variant.estimate,
-	)
-	if resolveErr == nil && request.ChatParameters.Reasoning != nil {
-		resolveErr = normalizeChatReasoning(
-			request.ChatParameters.Reasoning,
-			resolution.Deployment,
-			resolution.outputTokenLimit,
+	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
+		variant, err := variants.bodyFor(candidatePolicy)
+		if err != nil {
+			return nil, err
+		}
+		candidateRaw := copyRawRequestData(variant.fields)
+		request := *variant.chat
+		if request.Reasoning != nil {
+			reasoning := *request.Reasoning
+			request.Reasoning = &reasoning
+		}
+		requestType := schemas.ChatCompletionRequest
+		if request.IsStreamingRequested() {
+			requestType = schemas.ChatCompletionStreamRequest
+		}
+		resolution, err := resolveOpenAIRequest(
+			variant.body,
+			candidateRaw,
+			route,
+			requestType,
+			request.Model,
+			&request.Model,
+			&request.ChatParameters.ServiceTier,
+			func() { applyChatAliases(&request) },
+			func() *int { return request.ChatParameters.MaxCompletionTokens },
+			&request,
+			selection,
+			variant.estimate,
 		)
+		if err == nil && request.ChatParameters.Reasoning != nil {
+			err = normalizeChatReasoning(
+				request.ChatParameters.Reasoning,
+				resolution.Deployment,
+				resolution.outputTokenLimit,
+			)
+		}
+		if err != nil {
+			return nil, err
+		}
+		resolution.chat = &request
+		resolution.retainVariant(variant, candidatePolicy.Config, input)
+		return resolution, nil
 	}
-	if resolveErr != nil {
-		return nil, resolveErr
-	}
-	resolution.chat = &request
-	textBytes := variant.textBytes
-	resolution.inputTextBytes = &textBytes
-	resolution.inputFiles = variant.files
-	resolution.redactionSummary = variant.summary
-	resolution.ExportConfig = variant.exports
-	resolution.retainPolicyDecision(candidatePolicy.Config)
-	resolution.policyTime, resolution.policyBudget = input.now, input.policyBudget
-	resolution.policyBodyBytes = len(input.Body)
-	return resolution, nil
+	return plan.take(nil)
 }
 
 func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
@@ -855,19 +884,16 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 	selections, err := routingSelectionsForRequest(
 		route,
 		base.Model,
-		base.ServiceTier,
+		base.Tier,
 		config,
 		input.AvailableCredentials,
 	)
 	if err != nil {
 		return nil, err
 	}
-	selections, err = filterRoutingSelectionsByPolicy(selections, config, policyRequestContext{input.now, input.policyBudget, base.Model, route, len(input.Body)})
-	if err != nil {
-		return nil, err
-	}
+	selections = filterRoutingSelectionsByPolicy(selections, config)
 	if len(selections) == 0 {
-		if base.ServiceTier != nil {
+		if base.Tier != "" {
 			return nil, ErrServiceTierUnavailable
 		}
 		return nil, ErrModelUnavailable
@@ -884,60 +910,56 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 		base: RequestPolicy{Config: config, RedactionPolicy: redactionPolicy, LoadRedactionPolicy: loadRedactionPolicy},
 		load: credentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
 	}
-	selection, candidatePolicy, err := selectRequestCandidate(input, route, base.Model, providerPreference, &variants)
+	plan, err := planRequest(input, route, base.Model, providerPreference, &variants)
 	if err != nil {
 		return nil, err
 	}
-	variant, bodyErr := variants.bodyFor(candidatePolicy)
-	if bodyErr != nil {
-		return nil, bodyErr
-	}
-	candidateRaw := copyRawRequestData(variant.fields)
-	request := *variant.responses
-	if request.Reasoning != nil {
-		reasoning := *request.Reasoning
-		request.Reasoning = &reasoning
-	}
-	requestType := schemas.ResponsesRequest
-	if request.IsStreamingRequested() {
-		requestType = schemas.ResponsesStreamRequest
-	}
-	resolution, resolveErr := resolveOpenAIRequest(
-		variant.body,
-		candidateRaw,
-		route,
-		requestType,
-		request.Model,
-		&request.Model,
-		&request.ResponsesParameters.ServiceTier,
-		func() { applyResponsesAliases(candidateRaw, &request) },
-		func() *int { return request.ResponsesParameters.MaxOutputTokens },
-		&request,
-		selection,
-		variant.estimate,
-	)
-	if resolveErr == nil {
-		resolveErr = normalizeResponsesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
-	}
-	if resolveErr != nil {
-		return nil, resolveErr
-	}
-	if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
-		if request.ResponsesParameters.Reasoning == nil {
-			request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
+		variant, err := variants.bodyFor(candidatePolicy)
+		if err != nil {
+			return nil, err
 		}
-		request.ResponsesParameters.Reasoning.Mode = &mode
+		candidateRaw := copyRawRequestData(variant.fields)
+		request := *variant.responses
+		if request.Reasoning != nil {
+			reasoning := *request.Reasoning
+			request.Reasoning = &reasoning
+		}
+		requestType := schemas.ResponsesRequest
+		if request.IsStreamingRequested() {
+			requestType = schemas.ResponsesStreamRequest
+		}
+		resolution, err := resolveOpenAIRequest(
+			variant.body,
+			candidateRaw,
+			route,
+			requestType,
+			request.Model,
+			&request.Model,
+			&request.ResponsesParameters.ServiceTier,
+			func() { applyResponsesAliases(candidateRaw, &request) },
+			func() *int { return request.ResponsesParameters.MaxOutputTokens },
+			&request,
+			selection,
+			variant.estimate,
+		)
+		if err == nil {
+			err = normalizeResponsesReasoning(request.ResponsesParameters.Reasoning, resolution.Deployment, resolution.outputTokenLimit)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
+			if request.ResponsesParameters.Reasoning == nil {
+				request.ResponsesParameters.Reasoning = &schemas.ResponsesParametersReasoning{}
+			}
+			request.ResponsesParameters.Reasoning.Mode = &mode
+		}
+		resolution.responses = &request
+		resolution.retainVariant(variant, candidatePolicy.Config, input)
+		return resolution, nil
 	}
-	resolution.responses = &request
-	textBytes := variant.textBytes
-	resolution.inputTextBytes = &textBytes
-	resolution.inputFiles = variant.files
-	resolution.redactionSummary = variant.summary
-	resolution.ExportConfig = variant.exports
-	resolution.retainPolicyDecision(candidatePolicy.Config)
-	resolution.policyTime, resolution.policyBudget = input.now, input.policyBudget
-	resolution.policyBodyBytes = len(input.Body)
-	return resolution, nil
+	return plan.take(nil)
 }
 
 func piiRedactionError(err error) error {
@@ -1034,16 +1056,8 @@ func resolveOpenAIRequest(
 		return nil, ErrRouteUnavailable
 	}
 	model := requestedModel
-	var requestedServiceTier *schemas.BifrostServiceTier
-	if serviceTier != nil && *serviceTier != nil {
-		requestedServiceTier = *serviceTier
-	}
-	if err := validateRequestedServiceTier(provider, requestedServiceTier); err != nil {
-		return nil, err
-	}
-	if !applyResolvedDeployment(provider, modelField, serviceTier, deployment) {
-		return nil, ErrModelUnavailable
-	}
+	*modelField = deployment.Upstream.Model
+	*serviceTier = upstreamServiceTier(provider, deployment.Upstream)
 	if applyRequestAliases != nil {
 		applyRequestAliases()
 	}
@@ -1066,69 +1080,12 @@ func resolveOpenAIRequest(
 	}
 	resolved := resolvedRequest(route, requestType, provider, requestedModel, *modelField, deployment, filtered, outputTokenLimit, inputTokenEstimate, pricing)
 	resolved.CredentialIndex = selection.credential
-	resolved.providerAttemptLimit = selection.providerAttempts
 	resolved.inputTokenEstimate = &inputTokenEstimate
 	return resolved, nil
 }
 
-func validateRequestedServiceTier(provider schemas.ModelProvider, requested *schemas.BifrostServiceTier) error {
-	if requested == nil {
-		return nil
-	}
-	value := strings.ToLower(strings.TrimSpace(string(*requested)))
-	if value == "" {
-		return nil
-	}
-	switch provider {
-	case schemas.OpenAI:
-		switch value {
-		case "auto", "default", "fast", "flex", "priority":
-			return nil
-		case "scale", "provisioned":
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "OpenAI " + value + " service_tier is not supported by Stogas"}
-		default:
-			return ErrUnsupportedServiceTier
-		}
-	case schemas.Azure:
-		switch value {
-		case "auto", "default", "fast", "priority":
-			return nil
-		default:
-			return ErrUnsupportedServiceTier
-		}
-	case schemas.Anthropic:
-		switch value {
-		case "default", "standard", "standard_only":
-			return nil
-		case "auto", "priority":
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic " + value + " service_tier requires an uncataloged Priority Tier contract"}
-		case "flex":
-			return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Anthropic flex service_tier does not exist"}
-		default:
-			return ErrUnsupportedServiceTier
-		}
-	default:
-		return ErrUnsupportedServiceTier
-	}
-}
-
-func isKnownServiceTierValue(requested *schemas.BifrostServiceTier) bool {
-	if requested == nil {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(string(*requested))) {
-	case "", "auto", "default", "fast", "flex", "priority", "standard", "standard_only":
-		return true
-	default:
-		return false
-	}
-}
-
 func requestProviderPreference(rawData map[string]json.RawMessage) (ProviderRoutingPreference, error) {
-	raw, name, ok, err := requestRoutingPreferenceRaw(rawData)
-	if err != nil {
-		return ProviderRoutingPreference{}, err
-	}
+	raw, ok := rawData["provider"]
 	if !ok {
 		return ProviderRoutingPreference{}, nil
 	}
@@ -1136,65 +1093,50 @@ func requestProviderPreference(rawData map[string]json.RawMessage) (ProviderRout
 	if err := sonic.Unmarshal(raw, &provider); err == nil {
 		provider = strings.TrimSpace(provider)
 		if provider == "" {
-			return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
+			return ProviderRoutingPreference{}, errProviderPreferenceShape
 		}
 		return ProviderRoutingPreference{Only: []string{provider}}, nil
 	}
 	var object map[string]json.RawMessage
 	if err := sonic.Unmarshal(raw, &object); err != nil || object == nil {
-		return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
+		return ProviderRoutingPreference{}, errProviderPreferenceShape
 	}
 	for key := range object {
 		switch key {
 		case "only", "order":
 		default:
-			return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
+			return ProviderRoutingPreference{}, errProviderPreferenceShape
 		}
 	}
-	only, err := providerStringList(name, object["only"])
+	only, err := providerStringList(object["only"])
 	if err != nil {
 		return ProviderRoutingPreference{}, err
 	}
-	order, err := providerStringList(name, object["order"])
+	order, err := providerStringList(object["order"])
 	if err != nil {
 		return ProviderRoutingPreference{}, err
 	}
 	preference := ProviderRoutingPreference{Only: only, Order: order}
 	if preference.Empty() {
-		return ProviderRoutingPreference{}, providerPreferenceShapeError(name)
+		return ProviderRoutingPreference{}, errProviderPreferenceShape
 	}
 	return preference, nil
 }
 
-func requestRoutingPreferenceRaw(rawData map[string]json.RawMessage) (json.RawMessage, string, bool, error) {
-	providerRaw, hasProvider := rawData["provider"]
-	rulesRaw, hasRules := rawData["rules"]
-	if hasProvider && hasRules {
-		return nil, "", false, APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "provider and rules cannot both be set"}
-	}
-	if hasProvider {
-		return providerRaw, "provider", true, nil
-	}
-	if hasRules {
-		return rulesRaw, "rules", true, nil
-	}
-	return nil, "", false, nil
-}
-
-func providerStringList(name string, raw json.RawMessage) ([]string, error) {
+func providerStringList(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
 	var values []string
 	if err := sonic.Unmarshal(raw, &values); err != nil || len(values) == 0 || len(values) > maxProviderRoutingItems {
-		return nil, providerPreferenceShapeError(name)
+		return nil, errProviderPreferenceShape
 	}
 	out := make([]string, 0, len(values))
 	seen := map[string]bool{}
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
 		if normalized == "" || len(normalized) > maxProviderNameBytes {
-			return nil, providerPreferenceShapeError(name)
+			return nil, errProviderPreferenceShape
 		}
 		key := strings.ToLower(normalized)
 		if seen[key] {
@@ -1206,12 +1148,7 @@ func providerStringList(name string, raw json.RawMessage) ([]string, error) {
 	return out, nil
 }
 
-func providerPreferenceShapeError(name string) APIError {
-	if name == "" {
-		name = "provider"
-	}
-	return APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: name + " must be a non-empty string or an object with provider only/order lists"}
-}
+var errProviderPreferenceShape = APIError{StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "provider must be a non-empty string or an object with provider only/order lists"}
 
 func resolvedRequest(
 	route Route,
@@ -1250,8 +1187,8 @@ func maxInputTokenHold(contextWindowTokens int, outputTokenLimit int) int {
 }
 
 type routingFields struct {
-	Model       string
-	ServiceTier *schemas.BifrostServiceTier
+	Model string
+	Tier  string
 }
 
 func requestRoutingFields(raw map[string]json.RawMessage) (routingFields, error) {
@@ -1262,9 +1199,15 @@ func requestRoutingFields(raw map[string]json.RawMessage) (routingFields, error)
 		}
 	}
 	if value, ok := raw["service_tier"]; ok {
-		if err := json.Unmarshal(value, &fields.ServiceTier); err != nil {
+		var serviceTier *schemas.BifrostServiceTier
+		if err := json.Unmarshal(value, &serviceTier); err != nil {
 			return fields, ErrInvalidJSON
 		}
+		tier, err := requestedTier(serviceTier)
+		if err != nil {
+			return fields, err
+		}
+		fields.Tier = tier
 	}
 	return fields, nil
 }

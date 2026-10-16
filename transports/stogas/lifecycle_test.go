@@ -20,8 +20,17 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
 
-func testDeploymentForRoute(provider schemas.ModelProvider, model string, route catalog.Route) (catalog.Deployment, bool) {
-	return catalog.DeploymentForRouteServiceTier(provider, model, route, nil)
+// testDeploymentForRoute resolves an exact deployment selector as a request on the route does.
+func testDeploymentForRoute(provider schemas.ModelProvider, deploymentID string, route catalog.Route) (catalog.Deployment, bool) {
+	path, body := "/v1/responses", fmt.Sprintf(`{"model":%q,"input":"hi"}`, deploymentID)
+	if route == catalog.RouteChat {
+		path, body = "/v1/chat/completions", fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]}`, deploymentID)
+	}
+	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: path, Body: []byte(body)})
+	if err != nil || resolution.Provider != provider {
+		return catalog.Deployment{}, false
+	}
+	return resolution.Deployment, true
 }
 
 type statusError struct {
@@ -36,30 +45,18 @@ func (e *statusError) StatusCode() int {
 }
 
 type fakeBillingAuthorizer struct {
-	attempts       []string
-	errors         []error
-	finalEvents    []billing.RequestEvent
-	encryptionKeys customerkey.Keys
-	callCount      int
+	requests    []billing.HoldRequest
+	errors      []error
+	finalEvents []billing.RequestEvent
 }
 
-func (f *fakeBillingAuthorizer) authorize(requestID string) (*billing.Authorization, error) {
-	f.attempts = append(f.attempts, requestID)
-	idx := f.callCount
-	f.callCount++
-	if idx < len(f.errors) {
-		return nil, f.errors[idx]
+func (f *fakeBillingAuthorizer) Authorize(_ context.Context, request billing.HoldRequest) (*billing.Authorization, error) {
+	index := len(f.requests)
+	f.requests = append(f.requests, request)
+	if index < len(f.errors) {
+		return nil, f.errors[index]
 	}
 	return nil, nil
-}
-
-func (f *fakeBillingAuthorizer) AuthorizeRequestWithEncryptionKeys(ctx context.Context, rawAPIKey string, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage billing.UsageReservation, _ *billing.KeyConfigSnapshot, _ *billing.PreparedCredential, _ []policy.RuleMatch, _ customerkey.Keys, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
-	return f.authorize(requestID)
-}
-
-func (f *fakeBillingAuthorizer) AuthorizeDashboardRequestWithDuration(ctx context.Context, _ *billing.DashboardCredential, requestID string, providerKey string, productKey string, estimatedUpstreamCostUSD string, usage billing.UsageReservation, _ *billing.KeyConfigSnapshot, _ *billing.PreparedCredential, _ []policy.RuleMatch, key customerkey.Keys, _ *billing.UpstreamTarget, requestLifetime time.Duration) (*billing.Authorization, error) {
-	f.encryptionKeys = key
-	return f.authorize(requestID)
 }
 
 func (f *fakeBillingAuthorizer) FinalizeRequest(authorization *billing.Authorization, event billing.RequestEvent) error {
@@ -100,7 +97,7 @@ func TestPublicBillingErrorNeverReturnsPrivateDetails(t *testing.T) {
 		want PublicBillingError
 	}{
 		{"database failure", fmt.Errorf("%w: postgres://private-user:private-password@private-host/database", billing.ErrGatewayUnavailable),
-			PublicBillingError{503, "gateway_unavailable", "gateway_error", "Stogas is temporarily unavailable. Retry the request later."}},
+			PublicBillingError{503, "gateway_unavailable", "gateway_error", "The gateway is temporarily unavailable. Retry the request later."}},
 		{"wrapped rejection", fmt.Errorf("%w: balance=123 customer=private", billing.ErrInsufficientBalance),
 			PublicBillingError{402, "insufficient_balance", "billing_error", "Insufficient credit. Add funds to your organization to retry this request."}},
 		{"unknown error", errors.New("private database query and parameters"),
@@ -138,32 +135,7 @@ func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
 	}
 }
 
-func TestAuthorizeStateReleasesCredentialSnapshotAfterFailure(t *testing.T) {
-	requestID := "11111111-1111-1111-1111-111111111111"
-	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-	ctx.SetValue(schemas.BifrostContextKeyRequestID, requestID)
-	state := NewState(&catalog.ResolvedRequest{
-		Route:       catalog.RouteChat,
-		RequestType: schemas.ChatCompletionRequest,
-		Provider:    schemas.OpenAI,
-		Model:       "gpt-5",
-	}, "sk-user", nil, DefaultAdapter{})
-	state.EncryptionKeys, _ = customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
-	state.KeyConfig = &billing.KeyConfigSnapshot{Credentials: map[string][]billing.CredentialSelection{"openai": {{Mode: "stored", Credential: &billing.CachedCredential{EncryptedSecret: "ciphertext"}}}}}
-	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
-	authorizer := &fakeBillingAuthorizer{errors: []error{
-		&statusError{err: billing.ErrInvalidAPIKey, statusCode: 401},
-	}}
-
-	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrInvalidAPIKey) {
-		t.Fatalf("AuthorizeState error = %v, want invalid API key", err)
-	}
-	if state.EncryptionKeys != nil || state.KeyConfig != nil {
-		t.Fatal("credential snapshot remained in request state after authorization failed")
-	}
-}
-
-func TestAuthorizeStateForwardsDashboardEncryptionKeyAndReleasesIt(t *testing.T) {
+func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyRequestID, "11111111-1111-1111-1111-111111111111")
 	state := NewState(&catalog.ResolvedRequest{
@@ -172,25 +144,29 @@ func TestAuthorizeStateForwardsDashboardEncryptionKeyAndReleasesIt(t *testing.T)
 		Provider:    schemas.OpenAI,
 		Model:       "gpt-5",
 	}, "", nil, DefaultAdapter{})
-	state.SetDashboardCredential(&billing.DashboardCredential{
-		ActorUserID: "actor",
-		KeyID:       "key",
-		SessionID:   "session",
-	})
-	state.EncryptionKeys, _ = customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
-	state.Hold = HoldEstimate{
-		ProviderKey:              "openai",
-		ProductKey:               "gpt-5",
-		EstimatedUpstreamCostUSD: "1000",
+	dashboard := &billing.DashboardCredential{ActorUserID: "actor", KeyID: "key", SessionID: "session"}
+	state.SetDashboardCredential(dashboard)
+	state.PreparedCredential = &billing.PreparedCredential{}
+	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
+	keys, _ := customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
+	defer keys.Clear()
+	keyConfig := &billing.KeyConfigSnapshot{}
+	previous := &billing.Authorization{RequestID: "11111111-1111-1111-1111-111111111111"}
+	authorizer := &fakeBillingAuthorizer{errors: []error{&statusError{err: billing.ErrInvalidAPIKey, statusCode: 401}}}
+
+	if err := AuthorizeState(ctx, authorizer, state, keyConfig, keys, previous); !errors.Is(err, billing.ErrInvalidAPIKey) {
+		t.Fatalf("AuthorizeState error = %v, want invalid API key", err)
 	}
-	key := state.EncryptionKeys
-	defer key.Clear()
-	authorizer := &fakeBillingAuthorizer{errors: []error{billing.ErrInvalidAPIKey}}
-	if err := AuthorizeState(ctx, authorizer, state); !errors.Is(err, billing.ErrInvalidAPIKey) {
-		t.Fatal(err)
+	if len(authorizer.requests) != 1 {
+		t.Fatalf("authorizations = %d, want 1", len(authorizer.requests))
 	}
-	if authorizer.callCount != 1 || authorizer.encryptionKeys.Identity() != key.Identity() || state.EncryptionKeys != nil {
-		t.Fatal("dashboard encryption key was not forwarded or released")
+	request := authorizer.requests[0]
+	if request.Dashboard != dashboard || request.Snapshot != keyConfig || request.EncryptionKeys.Identity() != keys.Identity() ||
+		request.Previous != previous || request.ProviderKey != "openai" || request.EstimatedUpstreamCostUSD != "1000" {
+		t.Fatalf("hold request = %#v", request)
+	}
+	if state.PreparedCredential != nil || state.Authorization != nil {
+		t.Fatal("a refused pair kept its prepared credential or an authorization")
 	}
 }
 
@@ -199,8 +175,10 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 		t.Run("reject "+string(provider), func(t *testing.T) {
 			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 			state := &State{
-				Authorization: &billing.Authorization{UpstreamByok: "stogas"},
-				Resolution:    &catalog.ResolvedRequest{Provider: provider},
+				Pair: Pair{
+					Authorization: &billing.Authorization{UpstreamByok: "stogas"},
+					Resolution:    &catalog.ResolvedRequest{Provider: provider},
+				},
 			}
 			if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
@@ -210,19 +188,23 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
-		Authorization: &billing.Authorization{UpstreamByok: "stogas", UserID: "user-123"},
-		Resolution:    &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
+		Pair: Pair{
+			Authorization: &billing.Authorization{UpstreamByok: "stogas", UserID: "user-123"},
+			Resolution:    &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
+		},
 	}
 	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 
 	byokState := &State{
-		Authorization: &billing.Authorization{
-			UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
-			UpstreamByokSecret: "cpk_user",
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
+				UpstreamByokSecret: "cpk_user",
+			},
+			Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 		},
-		Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 	}
 	if err := applyUpstreamCredentials(ctx, byokState, nil); err != nil {
 		t.Fatalf("Chutes BYOK returned error: %v", err)
@@ -241,12 +223,14 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 		t.Run(string(provider), func(t *testing.T) {
 			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 			state := &State{
-				Authorization: &billing.Authorization{
-					UpstreamByok:       byokID,
-					UpstreamByokSecret: upstreamSecret,
-					UserID:             "stogas-user",
+				Pair: Pair{
+					Authorization: &billing.Authorization{
+						UpstreamByok:       byokID,
+						UpstreamByokSecret: upstreamSecret,
+						UserID:             "stogas-user",
+					},
+					Resolution: &catalog.ResolvedRequest{Provider: provider},
 				},
-				Resolution: &catalog.ResolvedRequest{Provider: provider},
 			}
 
 			if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
@@ -274,11 +258,13 @@ func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *tes
 	const credentialHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
-		Authorization: &billing.Authorization{
-			UpstreamByok:       credentialHash,
-			UpstreamByokSecret: upstreamSecret,
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				UpstreamByok:       credentialHash,
+				UpstreamByokSecret: upstreamSecret,
+			},
+			Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 		},
-		Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 	}
 
 	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
@@ -299,10 +285,12 @@ func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *tes
 func TestApplyUpstreamCredentialsRejectsIncompleteBYOKAuthorization(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	state := &State{
-		Authorization: &billing.Authorization{
-			UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001",
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				UpstreamByok: "0198f4cc-6c25-7000-8000-000000000001",
+			},
+			Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 		},
-		Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 	}
 
 	if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
@@ -317,11 +305,13 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 	for _, secret := range []string{" leading", "trailing ", "line\nbreak", "nul\x00byte", "unicode-é", string([]byte{0x7f})} {
 		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 		state := &State{
-			Authorization: &billing.Authorization{
-				UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
-				UpstreamByokSecret: secret,
+			Pair: Pair{
+				Authorization: &billing.Authorization{
+					UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
+					UpstreamByokSecret: secret,
+				},
+				Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 			},
-			Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI},
 		}
 
 		if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
@@ -335,11 +325,13 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 
 func TestDefaultAdapterCalculateUpstreamCostUsesSignals(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				"input_tokens":  {"per_mill_tokens": "1000000"},
-				"output_tokens": {"per_mill_tokens": "2000000"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					"input_tokens":  {"per_mill_tokens": "1000000"},
+					"output_tokens": {"per_mill_tokens": "2000000"},
+				}},
+			},
 		},
 		Signals: &StandardSignals{Prompt: 1000, Completion: 2000},
 	}
@@ -371,7 +363,9 @@ func TestCalculateUpstreamCostPartitionsEveryInputAndOutputCategoryExactlyOnce(t
 		billing.MeterReasoningTokens:         {billing.RatePerMillionTokens: "4000000"},
 	}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		},
 		Signals: &StandardSignals{
 			Prompt:       1000,
 			Cached:       100,
@@ -407,11 +401,13 @@ func TestCalculateUpstreamCostPartitionsEveryInputAndOutputCategoryExactlyOnce(t
 
 func TestCalculateUpstreamCostKeepsUsablePromptWhenCacheBreakdownIsImpossible(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
-			billing.MeterCachedInputTokens:     {billing.RatePerMillionTokens: "100000"},
-			billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
+				billing.MeterCachedInputTokens:     {billing.RatePerMillionTokens: "100000"},
+				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
+			}}},
+		},
 		Signals: &StandardSignals{Prompt: 100, Cached: 80, CacheWrite: 30},
 	}
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
@@ -446,9 +442,11 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &State{
-				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-					billing.MeterInputTokens: {billing.RatePerMillionTokens: "1000000"},
-				}}},
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+						billing.MeterInputTokens: {billing.RatePerMillionTokens: "1000000"},
+					}}},
+				},
 				Signals: tt.signals,
 			}
 			cost, err := calculateBaseUpstreamCost(state, nil)
@@ -480,8 +478,9 @@ func TestCalculateUpstreamCostKeepsUnpricedCacheDetailsAsOrdinaryInput(t *testin
 func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 	// Keep the universal estimate below the pricing threshold, then report
 	// actual usage above it. Settlement must change tiers and charge above hold.
-	longText := strings.Repeat("a", billing.LongContextThresholdTokens+1)
-	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
+	const longPrompt = 272001 // gpt-5.5 charges more above 272K prompt tokens
+	longText := strings.Repeat("a", longPrompt)
+	body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"` + longText + `"}],"max_completion_tokens":16}`)
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -507,18 +506,18 @@ func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
-		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionContextLTE272K || finalMeter.HoldRequired {
+		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionTokens || finalMeter.HoldRequired {
 			t.Fatalf("expected low-context final meter for %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
 	}
 
-	state.Signals = &StandardSignals{Prompt: billing.LongContextThresholdTokens + 1, Completion: 1}
+	state.Signals = &StandardSignals{Prompt: longPrompt, Completion: 1}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost above threshold returned error: %v", err)
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
-		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionContextGT272K || finalMeter.HoldRequired {
+		if finalMeter == nil || finalMeter.RateKey != "per_mill_context_gt_272k" || finalMeter.HoldRequired {
 			t.Fatalf("expected high-context final meter for %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
 	}
@@ -529,13 +528,13 @@ func TestCalculateUpstreamCostSelectsContextTierFromActualUsage(t *testing.T) {
 		t.Fatal("fixture must exercise usage above the local hold estimate")
 	}
 
-	state.Signals = &StandardSignals{Prompt: 1000, Completion: billing.LongContextThresholdTokens + 1}
+	state.Signals = &StandardSignals{Prompt: 1000, Completion: longPrompt}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost large output returned error: %v", err)
 	}
 	for _, meterKey := range []string{billing.MeterInputTokens, billing.MeterOutputTokens} {
 		finalMeter := findMeterEstimate(state.FinalMeters, meterKey)
-		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionContextLTE272K {
+		if finalMeter == nil || finalMeter.RateKey != billing.RatePerMillionTokens {
 			t.Fatalf("expected normal-context final meter for large output %s, got %#v in %#v", meterKey, finalMeter, state.FinalMeters)
 		}
 	}
@@ -547,9 +546,11 @@ func TestCalculateUpstreamCostRetainsExplicitlyFreeCacheUsage(t *testing.T) {
 		billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "0"},
 	}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
-		Hold: HoldEstimate{Meters: billing.AppendTokenMeterCost(nil, pricing,
-			billing.MeterInputTokens, 1000, true, billing.TokenRateHighest), EstimatedUpstreamCostUSD: "0.002"},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+			Hold: HoldEstimate{Meters: billing.AppendTokenMeterCost(nil, pricing,
+				billing.MeterInputTokens, 1000, true, billing.TokenRateHighest), EstimatedUpstreamCostUSD: "0.002"},
+		},
 	}
 	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
 		PromptTokens:        1000,
@@ -590,11 +591,13 @@ func TestCalculateUpstreamCostRetainsExplicitlyFreeCacheUsage(t *testing.T) {
 
 func TestCalculateUpstreamCostPartitionsReasoningFromAggregateOutputWithoutDoubleCounting(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				"input_tokens":  {"per_mill_tokens": "1000000"},
-				"output_tokens": {"per_mill_tokens": "2000000"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					"input_tokens":  {"per_mill_tokens": "1000000"},
+					"output_tokens": {"per_mill_tokens": "2000000"},
+				}},
+			},
 		},
 	}
 	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
@@ -633,7 +636,9 @@ func TestCalculateUpstreamCostUsesExplicitReasoningRateAndHoldReservesTheHigherO
 		billing.MeterReasoningTokens: {billing.RatePerMillionTokens: "5000000"},
 	}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+		},
 	}
 	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
 		CompletionTokens: 250,
@@ -702,9 +707,11 @@ func TestSignalsFromUsageFallsBackWhenProviderAggregateUsageIsPartial(t *testing
 
 func TestCalculateUpstreamCostIgnoresImpossibleReasoningDetailAndKeepsCompletion(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+			}}},
+		},
 	}
 	setSignalsFromUsage(state, &schemas.BifrostLLMUsage{
 		CompletionTokens: 10,
@@ -753,7 +760,9 @@ func TestDefaultAdapterCalculateUpstreamCostDoesNotChargeWithoutUsage(t *testing
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &State{
-				Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
+				Pair: Pair{
+					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
+				},
 				BifrostError: &schemas.BifrostError{
 					StatusCode: tt.statusCode,
 					Error: &schemas.ErrorField{
@@ -776,19 +785,21 @@ func TestDefaultAdapterCalculateUpstreamCostDoesNotChargeWithoutUsage(t *testing
 
 func TestDefaultAdapterCalculateUpstreamCostReturnsHoldWithoutUsage(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
-		}}},
-		Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
-		Signals:       &StandardSignals{},
-		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
-			MeterKey:     billing.MeterOutputTokens,
-			RateKey:      billing.RatePerMillionTokens,
-			RateUSD:      "1000000",
-			Quantity:     "123",
-			AmountUSD:    "123",
-			HoldRequired: true,
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
+			}}},
+			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("123")},
+			Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
+				MeterKey:     billing.MeterOutputTokens,
+				RateKey:      billing.RatePerMillionTokens,
+				RateUSD:      "1000000",
+				Quantity:     "123",
+				AmountUSD:    "123",
+				HoldRequired: true,
+			}}},
+		},
+		Signals: &StandardSignals{},
 	}
 	if err := (DefaultAdapter{}).CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
@@ -807,12 +818,14 @@ func TestCalculateBaseUpstreamCostChargesProviderMetersWithoutTokenUsage(t *test
 		meterKey: {billing.RatePerThousandCalls: "1000"},
 	}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
-		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
-			MeterKey:     meterKey,
-			Quantity:     "1",
-			HoldRequired: true,
-		}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+			Hold: HoldEstimate{Meters: []catalog.MeterEstimate{{
+				MeterKey:     meterKey,
+				Quantity:     "1",
+				HoldRequired: true,
+			}},
+			},
 		},
 	}
 	extraMeters := billing.AppendCallMeterCost(nil, pricing, meterKey, 1, false)
@@ -827,11 +840,13 @@ func TestCalculateBaseUpstreamCostChargesProviderMetersWithoutTokenUsage(t *test
 
 func TestDefaultAdapterCalculateUpstreamCostChargesReportedUsageWithProviderError(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
-				billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
+					billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+				}},
+			},
 		},
 		BifrostError: &schemas.BifrostError{
 			StatusCode: lifecycleIntPtr(500),
@@ -912,11 +927,13 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 			}
 
 			withUsage := &State{
-				Adapter: OpenAIAdapter{},
-				Resolution: &catalog.ResolvedRequest{
-					Provider:   schemas.OpenAI,
-					Route:      catalog.RouteChat,
-					Deployment: catalog.Deployment{Pricing: pricing},
+				Pair: Pair{
+					Adapter: OpenAIAdapter{},
+					Resolution: &catalog.ResolvedRequest{
+						Provider:   schemas.OpenAI,
+						Route:      catalog.RouteChat,
+						Deployment: catalog.Deployment{Pricing: pricing},
+					},
 				},
 			}
 			if err := withUsage.Adapter.IngestResponse(withUsage, nil, providerErr); err != nil {
@@ -935,7 +952,9 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 			}
 
 			withoutUsage := &State{
-				Resolution:   &catalog.ResolvedRequest{Provider: schemas.OpenAI, Deployment: catalog.Deployment{Pricing: pricing}},
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{Provider: schemas.OpenAI, Deployment: catalog.Deployment{Pricing: pricing}},
+				},
 				BifrostError: providerErr,
 			}
 			providerErr.ExtraFields.BilledUsage = nil
@@ -952,20 +971,22 @@ func TestEveryTelemetryErrorCategoryIsIndependentOfBestEffortSettlement(t *testi
 
 func TestNoUsageClientErrorHasNoFinalMeters(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
-		}}},
-		Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("2000")},
-		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSD: "2000",
-			Meters: []catalog.MeterEstimate{{
-				MeterKey:     billing.MeterOutputTokens,
-				RateKey:      billing.RatePerMillionTokens,
-				RateUSD:      "2000000",
-				Quantity:     "1000",
-				AmountUSD:    "2000",
-				HoldRequired: true,
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+			}}},
+			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("2000")},
+			Hold: HoldEstimate{
+				EstimatedUpstreamCostUSD: "2000",
+				Meters: []catalog.MeterEstimate{{
+					MeterKey:     billing.MeterOutputTokens,
+					RateKey:      billing.RatePerMillionTokens,
+					RateUSD:      "2000000",
+					Quantity:     "1000",
+					AmountUSD:    "2000",
+					HoldRequired: true,
+				}},
+			},
 		},
 		BifrostError: &schemas.BifrostError{
 			StatusCode: lifecycleIntPtr(400),
@@ -1002,9 +1023,9 @@ func TestCalculateUpstreamCostUsesActualOpenAIServiceTierWhenExplicitTierReturne
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	actualTier := schemas.BifrostServiceTierPriority
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	state.Signals = &StandardSignals{Prompt: 1000, ActualServiceTier: &actualTier}
+	state.ActualTier = catalog.TierFast
+	state.Signals = &StandardSignals{Prompt: 1000}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
@@ -1074,8 +1095,8 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 			if attemptCount == 2 {
 				first := state.beginProviderAttempt(state.StartedAt)
 				state.finishProviderAttempt(first, state.StartedAt.Add(time.Millisecond), nil, &schemas.BifrostError{Error: &schemas.ErrorField{Message: "retry"}})
-				state.beginProviderAttempt(state.StartedAt.Add(2 * time.Millisecond))
 			}
+			state.beginProviderAttempt(state.StartedAt.Add(2 * time.Millisecond))
 			FinalizeState(context.Background(), authorizer, state)
 			if len(authorizer.finalEvents) != 1 {
 				t.Fatalf("final events = %d, want 1", len(authorizer.finalEvents))
@@ -1087,10 +1108,10 @@ func TestOpenAIFastDowngradeUsesActualDeploymentForBillingAndEvidence(t *testing
 				t.Fatalf("response metadata lost the catalog identity: %#v", metadata.Catalog)
 			}
 			attempts := authorizer.finalEvents[0].ProviderAttempts
-			if len(attempts) != attemptCount || attempts[attemptCount-1].SelectedCatalogChainHash != resolution.Deployment.ChainHash {
+			if len(attempts) != attemptCount || attempts[attemptCount-1].ResolvedCatalogChainHash != resolution.Deployment.ChainHash {
 				t.Fatalf("original Fast selection was lost: %#v", attempts)
 			}
-			if attemptCount == 2 && attempts[0].SelectedCatalogChainHash != "" {
+			if attemptCount == 2 && attempts[0].ResolvedCatalogChainHash != "" {
 				t.Fatal("unchanged attempt repeated its selected chain")
 			}
 		})
@@ -1110,11 +1131,10 @@ func TestOpenAIFastHoldCoversActualPriorityServiceTier(t *testing.T) {
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)
 	}
-	actualTier := schemas.BifrostServiceTierPriority
+	state.ActualTier = catalog.TierFast
 	state.Signals = &StandardSignals{
-		Prompt:            resolution.InputTokenLimit(),
-		Completion:        resolution.OutputTokenLimit(),
-		ActualServiceTier: &actualTier,
+		Prompt:     resolution.InputTokenLimit(),
+		Completion: resolution.OutputTokenLimit(),
 	}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
@@ -1136,32 +1156,32 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 		{
 			name: "chat omitted",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 		},
 		{
 			name: "chat auto",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`,
 		},
 		{
 			name: "chat default",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"default","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses omitted",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","max_output_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16}`,
 		},
 		{
 			name: "responses auto",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","service_tier":"auto","max_output_tokens":16}`,
 		},
 		{
 			name: "responses default",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","service_tier":"default","max_output_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","service_tier":"default","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1201,7 +1221,7 @@ func TestOpenAIDefaultAndAutoUseExplicitStandardTierAndConservativeHoldRate(t *t
 				t.Fatalf("expected default deployment hold product key, got %#v", state.Hold)
 			}
 			defaultInput := findMeterEstimate(state.Hold.Meters, billing.MeterInputTokens)
-			if defaultInput == nil || defaultInput.RateKey != billing.RatePerMillionContextGT272K || defaultInput.RateUSD != "10" {
+			if defaultInput == nil || defaultInput.RateKey != "per_mill_context_gt_272k" || defaultInput.RateUSD != "10" {
 				t.Fatalf("default hold must reserve the deployment's highest possible input rate: %#v", state.Hold.Meters)
 			}
 		})
@@ -1217,12 +1237,12 @@ func TestOpenAICacheReadCalculateUpstreamCostStaysCoveredByNoCacheHold(t *testin
 		{
 			name: "chat",
 			path: "/v1/chat/completions",
-			body: `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"tenant-a","max_completion_tokens":16}`,
 		},
 		{
 			name: "responses",
 			path: "/v1/responses",
-			body: `{"model":"gpt-5.5","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
+			body: `{"model":"openai/gpt-5.5","input":"hi","prompt_cache_key":"tenant-a","max_output_tokens":16}`,
 		},
 	} {
 		t.Run(item.name, func(t *testing.T) {
@@ -1288,11 +1308,13 @@ func TestMissingCacheWriteUsageDoesNotInventAWritePremium(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := &State{
-				Resolution: &catalog.ResolvedRequest{
-					Provider: tt.provider,
-					Deployment: catalog.Deployment{
-						Pricing:  pricing,
-						Upstream: catalog.Upstream{Model: "gpt-5.6-sol"},
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{
+						Provider: tt.provider,
+						Deployment: catalog.Deployment{
+							Pricing:  pricing,
+							Upstream: catalog.Upstream{Model: "gpt-5.6-sol"},
+						},
 					},
 				},
 				Signals: &StandardSignals{Prompt: tt.prompt, Cached: tt.cached, CacheWrite: tt.reportedWrite},
@@ -1539,36 +1561,29 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 	for _, deploymentID := range deploymentIDs {
 		pricing := effectivePricingForDeployment(catalog.Deployment{Pricing: deployments[deploymentID].Pricing})
 		for _, meterKey := range tokenMeters {
-			standardRateKey, _, standardPriced := billing.PricingRate(
-				pricing,
-				meterKey,
-				billing.TokenRateStandard,
-			)
-			if !standardPriced {
+			rates := pricing[meterKey]
+			if len(rates) == 0 {
 				continue
 			}
 			modes := []struct {
 				name          string
 				promptContext int
-				rateMode      billing.TokenRateMode
+				rateKey       string
 			}{
-				{name: "standard", promptContext: 1, rateMode: billing.TokenRateStandard},
+				{name: "standard", promptContext: 1, rateKey: billing.RatePerMillionTokens},
 			}
-			longRateKey, _, longPriced := billing.PricingRate(
-				pricing,
-				meterKey,
-				billing.TokenRateLongContext,
-			)
-			if longPriced && longRateKey != standardRateKey {
-				modes = append(modes, struct {
-					name          string
-					promptContext int
-					rateMode      billing.TokenRateMode
-				}{
-					name:          "long-context",
-					promptContext: billing.LongContextThresholdTokens + 1,
-					rateMode:      billing.TokenRateLongContext,
-				})
+			for rateKey := range rates {
+				if cutoff, ok := billing.ContextCutoff(rateKey); ok {
+					modes = append(modes, struct {
+						name          string
+						promptContext int
+						rateKey       string
+					}{
+						name:          rateKey,
+						promptContext: cutoff + 1,
+						rateKey:       rateKey,
+					})
+				}
 			}
 
 			for _, mode := range modes {
@@ -1596,14 +1611,10 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 						signals.Prompt = quantity
 						signals.CacheWrite1h = quantity
 					case billing.MeterOutputTokens:
-						if mode.rateMode == billing.TokenRateLongContext {
-							signals.Prompt = mode.promptContext
-						}
+						signals.Prompt = mode.promptContext
 						signals.Completion = quantity
 					case billing.MeterReasoningTokens:
-						if mode.rateMode == billing.TokenRateLongContext {
-							signals.Prompt = mode.promptContext
-						}
+						signals.Prompt = mode.promptContext
 						signals.Completion = quantity
 						signals.Reasoning = quantity
 					default:
@@ -1611,8 +1622,10 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 					}
 
 					state := &State{
-						Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployments[deploymentID].Pricing}},
-						Signals:    signals,
+						Pair: Pair{
+							Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployments[deploymentID].Pricing}},
+						},
+						Signals: signals,
 					}
 					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
 						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
@@ -1621,9 +1634,10 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 					if meter == nil {
 						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
 					}
-					rateKey, rate, priced := billing.PricingRate(pricing, meterKey, mode.rateMode)
+					rateKey := mode.rateKey
+					rate, priced := billing.ParseRate(rates[rateKey])
 					if !priced {
-						t.Fatalf("effective pricing omitted %s/%s", meterKey, mode.name)
+						t.Fatalf("effective pricing omitted %s/%s", meterKey, rateKey)
 					}
 					wantAmount, err := calculatedMeterAmount(rateKey, big.NewInt(int64(quantity)), rate)
 					if err != nil {
@@ -1653,14 +1667,15 @@ func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *test
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"service_tier":"auto","max_completion_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
 	actualTier := schemas.BifrostServiceTier("unexpected_vendor_tier")
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-	state.Signals = &StandardSignals{Prompt: 1000, ActualServiceTier: &actualTier}
+	observeActualExecution(state, &actualTier, nil)
+	state.Signals = &StandardSignals{Prompt: 1000}
 	if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 		t.Fatalf("CalculateUpstreamCost returned error: %v", err)
 	}
@@ -1670,37 +1685,35 @@ func TestCalculateUpstreamCostUsesSelectedDeploymentForUnknownActualTier(t *test
 }
 
 func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testing.T) {
-	priority := schemas.BifrostServiceTierPriority
 	tests := []struct {
 		name        string
 		path        string
 		body        string
-		actualTier  *schemas.BifrostServiceTier
-		actualSpeed string
+		actualTier  string
 		actualModel string
 	}{
 		{
-			name:       "OpenAI Flex cannot become Priority",
+			name:       "OpenAI Flex cannot become Fast",
 			path:       "/v1/chat/completions",
 			body:       `{"model":"openai-gpt-5.5-2026-04-23-flex","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
-			actualTier: &priority,
+			actualTier: catalog.TierFast,
 		},
 		{
-			name:       "Azure Standard cannot become Priority",
+			name:       "Azure Standard cannot become Fast",
 			path:       "/v1/chat/completions",
 			body:       `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
-			actualTier: &priority,
+			actualTier: catalog.TierFast,
 		},
 		{
-			name:        "Anthropic Standard cannot become Fast",
-			path:        "/v1/chat/completions",
-			body:        `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
-			actualSpeed: "fast",
+			name:       "Anthropic Standard cannot become Fast",
+			path:       "/v1/chat/completions",
+			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			actualTier: catalog.TierFast,
 		},
 		{
 			name:        "reported fallback model is diagnostic only",
 			path:        "/v1/chat/completions",
-			body:        `{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
+			body:        `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
 			actualModel: "gpt-5-nano-2025-08-07",
 		},
 	}
@@ -1716,8 +1729,7 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 				t.Fatalf("ResolveRequest returned error: %v", err)
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			state.ActualServiceTier = tc.actualTier
-			state.ActualSpeed = tc.actualSpeed
+			state.ActualTier = tc.actualTier
 			state.ActualModel = tc.actualModel
 			actual := ExecutionDeployment(state)
 			if actual.ID != resolution.Deployment.ID {
@@ -1727,9 +1739,18 @@ func TestProviderExecutionMetadataCannotRetargetUnauthorizedDeployment(t *testin
 	}
 }
 
-func TestAnthropicNoOutputRefusalDoesNotChargeInformationalUsage(t *testing.T) {
+func TestClaudeRefusalBillingFollowsCategory(t *testing.T) {
 	refusal := "refusal"
 	stop := "stop"
+	category := func(value string) *schemas.ResponsesStopDetails {
+		return &schemas.ResponsesStopDetails{Type: "refusal", Category: &value}
+	}
+	chat := func(reason *string, details *schemas.ResponsesStopDetails) *schemas.BifrostResponse {
+		return &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
+			Choices:     []schemas.BifrostResponseChoice{{FinishReason: reason}},
+			StopDetails: details,
+		}}
+	}
 	pricing := catalog.Pricing{
 		billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
 		billing.MeterOutputTokens: {billing.RatePerMillionTokens: "1000000"},
@@ -1740,114 +1761,57 @@ func TestAnthropicNoOutputRefusalDoesNotChargeInformationalUsage(t *testing.T) {
 		outputEmitted bool
 		wantCost      string
 	}{
+		{name: "refusal before output without a category", response: chat(&refusal, nil), wantCost: billing.ZeroChargeUSD},
+		{name: "cyber refusal before output", response: chat(&refusal, category("cyber")), wantCost: billing.ZeroChargeUSD},
+		{name: "bio refusal before output", response: chat(&refusal, category("bio")), wantCost: "13"},
 		{
-			name: "chat refusal before output",
-			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
-				FinishReason: &refusal,
-			}}}},
-			wantCost: billing.ZeroChargeUSD,
-		},
-		{
-			name: "responses refusal before output",
+			name: "responses general harms refusal before output",
 			response: &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{
-				StopReason: &refusal,
+				StopReason: &refusal, StopDetails: category("general_harms"),
 			}},
 			wantCost: billing.ZeroChargeUSD,
 		},
 		{
-			name: "refusal after provider output reaches a disconnected caller",
-			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
-				FinishReason: &refusal,
-			}}}},
+			name: "streamed responses reasoning extraction refusal before output",
+			response: &schemas.BifrostResponse{ResponsesStreamResponse: &schemas.BifrostResponsesStreamResponse{
+				Response: &schemas.BifrostResponsesResponse{StopReason: &refusal, StopDetails: category("reasoning_extraction")},
+			}},
+			wantCost: "13",
+		},
+		{
+			name:          "refusal after provider output reaches a disconnected caller",
+			response:      chat(&refusal, category("cyber")),
 			outputEmitted: true,
 			wantCost:      "13",
 		},
-		{
-			name: "ordinary empty terminal still uses reported usage",
-			response: &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{Choices: []schemas.BifrostResponseChoice{{
-				FinishReason: &stop,
-			}}}},
-			wantCost: "13",
-		},
+		{name: "ordinary empty terminal still uses reported usage", response: chat(&stop, nil), wantCost: "13"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			state := &State{
-				Resolution: &catalog.ResolvedRequest{
-					Provider:   schemas.Anthropic,
-					Deployment: catalog.Deployment{Pricing: pricing},
-				},
-				Signals:               &StandardSignals{Prompt: 10, Completion: 3},
-				Response:              tt.response,
-				providerOutputEmitted: tt.outputEmitted,
-			}
-			if err := (AnthropicAdapter{}).CalculateUpstreamCost(state); err != nil {
-				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
-			}
-			if state.UpstreamCostUSD != tt.wantCost {
-				t.Fatalf("cost = %s, want %s; meters=%#v", state.UpstreamCostUSD, tt.wantCost, state.FinalMeters)
-			}
-			if tt.wantCost == billing.ZeroChargeUSD && len(state.FinalMeters) != 0 {
-				t.Fatalf("informational refusal usage produced priced meters: %#v", state.FinalMeters)
-			}
-		})
-	}
-}
-
-func TestAnthropicCalculateUpstreamCostUsesReturnedServiceTierDeployment(t *testing.T) {
-	tests := []struct {
-		name       string
-		body       string
-		wantHold   string
-		actualTier schemas.BifrostServiceTier
-	}{
-		{
-			name:       "auto request returned standard",
-			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16}`,
-			wantHold:   "anthropic-claude-opus-4-8",
-			actualTier: schemas.BifrostServiceTier("standard_only"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   "/v1/chat/completions",
-				Body:   []byte(tt.body),
+	for _, provider := range []schemas.ModelProvider{schemas.Anthropic, schemas.Azure} {
+		for _, tt := range tests {
+			t.Run(string(provider)+"/"+tt.name, func(t *testing.T) {
+				state := &State{
+					Pair: Pair{
+						Resolution: &catalog.ResolvedRequest{
+							Provider:   provider,
+							Deployment: catalog.Deployment{ModelID: "claude-fable-5-1", Pricing: pricing},
+						},
+					},
+					Signals:               &StandardSignals{Prompt: 10, Completion: 3},
+					Response:              tt.response,
+					providerOutputEmitted: tt.outputEmitted,
+				}
+				if err := AdapterFor(provider).CalculateUpstreamCost(state); err != nil {
+					t.Fatalf("CalculateUpstreamCost returned error: %v", err)
+				}
+				if state.UpstreamCostUSD != tt.wantCost {
+					t.Fatalf("cost = %s, want %s; meters=%#v", state.UpstreamCostUSD, tt.wantCost, state.FinalMeters)
+				}
+				if tt.wantCost == billing.ZeroChargeUSD && len(state.FinalMeters) != 0 {
+					t.Fatalf("informational refusal usage produced priced meters: %#v", state.FinalMeters)
+				}
 			})
-			if err != nil {
-				t.Fatalf("ResolveRequest returned error: %v", err)
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.EstimateHold(state); err != nil {
-				t.Fatalf("EstimateHold returned error: %v", err)
-			}
-			if state.Hold.ProductKey != tt.wantHold {
-				t.Fatalf("expected hold product %q, got %#v", tt.wantHold, state.Hold)
-			}
-			// This test isolates execution-price selection. Authorization-bound
-			// quantity clipping is covered separately.
-			state.Hold.Meters = nil
-
-			mutatedPricing := copyPricing(resolution.Deployment.Pricing)
-			mutatedPricing[billing.MeterInputTokens] = map[string]string{billing.RatePerMillionTokens: "999"}
-			mutatedPricing[billing.MeterOutputTokens] = map[string]string{billing.RatePerMillionTokens: "999"}
-			resolution.Deployment.Pricing = mutatedPricing
-
-			state.Signals = &StandardSignals{
-				Prompt:            1000,
-				Completion:        1000,
-				ActualServiceTier: &tt.actualTier,
-			}
-			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
-				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
-			}
-			if state.UpstreamCostUSD != "0.03" {
-				t.Fatalf("expected cataloged actual service-tier pricing, got %s meters=%#v", state.UpstreamCostUSD, state.FinalMeters)
-			}
-		})
+		}
 	}
 }
 
@@ -1856,13 +1820,13 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 		name       string
 		path       string
 		body       string
-		actualTier schemas.BifrostServiceTier
+		actualTier string
 	}{
 		{
 			name:       "responses default sent as standard only returns standard",
 			path:       "/v1/responses",
 			body:       `{"model":"anthropic-claude-sonnet-4-6","input":"hi","service_tier":"default","max_output_tokens":16}`,
-			actualTier: schemas.BifrostServiceTier("standard_only"),
+			actualTier: catalog.TierStandard,
 		},
 	}
 	for _, tt := range tests {
@@ -1882,10 +1846,10 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 			if state.Hold.ProductKey != resolution.Deployment.ID {
 				t.Fatalf("hold product should be selected standard deployment %q, got %#v", resolution.Deployment.ID, state.Hold)
 			}
+			state.ActualTier = tt.actualTier
 			state.Signals = &StandardSignals{
-				Prompt:            resolution.InputTokenLimit(),
-				Completion:        resolution.OutputTokenLimit(),
-				ActualServiceTier: &tt.actualTier,
+				Prompt:     resolution.InputTokenLimit(),
+				Completion: resolution.OutputTokenLimit(),
 			}
 			if err := state.Adapter.CalculateUpstreamCost(state); err != nil {
 				t.Fatalf("CalculateUpstreamCost returned error: %v", err)
@@ -1900,54 +1864,56 @@ func TestAnthropicMappedServiceTierHoldCoversFinalUsage(t *testing.T) {
 func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 	authorizer := &fakeBillingAuthorizer{}
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Route:    catalog.RouteChat,
-			Provider: schemas.OpenAI,
-			Model:    "gpt-5",
-			Deployment: catalog.Deployment{
-				ID:       "gpt-5-standard",
-				ModelID:  "gpt-5-2026-01-01",
-				RouteIDs: []string{"openai-chat-completions"},
-				Pricing: catalog.Pricing{
-					billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
-					billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route:    catalog.RouteChat,
+				Provider: schemas.OpenAI,
+				Model:    "gpt-5",
+				Deployment: catalog.Deployment{
+					ID:       "gpt-5-standard",
+					ModelID:  "gpt-5-2026-01-01",
+					RouteIDs: []string{"openai-chat-completions"},
+					Pricing: catalog.Pricing{
+						billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
+						billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
+					},
 				},
 			},
-		},
-		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: mustMoney("3000"),
-			AvailableBalanceUSD:     mustMoney("0"),
-			CreatedAt:               time.Now().UTC(),
-			KeyID:                   "key",
-			OrganizationID:          "org",
-			ProviderKey:             "openai",
-			ProductKey:              "gpt-5",
-			RequestID:               "request",
-			UserID:                  "user",
-		},
-		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSD: "3000",
-			Meters: []catalog.MeterEstimate{
-				{
-					MeterKey:     billing.MeterInputTokens,
-					RateKey:      billing.RatePerMillionTokens,
-					RateUSD:      "1000000",
-					Quantity:     "1000",
-					AmountUSD:    "1000",
-					HoldRequired: true,
-				},
-				{
-					MeterKey:     billing.MeterOutputTokens,
-					RateKey:      billing.RatePerMillionTokens,
-					RateUSD:      "2000000",
-					Quantity:     "1000",
-					AmountUSD:    "2000",
-					HoldRequired: true,
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: mustMoney("3000"),
+				AvailableBalanceUSD:     mustMoney("0"),
+				CreatedAt:               time.Now().UTC(),
+				KeyID:                   "key",
+				OrganizationID:          "org",
+				ProviderKey:             "openai",
+				ProductKey:              "gpt-5",
+				RequestID:               "request",
+				UserID:                  "user",
+			},
+			Hold: HoldEstimate{
+				EstimatedUpstreamCostUSD: "3000",
+				Meters: []catalog.MeterEstimate{
+					{
+						MeterKey:     billing.MeterInputTokens,
+						RateKey:      billing.RatePerMillionTokens,
+						RateUSD:      "1000000",
+						Quantity:     "1000",
+						AmountUSD:    "1000",
+						HoldRequired: true,
+					},
+					{
+						MeterKey:     billing.MeterOutputTokens,
+						RateKey:      billing.RatePerMillionTokens,
+						RateUSD:      "2000000",
+						Quantity:     "1000",
+						AmountUSD:    "2000",
+						HoldRequired: true,
+					},
 				},
 			},
+			Model: "gpt-5",
 		},
 		RequestType:       string(schemas.ChatCompletionRequest),
-		Model:             "gpt-5",
 		GatewayVersion:    "v1.5.13",
 		StartedAt:         time.Now().UTC(),
 		ProviderStartedAt: time.Now().UTC(),
@@ -1962,6 +1928,7 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 		}},
 		Signals: &StandardSignals{Prompt: 1000, Cached: 100},
 	}
+	state.beginProviderAttempt(state.ProviderStartedAt)
 
 	FinalizeState(context.Background(), authorizer, state)
 
@@ -1998,12 +1965,17 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 		t.Run(item.name, func(t *testing.T) {
 			now := time.Now().UTC()
 			state := &State{
-				Authorization:   &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("1"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request"},
-				UpstreamCostUSD: "0", StartedAt: now, Signals: item.signals,
-				RequestType: string(schemas.ChatCompletionRequest),
+				Pair: Pair{
+					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("1"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request"},
+				},
+				UpstreamCostUSD: "0",
+				StartedAt:       now,
+				Signals:         item.signals,
+				RequestType:     string(schemas.ChatCompletionRequest),
 			}
 			if item.dispatched {
 				state.ProviderStartedAt = now
+				state.beginProviderAttempt(state.ProviderStartedAt)
 			}
 			event := PrepareFinalState(state)
 			if event == nil {
@@ -2029,8 +2001,10 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 			now := time.Now().UTC()
 			status := 503
 			state := &State{
-				Authorization: &billing.Authorization{
-					AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request",
+				Pair: Pair{
+					Authorization: &billing.Authorization{
+						AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request",
+					},
 				},
 				UpstreamCostUSD: billing.ZeroChargeUSD,
 				RequestType:     string(schemas.ChatCompletionRequest),
@@ -2039,6 +2013,7 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 			}
 			if dispatched {
 				state.ProviderStartedAt = now.Add(-time.Millisecond)
+				state.beginProviderAttempt(state.ProviderStartedAt)
 			} else {
 				state.ProcessingError, state.BifrostError = state.BifrostError, nil
 			}
@@ -2083,13 +2058,17 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 	} {
 		t.Run(item.name, func(t *testing.T) {
 			state := &State{
-				Authorization:   &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0")},
-				UpstreamCostUSD: "0",
-				RequestType:     string(item.requestType),
-				StartedAt:       time.Now().Add(-time.Second), ProviderStartedAt: time.Now().Add(-time.Millisecond),
-				ProcessingError: &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
-				Response:        &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
+				Pair: Pair{
+					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0")},
+				},
+				UpstreamCostUSD:   "0",
+				RequestType:       string(item.requestType),
+				StartedAt:         time.Now().Add(-time.Second),
+				ProviderStartedAt: time.Now().Add(-time.Millisecond),
+				ProcessingError:   &schemas.BifrostError{StatusCode: schemas.Ptr(500), Error: &schemas.ErrorField{Code: schemas.Ptr("response_encoding_failed")}},
+				Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
+			state.beginProviderAttempt(state.ProviderStartedAt)
 			state.chatStreamFinished = item.completed && item.requestType == schemas.ChatCompletionStreamRequest
 			state.responsesStreamEnded = item.completed && item.requestType == schemas.ResponsesStreamRequest
 			wantCode := 200
@@ -2119,10 +2098,12 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 	now := time.Now().UTC()
 	state := &State{
-		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: mustMoney("0"),
-			AvailableBalanceUSD:     mustMoney("0"),
-			RequestID:               "request",
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: mustMoney("0"),
+				AvailableBalanceUSD:     mustMoney("0"),
+				RequestID:               "request",
+			},
 		},
 		UpstreamCostUSD: billing.ZeroChargeUSD,
 		RequestType:     string(schemas.ChatCompletionRequest),
@@ -2133,6 +2114,7 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 		ProviderStartedAt:   now.Add(-90 * time.Millisecond),
 		StartedAt:           now.Add(-100 * time.Millisecond),
 	}
+	state.beginProviderAttempt(state.ProviderStartedAt)
 	authorizer := &fakeBillingAuthorizer{}
 	FinalizeState(context.Background(), authorizer, state)
 
@@ -2567,7 +2549,9 @@ func TestTTFTRequiresGatewayRequestClock(t *testing.T) {
 func TestBufferedOutputIsObservedWithoutTTFT(t *testing.T) {
 	arrivedAt := time.Now().Add(-10 * time.Millisecond)
 	state := &State{
-		Resolution:          &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat},
+		},
 		ProviderCompletedAt: arrivedAt,
 	}
 	response := validUnaryChatProviderResponse()
@@ -2593,10 +2577,12 @@ func TestBufferedOutputIsObservedWithoutTTFT(t *testing.T) {
 
 func TestCacheReadSavingsUsesSettledMeterAndComparableInputRate(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1000000"},
-			billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "1000000"},
+				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+			}}},
+		},
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:  billing.MeterCachedInputTokens,
 			RateKey:   billing.RatePerMillionTokens,
@@ -2617,14 +2603,16 @@ func TestCacheReadSavingsUsesSettledMeterAndComparableInputRate(t *testing.T) {
 
 func TestCacheReadSavingsUsesPromptContextTier(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens: {
-				billing.RatePerMillionContextLTE272K: "1000000",
-				billing.RatePerMillionContextGT272K:  "2000000",
-			},
-			billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
-		}}},
-		Signals: &StandardSignals{Prompt: billing.LongContextThresholdTokens + 1, Cached: 100},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens: {
+					billing.RatePerMillionTokens: "1000000",
+					"per_mill_context_gt_272k":   "2000000",
+				},
+				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "100000"},
+			}}},
+		},
+		Signals: &StandardSignals{Prompt: 272001, Cached: 100},
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:  billing.MeterCachedInputTokens,
 			RateKey:   billing.RatePerMillionTokens,
@@ -2645,10 +2633,12 @@ func TestCacheReadSavingsUsesPromptContextTier(t *testing.T) {
 
 func TestCacheReadSavingsDoesNotTreatCacheWritesAsSavings(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
-			billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "1000000"},
+				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "1250000"},
+			}}},
+		},
 		Signals: &StandardSignals{Prompt: 100, CacheWrite: 100},
 		FinalMeters: []catalog.MeterEstimate{{
 			MeterKey:  billing.MeterCacheWriteInputTokens,
@@ -2670,11 +2660,13 @@ func TestCacheReadSavingsDoesNotTreatCacheWritesAsSavings(t *testing.T) {
 
 func TestCacheWriteOverheadKeepsAnthropicTTLMetersSeparate(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
-			billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
-			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens:             {billing.RatePerMillionTokens: "1000000"},
+				billing.MeterCacheWrite5mInputTokens: {billing.RatePerMillionTokens: "1250000"},
+				billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
+			}}},
+		},
 		Signals: &StandardSignals{Prompt: 500, CacheWrite5m: 200, CacheWrite1h: 300},
 		FinalMeters: []catalog.MeterEstimate{
 			{
@@ -2702,15 +2694,17 @@ func TestCacheWriteOverheadKeepsAnthropicTTLMetersSeparate(t *testing.T) {
 
 func TestCacheWriteOverheadUsesPromptContextTier(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-			billing.MeterInputTokens: {
-				billing.RatePerMillionContextLTE272K: "1000000",
-				billing.RatePerMillionContextGT272K:  "2000000",
-			},
-			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "4000000"},
-		}}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+				billing.MeterInputTokens: {
+					billing.RatePerMillionTokens: "1000000",
+					"per_mill_context_gt_272k":   "2000000",
+				},
+				billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "4000000"},
+			}}},
+		},
 		Signals: &StandardSignals{
-			Prompt:       billing.LongContextThresholdTokens + 1,
+			Prompt:       272001,
 			CacheWrite1h: 100,
 		},
 		FinalMeters: []catalog.MeterEstimate{{
@@ -2731,10 +2725,12 @@ func TestCacheWriteOverheadUsesPromptContextTier(t *testing.T) {
 func TestCacheEconomicsUseTheRequestLevelOrdinaryInputCounterfactual(t *testing.T) {
 	t.Run("cache read savings include ordinary-meter rounding", func(t *testing.T) {
 		state := &State{
-			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:       {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
-				billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000001"},
-			}}},
+			Pair: Pair{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:       {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
+					billing.MeterCachedInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000001"},
+				}}},
+			},
 			FinalMeters: []catalog.MeterEstimate{
 				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000015", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000002"},
 				{MeterKey: billing.MeterCachedInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000001", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000001"},
@@ -2748,10 +2744,12 @@ func TestCacheEconomicsUseTheRequestLevelOrdinaryInputCounterfactual(t *testing.
 
 	t.Run("cache write overhead includes ordinary-meter rounding", func(t *testing.T) {
 		state := &State{
-			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens:           {billing.RatePerMillionTokens: "0.0000000000000000000000000000005"},
-				billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
-			}}},
+			Pair: Pair{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens:           {billing.RatePerMillionTokens: "0.0000000000000000000000000000005"},
+					billing.MeterCacheWriteInputTokens: {billing.RatePerMillionTokens: "0.0000000000000000000000000000015"},
+				}}},
+			},
 			FinalMeters: []catalog.MeterEstimate{
 				{MeterKey: billing.MeterInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000005", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000001"},
 				{MeterKey: billing.MeterCacheWriteInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "0.0000000000000000000000000000015", Quantity: "1", AmountUSD: "0.000000000000000000000000000000000002"},
@@ -2789,7 +2787,9 @@ func TestMixedCacheEconomicsMatchRequestLevelCounterfactual(t *testing.T) {
 						name := fmt.Sprintf("ordinary=%d/read=%d/generic=%d/5m=%d/1h=%d", ordinary, read, genericWrite, write5m, write1h)
 						t.Run(name, func(t *testing.T) {
 							state := &State{
-								Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+								Pair: Pair{
+									Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+								},
 								Signals: &StandardSignals{
 									Prompt:       ordinary + read + genericWrite + write5m + write1h,
 									Cached:       read,
@@ -2881,7 +2881,9 @@ func FuzzCacheEconomicsMatchIndependentRequestCounterfactual(f *testing.F) {
 			billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: strconv.FormatUint(rate1h, 10)},
 		}
 		state := &State{
-			Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+			Pair: Pair{
+				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+			},
 			Signals: &StandardSignals{
 				Prompt:       ordinary + read + genericWrite + write5m + write1h,
 				Cached:       read,
@@ -2942,9 +2944,11 @@ func TestCacheEconomicsDoNotAffectSettlementWhenComparableInputRateIsMissing(t *
 	} {
 		t.Run(meterKey, func(t *testing.T) {
 			state := &State{
-				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-					meterKey: {billing.RatePerMillionTokens: "2000000"},
-				}}},
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+						meterKey: {billing.RatePerMillionTokens: "2000000"},
+					}}},
+				},
 				Signals: &StandardSignals{Prompt: 100},
 			}
 			switch meterKey {
@@ -3031,8 +3035,10 @@ func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
 				}
 			}
 			state := &State{
-				Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
-				Signals:    signals,
+				Pair: Pair{
+					Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+				},
+				Signals: signals,
 			}
 			if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
 				t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
@@ -3109,18 +3115,18 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 			}
 
 			modes := []struct {
-				name     string
-				prompt   int
-				rateMode billing.TokenRateMode
+				name   string
+				prompt int
 			}{
-				{name: "standard", prompt: 1000, rateMode: billing.TokenRateStandard},
+				{name: "standard", prompt: 1000},
 			}
-			if _, inputLong := deployment.Pricing[billing.MeterInputTokens][billing.RatePerMillionContextGT272K]; inputLong {
-				modes = append(modes, struct {
-					name     string
-					prompt   int
-					rateMode billing.TokenRateMode
-				}{name: "long-context", prompt: billing.LongContextThresholdTokens + 1, rateMode: billing.TokenRateLongContext})
+			for rateKey := range deployment.Pricing[billing.MeterInputTokens] {
+				if cutoff, ok := billing.ContextCutoff(rateKey); ok {
+					modes = append(modes, struct {
+						name   string
+						prompt int
+					}{name: rateKey, prompt: cutoff + 1})
+				}
 			}
 
 			for _, mode := range modes {
@@ -3137,8 +3143,10 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 						signals.CacheWrite1h = mode.prompt
 					}
 					state := &State{
-						Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployment.Pricing}},
-						Signals:    signals,
+						Pair: Pair{
+							Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployment.Pricing}},
+						},
+						Signals: signals,
 					}
 					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
 						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
@@ -3166,7 +3174,7 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 					if err != nil {
 						t.Fatalf("parse settled cache cost: %v", err)
 					}
-					_, inputRate, ok := billing.PricingRate(deployment.Pricing, billing.MeterInputTokens, mode.rateMode)
+					_, inputRate, ok := billing.PricingRate(deployment.Pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(mode.prompt))
 					if !ok {
 						t.Fatal("deployment has no comparable ordinary input rate")
 					}
@@ -3236,16 +3244,40 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 		billing.MeterCacheWrite1hInputTokens: {billing.RatePerMillionTokens: "2000000"},
 	}
 	state := &State{
-		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: mustMoney("1200"),
-			AvailableBalanceUSD:     mustMoney("0"),
-			KeyID:                   "key",
-			OrganizationID:          "org",
-			ProviderKey:             "anthropic",
-			ProductKey:              "claude",
-			RequestID:               "request",
-			UpstreamByok:            "stogas",
-			UserID:                  "user",
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: mustMoney("1200"),
+				AvailableBalanceUSD:     mustMoney("0"),
+				KeyID:                   "key",
+				OrganizationID:          "org",
+				ProviderKey:             "anthropic",
+				ProductKey:              "claude",
+				RequestID:               "request",
+				UpstreamByok:            "stogas",
+				UserID:                  "user",
+			},
+			Hold: HoldEstimate{
+				EstimatedUpstreamCostUSD: "1200",
+				Meters: []catalog.MeterEstimate{{
+					MeterKey:     billing.MeterCacheWrite1hInputTokens,
+					RateKey:      billing.RatePerMillionTokens,
+					RateUSD:      "2000000",
+					Quantity:     "600",
+					AmountUSD:    "1200",
+					HoldRequired: true,
+				}},
+			},
+			Resolution: &catalog.ResolvedRequest{
+				Provider: schemas.Anthropic,
+				Route:    catalog.RouteChat,
+				Model:    "claude",
+				Deployment: catalog.Deployment{
+					ID:       "anthropic-claude",
+					ModelID:  "claude",
+					Pricing:  pricing,
+					RouteIDs: []string{"anthropic-messages"},
+				},
+			},
 		},
 		UpstreamCostUSD: "860",
 		FinalMeters: []catalog.MeterEstimate{
@@ -3253,33 +3285,12 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 			{MeterKey: billing.MeterCacheWrite5mInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "1250000", Quantity: "200", AmountUSD: "250"},
 			{MeterKey: billing.MeterCacheWrite1hInputTokens, RateKey: billing.RatePerMillionTokens, RateUSD: "2000000", Quantity: "300", AmountUSD: "600"},
 		},
-		Hold: HoldEstimate{
-			EstimatedUpstreamCostUSD: "1200",
-			Meters: []catalog.MeterEstimate{{
-				MeterKey:     billing.MeterCacheWrite1hInputTokens,
-				RateKey:      billing.RatePerMillionTokens,
-				RateUSD:      "2000000",
-				Quantity:     "600",
-				AmountUSD:    "1200",
-				HoldRequired: true,
-			}},
-		},
-		RequestType: string(schemas.ChatCompletionRequest),
-		Resolution: &catalog.ResolvedRequest{
-			Provider: schemas.Anthropic,
-			Route:    catalog.RouteChat,
-			Model:    "claude",
-			Deployment: catalog.Deployment{
-				ID:       "anthropic-claude",
-				ModelID:  "claude",
-				Pricing:  pricing,
-				RouteIDs: []string{"anthropic-messages"},
-			},
-		},
+		RequestType:       string(schemas.ChatCompletionRequest),
 		Signals:           &StandardSignals{Prompt: 600, Cached: 100, CacheWrite5m: 200, CacheWrite1h: 300},
 		StartedAt:         time.Now().UTC(),
 		ProviderStartedAt: time.Now().UTC(),
 	}
+	state.beginProviderAttempt(state.ProviderStartedAt)
 
 	event := PrepareFinalState(state)
 	if event == nil {
@@ -3311,10 +3322,12 @@ func stringPointer(value string) *string {
 
 func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T) {
 	state := &State{
-		Resolution: &catalog.ResolvedRequest{
-			Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-				billing.MeterInputTokens: {billing.RatePerMillionTokens: "0.000000000000000000000000000000000001"},
-			}},
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+					billing.MeterInputTokens: {billing.RatePerMillionTokens: "0.000000000000000000000000000000000001"},
+				}},
+			},
 		},
 		FinalMeters: []catalog.MeterEstimate{
 			{
@@ -3361,6 +3374,7 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	state.UpstreamCostUSD = total
 	state.StartedAt = time.Now().UTC()
 	state.ProviderStartedAt = state.StartedAt
+	state.beginProviderAttempt(state.ProviderStartedAt)
 	FinalizeState(context.Background(), authorizer, state)
 	if len(authorizer.finalEvents) != 1 {
 		t.Fatalf("expected one final event, got %d", len(authorizer.finalEvents))
@@ -3500,27 +3514,30 @@ func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T
 				}}
 			}
 			state := &State{
-				Authorization: &billing.Authorization{
-					AuthorizedBilledCostUSD: mustMoney("100"),
-					AvailableBalanceUSD:     mustMoney("0"),
-					RequestID:               "request",
+				Pair: Pair{
+					Authorization: &billing.Authorization{
+						AuthorizedBilledCostUSD: mustMoney("100"),
+						AvailableBalanceUSD:     mustMoney("0"),
+						RequestID:               "request",
+					},
+					Hold: HoldEstimate{EstimatedUpstreamCostUSD: tc.hold, Meters: holdMeters},
+					Resolution: &catalog.ResolvedRequest{
+						Provider: schemas.OpenAI,
+						Route:    catalog.RouteChat,
+						Deployment: catalog.Deployment{Pricing: catalog.Pricing{
+							billing.MeterInputTokens: {billing.RatePerMillionTokens: rateUSD},
+						}},
+					},
 				},
-				UpstreamCostUSD: tc.final,
-				BifrostError:    providerErr,
-				FinalMeters:     finalMeters,
-				Hold:            HoldEstimate{EstimatedUpstreamCostUSD: tc.hold, Meters: holdMeters},
-				Resolution: &catalog.ResolvedRequest{
-					Provider: schemas.OpenAI,
-					Route:    catalog.RouteChat,
-					Deployment: catalog.Deployment{Pricing: catalog.Pricing{
-						billing.MeterInputTokens: {billing.RatePerMillionTokens: rateUSD},
-					}},
-				},
+				UpstreamCostUSD:   tc.final,
+				BifrostError:      providerErr,
+				FinalMeters:       finalMeters,
 				Signals:           &StandardSignals{Prompt: 1},
 				StartedAt:         time.Now().UTC().Add(-time.Second),
 				ProviderStartedAt: time.Now().UTC().Add(-time.Millisecond),
 				Response:          &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{ID: "response"}},
 			}
+			state.beginProviderAttempt(state.ProviderStartedAt)
 			event := PrepareFinalState(state)
 			if event == nil {
 				t.Fatal("PrepareFinalState returned nil")
@@ -3574,29 +3591,31 @@ func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T
 
 func TestPricingMetricBagCarriesStackedCacheAndHostedToolMeters(t *testing.T) {
 	state := &State{
-		Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
-			{
-				AmountUSD:    "100",
-				MeterKey:     billing.MeterInputTokens,
-				Quantity:     "1000",
-				RateKey:      billing.RatePerMillionTokens,
-				HoldRequired: true,
-			},
-			{
-				AmountUSD:    "200",
-				MeterKey:     billing.MeterCacheWrite1hInputTokens,
-				Quantity:     "1000",
-				RateKey:      billing.RatePerMillionTokens,
-				HoldRequired: true,
-			},
-			{
-				AmountUSD:    "300",
-				MeterKey:     meterAnthropicWebSearchCalls,
-				Quantity:     "2",
-				RateKey:      billing.RatePerThousandCalls,
-				HoldRequired: true,
-			},
-		}},
+		Pair: Pair{
+			Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
+				{
+					AmountUSD:    "100",
+					MeterKey:     billing.MeterInputTokens,
+					Quantity:     "1000",
+					RateKey:      billing.RatePerMillionTokens,
+					HoldRequired: true,
+				},
+				{
+					AmountUSD:    "200",
+					MeterKey:     billing.MeterCacheWrite1hInputTokens,
+					Quantity:     "1000",
+					RateKey:      billing.RatePerMillionTokens,
+					HoldRequired: true,
+				},
+				{
+					AmountUSD:    "300",
+					MeterKey:     meterAnthropicWebSearchCalls,
+					Quantity:     "2",
+					RateKey:      billing.RatePerThousandCalls,
+					HoldRequired: true,
+				},
+			}},
+		},
 		FinalMeters: []catalog.MeterEstimate{
 			{
 				AmountUSD: "50",
@@ -3744,7 +3763,7 @@ func TestOpenAIChatSearchModelHoldAndFinalMetersUseContextRate(t *testing.T) {
 
 func TestInputTextBytesIsUnpricedAndDistinguishesZeroFromUnknown(t *testing.T) {
 	for _, text := range []string{"", "é🙂"} {
-		body, err := json.Marshal(map[string]any{"model": "gpt-5.5", "input": text})
+		body, err := json.Marshal(map[string]any{"model": "openai/gpt-5.5", "input": text})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3752,7 +3771,7 @@ func TestInputTextBytesIsUnpricedAndDistinguishesZeroFromUnknown(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		meters := metersForState(&State{Resolution: resolution})
+		meters := metersForState(&State{Pair: Pair{Resolution: resolution}})
 		meter, ok := meters[billing.MeterInputTextBytes]
 		if !ok || meter.Quantity != strconv.Itoa(len(text)) || meter.RateKey != nil || meter.RateUSD != nil || meter.USD != nil {
 			t.Fatalf("decoded text meter = %#v (present %t)", meter, ok)

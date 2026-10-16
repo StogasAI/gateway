@@ -78,7 +78,7 @@ func (s *Server) validatePolicy(ctx *requestContext) {
 			return
 		}
 		// A decrypted error may contain private patterns or member names.
-		s.writeError(ctx, 400, map[string]any{"error": map[string]any{"code": "invalid_policy", "message": "Policy execution configuration is invalid", "type": "invalid_request_error"}})
+		s.writeError(ctx, 400, map[string]any{"error": map[string]any{"code": "invalid_policy", "message": "Policy configuration is invalid", "type": "invalid_request_error"}})
 		return
 	}
 	s.writeJSON(ctx, http.StatusOK, result)

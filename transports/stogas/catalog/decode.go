@@ -12,7 +12,7 @@ func decodeCompiledCatalog(data []byte) (compiledCatalog, error) {
 	var catalog compiledCatalog
 	err := json.Unmarshal(data, &catalog, json.RejectUnknownMembers(true),
 		json.WithUnmarshalers(json.JoinUnmarshalers(
-			sharedJSON[map[string]FileInputs](),
+			sharedJSON[map[string]NativeFileInputs](),
 			sharedJSON[map[string]DataHandling](),
 			sharedJSON[Pricing](),
 		)),

@@ -10,6 +10,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
@@ -17,7 +18,7 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 }
 
 func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
-	return DeploymentForRouteServiceTier(provider, model, route, nil)
+	return activeState().deploymentForRouteTier(provider, model, route, "")
 }
 
 func TestClientHeaderCatalogOmitsRemovedProviderSecrets(t *testing.T) {
@@ -48,10 +49,10 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
 	if len(snap.graph.Authors) != 10 ||
-		len(snap.graph.Models) != 31 ||
+		len(snap.graph.Models) != 42 ||
 		len(snap.graph.Providers) != 4 ||
 		len(snap.graph.Routes) != 7 ||
-		len(snap.graph.Deployments) != 106 {
+		len(snap.graph.Deployments) != 208 {
 		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
 			len(snap.graph.Authors),
 			len(snap.graph.Models),
@@ -92,74 +93,8 @@ func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *tes
 		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
 	}
 
-	if len(snap.graph.Models) != 31 {
+	if len(snap.graph.Models) != 42 {
 		t.Fatalf("runtime catalog unexpectedly contains informational-only models: %d", len(snap.graph.Models))
-	}
-}
-
-func TestSnapshotValidationRejectsInvalidAzureFormatHostingAndInstantCombinations(t *testing.T) {
-	mutate := func(t *testing.T, deploymentID string, apply func(map[string]any)) []byte {
-		t.Helper()
-		var runtime map[string]any
-		if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
-			t.Fatal(err)
-		}
-		deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
-		apply(deployment["upstream"].(map[string]any))
-		data, err := json.Marshal(runtime)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data
-	}
-
-	for _, test := range []struct {
-		name         string
-		deploymentID string
-		apply        func(map[string]any)
-	}{
-		{
-			name:         "format hosting mismatch",
-			deploymentID: "azure-gpt-5.6-sol",
-			apply:        func(upstream map[string]any) { upstream["hosting"] = "nvidia" },
-		},
-		{
-			name:         "instant non-default tier",
-			deploymentID: "azure-gpt-5.6-sol-instant",
-			apply:        func(upstream map[string]any) { upstream["serviceTier"] = "priority" },
-		},
-		{
-			name:         "priority Fireworks host",
-			deploymentID: "azure-glm-5.2",
-			apply:        func(upstream map[string]any) { upstream["serviceTier"] = "priority" },
-		},
-		{
-			name:         "priority DeepSeek format",
-			deploymentID: "azure-deepseek-v4-pro",
-			apply:        func(upstream map[string]any) { upstream["serviceTier"] = "priority" },
-		},
-		{
-			name:         "instant Fireworks host",
-			deploymentID: "azure-glm-5.2",
-			apply: func(upstream map[string]any) {
-				upstream["deploymentType"] = "instant"
-				upstream["serviceTier"] = "default"
-			},
-		},
-		{
-			name:         "instant DeepSeek format",
-			deploymentID: "azure-deepseek-v4-pro",
-			apply: func(upstream map[string]any) {
-				upstream["deploymentType"] = "instant"
-				upstream["serviceTier"] = "default"
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := snapshotFromCatalogBytes(mutate(t, test.deploymentID, test.apply)); err == nil {
-				t.Fatal("invalid Azure selector was accepted")
-			}
-		})
 	}
 }
 
@@ -213,40 +148,6 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 			if _, err := snapshotFromCatalogBytes(data); err == nil ||
 				!strings.Contains(err.Error(), "contradictory zero data retention") {
 				t.Fatalf("contradictory zero-retention artifact was accepted: %v", err)
-			}
-		})
-	}
-}
-
-func TestSnapshotValidationAcceptsObjectiveExternalAzureStorageAndRejectsDisclosedLocations(t *testing.T) {
-	const deploymentID = "azure-claude-opus-4-8-anthropic-hosted"
-	if _, err := snapshotFromCatalogBytes(embeddedRuntimeCatalogJSON); err != nil {
-		t.Fatalf("external Azure target with no provider storage was rejected: %v", err)
-	}
-
-	for _, test := range []struct {
-		name  string
-		field string
-		value string
-	}{
-		{name: "processing location", field: "processingLocation", value: "US"},
-		{name: "storage location", field: "storageLocation", value: "US"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
-				t.Fatal(err)
-			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
-			handling := deployment["dataHandlingByRoute"].(map[string]any)["azure-anthropic-messages"].(map[string]any)
-			handling[test.field] = test.value
-			data, err := json.Marshal(runtime)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := snapshotFromCatalogBytes(data); err == nil ||
-				!strings.Contains(err.Error(), "invalid locations for externally hosted Azure inference") {
-				t.Fatalf("external Azure target with disclosed %s was accepted: %v", test.field, err)
 			}
 		})
 	}
@@ -319,9 +220,9 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 			suffix      string
 			serviceTier string
 		}{
-			{serviceTier: "default"},
-			{suffix: "-flex", serviceTier: "flex"},
-			{suffix: "-fast", serviceTier: "priority"},
+			{serviceTier: TierStandard},
+			{suffix: "-flex", serviceTier: TierFlex},
+			{suffix: "-fast", serviceTier: TierFast},
 		} {
 			deploymentID := "openai-" + model + "-pro" + tierCase.suffix
 			t.Run(deploymentID, func(t *testing.T) {
@@ -349,9 +250,6 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 					*request.ResponsesRequest.Params.Reasoning.Mode != "pro" {
 					t.Fatalf("Pro mode did not reach the typed provider request: %#v", request.ResponsesRequest)
 				}
-				if actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, resolution.Deployment, nil, ""); !ok || actual.ID != deploymentID {
-					t.Fatalf("actual execution lost Pro identity: %#v", actual)
-				}
 				if _, ok := testDeploymentForRoute(schemas.OpenAI, deploymentID, RouteChat); ok {
 					t.Fatalf("%s was exposed on Chat Completions", deploymentID)
 				}
@@ -374,10 +272,9 @@ func TestGPT56ProDeploymentsUseFixedResponsesModeWithoutChangingTheUpstreamModel
 	if !ok {
 		t.Fatal("GPT-5.6 Sol Pro Flex is missing")
 	}
-	actualTier := schemas.BifrostServiceTierDefault
-	actual, ok := DeploymentForActualExecution(schemas.OpenAI, RouteResponses, flex, &actualTier, "")
+	actual, ok := StandardTierDeployment(schemas.OpenAI, RouteResponses, flex)
 	if !ok || actual.ID != "openai-gpt-5.6-sol-pro" {
-		t.Fatalf("actual service tier did not preserve Pro mode while selecting settlement pricing: %#v", actual)
+		t.Fatalf("Standard tier lookup did not preserve Pro mode: %#v", actual)
 	}
 	if _, err := ResolveRequest(RequestInput{
 		Method: "POST",
@@ -395,11 +292,10 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		t.Fatal("catalog is not loaded")
 	}
 	for _, requested := range []string{
-		"gpt-5.5",
-		"openai/gpt-5.5",
-		"openai/openai/gpt-5.5",
-		"open-ai/gpt-5.5",
-		"open-ai/open-ai/gpt-5.5",
+		"openai/gpt-5.5-2026-04-23",
+		"openai/openai/gpt-5.5-2026-04-23",
+		"open-ai/gpt-5.5-2026-04-23",
+		"open-ai/open-ai/gpt-5.5-2026-04-23",
 	} {
 		providers := snap.routeModelProviders(RouteResponses, requested, nil)
 		if len(providers) != 1 || providers[0] != schemas.OpenAI {
@@ -407,10 +303,10 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		}
 	}
 	for _, requested := range []string{
-		"anthropic/gpt-5.5",
-		"anthropic/openai/gpt-5.5",
-		"open_ai/gpt-5.5",
-		"openai/openai/openai/gpt-5.5",
+		"anthropic/gpt-5.5-2026-04-23",
+		"anthropic/openai/gpt-5.5-2026-04-23",
+		"open_ai/gpt-5.5-2026-04-23",
+		"openai/openai/openai/gpt-5.5-2026-04-23",
 		"gpt-5.5-latest",
 	} {
 		if providers := snap.routeModelProviders(RouteResponses, requested, nil); len(providers) != 0 {
@@ -449,7 +345,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 	}
 }
 
-func TestProviderRestrictionStillRequiresAnUnambiguousDeployment(t *testing.T) {
+func TestProviderRestrictionUsesTheDefaultOrder(t *testing.T) {
 	loadTestCatalog(t)
 	for _, route := range []Route{RouteChat, RouteResponses} {
 		path := "/v1/responses"
@@ -459,8 +355,8 @@ func TestProviderRestrictionStillRequiresAnUnambiguousDeployment(t *testing.T) {
 			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"only":["azure"]}}`
 		}
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
-		if PublicError(err).Code != "model_ambiguous" || resolution != nil {
-			t.Fatalf("provider restriction chose an arbitrary region: resolution=%#v err=%v", resolution, err)
+		if err != nil || resolution.Deployment.ID != "azure-gpt-5.6-sol" {
+			t.Fatalf("provider restriction skipped the cheapest region: resolution=%#v err=%v", resolution, err)
 		}
 	}
 }
@@ -503,26 +399,16 @@ func TestResolveRequestSupportsModelProviderAndDeploymentSelectors(t *testing.T)
 
 func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
 	loadTestCatalog(t)
-	defaultTier, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"openai/gpt-5.6-sol","input":"hello","service_tier":" DEFAULT "}`),
-	})
-	if err != nil || defaultTier.Deployment.ID != "openai-gpt-5.6-sol" ||
-		defaultTier.responses.ResponsesParameters.ServiceTier == nil ||
-		*defaultTier.responses.ResponsesParameters.ServiceTier != schemas.BifrostServiceTierDefault {
-		t.Fatalf("normalized default tier = %#v, err = %v", defaultTier, err)
-	}
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
-		body := `{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex"}`
+		body := `{"model":"gpt-5.5","input":"hello","service_tier":"flex"}`
 		if path == "/v1/chat/completions" {
-			body = `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"flex"}`
+			body = `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"service_tier":"flex"}`
 		}
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: []byte(body)})
 		if err != nil {
 			t.Fatalf("%s Flex request: %v", path, err)
 		}
-		if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != "openai-gpt-5.6-sol-flex" {
+		if resolution.Provider != schemas.OpenAI || resolution.Deployment.ID != "openai-gpt-5.5-2026-04-23-flex" {
 			t.Fatalf("%s Flex resolution = %s/%s", path, resolution.Provider, resolution.Deployment.ID)
 		}
 	}
@@ -530,7 +416,7 @@ func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
 	ordered, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex","provider":{"order":["azure","openai"]}}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hello","service_tier":"flex","provider":{"order":["azure","openai"]}}`),
 	})
 	if err != nil || ordered.Provider != schemas.OpenAI {
 		t.Fatalf("incompatible preferred provider was selected: resolution=%#v err=%v", ordered, err)
@@ -539,13 +425,13 @@ func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
 	if _, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.6-sol","input":"hello","service_tier":"flex","provider":{"only":["azure"]}}`),
+		Body:   []byte(`{"model":"gpt-5.5","input":"hello","service_tier":"flex","provider":{"only":["azure"]}}`),
 	}); !errors.Is(err, ErrProviderSelection) {
 		t.Fatalf("strict provider rule error = %v, want provider selection error", err)
 	}
 }
 
-func TestFailedPreferredProviderDoesNotHideRemainingAmbiguity(t *testing.T) {
+func TestUnusablePreferredProviderLeavesTheDefaultOrder(t *testing.T) {
 	snap := loadTestCatalog(t)
 
 	openAI := snap.graph.Deployments["openai-gpt-5.6-sol"]
@@ -560,139 +446,73 @@ func TestFailedPreferredProviderDoesNotHideRemainingAmbiguity(t *testing.T) {
 	chutesRoute.DeploymentIDs = append(chutesRoute.DeploymentIDs, "chutes-gpt-5.6-sol")
 	snap.graph.Routes["chutes-chat-completions"] = chutesRoute
 
-	for _, providerRule := range []string{"", `,"provider":{"order":["openai"]}`} {
-		_, err := ResolveRequest(RequestInput{
+	// OpenAI cannot serve two output tokens here. The copied Chutes price is
+	// lower than every Azure price, so it leads unless Azure is ranked first.
+	for providerRule, want := range map[string]string{
+		``:                                 "chutes-gpt-5.6-sol",
+		`,"provider":{"order":["openai"]}`: "chutes-gpt-5.6-sol",
+		`,"provider":{"order":["openai","azure"]}`: "azure-gpt-5.6-sol",
+	} {
+		resolution, err := ResolveRequest(RequestInput{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
 			Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2` + providerRule + `}`),
 		})
-		if err == nil || !strings.Contains(err.Error(), "azure-gpt-5.6-sol") ||
-			!strings.Contains(err.Error(), "chutes-gpt-5.6-sol") {
-			t.Fatalf("failed preferred provider error = %v, want both remaining selectors", err)
+		if err != nil || resolution.Deployment.ID != want {
+			t.Fatalf("%q: resolution=%v err=%v, want %s", providerRule, resolution, err, want)
 		}
 	}
-
-	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":2,"provider":{"order":["openai","azure"]}}`),
-	})
-	if PublicError(err).Code != "model_ambiguous" || resolution != nil {
-		t.Fatalf("provider order chose an arbitrary Azure region: %#v, err = %v", resolution, err)
-	}
 }
 
-func TestApplyDeploymentServiceTierNormalizesAndRejectsProviderTiers(t *testing.T) {
-	for _, provider := range []schemas.ModelProvider{schemas.Azure, schemas.Anthropic} {
-		if !applyDeploymentServiceTier(provider, nil, Deployment{}) {
-			t.Fatalf("%s rejected an omitted service-tier field", provider)
-		}
-	}
-
-	tests := []struct {
-		name       string
-		provider   schemas.ModelProvider
-		target     string
-		requested  *string
-		want       *schemas.BifrostServiceTier
-		compatible bool
-	}{
-		{name: "Azure omitted target and request", provider: schemas.Azure, compatible: true},
-		{name: "Azure omitted target with Auto", provider: schemas.Azure, requested: stringPointer(" AUTO "), compatible: true},
-		{name: "Azure explicit default without request", provider: schemas.Azure, target: "default", want: serviceTierPointer(schemas.BifrostServiceTierDefault), compatible: true},
-		{name: "Azure explicit default with Auto", provider: schemas.Azure, target: "default", requested: stringPointer(" AUTO "), want: serviceTierPointer(schemas.BifrostServiceTierDefault), compatible: true},
-		{name: "Azure omitted target rejects Flex", provider: schemas.Azure, requested: stringPointer(" Flex ")},
-		{name: "Azure Priority rejects Default", provider: schemas.Azure, target: "priority", requested: stringPointer("default")},
-		{name: "OpenAI default with Auto", provider: schemas.OpenAI, target: "default", requested: stringPointer(" AUTO "), want: serviceTierPointer(schemas.BifrostServiceTierDefault), compatible: true},
-		{name: "OpenAI default with whitespace", provider: schemas.OpenAI, target: "default", requested: stringPointer("  "), want: serviceTierPointer(schemas.BifrostServiceTierDefault), compatible: true},
-		{name: "OpenAI default preserves an invalid tier", provider: schemas.OpenAI, target: "default", requested: stringPointer(" invalid ")},
-		{name: "OpenAI Flex rejects Default", provider: schemas.OpenAI, target: "flex", requested: stringPointer("default")},
-		{name: "unknown Chutes target is rejected", provider: ProviderChutes, target: "future", requested: stringPointer("default")},
-		{name: "Anthropic Standard normalizes", provider: schemas.Anthropic, target: "standard_only", requested: stringPointer(" standard "), want: serviceTierPointer(schemas.BifrostServiceTierDefault), compatible: true},
-		{name: "Anthropic Standard rejects Flex", provider: schemas.Anthropic, target: "standard_only", requested: stringPointer("flex")},
-		{name: "unknown Anthropic target is rejected", provider: schemas.Anthropic, target: "future"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var actual *schemas.BifrostServiceTier
-			if test.requested != nil {
-				value := schemas.BifrostServiceTier(*test.requested)
-				actual = &value
-			}
-			compatible := applyDeploymentServiceTier(
-				test.provider,
-				&actual,
-				Deployment{Upstream: Upstream{ServiceTier: test.target}},
-			)
-			if compatible != test.compatible {
-				t.Fatalf("compatible = %t, want %t", compatible, test.compatible)
-			}
-			if test.want == nil {
-				if test.compatible && actual != nil {
-					t.Fatalf("normalized tier = %q, want nil", *actual)
-				}
-				if !test.compatible && test.requested == nil && actual != nil {
-					t.Fatalf("rejected tier = %q, want nil", *actual)
-				}
-				if !test.compatible && test.requested != nil && (actual == nil || string(*actual) != *test.requested) {
-					t.Fatalf("rejected tier = %v, want preserved %q", actual, *test.requested)
-				}
-				return
-			}
-			if actual == nil || *actual != *test.want {
-				t.Fatalf("normalized tier = %v, want %q", actual, *test.want)
-			}
-		})
-	}
-}
-
-func serviceTierPointer(value schemas.BifrostServiceTier) *schemas.BifrostServiceTier {
-	return &value
-}
-
-func TestUltrafastRequiresACatalogedPrice(t *testing.T) {
+func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 	loadTestCatalog(t)
+	// Claude runs in several regions, so the request must choose one.
+	multiRegion := `"policy":{"routing":{"filter":"deployment.upstream.inferenceGeo == 'global'"}}`
+	source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, test := range []struct {
-		name string
-		path string
-		body string
+		fields     string
+		deployment string
+		wire       schemas.BifrostServiceTier
+		err        error
 	}{
-		{name: "chat bare model", path: "/v1/chat/completions", body: `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"ultrafast"}`},
-		{name: "chat qualified model", path: "/v1/chat/completions", body: `{"model":"openai/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"ultrafast"}`},
-		{name: "responses bare model", path: "/v1/responses", body: `{"model":"gpt-5.6-sol","input":"hello","service_tier":"ultrafast"}`},
-		{name: "responses qualified model", path: "/v1/responses", body: `{"model":"openai/gpt-5.6-sol","input":"hello","service_tier":"ultrafast"}`},
+		{fields: `"model":"openai/gpt-5.5"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"openai/gpt-5.5","service_tier":"auto"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"openai/gpt-5.5","service_tier":"standard"`, deployment: "openai-gpt-5.5-2026-04-23", wire: "default"},
+		{fields: `"model":"openai/gpt-5.5","service_tier":"priority"`, deployment: "openai-gpt-5.5-2026-04-23-fast", wire: "fast"},
+		{fields: `"model":"openai/gpt-5.5","service_tier":"flex"`, deployment: "openai-gpt-5.5-2026-04-23-flex", wire: "flex"},
+		{fields: `"model":"azure/gpt-5.6-sol","service_tier":"fast"`, deployment: "azure-gpt-5.6-sol-fast", wire: "priority"},
+		{fields: `"model":"azure/gpt-6-astra","service_tier":"flex"`, deployment: "azure-gpt-6-astra-flex", wire: "flex"},
+		{fields: `"model":"openai/gpt-6-astra","service_tier":"ultrafast"`, deployment: "openai-gpt-6-astra-ultrafast", wire: "ultrafast"},
+		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-4-8-fast", wire: "default"},
+		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-4-8", wire: "default"},
+		{fields: `"model":"azure/claude-fable-5-1","service_tier":"default"`, deployment: "azure-claude-fable-5-1-anthropic-hosted"},
+		{fields: `"model":"openai/gpt-5.6-sol","service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"flex"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"openai-gpt-5.5-2026-04-23-flex","service_tier":"fast"`, err: ErrServiceTierUnavailable},
+		{fields: `"model":"openai/gpt-5.5","service_tier":"scale"`, err: ErrUnsupportedServiceTier},
+		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"standard_only"`, err: ErrUnsupportedServiceTier},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := ResolveRequest(RequestInput{Method: "POST", Path: test.path, Body: []byte(test.body)})
-			if !errors.Is(err, ErrUnsupportedServiceTier) {
-				t.Fatalf("uncataloged Ultrafast error = %v, want ErrUnsupportedServiceTier", err)
+		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hello",` + test.fields + `}`), Policy: config})
+		if test.err != nil {
+			if !errors.Is(err, test.err) {
+				t.Fatalf("%s error = %v, want %v", test.fields, err, test.err)
 			}
-		})
-	}
-}
-
-func TestProviderQualifiedOpenAIInvalidServiceTierError(t *testing.T) {
-	loadTestCatalog(t)
-	tests := []struct {
-		name    string
-		path    string
-		body    string
-		message string
-	}{
-		{name: "chat standard", path: "/v1/chat/completions", body: `{"model":"openai/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"standard"}`, message: ErrUnsupportedServiceTier.Message},
-		{name: "responses standard", path: "/v1/responses", body: `{"model":"openai/gpt-5.6-sol","input":"hello","service_tier":"standard"}`, message: ErrUnsupportedServiceTier.Message},
-		{name: "chat scale", path: "/v1/chat/completions", body: `{"model":"openai/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"scale"}`, message: "OpenAI scale service_tier is not supported by Stogas"},
-		{name: "responses scale", path: "/v1/responses", body: `{"model":"openai/gpt-5.6-sol","input":"hello","service_tier":"scale"}`, message: "OpenAI scale service_tier is not supported by Stogas"},
-		{name: "chat provisioned", path: "/v1/chat/completions", body: `{"model":"openai/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"service_tier":"provisioned"}`, message: "OpenAI provisioned service_tier is not supported by Stogas"},
-		{name: "responses provisioned", path: "/v1/responses", body: `{"model":"openai/gpt-5.6-sol","input":"hello","service_tier":"provisioned"}`, message: "OpenAI provisioned service_tier is not supported by Stogas"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := ResolveRequest(RequestInput{Method: "POST", Path: test.path, Body: []byte(test.body)})
-			if err == nil || err.Error() != test.message {
-				t.Fatalf("error = %v, want %q", err, test.message)
-			}
-		})
+			continue
+		}
+		if err != nil {
+			t.Fatalf("resolve %s: %v", test.fields, err)
+		}
+		wire := resolution.responses.ResponsesParameters.ServiceTier
+		if resolution.Deployment.ID != test.deployment || (wire == nil) != (test.wire == "") || wire != nil && *wire != test.wire {
+			t.Fatalf("%s selected %s with service_tier %v, want %s with %q", test.fields, resolution.Deployment.ID, wire, test.deployment, test.wire)
+		}
 	}
 }
 
@@ -711,7 +531,7 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 				t.Fatalf("resolve Azure %s %s request: %v", model, serviceTier, err)
 			}
 			if resolution.Deployment.ID != priorityID ||
-				resolution.Deployment.Upstream.ServiceTier != "priority" ||
+				resolution.Deployment.Upstream.ServiceTier != TierFast ||
 				resolution.Deployment.Upstream.ReasoningMode != "" {
 				t.Fatalf("unexpected Azure Priority deployment: %#v", resolution.Deployment)
 			}
@@ -734,7 +554,7 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 		}
 		if resolution.Deployment.ID != proPriorityID ||
 			resolution.Deployment.Upstream.ReasoningMode != "pro" ||
-			resolution.Deployment.Upstream.ServiceTier != "priority" {
+			resolution.Deployment.Upstream.ServiceTier != TierFast {
 			t.Fatalf("unexpected Azure Pro Priority deployment: %#v", resolution.Deployment)
 		}
 		request, err := resolution.ToBifrost(schemas.NewBifrostContext(t.Context(), schemas.NoDeadline))
@@ -747,14 +567,7 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 			t.Fatalf("Azure Pro Priority axes did not reach the provider request: request=%#v err=%v", request, err)
 		}
 
-		actualTier := schemas.BifrostServiceTierDefault
-		actual, ok := DeploymentForActualExecution(
-			schemas.Azure,
-			RouteResponses,
-			resolution.Deployment,
-			&actualTier,
-			"",
-		)
+		actual, ok := StandardTierDeployment(schemas.Azure, RouteResponses, resolution.Deployment)
 		if !ok || actual.ID != "azure-"+model+"-pro" ||
 			actual.Upstream.Hosting != resolution.Deployment.Upstream.Hosting ||
 			actual.Upstream.DeploymentType != resolution.Deployment.Upstream.DeploymentType {
@@ -773,28 +586,26 @@ func TestAzureGPT56PriorityAndProAreIndependentDeploymentAxes(t *testing.T) {
 	}
 }
 
-func TestAzureClaudeUsesNativeRouteAndManualReasoningBudget(t *testing.T) {
+func TestAzureClaudeUsesNativeRoute(t *testing.T) {
 	loadTestCatalog(t)
 	for _, input := range []RequestInput{
 		{
 			Method: "POST",
 			Path:   "/v1/chat/completions",
-			Body:   []byte(`{"model":"azure/claude-sonnet-4-6","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":8192,"reasoning":{"max_tokens":4096}}`),
+			Body:   []byte(`{"model":"azure/claude-fable-5-1","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":8192}`),
 		},
 		{
 			Method: "POST",
 			Path:   "/v1/responses",
-			Body:   []byte(`{"model":"azure/claude-sonnet-4-6","input":"hello","max_output_tokens":8192,"reasoning":{"max_tokens":4096}}`),
+			Body:   []byte(`{"model":"azure/claude-fable-5-1","input":"hello","max_output_tokens":8192}`),
 		},
 	} {
 		resolution, err := ResolveRequest(input)
 		if err != nil {
 			t.Fatalf("resolve Azure Claude request: %v", err)
 		}
-		if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-claude-sonnet-4-6-anthropic-hosted" ||
-			len(resolution.Deployment.RouteIDs) != 1 || resolution.Deployment.RouteIDs[0] != "azure-anthropic-messages" ||
-			resolution.Deployment.ReasoningMaxTokens == nil || resolution.Deployment.ReasoningMaxTokens.Minimum != 1024 ||
-			resolution.Deployment.ReasoningMaxTokens.Maximum != 127999 {
+		if resolution.Provider != schemas.Azure || resolution.Deployment.ID != "azure-claude-fable-5-1-anthropic-hosted" ||
+			len(resolution.Deployment.RouteIDs) != 1 || resolution.Deployment.RouteIDs[0] != "azure-anthropic-messages" {
 			t.Fatalf("unexpected Azure Claude resolution: %#v", resolution)
 		}
 	}
@@ -895,96 +706,100 @@ func TestRetiredAnthropicOpus41IsNotRoutableOrListed(t *testing.T) {
 	}
 }
 
-func TestDeploymentFactsSelectTierRegionAndSpeedExplicitly(t *testing.T) {
+func TestRequestedTierMovesOnlyModelSelectors(t *testing.T) {
 	loadTestCatalog(t)
-	flex, ok := testDeploymentForRoute(schemas.OpenAI, "openai-gpt-5.5-2026-04-23-flex", RouteResponses)
-	if !ok || flex.Upstream.ServiceTier != "flex" ||
-		flex.ImpliedServiceTier == nil ||
-		*flex.ImpliedServiceTier != schemas.BifrostServiceTierFlex {
-		t.Fatalf("unexpected flex deployment: %#v", flex)
+	for tier, want := range map[string]string{TierFlex: "openai-gpt-5.5-2026-04-23-flex", TierFast: "openai-gpt-5.5-2026-04-23-fast"} {
+		if deployment, ok := activeState().deploymentForRouteTier(schemas.OpenAI, "gpt-5.5-2026-04-23", RouteResponses, tier); !ok || deployment.ID != want {
+			t.Fatalf("%s request selected %#v, want %s", tier, deployment, want)
+		}
 	}
-	requestedFlex := schemas.BifrostServiceTierFlex
-	flex, ok = DeploymentForRouteServiceTier(
-		schemas.OpenAI,
-		"gpt-5.5",
-		RouteResponses,
-		&requestedFlex,
-	)
-	if !ok || flex.ID != "openai-gpt-5.5-2026-04-23-flex" {
-		t.Fatalf("OpenAI service_tier did not select the concrete flex deployment: %#v", flex)
+	for _, selector := range []string{"openai-gpt-5.5-2026-04-23", "openai-gpt-5.5-2026-04-23-fast"} {
+		if deployment, ok := activeState().deploymentForRouteTier(schemas.OpenAI, selector, RouteResponses, TierFlex); ok {
+			t.Fatalf("a requested tier retargeted the exact selector %s to %s", selector, deployment.ID)
+		}
 	}
-	for _, requestedFastTier := range []schemas.BifrostServiceTier{
-		schemas.BifrostServiceTier("fast"),
-		schemas.BifrostServiceTierPriority,
+	fastUS, ok := testDeploymentForRoute(schemas.Anthropic, "anthropic-claude-opus-4-8-fast-us", RouteResponses)
+	if !ok {
+		t.Fatal("Claude Opus 4.8 Fast US is missing")
+	}
+	if standardUS, ok := StandardTierDeployment(schemas.Anthropic, RouteResponses, fastUS); !ok || standardUS.ID != "anthropic-claude-opus-4-8-us" {
+		t.Fatalf("Standard sibling of %s = %#v, want anthropic-claude-opus-4-8-us", fastUS.ID, standardUS)
+	}
+}
+
+func TestGroupsSelectTheirNewestModel(t *testing.T) {
+	loadTestCatalog(t)
+	openAI, anthropic := map[string][]int{"openai": {0}}, map[string][]int{"anthropic": {0}}
+	for _, test := range []struct {
+		body        string
+		credentials map[string][]int
+		policy      string
+		deployment  string
+		code        string
+	}{
+		{body: `{"model":"gpt-5.5","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-5.5-2026-04-23"},
+		{body: `{"model":"gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
+		{body: `{"model":"openai/gpt-6","input":"hello"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol"},
+		{body: `{"model":"gpt-6","input":"hello","service_tier":"flex"}`, credentials: openAI, deployment: "openai-gpt-6.1-sol-flex"},
+		{body: `{"model":"anthropic/gpt-6","input":"hello"}`, code: ErrModelUnavailable.Code},
+		// Every Claude Mythos deployment needs approval, which only an exact selector requests.
+		{body: `{"model":"claude-mythos","input":"hello"}`, code: ErrModelUnavailable.Code},
+		// GPT-5.6 Luna, Sol and Terra share the newest release date, so only a policy order
+		// chooses among them.
+		{body: `{"model":"gpt-5.6","input":"hello"}`, credentials: openAI, code: ErrModelAmbiguous.Code},
+		{
+			body:        `{"model":"gpt-5.6","input":"hello"}`,
+			credentials: openAI,
+			policy:      `{"routing":{"sort":[{"by":"blended_price(3, 1)","direction":"asc"}]}}`,
+			deployment:  "openai-gpt-5.6-luna",
+		},
+		{
+			body:        `{"model":"claude","input":"hello"}`,
+			credentials: anthropic,
+			policy:      `{"routing":{"filter":"'claude-opus' in model.groupIds"}}`,
+			deployment:  "anthropic-claude-opus-5-5",
+		},
 	} {
-		fast, fastOK := DeploymentForRouteServiceTier(
-			schemas.OpenAI,
-			"gpt-5.5",
-			RouteResponses,
-			&requestedFastTier,
-		)
-		if !fastOK ||
-			fast.ID != "openai-gpt-5.5-2026-04-23-fast" ||
-			fast.Upstream.ServiceTier != "priority" ||
-			fast.ImpliedServiceTier == nil ||
-			*fast.ImpliedServiceTier != schemas.BifrostServiceTierPriority {
-			t.Fatalf("OpenAI %q service_tier did not select the Fast deployment: %#v", requestedFastTier, fast)
+		var config *policy.Config
+		if test.policy != "" {
+			source, err := policy.CompileSource([]byte(test.policy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config, err = policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}}); err != nil {
+				t.Fatal(err)
+			}
 		}
-		flex, ok = DeploymentForRouteServiceTier(
-			schemas.OpenAI,
-			"openai-gpt-5.5-2026-04-23-flex",
-			RouteResponses,
-			&requestedFastTier,
-		)
-		if ok {
-			t.Fatalf("conflicting %q request tier accepted for exact flex deployment: %#v", requestedFastTier, flex)
+		resolved, err := ResolveRequest(RequestInput{
+			AvailableCredentials: test.credentials,
+			Body:                 []byte(test.body),
+			Method:               "POST",
+			Path:                 "/v1/responses",
+			Policy:               config,
+		})
+		if test.code != "" {
+			if err == nil || PublicError(err).Code != test.code {
+				t.Fatalf("%s: want %s, got %#v, %v", test.body, test.code, resolved, err)
+			}
+			continue
+		}
+		if err != nil || resolved.Deployment.ID != test.deployment {
+			t.Fatalf("%s: want %s, got %#v, %v", test.body, test.deployment, resolved, err)
 		}
 	}
-	if _, ok = DeploymentForRouteServiceTier(
-		schemas.OpenAI,
-		"openai-gpt-5.5-2026-04-23",
-		RouteResponses,
-		&requestedFlex,
-	); ok {
-		t.Fatal("conflicting axes must not retarget an exact deployment selector")
+
+	models, ok := PublicModelsPayload()
+	if !ok {
+		t.Fatal("public model list unavailable")
 	}
-	resolution, err := ResolveRequest(RequestInput{
-		Method: "POST",
-		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hello","service_tier":"fast"}`),
-	})
-	if err != nil {
-		t.Fatalf("resolve Fast mode request: %v", err)
+	listed := map[string]bool{}
+	for _, model := range models.Data {
+		listed[model.ID] = true
 	}
-	if resolution.Deployment.ID != "openai-gpt-5.5-2026-04-23-fast" ||
-		resolution.responses == nil ||
-		resolution.responses.ResponsesParameters.ServiceTier == nil ||
-		*resolution.responses.ResponsesParameters.ServiceTier != schemas.BifrostServiceTierPriority {
-		t.Fatalf("Fast mode was not normalized to Bifrost's priority wire value: %#v", resolution)
-	}
-	actualFast := schemas.BifrostServiceTier("fast")
-	actual, actualOK := DeploymentForActualExecution(
-		schemas.OpenAI,
-		RouteResponses,
-		resolution.Deployment,
-		&actualFast,
-		"",
-	)
-	if !actualOK || actual.ID != "openai-gpt-5.5-2026-04-23-fast" {
-		t.Fatalf("returned fast tier did not settle against the Fast deployment: %#v", actual)
-	}
-	fastUS, ok := testDeploymentForRoute(
-		schemas.Anthropic,
-		"anthropic-claude-opus-4-8-fast-us",
-		RouteResponses,
-	)
-	if !ok ||
-		fastUS.ID != "anthropic-claude-opus-4-8-fast-us" ||
-		fastUS.Upstream.Speed != "fast" ||
-		fastUS.Upstream.InferenceGeo != "us" ||
-		len(fastUS.RouteIDs) != 1 ||
-		fastUS.RouteIDs[0] != "anthropic-messages" {
-		t.Fatalf("unexpected fast US deployment: %#v", fastUS)
+	for selector, want := range map[string]bool{"gpt-5.5": true, "gpt-6": true, "gpt-5.6": false, "claude-mythos": false} {
+		if listed[selector] != want {
+			t.Fatalf("/v1/models lists %s: %t, want %t", selector, listed[selector], want)
+		}
 	}
 }
 
@@ -1028,7 +843,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 	resolution, err := ResolveRequest(RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"gpt-5.5","input":"hello","reasoning":{"effort":"high"}}`),
+		Body:   []byte(`{"model":"openai/gpt-5.5","input":"hello","reasoning":{"effort":"high"}}`),
 	})
 	if err != nil {
 		t.Fatalf("resolve request: %v", err)
@@ -1058,7 +873,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 	loadTestCatalog(t)
 	payload, ok := PublicCatalogPayload()
-	if !ok || payload.Schema != PublicCatalogVersion {
+	if !ok || payload.Schema != publicSchema {
 		t.Fatalf("public catalog unavailable: %#v", payload)
 	}
 	if !strings.HasPrefix(payload.RuntimeDigest, "sha256:") ||
@@ -1067,8 +882,7 @@ func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 		t.Fatalf("public catalog identities are incomplete: %#v", payload)
 	}
 	var providers map[string]struct {
-		DataHandling map[string]any            `json:"dataHandling"`
-		Pricing      map[string]map[string]any `json:"pricing"`
+		DataHandling map[string]any `json:"dataHandling"`
 	}
 	if err := json.Unmarshal(payload.Graph["providers"], &providers); err != nil {
 		t.Fatalf("decode public providers: %v", err)
@@ -1082,9 +896,6 @@ func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 			t.Fatalf("%s provider data handling is incomplete: %#v", id, provider.DataHandling)
 		}
 	}
-	if providers["anthropic"].Pricing[meterAnthropicWebSearchCalls][billing.RatePerThousandCalls] == nil {
-		t.Fatalf("Anthropic provider-wide web-search pricing is absent: %#v", providers["anthropic"].Pricing)
-	}
 	var routes map[string]map[string]any
 	if err := json.Unmarshal(payload.Graph["routes"], &routes); err != nil {
 		t.Fatalf("decode public routes: %v", err)
@@ -1093,9 +904,6 @@ func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 		handling["endToEndEncrypted"] == nil ||
 		handling["processingLocation"] != nil || handling["storageLocation"] != nil {
 		t.Fatalf("Anthropic route transport handling is incomplete: %#v", handling)
-	}
-	if _, misplaced := routes["anthropic-messages"]["pricing"]; misplaced {
-		t.Fatal("Anthropic route owns provider-wide pricing")
 	}
 	var deployments map[string]map[string]any
 	if err := json.Unmarshal(payload.Graph["deployments"], &deployments); err != nil {
@@ -1108,9 +916,9 @@ func TestPublicCatalogPreservesPolicyOwnership(t *testing.T) {
 
 func TestPricingIsMaterializedOnDeployments(t *testing.T) {
 	loadTestCatalog(t)
-	deployment, ok := testDeploymentForRoute(schemas.OpenAI, "gpt-5.5", RouteResponses)
+	deployment, ok := testDeploymentForRoute(schemas.OpenAI, "gpt-5.5-2026-04-23", RouteResponses)
 	if !ok {
-		t.Fatal("gpt-5.5 deployment unavailable")
+		t.Fatal("GPT-5.5 deployment unavailable")
 	}
 	if deployment.Pricing["openai_responses_web_search_calls"][billing.RatePerThousandCalls] == "" {
 		t.Fatalf("route pricing was not materialized: %#v", deployment.Pricing)
@@ -1225,7 +1033,7 @@ func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
 		deployment := runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"]
 		deployment.ChainHashes = hashes
 		runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"] = deployment
-		if err := validateCompiledCatalog(runtime); err == nil {
+		if err := validateCompiledGraph(runtime.Graph); err == nil {
 			t.Fatalf("invalid historical chain mapping was accepted: %#v", hashes)
 		}
 	}
@@ -1506,10 +1314,10 @@ func TestCanonicalDataLocationContainment(t *testing.T) {
 		"EU within Europe":         {actual: "eu", boundary: "europe", allowed: true},
 		"APAC country":             {actual: "JP", boundary: "apac", allowed: true},
 		"country outside APAC":     {actual: "US", boundary: "apac", allowed: false},
-		"global boundary":          {actual: "US", boundary: "global", allowed: true},
+		"world boundary":           {actual: "US", boundary: "world", allowed: true},
 		"unknown boundary":         {actual: "unknown", boundary: "unknown", allowed: true},
 		"unknown actual is not EU": {actual: "unknown", boundary: "eu", allowed: false},
-		"invalid country":          {actual: "ZZ", boundary: "global", allowed: false},
+		"invalid country":          {actual: "ZZ", boundary: "world", allowed: false},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -1553,18 +1361,18 @@ func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
 		name  string
 		apply func(map[string]any)
 	}{
-		{"missing route", func(d map[string]any) { delete(d["fileInputsByRoute"].(map[string]any), "openai-responses") }},
+		{"missing route", func(d map[string]any) { delete(d["nativeFileInputsByRoute"].(map[string]any), "openai-responses") }},
 		{"unattached route", func(d map[string]any) {
-			d["fileInputsByRoute"].(map[string]any)["unattached"] = map[string]any{"extensions": []any{}, "mediaTypes": []any{}}
+			d["nativeFileInputsByRoute"].(map[string]any)["unattached"] = map[string]any{"extensions": []any{}, "mediaTypes": []any{}}
 		}},
 		{"missing array", func(d map[string]any) {
-			delete(d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any), "mediaTypes")
+			delete(d["nativeFileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any), "mediaTypes")
 		}},
 		{"wildcard MIME", func(d map[string]any) {
-			d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["mediaTypes"] = []any{"text/*"}
+			d["nativeFileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["mediaTypes"] = []any{"text/*"}
 		}},
 		{"duplicate extension", func(d map[string]any) {
-			d["fileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["extensions"] = []any{".pdf", ".pdf"}
+			d["nativeFileInputsByRoute"].(map[string]any)["openai-responses"].(map[string]any)["extensions"] = []any{".pdf", ".pdf"}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1601,7 +1409,7 @@ func TestSnapshotAcceptsProviderProcessedPDFForTextModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("provider-processed document support rejected: %v", err)
 	}
-	formats := snap.graph.Deployments[id].FileInputsByRoute["openai-responses"]
+	formats := snap.graph.Deployments[id].NativeFileInputsByRoute["openai-responses"]
 	if !stringIn(formats.Extensions, ".pdf") || !stringIn(formats.MediaTypes, "application/pdf") {
 		t.Fatal("provider-processed PDF support was lost")
 	}

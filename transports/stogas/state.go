@@ -2,7 +2,6 @@ package stogas
 
 import (
 	"bytes"
-	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"sync"
 	"time"
 
@@ -21,34 +20,39 @@ const stateContextKey contextKey = "stogas.state"
 // explicit rather than pretending to be a published release.
 var GatewayVersion = "dev"
 
+// Pair holds what belongs to one deployment and credential pair. A fallback
+// binds the next pair as a whole; the request's own facts stay on State.
+type Pair struct {
+	Export             *exporter.Capture
+	Resolution         *catalog.ResolvedRequest
+	Adapter            Adapter
+	Hold               HoldEstimate
+	PreparedCredential *billing.PreparedCredential
+	PolicyVersions     *billing.PolicyVersions
+	Authorization      *billing.Authorization
+	RequestSettings    billing.RequestSettings
+	Model              string
+	PluginMetrics      plugins.Metrics
+}
+
 type State struct {
-	Export                  *exporter.Capture
-	Resolution              *catalog.ResolvedRequest
-	Adapter                 Adapter
+	Pair
 	observedUsage           *StandardSignals
 	Signals                 Signals
-	Hold                    HoldEstimate
-	KeyConfig               *billing.KeyConfigSnapshot
-	PreparedCredential      *billing.PreparedCredential
-	PolicyVersions          *billing.PolicyVersions
 	RawAPIKey               string
 	APIKeyClaims            *billing.APIKeyClaims
 	DashboardCredential     *billing.DashboardCredential
-	EncryptionKeys          customerkey.Keys
-	Authorization           *billing.Authorization
 	BillingFinalized        bool
 	RequestLifetime         time.Duration
 	RequestID               string
 	StartedAt               time.Time
 	RequestType             string
-	Model                   string
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
 	ProcessingError         *schemas.BifrostError
 	FinalEvent              *billing.RequestEvent
 	UpstreamCostUSD         string
 	FinalMeters             []catalog.MeterEstimate
-	PluginMetrics           plugins.Metrics
 	ProviderStartedAt       time.Time
 	ProviderCompletedAt     time.Time
 	TTFTMS                  *uint32
@@ -61,8 +65,7 @@ type State struct {
 	clientStateMu           sync.RWMutex
 	GatewayVersion          string
 	NodeID                  string
-	ActualServiceTier       *schemas.BifrostServiceTier
-	ActualSpeed             string
+	ActualTier              string
 	ActualModel             string
 	providerStreamBytes     int
 	chatStreamObserved      bool
@@ -86,8 +89,6 @@ type State struct {
 	textMaterial            textMaterial
 	textMaterialObserved    bool
 	responsesTextMaterial   map[int]textMaterial
-
-	ProviderResponseHeaders map[string]string
 
 	providerAttemptsMu sync.Mutex
 	providerAttempts   []providerAttemptObservation
@@ -145,9 +146,9 @@ type providerResponsesAnnotation struct {
 type providerAttemptObservation struct {
 	CatalogChainHash string
 	Provider         string
+	Byok             string
 	StartedAt        time.Time
 	CompletedAt      time.Time
-	OutputObserved   bool
 	Response         *schemas.BifrostResponse
 	Error            *schemas.BifrostError
 }
@@ -161,20 +162,23 @@ type HoldEstimate struct {
 }
 
 func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *billing.APIKeyClaims, adapter Adapter) *State {
-	state := &State{
-		Resolution:     resolution,
-		Adapter:        adapter,
+	return &State{
+		Pair:           NewPair(resolution, adapter),
 		RawAPIKey:      rawAPIKey,
 		APIKeyClaims:   claims,
 		GatewayVersion: GatewayVersion,
 	}
+}
+
+func NewPair(resolution *catalog.ResolvedRequest, adapter Adapter) Pair {
+	pair := Pair{Resolution: resolution, Adapter: adapter}
 	if summary := resolution.StructuredPIIRedactionSummary(); summary != nil {
-		state.PluginMetrics.StogasStructuredPIIRedaction = &plugins.StogasStructuredPIIRedactionMetrics{
+		pair.PluginMetrics.StogasStructuredPIIRedaction = &plugins.StogasStructuredPIIRedactionMetrics{
 			ItemsRedacted: summary.ItemsRedacted,
 			DurationUS:    summary.DurationUS,
 		}
 	}
-	return state
+	return pair
 }
 
 func (s *State) SetDashboardCredential(credential *billing.DashboardCredential) {
@@ -201,17 +205,31 @@ func (s *State) MarkProviderCompleted() {
 	s.completeLatestProviderAttempt(completedAt)
 }
 
-// MarkProviderNotSent removes the provider call after its transport proved
-// that nothing reached the provider. The request settles like any other
-// failure before dispatch: no provider attempt and no tokens.
+// MarkProviderNotSent removes the last provider call after its transport
+// proved that nothing reached the provider. A request without another call
+// settles like any other failure before dispatch: no provider time and no tokens.
 func (s *State) MarkProviderNotSent() {
 	if s == nil {
 		return
 	}
-	s.ProviderStartedAt, s.ProviderCompletedAt = time.Time{}, time.Time{}
 	s.providerAttemptsMu.Lock()
-	s.providerAttempts = nil
-	s.providerAttemptsMu.Unlock()
+	defer s.providerAttemptsMu.Unlock()
+	if count := len(s.providerAttempts); count > 0 {
+		s.providerAttempts = s.providerAttempts[:count-1]
+	}
+	if len(s.providerAttempts) == 0 {
+		s.ProviderStartedAt, s.ProviderCompletedAt = time.Time{}, time.Time{}
+	}
+}
+
+// ProviderAttemptCount reports how many provider calls the log will show.
+func (s *State) ProviderAttemptCount() int {
+	if s == nil {
+		return 0
+	}
+	s.providerAttemptsMu.Lock()
+	defer s.providerAttemptsMu.Unlock()
+	return len(s.providerAttempts)
 }
 
 func (s *State) MarkClientStopped() {
@@ -253,16 +271,11 @@ func (s *State) observeTTFT() {
 	s.TTFTMS = &value
 }
 
+// Output reaches the request only from its last provider call.
 func (s *State) observeProviderOutput() {
-	if s == nil {
-		return
+	if s != nil {
+		s.ProviderOutputObserved = true
 	}
-	s.ProviderOutputObserved = true
-	s.providerAttemptsMu.Lock()
-	if len(s.providerAttempts) > 0 {
-		s.providerAttempts[len(s.providerAttempts)-1].OutputObserved = true
-	}
-	s.providerAttemptsMu.Unlock()
 }
 
 func (s *State) beginProviderAttempt(startedAt time.Time) int {
@@ -280,11 +293,15 @@ func (s *State) beginProviderAttempt(startedAt time.Time) int {
 			previous.CompletedAt = maxProviderAttemptTime(startedAt, previous.StartedAt)
 		}
 	}
-	chainHash := ""
+	// The request's owner binds another pair only between provider calls.
+	attempt := providerAttemptObservation{StartedAt: startedAt}
 	if s.Resolution != nil {
-		chainHash = s.Resolution.Deployment.ChainHash
+		attempt.CatalogChainHash = s.Resolution.Deployment.ChainHash
 	}
-	s.providerAttempts = append(s.providerAttempts, providerAttemptObservation{StartedAt: startedAt, CatalogChainHash: chainHash})
+	if s.Authorization != nil {
+		attempt.Byok = s.Authorization.UpstreamByok
+	}
+	s.providerAttempts = append(s.providerAttempts, attempt)
 	return len(s.providerAttempts) - 1
 }
 
@@ -334,47 +351,38 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 	}
 	s.providerAttemptsMu.Lock()
 	defer s.providerAttemptsMu.Unlock()
-	// Keep the existing outer provider clock for the common one-attempt path.
-	if len(s.providerAttempts) < 2 {
+	if len(s.providerAttempts) == 0 {
 		return nil
 	}
 	attempts := make([]billing.ProviderAttemptInput, len(s.providerAttempts))
 	for index, attempt := range s.providerAttempts {
 		attempts[index] = billing.ProviderAttemptInput{
 			Provider:                 attempt.Provider,
+			Byok:                     attempt.Byok,
 			CatalogChainHash:         attempt.CatalogChainHash,
-			SelectedCatalogChainHash: attempt.CatalogChainHash,
+			ResolvedCatalogChainHash: attempt.CatalogChainHash,
 			StartedAt:                attempt.StartedAt,
 			CompletedAt:              attempt.CompletedAt,
-			OutputObserved:           attempt.OutputObserved,
 			Response:                 attempt.Response,
 			Error:                    attempt.Error,
 		}
 	}
+	// The final outcome belongs to the last call, which ran on the bound pair.
 	finalAttempt := &attempts[len(attempts)-1]
-	finalAttempt.CatalogChainHash = ExecutionDeployment(s).ChainHash
+	if s.Resolution != nil && finalAttempt.CatalogChainHash == s.Resolution.Deployment.ChainHash {
+		finalAttempt.CatalogChainHash = ExecutionDeployment(s).ChainHash
+	}
 	if finalAttempt.CompletedAt.IsZero() {
 		finalAttempt.CompletedAt = maxProviderAttemptTime(s.ProviderCompletedAt, finalAttempt.StartedAt)
 	}
+	finalAttempt.OutputObserved = s.ProviderOutputObserved
 	if s.Response != nil {
 		finalAttempt.Response = s.Response
 	}
-	if s.BifrostError != nil && !providerAttemptErrorBeforeFinal(attempts, s.BifrostError) {
+	if s.BifrostError != nil {
 		finalAttempt.Error = s.BifrostError
 	}
 	return attempts
-}
-
-func providerAttemptErrorBeforeFinal(attempts []billing.ProviderAttemptInput, target *schemas.BifrostError) bool {
-	// When every fallback fails, Bifrost returns the primary error. Keep that
-	// error on its original attempt instead of replacing the last fallback's
-	// independently observed error.
-	for _, attempt := range attempts[:len(attempts)-1] {
-		if attempt.Error == target {
-			return true
-		}
-	}
-	return false
 }
 
 func maxProviderAttemptTime(value time.Time, minimum time.Time) time.Time {

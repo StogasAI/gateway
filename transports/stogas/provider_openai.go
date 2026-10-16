@@ -20,7 +20,6 @@ import (
 const (
 	openAIAdapterRouteChat      openAIAdapterRoute = "chat-completions"
 	openAIAdapterRouteResponses openAIAdapterRoute = "responses"
-	maxPromptCacheBreakpoints                      = 4
 
 	webSearchFixedContentInputTokens = 8000
 	webSearchContextWindowTokens     = 128000
@@ -96,11 +95,11 @@ func validateOpenAIPromptCaching(state *State) error {
 		return err
 	}
 	if rawJSONValueSet(raw["prompt_cache_key"]) && !capabilities.ImplicitPromptCaching {
-		return invalidRequest("prompt caching is not supported for the selected OpenAI deployment")
+		return invalidRequest("prompt caching is not supported for the selected deployment")
 	}
 	if retentionRaw := raw["prompt_cache_retention"]; rawJSONValueSet(retentionRaw) {
 		if !capabilities.ImplicitPromptCaching {
-			return invalidRequest("prompt caching is not supported for the selected OpenAI deployment")
+			return invalidRequest("prompt caching is not supported for the selected deployment")
 		}
 		retention, ok := rawStringValue(retentionRaw)
 		if !ok {
@@ -111,21 +110,15 @@ func validateOpenAIPromptCaching(state *State) error {
 		}
 	}
 	optionsSet := rawJSONValueSet(raw["prompt_cache_options"])
-	breakpoints, err := validatePromptCacheBreakpoints(
-		rawPromptContent(state.Resolution.Route, raw),
-		state.Resolution.Route,
-	)
+	breakpoints, err := validatePromptCacheBreakpoints(rawPromptContent(state.Resolution.Route, raw))
 	if err != nil {
 		return err
-	}
-	if breakpoints > maxPromptCacheBreakpoints {
-		return invalidRequest("prompt_cache_breakpoint supports at most four prompt blocks")
 	}
 	if !optionsSet && breakpoints == 0 {
 		return nil
 	}
 	if !capabilities.ExplicitPromptCaching {
-		return invalidRequest("explicit prompt caching is not supported for the selected OpenAI deployment")
+		return invalidRequest("explicit prompt caching is not supported for the selected deployment")
 	}
 	if !optionsSet {
 		return nil
@@ -165,18 +158,15 @@ func rawPromptContent(route catalog.Route, raw map[string]json.RawMessage) json.
 	return raw["input"]
 }
 
-func validatePromptCacheBreakpoints(raw json.RawMessage, route catalog.Route) (int, error) {
+// The provider decides which prompt blocks accept a breakpoint and how many it
+// honors. The gateway checks only the mode, because a new mode could change the
+// cache-write price.
+func validatePromptCacheBreakpoints(raw json.RawMessage) (int, error) {
 	count := 0
 	err := openAIWalkRawJSON(raw, "prompt_cache_breakpoint", func(object map[string]json.RawMessage) error {
 		breakpointRaw, exists := object["prompt_cache_breakpoint"]
 		if !exists {
 			return nil
-		}
-		blockType := rawjson.NormalizedStringField(object, "type")
-		allowed := (route == catalog.RouteChat && stringInSet(blockType, "text", "refusal")) ||
-			(route == catalog.RouteResponses && blockType == "input_text")
-		if !allowed {
-			return invalidRequest("prompt_cache_breakpoint is not supported on this prompt block")
 		}
 		breakpoint, ok := rawObject(breakpointRaw)
 		if !ok || !onlyRawKeys(breakpoint, "mode") {
@@ -325,7 +315,7 @@ func validateOpenAIChatWebSearchOptions(raw json.RawMessage) error {
 				return err
 			}
 		default:
-			return invalidRequest("web_search_options." + key + " is not supported by Stogas API")
+			return invalidRequest("web_search_options." + key + " is not supported")
 		}
 	}
 	return nil
@@ -338,7 +328,7 @@ func validateOpenAIChatWebSearchUserLocation(raw json.RawMessage) error {
 	}
 	for key := range location {
 		if key != "type" && key != "approximate" {
-			return invalidRequest("web_search_options.user_location." + key + " is not supported by Stogas API")
+			return invalidRequest("web_search_options.user_location." + key + " is not supported")
 		}
 	}
 	if _, exists := location["type"]; !exists {
@@ -369,7 +359,7 @@ func validateOpenAIChatWebSearchUserLocation(raw json.RawMessage) error {
 						return invalidRequest("web_search_options.user_location.approximate." + field + " must be a string")
 					}
 				default:
-					return invalidRequest("web_search_options.user_location.approximate." + field + " is not supported by Stogas API")
+					return invalidRequest("web_search_options.user_location.approximate." + field + " is not supported")
 				}
 			}
 		}
@@ -439,7 +429,7 @@ func (OpenAIAdapter) CalculateUpstreamCost(state *State) error {
 	if state == nil {
 		return nil
 	}
-	upstreamCostUSD, err := calculateBaseUpstreamCost(state, openAIFinalMeters(openAIAdapterContextForUpstreamCost(state)))
+	upstreamCostUSD, err := calculateBaseUpstreamCost(state, openAIFinalMeters(openAIAdapterContextForState(state)))
 	if err != nil {
 		return err
 	}
@@ -474,7 +464,7 @@ func (OpenAIAdapter) ValidateRawResponsesToolType(state *State, tool map[string]
 }
 
 func openAIAdapterContextForState(state *State) openAIAdapterContext {
-	return openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
+	return openAIAdapterContextForDeployment(state, ExecutionDeployment(state))
 }
 
 func openAIAdapterContextForHold(state *State) openAIAdapterContext {
@@ -483,12 +473,6 @@ func openAIAdapterContextForHold(state *State) openAIAdapterContext {
 	}
 	req := openAIAdapterContextForDeployment(state, state.Resolution.Deployment)
 	req.Deployment.Pricing = holdPricingForState(state)
-	return req
-}
-
-func openAIAdapterContextForUpstreamCost(state *State) openAIAdapterContext {
-	req := openAIAdapterContextForDeployment(state, pricingDeploymentForState(state))
-	req.ActualWebSearchCalls = actualWebSearchCalls(state)
 	return req
 }
 
@@ -526,7 +510,7 @@ func openAIGuardrailError(err error) error {
 	case errors.Is(err, errOpenAIUnsupportedParameter):
 		return invalidRequest("Parameter is not supported by this deployment")
 	case errors.Is(err, errOpenAIUnsupportedInput):
-		return invalidRequest("Input modality is not supported by Stogas billing")
+		return invalidRequest("We cannot bill this input modality")
 	case errors.Is(err, errOpenAIOutputTokenLimitTooLow):
 		return catalog.ErrParameterTooLarge
 	default:
@@ -587,7 +571,7 @@ func openAIUnsupportedResponsesToolMessage(rawType string) string {
 	case normalized == "image_generation":
 		return "image_generation output and its pricing are not supported"
 	case normalized == "tool_search" || normalized == "namespace" || normalized == "memory":
-		return rawType + " is not supported until Stogas exposes the required tool-loading or provider-state lifecycle"
+		return rawType + " is not supported because it needs tool loading or provider-held state that we do not offer"
 	default:
 		return "Only function, custom, and priced hosted web search tools are supported"
 	}

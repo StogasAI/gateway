@@ -1104,14 +1104,12 @@ func ToOpenAIResponsesRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.B
 // samplingParamUnsupported reports whether the model rejects a sampling field
 // (top_p, temperature, top_logprobs, logprobs). The datasheet can mark it
 // unsupported outright, or conditionally via "when_effort_none" — accepted only
-// while reasoning is off. The fallback is name detection: OpenAI reasoning models
-// (o1/o3 series, GPT-6) reject it, except GPT-5.x while effort is "none". An
-// omitted effort counts as "none" only where that is the model's default: the
-// datasheet's default_reasoning_effort, else GPT-5.1 through 5.4 by name. The
-// -pro variants always reason, so they always strip.
-// Gated on the OpenAI-family name rather than caps.SupportsReasoning:
-// this asks whether the API rejects the field, which is not the same question for
-// xAI/Groq.
+// while reasoning is off. An omitted effort counts as "none" only where that is
+// the model's default: the datasheet's default_reasoning_effort, else GPT-5.1
+// through 5.4 by name.
+// Stogas: without a datasheet entry the field is kept and the provider decides.
+// Upstream guesses from the model name and silently drops client fields, even
+// ones the provider accepts, such as temperature on GPT-6 Sol at effort "none".
 func samplingParamUnsupported(caps schemas.ModelCaps, field, model, effort string) bool {
 	effortIsNone := effort == schemas.ReasoningEffortNone || (effort == "" && !omittedEffortReasons(caps, model))
 	// An outright unsupported_fields entry outranks the conditional label: the
@@ -1123,19 +1121,7 @@ func samplingParamUnsupported(caps schemas.ModelCaps, field, model, effort strin
 	if caps.FieldCondition(field) == schemas.ConditionWhenEffortNone {
 		return !effortIsNone
 	}
-
-	fallback := true
-	if !IsOpenAIReasoningModel(model) {
-		fallback = false
-	} else {
-		_, parsedModel := schemas.ParseModelString(model, schemas.OpenAI)
-		modelLower := strings.ToLower(parsedModel)
-		if strings.Contains(modelLower, "gpt-5.") && effortIsNone &&
-			!strings.Contains(modelLower, "-pro") {
-			fallback = false
-		}
-	}
-	return caps.FieldUnsupported(field, fallback)
+	return false
 }
 
 // filterUnsupportedTools removes tool types that OpenAI doesn't support

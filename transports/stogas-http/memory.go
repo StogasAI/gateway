@@ -13,10 +13,14 @@ import (
 
 const (
 	requestMemoryBudgetBytes = DefaultPayloadMemoryBudgetBytes
-	// This factor is conservative admission accounting for parsing and
-	// normalization. It does not allocate or prove five in-memory copies.
+	// Admission accounting, not a count of copies: once its input is released, a
+	// request kept at most four times its body in October 15 measurements.
 	requestBodyReservationFactor = int64(5)
-	minimumRequestWeightBytes    = int64(512 * 1024)
+	// Until then it also holds the received body, its re-encoded JSON, Bifrost's
+	// decoder copies and the provider body; complete local preparation peaked at
+	// 9.05 times the body. TestRequestPreparationFitsItsMemoryCharges checks both.
+	requestPreparationReservationFactor = int64(10)
+	minimumRequestWeightBytes           = int64(512 * 1024)
 	// Wire bytes alone miss dense arrays of empty or short values. Charge each
 	// JSON value at the largest fixed input-item size before typed decoding.
 	// This is admission accounting, not a bound on every Go allocation or RSS.
@@ -76,23 +80,24 @@ type requestMemoryLease struct {
 }
 
 type requestMemoryDiagnostics struct {
-	BudgetBytes                      int64  `json:"budgetBytes"`
-	ConfidentialHeadroomBytes        int64  `json:"confidentialHeadroomBytes"`
-	ConfidentialReservedBytes        int64  `json:"confidentialReservedBytes"`
-	ConfidentialReservationFailures  uint64 `json:"confidentialReservationFailures"`
-	DownstreamReservationFailures    uint64 `json:"downstreamReservationFailures"`
-	DownstreamReservedBytes          int64  `json:"downstreamReservedBytes"`
-	MinimumRequestReservationBytes   int64  `json:"minimumRequestReservationBytes"`
-	PeakReservedBytes                int64  `json:"peakReservedBytes"`
-	ProviderResponseCapacityFailures uint64 `json:"providerResponseCapacityFailures"`
-	RequestBodyReservationFactor     int64  `json:"requestBodyReservationFactor"`
-	JSONValueReservationBytes        int64  `json:"jsonValueReservationBytes"`
-	RequestReservationFailures       uint64 `json:"requestReservationFailures"`
-	RequestReservedBytes             int64  `json:"requestReservedBytes"`
-	ReservedBytes                    int64  `json:"reservedBytes"`
-	Saturated                        bool   `json:"saturated"`
-	StreamStateReservationFailures   uint64 `json:"streamStateReservationFailures"`
-	StreamStateReservedBytes         int64  `json:"streamStateReservedBytes"`
+	BudgetBytes                         int64  `json:"budgetBytes"`
+	ConfidentialHeadroomBytes           int64  `json:"confidentialHeadroomBytes"`
+	ConfidentialReservedBytes           int64  `json:"confidentialReservedBytes"`
+	ConfidentialReservationFailures     uint64 `json:"confidentialReservationFailures"`
+	DownstreamReservationFailures       uint64 `json:"downstreamReservationFailures"`
+	DownstreamReservedBytes             int64  `json:"downstreamReservedBytes"`
+	MinimumRequestReservationBytes      int64  `json:"minimumRequestReservationBytes"`
+	PeakReservedBytes                   int64  `json:"peakReservedBytes"`
+	ProviderResponseCapacityFailures    uint64 `json:"providerResponseCapacityFailures"`
+	RequestBodyReservationFactor        int64  `json:"requestBodyReservationFactor"`
+	RequestPreparationReservationFactor int64  `json:"requestPreparationReservationFactor"`
+	JSONValueReservationBytes           int64  `json:"jsonValueReservationBytes"`
+	RequestReservationFailures          uint64 `json:"requestReservationFailures"`
+	RequestReservedBytes                int64  `json:"requestReservedBytes"`
+	ReservedBytes                       int64  `json:"reservedBytes"`
+	Saturated                           bool   `json:"saturated"`
+	StreamStateReservationFailures      uint64 `json:"streamStateReservationFailures"`
+	StreamStateReservedBytes            int64  `json:"streamStateReservedBytes"`
 }
 
 func requestMemoryWeight(bodyBytes int, structure int64) int64 {
@@ -107,6 +112,17 @@ func requestMemoryWeight(bodyBytes int, structure int64) int64 {
 		return minimumRequestWeightBytes
 	}
 	return weight
+}
+
+// requestPreparationWeight tops the request charge up to the preparation peak.
+func requestPreparationWeight(bodyBytes, capacity int) int64 {
+	if bodyBytes <= 0 {
+		return 0
+	}
+	if int64(bodyBytes) > math.MaxInt64/requestPreparationReservationFactor {
+		return math.MaxInt64
+	}
+	return max(0, int64(bodyBytes)*requestPreparationReservationFactor-requestMemoryWeight(capacity, 0))
 }
 
 func newRequestMemoryAdmission() *requestMemoryAdmission {
@@ -485,29 +501,31 @@ func (a *requestMemoryAdmission) saturated() bool {
 func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
 	if a == nil {
 		return requestMemoryDiagnostics{
-			BudgetBytes:                    requestMemoryBudgetBytes,
-			MinimumRequestReservationBytes: minimumRequestWeightBytes,
-			RequestBodyReservationFactor:   requestBodyReservationFactor,
-			JSONValueReservationBytes:      requestJSONValueBytes,
+			BudgetBytes:                         requestMemoryBudgetBytes,
+			MinimumRequestReservationBytes:      minimumRequestWeightBytes,
+			RequestBodyReservationFactor:        requestBodyReservationFactor,
+			RequestPreparationReservationFactor: requestPreparationReservationFactor,
+			JSONValueReservationBytes:           requestJSONValueBytes,
 		}
 	}
 	return requestMemoryDiagnostics{
-		BudgetBytes:                      a.budgetBytes(),
-		ConfidentialHeadroomBytes:        a.confidentialHeadroom,
-		ConfidentialReservedBytes:        a.confidentialReserved.Load(),
-		ConfidentialReservationFailures:  a.confidentialFailures.Load(),
-		DownstreamReservationFailures:    a.downstreamFailures.Load(),
-		DownstreamReservedBytes:          a.downstreamReserved.Load(),
-		MinimumRequestReservationBytes:   minimumRequestWeightBytes,
-		PeakReservedBytes:                a.peakReserved.Load(),
-		ProviderResponseCapacityFailures: a.responseFailures.Load(),
-		RequestBodyReservationFactor:     requestBodyReservationFactor,
-		JSONValueReservationBytes:        requestJSONValueBytes,
-		RequestReservationFailures:       a.requestFailures.Load(),
-		RequestReservedBytes:             a.requestReserved.Load(),
-		ReservedBytes:                    a.reserved.Load(),
-		Saturated:                        a.saturated(),
-		StreamStateReservationFailures:   a.streamStateFailures.Load(),
-		StreamStateReservedBytes:         a.streamStateReserved.Load(),
+		BudgetBytes:                         a.budgetBytes(),
+		ConfidentialHeadroomBytes:           a.confidentialHeadroom,
+		ConfidentialReservedBytes:           a.confidentialReserved.Load(),
+		ConfidentialReservationFailures:     a.confidentialFailures.Load(),
+		DownstreamReservationFailures:       a.downstreamFailures.Load(),
+		DownstreamReservedBytes:             a.downstreamReserved.Load(),
+		MinimumRequestReservationBytes:      minimumRequestWeightBytes,
+		PeakReservedBytes:                   a.peakReserved.Load(),
+		ProviderResponseCapacityFailures:    a.responseFailures.Load(),
+		RequestBodyReservationFactor:        requestBodyReservationFactor,
+		RequestPreparationReservationFactor: requestPreparationReservationFactor,
+		JSONValueReservationBytes:           requestJSONValueBytes,
+		RequestReservationFailures:          a.requestFailures.Load(),
+		RequestReservedBytes:                a.requestReserved.Load(),
+		ReservedBytes:                       a.reserved.Load(),
+		Saturated:                           a.saturated(),
+		StreamStateReservationFailures:      a.streamStateFailures.Load(),
+		StreamStateReservedBytes:            a.streamStateReserved.Load(),
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestRequestPoliciesAreConsumedForChatAndResponses(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"maxAttempts": 2}}`))
+			source, err := policy.CompileSource([]byte(`{"delegation":{"request":["routing.filter"]},"routing":{"fallbacks": 1}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,13 +74,12 @@ func policyChatBody(extra string) []byte {
 	return []byte(`{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]` + extra + `}`)
 }
 
-func policyConfig(maxCandidates int) *policy.Config {
+// policyConfig allows a request this many deployment and credential pairs.
+func policyConfig(pairs int) *policy.Config {
 	return &policy.Config{
 		CompilerVersion: policy.CompilerVersion,
-		Routing: policy.Routing{
-			MaxAttempts: maxCandidates,
-		},
-		Schema: "stogas.key-config.compiled.v1",
+		Routing:         policy.Routing{Fallbacks: pairs - 1},
+		Schema:          "stogas.key-config.compiled.v1",
 	}
 }
 
@@ -93,7 +93,7 @@ func resolvePolicyChat(t *testing.T, config *policy.Config, extra string) (*Reso
 	})
 }
 
-func TestRoutingFallbacksRequireExplicitAllowanceAndFollowCandidateOrder(t *testing.T) {
+func TestRoutingFallbacksFollowCandidateOrderWithinTheirSlots(t *testing.T) {
 	loadTestCatalog(t)
 	unavailable := errors.New("local credential unavailable")
 	for _, test := range []struct {
@@ -103,15 +103,16 @@ func TestRoutingFallbacksRequireExplicitAllowanceAndFollowCandidateOrder(t *test
 		want        []schemas.ModelProvider
 		failFirst   bool
 		wantFailure bool
-		ambiguous   bool
 	}{
-		{"no implicit provider order", nil, "", nil, false, false, true},
-		{"explicit order without fallback", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, false, false, false},
-		{"default never falls back", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, true, true, false},
-		{"one candidate never falls back", policyConfig(1), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, true, true, false},
-		{"allowance does not define order", policyConfig(2), "", nil, false, false, true},
-		{"explicit fallback", policyConfig(2), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false, false},
-		{"client order", policyConfig(2), `,"provider":{"order":["azure","openai"]}`, []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false, false},
+		// Equal prices: the lower deployment ID, azure-gpt-5.6-sol, comes first.
+		{"default order", nil, "", []schemas.ModelProvider{schemas.Azure}, false, false},
+		{"default order falls back by default", nil, "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
+		{"default order with fallback", policyConfig(2), "", []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
+		{"explicit order without fallback", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, false, false},
+		{"explicit order falls back by default", nil, `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
+		{"one pair never falls back", policyConfig(1), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI}, true, true},
+		{"explicit fallback", policyConfig(2), `,"provider":{"order":["openai","azure"]}`, []schemas.ModelProvider{schemas.OpenAI, schemas.Azure}, true, false},
+		{"client order", policyConfig(2), `,"provider":{"order":["azure","openai"]}`, []schemas.ModelProvider{schemas.Azure, schemas.OpenAI}, true, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var attempts []schemas.ModelProvider
@@ -131,11 +132,7 @@ func TestRoutingFallbacksRequireExplicitAllowanceAndFollowCandidateOrder(t *test
 			if !reflect.DeepEqual(attempts, test.want) {
 				t.Fatalf("attempts=%v want=%v", attempts, test.want)
 			}
-			if test.ambiguous {
-				if PublicError(err).Code != "model_ambiguous" || resolved != nil {
-					t.Fatalf("ambiguity=%v result=%v", err, resolved)
-				}
-			} else if test.wantFailure {
+			if test.wantFailure {
 				if !errors.Is(err, unavailable) || resolved != nil {
 					t.Fatalf("failure=%v result=%v", err, resolved)
 				}
@@ -220,8 +217,13 @@ func TestAllowedCatalogNodesPrecedeServiceTierCompatibility(t *testing.T) {
 	loadTestCatalog(t)
 	config := policyConfig(2)
 	config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Providers: []string{"azure"}}
-	if _, err := resolvePolicyChat(t, config, `,"service_tier":"flex"`); !errors.Is(err, ErrUnsupportedServiceTier) {
-		t.Fatalf("Azure-only Flex error = %v, want ErrUnsupportedServiceTier", err)
+	if _, err := ResolveRequest(RequestInput{
+		Body:   []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"service_tier":"flex"}`),
+		Method: "POST",
+		Path:   "/v1/chat/completions",
+		Policy: config,
+	}); !errors.Is(err, ErrServiceTierUnavailable) {
+		t.Fatalf("Azure-only Flex error = %v, want ErrServiceTierUnavailable", err)
 	}
 	if _, err := resolvePolicyChat(t, config, `,"service_tier":"unknown"`); !errors.Is(err, ErrUnsupportedServiceTier) {
 		t.Fatalf("unknown tier error = %v, want ErrUnsupportedServiceTier", err)
@@ -379,20 +381,29 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		}
 	}
 
-	aliases, exists := values.PolicyValue("model.aliases")
-	if !exists || aliases.Type != "string_list" || len(aliases.Strings) == 0 {
-		t.Fatalf("model aliases = %#v, %t", aliases, exists)
+	groups, exists := values.PolicyValue("model.groupIds")
+	if !exists || groups.Type != "string_list" || !slices.Equal(groups.Strings, []string{"gpt", "gpt-5", "gpt-5.6"}) {
+		t.Fatalf("model groups = %#v, %t", groups, exists)
 	}
-	price, exists := values.PolicyValue("deployment.pricing.input_tokens.per_mill_context_lte_272k")
+	price, exists := values.PolicyValue("deployment.pricing.input_tokens.per_mill_tokens")
 	if !exists || price.Type != "decimal" || price.Decimal == nil || price.Decimal.Sign() <= 0 {
 		t.Fatalf("input price = %#v, %t", price, exists)
 	}
-	blendedQuery, err := policy.CompileRouting(`blended_price(3, 1, "per_mill_context_lte_272k") > decimal("0") && !has(deployment.pricing.input_tokens.per_mill_tokens)`, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if matches, err := blendedQuery.Matches(values); err != nil || !matches {
-		t.Fatal("blended price did not read the resolved deployment's explicit tier")
+	for _, test := range []struct {
+		source string
+		want   bool
+	}{
+		{`blended_price(1, 0, 272000) == deployment.pricing.input_tokens.per_mill_tokens`, true},
+		{`blended_price(1, 0, 272001) > deployment.pricing.input_tokens.per_mill_tokens`, true},
+		{`blended_price(3, 1, 272001) > blended_price(3, 1)`, true},
+	} {
+		query, err := policy.CompileRouting(test.source, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if matches, err := query.Matches(values); err != nil || matches != test.want {
+			t.Fatalf("%s: match=%v err=%v", test.source, matches, err)
+		}
 	}
 	for _, path := range []string{"request.estimatedInputTokens", "request.maximumOutputTokens"} {
 		if _, exists := values.PolicyValue(path); exists {

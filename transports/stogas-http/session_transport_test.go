@@ -22,7 +22,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
@@ -848,7 +847,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 		}
 		ctx.body, _ = io.ReadAll(ctx.request.Body)
 		resolution := mustResolvedRequest(t, "/v1/chat/completions", string(ctx.body))
-		bifrostCtx, state, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "secret"}, stogas.DefaultAdapter{}, "")
+		bifrostCtx, state, cancel, err := newRequestContext(ctx, time.Now(), resolution, apiCredential{Raw: "secret"}, "")
 		if err != nil {
 			t.Error(err)
 			ctx.writer.WriteHeader(500)
@@ -863,7 +862,7 @@ func TestSessionHTTPBufferedMetadataReceiptsAndOuterQueryRejection(t *testing.T)
 		ctx.writer.Header().Set("X-Internal-Note", "private")
 		(&Server{proofs: service}).writeInferenceJSON(ctx, bifrostCtx, state, 429, map[string]any{"error": "limited"})
 	}, true)
-	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`)
+	body := []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}]}`)
 	metadata, _ := json.Marshal(sessionRequestMetadata{Method: "POST", Path: "/v1/chat/completions", Headers: map[string]string{"Authorization": "Bearer secret", "Content-Type": "application/json", "Stogas-Metadata": "v1", "X-Request-ID": "client-chosen"}})
 	wire, decoder := f.request(t, metadata, body)
 	request, err := http.NewRequest(http.MethodPost, f.endpoint.URL+sessionPath+"?unbound=true", bytes.NewReader(wire))

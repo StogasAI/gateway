@@ -39,7 +39,7 @@ func azureTestBinding() billing.AzureBinding {
 		ModelFormat:        "OpenAI",
 		ModelName:          "gpt-5.6-sol",
 		ModelVersion:       "2026-07-09",
-		ProcessingLocation: "global",
+		ProcessingLocation: "world",
 		StorageLocation:    "US",
 		TokenScope:         azureDataScope,
 	}
@@ -51,7 +51,7 @@ func azureTestResolution() *catalog.ResolvedRequest {
 			ID:      "azure-gpt-5.6-sol",
 			ModelID: "gpt-5.6-sol",
 			DataHandling: catalog.DataHandling{
-				ProcessingLocation: "global",
+				ProcessingLocation: "world",
 				StorageLocation:    "unknown",
 			},
 			Upstream: catalog.Upstream{
@@ -60,7 +60,7 @@ func azureTestResolution() *catalog.ResolvedRequest {
 				Model:          "gpt-5.6-sol",
 				ModelFormat:    "OpenAI",
 				ModelVersion:   "2026-07-09",
-				ServiceTier:    "default",
+				ServiceTier:    catalog.TierStandard,
 			},
 		},
 		Provider: schemas.Azure,
@@ -117,7 +117,7 @@ func TestAzureCredentialEligibilityRetainsMultipleTargetsAndRequestVariants(t *t
 	}}
 	eligible := CredentialDeploymentFilter(snapshot, now)
 	deployment := azureTestResolution().Deployment
-	deployment.Upstream.ServiceTier = "priority"
+	deployment.Upstream.ServiceTier = catalog.TierFast
 	deployment.Upstream.ReasoningMode = "pro"
 	if !eligible(schemas.Azure, 0, deployment) {
 		t.Fatal("an expired target hid a live target supporting the same request variants")
@@ -200,7 +200,7 @@ func TestAzureDirectKeyUsesOnlyTheAuthorizedExactBinding(t *testing.T) {
 	}
 
 	for _, upstream := range []catalog.Upstream{
-		{DeploymentType: "global_standard", Hosting: "azure", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ServiceTier: "priority"},
+		{DeploymentType: "global_standard", Hosting: "azure", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ServiceTier: catalog.TierFast},
 		{DeploymentType: "global_standard", Hosting: "azure", Model: "gpt-5.6-sol", ModelFormat: "OpenAI", ModelVersion: "2026-07-09", ReasoningMode: "pro"},
 	} {
 		resolution := azureTestResolution()
@@ -340,12 +340,14 @@ func (f azureTokenFunc) Token(ctx context.Context, credential azureauth.Credenti
 func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 	binding := azureTestBinding()
 	state := &State{
-		Authorization: &billing.Authorization{
-			AzureBinding:       &binding,
-			UpstreamByok:       "00000000-0000-8000-8000-000000000001",
-			UpstreamByokSecret: azureTestCredential(t),
+		Pair: Pair{
+			Authorization: &billing.Authorization{
+				AzureBinding:       &binding,
+				UpstreamByok:       "00000000-0000-8000-8000-000000000001",
+				UpstreamByokSecret: azureTestCredential(t),
+			},
+			Resolution: azureTestResolution(),
 		},
-		Resolution: azureTestResolution(),
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	if err := applyUpstreamCredentials(ctx, state, azureTokenFunc(func(_ context.Context, credential azureauth.Credential) (string, error) {

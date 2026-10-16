@@ -12,9 +12,8 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-// Validation checks execution rules without creating a hold or updating state.
+// PolicyValidation reports a policy check that creates no hold and changes no state.
 type PolicyValidation struct {
-	Scope            string                  `json:"scope"`
 	Status           string                  `json:"status"`
 	UncheckedPlugins []UncheckedPolicyPlugin `json:"uncheckedPlugins"`
 }
@@ -28,23 +27,24 @@ func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, 
 	if s == nil || s.db == nil {
 		return nil, ErrGatewayUnavailable
 	}
-	var hash, dashboardID, actorID, sessionID *string
+	// The database finds the key by the ID in its MAC, or the one a dashboard credential selected.
+	var hash, keyID, actorID, sessionID *string
 	var expected *APIKeyClaims
 	if dashboard != nil {
-		dashboardID, actorID, sessionID = &dashboard.KeyID, &dashboard.ActorUserID, &dashboard.SessionID
+		keyID, actorID, sessionID = &dashboard.KeyID, &dashboard.ActorUserID, &dashboard.SessionID
 	} else {
 		signed, keyHash, _, err := s.parseVerifiedAPIKey(rawKey)
 		if err != nil {
 			return nil, err
 		}
-		hash, expected = &keyHash, signed
+		hash, keyID, expected = &keyHash, &signed.KeyID, signed
 	}
 	ctx, cancel := context.WithTimeout(ctx, keyConfigFetchTimeout)
 	defer cancel()
 	var result string
 	var claims *APIKeyClaims
 	query := "select result, key_claims from (" + strings.TrimSuffix(s.keyConfigQuery, ";") + ") as policy_authorization"
-	if err := s.db.pool.QueryRow(ctx, query, hash, dashboardID, actorID, sessionID, nil).Scan(&result, &claims); err != nil {
+	if err := s.db.pool.QueryRow(ctx, query, hash, keyID, actorID, sessionID, nil).Scan(&result, &claims); err != nil {
 		return nil, ErrGatewayUnavailable
 	}
 	if err := authorizationResultError(result); err != nil {
@@ -96,11 +96,12 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		}
 		return order[prepared[i].Scope] < order[prepared[j].Scope]
 	})
-	result := &PolicyValidation{Scope: "execution", Status: "valid", UncheckedPlugins: []UncheckedPolicyPlugin{}}
+	result := &PolicyValidation{Status: "valid", UncheckedPlugins: []UncheckedPolicyPlugin{}}
 	var sources []*sharedPolicySource
 	defer func() { s.keyConfigs.releaseSources(sources) }()
 	values := make([]policy.ScopedSource, 0, len(prepared))
 	var plans []*redaction.Policy
+	var sections []*policy.Plugins
 	var registered map[string]string
 	for _, entry := range prepared {
 		source := entry.Config
@@ -158,12 +159,16 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			}
 			plans = append(plans, plan)
 		}
-		for _, plan := range compiled.rulePlans {
-			if _, err := plan.get(); err != nil {
+		sections = appendPluginSection(sections, compiled.value.Config)
+		for _, shared := range compiled.rulePlans {
+			plan, err := shared.get()
+			if err != nil {
 				return nil, err
 			}
+			plans = append(plans, plan)
 		}
 		for _, rule := range compiled.value.Rules {
+			sections = appendPluginSection(sections, rule.Value.Config)
 			if rule.Encrypted == nil {
 				continue
 			}
@@ -181,17 +186,32 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			}
 			sources = append(sources, opened)
 			if opened.plan != nil {
-				if _, err := opened.plan.get(); err != nil {
+				plan, err := opened.plan.get()
+				if err != nil {
 					return nil, err
 				}
+				plans = append(plans, plan)
 			}
+			sections = appendPluginSection(sections, opened.value.Config)
 		}
 	}
 	if _, err := policy.ComposeSources(values); err != nil {
+		return nil, err
+	}
+	// One request can match every rule, so combined plugin limits must hold for
+	// all base and rule settings together.
+	if err := (&policy.Config{PluginSources: sections}).ValidatePlugins(); err != nil {
 		return nil, err
 	}
 	if _, err := redaction.CombinePolicies(plans); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func appendPluginSection(sections []*policy.Plugins, config *policy.Config) []*policy.Plugins {
+	if config == nil || config.Plugins == nil {
+		return sections
+	}
+	return append(sections, config.Plugins)
 }

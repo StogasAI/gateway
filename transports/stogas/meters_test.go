@@ -12,7 +12,7 @@ import (
 
 func TestEstimatedInputMeterIsIndependentOfReportedAndChargedUsage(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions",
-		Body: []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`)})
+		Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}],"max_completion_tokens":16}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +20,7 @@ func TestEstimatedInputMeterIsIndependentOfReportedAndChargedUsage(t *testing.T)
 	if !known || estimate <= 0 {
 		t.Fatal("request has no local estimate")
 	}
-	state := &State{Resolution: resolution}
+	state := &State{Pair: Pair{Resolution: resolution}}
 	before := metersForState(state)
 	if _, invented := before[billing.MeterTotalInputTokens]; invented {
 		t.Fatal("estimate became observed usage")
@@ -39,12 +39,17 @@ func TestEstimatedInputMeterIsIndependentOfReportedAndChargedUsage(t *testing.T)
 }
 
 func TestMetersKeepActualUsageAboveHold(t *testing.T) {
-	state := &State{Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
-		{MeterKey: billing.MeterInputTokens, Quantity: "50", HoldRequired: true},
-		{MeterKey: billing.MeterOutputTokens, Quantity: "20", HoldRequired: true},
-	}}, FinalMeters: []catalog.MeterEstimate{
-		{MeterKey: billing.MeterInputTokens, Quantity: "100", RateKey: billing.RatePerMillionTokens, RateUSD: "2", AmountUSD: "0.0002"},
-	}}
+	state := &State{
+		Pair: Pair{
+			Hold: HoldEstimate{Meters: []catalog.MeterEstimate{
+				{MeterKey: billing.MeterInputTokens, Quantity: "50", HoldRequired: true},
+				{MeterKey: billing.MeterOutputTokens, Quantity: "20", HoldRequired: true},
+			}},
+		},
+		FinalMeters: []catalog.MeterEstimate{
+			{MeterKey: billing.MeterInputTokens, Quantity: "100", RateKey: billing.RatePerMillionTokens, RateUSD: "2", AmountUSD: "0.0002"},
+		},
+	}
 	usage := &schemas.BifrostLLMUsage{PromptTokens: 100, CompletionTokens: 30, TotalTokens: 130}
 	setSignalsFromUsage(state, usage)
 	setSignalsFromUsage(state, usage) // A terminal usage snapshot is cumulative.

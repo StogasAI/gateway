@@ -39,7 +39,6 @@ type Source struct {
 	Config                  *Config
 	Digest                  string
 	Delegation              *Delegation
-	HasAttempts             bool
 	previewRuleBytes        int
 	size                    sourceSize
 }
@@ -158,11 +157,12 @@ type sourceBody struct {
 	Timeouts   *Timeouts       `json:"timeouts"`
 	Plugins    json.RawMessage `json:"plugins"`
 	Routing    *struct {
-		Allowed     *AllowedCatalogNodes `json:"allowedCatalogNodes"`
-		Filter      *string              `json:"filter"`
-		Sort        []Sort               `json:"sort"`
-		Selection   *Selection           `json:"selection"`
-		MaxAttempts *int                 `json:"maxAttempts"`
+		Allowed   *AllowedCatalogNodes `json:"allowedCatalogNodes"`
+		Filter    *string              `json:"filter"`
+		Sort      []Sort               `json:"sort"`
+		Selection *Selection           `json:"selection"`
+		Retries   *int                 `json:"retries"`
+		Fallbacks *int                 `json:"fallbacks"`
 	} `json:"routing"`
 }
 
@@ -366,7 +366,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		return nil, err
 	}
 	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Access: doc.Access, Input: doc.Input, Timeouts: doc.Timeouts,
-		Routing: Routing{MaxAttempts: 1}}
+		Routing: Routing{Fallbacks: DefaultFallbacks}}
 	source := &Source{Config: config, Digest: d.digest, Delegation: doc.Delegation, size: d.size}
 	source.settings = settingsMask(d.ownSections())
 	if doc.Encryption != nil {
@@ -391,9 +391,11 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		}
 		config.Routing.AllowedCatalogNodes = doc.Routing.Allowed
 		config.Routing.Selection = doc.Routing.Selection
-		if doc.Routing.MaxAttempts != nil {
-			source.HasAttempts = true
-			config.Routing.MaxAttempts = *doc.Routing.MaxAttempts
+		if doc.Routing.Retries != nil {
+			config.Routing.Retries = *doc.Routing.Retries
+		}
+		if doc.Routing.Fallbacks != nil {
+			config.Routing.Fallbacks = *doc.Routing.Fallbacks
 		}
 	}
 
@@ -698,7 +700,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if len(sources) == 0 || sources[0].Scope != OrganizationScope {
 		return nil, configError("organization source is required")
 	}
-	out := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, RequestPermission: RequestPermission(requestPermissions), Routing: Routing{MaxAttempts: 1}}
+	out := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, RequestPermission: RequestPermission(requestPermissions), Routing: Routing{Fallbacks: DefaultFallbacks}}
 	if sources[0].Value == nil {
 		return nil, configError("organization source is required")
 	}
@@ -718,7 +720,8 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	hasRequestPermission := false
 	var filters []*CELExpression
 	sorts := []Sort{}
-	var attempts *int
+	// The smallest value among the policies that set one applies.
+	var retries, fallbacks *int
 	seenPlugins := map[*Plugins]bool{}
 	seenWindows := map[string]bool{}
 	for _, entry := range sources {
@@ -739,6 +742,9 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		}
 		if err := source.Delegation.validateScope(scope); err != nil {
 			return nil, err
+		}
+		if scope == CredentialScope && source.plans() {
+			return nil, configError("credential policies cannot set routing.sort, routing.selection or routing.fallbacks")
 		}
 		config := source.Config
 		allowed := requestPermissions
@@ -778,15 +784,18 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if allowed&permissionNodes != 0 {
 			out.Routing.AllowedCatalogNodes = intersectAllowedNodes(out.Routing.AllowedCatalogNodes, config.Routing.AllowedCatalogNodes)
 		}
-		if allowed&permissionAttempts != 0 && source.HasAttempts && (attempts == nil || *attempts > config.Routing.MaxAttempts) {
-			attempts = &config.Routing.MaxAttempts
+		set := allowed & source.settings
+		if set&permissionRetries != 0 && (retries == nil || *retries > config.Routing.Retries) {
+			retries = &config.Routing.Retries
+		}
+		if set&permissionFallbacks != 0 && (fallbacks == nil || *fallbacks > config.Routing.Fallbacks) {
+			fallbacks = &config.Routing.Fallbacks
 		}
 		if selection := config.Routing.Selection; allowed&permissionSelection != 0 && selection != nil {
 			if out.Routing.Selection != nil && !out.Routing.Selection.Same(selection) {
 				return nil, configError("applicable policies require different routing selections")
 			}
 			out.Routing.Selection = selection
-			out.Routing.OrderDefault = source.defaultSettings
 		}
 		if q := config.Routing.Query; q != nil {
 			if allowed&permissionFilter != 0 {
@@ -797,7 +806,6 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 					return nil, configError("applicable policies require different routing sort orders")
 				}
 				sorts = q.OrderBy
-				out.Routing.OrderDefault = source.defaultSettings
 			}
 		}
 		if allowed&pluginPermissions != 0 && config.Plugins != nil && !seenPlugins[config.Plugins] {
@@ -808,8 +816,11 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 	if !hasRequestPermission {
 		out.RequestPermission = 0
 	}
-	if attempts != nil {
-		out.Routing.MaxAttempts = *attempts
+	if retries != nil {
+		out.Routing.Retries = *retries
+	}
+	if fallbacks != nil {
+		out.Routing.Fallbacks = *fallbacks
 	}
 	if len(filters) > 0 || len(sorts) > 0 {
 		out.Routing.Query = &Query{OrderBy: sorts, Filters: filters}
@@ -818,6 +829,16 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// A credential policy applies only to that credential's candidates, so its
+// order or fallback count would differ from those of other credentials.
+func (s *Source) plans() bool {
+	plans := s.settings&planPermissions != 0
+	for _, rule := range s.Rules {
+		plans = plans || rule.Value.settings&planPermissions != 0
+	}
+	return plans
 }
 
 func (c *Config) ValidatePlugins() error {

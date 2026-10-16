@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
 				}
 				resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 					Method: "POST", Path: "/v1/" + route,
-					Body: []byte(fmt.Sprintf(`{"model":"gpt-5.5",%q:16,%s}`, limitField, input)),
+					Body: []byte(fmt.Sprintf(`{"model":"openai/gpt-5.5",%q:16,%s}`, limitField, input)),
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -209,6 +210,101 @@ func TestPrepareProviderRequestRemovesClientIdentityAndAppliesStorePolicy(t *tes
 	}
 }
 
+func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
+	for _, tc := range []struct {
+		name, route, body, want string
+	}{
+		{
+			name:  "chat to Anthropic records the required output limit",
+			route: "chat/completions",
+			body: `{"model":"anthropic-claude-opus-4-7","messages":[{"role":"user","content":"secret prompt"}],
+				"reasoning_effort":"high","task_budget":{"type":"tokens","total":20000},"stop":["secret-stop"],
+				"tools":[{"type":"function","function":{"name":"secret_tool","parameters":{"type":"object"}}}],
+				"tool_choice":"auto","metadata":{"secret":"value"},"user":"secret-user"}`,
+			want: `{"max_output_tokens":%d,"reasoning_effort":"high","task_budget_tokens":20000,"tool_choice":"auto"}`,
+		},
+		{
+			name:  "responses to OpenAI keeps only the format and tool choice types",
+			route: "responses",
+			body: `{"model":"openai/gpt-5.5","input":"secret prompt","instructions":"secret instructions","max_output_tokens":64,
+				"reasoning":{"effort":"low","summary":"auto"},"include":["reasoning.encrypted_content"],"truncation":"auto",
+				"text":{"verbosity":"low","format":{"type":"json_schema","name":"secret_schema","strict":true,
+					"schema":{"type":"object","properties":{"secret":{"type":"string"}},"required":["secret"],"additionalProperties":false}}},
+				"tools":[{"type":"function","name":"secret_tool","parameters":{"type":"object"}}],
+				"tool_choice":{"type":"function","name":"secret_tool"},"parallel_tool_calls":false,
+				"prompt_cache_key":"secret-cache-key","metadata":{"secret":"value"}}`,
+			want: `{"max_output_tokens":64,"reasoning_effort":"low","reasoning_summary":"auto","verbosity":"low",
+				"response_format":"json_schema","include":["reasoning.encrypted_content"],"tool_choice":"function",
+				"parallel_tool_calls":false,"truncation":"auto"}`,
+		},
+		{
+			name:  "responses to Anthropic reads extra parameters",
+			route: "responses",
+			body: `{"model":"anthropic-claude-opus-4-7","input":"secret prompt","max_output_tokens":256,"top_k":5,
+				"task_budget":{"type":"tokens","total":30000}}`,
+			want: `{"max_output_tokens":256,"task_budget_tokens":30000,"top_k":5}`,
+		},
+		{
+			name:  "chat to Chutes reads the fields the gateway sends to Chutes",
+			route: "chat/completions",
+			body: `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+				"reasoning":{"enabled":false},"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
+			want: `{"max_output_tokens":64,"reasoning_enabled":false,"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
+		},
+		{
+			name:  "chat to Chutes leaves out integers that would round in the log",
+			route: "chat/completions",
+			body: `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+				"seed":9007199254740993,"top_k":-9007199254740992,"temperature":0.2}`,
+			want: `{"max_output_tokens":64,"temperature":0.2}`,
+		},
+		{
+			name:  "responses to OpenAI leaves out long text",
+			route: "responses",
+			body: `{"model":"openai/gpt-5.5","input":"secret prompt","max_output_tokens":64,
+				"reasoning":{"effort":"low","summary":"` + strings.Repeat("x", 65) + `"}}`,
+			want: `{"max_output_tokens":64,"reasoning_effort":"low"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Body: []byte(tc.body)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(state.RequestSettings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(strings.Replace(tc.want, "%d", fmt.Sprint(resolvedOutputLimit(resolved)), 1)), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("request settings = %s, want %s", encoded, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreparedProviderBodySurvivesCredentialInstallationAndDispatchBuilder(t *testing.T) {
 	text := "hello"
 	request := &schemas.BifrostRequest{
@@ -352,6 +448,53 @@ func TestPrepareProviderRequestUsesNativeAnthropicBodiesForAzureClaude(t *testin
 	}
 }
 
+// The customer names the Azure deployment, so the wire model need not mention Claude.
+func TestPrepareProviderRequestSendsBasicWebToolsToAzureHostedClaude(t *testing.T) {
+	const deploymentName = "opus-prod"
+	text := "hello"
+	role := schemas.ResponsesInputMessageRoleUser
+	request := &schemas.BifrostRequest{
+		RequestType: schemas.ResponsesRequest,
+		ResponsesRequest: &schemas.BifrostResponsesRequest{
+			Provider: schemas.Azure,
+			Model:    deploymentName,
+			Input: []schemas.ResponsesMessage{{
+				Role:    &role,
+				Content: &schemas.ResponsesMessageContent{ContentStr: &text},
+			}},
+			Params: &schemas.ResponsesParameters{Tools: []schemas.ResponsesTool{
+				{Type: schemas.ResponsesToolTypeWebSearch, ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{}},
+				{Type: schemas.ResponsesToolTypeWebFetch, ResponsesToolWebFetch: &schemas.ResponsesToolWebFetch{}},
+			}},
+		},
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
+	state := providerRequestTestState(schemas.Azure, deploymentName, request.RequestType, 128000)
+	state.Resolution.Deployment.ModelID = "claude-opus-5"
+	state.Resolution.Deployment.Upstream.Hosting = "azure"
+
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatalf("PrepareProviderRequest returned error: %v", err)
+	}
+	if !schemas.IsAnthropicModelFamily(ctx, deploymentName) {
+		t.Fatal("core does not send the Anthropic wire format to the Claude deployment")
+	}
+	var payload struct {
+		Model string `json:"model"`
+		Tools []struct {
+			Type string `json:"type"`
+		} `json:"tools"`
+	}
+	body := preparedProviderBody(t, ctx, request.ResponsesRequest)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("decode prepared Azure Claude body: %v", err)
+	}
+	if payload.Model != deploymentName || len(payload.Tools) != 2 || payload.Tools[0].Type != "web_search_20250305" || payload.Tools[1].Type != "web_fetch_20250910" {
+		t.Fatalf("Azure hosted Claude did not receive the basic web tools: %s", body)
+	}
+}
+
 func TestPrepareProviderRequestSendsBasicAnthropicWebToolVersions(t *testing.T) {
 	text := "hello"
 	role := schemas.ResponsesInputMessageRoleUser
@@ -428,15 +571,19 @@ func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T)
 	}
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
-	state := &State{Resolution: &catalog.ResolvedRequest{
-		Provider:    schemas.OpenAI,
-		Model:       wireModel,
-		RequestType: request.RequestType,
-		Deployment: catalog.Deployment{
-			ModelID:         "gpt-5.6-terra",
-			MaxOutputTokens: 10000,
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Provider:    schemas.OpenAI,
+				Model:       wireModel,
+				RequestType: request.RequestType,
+				Deployment: catalog.Deployment{
+					ModelID:         "gpt-5.6-terra",
+					MaxOutputTokens: 10000,
+				},
+			},
 		},
-	}}
+	}
 
 	if err := PrepareProviderRequest(ctx, state, request); err != nil {
 		t.Fatalf("PrepareProviderRequest returned error: %v", err)
@@ -517,12 +664,16 @@ func preparedProviderBody(t *testing.T, ctx *schemas.BifrostContext, request pro
 }
 
 func providerRequestTestState(provider schemas.ModelProvider, model string, requestType schemas.RequestType, maxOutputTokens int) *State {
-	return &State{Resolution: &catalog.ResolvedRequest{
-		Provider:    provider,
-		Model:       model,
-		RequestType: requestType,
-		Deployment:  catalog.Deployment{MaxOutputTokens: maxOutputTokens},
-	}}
+	return &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Provider:    provider,
+				Model:       model,
+				RequestType: requestType,
+				Deployment:  catalog.Deployment{MaxOutputTokens: maxOutputTokens},
+			},
+		},
+	}
 }
 
 func providerRequestTestModel(provider schemas.ModelProvider) string {

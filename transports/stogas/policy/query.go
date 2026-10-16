@@ -86,6 +86,9 @@ func compileRouting(filter string, order []Sort, compiler *celCompiler) (*Query,
 		if err != nil {
 			return nil, err
 		}
+		if compiler.prepare && !expression.candidate {
+			return nil, configError("routing.sort expressions must read author, model, deployment, route or provider fields")
+		}
 		query.OrderBy[i].expression = expression
 	}
 	return query, nil

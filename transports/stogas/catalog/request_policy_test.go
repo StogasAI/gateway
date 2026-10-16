@@ -15,7 +15,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-func TestCredentialEligibilityPrecedesPoliciesAndAmbiguity(t *testing.T) {
+func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		for _, test := range []struct {
@@ -29,8 +29,12 @@ func TestCredentialEligibilityPrecedesPoliciesAndAmbiguity(t *testing.T) {
 			{name: "unconfigured exact deployment", model: "openai-gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, code: "model_unavailable"},
 			{name: "no configured credentials", model: "gpt-5.6-sol", providers: map[string][]int{}, code: "model_unavailable"},
 			{name: "no model and no credentials", providers: map[string][]int{}, code: "model_unavailable"},
-			{name: "two configured providers", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}, "openai": {0}}, code: "model_ambiguous"},
-			{name: "provider still has regions", model: "azure/gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, code: "model_ambiguous"},
+			// Equal prices fall back to the lower deployment ID.
+			{name: "two configured providers", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}, "openai": {0}}, deployment: "azure-gpt-5.6-sol"},
+			{name: "cheapest region first", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `deployment.id != 'azure-gpt-5.6-sol' && deployment.id != 'azure-gpt-5.6-sol-instant'`, deployment: "azure-gpt-5.6-sol-apac"},
+			{name: "provider still has regions", model: "azure/gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, deployment: "azure-gpt-5.6-sol"},
+			{name: "no model and several models", providers: map[string][]int{"openai": {0}}, code: "model_ambiguous"},
+			{name: "no model and one model", providers: map[string][]int{"azure": {0}, "openai": {0}}, filter: `model.id == 'gpt-5.6-sol'`, deployment: "azure-gpt-5.6-sol"},
 			{name: "strict provider unavailable", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, extra: `,"provider":"openai"`, code: "provider_not_allowed"},
 			{name: "exact selection retains policy", model: "openai-gpt-5.6-sol", providers: map[string][]int{"openai": {0}}, filter: `provider.id == 'azure'`, code: "model_unavailable"},
 			{name: "policy narrows one region", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `deployment.id == 'azure-gpt-5.6-sol-eu'`, deployment: "azure-gpt-5.6-sol-eu"},
@@ -176,21 +180,81 @@ func TestConditionalPolicyRedactsOnlyTheSelectedBranch(t *testing.T) {
 	}
 }
 
-func TestFallbackCannotChooseAnAmbiguousBackup(t *testing.T) {
+func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	loadTestCatalog(t)
-	checks := 0
-	_, err := ResolveRequest(RequestInput{
-		Body: policyChatBody(`,"provider":{"order":["openai","azure"]}`), Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(2),
-		CheckCandidate: func(provider schemas.ModelProvider, _ int, _ Deployment) error {
-			checks++
-			if provider != schemas.OpenAI {
-				t.Fatal("attempted an ambiguous backup")
+	compose := func(rules string) *policy.Config {
+		source, err := policy.CompileSource([]byte(`{"rules":` + rules + `}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return config
+	}
+	denied := func(when string) string {
+		return `{"closed":{"when":"` + when + `","access":{"deny":[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]}}}`
+	}
+	// The catalog states an Azure deployment type and no OpenAI deployment type.
+	undecided := `{"typed":{"when":"deployment.upstream.deploymentType != ''","input":{"asciiOnly":true}}}`
+	for _, test := range []struct {
+		name, rules, order, want, code string
+		credentials                    bool
+	}{
+		{name: "deny period leaves another provider", rules: denied("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
+		{name: "deny period leaves another credential", rules: denied("provider.id == 'openai'"), want: "openai-gpt-5.6-sol", credentials: true},
+		{name: "deny period on every candidate", rules: denied("provider.id != ''"), order: "azure", code: "schedule_denied"},
+		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
+		{name: "undecided condition leaves another credential", rules: undecided, want: "openai-gpt-5.6-sol", credentials: true},
+		{name: "undecided condition on every candidate", rules: `{"geo":{"when":"deployment.upstream.inferenceGeo == 'us'","input":{"asciiOnly":true}}}`, order: "azure", code: "invalid_request"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			preferred := map[string]string{"azure": `"azure","openai"`, "openai": `"openai","azure"`}[test.order]
+			input := RequestInput{
+				Body: policyChatBody(`,"provider":{"order":[` + preferred + `]}`), Method: "POST", Path: "/v1/chat/completions",
+				Policy: compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
+				DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment Deployment) bool {
+					return deployment.ID == "openai-gpt-5.6-sol" || deployment.ID == "azure-gpt-5.6-sol"
+				},
 			}
-			return errors.New("credential could not be decrypted")
+			if test.credentials {
+				input.Body = []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`)
+				input.Policy, input.AvailableCredentials = policyConfig(1), map[string][]int{"openai": {0, 1}}
+				input.CredentialPolicy = func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
+					if index == 0 {
+						return RequestPolicy{Config: compose(test.rules)}, nil
+					}
+					return RequestPolicy{Config: policyConfig(1)}, nil
+				}
+			}
+			resolved, err := ResolveRequest(input)
+			if test.code != "" {
+				if resolved != nil || PublicError(err).Code != test.code {
+					t.Fatalf("result=%v error=%v", resolved, err)
+				}
+			} else if err != nil || resolved.Deployment.ID != test.want || test.credentials && resolved.CredentialIndex != 1 {
+				t.Fatalf("result=%v error=%v", resolved, err)
+			}
+		})
+	}
+}
+
+func TestFallbackUsesTheDefaultOrderWithinAProvider(t *testing.T) {
+	loadTestCatalog(t)
+	var attempts []string
+	resolved, err := ResolveRequest(RequestInput{
+		Body: policyChatBody(`,"provider":{"order":["openai","azure"]}`), Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(2),
+		CheckCandidate: func(_ schemas.ModelProvider, _ int, deployment Deployment) error {
+			attempts = append(attempts, deployment.ID)
+			if len(attempts) == 1 {
+				return errors.New("credential could not be decrypted")
+			}
+			return nil
 		},
 	})
-	if checks != 1 || PublicError(err).Code != "model_ambiguous" {
-		t.Fatalf("checks=%d error=%v", checks, err)
+	if err != nil || resolved.Deployment.ID != "azure-gpt-5.6-sol" || !reflect.DeepEqual(attempts, []string{"openai-gpt-5.6-sol", "azure-gpt-5.6-sol"}) {
+		t.Fatalf("attempts=%v result=%v error=%v", attempts, resolved, err)
 	}
 }
 
@@ -288,7 +352,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"routing":{"maxAttempts": 2},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -427,15 +491,23 @@ func TestOrderedCredentialsChooseWithinOneDeployment(t *testing.T) {
 
 func TestCredentialOrderCannotChooseBetweenDeployments(t *testing.T) {
 	loadTestCatalog(t)
-	checks := 0
-	_, err := ResolveRequest(RequestInput{
+	var attempts []string
+	resolved, err := ResolveRequest(RequestInput{
 		Body:   []byte(`{"model":"azure/gpt-5.6-sol","messages":[{"role":"user","content":"hello"}],"provider":{"order":["azure"]}}`),
-		Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(2),
-		AvailableCredentials: map[string][]int{"azure": {0, 1}},
-		CheckCandidate:       func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
+		Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(3),
+		AvailableCredentials: map[string][]int{"azure": {1, 0}},
+		// Credential 1 runs only the US Data Zone, so it cannot move that
+		// deployment ahead of the cheaper Global one that credential 0 runs.
+		DeploymentEligible: func(_ schemas.ModelProvider, index int, deployment Deployment) bool {
+			return deployment.ID == []string{"azure-gpt-5.6-sol", "azure-gpt-5.6-sol-us"}[index]
+		},
+		CheckCandidate: func(_ schemas.ModelProvider, index int, deployment Deployment) error {
+			attempts = append(attempts, fmt.Sprint(deployment.ID, "/", index))
+			return nil
+		},
 	})
-	if PublicError(err).Code != "model_ambiguous" || checks != 0 {
-		t.Fatalf("error=%v checks=%d", err, checks)
+	if err != nil || resolved.CredentialIndex != 0 || !reflect.DeepEqual(attempts, []string{"azure-gpt-5.6-sol/0"}) {
+		t.Fatalf("attempts=%v result=%v error=%v", attempts, resolved, err)
 	}
 }
 
@@ -578,37 +650,13 @@ func TestSharedPolicyGroupsPreserveInterleavedCredentialPreference(t *testing.T)
 				if err != nil || resolved.CredentialIndex != 2 || !reflect.DeepEqual(attempts, []int{0, 1, 2}) || !reflect.DeepEqual(transformed, []int{2}) {
 					t.Fatalf("selection=%v attempts=%v transformations=%v error=%v", resolved, attempts, transformed, err)
 				}
-				if resolved.policy != nil || resolved.ProviderAttemptLimit() != 1 {
-					t.Fatal("inference retained the full policy graph or lost its decision")
+				if resolved.policy != nil {
+					t.Fatal("inference retained the full policy graph")
+				}
+				if next, err := resolved.NextPair(nil); next != nil || err == nil {
+					t.Fatalf("a fourth pair exceeded the request's three: %v %v", next, err)
 				}
 			})
-		}
-	}
-}
-
-func TestUnreachableCredentialStillParticipatesInRoutingOrderAgreement(t *testing.T) {
-	loadTestCatalog(t)
-	for _, filtered := range []bool{false, true} {
-		checks := 0
-		_, err := ResolveRequest(RequestInput{
-			Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`), Method: "POST", Path: "/v1/chat/completions",
-			AvailableCredentials: map[string][]int{"openai": {0, 1, 2, 3}},
-			CredentialPolicy: func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
-				config := policyConfig(3)
-				filter, direction := "true", "asc"
-				if index == 3 {
-					direction = "desc"
-					if filtered {
-						filter = "false"
-					}
-				}
-				config.Routing.Query = mustRouting(t, filter, []policy.Sort{{By: "deployment.id", Direction: direction}})
-				return RequestPolicy{Config: config}, nil
-			},
-			CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { checks++; return nil },
-		})
-		if filtered && (err != nil || checks != 1) || !filtered && (PublicError(err).Code != "invalid_request" || checks != 0) {
-			t.Fatalf("filtered=%t checks=%d error=%v", filtered, checks, err)
 		}
 	}
 }
@@ -657,5 +705,43 @@ func TestInvalidEncryptedCandidateCannotFallBack(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLocalPairFailuresUseTheirSlots(t *testing.T) {
+	loadTestCatalog(t)
+	strict := policyConfig(3)
+	strict.Input = &policy.Input{ASCIIOnly: true}
+	open := policyConfig(3)
+	open.Routing.Retries = 2
+	configs := []*policy.Config{strict, open, open}
+	input := func(reserve func(int) error) RequestInput {
+		return RequestInput{
+			Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"héllo"}]}`),
+			Method: "POST", Path: "/v1/chat/completions",
+			AvailableCredentials: map[string][]int{"openai": {0, 1, 2}},
+			CredentialPolicy: func(_ schemas.ModelProvider, index int) (RequestPolicy, error) {
+				return RequestPolicy{Config: configs[index]}, nil
+			},
+			ReserveBody: reserve,
+		}
+	}
+	// The first credential's policy rejects the input, so the second serves it.
+	resolved, err := ResolveRequest(input(nil))
+	if err != nil || resolved.CredentialIndex != 1 || resolved.Retries() != 2 {
+		t.Fatalf("resolution=%+v error=%v", resolved, err)
+	}
+	next, err := resolved.NextPair(nil)
+	if err != nil || next.CredentialIndex != 2 {
+		t.Fatalf("next=%+v error=%v", next, err)
+	}
+	if last, err := next.NextPair(nil); last != nil || PublicError(err).Code != "input_ascii_required" {
+		t.Fatalf("a fourth pair or the wrong first error: %+v %v", last, err)
+	}
+
+	// Every pair needs the same memory, so a failed reservation stops the walk.
+	capacity, reserved := errors.New("memory unavailable"), 0
+	if _, err := ResolveRequest(input(func(int) error { reserved++; return capacity })); !errors.Is(err, capacity) || reserved != 1 {
+		t.Fatalf("reservations=%d error=%v", reserved, err)
 	}
 }

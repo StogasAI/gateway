@@ -1,7 +1,9 @@
 package stogashttp
 
 import (
+	"context"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -20,12 +22,81 @@ func (s *Server) writeBifrostError(ctx *requestContext, bifrostErr *schemas.Bifr
 	s.writeError(ctx, statusCode, payload)
 }
 
+// writeProviderError passes on the provider's Retry-After, which SDKs wait for
+// instead of their short backoff when a provider is rate limited or overloaded.
+func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
+	statusCode, payload := publicBifrostError(bifrostErr)
+	if retryAfter := providerErrorRetryAfter(statusCode, bifrostCtx); retryAfter != "" {
+		ctx.writer.Header().Set("Retry-After", retryAfter)
+	}
+	s.writeError(ctx, statusCode, payload)
+}
+
+func providerErrorRetryAfter(statusCode int, bifrostCtx *schemas.BifrostContext) string {
+	if statusCode != http.StatusTooManyRequests && statusCode != http.StatusServiceUnavailable && statusCode != 529 {
+		return ""
+	}
+	if wait, ok := providerRetryAfter(bifrostCtx); ok {
+		return retryAfterSeconds(wait)
+	}
+	return ""
+}
+
+// providerResponseHeader returns a header of the provider's response.
+func providerResponseHeader(bifrostCtx *schemas.BifrostContext, name string) string {
+	headers, _ := bifrostCtx.Value(schemas.BifrostContextKeyProviderResponseHeaders).(map[string]string)
+	for key, value := range headers {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
+}
+
+// providerRetryAfter reads how long the provider asks callers to wait, as the
+// OpenAI and Anthropic SDKs do: retry-after-ms first, then Retry-After in
+// seconds or as an HTTP date.
+func providerRetryAfter(bifrostCtx *schemas.BifrostContext) (time.Duration, bool) {
+	milliseconds, seconds := providerResponseHeader(bifrostCtx, "retry-after-ms"), providerResponseHeader(bifrostCtx, "retry-after")
+	if wait, ok := parseRetryAfter(milliseconds, time.Millisecond); ok {
+		return wait, true
+	}
+	if wait, ok := parseRetryAfter(seconds, time.Second); ok {
+		return wait, true
+	}
+	if at, err := http.ParseTime(seconds); err == nil {
+		return max(0, time.Until(at)), true
+	}
+	return 0, false
+}
+
+func parseRetryAfter(value string, unit time.Duration) (time.Duration, bool) {
+	amount, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil || !(amount >= 0) {
+		return 0, false
+	}
+	// Larger waits saturate; float64(math.MaxInt64) is 2^63.
+	if amount*float64(unit) >= math.MaxInt64 {
+		return math.MaxInt64, true
+	}
+	return time.Duration(amount * float64(unit)), true
+}
+
+// retryAfterSeconds rounds up, so a client never retries early.
+func retryAfterSeconds(wait time.Duration) string {
+	seconds := wait / time.Second
+	if wait%time.Second != 0 {
+		seconds++
+	}
+	return strconv.FormatInt(int64(seconds), 10)
+}
+
 func bifrostErrorPayload(bifrostErr *schemas.BifrostError) any {
 	_, payload := publicBifrostError(bifrostErr)
 	return payload
 }
 
-func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
+func publicBifrostError(bifrostErr *schemas.BifrostError) (int, map[string]any) {
 	if statusCode, errorType, code, message, ok := publicStableGatewayError(bifrostErr); ok {
 		return statusCode, map[string]any{
 			"error": map[string]any{
@@ -50,16 +121,6 @@ func publicBifrostError(bifrostErr *schemas.BifrostError) (int, any) {
 			"type":    errorType,
 		},
 	}
-}
-
-// publicErrorStatus returns the HTTP status and code that the client receives.
-func publicErrorStatus(bifrostErr *schemas.BifrostError) (int, string) {
-	if statusCode, _, code, _, ok := publicStableGatewayError(bifrostErr); ok {
-		return statusCode, code
-	}
-	statusCode := publicBifrostStatus(bifrostErr)
-	code, _ := publicBifrostCode(statusCode, bifrostErr).(string)
-	return statusCode, code
 }
 
 func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, string, string, bool) {
@@ -91,7 +152,7 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 			"Failed to build confidential response proof", true
 	case "billing_price_invalid", "response_encoding_failed":
 		return http.StatusInternalServerError, "internal_error", code,
-			"Stogas could not complete the response. Retry the request later.", true
+			"We could not complete the response. Retry the request later.", true
 	case "upstream_rate_limit_error":
 		return http.StatusTooManyRequests, "rate_limit_error", code,
 			"The upstream provider rate limit was exceeded", true
@@ -123,15 +184,16 @@ func publicBifrostStatus(bifrostErr *schemas.BifrostError) int {
 		return http.StatusInternalServerError
 	}
 	if bifrostErr.StatusCode != nil {
-		status := *bifrostErr.StatusCode
-		if status >= 400 && status <= 599 {
-			switch status {
-			case http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
-				return http.StatusServiceUnavailable
-			}
+		switch status := *bifrostErr.StatusCode; {
+		case status == http.StatusUnauthorized || status == http.StatusPaymentRequired || status == http.StatusForbidden:
+			// The gateway owns the provider credential, so these statuses never
+			// pass through. Credential, quota and access errors have stable codes;
+			// any other error here carries a more specific identifier.
+		case status >= 400 && status <= 599:
 			return status
+		default:
+			return http.StatusInternalServerError
 		}
-		return http.StatusInternalServerError
 	}
 
 	switch stogasbilling.NormalizeUpstreamStatus(bifrostErr) {
@@ -145,7 +207,7 @@ func publicBifrostStatus(bifrostErr *schemas.BifrostError) int {
 		return http.StatusServiceUnavailable
 	case "request_too_large":
 		return http.StatusRequestEntityTooLarge
-	case "invalid_request", "context_length_exceeded", "invalid_image":
+	case "invalid_request", "context_length_exceeded", "invalid_image", "content_filter":
 		return http.StatusBadRequest
 	default:
 		return http.StatusInternalServerError
@@ -317,7 +379,6 @@ func messageLooksSensitive(message string) bool {
 		"stack",
 		"internal",
 		"secret",
-		"token",
 	} {
 		if strings.Contains(text, needle) {
 			return true
@@ -388,32 +449,92 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 			}
 		}
 	}
+	switch code {
+	case "upstream_authentication_failed", "upstream_quota_exceeded", "upstream_access_denied":
+		// A retry cannot fix the provider account. OpenAI and Anthropic SDKs
+		// otherwise retry these 502 responses twice.
+		ctx.writer.Header().Set("X-Should-Retry", "false")
+	}
 	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {
 		_, _ = inferenceRequestID(ctx)
 	}
 	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode))
 	data, err := sonic.Marshal(payload)
 	if err != nil {
-		data = []byte(`{"error":{"message":"Stogas could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
+		data = []byte(`{"error":{"message":"We could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
 	}
 	defer clear(data)
 	s.writeResponse(ctx, statusCode, "application/json", data)
 }
 
 func (s *Server) writeCatalogError(ctx *requestContext, err error) {
-	apiErr := catalog.PublicError(err)
-	s.writeError(ctx, apiErr.StatusCode, map[string]any{
-		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode)},
-	})
+	s.writeErrorResponse(ctx, catalogErrorResponse(err))
 }
 
 func (s *Server) writeBillingError(ctx *requestContext, err error) {
+	s.writeErrorResponse(ctx, billingErrorResponse(err))
+}
+
+func (s *Server) writeRequestMemoryCapacity(ctx *requestContext) {
+	s.writeErrorResponse(ctx, capacityErrorResponse())
+}
+
+// writeLocalError answers a request that ended before any provider call
+// reached a provider.
+func (s *Server) writeLocalError(ctx *requestContext, err error) {
+	s.writeErrorResponse(ctx, localErrorResponse(err))
+}
+
+type errorResponse struct {
+	status     int
+	payload    map[string]any
+	retryAfter string
+}
+
+func (s *Server) writeErrorResponse(ctx *requestContext, response errorResponse) {
+	if response.retryAfter != "" {
+		ctx.writer.Header().Set("Retry-After", response.retryAfter)
+	}
+	s.writeError(ctx, response.status, response.payload)
+}
+
+func localErrorResponse(err error) errorResponse {
+	var unsent *unsentCall
+	var refusal billingFailure
+	switch {
+	case errors.As(err, &unsent):
+		status, payload := publicBifrostError(unsent.failure)
+		return errorResponse{status, payload, providerErrorRetryAfter(status, unsent.ctx)}
+	case errors.Is(err, errRequestMemoryCapacity):
+		return capacityErrorResponse()
+	case errors.As(err, &refusal), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return billingErrorResponse(err)
+	default:
+		return catalogErrorResponse(err)
+	}
+}
+
+func catalogErrorResponse(err error) errorResponse {
+	apiErr := catalog.PublicError(err)
+	return errorResponse{status: apiErr.StatusCode, payload: map[string]any{
+		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode)},
+	}}
+}
+
+func billingErrorResponse(err error) errorResponse {
 	apiErr := stogas.PublicBillingErrorFor(err)
+	response := errorResponse{status: apiErr.StatusCode, payload: map[string]any{
+		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": apiErr.Code, "param": nil},
+	}}
 	var retry interface{ RetryAfter() time.Duration }
 	if errors.As(err, &retry) {
-		ctx.writer.Header().Set("Retry-After", strconv.FormatInt(max(1, int64((retry.RetryAfter()+time.Second-1)/time.Second)), 10))
+		response.retryAfter = retryAfterSeconds(max(time.Second, retry.RetryAfter()))
 	}
-	s.writeError(ctx, apiErr.StatusCode, map[string]any{
-		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": apiErr.Code, "param": nil},
-	})
+	return response
+}
+
+func capacityErrorResponse() errorResponse {
+	return errorResponse{http.StatusServiceUnavailable, map[string]any{
+		"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"},
+	}, "1"}
 }

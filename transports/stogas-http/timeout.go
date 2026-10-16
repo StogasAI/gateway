@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 )
@@ -30,21 +31,43 @@ func newResponseDeadline(startedAt time.Time, total, idle time.Duration) *respon
 	return wait
 }
 
+// startOutput gives a provider call its output idle window. Each retry and
+// fallback call gets a new window within the total deadline.
 func (wait *responseDeadline) startOutput() bool {
 	if wait == nil {
 		return true
 	}
 	wait.mu.Lock()
 	defer wait.mu.Unlock()
-	if wait.stopped || !time.Now().Before(wait.deadline) {
+	// A caller that left before the deadline did not time out.
+	if wait.stopped {
+		return false
+	}
+	now := time.Now()
+	if !now.Before(wait.deadline) {
 		wait.expire()
 		return false
 	}
-	if next := time.Now().Add(wait.idle); next.Before(wait.deadline) {
-		wait.deadline = next
-		wait.timer.Reset(time.Until(next))
+	next := now.Add(wait.idle)
+	if next.After(wait.total) {
+		next = wait.total
 	}
+	wait.deadline = next
+	wait.timer.Reset(next.Sub(now))
 	return true
+}
+
+// remaining reports how long the caller still waits for output.
+func (wait *responseDeadline) remaining() time.Duration {
+	if wait == nil {
+		return time.Duration(math.MaxInt64)
+	}
+	wait.mu.Lock()
+	defer wait.mu.Unlock()
+	if wait.stopped {
+		return 0
+	}
+	return time.Until(wait.deadline)
 }
 
 // Called with mu held, including when expiry races dispatch or completion.

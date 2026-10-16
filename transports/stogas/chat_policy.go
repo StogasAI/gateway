@@ -99,10 +99,15 @@ func invalidRequest(message string) error {
 }
 
 func unsupportedParameterError(name string) error {
-	if name == "fallbacks" {
+	switch name {
+	case "fallbacks":
 		return invalidRequest("Fallbacks are not supported")
+	case "speed":
+		return invalidRequest(`speed is not supported; use service_tier "fast"`)
+	case "inference_geo":
+		return invalidRequest("inference_geo is not supported; use a regional deployment ID or a routing filter")
 	}
-	return invalidRequest(name + " is not supported by Stogas API")
+	return invalidRequest(name + " is not supported")
 }
 
 func validateNumber(raw map[string]json.RawMessage, name string) error {
@@ -318,7 +323,7 @@ func validateStreamOptions(raw map[string]json.RawMessage, allowIncludeUsage boo
 				return err
 			}
 		default:
-			return invalidRequest("stream_options." + name + " is not supported by Stogas API")
+			return invalidRequest("stream_options." + name + " is not supported")
 		}
 	}
 	return nil
@@ -453,7 +458,7 @@ func validateReasoningParameters(raw map[string]json.RawMessage, allowedFields m
 	}
 	for name := range reasoning {
 		if !allowedFields[name] {
-			return invalidRequest("reasoning." + name + " is not supported by Stogas API")
+			return invalidRequest("reasoning." + name + " is not supported")
 		}
 	}
 	for _, item := range []struct {

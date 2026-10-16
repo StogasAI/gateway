@@ -50,9 +50,43 @@ type requestVariants struct {
 	budget        policy.SourceBudget
 }
 
+// pairChoice is one deployment and credential in routing order.
+type pairChoice struct {
+	candidate *ResolvedRequest
+	index     int
+}
+
+// requestPlan hands out the request's deployment and credential pairs in routing
+// order. Every pair uses one of 1 + routing.fallbacks slots, whether its provider
+// is called or its local preparation fails.
+type requestPlan struct {
+	input    RequestInput
+	variants *requestVariants
+	choices  []pairChoice
+	slots    int
+	// end is the ambiguity that stopped the order, reported only when no pair
+	// could be prepared.
+	end      error
+	firstErr error
+	resolve  func(routingSelection, RequestPolicy) (*ResolvedRequest, error)
+}
+
+// capacityError marks a failed memory reservation, which every pair would repeat.
+type capacityError struct{ error }
+
+func (e capacityError) Unwrap() error { return e.error }
+
+// stopsPlan reports errors that another pair cannot avoid. A client key that
+// fails to open its content must not route the request elsewhere.
+func stopsPlan(err error) bool {
+	var capacity capacityError
+	return errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) || errors.As(err, &capacity)
+}
+
 // Routing examines metadata and complete candidate policies. No body transform,
 // token count, or credential decryption is part of catalog enumeration.
-func selectRequestCandidate(input RequestInput, route Route, model string, preference ProviderRoutingPreference, variants *requestVariants) (routingSelection, RequestPolicy, error) {
+func planRequest(input RequestInput, route Route, model string, preference ProviderRoutingPreference, variants *requestVariants) (*requestPlan, error) {
+	const maxPairs = 1 + policy.MaxFallbacks
 	var candidates routingCandidates
 	credentials := make(map[*ResolvedRequest][]int, len(variants.selections))
 	ranks := make(map[credentialCandidate]int)
@@ -73,6 +107,11 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 		}
 		groups := make(map[*policy.Config]*ResolvedRequest)
 		for rank, index := range indexes {
+			// Credentials are tried in assignment order, so later ones cannot
+			// fit within the request's pairs once they are full.
+			if retained == maxPairs {
+				break
+			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
 			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment) {
 				continue
@@ -80,10 +119,10 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 			value, err := variants.policyFor(selection.provider, index)
 			if err != nil {
 				if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) {
-					return routingSelection{}, RequestPolicy{}, err
+					return nil, err
 				}
 				if errors.Is(err, policy.ErrSourceBudget) {
-					return routingSelection{}, RequestPolicy{}, policyEvaluationError(err)
+					return nil, policyEvaluationError(err)
 				}
 				if firstErr == nil {
 					firstErr = err
@@ -92,27 +131,38 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 			}
 			original := value.Config
 			if existing, found := groups[original]; found {
-				if existing != nil && len(credentials[existing]) < existing.attemptLimit() {
+				if existing != nil && len(credentials[existing]) < maxPairs {
 					credentials[existing] = append(credentials[existing], index)
 				}
 				continue
 			}
 			groups[original] = nil
+			// An undecided condition or a deny period from a matched rule
+			// excludes only this candidate, as an unmatched filter does.
 			value.Config, err = value.Config.Activate(values)
-			if err != nil {
-				return routingSelection{}, RequestPolicy{}, policyEvaluationError(err)
+			if errors.Is(err, policy.ErrUnknownCondition) {
+				if firstErr == nil {
+					firstErr = policyEvaluationError(err)
+				}
+				continue
 			}
-			matches, err := candidateMatchesPolicy(selection, value.Config, policyRequestContext{input.now, input.policyBudget, model, route, len(input.Body)})
 			if err != nil {
-				return routingSelection{}, RequestPolicy{}, err
+				return nil, policyEvaluationError(err)
+			}
+			if value.Config.DeniedAt(input.now) {
+				if firstErr == nil {
+					firstErr = ErrScheduleDenied
+				}
+				continue
+			}
+			if !policyAllowsSelection(value.Config, selection) {
+				continue
+			}
+			matches, err := policyMatches(value.Config, values)
+			if err != nil {
+				return nil, err
 			}
 			if matches {
-				matches, err = candidates.consider(value.Config, values)
-				if err != nil {
-					return routingSelection{}, RequestPolicy{}, err
-				}
-			}
-			if matches && retained < policy.MaxAttempts {
 				candidate := template
 				candidate.CredentialIndex, candidate.policy = index, value.Config
 				candidates.add(&candidate, values)
@@ -123,73 +173,102 @@ func selectRequestCandidate(input RequestInput, route Route, model string, prefe
 		}
 	}
 	if len(candidates.filtered) == 0 && firstErr != nil {
-		return routingSelection{}, RequestPolicy{}, firstErr
+		return nil, firstErr
 	}
 	ordered, err := candidates.finish(preference)
 	if err != nil {
-		return routingSelection{}, RequestPolicy{}, err
+		return nil, err
 	}
-	firstErr = nil
-	attempts, allowance := 0, 0
-candidates:
+	// Fallbacks cannot differ between candidates, so any one carries the count.
+	plan := &requestPlan{input: input, variants: variants, slots: 1 + policy.DefaultFallbacks}
+	if config := candidates.filtered[0].policy; config != nil {
+		plan.slots = 1 + config.Routing.Fallbacks
+	}
 	for _, group := range ordered {
 		if len(group) == 0 {
 			continue
 		}
-		for _, candidate := range group[1:] {
-			if candidate.Deployment.ID != group[0].Deployment.ID || candidate.Provider != group[0].Provider {
-				return routingSelection{}, RequestPolicy{}, ambiguousModelError(group)
-			}
+		if spansDeployments(group) {
+			plan.end = ambiguousModelError(group)
+			break
 		}
-		// Equal policies share routing work. Merge their remaining credential
-		// choices back into the original preference order for this deployment.
-		type choice struct {
-			candidate *ResolvedRequest
-			index     int
-		}
-		var choices []choice
+		// Equal policies share routing work. Merge their credential choices
+		// back into the original preference order for this deployment.
+		start := len(plan.choices)
 		for _, candidate := range group {
 			for _, index := range credentials[candidate] {
-				choices = append(choices, choice{candidate, index})
+				plan.choices = append(plan.choices, pairChoice{candidate, index})
 			}
 		}
-		sort.Slice(choices, func(i, j int) bool {
-			return ranks[credentialCandidate{choices[i].candidate.Provider, choices[i].index}] < ranks[credentialCandidate{choices[j].candidate.Provider, choices[j].index}]
+		added := plan.choices[start:]
+		sort.SliceStable(added, func(i, j int) bool {
+			return ranks[credentialCandidate{added[i].candidate.Provider, added[i].index}] < ranks[credentialCandidate{added[j].candidate.Provider, added[j].index}]
 		})
-		for _, choice := range choices {
-			candidate := choice.candidate
-			if allowance == 0 || candidate.attemptLimit() < allowance {
-				allowance = candidate.attemptLimit()
-			}
-			if attempts >= allowance {
-				break candidates
-			}
-			attempts++
-			if input.CheckCandidate != nil {
-				if err := input.CheckCandidate(candidate.Provider, choice.index, candidate.Deployment); err != nil {
-					if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) {
-						return routingSelection{}, RequestPolicy{}, err
-					}
-					if firstErr == nil {
-						firstErr = err
-					}
-					if attempts >= allowance {
-						break candidates
-					}
-					continue
-				}
-			}
-			value, _ := variants.policyFor(candidate.Provider, choice.index)
-			value.Config = candidate.policy
-			selected := routingSelection{provider: candidate.Provider, deployment: candidate.Deployment, credential: choice.index, providerAttempts: allowance - attempts + 1}
-			variants.selections = []routingSelection{selected}
-			return selected, value, nil
+		if len(plan.choices) >= plan.slots {
+			break
 		}
 	}
-	if firstErr == nil {
-		firstErr = ErrModelUnavailable
+	return plan, nil
+}
+
+func spansDeployments(group []*ResolvedRequest) bool {
+	for _, candidate := range group[1:] {
+		if candidate.Deployment.ID != group[0].Deployment.ID || candidate.Provider != group[0].Provider {
+			return true
+		}
 	}
-	return routingSelection{}, RequestPolicy{}, firstErr
+	return false
+}
+
+// take resolves the next pair, recording failure as the previous pair's local
+// error. A pair that fails its credential check or body preparation uses its
+// slot. With no pair left, take returns the first local error.
+func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
+	if failure != nil && stopsPlan(failure) {
+		return nil, failure
+	}
+	p.fail(failure)
+	for p.slots > 0 && len(p.choices) > 0 {
+		choice := p.choices[0]
+		p.choices, p.slots = p.choices[1:], p.slots-1
+		candidate := choice.candidate
+		if p.input.CheckCandidate != nil {
+			if err := p.input.CheckCandidate(candidate.Provider, choice.index, candidate.Deployment); err != nil {
+				if stopsPlan(err) {
+					return nil, err
+				}
+				p.fail(err)
+				continue
+			}
+		}
+		value, _ := p.variants.policyFor(candidate.Provider, choice.index)
+		value.Config = candidate.policy
+		selection := routingSelection{provider: candidate.Provider, deployment: candidate.Deployment, credential: choice.index}
+		p.variants.selections = []routingSelection{selection}
+		resolved, err := p.resolve(selection, value)
+		if err == nil {
+			resolved.plan = p
+			return resolved, nil
+		}
+		if stopsPlan(err) {
+			return nil, err
+		}
+		p.fail(err)
+	}
+	switch {
+	case p.firstErr != nil:
+		return nil, p.firstErr
+	case p.end != nil:
+		return nil, p.end
+	default:
+		return nil, ErrModelUnavailable
+	}
+}
+
+func (p *requestPlan) fail(err error) {
+	if p.firstErr == nil {
+		p.firstErr = err
+	}
 }
 
 func (v *requestVariants) policyFor(provider schemas.ModelProvider, index int) (RequestPolicy, error) {
@@ -228,6 +307,15 @@ func (v *requestVariants) policyFor(provider schemas.ModelProvider, index int) (
 	}
 	v.policies[key] = requestPolicyResult{value, err}
 	return value, err
+}
+
+// reserve marks a failed reservation so the plan stops instead of preparing
+// another pair.
+func (v *requestVariants) reserve(bytes int) error {
+	if err := v.reserveBody(bytes); err != nil {
+		return capacityError{err}
+	}
+	return nil
 }
 
 func (v *requestVariants) bodyFor(value RequestPolicy) (*requestBodyVariant, error) {
@@ -293,7 +381,7 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 	fields := copyRawRequestData(v.fields)
 	var reserveExpansion func(int) error
 	if v.reserveBody != nil {
-		reserveExpansion = func(bytes int) error { return v.reserveBody(v.inputBytes + bytes) }
+		reserveExpansion = func(bytes int) error { return v.reserve(v.inputBytes + bytes) }
 	}
 	files, err := inputfiles.Process(fields, v.route == RouteResponses, extract, reserveExpansion)
 	if err != nil {
@@ -316,7 +404,7 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 		return nil, ErrInvalidJSON
 	}
 	if v.reserveBody != nil {
-		if err := v.reserveBody(len(body)); err != nil {
+		if err := v.reserve(len(body)); err != nil {
 			return nil, err
 		}
 	}
@@ -329,7 +417,7 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 	}
 	if v.route == RouteChat {
 		variant.chat = &openaiprovider.OpenAIChatRequest{}
-		err = sonic.Unmarshal(body, variant.chat)
+		err = variant.chat.UnmarshalJSON(body)
 	} else {
 		variant.responses = &openaiprovider.OpenAIResponsesRequest{}
 		err = sonic.Unmarshal(body, variant.responses)
@@ -338,13 +426,4 @@ func (v *requestVariants) prepareBody(value RequestPolicy, surface redaction.Sur
 		return nil, ErrInvalidJSON
 	}
 	return variant, nil
-}
-
-func candidateMatchesPolicy(selection routingSelection, config *policy.Config, context policyRequestContext) (bool, error) {
-	if config != nil && config.DeniedAt(context.now) {
-		return false, APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
-	}
-	selections := [1]routingSelection{selection}
-	filtered, err := filterRoutingSelectionsByPolicy(selections[:], config, context)
-	return len(filtered) != 0, err
 }

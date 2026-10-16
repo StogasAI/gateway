@@ -9,7 +9,7 @@ import (
 
 // Permission is a set of policy sections. Groups and their children resolve to
 // the same bits, so composition is an intersection with no ordering priority.
-type Permission uint16
+type Permission uint32
 
 const (
 	permissionAccess Permission = 1 << iota
@@ -20,7 +20,8 @@ const (
 	permissionFilter
 	permissionSort
 	permissionNodes
-	permissionAttempts
+	permissionRetries
+	permissionFallbacks
 	permissionDelegation
 	permissionTextExtraction
 	permissionEncryption
@@ -41,11 +42,11 @@ var permissionSections = map[string]Permission{
 	"plugins.stogasExport":         permissionExport,
 	"plugins.stogasTextExtraction": permissionTextExtraction,
 	"plugins.stogasRedaction":      permissionPlugins, "plugins.encrypted": permissionEncryptedPlugins,
-	"routing":        permissionFilter | permissionSort | permissionNodes | permissionAttempts | permissionSelection,
+	"routing":        permissionFilter | permissionSort | permissionNodes | permissionRetries | permissionFallbacks | permissionSelection,
 	"routing.filter": permissionFilter, "routing.sort": permissionSort,
-	"routing.allowedCatalogNodes": permissionNodes, "routing.maxAttempts": permissionAttempts,
-	"routing.selection": permissionSelection,
-	"delegation":        permissionDelegation, "encryption": permissionEncryption,
+	"routing.allowedCatalogNodes": permissionNodes, "routing.retries": permissionRetries,
+	"routing.fallbacks": permissionFallbacks, "routing.selection": permissionSelection,
+	"delegation": permissionDelegation, "encryption": permissionEncryption,
 }
 
 var policyEntityID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
@@ -212,7 +213,8 @@ func (d *SourceDocument) ownSections() Permission {
 	var sections Permission
 	for name, raw := range d.fields {
 		if name == "plugins" && d.Encrypted() {
-			sections |= permissionEncryptedPlugins
+			// Ciphertext can hold any plugin setting, so it needs every plugin permission.
+			sections |= pluginPermissions
 			continue
 		}
 		if name == "routing" || name == "plugins" || name == "timeouts" {

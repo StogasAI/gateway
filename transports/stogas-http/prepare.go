@@ -13,29 +13,9 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-type candidateFailureKind uint8
-
-const (
-	candidateFailureCatalog candidateFailureKind = iota
-	candidateFailureBilling
-	candidateFailureRequest
-)
-
-type candidateFailure struct {
-	err  error
-	kind candidateFailureKind
-}
-
-type preparedCandidate struct {
-	adapter    stogas.Adapter
-	bifrostCtx *schemas.BifrostContext
-	bifrostReq *schemas.BifrostRequest
-	cancel     context.CancelFunc
-	resolution *catalog.ResolvedRequest
-	state      *stogas.State
-}
-
-func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Time) *preparedCandidate {
+// startRun resolves the request's pairs and binds the first one that
+// prepares. It returns nil after it has written the response.
+func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation *requestMemoryLease) *providerRun {
 	lease := ctx.memory
 	credential, ok := s.requireInferenceEnvelope(ctx)
 	if !ok {
@@ -59,55 +39,47 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 		s.writeBillingError(ctx, err)
 		return nil
 	}
-	defer credential.EncryptionKeys.Clear()
-	nodeID := ""
-	if s.secure != nil {
-		nodeID = s.secure.NodeID()
-	}
 	keyConfig, err := s.keyConfigForCredential(credential)
 	if keyConfig != nil {
 		ctx.policyVersions = keyConfig.Versions
-	}
-	if credential.Dashboard != nil && keyConfig != nil && keyConfig.Claims != nil {
-		ctx.claims = keyConfig.Claims
+		if credential.Dashboard != nil && keyConfig.Claims != nil {
+			ctx.claims = keyConfig.Claims
+		}
 	}
 	if err != nil {
+		credential.EncryptionKeys.Clear()
 		s.writeBillingError(ctx, err)
 		return nil
 	}
-	policyMemory := s.memory.newLease(requestLifetimeMemory)
-	defer policyMemory.release()
-	policyBytes := keyConfig.MemoryBytes()
-	if !policyMemory.grow(int(policyBytes)) {
+	run := &providerRun{
+		server: s, client: ctx, credential: credential, keyConfig: keyConfig,
+		policyMemory: s.memory.newLease(requestLifetimeMemory), preparation: preparation,
+		bodyBytes: len(ctx.body), startedAt: startedAt,
+	}
+	if err := run.accountPolicyMemory(); err != nil {
+		run.releasePlan()
 		s.writeRequestMemoryCapacity(ctx)
 		return nil
 	}
-	if keyConfig.Config.DeniedAt(requestStartedAt.UTC()) {
-		s.writeError(ctx, http.StatusForbidden, map[string]any{
-			"error": map[string]any{
-				"message": "Request is not allowed at this time",
-				"type":    "permission_denied",
-				"code":    "schedule_denied",
-			},
-		})
+	if keyConfig.Config.DeniedAt(startedAt.UTC()) {
+		run.releasePlan()
+		s.writeCatalogError(ctx, catalog.ErrScheduleDenied)
 		return nil
 	}
-	var preparedCredential *billing.PreparedCredential
 	var candidateBudget policy.SourceBudget
-	defer func() { preparedCredential.Clear() }()
-	finishPreprocessing := s.preprocessing.begin(len(ctx.body))
-	defer finishPreprocessing()
-	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
+	bodyCapacity := cap(ctx.body)
+	run.finishPreprocessing = s.preprocessing.begin(len(ctx.body))
+	first, err := catalog.ResolveRequest(catalog.RequestInput{
 		Body:                 ctx.body,
 		Fields:               fields,
 		Method:               ctx.request.Method,
 		Path:                 ctx.request.URL.Path,
 		Policy:               keyConfig.Config,
 		AvailableCredentials: keyConfig.AvailableCredentials(credential.EncryptionKeys),
-		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, requestStartedAt),
+		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
 		LoadRedactionPolicy:  keyConfig.RedactionPolicy,
 		ReserveBody: func(bytes int) error {
-			if !lease.resize(max(cap(ctx.body), bytes)) {
+			if !lease.resize(max(bodyCapacity, bytes)) {
 				return errRequestMemoryCapacity
 			}
 			return nil
@@ -125,20 +97,18 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 				public := stogas.PublicBillingErrorFor(err)
 				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
 			}
-			preparedCredential = candidate
+			run.prepared.Clear()
+			run.prepared = candidate
 			return nil
 		},
 		CredentialPolicy: func(provider schemas.ModelProvider, index int) (catalog.RequestPolicy, error) {
-			selected, err := keyConfig.PolicyForCredential(string(provider), index, credential.EncryptionKeys, requestStartedAt, &candidateBudget)
+			selected, err := keyConfig.PolicyForCredential(string(provider), index, credential.EncryptionKeys, startedAt, &candidateBudget)
 			if err != nil {
 				if errors.Is(err, policy.ErrSourceBudget) {
 					return catalog.RequestPolicy{}, err
 				}
 				public := stogas.PublicBillingErrorFor(err)
 				return catalog.RequestPolicy{}, errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
-			}
-			if selected.Config.DeniedAt(requestStartedAt.UTC()) {
-				return catalog.RequestPolicy{}, catalog.APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
 			}
 			return catalog.RequestPolicy{Config: selected.Config, LoadActivePlugins: func(config *policy.Config) (*policy.ActivePlugins, error) {
 				compiled, err := keyConfig.ActivePlugins(config, credential.EncryptionKeys)
@@ -150,7 +120,13 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 			}}, nil
 		},
 	})
+	if err == nil {
+		err = run.accountPolicyMemory()
+	}
 	if err != nil {
+		run.finishPreprocessing()
+		run.plan = first
+		run.releasePlan()
 		if errors.Is(err, errRequestMemoryCapacity) {
 			s.writeRequestMemoryCapacity(ctx)
 			return nil
@@ -158,41 +134,41 @@ func (s *Server) prepareInference(ctx *requestContext, requestStartedAt time.Tim
 		s.writeCatalogError(ctx, err)
 		return nil
 	}
-	if grown := keyConfig.MemoryBytes() - policyBytes; grown > 0 && !policyMemory.grow(int(grown)) {
-		s.writeRequestMemoryCapacity(ctx)
-		return nil
+	ctx.requestType = string(first.RequestType)
+	run.plan = first
+	nodeID := ""
+	if s.secure != nil {
+		nodeID = s.secure.NodeID()
 	}
-	ctx.requestType = string(resolution.RequestType)
-	prepared, failure := s.prepareCandidate(
-		ctx,
-		resolution,
-		credential,
-		nodeID,
-		requestStartedAt,
-		keyConfig,
-		preparedCredential,
-		finishPreprocessing,
-	)
-	keyConfig = nil
-	policyMemory.release()
-	if prepared == nil {
-		if failure == nil {
-			s.writeCatalogError(ctx, catalog.ErrModelUnavailable)
+	run.request, run.state, run.cancel, err = newRequestContext(ctx, startedAt, first, credential, nodeID)
+	if err != nil {
+		run.finishPreprocessing()
+		run.releasePlan()
+		if errors.Is(err, context.DeadlineExceeded) {
+			s.writeBillingError(ctx, err)
 			return nil
 		}
-		switch failure.kind {
-		case candidateFailureBilling:
-			s.writeBillingError(ctx, failure.err)
-		case candidateFailureRequest:
-			s.writeError(ctx, http.StatusBadRequest, map[string]any{
-				"error": map[string]any{"message": failure.err.Error(), "type": "invalid_request_error"},
-			})
-		default:
-			s.writeCatalogError(ctx, failure.err)
-		}
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{
+			"error": map[string]any{"message": err.Error(), "type": "invalid_request_error"},
+		})
 		return nil
 	}
-	return prepared
+	// The receipt commits to the received bytes, which the run releases with
+	// its plan.
+	if wantsMetadata(run.request) {
+		if _, err := ctx.receiptRequestDigest(); err != nil {
+			run.finishPreprocessing()
+			run.cancel()
+			run.releasePlan()
+			s.writeProofError(ctx)
+			return nil
+		}
+	}
+	if !run.bindFrom(first) {
+		s.failRun(ctx, run, true)
+		return nil
+	}
+	return run
 }
 
 func (s *Server) keyConfigForCredential(credential apiCredential) (*billing.KeyConfigSnapshot, error) {
@@ -203,128 +179,4 @@ func (s *Server) keyConfigForCredential(credential apiCredential) (*billing.KeyC
 		return s.runtime.Billing().ConfigForDashboard(context.Background(), credential.Dashboard, credential.EncryptionKeys)
 	}
 	return s.runtime.Billing().ConfigForAPIKey(context.Background(), credential.Raw, credential.Claims, credential.EncryptionKeys)
-}
-
-func (s *Server) prepareCandidate(
-	ctx *requestContext,
-	resolution *catalog.ResolvedRequest,
-	credential apiCredential,
-	nodeID string,
-	requestStartedAt time.Time,
-	keyConfig *billing.KeyConfigSnapshot,
-	preparedCredential *billing.PreparedCredential,
-	finishPreprocessing func(),
-) (*preparedCandidate, *candidateFailure) {
-	adapter := stogas.AdapterFor(resolution.Provider)
-	candidateCredential := credential
-	bifrostCtx, state, cancel, err := newRequestContext(
-		ctx,
-		requestStartedAt,
-		resolution,
-		candidateCredential,
-		adapter,
-		nodeID,
-	)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
-		}
-		return nil, &candidateFailure{err: err, kind: candidateFailureRequest}
-	}
-	if keyConfig != nil && keyConfig.Claims != nil {
-		state.Export = s.exports.Start(resolution.ExportConfig)
-	}
-	resolution.ExportConfig = nil
-	failBeforeHold := func(err error, kind candidateFailureKind) (*preparedCandidate, *candidateFailure) {
-		state.EncryptionKeys = nil
-		public := catalog.PublicError(err)
-		state.ProcessingError = &schemas.BifrostError{StatusCode: &public.StatusCode, Error: &schemas.ErrorField{Code: schemas.Ptr(public.Code)}}
-		stogas.FinalizeExportState(bifrostCtx, state)
-		cancel()
-		return nil, &candidateFailure{err: err, kind: kind}
-	}
-	state.KeyConfig = keyConfig
-	state.PreparedCredential = preparedCredential
-	if keyConfig != nil {
-		selected, err := keyConfig.PolicyForCredential(string(resolution.Provider), resolution.CredentialIndex, credential.EncryptionKeys, requestStartedAt, nil)
-		if err != nil {
-			return failBeforeHold(err, candidateFailureBilling)
-		}
-		state.PolicyVersions = selected.Versions
-		ctx.policyVersions = selected.Versions
-	}
-	configureProviderStreamIdleTimeout(bifrostCtx, state)
-	if err := adapter.ValidateRequest(state); err != nil {
-		return failBeforeHold(err, candidateFailureCatalog)
-	}
-	if err := adapter.SanitizeRequest(state); err != nil {
-		return failBeforeHold(err, candidateFailureCatalog)
-	}
-	if err := adapter.EstimateHold(state); err != nil {
-		return failBeforeHold(err, candidateFailureCatalog)
-	}
-	bifrostReq, err := resolution.ToBifrost(bifrostCtx)
-	if err != nil {
-		return failBeforeHold(err, candidateFailureCatalog)
-	}
-	state.Export.Input(resolution.RawBody(), resolution.Route == catalog.RouteResponses)
-	if err := stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
-		return failBeforeHold(err, candidateFailureCatalog)
-	}
-
-	// Selection and the single input transformation are complete. Database and
-	// provider waits are excluded from preprocessing; no failure can reroute.
-	finishPreprocessing()
-	if err := ctx.inferenceWaitError(); err != nil {
-		return failBeforeHold(err, candidateFailureBilling)
-	}
-	err = stogas.AuthorizeState(bifrostCtx, s.runtime.Billing(), state)
-	if state.Authorization != nil {
-		s.recordAdmission(ctx)
-		ctx.markPaid()
-	}
-	if err != nil {
-		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
-		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
-	}
-	if err := s.runtime.ApplyUpstreamCredentials(bifrostCtx, state); err != nil {
-		s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
-		return nil, &candidateFailure{err: err, kind: candidateFailureBilling}
-	}
-	if resolution.Provider == schemas.Azure {
-		bifrostReq, err = resolution.ToBifrost(bifrostCtx)
-		if err == nil {
-			err = stogas.PrepareProviderRequest(bifrostCtx, state, bifrostReq)
-		}
-		if err != nil {
-			s.finalizePreparedFailure(ctx, bifrostCtx, state, cancel, err)
-			return nil, &candidateFailure{err: err, kind: candidateFailureCatalog}
-		}
-	}
-	return &preparedCandidate{
-		adapter:    adapter,
-		bifrostCtx: bifrostCtx,
-		bifrostReq: bifrostReq,
-		cancel:     cancel,
-		resolution: resolution,
-		state:      state,
-	}, nil
-}
-
-// finalizePreparedFailure ends a prepared request before its provider call.
-func (s *Server) finalizePreparedFailure(
-	ctx *requestContext,
-	bifrostCtx *schemas.BifrostContext,
-	state *stogas.State,
-	cancel context.CancelFunc,
-	err error,
-) {
-	apiErr := stogas.PublicBillingErrorFor(err)
-	status := apiErr.StatusCode
-	state.ProcessingError = &schemas.BifrostError{
-		IsBifrostError: true,
-		StatusCode:     &status,
-		Error:          &schemas.ErrorField{Message: apiErr.Message, Code: schemas.Ptr(apiErr.Code)},
-	}
-	s.finalizeAfterResponse(ctx, bifrostCtx, state, cancel)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func TestPreprocessingActivityConcurrent(t *testing.T) {
@@ -68,19 +69,32 @@ func TestPreprocessingAcceptsBurstAndFinishesFailedResolution(t *testing.T) {
 
 func TestPreprocessingExcludesAuthorization(t *testing.T) {
 	for _, request := range []struct{ path, body string }{
-		{"/v1/chat/completions", `{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}]}`},
-		{"/v1/responses", `{"model":"gpt-5.5","input":"hello"}`},
+		{"/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hello"}]}`},
+		{"/v1/responses", `{"model":"openai/gpt-5.5","input":"hello"}`},
 	} {
 		t.Run(request.path, func(t *testing.T) {
 			server := &Server{}
 			ctx := newTestRequest(t)
 			testRequestBody(ctx, request.body)
 			resolution := mustResolvedRequest(t, request.path, request.body)
-			finish := server.preprocessing.begin(len(request.body))
-			defer finish()
-			candidate, failure := server.prepareCandidate(ctx, resolution, apiCredential{Raw: "invalid"}, "", time.Now(), nil, nil, finish)
-			if candidate != nil || failure == nil || failure.kind != candidateFailureBilling || !errors.Is(failure.err, billing.ErrInvalidAPIKey) {
-				t.Fatalf("did not reach authorization: candidate=%v failure=%+v", candidate, failure)
+			run := &providerRun{
+				server: server, client: ctx, credential: apiCredential{Raw: "invalid"}, startedAt: time.Now(),
+				keyConfig: &billing.KeyConfigSnapshot{
+					PolicySnapshot: billing.PolicySnapshot{Config: &policy.Config{}},
+					Credentials:    map[string][]billing.CredentialSelection{string(resolution.Provider): {{}}},
+				},
+				finishPreprocessing: server.preprocessing.begin(len(request.body)),
+			}
+			defer run.finishPreprocessing()
+			var err error
+			run.request, run.state, run.cancel, err = newRequestContext(ctx, run.startedAt, resolution, run.credential, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer run.cancel()
+			var refusal billingFailure
+			if err := run.bind(resolution); !errors.As(err, &refusal) || !errors.Is(err, billing.ErrInvalidAPIKey) {
+				t.Fatalf("did not reach authorization: %v", err)
 			}
 			if server.preprocessing.diagnostics().Active != 0 {
 				t.Fatal("authorization remained in preprocessing activity")
@@ -132,7 +146,7 @@ func TestJSONDecodeDiagnosticsIncludeRejectedRequests(t *testing.T) {
 		ctx.credential = &apiCredential{Raw: "private-credential"}
 		// Invalid JSON fails decoding; valid JSON proceeds to the unavailable
 		// billing service. Both must close the decoding observation exactly once.
-		if server.prepareInference(ctx, time.Now()) != nil {
+		if server.startRun(ctx, time.Now(), nil) != nil {
 			t.Fatal("request unexpectedly prepared without a runtime")
 		}
 		stats := server.privateDiagnostics().Requests
