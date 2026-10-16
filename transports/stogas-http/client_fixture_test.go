@@ -132,6 +132,11 @@ func serveClientFixture(path string) error {
 		return err
 	}
 	defer server.shutdown()
+	// Confidential startup keeps room for one maximum request beside retained
+	// session state; the fixture has no Control configuration that would do so.
+	if err := server.memory.protectRequestMemory(config.MaxRequestBodyMiB * 1024 * 1024); err != nil {
+		return err
+	}
 	keys, document, nodeID, err := fixtureNode(path)
 	if err != nil {
 		return err
@@ -157,5 +162,11 @@ func serveClientFixture(path string) error {
 		return err
 	}
 	defer server.sessions.Close()
+	// The confidential runtime expires idle sessions on this schedule.
+	go func() {
+		for range time.Tick(time.Minute) {
+			server.sessions.ExpireIdle()
+		}
+	}()
 	return server.Start()
 }
