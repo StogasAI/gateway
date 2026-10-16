@@ -233,7 +233,7 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	for i := rejectionLogPerKeyCapacity; i <= rejectionLogCapacity; i++ {
 		copy := input
 		claims := *input.Claims
-		claims.KeyID = uuid.Must(uuid.NewV7()).String()
+		claims.KeyID, claims.OrganizationID = uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
 		copy.Claims = &claims
 		service.RecordRejection(copy)
 	}
@@ -244,6 +244,54 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	service.RecordRejection(input)
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.DroppedRequests != 3 || got.StoredRequests != got.RecordedRequests-3 {
 		t.Fatalf("shutdown loss accounting: %+v", got)
+	}
+}
+
+// An organization with many keys can neither fill the buffer that every
+// organization shares nor add individual rows for every key.
+func TestRejectionLogsBoundEachOrganization(t *testing.T) {
+	db := newFakeSettlementDatabase(t, settleAll)
+	service := db.service
+	input := rejectionFixture()
+	input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow)
+	for range rejectionLogPerOrganizationCapacity + 1 {
+		copy := input
+		claims := *input.Claims
+		claims.KeyID = uuid.Must(uuid.NewV7()).String()
+		copy.Claims = &claims
+		for range 2 {
+			copy.RequestID = uuid.Must(uuid.NewV7()).String()
+			service.RecordRejection(copy)
+		}
+	}
+	other := rejectionFixture()
+	other.CreatedAt = input.CreatedAt
+	service.RecordRejection(other)
+	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != rejectionLogPerOrganizationCapacity+1 || got.DroppedRequests != 2 {
+		t.Fatalf("organization cap: %+v", got)
+	}
+	drainSettlements(t, service)
+	var individual, counted int
+	for _, raw := range rejectionRows(db) {
+		var row struct {
+			Organization string `json:"stogas_organization_id"`
+			Count        uint32 `json:"request_count"`
+		}
+		if err := json.Unmarshal(raw, &row); err != nil {
+			t.Fatal(err)
+		}
+		switch {
+		case row.Organization == other.Claims.OrganizationID:
+		case row.Count == 1:
+			individual++
+		case row.Count == 2:
+			counted++
+		default:
+			t.Fatalf("unexpected row count %d", row.Count)
+		}
+	}
+	if individual != 2*rejectionLogPerKeyCapacity || counted != rejectionLogPerOrganizationCapacity-rejectionLogPerKeyCapacity {
+		t.Fatalf("got %d individual rows and %d count rows", individual, counted)
 	}
 }
 
@@ -268,7 +316,7 @@ func TestRejectionLogsSendIndividualRowsAtOnceAndCountsWhenTheMinuteEnds(t *test
 	b := &service.rejectionLogs
 	// Existing maps keep RecordRejection from starting the sender, so the test
 	// takes each batch itself.
-	b.groups, b.perKey = map[rejectionLogKey]*rejectionLogGroup{}, map[string]int{}
+	b.groups, b.perKey, b.perOrganization = map[rejectionLogKey]*rejectionLogGroup{}, map[string]int{}, map[string]int{}
 	input := rejectionFixture()
 	record := func(at time.Time) {
 		copy := input

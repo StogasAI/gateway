@@ -17,7 +17,13 @@ const (
 	rejectionLogIndividualLimit = 5
 	rejectionLogCapacity        = 4096
 	rejectionLogPerKeyCapacity  = 32
-	rejectionLogBatchSize       = settlementMaxRejections
+	// One organization may hold a sixteenth of the groups, and only its first
+	// rejectionLogPerKeyCapacity groups send individual rows; the rest send
+	// their count alone. So one organization's rejections add at most 416 rows
+	// a minute on each gateway instead of 24,576, and cannot fill the buffer
+	// that every organization's rejections share.
+	rejectionLogPerOrganizationCapacity = 256
+	rejectionLogBatchSize               = settlementMaxRejections
 )
 
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
@@ -66,9 +72,10 @@ type rejectionLogGroup struct {
 }
 
 type rejectionLogBuffer struct {
-	mu     sync.Mutex
-	groups map[rejectionLogKey]*rejectionLogGroup
-	perKey map[string]int
+	mu              sync.Mutex
+	groups          map[rejectionLogKey]*rejectionLogGroup
+	perKey          map[string]int
+	perOrganization map[string]int
 	// The batch being settled.
 	pendingAt     time.Time
 	pendingGroups int
@@ -122,7 +129,7 @@ func (s *Service) RecordRejection(input RejectionInput) {
 	}
 	if b.groups == nil {
 		b.groups = make(map[rejectionLogKey]*rejectionLogGroup)
-		b.perKey = make(map[string]int)
+		b.perKey, b.perOrganization = make(map[string]int), make(map[string]int)
 		b.stop, b.done = make(chan struct{}), make(chan struct{})
 		go s.runRejectionLogs()
 	}
@@ -140,14 +147,20 @@ func (s *Service) RecordRejection(input RejectionInput) {
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {
-		if len(b.groups) >= rejectionLogCapacity || b.perKey[input.Claims.KeyID] >= rejectionLogPerKeyCapacity {
+		organization := b.perOrganization[input.Claims.OrganizationID]
+		if len(b.groups) >= rejectionLogCapacity || b.perKey[input.Claims.KeyID] >= rejectionLogPerKeyCapacity ||
+			organization >= rejectionLogPerOrganizationCapacity {
 			b.recordDropped(1)
 			return
 		}
 		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input)}
 		group.RequestCount = 0
+		if organization >= rejectionLogPerKeyCapacity {
+			group.recorded = rejectionLogIndividualLimit
+		}
 		b.groups[key] = group
 		b.perKey[input.Claims.KeyID]++
+		b.perOrganization[input.Claims.OrganizationID]++
 	}
 	if group.recorded < rejectionLogIndividualLimit {
 		group.recorded++
@@ -245,15 +258,19 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 			b.pendingGroups++
 		}
 		delete(b.groups, key)
-		b.perKey[key.keyID]--
-		if b.perKey[key.keyID] == 0 {
-			delete(b.perKey, key.keyID)
-		}
+		releaseGroup(b.perKey, key.keyID)
+		releaseGroup(b.perOrganization, group.StogasOrganizationID)
 		if len(batch) == rejectionLogBatchSize {
 			break
 		}
 	}
 	return batch
+}
+
+func releaseGroup(counts map[string]int, id string) {
+	if counts[id]--; counts[id] == 0 {
+		delete(counts, id)
+	}
 }
 
 func (s *Service) runRejectionLogs() {
