@@ -31,12 +31,27 @@ func callerAdmissionKey(claims *APIKeyClaims, dashboard *DashboardCredential) st
 	return ""
 }
 
+// A secret that PostgreSQL refused, because its key was deleted, left its grant
+// or got a new secret, keeps its valid signature. Its holder could otherwise
+// spend the organization's local request allowance again after every brief
+// cooldown, so this gateway refuses the secret for a minute without asking
+// PostgreSQL.
+const refusedAPIKeyDuration = time.Minute
+
 // RecordCallerFailure accepts only locally verified identities. Failed work,
 // including dependency failures, consumes the same brief backoff. Cancellation
 // and rejected retries do not extend a cooldown.
 func (s *Service) RecordCallerFailure(claims *APIKeyClaims, dashboard *DashboardCredential, status int, code string) {
 	if s == nil || status < 400 || status == 408 || status == 499 || code == ErrAbuseRateLimit.Code {
 		return
+	}
+	if dashboard == nil && claims != nil {
+		for _, refusal := range []*RequestError{ErrInvalidAPIKey, ErrAPIKeyOldSecret} {
+			if code == refusal.Code {
+				s.callerFailures.refuse(claims.admissionKey, refusal, time.Now())
+				return
+			}
+		}
 	}
 	s.callerFailures.record(callerAdmissionKey(claims, dashboard), time.Now())
 }
@@ -65,6 +80,8 @@ type callerFailureEntry struct {
 	blockedUntil time.Time
 	failures     uint8
 	lastFailedAt time.Time
+	refusal      *RequestError
+	refusedUntil time.Time
 }
 
 type callerFailureShard struct {
@@ -135,6 +152,44 @@ func (c *callerFailureCache) record(key string, now time.Time) {
 		evictCallerFailureEntry(shard.entries)
 	}
 	shard.entries[key] = entry
+}
+
+// refuse remembers PostgreSQL's refusal of a secret. Requests refused from
+// memory do not extend it, so a key that becomes valid again, such as one
+// returned to its grant, works within the minute.
+func (c *callerFailureCache) refuse(key string, refusal *RequestError, now time.Time) {
+	if c == nil || key == "" {
+		return
+	}
+	shard := &c.shards[localAdmissionShard(key)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if shard.entries == nil {
+		shard.entries = make(map[string]callerFailureEntry)
+	}
+	entry, exists := shard.entries[key]
+	if now.Before(entry.refusedUntil) {
+		return
+	}
+	entry.refusal = refusal
+	entry.refusedUntil = now.Add(refusedAPIKeyDuration)
+	if !exists {
+		evictCallerFailureEntry(shard.entries)
+	}
+	shard.entries[key] = entry
+}
+
+func (c *callerFailureCache) refused(key string, now time.Time) error {
+	if c == nil || key == "" {
+		return nil
+	}
+	shard := &c.shards[localAdmissionShard(key)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if entry, ok := shard.entries[key]; ok && now.Before(entry.refusedUntil) {
+		return entry.refusal
+	}
+	return nil
 }
 
 // A successful request ends an earlier failure streak. An older request
