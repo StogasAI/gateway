@@ -25,8 +25,9 @@ const (
 type approvedGateway struct {
 	ID      string `json:"release_id"`
 	Release struct {
-		Measurement string `json:"measurement"`
-		Sequence    uint64 `json:"sequence"`
+		Measurement            string `json:"measurement"`
+		Sequence               uint64 `json:"sequence"`
+		MinimumCatalogSequence uint64 `json:"minimum_catalog_sequence"`
 	} `json:"release"`
 }
 
@@ -213,7 +214,9 @@ func (summary evidenceSummary) gateway(measurement string) (approvedGateway, boo
 }
 
 // catalogs lists the approved catalogs compatible with an approved gateway release,
-// newest first. The verifier summary orders catalogs by increasing sequence.
+// newest first: the catalog names the oldest gateway that reads it, and the gateway
+// the oldest catalog it reads. The verifier summary orders catalogs by increasing
+// sequence.
 func (summary evidenceSummary) catalogs(gatewayID string) []approvedCatalog {
 	index := slices.IndexFunc(summary.Gateways, func(gateway approvedGateway) bool { return gateway.ID == gatewayID })
 	if index < 0 {
@@ -222,7 +225,7 @@ func (summary evidenceSummary) catalogs(gatewayID string) []approvedCatalog {
 	gateway := summary.Gateways[index].Release
 	var compatible []approvedCatalog
 	for _, catalog := range slices.Backward(summary.Catalogs) {
-		if catalog.Release.MinimumGatewaySequence <= gateway.Sequence {
+		if catalog.Release.MinimumGatewaySequence <= gateway.Sequence && catalog.Release.Sequence >= gateway.MinimumCatalogSequence {
 			compatible = append(compatible, catalog)
 		}
 	}

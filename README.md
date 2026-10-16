@@ -33,7 +33,7 @@ The scripts first build the native verifier library at the commit pinned in `sto
 
 ## Releases
 
-Tagged releases build `gateway.igvm` and a manifest that binds its hash, build inputs, SNP launch policies, and launch measurement. GitHub attests the manifest and image. Stogas rebuilds the same pinned Guix derivation independently and signs the manifest only when the result matches.
+Tagged releases build `gateway.igvm` and a manifest that binds its hash, build inputs, SNP launch policies, launch measurement, and the oldest catalog release it reads, which `stogas/release/release-policy.json` sets. GitHub attests the manifest and image. Stogas rebuilds the same pinned Guix derivation independently and signs the manifest only when the result matches.
 
 ## License
 
