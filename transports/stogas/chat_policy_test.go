@@ -102,6 +102,8 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"Sonnet 5 mid-conversation system", `{"model":"anthropic-claude-sonnet-5","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"}]}`, "cannot be preserved after the conversation starts"},
 		{"Anthropic mid-conversation system placement", `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"first"},{"role":"system","content":"new policy"},{"role":"user","content":"continue"}]}`, "must be last or immediately precede an assistant message"},
 		{"metadata non-string", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a":1}}`, "metadata values"},
+		{"metadata control character", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"team":"a\nb"}}`, "metadata values must be valid strings up to 512 bytes without control characters"},
+		{"metadata NUL key", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"metadata":{"a\u0000":"b"}}`, "metadata keys must be valid strings up to 64 bytes without control characters"},
 		{"anthropic-only cache control on openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"cache_control":{"type":"ephemeral"}}`, "only supported for Anthropic"},
 		{"nested cache control on openai", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":[{"type":"text","text":"hi","cache_control":{"type":"ephemeral"}}]}]}`, "cache_control is only supported for Anthropic"},
 		{"prompt cache options anthropic", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"prompt_cache_options":{"mode":"explicit"}}`, "prompt_cache_options is only supported for OpenAI"},
@@ -1257,7 +1259,7 @@ func TestAnthropicOutboundServiceTierMapping(t *testing.T) {
 	}
 }
 
-func TestChatPolicySanitizesMetadataBeforeUpstream(t *testing.T) {
+func TestMetadataReachesRequestRecordsButNotProviders(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
@@ -1269,6 +1271,9 @@ func TestChatPolicySanitizesMetadataBeforeUpstream(t *testing.T) {
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error: %v", err)
+	}
+	if !reflect.DeepEqual(state.Metadata, map[string]string{"tenant": "test"}) {
+		t.Fatalf("request records lost the metadata: %#v", state.Metadata)
 	}
 	if err := state.Adapter.SanitizeRequest(state); err != nil {
 		t.Fatalf("SanitizeRequest returned error: %v", err)
@@ -1462,6 +1467,7 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"store true", `{"model":"openai/gpt-5.5","input":"hi","store":true}`, "store=true is not supported"},
 		{"store string", `{"model":"openai/gpt-5.5","input":"hi","store":"false"}`, "Invalid JSON body"},
 		{"metadata non-string", `{"model":"openai/gpt-5.5","input":"hi","metadata":{"tenant":1}}`, "metadata values"},
+		{"metadata control character", `{"model":"openai/gpt-5.5","input":"hi","metadata":{"tenant":"\u001f"}}`, "without control characters"},
 		{"anthropic parallel tool calls", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"parallel_tool_calls":false}`, "parallel_tool_calls is not supported for Anthropic"},
 		{"anthropic max tool calls function only", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"function","name":"lookup"}],"max_tool_calls":2}`, "max_tool_calls is only supported for Anthropic hosted tools"},
 		{"max tool calls without tools", `{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":2}`, "max_tool_calls requires supported tools"},

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -559,6 +560,61 @@ func TestEncodeRequestLogRejectsOversizedPayload(t *testing.T) {
 	if _, err := encodeRequestLog(event, ""); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("oversized gateway request event error = %v, want bounded-payload rejection", err)
 	}
+}
+
+// A log that does not fit makes the gateway refuse new requests, so the
+// largest log that clients and providers can cause must fit. Their strings are
+// quotes, which JSON writes as two bytes each. A request records fewer than 25
+// meters with today's catalog.
+func TestLargestRequestLogFitsTheLimit(t *testing.T) {
+	quotes := func(n int) string { return strings.Repeat(`"`, n) }
+	setting, usd, count := quotes(maxSettingBytes), "9"+strings.Repeat("9", money.Precision-money.Scale-1)+"."+strings.Repeat("9", money.Scale), uint32(1<<32-1)
+	integer, number, flag := maxExactJSONInteger, -1.2345678901234567e-300, true
+	include := make([]string, maxSettingValues)
+	for i := range include {
+		include[i] = setting
+	}
+	event := RequestEvent{
+		SchemaVersion: RequestLogSchemaVersion, RequestID: uuid.NewString(), CreatedAt: "2026-10-16T12:00:00.000Z", LastRequestAt: "2026-10-16T12:00:00.000Z",
+		RequestCount: 1, GatewayError: &EventError{Code: "upstream_configuration_error", Status: 599}, StogasAPIKeyID: uuid.NewString(),
+		StogasGrantID: new(uuid.NewString()), StogasUserID: uuid.NewString(), StogasOrganizationID: uuid.NewString(), RequestType: "chat_completion_stream",
+		RequestSettings: RequestSettings{
+			MaxOutputTokens: &integer, ReasoningEnabled: &flag, ReasoningEffort: setting, ReasoningMaxTokens: &integer, ReasoningSummary: setting,
+			ReasoningDisplay: setting, TaskBudgetTokens: &integer, Temperature: &number, TopP: &number, TopK: &integer, FrequencyPenalty: &number,
+			PresencePenalty: &number, RepetitionPenalty: &number, Seed: &integer, Logprobs: &flag, TopLogprobs: &integer, Verbosity: setting,
+			ResponseFormat: setting, Include: include, ToolChoice: setting, ParallelToolCalls: &flag, MaxToolCalls: &integer, Truncation: setting,
+		},
+		Metadata: map[string]string{}, Transport: TransportAttestedTLS, Cancelled: true, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
+		PolicyVersions: &PolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
+		Performance: RequestPerformance{TotalMS: count, ProviderMS: count, ProviderStartMS: &count, FirstOutputMS: &count, TTFTMS: &count},
+		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
+			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd}},
+		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: count, DurationUS: count},
+			StogasExport: &plugins.StogasExportMetrics{CaptureUS: count}},
+	}
+	for i := range MaxMetadataEntries {
+		event.Metadata[quotes(MaxMetadataKeyBytes-2)+fmt.Sprintf("%02d", i)] = quotes(MaxMetadataValueBytes)
+	}
+	for range 36 {
+		*event.PolicyVersions = append(*event.PolicyVersions, PolicyVersion{Scope: "credential", ID: uuid.NewString(), Revision: 1<<31 - 1})
+	}
+	for range 12 {
+		status := 599
+		event.ProviderAttempts = append(event.ProviderAttempts, ProviderAttempt{
+			CatalogChainHash: "sha256:" + strings.Repeat("f", 64), ResolvedCatalogChainHash: "sha256:" + strings.Repeat("e", 64),
+			Provider: quotes(maxProviderNameBytes), Status: "context_length_exceeded", StatusCode: &status, StartMS: count, LatencyMS: count,
+			OutputObserved: true, ProviderRequestID: quotes(maxProviderRequestIDBytes), FinishReason: quotes(maxProviderReasonBytes), Byok: new(uuid.NewString()),
+		})
+	}
+	for i := range 40 {
+		rate := strings.Repeat("r", 64)
+		event.Usage.Meters[fmt.Sprintf("%064d", i)] = EventMeter{Quantity: "18446744073709551615", RateKey: &rate, RateUSD: &usd, USD: &usd}
+	}
+	payload, err := encodeRequestLog(event, strings.Repeat("h", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("largest request log: %d of %d bytes", len(payload), requestLogMaxEventBytes)
 }
 
 func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {

@@ -37,13 +37,14 @@ type RejectionInput struct {
 	CreatedAt      time.Time
 	NodeID         string
 	GatewayVersion string
+	Transport      string
 }
 
 type rejectionLogKey struct {
-	keyID, requestType, code string
-	status                   int
-	window                   int64
-	versions                 [32]byte
+	keyID, requestType, code, transport string
+	status                              int
+	window                              int64
+	versions                            [32]byte
 }
 
 type RejectionLogDiagnostics struct {
@@ -87,6 +88,7 @@ type rejectionLogBuffer struct {
 
 // NewRejectionEvent gives authenticated pre-authorization failures the same
 // customer-visible representation in telemetry and optional content exports.
+// Rejections share records, so none keeps a request's metadata.
 func NewRejectionEvent(input RejectionInput) RequestEvent {
 	at := input.CreatedAt.UTC()
 	if at.IsZero() {
@@ -100,7 +102,7 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 		PolicyVersions: input.PolicyVersions,
 		StogasAPIKeyID: input.Claims.KeyID, StogasOrganizationID: input.Claims.OrganizationID,
 		StogasUserID: input.Claims.ResponsibleID, StogasGrantID: input.Claims.GrantID,
-		RequestType:      input.RequestType,
+		RequestType: input.RequestType, Metadata: map[string]string{}, Transport: input.Transport,
 		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
 		ProviderAttempts: []ProviderAttempt{},
 		Usage: RequestUsage{Meters: EventMeters{}, UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
@@ -143,7 +145,7 @@ func (s *Service) RecordRejection(input RejectionInput) {
 		raw, _ := json.Marshal(input.PolicyVersions)
 		versions = sha256.Sum256(raw)
 	}
-	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions}
+	key := rejectionLogKey{input.Claims.KeyID, input.RequestType, input.Code, input.Transport, input.StatusCode, at.Truncate(rejectionLogWindow).Unix(), versions}
 	stamp := at.Format("2006-01-02T15:04:05.000Z")
 	group := b.groups[key]
 	if group == nil {

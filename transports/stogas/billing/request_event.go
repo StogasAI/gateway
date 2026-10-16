@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
@@ -42,6 +43,14 @@ type EventError struct {
 
 const RequestLogSchemaVersion uint8 = 1
 
+// How the client reached the gateway: ordinary TLS, TLS with the gateway's
+// attestation evidence, or an end-to-end encrypted session.
+const (
+	TransportHTTPS       = "https"
+	TransportAttestedTLS = "attested_tls"
+	TransportE2EE        = "e2ee"
+)
+
 type RequestEvent struct {
 	SchemaVersion        uint8              `json:"schema_version"`
 	RequestID            string             `json:"request_id"`
@@ -55,6 +64,8 @@ type RequestEvent struct {
 	StogasOrganizationID string             `json:"stogas_organization_id"`
 	RequestType          string             `json:"request_type"`
 	RequestSettings      RequestSettings    `json:"request_settings"`
+	Metadata             map[string]string  `json:"metadata"`
+	Transport            string             `json:"transport"`
 	Cancelled            bool               `json:"cancelled"`
 	ClientStopMS         *uint32            `json:"client_stop_ms"`
 	CatalogVersion       *uint64            `json:"catalog_version"`
@@ -98,6 +109,14 @@ type RequestSettings struct {
 	MaxToolCalls       *int     `json:"max_tool_calls,omitempty"`
 	Truncation         string   `json:"truncation,omitempty"`
 }
+
+// A request's metadata follows OpenAI's: up to 16 pairs, with keys up to 64
+// bytes and values up to 512 bytes.
+const (
+	MaxMetadataEntries    = 16
+	MaxMetadataKeyBytes   = 64
+	MaxMetadataValueBytes = 512
+)
 
 const (
 	// Provider settings are short words, and an include list names a few
@@ -327,18 +346,20 @@ func encodeRequestLog(event RequestEvent, holdParamsHash string) (string, error)
 	if event.Usage.Meters == nil {
 		event.Usage.Meters = EventMeters{}
 	}
-	var encoded []byte
-	var err error
-	if holdParamsHash == "" {
-		encoded, err = json.Marshal(event)
-	} else {
-		encoded, err = json.Marshal(settlementLog{event, holdParamsHash})
+	var log any = event
+	if holdParamsHash != "" {
+		log = settlementLog{event, holdParamsHash}
 	}
-	if err != nil {
+	// HTML escaping would write <, > and & in client metadata as six bytes.
+	var encoded strings.Builder
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(log); err != nil {
 		return "", fmt.Errorf("marshal request log: %w", err)
 	}
-	if len(encoded) > requestLogMaxEventBytes {
-		return "", fmt.Errorf("request log is %d bytes, limit is %d", len(encoded), requestLogMaxEventBytes)
+	payload := strings.TrimSuffix(encoded.String(), "\n")
+	if len(payload) > requestLogMaxEventBytes {
+		return "", fmt.Errorf("request log is %d bytes, limit is %d", len(payload), requestLogMaxEventBytes)
 	}
-	return string(encoded), nil
+	return payload, nil
 }

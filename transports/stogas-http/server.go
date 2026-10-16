@@ -369,6 +369,8 @@ type ingressTLSConn struct {
 	*tls.Conn
 	deadline time.Time
 	admit    func(*ingressTLSConn) error
+	// Set by the handshake, before the connection's first request.
+	attested bool
 	mu       sync.Mutex
 	closed   bool
 	release  func()
@@ -384,7 +386,11 @@ func (c *ingressTLSConn) HandshakeContext(ctx context.Context) error {
 	// handshake-only context prevents that from renewing the setup allowance.
 	ctx, cancel := context.WithDeadline(ctx, c.deadline)
 	defer cancel()
-	return c.Conn.HandshakeContext(ctx)
+	if err := c.Conn.HandshakeContext(ctx); err != nil {
+		return err
+	}
+	c.attested = attest.PresentsEvidence(c.Conn.ConnectionState())
+	return nil
 }
 
 // hold keeps the memory until the socket closes, or returns it at once if the

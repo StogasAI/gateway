@@ -12,14 +12,12 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
 const (
-	maxMetadataKeys          = 16
-	maxMetadataKeyBytes      = 64
-	maxMetadataValueBytes    = 512
 	maxPromptCacheKeyBytes   = 256
 	maxPortableStopSequences = 16
 	maxStopSequenceBytes     = 1024
@@ -71,9 +69,11 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if err := validateInteger(raw, "max_tokens"); err != nil {
 		return err
 	}
-	if err := validateMetadata(raw["metadata"]); err != nil {
+	metadata, err := parseMetadata(raw["metadata"])
+	if err != nil {
 		return err
 	}
+	state.Metadata = metadata
 	if err := validateModalities(raw["modalities"]); err != nil {
 		return err
 	}
@@ -355,30 +355,39 @@ func validateFalseOnlyBoolean(raw map[string]json.RawMessage, name string) error
 	return nil
 }
 
-func validateMetadata(raw json.RawMessage) error {
+// parseMetadata reads the metadata object that request records keep. JSON
+// writes a control character as six bytes, and PostgreSQL's jsonb refuses
+// U+0000, so neither keys nor values may contain one.
+func parseMetadata(raw json.RawMessage) (map[string]string, error) {
 	if len(raw) == 0 {
-		return nil
+		return nil, nil
 	}
 	var metadata map[string]any
 	if err := sonic.Unmarshal(raw, &metadata); err != nil {
-		return invalidRequest("metadata must be an object")
+		return nil, invalidRequest("metadata must be an object")
 	}
-	if len(metadata) > maxMetadataKeys {
-		return invalidRequest("metadata supports at most 16 keys")
+	if len(metadata) > billing.MaxMetadataEntries {
+		return nil, invalidRequest("metadata supports at most 16 keys")
 	}
+	parsed := make(map[string]string, len(metadata))
 	for key, value := range metadata {
-		if key == "" || len(key) > maxMetadataKeyBytes || !utf8.ValidString(key) {
-			return invalidRequest("metadata keys must be valid strings up to 64 bytes")
+		if key == "" || len(key) > billing.MaxMetadataKeyBytes || !metadataText(key) {
+			return nil, invalidRequest("metadata keys must be valid strings up to 64 bytes without control characters")
 		}
 		text, ok := value.(string)
 		if !ok {
-			return invalidRequest("metadata values must be strings")
+			return nil, invalidRequest("metadata values must be strings")
 		}
-		if len(text) > maxMetadataValueBytes || !utf8.ValidString(text) {
-			return invalidRequest("metadata values must be valid strings up to 512 bytes")
+		if len(text) > billing.MaxMetadataValueBytes || !metadataText(text) {
+			return nil, invalidRequest("metadata values must be valid strings up to 512 bytes without control characters")
 		}
+		parsed[key] = text
 	}
-	return nil
+	return parsed, nil
+}
+
+func metadataText(text string) bool {
+	return utf8.ValidString(text) && !strings.ContainsFunc(text, func(r rune) bool { return r < 0x20 })
 }
 
 func validateModalities(raw json.RawMessage) error {

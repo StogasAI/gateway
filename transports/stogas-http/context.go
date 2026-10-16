@@ -63,6 +63,7 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 	state.SetDashboardCredential(credential.Dashboard)
 	state.NodeID = strings.ToLower(strings.TrimSpace(nodeID))
 	state.RequestID = requestID
+	state.Transport = ctx.transport()
 	state.StartedAt = startedAt
 	state.RequestLifetime = billing.GatewayRequestLifetime
 	stogas.SetState(bifrostCtx, state)

@@ -47,6 +47,8 @@ type State struct {
 	RequestID               string
 	StartedAt               time.Time
 	RequestType             string
+	Metadata                map[string]string
+	Transport               string
 	Response                *schemas.BifrostResponse
 	BifrostError            *schemas.BifrostError
 	ProcessingError         *schemas.BifrostError

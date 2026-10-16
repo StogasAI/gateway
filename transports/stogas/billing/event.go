@@ -37,6 +37,8 @@ type EventInput struct {
 	GatewayVersion        string
 	RequestType           string
 	RequestSettings       RequestSettings
+	Metadata              map[string]string
+	Transport             string
 	StartedAt             time.Time
 }
 
@@ -131,6 +133,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		StogasOrganizationID: authorization.OrganizationID,
 		RequestType:          normalizeRequestType(input.RequestType),
 		RequestSettings:      input.RequestSettings,
+		Metadata:             requestMetadata(input.Metadata),
+		Transport:            input.Transport,
 		Cancelled:            input.Cancelled,
 		ClientStopMS:         clientStopMS,
 		CatalogVersion:       catalogVersion(input.CatalogVersion),
@@ -154,6 +158,14 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		Plugins:        input.Plugins,
 		GatewayVersion: strings.TrimSpace(input.GatewayVersion),
 	}, nil
+}
+
+// requestMetadata keeps metadata an object in every record, including exports.
+func requestMetadata(metadata map[string]string) map[string]string {
+	if metadata == nil {
+		return map[string]string{}
+	}
+	return metadata
 }
 
 func requestFirstOutput(input EventInput, startedAt time.Time, providerStartMS *uint32, providerMS uint32) *uint32 {

@@ -33,6 +33,7 @@ func FinalizeExportState(ctx context.Context, state *State) {
 			Claims: state.APIKeyClaims, RequestID: state.RequestID, RequestType: string(state.Resolution.RequestType),
 			Code: code, StatusCode: status, CreatedAt: state.StartedAt,
 			PolicyVersions: state.PolicyVersions, NodeID: state.NodeID, GatewayVersion: state.GatewayVersion,
+			Transport: state.Transport,
 		})
 		state.FinalEvent = &event
 	}
