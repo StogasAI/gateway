@@ -65,6 +65,7 @@ type MaintenanceDiagnostics struct {
 	LastSuccessAt            *time.Time                 `json:"last_success_at"`
 	EvidenceReason           string                     `json:"evidence_reason,omitempty"`
 	CertificateRenewalFailed bool                       `json:"certificate_renewal_failed"`
+	RefusedCatalogs          []uint64                   `json:"refused_catalogs,omitempty"`
 	Quotes                   attest.QuoteDiagnostics    `json:"quotes"`
 	Sessions                 channel.SessionDiagnostics `json:"sessions"`
 }
@@ -328,7 +329,7 @@ func (r *Runtime) Diagnostics() *MaintenanceDiagnostics {
 	}
 	m := r.maintenance
 	m.mu.RLock()
-	result := &MaintenanceDiagnostics{Region: r.region, ConsecutiveFailures: m.failures, LastAttemptAt: timePointer(m.lastAttempt), LastSuccessAt: timePointer(m.lastSuccess), EvidenceReason: m.evidenceReason, CertificateRenewalFailed: m.renewalFailed}
+	result := &MaintenanceDiagnostics{Region: r.region, ConsecutiveFailures: m.failures, LastAttemptAt: timePointer(m.lastAttempt), LastSuccessAt: timePointer(m.lastSuccess), EvidenceReason: m.evidenceReason, CertificateRenewalFailed: m.renewalFailed, RefusedCatalogs: m.refusedCatalogs}
 	if result.EvidenceReason == "" {
 		result.EvidenceReason = m.validityReason(m.evidence.now())
 	}

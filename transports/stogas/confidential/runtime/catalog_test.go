@@ -7,6 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -77,16 +80,20 @@ func TestApprovedCatalogSelectionRespectsGatewayCompatibility(t *testing.T) {
 		value.Release.MinimumGatewaySequence = minimum
 		return value
 	}
-	summary.Catalogs = []approvedCatalog{makeCatalog("newer-incompatible", 10, 5), makeCatalog("older", 2, 2), makeCatalog("compatible", 8, 4)}
-	selected, ok := summary.catalog("gateway")
-	if !ok || selected.ID != "compatible" {
-		t.Fatal("selected incompatible or superseded catalog")
+	// The verifier summary orders catalogs by increasing sequence.
+	summary.Catalogs = []approvedCatalog{makeCatalog("older", 2, 2), makeCatalog("compatible", 8, 4), makeCatalog("newer-incompatible", 10, 5)}
+	var selected []string
+	for _, approved := range summary.catalogs("gateway") {
+		selected = append(selected, approved.ID)
 	}
-	if _, ok := summary.catalog("unapproved"); ok {
+	if !slices.Equal(selected, []string{"compatible", "older"}) {
+		t.Fatalf("selected %v, want compatible catalogs newest first", selected)
+	}
+	if summary.catalogs("unapproved") != nil {
 		t.Fatal("selected catalog for unapproved gateway")
 	}
-	summary.Catalogs = summary.Catalogs[:1]
-	if _, ok := summary.catalog("gateway"); ok {
+	summary.Catalogs = summary.Catalogs[2:]
+	if len(summary.catalogs("gateway")) != 0 {
 		t.Fatal("selected catalog requiring a newer gateway")
 	}
 }
@@ -118,6 +125,72 @@ func TestRejectedCatalogIsNotDownloadedAgain(t *testing.T) {
 	}
 	if reads.Load() != 2 {
 		t.Fatalf("refused catalog was downloaded again: %d reads", reads.Load())
+	}
+}
+
+func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
+	runtimeData, err := os.ReadFile("../../catalog/fallback/catalog.runtime.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicData, err := os.ReadFile("../../catalog/fallback/catalog.public.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := map[string][]byte{}
+	var reads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads.Add(1)
+		data, ok := artifacts[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/catalog/blobs/sha256/"), ".json")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	e := fixtureEvidence(t, evidenceFixture(t), server.URL)
+	gateway := approvedGateway{ID: "gateway"}
+	gateway.Release.Sequence = 4
+	makeCatalog := func(sequence uint64, runtimeData, publicData []byte, served bool) approvedCatalog {
+		approved := approvedCatalog{ID: "catalog-" + strconv.FormatUint(sequence, 10)}
+		approved.Release.Sequence, approved.Release.MinimumGatewaySequence = sequence, 4
+		digest := func(data []byte) string {
+			sum := sha256.Sum256(data)
+			if served {
+				artifacts[hex.EncodeToString(sum[:])] = data
+			}
+			return "sha256:" + hex.EncodeToString(sum[:])
+		}
+		approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest(runtimeData), int64(len(runtimeData))
+		approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest(publicData), int64(len(publicData))
+		return approved
+	}
+	// The active catalog is process state; no other test approves these bytes as catalog 7.
+	refused := []byte(`{"catalog":"not installable"}`)
+	older, newer := makeCatalog(7, runtimeData, publicData, true), makeCatalog(9, refused, refused, true)
+	e.summary.Gateways, e.summary.Catalogs = []approvedGateway{gateway}, []approvedCatalog{older, newer}
+	if err := e.updateCatalog(t.Context(), "gateway"); err != nil || !older.active() || !e.summary.activeCatalogApproved("gateway") {
+		t.Fatalf("older approved catalog was not installed after a refusal: %v", err)
+	}
+	if refusedSequences := e.refusedCatalogSequences(); !slices.Equal(refusedSequences, []uint64{9}) {
+		t.Fatalf("refused catalogs = %v", refusedSequences)
+	}
+	reads.Store(0)
+	if err := e.updateCatalog(t.Context(), "gateway"); err != nil || reads.Load() != 0 {
+		t.Fatalf("refused catalog was downloaded again: %d reads, %v", reads.Load(), err)
+	}
+	// A failed download says nothing about compatibility, so it does not fall back,
+	// and the installed approved catalog keeps serving.
+	unavailable := makeCatalog(10, []byte(`{"catalog":"missing"}`), []byte(`{"catalog":"missing"}`), false)
+	e.summary.Catalogs = []approvedCatalog{older, newer, unavailable}
+	if err := e.updateCatalog(t.Context(), "gateway"); !errors.Is(err, errCatalogUnavailable) || !older.active() || !e.summary.activeCatalogApproved("gateway") {
+		t.Fatalf("download failure replaced or withdrew the installed catalog: %v", err)
+	}
+	// Withdrawal forgets a refusal, so a later approval of the same bytes is tried again.
+	e.summary.Catalogs = []approvedCatalog{older}
+	if err := e.updateCatalog(t.Context(), "gateway"); err != nil || len(e.refusedCatalogSequences()) != 0 {
+		t.Fatalf("withdrawn catalog stayed refused: %v", err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -38,41 +39,67 @@ type catalogRejection struct {
 	publicDigest string
 }
 
-func (summary evidenceSummary) activeCatalogApproved(gatewayID string) bool {
-	var sequence uint64
-	found := false
-	for _, gateway := range summary.Gateways {
-		if gateway.ID == gatewayID {
-			sequence, found = gateway.Release.Sequence, true
-			break
-		}
-	}
-	if !found {
-		return false
-	}
-	for _, approved := range summary.Catalogs {
-		release := approved.Release
-		if release.MinimumGatewaySequence <= sequence && catalog.ActiveMatchesApproved(catalog.Identity{Sequence: release.Sequence, Digest: release.RuntimeDigest}, release.PublicDigest) {
-			return true
-		}
-	}
-	return false
+func (approved approvedCatalog) identity() catalog.Identity {
+	return catalog.Identity{Sequence: approved.Release.Sequence, Digest: approved.Release.RuntimeDigest}
 }
 
+func (approved approvedCatalog) active() bool {
+	return catalog.ActiveMatchesApproved(approved.identity(), approved.Release.PublicDigest)
+}
+
+func (approved approvedCatalog) rejection() catalogRejection {
+	return catalogRejection{identity: approved.identity(), publicDigest: approved.Release.PublicDigest}
+}
+
+func (summary evidenceSummary) activeCatalogApproved(gatewayID string) bool {
+	return slices.ContainsFunc(summary.catalogs(gatewayID), approvedCatalog.active)
+}
+
+// updateCatalog installs the newest approved compatible catalog that this binary
+// accepts. A refused catalog leaves older approved catalogs eligible, so a catalog
+// whose stated minimum gateway is too low cannot take down gateways while an older
+// approved catalog remains readable. A failed download ends the search because it
+// says nothing about whether this binary can read the catalog.
 func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string) error {
-	approved, ok := e.summary.catalog(gatewayID)
-	if !ok {
+	candidates := e.summary.catalogs(gatewayID)
+	// Forget refusals of catalogs that are no longer approved, so the list stays
+	// bounded by the approval set and a later approval of the same bytes is retried.
+	e.refusedCatalogs = slices.DeleteFunc(e.refusedCatalogs, func(refused catalogRejection) bool {
+		return !slices.ContainsFunc(candidates, func(approved approvedCatalog) bool { return approved.rejection() == refused })
+	})
+	if len(candidates) == 0 {
 		return errCatalogUnapproved
 	}
+	refusal := errCatalogIncompatible
+	for _, approved := range candidates {
+		if approved.active() {
+			return nil
+		}
+		if slices.Contains(e.refusedCatalogs, approved.rejection()) {
+			continue
+		}
+		err := e.installCatalog(parent, approved)
+		if !errors.Is(err, errCatalogIncompatible) {
+			return err
+		}
+		e.refusedCatalogs = append(e.refusedCatalogs, approved.rejection())
+		refusal = err
+	}
+	return refusal
+}
+
+// refusedCatalogSequences lists the approved compatible catalogs this binary refused.
+func (e *currentEvidence) refusedCatalogSequences() []uint64 {
+	sequences := make([]uint64, 0, len(e.refusedCatalogs))
+	for _, refused := range e.refusedCatalogs {
+		sequences = append(sequences, refused.identity.Sequence)
+	}
+	slices.Sort(sequences)
+	return sequences
+}
+
+func (e *currentEvidence) installCatalog(parent context.Context, approved approvedCatalog) error {
 	release := approved.Release
-	identity := catalog.Identity{Sequence: release.Sequence, Digest: release.RuntimeDigest}
-	if catalog.ActiveMatchesApproved(identity, release.PublicDigest) {
-		return nil
-	}
-	rejection := catalogRejection{identity: identity, publicDigest: release.PublicDigest}
-	if e.rejectedCatalog == rejection {
-		return errCatalogIncompatible
-	}
 	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
 	defer cancel()
 	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
@@ -83,8 +110,7 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	if err := catalog.InstallApproved(runtimeBytes, publicBytes, identity, release.PublicDigest); err != nil {
-		e.rejectedCatalog = rejection
+	if err := catalog.InstallApproved(runtimeBytes, publicBytes, approved.identity(), release.PublicDigest); err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
 	return nil

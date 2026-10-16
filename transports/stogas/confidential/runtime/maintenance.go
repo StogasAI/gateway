@@ -30,6 +30,7 @@ type bootMaintenance struct {
 	evidenceReason       string
 	catalogReady         bool
 	catalogErr           error
+	refusedCatalogs      []uint64
 	terminal             bool
 	lastAttempt          time.Time
 	lastSuccess          time.Time
@@ -71,6 +72,7 @@ func (m *bootMaintenance) maintain(ctx context.Context) error {
 		m.mu.Lock()
 		m.catalogReady = m.evidence.summary.activeCatalogApproved(gatewayID)
 		m.catalogErr = catalogErr
+		m.refusedCatalogs = m.evidence.refusedCatalogSequences()
 		m.mu.Unlock()
 		err = errors.Join(err, catalogErr)
 	}
