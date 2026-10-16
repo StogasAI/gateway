@@ -21,6 +21,18 @@ type Inspection struct {
 	Digest          string            `json:"digest"`
 	Effective       map[string]any    `json:"effective,omitempty"`
 	Conditions      map[string]string `json:"conditions,omitempty"`
+	Notes           []InspectionNote  `json:"notes,omitempty"`
+}
+
+// InspectionNote names another policy that affects the edited one. "kept"
+// lists sections that the policy no longer lets the edited one set; they still
+// apply. "order" means that policy's ordering applies instead of the edited
+// one's.
+type InspectionNote struct {
+	Kind     string   `json:"kind"`
+	Scope    Scope    `json:"scope"`
+	ID       string   `json:"id,omitempty"`
+	Sections []string `json:"sections,omitempty"`
 }
 
 type InspectionSource struct {
@@ -35,12 +47,15 @@ type InspectionEdit struct {
 	Previous json.RawMessage `json:"previous,omitempty"`
 }
 
-var ErrPolicyEditForbidden = errors.New("the parent policy does not allow policy edits")
+var ErrPolicyEditForbidden = errors.New("a parent policy does not permit this policy edit")
 
-type policyEditError struct{ scope Scope }
+type policyEditError struct {
+	scope, parent Scope
+	sections      []string
+}
 
 func (e policyEditError) Error() string {
-	return fmt.Sprintf("The parent policy does not allow %s policy edits", e.scope)
+	return fmt.Sprintf("The %s policy does not let %s policies set %s", e.parent, e.scope, strings.Join(e.sections, ", "))
 }
 
 func (e policyEditError) Unwrap() error { return ErrPolicyEditForbidden }
@@ -155,7 +170,7 @@ func (v *Inspector) Add(entry InspectionSource) error {
 	if v.ruleBytes > MaxCompiledBytes {
 		return configError("combined policy exceeds the size limit")
 	}
-	if v.edit == nil || v.edit.Scope != entry.Scope || v.edit.ID != "" && v.edit.ID != entry.ID {
+	if !v.edit.covers(entry) {
 		entry.Config = nil
 	}
 	v.entries = append(v.entries, entry)
@@ -183,7 +198,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if err != nil {
 		return nil, err
 	}
-	delegation, err := inspectDelegation(entries, documents, sources, edit)
+	delegation, notes, err := inspectDelegation(entries, documents, sources, edit)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +222,22 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	}
 	if len(compiled.Routing.Order) > 0 {
 		routing["order"] = compiled.Routing.Order
+	}
+	if compiled.orderScope != "" {
+		from := InspectionSource{Scope: compiled.orderScope}
+		for _, entry := range entries {
+			if entry.Scope == from.Scope {
+				from = entry
+			}
+		}
+		reference := inspectionReference(from)
+		reference["mode"] = map[bool]string{false: "required", true: "default"}[compiled.orderDefault]
+		routing["orderFrom"] = reference
+		for i, entry := range entries {
+			if edit.covers(entry) && entry.Scope != from.Scope && sources[i].Value.orders() {
+				notes = append(notes, InspectionNote{Kind: "order", Scope: from.Scope, ID: from.ID})
+			}
+		}
 	}
 	if compiled.Routing.Query != nil {
 		if len(compiled.Routing.Query.Filters) > 0 {
@@ -277,7 +308,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	if len(opaque) > 0 {
 		effective["uncheckedPlugins"] = opaque
 	}
-	return &Inspection{Compiled: compiled, CompilerVersion: CompilerVersion, Digest: ChainDigest(sources), Effective: effective}, nil
+	return &Inspection{Compiled: compiled, CompilerVersion: CompilerVersion, Digest: ChainDigest(sources), Effective: effective, Notes: notes}, nil
 }
 
 func inspectionReference(entry InspectionSource) map[string]any {
@@ -360,7 +391,14 @@ func sortedAllowedNodes(value *AllowedCatalogNodes) *AllowedCatalogNodes {
 	return &copy
 }
 
-func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, sources []ScopedSource, edit *InspectionEdit) (map[string]any, error) {
+func (e *InspectionEdit) covers(entry InspectionSource) bool {
+	return e != nil && e.Scope == entry.Scope && (e.ID == "" || e.ID == entry.ID)
+}
+
+// A policy may keep sections that its parents no longer permit, but it cannot
+// add or change them. A move passes no previous policy, so the new parents
+// check every section.
+func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, sources []ScopedSource, edit *InspectionEdit) (map[string]any, []InspectionNote, error) {
 	ids := make(map[Scope]string, len(entries))
 	for _, entry := range entries {
 		ids[entry.Scope] = entry.ID
@@ -369,22 +407,34 @@ func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, 
 	for _, scope := range []Scope{FolderScope, GrantScope, RoleScope, MemberScope, CredentialScope, KeyScope} {
 		permissions[scope] = allPermissions
 	}
+	var notes []InspectionNote
 	for i, entry := range entries {
-		source, document := sources[i].Value, documents[i]
-		editing := edit != nil && edit.Scope == entry.Scope && (edit.ID == "" || edit.ID == entry.ID)
-		if editing && entry.Scope != OrganizationScope {
-			allowed := allPermissions
-			for _, ancestor := range sources[:i] {
-				allowed &= ancestor.Value.Delegation.saved()[entry.Scope].Permission(entry.ID)
+		if edit.covers(entry) && entry.Scope != OrganizationScope {
+			kept := documents[i].usedSections
+			changed := kept
+			if edit.Previous != nil {
+				proposal, err := ParseSourceDocument(entry.Config)
+				if err != nil {
+					return nil, nil, err
+				}
+				// An unreadable previous policy keeps nothing.
+				previous, _ := ParseSourceDocument(edit.Previous)
+				changed = changedSections(proposal, previous)
 			}
-			if document.usedSections&^allowed != 0 {
-				return nil, policyEditError{scope: entry.Scope}
+			for j, parent := range sources[:i] {
+				allowed := parent.Value.Delegation.saved()[entry.Scope].Permission(entry.ID)
+				if blocked := changed &^ allowed; blocked != 0 {
+					return nil, nil, policyEditError{scope: entry.Scope, parent: entries[j].Scope, sections: blocked.sectionNames()}
+				}
+				if blocked := kept &^ allowed; blocked != 0 {
+					notes = append(notes, InspectionNote{Kind: "kept", Scope: entries[j].Scope, ID: entries[j].ID, Sections: blocked.sectionNames()})
+					kept &^= blocked
+				}
 			}
 		}
-		for target, rule := range source.Delegation.saved() {
+		for target, rule := range sources[i].Value.Delegation.saved() {
 			permissions[target] &= rule.Permission(ids[target])
 		}
-
 	}
 	result := map[string]any{}
 	for scope, permission := range permissions {
@@ -392,7 +442,7 @@ func inspectDelegation(entries []InspectionSource, documents []*SourceDocument, 
 			result[delegationTarget(scope)] = permission
 		}
 	}
-	return result, nil
+	return result, notes, nil
 }
 
 func delegationTarget(scope Scope) string {

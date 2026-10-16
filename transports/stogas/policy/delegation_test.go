@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
@@ -140,6 +142,57 @@ func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
 		_, err = ApplyRequest(base, request)
 		if allowed && err != nil || !allowed && !errors.Is(err, ErrRequestPolicyDenied) {
 			t.Fatalf("request with %v: %v", permission, err)
+		}
+	}
+}
+
+// A policy keeps sections that its parents no longer permit until someone
+// removes them, but nobody can add or change those sections.
+func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
+	org := json.RawMessage(`{"delegation":{"keys":["routing.filter","input"]}}`)
+	folder := json.RawMessage(`{"delegation":{"keys":["routing.filter","timeouts.totalSeconds"]}}`)
+	previous := `{"input":{"asciiOnly":true},"routing":{"filter":"provider.id != 'a'"},"rules":{"chat":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`
+	inspect := func(proposal string, previous json.RawMessage) (*Inspection, error) {
+		return InspectSources([]InspectionSource{
+			{Scope: OrganizationScope, Config: org},
+			{Scope: FolderScope, ID: "folder", Config: folder},
+			{Scope: KeyScope, ID: "key", Config: json.RawMessage(proposal)},
+		}, &InspectionEdit{Scope: KeyScope, ID: "key", Previous: previous})
+	}
+	kept := []InspectionNote{
+		{Kind: "kept", Scope: OrganizationScope, Sections: []string{"timeouts.totalSeconds"}},
+		{Kind: "kept", Scope: FolderScope, ID: "folder", Sections: []string{"input"}},
+	}
+	for _, proposal := range []string{
+		previous,
+		strings.Replace(previous, "provider.id != 'a'", "provider.id != 'b'", 1),
+		strings.Replace(previous, `"rules"`, `"$schema":"https://stogas.ai/schemas/key-config-v1.json","rules"`, 1),
+	} {
+		inspection, err := inspect(proposal, json.RawMessage(previous))
+		if err != nil || !reflect.DeepEqual(inspection.Notes, kept) {
+			t.Fatalf("%s: notes %+v, %v", proposal, inspection, err)
+		}
+	}
+	inspection, err := inspect(`{"rules":{"chat":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`, json.RawMessage(previous))
+	if err != nil || !reflect.DeepEqual(inspection.Notes, kept[:1]) {
+		t.Fatalf("removing a kept section: %+v, %v", inspection, err)
+	}
+	for proposal, message := range map[string]string{
+		strings.Replace(previous, `"asciiOnly":true`, `"asciiOnly":false`, 1):  "The folder policy does not let key policies set input",
+		strings.Replace(previous, `"totalSeconds":60`, `"totalSeconds":30`, 1): "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `request.route == 'chat'`, `true`, 1):        "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `"chat"`, `"chats"`, 1):                      "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `"when"`, `"mode":"default","when"`, 1):      "The organization policy does not let key policies set timeouts.totalSeconds",
+	} {
+		if _, err := inspect(proposal, json.RawMessage(previous)); !errors.Is(err, ErrPolicyEditForbidden) || err.Error() != message {
+			t.Fatalf("%s: %v", proposal, err)
+		}
+	}
+	// A move has no previous policy, so its new parents check every section.
+	for _, before := range []json.RawMessage{nil, json.RawMessage(`null`), json.RawMessage(`{}`)} {
+		_, err := inspect(previous, before)
+		if !errors.Is(err, ErrPolicyEditForbidden) || err.Error() != "The organization policy does not let key policies set timeouts.totalSeconds" {
+			t.Fatalf("previous %s: %v", before, err)
 		}
 	}
 }
