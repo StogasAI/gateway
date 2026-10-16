@@ -81,7 +81,7 @@ func newSetup(t *testing.T, reporter *setupReporter) *ServerSetup {
 			t.Error(err)
 		}
 	})
-	setup, err := NewServerSetup(attest.Production, attest.BootEvidence{Document: []byte(`{"fixture":"synthetic boot record"}`), Inclusion: []byte(`{"fixture":"synthetic inclusion"}`)}, 600*time.Second, batcher)
+	setup, err := NewServerSetup(attest.Production, attest.BootEvidence{Document: []byte(`{"fixture":"synthetic boot record"}`), Inclusion: []byte(`{"fixture":"synthetic inclusion"}`)}, time.Minute, batcher)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestSetupEstablishesReusableUniqueSession(t *testing.T) {
 			t.Fatal("reused identity or oversized setup")
 		}
 		lastID = session.ID()
-		if !bytes.Equal(response[:6], []byte(setupResponseHeader)) || binary.BigEndian.Uint32(response[38:42]) != 600 {
+		if !bytes.Equal(response[:6], []byte(setupResponseHeader)) || binary.BigEndian.Uint32(response[38:42]) != 60 {
 			t.Fatal("wrong setup metadata")
 		}
 		recipient, transcript := setupRecipient(t, seed, hello, response, setup.boot.Document)

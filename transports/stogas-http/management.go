@@ -46,10 +46,25 @@ func (s *Server) drain(ctx *requestContext) {
 
 // Operator drain leaves private diagnostics and readiness alive until the host
 // stops this instance. Admitted provider work still owns its normal deadline.
+// The listener stays open until every encryption session has expired, so each
+// request sent on one gets an authenticated refusal rather than a proxy error.
+// Without keep-alives, HTTP/1 connections close after their next response and
+// HTTP/2 connections send GOAWAY when their last stream ends.
 func (s *Server) drainPublic() {
 	s.requests.start()
 	ctx, cancel := context.WithTimeout(context.Background(), guestShutdownHardCap)
 	defer cancel()
+	s.server.SetKeepAlivesEnabled(false)
+	if s.sessions != nil {
+		poll := time.NewTicker(time.Second)
+		defer poll.Stop()
+		for s.sessions.ExpireIdle() > 0 && ctx.Err() == nil {
+			select {
+			case <-poll.C:
+			case <-ctx.Done():
+			}
+		}
+	}
 	if err := s.server.Shutdown(ctx); err != nil {
 		_ = s.server.Close()
 		if s.logger != nil {

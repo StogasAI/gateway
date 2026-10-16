@@ -117,7 +117,7 @@ func newDoSSetup(t testing.TB) *dosSetup {
 		t.Fatal("ClientHello capture failed", err)
 	}
 	probe.hello = slices.Clone(wire.output.Bytes())
-	probe.e2ee, err = NewServerSetup(attest.Production, boot, 10*time.Minute, batcher)
+	probe.e2ee, err = NewServerSetup(attest.Production, boot, time.Minute, batcher)
 	if err != nil {
 		t.Fatal(err)
 	}

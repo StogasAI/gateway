@@ -10,6 +10,12 @@ import (
 
 var ErrSessionCapacity = errors.New("encrypted session capacity exhausted")
 
+// The SDK stops sending on a session once the idle hint has passed since it
+// sent the session's last request. The store keeps the session this much
+// longer, the SDK's ceiling for opening a connection, so that a request sent
+// just before then still finds it.
+const deliveryAllowance = 15 * time.Second
+
 // SessionReservation charges the listener's aggregate memory budget before
 // setup. It covers setup and the retained session, including replay state and
 // its store entry. Release must be nonblocking and must not call back into Store.
@@ -34,7 +40,7 @@ type Store struct {
 	reserve  SessionReservation
 	sessions map[[32]byte]*storedSession
 	idle     list.List // Oldest completed use first; active requests are absent.
-	closed   bool
+	closed   bool      // No new sessions; existing ones remain until they expire.
 	stats    SessionDiagnostics
 }
 
@@ -57,7 +63,7 @@ func NewStore(setup *ServerSetup, reserve SessionReservation) (*Store, error) {
 }
 
 // Open installs a session before returning its handshake bytes. The listener
-// must Remove it if writing those bytes fails. A closed store never reopens.
+// must Remove it if writing those bytes fails. A sealed store never reopens.
 func (s *Store) Open(ctx context.Context, hello []byte) ([32]byte, []byte, error) {
 	s.mu.Lock()
 	closed := s.closed
@@ -122,6 +128,9 @@ func (s *Store) AcceptStart(id [32]byte, number uint64, encoded []byte) (*Server
 		return nil, nil, ErrClosed
 	}
 	entry.pins++
+	// A drain refuses every request it authenticates. Those refusals must not
+	// keep a session, and with it the draining gateway, alive.
+	refused := s.closed
 	s.mu.Unlock()
 
 	request, metadata, err := entry.session.AcceptStart(number, encoded)
@@ -155,7 +164,9 @@ func (s *Store) AcceptStart(id [32]byte, number uint64, encoded []byte) (*Server
 		defer s.mu.Unlock()
 		entry.active--
 		s.stats.Active--
-		entry.lastUsed = time.Now()
+		if !refused {
+			entry.lastUsed = time.Now()
+		}
 		if entry.active == 0 && !entry.retired {
 			entry.idle = s.idle.PushBack(entry)
 		}
@@ -179,7 +190,8 @@ func (s *Store) Remove(id [32]byte) {
 	}
 }
 
-func (s *Store) ExpireIdle() {
+// ExpireIdle returns the number of sessions that remain open.
+func (s *Store) ExpireIdle() int {
 	s.mu.Lock()
 	var retired, retained []*storedSession
 	now := time.Now()
@@ -203,18 +215,20 @@ func (s *Store) ExpireIdle() {
 		s.unpin(entry)
 		s.mu.Unlock()
 	}
+	return len(retained)
 }
 
-// ReclaimIdle releases the oldest unused sessions under memory pressure. The
-// one-minute grace preserves recent reuse and the delayed-start window. Pins
-// protect starts that are authenticating, as well as admitted exchanges. A
-// forged start never changes recency. The caller enforces shared byte admission.
+// ReclaimIdle releases the oldest unused sessions under memory pressure. It
+// never ends one within its idle hint, so it ends no session the SDK still
+// sends new requests on. Pins protect starts that are authenticating, as well
+// as admitted exchanges. A forged start never changes recency. The caller
+// enforces shared byte admission.
 func (s *Store) ReclaimIdle(maximum int) int {
 	if maximum <= 0 || !s.mu.TryLock() {
 		return 0
 	}
 	now := time.Now()
-	grace := min(time.Minute, time.Duration(s.setup.idleSeconds)*time.Second)
+	grace := time.Duration(s.setup.idleSeconds) * time.Second
 	var retired []*storedSession
 	for item := s.idle.Front(); item != nil && len(retired) < maximum; {
 		entry := item.Value.(*storedSession)
@@ -240,6 +254,15 @@ func (s *Store) ReclaimIdle(maximum int) int {
 	return len(retired)
 }
 
+// Seal stops new sessions. Each existing session stays until it expires, so
+// the SDK learns about a drain from an authenticated refusal of its next
+// request, which it sends again on a new session.
+func (s *Store) Seal() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+}
+
 func (s *Store) Close() {
 	s.mu.Lock()
 	s.closed = true
@@ -263,7 +286,7 @@ func (s *Store) Diagnostics() SessionDiagnostics {
 // Index helpers run under mu. A retired entry remains charged until cleanup
 // and its last authentication attempt or admitted request have finished.
 func (s *Store) expired(entry *storedSession, now time.Time) bool {
-	return entry.active == 0 && now.Sub(entry.lastUsed) >= time.Duration(s.setup.idleSeconds)*time.Second
+	return entry.active == 0 && now.Sub(entry.lastUsed) >= time.Duration(s.setup.idleSeconds)*time.Second+deliveryAllowance
 }
 
 func (s *Store) retire(id [32]byte, entry *storedSession) {

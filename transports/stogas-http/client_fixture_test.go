@@ -148,7 +148,7 @@ func serveClientFixture(path string) error {
 		return err
 	}
 	defer batcher.Close(context.Background())
-	setup, err := channel.NewServerSetup(attest.Production, attest.BootEvidence{Document: document, Inclusion: []byte(`{}`)}, 10*time.Minute, batcher)
+	setup, err := channel.NewServerSetup(attest.Production, attest.BootEvidence{Document: document, Inclusion: []byte(`{}`)}, time.Minute, batcher)
 	if err != nil {
 		return err
 	}

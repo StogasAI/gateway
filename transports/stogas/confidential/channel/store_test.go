@@ -96,8 +96,8 @@ func TestStoreIdleExpiryCountsOnlyAuthenticatedActivity(t *testing.T) {
 		store, retained := storeFixture(t, &setupReporter{})
 		id, root, initialPublic := openStoredSession(t, store)
 		defer clear(root[:])
-		idle := time.Duration(store.setup.idleSeconds) * time.Second
-		time.Sleep(idle - time.Second)
+		expiry := time.Duration(store.setup.idleSeconds)*time.Second + deliveryAllowance
+		time.Sleep(expiry - time.Second)
 		invalid := storedStart(t, root, id, initialPublic, 1)
 		invalid[len(invalid)-1] ^= 1
 		if _, _, err := store.AcceptStart(id, 1, invalid); !errors.Is(err, ErrAuthentication) {
@@ -120,13 +120,13 @@ func TestStoreIdleExpiryCountsOnlyAuthenticatedActivity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(2 * idle)
+		time.Sleep(2 * expiry)
 		store.ExpireIdle()
 		if store.Diagnostics().Open != 1 {
 			t.Fatal("active inference was counted as idle")
 		}
 		request.Close()
-		time.Sleep(idle - time.Second)
+		time.Sleep(expiry - time.Second)
 		if _, _, err := store.AcceptStart(id, 0, storedStart(t, root, id, initialPublic, 0)); !errors.Is(err, ErrReplay) {
 			t.Fatalf("duplicate became usable: %v", err)
 		}
@@ -134,6 +134,43 @@ func TestStoreIdleExpiryCountsOnlyAuthenticatedActivity(t *testing.T) {
 		store.ExpireIdle()
 		if retained.Load() != 0 || store.Diagnostics().Expired != 2 {
 			t.Fatal("duplicate traffic extended idle life")
+		}
+	})
+}
+
+func TestStoreSealKeepsSessionsWithoutRefusalsExtendingThem(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store, _ := storeFixture(t, &setupReporter{})
+		id, root, initialPublic := openStoredSession(t, store)
+		defer clear(root[:])
+		admitted, _, err := store.AcceptStart(id, 0, storedStart(t, root, id, initialPublic, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.Seal()
+		_, hello := setupVector(t)
+		if _, _, err := store.Open(context.Background(), hello); !errors.Is(err, ErrClosed) {
+			t.Fatalf("sealed store opened a session: %v", err)
+		}
+		expiry := time.Duration(store.setup.idleSeconds)*time.Second + deliveryAllowance
+		time.Sleep(expiry)
+		if store.ExpireIdle() != 1 {
+			t.Fatal("seal ended a session with an admitted request")
+		}
+		// The client may reuse the session for an expiry after this request ends.
+		admitted.Close()
+		time.Sleep(expiry - time.Second)
+		refused, _, err := store.AcceptStart(id, 1, storedStart(t, root, id, initialPublic, 1))
+		if err != nil {
+			t.Fatalf("sealed store could not authenticate a refusal: %v", err)
+		}
+		refused.Close()
+		if store.ExpireIdle() != 1 {
+			t.Fatal("session expired before its idle deadline")
+		}
+		time.Sleep(time.Second)
+		if store.ExpireIdle() != 0 || store.Diagnostics().Expired != 1 {
+			t.Fatal("a request after the seal extended the session")
 		}
 	})
 }

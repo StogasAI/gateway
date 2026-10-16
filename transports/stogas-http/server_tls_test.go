@@ -204,7 +204,7 @@ func TestUnreadyGatewayReleasesConnectionsAndSessions(t *testing.T) {
 		}
 		body, _ := io.ReadAll(response.Body)
 		response.Body.Close()
-		if (response.ProtoMajor == 2) != http2 || response.StatusCode != http.StatusServiceUnavailable || !bytes.Contains(body, []byte("gateway_unavailable")) {
+		if (response.ProtoMajor == 2) != http2 || response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Stogas-Refused") != "?1" || !bytes.Contains(body, []byte("gateway_unavailable")) {
 			t.Fatalf("HTTP/%d unready response %d %s", response.ProtoMajor, response.StatusCode, body)
 		}
 		select {
@@ -218,8 +218,8 @@ func TestUnreadyGatewayReleasesConnectionsAndSessions(t *testing.T) {
 	f.server.secure = &confidentialruntime.Runtime{}
 	wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), []byte("{}"))
 	result, body := readSessionResponse(t, f.post(t, wire, true), decoder)
-	if result.Status != http.StatusServiceUnavailable || !result.Closing || !bytes.Contains(body, []byte("gateway_unavailable")) {
-		t.Fatal("unready gateway kept the encrypted session")
+	if result.Status != http.StatusServiceUnavailable || !result.Refused || !bytes.Contains(body, []byte("gateway_unavailable")) {
+		t.Fatal("unready gateway did not refuse inside the session")
 	}
 }
 
