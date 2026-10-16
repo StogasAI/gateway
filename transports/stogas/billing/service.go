@@ -309,6 +309,9 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
+	if err := s.callerFailures.refused(claims.admissionKey, time.Now()); err != nil {
+		return claims, err
+	}
 	if err := s.callerBackoff(claims.admissionKey, time.Now()); err != nil {
 		return claims, err
 	}
@@ -654,7 +657,7 @@ func authorizationResultError(result string) error {
 		return err
 	}
 	switch result {
-	case "invalid_key", "hold_missing":
+	case "invalid_key":
 		return ErrInvalidAPIKey
 	case "key_secret_replaced":
 		return ErrAPIKeyOldSecret

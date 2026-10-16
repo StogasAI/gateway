@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -91,6 +92,36 @@ func TestOrganizationAbuseLimitIsSharedByKeysAndDashboard(t *testing.T) {
 	if service.localRequests.attempts.Load() != before {
 		t.Fatal("unauthenticated key consumed an organization's allowance")
 	}
+}
+
+func TestRefusedKeySpendsNoOrganizationAllowance(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const secret = "test-api-key-pepper"
+		raw := testSignedAPIKey(t, secret, "019de515-eabf-7c0e-89bd-400629a79580",
+			"019de516-7df8-71d6-80e4-3c62090d4e94", "019de516-b10f-786f-97f8-b95c71dfe1b6", "", apiKeyVersion)
+		service := &Service{apiKeyPepper: secret}
+		claims, err := service.ParseAPIKey(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// PostgreSQL found that the key has a new secret.
+		service.RecordCallerFailure(claims, nil, 401, ErrAPIKeyOldSecret.Code)
+		spent := service.localRequests.attempts.Load()
+		for range localRequestBurst + 1 {
+			if _, err := service.ParseAPIKey(raw); !errors.Is(err, ErrAPIKeyOldSecret) {
+				t.Fatalf("refused secret got %v", err)
+			}
+			service.RecordCallerFailure(claims, nil, 401, ErrAPIKeyOldSecret.Code)
+		}
+		if service.localRequests.attempts.Load() != spent {
+			t.Fatal("a refused secret spent its organization's allowance")
+		}
+		// Refusals from memory do not extend the minute, so PostgreSQL decides again after it.
+		time.Sleep(refusedAPIKeyDuration)
+		if _, err := service.ParseAPIKey(raw); err != nil {
+			t.Fatalf("refusal outlasted its minute: %v", err)
+		}
+	})
 }
 
 func TestVerifiedAPIKeyCacheCopiesClaims(t *testing.T) {
@@ -348,7 +379,7 @@ func TestCallerFailuresIncludeInfrastructureButExcludeCancellationAndBackoff(t *
 }
 
 // Rotation keeps the key ID, and the replaced secret still passes the MAC
-// check. Its failures must not delay the current secret, sibling keys or
+// check. Its refusal must not reach the current secret, sibling keys or
 // dashboard sessions, and dashboard failures must not delay API secrets.
 func TestCallerFailuresIsolateSecretsAndDashboardSessions(t *testing.T) {
 	const secret = "test-api-key-pepper"
@@ -366,9 +397,9 @@ func TestCallerFailuresIsolateSecretsAndDashboardSessions(t *testing.T) {
 	if err != nil || currentClaims.KeyID != replacedClaims.KeyID {
 		t.Fatalf("reissued secret: %v", err)
 	}
-	service.RecordCallerFailure(replacedClaims, nil, 401, ErrInvalidAPIKey.Code)
-	if _, err := service.ParseAPIKey(replaced); !errors.Is(err, ErrAbuseRateLimit) {
-		t.Fatalf("replaced secret was not delayed: %v", err)
+	service.RecordCallerFailure(replacedClaims, nil, 401, ErrAPIKeyOldSecret.Code)
+	if _, err := service.ParseAPIKey(replaced); !errors.Is(err, ErrAPIKeyOldSecret) {
+		t.Fatalf("replaced secret was not refused: %v", err)
 	}
 	for _, raw := range []string{current, sibling} {
 		if _, err := service.ParseAPIKey(raw); err != nil {
