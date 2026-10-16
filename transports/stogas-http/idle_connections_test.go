@@ -110,13 +110,19 @@ func TestStalledSocketsCannotKeepClientsOut(t *testing.T) {
 		var timeout net.Error
 		return errors.As(err, &timeout) && timeout.Timeout()
 	}
-	oldest := stall("192.0.2.30:1000")
-	newer := stall("192.0.2.31:1000")
-	for start := time.Now(); gateway.memory.reserved.Load() != 2*connectionRetainedBytes; time.Sleep(time.Millisecond) {
-		if time.Since(start) > 5*time.Second {
-			t.Fatal("stalled sockets were not charged")
+	charged := func(sockets int64) {
+		for start := time.Now(); gateway.memory.reserved.Load() != sockets*connectionRetainedBytes; time.Sleep(time.Millisecond) {
+			if time.Since(start) > 5*time.Second {
+				t.Fatal("stalled sockets were not charged")
+			}
 		}
 	}
+	// Each socket is charged and ordered on its own goroutine, so wait for the
+	// first charge before opening the socket that must be newer.
+	oldest := stall("192.0.2.30:1000")
+	charged(1)
+	newer := stall("192.0.2.31:1000")
+	charged(2)
 	// A source over its setup allowance is refused before its memory charge,
 	// so it cannot make the gateway close anyone else's socket.
 	exhaustedAt := time.Now().Add(time.Hour)
