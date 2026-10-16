@@ -17,11 +17,10 @@ import (
 func azureTestCredential(t *testing.T) string {
 	t.Helper()
 	encoded, err := json.Marshal(azureByokCredential{
-		ClientID:        "00000000-0000-4000-8000-000000000002",
-		ClientSecret:    "azure-client-secret",
-		Schema:          azureByokSchema,
-		SubscriptionIDs: []string{"00000000-0000-4000-8000-000000000003"},
-		TenantID:        "00000000-0000-4000-8000-000000000001",
+		ClientID:     "00000000-0000-4000-8000-000000000002",
+		ClientSecret: "azure-client-secret",
+		Schema:       azureByokSchema,
+		TenantID:     "00000000-0000-4000-8000-000000000001",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -31,7 +30,6 @@ func azureTestCredential(t *testing.T) string {
 
 func azureTestBinding() billing.AzureBinding {
 	return billing.AzureBinding{
-		AccountLocation:    "eastus",
 		DeploymentName:     "customer-sol",
 		DeploymentType:     "global_standard",
 		Endpoint:           "https://stogas-ai.openai.azure.com",
@@ -151,7 +149,7 @@ func TestAzureOnlyCredentialSelectsItsConfiguredDeploymentWithoutSecretAccess(t 
 func TestParseAzureByokCredential(t *testing.T) {
 	valid := azureTestCredential(t)
 	parsed, err := parseAzureByokCredential(valid)
-	if err != nil || parsed.ClientSecret != "azure-client-secret" || len(parsed.SubscriptionIDs) != 1 {
+	if err != nil || parsed.ClientSecret != "azure-client-secret" {
 		t.Fatalf("valid Azure credential = %#v, err=%v", parsed, err)
 	}
 
@@ -161,13 +159,7 @@ func TestParseAzureByokCredential(t *testing.T) {
 		"unknown schema":      strings.Replace(valid, azureByokSchema, "unknown", 1),
 		"unknown field":       strings.Replace(valid, `"schema"`, `"extra":true,"schema"`, 1),
 		"invalid client ID":   strings.Replace(valid, "00000000-0000-4000-8000-000000000002", "client", 1),
-		"duplicate subscription": strings.Replace(
-			valid,
-			`["00000000-0000-4000-8000-000000000003"]`,
-			`["00000000-0000-4000-8000-000000000003","00000000-0000-4000-8000-000000000003"]`,
-			1,
-		),
-		"trailing JSON": valid + `{}`,
+		"trailing JSON":       valid + `{}`,
 	}
 	for name, raw := range tests {
 		t.Run(name, func(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	azureByokSchema        = "stogas.azure-byok.v5"
+	azureByokSchema        = "stogas.azure-byok.v6"
 	azureDeploymentNameMax = 256
 	azureDataScope         = "https://ai.azure.com/.default"
 )
@@ -27,11 +27,10 @@ var (
 )
 
 type azureByokCredential struct {
-	ClientID        string   `json:"clientId"`
-	ClientSecret    string   `json:"clientSecret"`
-	Schema          string   `json:"schema"`
-	SubscriptionIDs []string `json:"subscriptionIds"`
-	TenantID        string   `json:"tenantId"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
+	Schema       string `json:"schema"`
+	TenantID     string `json:"tenantId"`
 }
 
 // CredentialDeploymentFilter narrows catalog candidates using cached public
@@ -135,23 +134,8 @@ func parseAzureByokCredential(raw string) (azureByokCredential, error) {
 	if credential.Schema != azureByokSchema ||
 		!azureUUIDPattern.MatchString(credential.ClientID) ||
 		!azureUUIDPattern.MatchString(credential.TenantID) ||
-		!validUpstreamAPIKey(credential.ClientSecret) ||
-		len(credential.SubscriptionIDs) < 1 || len(credential.SubscriptionIDs) > 64 {
+		!validUpstreamAPIKey(credential.ClientSecret) {
 		return azureByokCredential{}, errors.New("invalid Azure BYOK")
-	}
-	seen := make(map[string]struct{}, len(credential.SubscriptionIDs))
-	previous := ""
-	for index, subscriptionID := range credential.SubscriptionIDs {
-		subscriptionID = strings.ToLower(strings.TrimSpace(subscriptionID))
-		if !azureUUIDPattern.MatchString(subscriptionID) || subscriptionID <= previous {
-			return azureByokCredential{}, errors.New("invalid Azure BYOK")
-		}
-		if _, exists := seen[subscriptionID]; exists {
-			return azureByokCredential{}, errors.New("invalid Azure BYOK")
-		}
-		seen[subscriptionID] = struct{}{}
-		credential.SubscriptionIDs[index] = subscriptionID
-		previous = subscriptionID
 	}
 	return credential, nil
 }
