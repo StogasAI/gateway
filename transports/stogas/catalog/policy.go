@@ -72,25 +72,32 @@ func routingSelectionsForRequest(
 	requestedTier string,
 	config *policy.Config,
 	availableCredentials map[string][]int,
+	trace *routingTrace,
 ) ([]routingSelection, error) {
 	snap := activeState()
 	if snap == nil {
 		return nil, ErrCatalogUnavailable
 	}
 	if requestedModel == "" {
-		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, nil, "")
+		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, nil, "", trace)
 	}
 	if qualifier, selector := splitQualifiedModel(requestedModel); snap.groups[selector] {
-		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, qualifier, selector)
+		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, qualifier, selector, trace)
 	}
-	providers := snap.routeModelProviders(route, requestedModel, availableCredentials)
-	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, providers, config)
+	providers := snap.routeModelProviders(route, requestedModel, availableCredentials, trace)
+	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, requestedTier, providers, config, trace)
 	if len(providers) == 0 {
 		return nil, ErrModelUnavailable
 	}
 	selections := make([]routingSelection, 0)
 	for _, provider := range providers {
-		selections = append(selections, routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)...)
+		deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)
+		if trace != nil && len(deployments) == 0 && requestedTier != "" {
+			if _, ok := snap.deploymentForRouteTier(provider, requestedModel, route, ""); ok {
+				trace.removeProvider(provider, RemovedServiceTier)
+			}
+		}
+		selections = append(selections, deployments...)
 	}
 	if len(selections) == 0 {
 		if requestedTier != "" {
@@ -105,27 +112,42 @@ func routingSelectionsForRequest(
 // ordering. The pool holds every model, or the group's models; deployments that need approval
 // join it only through exact selectors. Enumerate the catalog once, before request parsing and
 // token work.
-func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, availableCredentials map[string][]int, qualifier []string, group string) ([]routingSelection, error) {
+//
+// A trace names providers without credentials and deployments that need approval. For a group,
+// it also names providers that serve the group only through another interface.
+func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, availableCredentials map[string][]int, qualifier []string, group string, trace *routingTrace) ([]routingSelection, error) {
 	tier := requestedTier
 	if tier == "" {
 		tier = TierStandard
 	}
 	selections := make([]routingSelection, 0)
+	skipped := providerSkips{trace: trace}
 	for _, routeNode := range snap.graph.Routes {
-		if !routeSupportsInterface(routeNode, route) {
-			continue
-		}
 		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if availableCredentials != nil && len(availableCredentials[routeNode.ProviderID]) == 0 {
+		supported := routeSupportsInterface(routeNode, route)
+		credentialed := availableCredentials == nil || len(availableCredentials[routeNode.ProviderID]) > 0
+		if trace == nil && (!supported || !credentialed) || trace != nil && !supported && group == "" {
 			continue
 		}
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := snap.graph.Deployments[id]
-			if !deploymentAvailableNow(compiled) || compiled.ApprovalRequired || compiled.Upstream.ReasoningMode != "" || compiled.Upstream.ServiceTier != tier {
+			if !deploymentAvailableNow(compiled) || compiled.Upstream.ReasoningMode != "" || compiled.Upstream.ServiceTier != tier {
 				continue
 			}
 			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
 				!snap.qualifierMatches(qualifier, routeNode.ProviderID, compiled.ModelID)) {
+				continue
+			}
+			if !supported || !credentialed {
+				skipped.add(provider, supported)
+				break
+			}
+			if compiled.ApprovalRequired {
+				if trace != nil {
+					if deployment, ok := snap.deploymentFromCompiled(id, routeNode); ok {
+						trace.removeSelection(routingSelection{deployment: deployment, provider: provider}, RemovedApproval, nil)
+					}
+				}
 				continue
 			}
 			deployment, ok := snap.deploymentFromCompiled(id, routeNode)
@@ -134,6 +156,10 @@ func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, 
 			}
 		}
 	}
+	for _, selection := range selections {
+		skipped.served(selection.provider)
+	}
+	skipped.record()
 	if len(selections) == 0 {
 		if requestedTier != "" {
 			return nil, ErrServiceTierUnavailable
@@ -156,8 +182,10 @@ func filterRoutingProvidersByAllowedNodes(
 	snap *snapshot,
 	route Route,
 	requestedModel string,
+	requestedTier string,
 	providers []schemas.ModelProvider,
 	config *policy.Config,
+	trace *routingTrace,
 ) []schemas.ModelProvider {
 	if snap == nil || config == nil || config.Routing.AllowedCatalogNodes == nil {
 		return providers
@@ -194,6 +222,15 @@ func filterRoutingProvidersByAllowedNodes(
 		}
 		if matched {
 			filtered = append(filtered, provider)
+		} else if trace != nil {
+			// Name the deployments that the provider would otherwise serve.
+			deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)
+			if len(deployments) == 0 {
+				deployments = routingDeploymentsForProvider(snap, route, provider, requestedModel, "")
+			}
+			for _, selection := range deployments {
+				trace.removeSelection(selection, RemovedAllowedNodes, nodesOrigin(config, selection.deployment))
+			}
 		}
 	}
 	return filtered
@@ -228,11 +265,13 @@ func filterProviderSelections(selections []routingSelection, preference Provider
 	return kept, nil
 }
 
-func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config) []routingSelection {
+func filterRoutingSelectionsByPolicy(selections []routingSelection, config *policy.Config, trace *routingTrace) []routingSelection {
 	filtered := selections[:0]
 	for _, selection := range selections {
 		if policyAllowsSelection(config, selection) {
 			filtered = append(filtered, selection)
+		} else if trace != nil {
+			trace.removeSelection(selection, RemovedAllowedNodes, nodesOrigin(config, selection.deployment))
 		}
 	}
 	return filtered
@@ -302,17 +341,20 @@ func routingDeploymentsForProvider(
 type routingCandidates struct {
 	filtered []*ResolvedRequest
 	values   map[*ResolvedRequest]*resolvedPolicyValues
+	trace    *routingTrace
 }
 
-func policyMatches(config *policy.Config, values *resolvedPolicyValues) (bool, error) {
+// policyFilterFailure returns the index of the first routing filter that
+// removes a candidate, or -1, and whether that filter read only stated facts.
+func policyFilterFailure(config *policy.Config, values *resolvedPolicyValues) (int, bool, error) {
 	if config == nil || config.Routing.Query == nil {
-		return true, nil
+		return -1, true, nil
 	}
-	matches, err := config.Routing.Query.Matches(values)
+	index, known, err := config.Routing.Query.FirstFailure(values)
 	if err != nil {
-		return false, policyEvaluationError(err)
+		return index, known, policyEvaluationError(err)
 	}
-	return matches, nil
+	return index, known, nil
 }
 
 func (r *routingCandidates) add(candidate *ResolvedRequest, values *resolvedPolicyValues) {
@@ -341,14 +383,22 @@ func (r *routingCandidates) finish(preference ProviderRoutingPreference) ([][]*R
 		ordering = config.Routing
 	}
 	if filtered[0].RequestedModel != "" {
-		filtered = newestModelCandidates(filtered)
+		newest := newestModelCandidates(filtered)
+		if r.trace != nil && len(newest) < len(filtered) {
+			r.recordOlderModels(filtered, releaseDate(newest[0]))
+		}
+		filtered = newest
 	}
 	query := ordering.Query
 	if query != nil && len(query.OrderBy) == 0 {
 		query = nil
 	}
 	if len(ordering.Order) == 0 && query == nil && spansModels(filtered) {
-		return nil, ambiguousModelError(filtered)
+		models := candidateModels(filtered)
+		if r.trace != nil {
+			r.trace.ambiguous = models
+		}
+		return nil, ambiguousModelError(models)
 	}
 	snap := activeState()
 	if snap == nil {
@@ -478,7 +528,23 @@ func spansModels(group []*ResolvedRequest) bool {
 	return false
 }
 
-func ambiguousModelError(resolved []*ResolvedRequest) APIError {
+// recordOlderModels names each deployment of a model released before newest.
+func (r *routingCandidates) recordOlderModels(candidates []*ResolvedRequest, newest string) {
+	type pair struct {
+		provider   schemas.ModelProvider
+		deployment string
+	}
+	seen := map[pair]bool{}
+	for _, candidate := range candidates {
+		key := pair{candidate.Provider, candidate.Deployment.ID}
+		if releaseDate(candidate) < newest && !seen[key] {
+			seen[key] = true
+			r.trace.removeSelection(routingSelection{provider: candidate.Provider, deployment: candidate.Deployment}, RemovedOlderModel, nil)
+		}
+	}
+}
+
+func candidateModels(resolved []*ResolvedRequest) []string {
 	models := make([]string, 0, len(resolved))
 	seen := map[string]bool{}
 	for _, candidate := range resolved {
@@ -489,6 +555,10 @@ func ambiguousModelError(resolved []*ResolvedRequest) APIError {
 		}
 	}
 	sort.Strings(models)
+	return models
+}
+
+func ambiguousModelError(models []string) APIError {
 	message := ErrModelAmbiguous.Message
 	// Error output stays bounded when many models remain.
 	if len(models) <= 8 {

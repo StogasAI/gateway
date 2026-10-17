@@ -68,6 +68,7 @@ func PublicError(err error) APIError {
 type RequestInput struct {
 	now          time.Time
 	policyBudget *policy.CELBudget
+	trace        *routingTrace
 	Body         []byte
 	// Fields, when supplied, must come from DecodeRequestBody for this Body.
 	Fields              map[string]json.RawMessage
@@ -709,17 +710,23 @@ func compileRequestPolicy(rawData map[string]json.RawMessage, input RequestInput
 	return request, requestPolicyError(err)
 }
 
-func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, error) {
-	body, rawData, config := input.Body, input.Fields, input.Policy
-	redactionPolicy, loadRedactionPolicy, credentialPolicy := input.RedactionPolicy, input.LoadRedactionPolicy, input.CredentialPolicy
-	var err error
+// planInputRoutes decodes the body once and plans its routes.
+func planInputRoutes(input RequestInput, route Route) (*requestPlan, error) {
+	rawData := input.Fields
 	if rawData == nil {
-		rawData, err = DecodeRequestBody(body, nil)
+		var err error
+		rawData, err = DecodeRequestBody(input.Body, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 	delete(rawData, "encryption_keys")
+	return planRoutes(input, route, rawData)
+}
+
+// planRoutes runs the routing steps that every interface shares, from the
+// request policy and field checks to catalog selection and the pair plan.
+func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMessage) (*requestPlan, error) {
 	requestPolicy, err := compileRequestPolicy(rawData, input)
 	if err != nil {
 		return nil, err
@@ -728,13 +735,19 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 		return nil, err
 	}
 	dropNoOpCompatibilityFields(rawData, route)
-	if _, err := normalizeChatStopString(rawData); err != nil {
-		return nil, err
-	}
-	if err := validateChatRawAliases(rawData); err != nil {
-		return nil, err
-	}
-	if err := validateRawReasoningParameters(rawData, chatRawReasoningFields, true, false); err != nil {
+	tokenFields := []string{"max_output_tokens"}
+	if route == RouteChat {
+		if _, err := normalizeChatStopString(rawData); err != nil {
+			return nil, err
+		}
+		if err := validateChatRawAliases(rawData); err != nil {
+			return nil, err
+		}
+		if err := validateRawReasoningParameters(rawData, chatRawReasoningFields, true, false); err != nil {
+			return nil, err
+		}
+		tokenFields = []string{"max_completion_tokens", "max_tokens"}
+	} else if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
 		return nil, err
 	}
 	base, err := requestRoutingFields(rawData)
@@ -748,17 +761,11 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	if err != nil {
 		return nil, err
 	}
-	selections, err := routingSelectionsForRequest(
-		route,
-		base.Model,
-		base.Tier,
-		config,
-		input.AvailableCredentials,
-	)
+	selections, err := routingSelectionsForRequest(route, base.Model, base.Tier, input.Policy, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
-	selections = filterRoutingSelectionsByPolicy(selections, config)
+	selections = filterRoutingSelectionsByPolicy(selections, input.Policy, input.trace)
 	if len(selections) == 0 {
 		if base.Tier != "" {
 			return nil, ErrServiceTierUnavailable
@@ -769,18 +776,23 @@ func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, err
 	if err != nil {
 		return nil, err
 	}
-	selections, err = filterRequestParameters(selections, rawData, route, "max_completion_tokens", "max_tokens")
+	selections, err = filterRequestParameters(selections, rawData, route, tokenFields...)
 	if err != nil {
 		return nil, err
 	}
-	variants := requestVariants{
-		base: RequestPolicy{Config: config, RedactionPolicy: redactionPolicy, LoadRedactionPolicy: loadRedactionPolicy},
-		load: credentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
+	variants := &requestVariants{
+		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
+		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
 	}
-	plan, err := planRequest(input, route, base.Model, providerPreference, &variants)
+	return planRequest(input, route, base.Model, providerPreference, variants)
+}
+
+func resolveChatRequests(input RequestInput, route Route) (*ResolvedRequest, error) {
+	plan, err := planInputRoutes(input, route)
 	if err != nil {
 		return nil, err
 	}
+	variants := plan.variants
 	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
 		variant, err := variants.bodyFor(candidatePolicy)
 		if err != nil {
@@ -849,71 +861,11 @@ func normalizeChatStopString(rawData map[string]json.RawMessage) (bool, error) {
 }
 
 func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest, error) {
-	body, rawData, config := input.Body, input.Fields, input.Policy
-	redactionPolicy, loadRedactionPolicy, credentialPolicy := input.RedactionPolicy, input.LoadRedactionPolicy, input.CredentialPolicy
-	var err error
-	if rawData == nil {
-		rawData, err = DecodeRequestBody(body, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	delete(rawData, "encryption_keys")
-	requestPolicy, err := compileRequestPolicy(rawData, input)
+	plan, err := planInputRoutes(input, route)
 	if err != nil {
 		return nil, err
 	}
-	if err := dropUnknownTopLevelFields(rawData, route); err != nil {
-		return nil, err
-	}
-	dropNoOpCompatibilityFields(rawData, route)
-	if err := validateRawReasoningParameters(rawData, responsesRawReasoningFields, false, true); err != nil {
-		return nil, err
-	}
-	base, err := requestRoutingFields(rawData)
-	if err != nil {
-		return nil, err
-	}
-	if _, supplied := rawData["model"]; supplied && strings.TrimSpace(base.Model) == "" {
-		return nil, ErrModelUnavailable
-	}
-	providerPreference, err := requestProviderPreference(rawData)
-	if err != nil {
-		return nil, err
-	}
-	selections, err := routingSelectionsForRequest(
-		route,
-		base.Model,
-		base.Tier,
-		config,
-		input.AvailableCredentials,
-	)
-	if err != nil {
-		return nil, err
-	}
-	selections = filterRoutingSelectionsByPolicy(selections, config)
-	if len(selections) == 0 {
-		if base.Tier != "" {
-			return nil, ErrServiceTierUnavailable
-		}
-		return nil, ErrModelUnavailable
-	}
-	selections, err = filterProviderSelections(selections, providerPreference)
-	if err != nil {
-		return nil, err
-	}
-	selections, err = filterRequestParameters(selections, rawData, route, "max_output_tokens")
-	if err != nil {
-		return nil, err
-	}
-	variants := requestVariants{
-		base: RequestPolicy{Config: config, RedactionPolicy: redactionPolicy, LoadRedactionPolicy: loadRedactionPolicy},
-		load: credentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
-	}
-	plan, err := planRequest(input, route, base.Model, providerPreference, &variants)
-	if err != nil {
-		return nil, err
-	}
+	variants := plan.variants
 	plan.resolve = func(selection routingSelection, candidatePolicy RequestPolicy) (*ResolvedRequest, error) {
 		variant, err := variants.bodyFor(candidatePolicy)
 		if err != nil {

@@ -44,8 +44,8 @@ func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, 
 	var result string
 	var claims *APIKeyClaims
 	query := "select result, key_claims from (" + strings.TrimSuffix(s.keyConfigQuery, ";") + ") as policy_authorization"
-	if err := s.db.pool.QueryRow(ctx, query, hash, keyID, actorID, sessionID, nil).Scan(&result, &claims); err != nil {
-		return nil, ErrGatewayUnavailable
+	if err := s.queryForTool(ctx, query, []any{hash, keyID, actorID, sessionID, nil, "use"}, &result, &claims); err != nil {
+		return nil, err
 	}
 	if err := authorizationResultError(result); err != nil {
 		return nil, err

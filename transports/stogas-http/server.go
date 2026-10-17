@@ -185,6 +185,8 @@ func (s *Server) routes() error {
 			s.models(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == policyValidationPath:
 			s.validatePolicy(ctx)
+		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == policySimulationPath:
+			s.simulatePolicy(ctx)
 		case ctx.request.Method == http.MethodPost && isInferencePath(ctx.request.URL.Path):
 			s.inference(ctx)
 		default:

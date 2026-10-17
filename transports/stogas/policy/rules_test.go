@@ -140,7 +140,7 @@ func (v budgetRuleValues) PolicyCELBudget() *CELBudget { return v.budget }
 func TestConstantRulesConsumeTheSharedRequestBudget(t *testing.T) {
 	for _, condition := range []string{"", `"when":"true",`} {
 		source := ruleSource(t, `{"rules":{"first":{`+condition+`"input":{"asciiOnly":true}},"second":{`+condition+`"input":{"asciiOnly":true}}}}`)
-		config, err := ComposeSources([]ScopedSource{{OrganizationScope, source}})
+		config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -169,8 +169,8 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 	role := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
-		{{OrganizationScope, org}, {RoleScope, role}, {RoleScope, other}},
-		{{OrganizationScope, org}, {RoleScope, other}, {RoleScope, role}},
+		{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: role}, {Scope: RoleScope, Value: other}},
+		{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: other}, {Scope: RoleScope, Value: role}},
 	} {
 		combined, err := ComposeSources(sources)
 		if err != nil {
@@ -206,7 +206,7 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 
 func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 	org := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"filter":"provider.id == 'openai'"},"rules":{"default_sort":{"mode":"default","routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	base, err := ComposeSources([]ScopedSource{{OrganizationScope, org}})
+	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 		t.Fatalf("request default did not replace the saved default: %+v, %v", combined, err)
 	}
 	strict := ruleSource(t, `{"delegation":{"request":["routing.sort"]},"routing":{"sort":[{"by":"provider.id"}]}}`)
-	required, err := ComposeSources([]ScopedSource{{OrganizationScope, strict}})
+	required, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: strict}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing.T) {
 	org := ruleSource(t, `{"delegation":{"request":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"totalSeconds":600}}}}`)
 	key := ruleSource(t, `{"timeouts":{"totalSeconds":1200}}`)
-	base, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, key}})
+	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,9 +298,9 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
 			// The grant's required sort is broader than the key's empty one.
-			sources := []ScopedSource{{OrganizationScope, org}, {KeyScope, empty}}
+			sources := []ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: empty}}
 			if withRequired {
-				sources = append(sources, ScopedSource{GrantScope, required})
+				sources = append(sources, ScopedSource{Scope: GrantScope, Value: required})
 				if reverse {
 					sources[1], sources[2] = sources[2], sources[1]
 				}
@@ -363,7 +363,7 @@ func TestOneRoutingOrderingApplies(t *testing.T) {
 			var sources []ScopedSource
 			for i, raw := range test.sources {
 				if raw != "" {
-					sources = append(sources, ScopedSource{scopes[i], ruleSource(t, raw)})
+					sources = append(sources, ScopedSource{Scope: scopes[i], Value: ruleSource(t, raw)})
 				}
 			}
 			combined, err := ComposeSources(sources)
@@ -388,7 +388,7 @@ func TestOneRoutingOrderingApplies(t *testing.T) {
 	// routing.order and routing.sort form one ordering from one policy.
 	org := ruleSource(t, `{"routing":{"order":["deployment-b"],"sort":[{"by":"provider.id"}]}}`)
 	key := ruleSource(t, `{"routing":{"order":["deployment-a"]}}`)
-	combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, key}})
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil || !slices.Equal(combined.Routing.Order, []string{"deployment-b"}) || len(combined.Routing.Query.OrderBy) != 1 {
 		t.Fatalf("ordering mixed policies: %+v, %v", combined, err)
 	}
@@ -418,6 +418,80 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 	source := ruleSource(t, `{"rules":{"r":{"mode":"default","routing":{"filter":"provider.id != 'x'","order":["deployment-a"],`+sort+`}}}}`)
 	if source.defaultOrdering == nil || len(source.defaultOrdering.sorts) != 1 || source.Rules[0].Value.orders() || len(source.Rules[0].Value.Config.Routing.Query.Filters) != 1 {
 		t.Fatalf("default ordering did not move to its policy: %+v", source)
+	}
+}
+
+// A routing simulation names the policy, and the rule, behind each decision.
+func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
+	org := ruleSource(t, `{"routing":{"allowedCatalogNodes":{"providers":["openai","anthropic"]},"filter":"provider.id != 'blocked'","fallbacks":2},"rules":{"order":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
+	folder := ruleSource(t, `{"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"routing":{"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
+	key := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","access":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
+	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: FolderScope, Value: folder}, {Scope: KeyScope, Value: key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = base.Activate(ruleValues{})
+	var unknown *UnknownConditionError
+	if !errors.As(err, &unknown) || !errors.Is(err, ErrUnknownCondition) || unknown.Origin != (Origin{Source: 2, Rule: "chat"}) || unknown.Condition != "request.route == 'chat'" {
+		t.Fatalf("undecided condition = %#v", err)
+	}
+	active, err := base.Activate(ruleValues{"request.route": {Type: "string", String: "chat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	located := func(origin Origin, found bool) string {
+		return fmt.Sprintf("%d%s %v", origin.Source, origin.Rule, found)
+	}
+	monday, tuesday := time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC), time.Date(2026, 10, 13, 10, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name      string
+		got, want string
+	}{
+		// The folder's default filter yields to the organization's required one.
+		{"first filter", located(active.FilterOrigin(0)), "0 true"},
+		{"rule filter", located(active.FilterOrigin(1)), "2chat true"},
+		{"no filter", located(active.FilterOrigin(2)), "0 false"},
+		{"policy deny", located(active.DenyOrigin(monday)), "1 true"},
+		{"rule deny", located(active.DenyOrigin(tuesday)), "2chat true"},
+		{"inactive rule deny", located(base.DenyOrigin(tuesday)), "0 false"},
+		{"policy nodes", located(active.NodesOrigin("openai", "gpt", "chutes-gpt", "chutes", "chutes")), "0 true"},
+		{"rule nodes", located(active.NodesOrigin("openai", "gpt", "openai-b", "openai", "openai")), "2chat true"},
+		{"allowed nodes", located(active.NodesOrigin("openai", "gpt", "openai-a", "openai", "openai")), "0 false"},
+		{"smallest fallbacks", located(active.FallbacksOrigin()), "1 true"},
+		{"default order", located(active.OrderOrigin()), "0order true"},
+	} {
+		if test.got != test.want {
+			t.Errorf("%s: origin %s, want %s", test.name, test.got, test.want)
+		}
+	}
+	if len(active.Routing.Query.Filters) != 2 || active.Routing.Fallbacks != 1 {
+		t.Fatalf("composition changed: %+v", active.Routing)
+	}
+	required, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}, {Scope: KeyScope, Value: ruleSource(t, `{"routing":{"order":["a"]}}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := located(required.OrderOrigin()); got != "1 true" {
+		t.Fatalf("required order origin %s", got)
+	}
+	if got := located(required.FallbacksOrigin()); got != "0 false" {
+		t.Fatalf("default fallbacks origin %s", got)
+	}
+	query := active.Routing.Query
+	for _, test := range []struct {
+		values ruleValues
+		index  int
+		known  bool
+	}{
+		{ruleValues{"provider.id": {Type: "string", String: "openai"}, "deployment.id": {Type: "string", String: "openai-a"}}, -1, true},
+		{ruleValues{"provider.id": {Type: "string", String: "blocked"}}, 0, true},
+		{ruleValues{"provider.id": {Type: "string", String: "openai"}}, 1, false},
+		{ruleValues{"provider.id": {Type: "string", String: "openai"}, "deployment.id": {Type: "string", String: "openai-b"}}, 1, true},
+	} {
+		index, known, err := query.FirstFailure(test.values)
+		if err != nil || index != test.index || known != test.known {
+			t.Fatalf("first failure for %v = %d known %v: %v", test.values, index, known, err)
+		}
 	}
 }
 
@@ -453,21 +527,21 @@ func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 		`{"rules":{"r":{"mode":"default","routing":{"sort":[{"by":"random()"}]}}}}`,
 	} {
 		for _, scope := range []Scope{CredentialScope, RoleScope, MemberScope} {
-			if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {scope, ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), string(scope)+" policies cannot") {
+			if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: scope, Value: ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), string(scope)+" policies cannot") {
 				t.Fatalf("%s ordering accepted: %s: %v", scope, raw, err)
 			}
 		}
 		for _, scope := range []Scope{FolderScope, GrantScope, KeyScope} {
-			if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {scope, ruleSource(t, raw)}}); err != nil {
+			if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: scope, Value: ruleSource(t, raw)}}); err != nil {
 				t.Fatalf("%s ordering rejected: %s: %v", scope, raw, err)
 			}
 		}
 	}
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, ruleSource(t, `{"routing":{"fallbacks":1}}`)}}); err == nil {
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: ruleSource(t, `{"routing":{"fallbacks":1}}`)}}); err == nil {
 		t.Fatal("credential fallbacks accepted")
 	}
 	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {CredentialScope, allowed}}); err != nil {
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: allowed}}); err != nil {
 		t.Fatalf("credential restriction rejected: %v", err)
 	}
 }
@@ -480,7 +554,7 @@ func TestRuleConditionsAreTypedAndNeverTreatUnknownAsFalse(t *testing.T) {
 		}
 	}
 	source := ruleSource(t, `{"rules":{"restricted":{"when":"deployment.weightPrecision == 'fp8'","input":{"asciiOnly":true}}}}`)
-	config, err := ComposeSources([]ScopedSource{{OrganizationScope, source}})
+	config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +570,7 @@ func TestRuleCounterIdentityIgnoresFormatting(t *testing.T) {
 	if first.Rules[0].ConditionDigest() != formatted.Rules[0].ConditionDigest() || first.Rules[0].ConditionDigest() == different.Rules[0].ConditionDigest() {
 		t.Fatal("counter condition identity changed incorrectly")
 	}
-	config, err := ComposeSources([]ScopedSource{{OrganizationScope, first}})
+	config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: first}})
 	if err != nil {
 		t.Fatal(err)
 	}

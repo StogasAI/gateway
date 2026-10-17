@@ -84,7 +84,8 @@ func stopsPlan(err error) bool {
 // token count, or credential decryption is part of catalog enumeration.
 func planRequest(input RequestInput, route Route, model string, preference ProviderRoutingPreference, variants *requestVariants) (*requestPlan, error) {
 	const maxPairs = 1 + policy.MaxFallbacks
-	var candidates routingCandidates
+	trace := input.trace
+	candidates := routingCandidates{trace: trace}
 	credentials := make(map[*ResolvedRequest][]int, len(variants.selections))
 	ranks := make(map[credentialCandidate]int)
 	var firstErr error
@@ -107,10 +108,14 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			// Credentials are tried in assignment order, so later ones cannot
 			// fit within the request's pairs once they are full.
 			if retained == maxPairs {
+				for _, rest := range indexes[rank:] {
+					trace.removePair(selection, rest, nil, RemovedCandidate{Reason: RemovedPairLimit})
+				}
 				break
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
 			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment) {
+				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialTarget})
 				continue
 			}
 			value, err := variants.policyFor(selection.provider, index)
@@ -124,12 +129,20 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				if firstErr == nil {
 					firstErr = err
 				}
+				if trace != nil {
+					trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredential, Code: PublicError(err).Code})
+				}
 				continue
 			}
 			original := value.Config
 			if existing, found := groups[original]; found {
-				if existing != nil && len(credentials[existing]) < maxPairs {
+				switch {
+				case existing == nil:
+					trace.removeGrouped(selection, index, original)
+				case len(credentials[existing]) < maxPairs:
 					credentials[existing] = append(credentials[existing], index)
+				default:
+					trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedPairLimit})
 				}
 				continue
 			}
@@ -141,6 +154,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				if firstErr == nil {
 					firstErr = policyEvaluationError(err)
 				}
+				if unknown := (*policy.UnknownConditionError)(nil); trace != nil && errors.As(err, &unknown) {
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedCondition, Origin: &unknown.Origin, Expression: unknown.Condition})
+				}
 				continue
 			}
 			if err != nil {
@@ -150,23 +166,38 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 				if firstErr == nil {
 					firstErr = ErrScheduleDenied
 				}
+				if trace != nil {
+					origin, _ := value.Config.DenyOrigin(input.now)
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedDeny, Origin: &origin})
+				}
 				continue
 			}
 			if !policyAllowsSelection(value.Config, selection) {
+				if trace != nil {
+					trace.removePair(selection, index, original, RemovedCandidate{Reason: RemovedAllowedNodes, Origin: nodesOrigin(value.Config, selection.deployment)})
+				}
 				continue
 			}
-			matches, err := policyMatches(value.Config, values)
+			failed, known, err := policyFilterFailure(value.Config, values)
 			if err != nil {
 				return nil, err
 			}
-			if matches {
-				candidate := template
-				candidate.CredentialIndex, candidate.policy = index, value.Config
-				candidates.add(&candidate, values)
-				groups[original] = &candidate
-				credentials[&candidate] = []int{index}
-				retained++
+			if failed >= 0 {
+				if trace != nil {
+					entry := RemovedCandidate{Reason: RemovedFilter, Expression: value.Config.Routing.Query.Filters[failed].Source, Unknown: !known}
+					if origin, ok := value.Config.FilterOrigin(failed); ok {
+						entry.Origin = &origin
+					}
+					trace.removePair(selection, index, original, entry)
+				}
+				continue
 			}
+			candidate := template
+			candidate.CredentialIndex, candidate.policy = index, value.Config
+			candidates.add(&candidate, values)
+			groups[original] = &candidate
+			credentials[&candidate] = []int{index}
+			retained++
 		}
 	}
 	if len(candidates.filtered) == 0 && firstErr != nil {
@@ -194,7 +225,8 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 		sort.SliceStable(added, func(i, j int) bool {
 			return ranks[credentialCandidate{added[i].candidate.Provider, added[i].index}] < ranks[credentialCandidate{added[j].candidate.Provider, added[j].index}]
 		})
-		if len(plan.choices) >= plan.slots {
+		// A simulation lists the pairs that the fallback count leaves untried.
+		if len(plan.choices) >= plan.slots && trace == nil {
 			break
 		}
 	}

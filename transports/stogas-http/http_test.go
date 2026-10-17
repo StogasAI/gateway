@@ -219,26 +219,30 @@ func TestTransientMemoryPressureShedsWorkWithoutFailingReadiness(t *testing.T) {
 }
 
 func TestDenseJSONIsRejectedBeforeConfigurationFetchOrPolicyCompilation(t *testing.T) {
-	for _, path := range []string{"/v1/chat/completions", policyValidationPath} {
+	for _, path := range []string{"/v1/chat/completions", policyValidationPath, policySimulationPath} {
 		t.Run(path, func(t *testing.T) {
 			server := &Server{memory: &requestMemoryAdmission{budget: minimumRequestWeightBytes}}
 			ctx := newTestRequest(t)
 			ctx.memory.release()
 			ctx.request.Method = http.MethodPost
 			testRequestURI(ctx, path)
-			field := "messages"
-			if path == policyValidationPath {
-				field = "policySources"
+			field := map[string]string{policyValidationPath: "policySources", policySimulationPath: "policy"}[path]
+			if field == "" {
+				field = "messages"
 			}
 			testRequestBody(ctx, `{"`+field+`":[`+strings.Repeat(`{},`, 6000)+`{}]}`)
 			ctx.memory, _ = server.memory.acquire(cap(ctx.body))
 			t.Cleanup(ctx.memory.release)
 			ctx.credential = &apiCredential{Raw: "authenticated-fixture"}
-			if path == policyValidationPath {
+			// No runtime/database is installed: reaching configuration fetch
+			// instead of admission would fail this test.
+			switch path {
+			case policyValidationPath:
 				server.validatePolicy(ctx)
-			} else {
-				// No runtime/database is installed: reaching configuration fetch
-				// instead of admission would fail this test.
+			case policySimulationPath:
+				ctx.credential = &apiCredential{Dashboard: &billing.DashboardCredential{}}
+				server.simulatePolicy(ctx)
+			default:
 				server.inference(ctx)
 			}
 			if testResponse(ctx).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(ctx).Body.String(), "gateway_capacity_exceeded") {

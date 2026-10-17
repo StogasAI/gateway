@@ -130,7 +130,7 @@ func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
 				t.Fatalf("saved %s with %v: %v", config, permission, err)
 			}
 		}
-		base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, string(parent))}})
+		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
 		if err != nil {
 			t.Fatal(err)
 		}

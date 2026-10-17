@@ -166,19 +166,26 @@ func (q *Query) validate() error {
 }
 
 func (q *Query) Matches(values Values) (bool, error) {
+	index, _, err := q.FirstFailure(values)
+	return index < 0 && err == nil, err
+}
+
+// FirstFailure returns the index of the first filter that removes a candidate,
+// or -1, and whether that filter read only available fields.
+func (q *Query) FirstFailure(values Values) (index int, known bool, err error) {
 	if q == nil {
-		return true, nil
+		return -1, true, nil
 	}
-	for _, filter := range q.Filters {
+	for i, filter := range q.Filters {
 		known, matches, _, err := filter.Evaluate(values, policyTime(values))
 		if err != nil {
-			return false, fmt.Errorf("routing filter evaluation failed: %w", err)
+			return i, true, fmt.Errorf("routing filter evaluation failed: %w", err)
 		}
 		if !known || !matches {
-			return false, nil
+			return i, known, nil
 		}
 	}
-	return true, nil
+	return -1, true, nil
 }
 
 func (q *Query) SameOrder(other *Query) bool {

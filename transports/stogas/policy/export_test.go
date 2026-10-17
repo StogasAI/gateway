@@ -47,7 +47,7 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 		{"conditional skips", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "anthropic", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, tc.org)}, {KeyScope, ruleSource(t, tc.key)}})
+			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, tc.org)}, {Scope: KeyScope, Value: ruleSource(t, tc.key)}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +88,7 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, section := range []string{"plugins.stogasRedaction", "plugins.stogasExport", "plugins"} {
-		base, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)}})
+		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,7 +111,7 @@ func TestExportAggregateDestinationBound(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasExport": map[string]any{"destinations": destinations}}})
 	source := ruleSource(t, string(raw))
 	child := ruleSource(t, `{"plugins":{"stogasExport":{"destinations":[{"url":"https://other.example/"}]}}}`)
-	combined, err := ComposeSources([]ScopedSource{{OrganizationScope, source}, {KeyScope, child}})
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: KeyScope, Value: child}})
 	if err == nil {
 		_, err = combined.Activate(ruleValues{})
 	}

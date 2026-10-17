@@ -22,7 +22,8 @@ const keyConfigArguments = `
   $2::text,
   $3::text,
   $4::text,
-  $5::jsonb
+  $5::jsonb,
+  $6::text
 `
 
 const keyConfigColumns = "result, key_id, policy_sources, key_claims, credentials_generation, credentials, credential_sources"
@@ -214,6 +215,7 @@ func (s *Service) fetchKeyConfig(
 		dashboardActorUserID,
 		dashboardSessionID,
 		pins.known,
+		"use",
 	).Scan(
 		&row.Result,
 		&row.KeyID,
@@ -240,6 +242,19 @@ func (s *Service) fetchKeyConfig(
 	if claims != nil && (row.Claims == nil || row.Claims.KeyID != claims.KeyID || row.Claims.OrganizationID != claims.OrganizationID || row.Claims.ResponsibleID != claims.ResponsibleID || derefString(row.Claims.GrantID) != derefString(claims.GrantID)) {
 		return nil, ErrInvalidAPIKey
 	}
+	snapshot, err := s.composeKeyConfig(row, pins, encryptionKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer s.keyConfigs.releaseSources(snapshot.sourceRefs)
+	return s.keyConfigs.put(cacheKey, snapshot, checkedAt), nil
+}
+
+// composeKeyConfig compiles a key's policies and checks its credentials. The
+// caller releases the snapshot's source references. An invalid combination
+// fails every request until someone changes a policy, so it is not reported
+// as an unavailable gateway.
+func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encryptionKeys customerkey.Keys) (*KeyConfigSnapshot, error) {
 	if len(row.Sources) < 2 || len(row.Sources) > 36 {
 		return nil, ErrGatewayUnavailable
 	}
@@ -250,12 +265,11 @@ func (s *Service) fetchKeyConfig(
 	}
 	sources, err := s.keyConfigs.acquireSourceDelta(row.Sources, row.Claims.OrganizationID, pins, encryptionKeys)
 	if err != nil {
-		if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) || errors.Is(err, policy.ErrSourceBudget) {
+		if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) || errors.Is(err, policy.ErrInvalidConfig) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
-	defer s.keyConfigs.releaseSources(sources)
 	versions := make(PolicyVersions, len(sources))
 	values := make([]policy.ScopedSource, len(sources))
 	for i, source := range sources {
@@ -264,19 +278,20 @@ func (s *Service) fetchKeyConfig(
 	}
 	digest := policy.ChainDigest(values)
 	compiled, err := s.keyConfigs.composeSources(values, digest)
+	if err == nil {
+		err = restoreCredentialPolicySources(row.Credentials, pins, row.CredentialSources)
+	}
+	if err == nil && (row.CredentialsGeneration == nil || *row.CredentialsGeneration < 1 || validateCredentials(row.Claims, row.Credentials) != nil) {
+		err = ErrGatewayUnavailable
+	}
 	if err != nil {
-		if errors.Is(err, policy.ErrSourceBudget) {
+		s.keyConfigs.releaseSources(sources)
+		if errors.Is(err, policy.ErrInvalidConfig) || errors.Is(err, ErrGatewayUnavailable) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
-	if err := restoreCredentialPolicySources(row.Credentials, pins, row.CredentialSources); err != nil {
-		return nil, err
-	}
-	if row.CredentialsGeneration == nil || *row.CredentialsGeneration < 1 || validateCredentials(row.Claims, row.Credentials) != nil {
-		return nil, ErrGatewayUnavailable
-	}
-	snapshot := &KeyConfigSnapshot{
+	return &KeyConfigSnapshot{
 		Claims: row.Claims,
 		PolicySnapshot: PolicySnapshot{
 			Versions: &versions, Config: compiled, Digest: digest,
@@ -285,8 +300,24 @@ func (s *Service) fetchKeyConfig(
 		},
 		CredentialsGeneration: *row.CredentialsGeneration,
 		Credentials:           row.Credentials,
+	}, nil
+}
+
+// queryForTool runs a configuration read for a tool that serves no request,
+// such as policy validation or a routing simulation. Tools share a third of
+// the database connections, so they cannot delay the reads and holds of
+// requests.
+func (s *Service) queryForTool(ctx context.Context, query string, arguments []any, destinations ...any) error {
+	select {
+	case s.toolQueries <- struct{}{}:
+	case <-ctx.Done():
+		return ErrGatewayUnavailable
 	}
-	return s.keyConfigs.put(cacheKey, snapshot, checkedAt), nil
+	defer func() { <-s.toolQueries }()
+	if err := s.db.pool.QueryRow(ctx, query, arguments...).Scan(destinations...); err != nil {
+		return fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+	}
+	return nil
 }
 
 // A hold renews only the snapshot it actually checked, measured from before the

@@ -28,6 +28,15 @@ type RuleMatch struct {
 
 var ErrUnknownCondition = errors.New("policy condition requires a catalog fact that is unavailable")
 
+// UnknownConditionError locates a rule whose condition could not be decided.
+type UnknownConditionError struct {
+	Origin    Origin
+	Condition string
+}
+
+func (e *UnknownConditionError) Error() string { return ErrUnknownCondition.Error() }
+func (e *UnknownConditionError) Unwrap() error { return ErrUnknownCondition }
+
 type ruleDocument struct {
 	fields map[string]json.RawMessage
 	source *SourceDocument
@@ -173,7 +182,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 					return nil, err
 				}
 				if !known {
-					return nil, ErrUnknownCondition
+					return nil, &UnknownConditionError{Origin: Origin{Source: index, Rule: rule.Name}, Condition: rule.When.Source}
 				}
 				if !matched {
 					continue
@@ -182,7 +191,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 			part := *rule.Value
 			part.defaultSettings = rule.Default
 			part.encryptedPlugins = rule.Encrypted
-			active = append(active, ScopedSource{Scope: entry.Scope, Value: &part})
+			active = append(active, ScopedSource{Scope: entry.Scope, Value: &part, rule: rule.Name, policy: index})
 			if rule.HasLimits {
 				matches = append(matches, RuleMatch{Source: index, Name: rule.Name})
 			}
@@ -198,7 +207,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 		}
 	}
 	out.ActiveRules, out.ActiveEncryptedPlugins = matches, opaque
-	out.activated = true
+	out.sources, out.activated = active, true
 	return out, nil
 }
 

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
@@ -50,6 +51,8 @@ type Source struct {
 type ordering struct {
 	order []string
 	sorts []Sort
+	// rule names the default rule that set this ordering.
+	rule string
 }
 
 // Ordering scopes form one chain from the organization to the request. Role
@@ -63,9 +66,9 @@ func (o *ordering) same(other *ordering) bool {
 
 // takeOrdering moves a default rule's ordering to its policy, so composition
 // chooses it without activating rules.
-func (s *Source) takeOrdering() *ordering {
+func (s *Source) takeOrdering(rule string) *ordering {
 	routing := &s.Config.Routing
-	taken := &ordering{order: routing.Order}
+	taken := &ordering{order: routing.Order, rule: rule}
 	routing.Order = nil
 	if query := routing.Query; query != nil {
 		taken.sorts, query.OrderBy = query.OrderBy, nil
@@ -461,7 +464,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 		if source.settings&orderingPermissions != 0 || source.defaultOrdering != nil {
 			return nil, configError("set routing.order and routing.sort once per policy: at the top level, or in one rule with mode default and no when")
 		}
-		source.defaultOrdering = rule.Value.takeOrdering()
+		source.defaultOrdering = rule.Value.takeOrdering(rule.Name)
 	}
 	source.size.nodes = compiler.nodes - initialNodes
 	return source, nil
@@ -695,6 +698,104 @@ func (s Scope) Valid() bool {
 type ScopedSource struct {
 	Scope Scope
 	Value *Source
+	// Activation adds a matched rule's settings with the rule's name and the
+	// position of its policy.
+	rule   string
+	policy int
+}
+
+// Origin locates a composed setting by the position of its policy among the
+// composed sources and, for a setting from a rule, the rule's name. Positions
+// identify policies because equal content may belong to several resources.
+type Origin struct {
+	Source int
+	Rule   string
+}
+
+func (c *Config) origin(index int) Origin {
+	if entry := c.sources[index]; entry.rule != "" {
+		return Origin{Source: entry.policy, Rule: entry.rule}
+	}
+	return Origin{Source: index}
+}
+
+// allowedSettings returns the units a source may set. A default yields each
+// unit that a required setting holds.
+func (c *Config) allowedSettings(source *Source) Permission {
+	if source.defaultSettings {
+		return requestPermissions &^ c.requiredSettings
+	}
+	return requestPermissions
+}
+
+// FilterOrigin locates the composed routing filter at index.
+func (c *Config) FilterOrigin(index int) (Origin, bool) {
+	for i, entry := range c.sources {
+		query := entry.Value.Config.Routing.Query
+		if query == nil || c.allowedSettings(entry.Value)&permissionFilter == 0 {
+			continue
+		}
+		if index < len(query.Filters) {
+			return c.origin(i), true
+		}
+		index -= len(query.Filters)
+	}
+	return Origin{}, false
+}
+
+// DenyOrigin locates the first deny period that covers now.
+func (c *Config) DenyOrigin(now time.Time) (Origin, bool) {
+	for i, entry := range c.sources {
+		access := entry.Value.Config.Access
+		if access == nil || c.allowedSettings(entry.Value)&permissionAccess == 0 {
+			continue
+		}
+		for index := range access.Deny {
+			if access.Deny[index].covers(now) {
+				return c.origin(i), true
+			}
+		}
+	}
+	return Origin{}, false
+}
+
+// NodesOrigin locates the first allowed catalog nodes that exclude a candidate.
+func (c *Config) NodesOrigin(authorID, modelID, deploymentID, routeID, providerID string) (Origin, bool) {
+	for i, entry := range c.sources {
+		if c.allowedSettings(entry.Value)&permissionNodes != 0 &&
+			!entry.Value.Config.Routing.AllowedCatalogNodes.Allows(authorID, modelID, deploymentID, routeID, providerID) {
+			return c.origin(i), true
+		}
+	}
+	return Origin{}, false
+}
+
+// FallbacksOrigin locates the policy that sets the composed fallback count.
+func (c *Config) FallbacksOrigin() (Origin, bool) {
+	for i, entry := range c.sources {
+		if c.allowedSettings(entry.Value)&entry.Value.settings&permissionFallbacks != 0 &&
+			entry.Value.Config.Routing.Fallbacks == c.Routing.Fallbacks {
+			return c.origin(i), true
+		}
+	}
+	return Origin{}, false
+}
+
+// OrderOrigin locates the policy, and for a default ordering its rule, that
+// sets the composed routing order and sort.
+func (c *Config) OrderOrigin() (Origin, bool) {
+	for i, entry := range c.sources {
+		if entry.Scope != c.orderScope || entry.rule != "" {
+			continue
+		}
+		if c.orderDefault && entry.Value.defaultOrdering != nil {
+			return Origin{Source: i, Rule: entry.Value.defaultOrdering.rule}, true
+		}
+		if !c.orderDefault && entry.Value.settings&orderingPermissions != 0 {
+			return Origin{Source: i}, true
+		}
+	}
+	return Origin{}, false
 }
 
 func ChainDigest(sources []ScopedSource) string {
@@ -821,10 +922,7 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 			}
 		}
 		config := source.Config
-		allowed := requestPermissions
-		if source.defaultSettings {
-			allowed &^= out.requiredSettings
-		}
+		allowed := out.allowedSettings(source)
 		if source.Delegation != nil && source.Delegation.Request != nil {
 			hasRequestPermission = true
 			out.RequestPermission &= *source.Delegation.Request
