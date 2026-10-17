@@ -41,8 +41,8 @@ func TestResponseDeadlinePreservesProviderLifetimeAndFinalUsage(t *testing.T) {
 				}
 				request, cancelRequest := schemas.NewBifrostContextWithTimeout(t.Context(), time.Hour)
 				var defaults *policy.Timeouts
-				ctx.responseWait = newResponseDeadline(time.Now(), total, defaults.OutputIdle())
-				ctx.responseWait.startOutput()
+				ctx.responseWait = newResponseDeadline(time.Now(), total)
+				ctx.responseWait.startOutput(defaults.OutputIdle())
 				cancel := func() { ctx.responseWait.stop(); cancelRequest() }
 				defer cancel()
 				state := &stogas.State{Pair: stogas.Pair{Adapter: stogas.DefaultAdapter{}, Resolution: &catalog.ResolvedRequest{Route: catalog.RouteChat}}}
@@ -137,7 +137,7 @@ func TestRequestTimeoutIncludesPreparationAndRejectsExpiredAdmission(t *testing.
 		}
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
-		if !ctx.responseWait.timedOut() || request.Err() != nil || ctx.responseWait.startOutput() {
+		if !ctx.responseWait.timedOut() || request.Err() != nil || ctx.responseWait.startOutput(time.Minute) {
 			t.Fatal("expired preparation permitted dispatch or canceled the provider lifetime")
 		}
 		request, state, cancel, err = newRequestContext(newTestRequest(t), startedAt, resolution, apiCredential{}, "")
@@ -152,8 +152,8 @@ func TestOutputTimeoutPreservesUsageOnProviderStartupFailure(t *testing.T) {
 		ctx := newTestRequest(t)
 		request, cancel := schemas.NewBifrostContextWithCancel(t.Context())
 		defer cancel()
-		ctx.responseWait = newResponseDeadline(time.Now(), time.Hour, time.Second)
-		ctx.responseWait.startOutput()
+		ctx.responseWait = newResponseDeadline(time.Now(), time.Hour)
+		ctx.responseWait.startOutput(time.Second)
 		time.Sleep(time.Second)
 		synctest.Wait()
 		if request.Err() != nil {

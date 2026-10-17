@@ -21,19 +21,20 @@ type responseDeadline struct {
 	expired  bool
 }
 
-func newResponseDeadline(startedAt time.Time, total, idle time.Duration) *responseDeadline {
+func newResponseDeadline(startedAt time.Time, total time.Duration) *responseDeadline {
 	ctx, cancel := context.WithCancel(context.Background())
 	deadline := startedAt.Add(total)
-	wait := &responseDeadline{total: deadline, deadline: deadline, idle: idle, context: ctx, cancel: cancel}
+	wait := &responseDeadline{total: deadline, deadline: deadline, context: ctx, cancel: cancel}
 	wait.mu.Lock()
 	wait.timer = time.AfterFunc(time.Until(deadline), wait.check)
 	wait.mu.Unlock()
 	return wait
 }
 
-// startOutput gives a provider call its output idle window. Each retry and
-// fallback call gets a new window within the total deadline.
-func (wait *responseDeadline) startOutput() bool {
+// startOutput gives a provider call the output idle window of its pair's
+// policy. Each retry and fallback call gets a new window within the total
+// deadline.
+func (wait *responseDeadline) startOutput(idle time.Duration) bool {
 	if wait == nil {
 		return true
 	}
@@ -48,7 +49,8 @@ func (wait *responseDeadline) startOutput() bool {
 		wait.expire()
 		return false
 	}
-	next := now.Add(wait.idle)
+	wait.idle = idle
+	next := now.Add(idle)
 	if next.After(wait.total) {
 		next = wait.total
 	}
