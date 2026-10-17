@@ -247,10 +247,14 @@ func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesSt
 
 func TestCustomerRequestBodyEndUserIDsReachOpenAI(t *testing.T) {
 	_, customer := customerOpenAICredential(t)
+	long := strings.Repeat("a", 65)
 	for _, tc := range []struct{ name, route, fields, user, safety string }{
 		{"chat", "chat/completions", `"messages":[{"role":"user","content":"hi"}],"user":"user-1","safety_identifier":"hash-1"`, "user-1", "hash-1"},
 		{"responses", "responses", `"input":"hi","user":"user-1","safety_identifier":"hash-1"`, "user-1", "hash-1"},
 		{"empty values name no user", "chat/completions", `"messages":[{"role":"user","content":"hi"}],"user":"","safety_identifier":null`, "", ""},
+		// Core drops a user longer than 64 characters, which the docs state;
+		// OpenAI itself accepted 4,096 characters in both fields on Oct 17, 2026.
+		{"core drops a long user", "responses", `"input":"hi","user":"` + long + `","safety_identifier":"` + long + `"`, "", long},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Body: []byte(`{"model":"openai/gpt-5.5",` + tc.fields + `}`)})
