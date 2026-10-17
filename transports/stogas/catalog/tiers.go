@@ -36,10 +36,18 @@ var providerServiceTiers = map[schemas.ModelProvider]map[string]schemas.BifrostS
 	schemas.Anthropic: {TierStandard: "default", TierFast: "default"},
 }
 
-// standardOnly serves providers, and Azure models other than OpenAI's, that take no service_tier.
+// standardOnly serves providers, and Azure models other than OpenAI's and Claude, that take no
+// service_tier.
 var standardOnly = map[string]schemas.BifrostServiceTier{TierStandard: ""}
 
+// claudeOnAzure sends no tier either: Azure sells Claude Fast as its own model, which runs every
+// request at Fast, and rejects speed.
+var claudeOnAzure = map[string]schemas.BifrostServiceTier{TierStandard: "", TierFast: ""}
+
 func offeredTiers(provider schemas.ModelProvider, modelFormat string) map[string]schemas.BifrostServiceTier {
+	if provider == schemas.Azure && modelFormat == "Anthropic" {
+		return claudeOnAzure
+	}
 	if tiers, ok := providerServiceTiers[provider]; ok && (provider != schemas.Azure || modelFormat == "OpenAI") {
 		return tiers
 	}
@@ -59,10 +67,10 @@ func requestedTier(value *schemas.BifrostServiceTier) (string, error) {
 }
 
 // ReportedTier returns the tier that a provider response reports, or "" when it reports none.
-// Claude reports Fast mode in speed; its service_tier describes Priority Tier capacity instead.
-// Providers without tiers can report nothing that Stogas bills.
-func ReportedTier(provider schemas.ModelProvider, serviceTier *schemas.BifrostServiceTier, speed *string) string {
-	if provider == schemas.Anthropic {
+// Claude, on Anthropic or Azure, reports Fast mode in speed; its service_tier describes Priority
+// Tier capacity instead. Providers without tiers can report nothing that Stogas bills.
+func ReportedTier(provider schemas.ModelProvider, modelFormat string, serviceTier *schemas.BifrostServiceTier, speed *string) string {
+	if provider == schemas.Anthropic || provider == schemas.Azure && modelFormat == "Anthropic" {
 		serviceTier = (*schemas.BifrostServiceTier)(speed)
 	}
 	if _, tiered := providerServiceTiers[provider]; !tiered || serviceTier == nil {

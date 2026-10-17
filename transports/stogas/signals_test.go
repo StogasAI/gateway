@@ -858,6 +858,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 	tests := []struct {
 		name          string
 		provider      schemas.ModelProvider
+		modelFormat   string
 		selectedTier  string
 		processing    string
 		currentTier   string
@@ -876,6 +877,9 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 		{name: "Anthropic Fast can fall back to Standard", provider: schemas.Anthropic, selectedTier: catalog.TierFast, reportedSpeed: "standard"},
 		{name: "Anthropic Standard cannot become Fast", provider: schemas.Anthropic, reportedSpeed: "fast", wantError: true},
 		{name: "Anthropic Priority Tier capacity is not Fast", provider: schemas.Anthropic, reportedTier: "priority"},
+		{name: "Azure Claude Fast can fall back to Standard", provider: schemas.Azure, modelFormat: "Anthropic", selectedTier: catalog.TierFast, reportedSpeed: "standard"},
+		{name: "Azure Claude Standard cannot become Fast", provider: schemas.Azure, modelFormat: "Anthropic", reportedSpeed: "fast", wantError: true},
+		{name: "Azure Claude Priority Tier capacity is not Fast", provider: schemas.Azure, modelFormat: "Anthropic", reportedTier: "priority"},
 		{name: "unknown OpenAI tier is ignored", provider: schemas.OpenAI, reportedTier: "scale"},
 		{name: "OpenAI speed is ignored", provider: schemas.OpenAI, reportedSpeed: "fast"},
 		{name: "Chutes tier is ignored", provider: catalog.ProviderChutes, reportedTier: "priority"},
@@ -903,7 +907,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 					Resolution: &catalog.ResolvedRequest{
 						Provider: tc.provider,
 						Deployment: catalog.Deployment{
-							Upstream:     catalog.Upstream{ServiceTier: selectedTier},
+							Upstream:     catalog.Upstream{ServiceTier: selectedTier, ModelFormat: tc.modelFormat},
 							DataHandling: catalog.DataHandling{ProcessingLocation: tc.processing},
 						},
 					},
