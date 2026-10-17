@@ -305,5 +305,5 @@ func chain(handler requestHandler, middlewares ...func(requestHandler) requestHa
 }
 
 func isGatewayRequestPath(path string) bool {
-	return path == policyValidationPath || isInferencePath(path)
+	return path == policyValidationPath || path == policySimulationPath || isInferencePath(path)
 }

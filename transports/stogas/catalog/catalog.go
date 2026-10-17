@@ -158,9 +158,12 @@ func providerInList(provider schemas.ModelProvider, providers []schemas.ModelPro
 	return false
 }
 
-func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[string][]int) []schemas.ModelProvider {
+// routeModelProviders returns the providers whose routes serve the requested
+// model on the interface and have a credential. A trace names the others.
+func (s *snapshot) routeModelProviders(route Route, requested string, allowed map[string][]int, trace *routingTrace) []schemas.ModelProvider {
 	seen := map[schemas.ModelProvider]bool{}
 	providers := []schemas.ModelProvider{}
+	skipped := providerSkips{trace: trace}
 	// Exact deployment selectors visit only that deployment's routes.
 	_, selector := splitQualifiedModel(requested)
 	if deployment, pinned := s.graph.Deployments[selector]; pinned {
@@ -168,21 +171,26 @@ func (s *snapshot) routeModelProviders(route Route, requested string, allowed ma
 			routeNode := s.graph.Routes[routeID]
 			provider := schemas.ModelProvider(routeNode.ProviderID)
 			if !routeSupportsInterface(routeNode, route) || (allowed != nil && len(allowed[routeNode.ProviderID]) == 0) {
+				if trace != nil && s.servesModel(routeNode, requested) {
+					skipped.add(provider, routeSupportsInterface(routeNode, route))
+				}
 				continue
 			}
 			if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID != "" && !seen[provider] {
 				seen[provider] = true
+				skipped.served(provider)
 				providers = append(providers, provider)
 			}
 		}
+		skipped.record()
 		return providers
 	}
 	for _, routeNode := range s.graph.Routes {
-		if !routeSupportsInterface(routeNode, route) {
-			continue
-		}
 		provider := schemas.ModelProvider(routeNode.ProviderID)
-		if allowed != nil && len(allowed[string(provider)]) == 0 {
+		if !routeSupportsInterface(routeNode, route) || allowed != nil && len(allowed[string(provider)]) == 0 {
+			if trace != nil && s.servesModel(routeNode, requested) {
+				skipped.add(provider, routeSupportsInterface(routeNode, route))
+			}
 			continue
 		}
 		if deploymentID, _ := s.deploymentIDFor(routeNode, requested); deploymentID == "" {
@@ -192,10 +200,17 @@ func (s *snapshot) routeModelProviders(route Route, requested string, allowed ma
 			continue
 		}
 		seen[provider] = true
+		skipped.served(provider)
 		providers = append(providers, provider)
 	}
+	skipped.record()
 	sort.Slice(providers, func(i, j int) bool { return providers[i] < providers[j] })
 	return providers
+}
+
+func (s *snapshot) servesModel(route compiledRoute, requested string) bool {
+	deploymentID, _ := s.deploymentIDFor(route, requested)
+	return deploymentID != ""
 }
 
 func (s *snapshot) resolveProviderPreferences(preferences []string) ([]schemas.ModelProvider, error) {

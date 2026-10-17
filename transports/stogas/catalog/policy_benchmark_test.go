@@ -242,11 +242,11 @@ func finalizeRoutingCandidates(resolved []*ResolvedRequest, config *policy.Confi
 		if !ok {
 			continue
 		}
-		matched, err := policyMatches(config, values)
+		failed, _, err := policyFilterFailure(config, values)
 		if err != nil {
 			return nil, err
 		}
-		if matched {
+		if failed < 0 {
 			candidate.policy = config
 			result.add(candidate, values)
 		}

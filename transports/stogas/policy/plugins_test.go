@@ -18,9 +18,9 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 		{"shared plugin default unit", []string{`{"rules":{"extract":{"mode":"default","plugins":{"stogasTextExtraction":true}}}}`, `{"plugins":{"stogasRedaction":{}}}`}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sources := []ScopedSource{{OrganizationScope, ruleSource(t, `{}`)}}
+			sources := []ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}}
 			for _, raw := range tc.sources {
-				sources = append(sources, ScopedSource{RoleScope, ruleSource(t, raw)})
+				sources = append(sources, ScopedSource{Scope: RoleScope, Value: ruleSource(t, raw)})
 			}
 			combined, err := ComposeSources(sources)
 			if err != nil {
@@ -54,7 +54,7 @@ func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
 	}
 	for _, section := range []string{"plugins.stogasRedaction", "plugins.stogasTextExtraction", "plugins"} {
 		source := ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)
-		base, err := ComposeSources([]ScopedSource{{OrganizationScope, source}})
+		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -325,14 +325,17 @@ func (c *Config) DeniedAt(now time.Time) bool {
 		return false
 	}
 	for index := range c.Access.Deny {
-		window := &c.Access.Deny[index]
-		local := now.In(window.location)
-		minute := local.Hour()*60 + local.Minute()
-		if window.weekdays[local.Weekday()] && minute >= window.startMinute && minute < window.endMinute {
+		if c.Access.Deny[index].covers(now) {
 			return true
 		}
 	}
 	return false
+}
+
+func (w *DenyWindow) covers(now time.Time) bool {
+	local := now.In(w.location)
+	minute := local.Hour()*60 + local.Minute()
+	return w.weekdays[local.Weekday()] && minute >= w.startMinute && minute < w.endMinute
 }
 
 func (a *AllowedCatalogNodes) Allows(authorID, modelID, deploymentID, routeID, providerID string) bool {

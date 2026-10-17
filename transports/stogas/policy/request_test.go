@@ -31,7 +31,7 @@ func TestSourceQueryCorpus(t *testing.T) {
 
 func requestParent(t *testing.T, raw string) *Config {
 	t.Helper()
-	config, err := ComposeSources([]ScopedSource{{OrganizationScope, ruleSource(t, raw)}})
+	config, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, raw)}})
 	if err != nil {
 		t.Fatal(err)
 	}

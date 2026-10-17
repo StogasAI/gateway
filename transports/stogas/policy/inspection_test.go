@@ -162,7 +162,7 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				sources = append(sources, ScopedSource{scope, source})
+				sources = append(sources, ScopedSource{Scope: scope, Value: source})
 				err = inspector.Add(InspectionSource{Scope: scope, Config: raw})
 				if index < 2 && err != nil || index == 2 && (err == nil || !strings.Contains(err.Error(), "size limit")) {
 					t.Fatalf("source %d: wrong size result: %v", index, err)
@@ -282,7 +282,7 @@ func TestInspectionRejectsRuleOverflowBeforeRetainingAnotherSource(t *testing.T)
 	if len(inspector.sources) != 2 {
 		t.Fatal("overflow retained another source")
 	}
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, source}, {RoleScope, source}, {KeyScope, source}}); err == nil {
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: RoleScope, Value: source}, {Scope: KeyScope, Value: source}}); err == nil {
 		t.Fatal("runtime accepted the same oversized rule combination")
 	}
 }

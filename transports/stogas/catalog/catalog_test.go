@@ -297,7 +297,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"open-ai/gpt-5.5-2026-04-23",
 		"open-ai/open-ai/gpt-5.5-2026-04-23",
 	} {
-		providers := snap.routeModelProviders(RouteResponses, requested, nil)
+		providers := snap.routeModelProviders(RouteResponses, requested, nil, nil)
 		if len(providers) != 1 || providers[0] != schemas.OpenAI {
 			t.Fatalf("%s: providers=%v", requested, providers)
 		}
@@ -309,7 +309,7 @@ func TestCatalogResolvesStructuralQualificationWithoutGeneratedPermutations(t *t
 		"openai/openai/openai/gpt-5.5-2026-04-23",
 		"gpt-5.5-latest",
 	} {
-		if providers := snap.routeModelProviders(RouteResponses, requested, nil); len(providers) != 0 {
+		if providers := snap.routeModelProviders(RouteResponses, requested, nil, nil); len(providers) != 0 {
 			t.Fatalf("%s: expected a closed miss, providers=%v", requested, providers)
 		}
 	}

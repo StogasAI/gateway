@@ -93,7 +93,7 @@ func validCredentialValue(value string) bool {
 
 func (s *Server) requireAPIKey(ctx *requestContext) (apiCredential, bool) {
 	route, ok := catalog.RouteForPath(ctx.request.URL.Path)
-	if ctx.request.URL.Path == policyValidationPath {
+	if ctx.request.URL.Path == policyValidationPath || ctx.request.URL.Path == policySimulationPath {
 		route, ok = catalog.RouteChat, true
 	}
 	if !ok {

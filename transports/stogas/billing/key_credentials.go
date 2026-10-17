@@ -323,8 +323,18 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 	if err != nil {
 		return nil, err
 	}
+	compiled, err := s.selectionPolicy(selection, now, budget)
+	if err != nil {
+		return nil, err
+	}
+	return compiled, compiled.checkEncryptionKeys(key)
+}
+
+// selectionPolicy composes the key's policies with the selected credential's
+// policy, which applies just before the key's own.
+func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now time.Time, budget *policy.SourceBudget) (*PolicySnapshot, error) {
 	if selection.ID == "" {
-		return &s.PolicySnapshot, s.checkEncryptionKeys(key)
+		return &s.PolicySnapshot, nil
 	}
 	if selection.Credential == nil {
 		return nil, ErrByok
@@ -344,10 +354,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 	compiled := s.credentialPolicies[selection.ID]
 	c.mu.Unlock()
 	if compiled != nil {
-		if err := budget.AddConfig(compiled.Config); err != nil {
-			return nil, err
-		}
-		return compiled, compiled.checkEncryptionKeys(key)
+		return compiled, budget.AddConfig(compiled.Config)
 	}
 	stored := selection.Credential.policySource
 	if stored == nil {
@@ -360,7 +367,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 	if err := budget.AddDocument(document); err != nil {
 		return nil, err
 	}
-	source, err := c.acquireSourceDocument(document, record.Source, s.Claims.OrganizationID, key, true)
+	source, err := c.acquireSourceDocument(document, record.Source, s.Claims.OrganizationID, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +398,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if previous := s.credentialPolicies[selection.ID]; previous != nil {
-		return previous, previous.checkEncryptionKeys(key)
+		return previous, nil
 	}
 	s.credentialPolicies[selection.ID] = compiled
 	if s.retained {
@@ -410,7 +417,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 			}
 		}
 	}
-	return compiled, compiled.checkEncryptionKeys(key)
+	return compiled, nil
 }
 
 func credentialContent(value *CachedCredential, source *sharedCredentialPolicy) ([32]byte, int64, error) {

@@ -62,7 +62,7 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 				}
 				value, compileErr := CompileSource(document)
 				err = compileErr
-				sources = append(sources, ScopedSource{[]Scope{OrganizationScope, GrantScope, KeyScope}[i], value})
+				sources = append(sources, ScopedSource{Scope: []Scope{OrganizationScope, GrantScope, KeyScope}[i], Value: value})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -162,7 +162,7 @@ func TestCompositionKeepsParentsImmutableAndChecksCombinedLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := json.Marshal(org.Config)
-	combined, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, key}})
+	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,20 +178,20 @@ func TestCompositionKeepsParentsImmutableAndChecksCombinedLimits(t *testing.T) {
 		t.Fatal("request changed parent")
 	}
 	for _, sources := range [][]ScopedSource{
-		{{KeyScope, key}},
-		{{OrganizationScope, nil}, {KeyScope, key}},
-		{{OrganizationScope, org}, {KeyScope, nil}},
-		{{OrganizationScope, org}, {Scope("unknown"), key}, {KeyScope, key}},
+		{{Scope: KeyScope, Value: key}},
+		{{Scope: OrganizationScope}, {Scope: KeyScope, Value: key}},
+		{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope}},
+		{{Scope: OrganizationScope, Value: org}, {Scope: Scope("unknown"), Value: key}, {Scope: KeyScope, Value: key}},
 	} {
 		if _, err := ComposeSources(sources); err == nil {
 			t.Fatal("missing or invalid scope accepted")
 		}
 	}
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}}); err != nil {
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}}); err != nil {
 		t.Fatalf("organization preview failed: %v", err)
 	}
 	forbidden, _ := CompileSource([]byte(`{"delegation":{"keys":true}}`))
-	if _, err := ComposeSources([]ScopedSource{{OrganizationScope, org}, {KeyScope, forbidden}}); err == nil {
+	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: forbidden}}); err == nil {
 		t.Fatal("key delegated editing")
 	}
 }
