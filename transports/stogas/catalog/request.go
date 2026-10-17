@@ -1320,18 +1320,19 @@ func dropUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route) 
 }
 
 // dropNoOpCompatibilityFields accepts common SDK defaults without letting
-// those fields select provider storage, routing, identity, or non-text output.
-// JSON null is omission for every optional top-level request field. Required
-// fields remain so the normal request validator can report them accurately.
-// Meaningful unsupported values remain and are rejected by route policy.
+// those fields select provider storage, routing, or non-text output. JSON null
+// is omission for every optional top-level request field, and an empty
+// end-user ID names no user. Required fields remain so the normal request
+// validator can report them accurately. Meaningful unsupported values remain
+// and are rejected by route policy.
 func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route) {
 	for name, raw := range rawData {
 		if name != "model" && name != "messages" && name != "input" && rawJSONNull(raw) {
 			delete(rawData, name)
 		}
 	}
-	delete(rawData, "user")
-	delete(rawData, "safety_identifier")
+	dropRawFieldIf(rawData, "user", rawJSONNullOrEmptyString)
+	dropRawFieldIf(rawData, "safety_identifier", rawJSONNullOrEmptyString)
 
 	switch route {
 	case RouteChat:

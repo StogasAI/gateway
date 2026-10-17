@@ -58,13 +58,14 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		bifrostErr *schemas.BifrostError
 		settings   billing.RequestSettings
 	)
+	customerAccount := state.PreparedCredential.UsesBYOK()
 	switch {
 	case request.ChatRequest != nil && request.ResponsesRequest == nil:
 		chat := request.ChatRequest
 		if !isChatRequestType(request.RequestType) || chat.Provider != resolution.Provider || chat.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeChatProviderFields(ctx, chat)
+		sanitizeChatProviderFields(ctx, chat, customerAccount)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
 		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest)
 		settings = billing.ChatRequestSettings(chat.Params)
@@ -73,7 +74,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		if !isResponsesRequestType(request.RequestType) || responses.Provider != resolution.Provider || responses.Model != resolution.Model {
 			return catalog.ErrUnsupportedRequest
 		}
-		sanitizeResponsesProviderFields(ctx, responses)
+		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest)
 		settings = billing.ResponsesRequestSettings(responses.Params)
@@ -140,29 +141,49 @@ func isResponsesRequestType(requestType schemas.RequestType) bool {
 	return requestType == schemas.ResponsesRequest || requestType == schemas.ResponsesStreamRequest
 }
 
-func sanitizeChatProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest) {
+func sanitizeChatProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, customerAccount bool) {
 	if request.Params == nil {
 		request.Params = &schemas.ChatParameters{}
 	}
 	request.Params.Metadata = nil
-	request.Params.SafetyIdentifier = nil
-	request.Params.User = nil
+	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, request.Params.User, request.Params.SafetyIdentifier)
 	request.Params.Store = nil
 	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
 		request.Params.Store = schemas.Ptr(false)
 	}
 }
 
-func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest) {
+func sanitizeResponsesProviderFields(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, customerAccount bool) {
 	if request.Params == nil {
 		request.Params = &schemas.ResponsesParameters{}
 	}
 	request.Params.Metadata = nil
-	request.Params.SafetyIdentifier = nil
-	request.Params.User = nil
+	request.Params.User, request.Params.SafetyIdentifier = providerEndUserIDs(ctx, request.Provider, request.Model, customerAccount, request.Params.User, request.Params.SafetyIdentifier)
 	request.Params.Store = nil
 	if request.Provider == schemas.OpenAI || (request.Provider == schemas.Azure && !schemas.IsAnthropicModelFamily(ctx, request.Model)) {
 		request.Params.Store = schemas.Ptr(false)
+	}
+}
+
+// providerEndUserIDs returns the client's user and safety_identifier that the
+// provider receives. They let a provider act on one of the customer's users
+// instead of the whole account, so only the customer's own account receives
+// them: on our managed accounts, a client could name another customer's users.
+// Anthropic's one field, metadata.user_id, is filled by core from user, so
+// safety_identifier takes it when both are set. Chutes documents no such field.
+func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string, customerAccount bool, user, safetyIdentifier *string) (*string, *string) {
+	switch {
+	case !customerAccount:
+		return nil, nil
+	case usesAnthropicWireFormat(ctx, provider, model):
+		if safetyIdentifier != nil {
+			return safetyIdentifier, nil
+		}
+		return user, nil
+	case provider == schemas.OpenAI || provider == schemas.Azure:
+		return user, safetyIdentifier
+	default:
+		return nil, nil
 	}
 }
 
