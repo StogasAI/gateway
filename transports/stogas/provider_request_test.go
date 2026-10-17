@@ -13,6 +13,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 func TestPreparedProviderRequestPreservesDecodedPrompt(t *testing.T) {
@@ -137,76 +138,163 @@ func TestPreparedAnthropicThinkingDisplayPreservesCallerChoice(t *testing.T) {
 	}
 }
 
-func TestPrepareProviderRequestRemovesClientIdentityAndAppliesStorePolicy(t *testing.T) {
+func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesStorePolicy(t *testing.T) {
+	_, customer := customerOpenAICredential(t)
+	managed, err := (&billing.Service{}).PrepareCredential(&billing.KeyConfigSnapshot{
+		Claims:         &billing.APIKeyClaims{OrganizationID: "org-test"},
+		PolicySnapshot: billing.PolicySnapshot{Config: &policy.Config{}},
+		Credentials:    map[string][]billing.CredentialSelection{"chutes": {{Mode: "managed"}}},
+	}, "chutes", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type endUserIDs struct{ user, safetyIdentifier, metadataUserID string }
 	text := "hello"
 	metadata := map[string]any{"private": "value"}
-	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Azure, schemas.Anthropic, catalog.ProviderChutes} {
-		t.Run(string(provider)+" chat", func(t *testing.T) {
-			model := providerRequestTestModel(provider)
-			request := &schemas.BifrostRequest{
-				RequestType: schemas.ChatCompletionRequest,
-				ChatRequest: &schemas.BifrostChatRequest{
-					Provider: provider,
-					Model:    model,
-					Input: []schemas.ChatMessage{{
-						Role:    schemas.ChatMessageRoleUser,
-						Content: &schemas.ChatMessageContent{ContentStr: &text},
-					}},
-					Params: &schemas.ChatParameters{
-						Metadata:         &metadata,
-						SafetyIdentifier: schemas.Ptr("caller-safety"),
-						Store:            schemas.Ptr(true),
-						User:             schemas.Ptr("caller-user"),
-					},
-				},
+	// Preparation reads only whether the pair's credential is the customer's
+	// own, so one credential of each kind serves every provider here.
+	for _, tc := range []struct {
+		name, model    string
+		provider       schemas.ModelProvider
+		customer       bool
+		user, safety   string
+		want           endUserIDs
+		openAIWire     bool
+		anthropicLimit bool
+	}{
+		{name: "openai managed", provider: schemas.OpenAI, model: "gpt-5.6-terra", user: "caller-user", safety: "caller-safety", openAIWire: true},
+		{name: "openai customer", provider: schemas.OpenAI, model: "gpt-5.6-terra", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{user: "caller-user", safetyIdentifier: "caller-safety"}, openAIWire: true},
+		{name: "azure gpt customer", provider: schemas.Azure, model: "gpt-5.6-terra", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{user: "caller-user", safetyIdentifier: "caller-safety"}, openAIWire: true},
+		{name: "anthropic managed", provider: schemas.Anthropic, model: "claude-sonnet-4-6", user: "caller-user", safety: "caller-safety", anthropicLimit: true},
+		{name: "anthropic customer", provider: schemas.Anthropic, model: "claude-sonnet-4-6", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{metadataUserID: "caller-safety"}, anthropicLimit: true},
+		{name: "anthropic customer user only", provider: schemas.Anthropic, model: "claude-sonnet-4-6", customer: true, user: "caller-user", want: endUserIDs{metadataUserID: "caller-user"}, anthropicLimit: true},
+		{name: "azure claude customer", provider: schemas.Azure, model: "claude-sonnet-4-6", customer: true, user: "caller-user", safety: "caller-safety", want: endUserIDs{metadataUserID: "caller-safety"}, anthropicLimit: true},
+		{name: "chutes managed", provider: catalog.ProviderChutes, model: "deepseek-ai/DeepSeek-V3.2", user: "caller-user", safety: "caller-safety"},
+		{name: "chutes customer", provider: catalog.ProviderChutes, model: "deepseek-ai/DeepSeek-V3.2", customer: true, user: "caller-user", safety: "caller-safety"},
+	} {
+		for _, requestType := range []schemas.RequestType{schemas.ChatCompletionRequest, schemas.ResponsesRequest} {
+			if tc.provider == catalog.ProviderChutes && requestType == schemas.ResponsesRequest {
+				continue
 			}
-			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
-			state := providerRequestTestState(provider, model, request.RequestType, 128000)
+			t.Run(tc.name+" "+string(requestType), func(t *testing.T) {
+				var user, safety *string
+				if tc.user != "" {
+					user = &tc.user
+				}
+				if tc.safety != "" {
+					safety = &tc.safety
+				}
+				request := &schemas.BifrostRequest{RequestType: requestType}
+				if requestType == schemas.ChatCompletionRequest {
+					request.ChatRequest = &schemas.BifrostChatRequest{
+						Provider: tc.provider,
+						Model:    tc.model,
+						Input:    []schemas.ChatMessage{{Role: schemas.ChatMessageRoleUser, Content: &schemas.ChatMessageContent{ContentStr: &text}}},
+						Params:   &schemas.ChatParameters{Metadata: &metadata, SafetyIdentifier: safety, Store: schemas.Ptr(true), User: user},
+					}
+				} else {
+					role := schemas.ResponsesInputMessageRoleUser
+					request.ResponsesRequest = &schemas.BifrostResponsesRequest{
+						Provider: tc.provider,
+						Model:    tc.model,
+						Input:    []schemas.ResponsesMessage{{Role: &role, Content: &schemas.ResponsesMessageContent{ContentStr: &text}}},
+						Params:   &schemas.ResponsesParameters{Metadata: &metadata, SafetyIdentifier: safety, Store: schemas.Ptr(true), User: user},
+					}
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, requestType)
+				state := providerRequestTestState(tc.provider, tc.model, requestType, 128000)
+				state.Resolution.Deployment.ModelID = tc.model
+				state.PreparedCredential = managed
+				if tc.customer {
+					state.PreparedCredential = customer
+				}
 
-			if err := PrepareProviderRequest(ctx, state, request); err != nil {
-				t.Fatalf("PrepareProviderRequest returned error: %v", err)
-			}
-			assertSanitizedProviderParams(t, provider, request.ChatRequest.Params, nil)
-			assertSanitizedProviderBody(t, provider, preparedProviderBody(t, ctx, request.ChatRequest))
-		})
-
-		if provider == catalog.ProviderChutes {
-			continue
+				if err := PrepareProviderRequest(ctx, state, request); err != nil {
+					t.Fatalf("PrepareProviderRequest returned error: %v", err)
+				}
+				var body []byte
+				if request.ChatRequest != nil {
+					body = preparedProviderBody(t, ctx, request.ChatRequest)
+				} else {
+					body = preparedProviderBody(t, ctx, request.ResponsesRequest)
+					if limit := request.ResponsesRequest.Params.MaxOutputTokens; tc.anthropicLimit && (limit == nil || *limit != 128000) {
+						t.Fatalf("Anthropic max_output_tokens = %#v, want pinned limit 128000", limit)
+					}
+				}
+				var wire struct {
+					User             string            `json:"user"`
+					SafetyIdentifier string            `json:"safety_identifier"`
+					Metadata         map[string]string `json:"metadata"`
+					Store            *bool             `json:"store"`
+				}
+				if err := json.Unmarshal(body, &wire); err != nil {
+					t.Fatalf("decode prepared body: %v", err)
+				}
+				if got := (endUserIDs{wire.User, wire.SafetyIdentifier, wire.Metadata["user_id"]}); got != tc.want {
+					t.Fatalf("end-user IDs = %+v, want %+v: %s", got, tc.want, body)
+				}
+				if _, private := wire.Metadata["private"]; private {
+					t.Fatalf("client metadata reached the provider: %s", body)
+				}
+				if tc.openAIWire != (wire.Store != nil) || wire.Store != nil && *wire.Store {
+					t.Fatalf("store = %#v, want false only on OpenAI wire: %s", wire.Store, body)
+				}
+			})
 		}
-		t.Run(string(provider)+" responses", func(t *testing.T) {
-			model := providerRequestTestModel(provider)
-			role := schemas.ResponsesInputMessageRoleUser
-			request := &schemas.BifrostRequest{
-				RequestType: schemas.ResponsesRequest,
-				ResponsesRequest: &schemas.BifrostResponsesRequest{
-					Provider: provider,
-					Model:    model,
-					Input: []schemas.ResponsesMessage{{
-						Role:    &role,
-						Content: &schemas.ResponsesMessageContent{ContentStr: &text},
-					}},
-					Params: &schemas.ResponsesParameters{
-						Metadata:         &metadata,
-						SafetyIdentifier: schemas.Ptr("caller-safety"),
-						Store:            schemas.Ptr(true),
-						User:             schemas.Ptr("caller-user"),
-					},
-				},
+	}
+}
+
+func TestCustomerRequestBodyEndUserIDsReachOpenAI(t *testing.T) {
+	_, customer := customerOpenAICredential(t)
+	for _, tc := range []struct{ name, route, fields, user, safety string }{
+		{"chat", "chat/completions", `"messages":[{"role":"user","content":"hi"}],"user":"user-1","safety_identifier":"hash-1"`, "user-1", "hash-1"},
+		{"responses", "responses", `"input":"hi","user":"user-1","safety_identifier":"hash-1"`, "user-1", "hash-1"},
+		{"empty values name no user", "chat/completions", `"messages":[{"role":"user","content":"hi"}],"user":"","safety_identifier":null`, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + tc.route, Body: []byte(`{"model":"openai/gpt-5.5",` + tc.fields + `}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			state.PreparedCredential = customer
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatal(err)
 			}
 			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
-			state := providerRequestTestState(provider, model, request.RequestType, 128000)
-
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := PrepareProviderRequest(ctx, state, request); err != nil {
-				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+				t.Fatal(err)
 			}
-			if provider == schemas.Anthropic && (request.ResponsesRequest.Params.MaxOutputTokens == nil || *request.ResponsesRequest.Params.MaxOutputTokens != 128000) {
-				t.Fatalf("Anthropic max_output_tokens = %#v, want pinned limit 128000", request.ResponsesRequest.Params.MaxOutputTokens)
+			var body []byte
+			if request.ChatRequest != nil {
+				body = preparedProviderBody(t, ctx, request.ChatRequest)
+			} else {
+				body = preparedProviderBody(t, ctx, request.ResponsesRequest)
 			}
-			assertSanitizedProviderParams(t, provider, nil, request.ResponsesRequest.Params)
-			assertSanitizedProviderBody(t, provider, preparedProviderBody(t, ctx, request.ResponsesRequest))
+			var wire map[string]any
+			if err := json.Unmarshal(body, &wire); err != nil {
+				t.Fatal(err)
+			}
+			for field, want := range map[string]string{"user": tc.user, "safety_identifier": tc.safety} {
+				if got, present := wire[field]; want == "" && present || want != "" && got != want {
+					t.Fatalf("%s = %#v, want %q: %s", field, got, want, body)
+				}
+			}
 		})
+	}
+	for _, fields := range []string{`"user":123`, `"safety_identifier":{"id":"user-1"}`} {
+		if _, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],` + fields + `}`)}); err == nil {
+			t.Fatalf("%s was accepted", fields)
+		}
 	}
 }
 
@@ -684,50 +772,4 @@ func providerRequestTestModel(provider schemas.ModelProvider) string {
 		return "deepseek-ai/DeepSeek-V3.2"
 	}
 	return "gpt-5.6-terra"
-}
-
-func assertSanitizedProviderParams(t *testing.T, provider schemas.ModelProvider, chat *schemas.ChatParameters, responses *schemas.ResponsesParameters) {
-	t.Helper()
-	var metadata *map[string]any
-	var safetyIdentifier, user *string
-	var store *bool
-	if chat != nil {
-		metadata, safetyIdentifier, store, user = chat.Metadata, chat.SafetyIdentifier, chat.Store, chat.User
-	} else {
-		metadata, safetyIdentifier, store, user = responses.Metadata, responses.SafetyIdentifier, responses.Store, responses.User
-	}
-	if metadata != nil || safetyIdentifier != nil || user != nil {
-		t.Fatalf("provider fields were not sanitized: metadata=%#v safety=%#v user=%#v", metadata, safetyIdentifier, user)
-	}
-	if provider == schemas.OpenAI || provider == schemas.Azure {
-		if store == nil || *store {
-			t.Fatalf("%s store policy = %#v, want false", provider, store)
-		}
-	} else if store != nil {
-		t.Fatalf("provider %s retained store: %#v", provider, store)
-	}
-}
-
-func assertSanitizedProviderBody(t *testing.T, provider schemas.ModelProvider, body []byte) {
-	t.Helper()
-	var payload map[string]any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("decode prepared body: %v", err)
-	}
-	for _, field := range []string{"metadata", "safety_identifier", "user"} {
-		if _, ok := payload[field]; ok {
-			t.Fatalf("prepared body retained %s: %s", field, body)
-		}
-	}
-	store, hasStore := payload["store"]
-	if provider == schemas.OpenAI || provider == schemas.Azure {
-		if !hasStore || store != false {
-			t.Fatalf("%s prepared body store = %#v present=%v", provider, store, hasStore)
-		}
-	} else if hasStore {
-		t.Fatalf("provider %s prepared body retained store: %s", provider, body)
-	}
-	if len(body) == 0 || bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
-		t.Fatal("prepared provider body is empty")
-	}
 }

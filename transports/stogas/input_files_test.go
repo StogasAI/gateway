@@ -164,7 +164,10 @@ func TestProviderFileIDReservesFullInputAndRejectsWithoutBYOK(t *testing.T) {
 	}
 }
 
-func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
+// customerOpenAICredential prepares a customer's own encrypted OpenAI
+// credential, as the gateway does for each pair.
+func customerOpenAICredential(t *testing.T) (*billing.KeyConfigSnapshot, *billing.PreparedCredential) {
+	t.Helper()
 	key, err := customerkey.Parse("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	if err != nil {
 		t.Fatal(err)
@@ -178,12 +181,16 @@ func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
 		PolicySnapshot: billing.PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{"default": key.ID()}}},
 		Credentials:    map[string][]billing.CredentialSelection{"openai": {{Mode: "encrypted", ID: id, Credential: &billing.CachedCredential{ID: id, OrganizationID: "org-test", Provider: "openai", Kind: "encrypted", Enabled: true, EncryptionKeyID: key.ID(), EncryptedSecret: envelope}}}},
 	}
-	service := &billing.Service{}
-	prepared, err := service.PrepareCredential(snapshot, "openai", 0, customerkey.Keys{"default": key})
+	prepared, err := (&billing.Service{}).PrepareCredential(snapshot, "openai", 0, customerkey.Keys{"default": key})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer prepared.Clear()
+	t.Cleanup(prepared.Clear)
+	return snapshot, prepared
+}
+
+func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
+	snapshot, prepared := customerOpenAICredential(t)
 	for _, kind := range []string{"input_file", "input_image"} {
 		t.Run(kind, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"openai/gpt-5.5","max_output_tokens":100,"input":[{"role":"user","content":[{"type":"` + kind + `","file_id":"file-customer-owned"}]}]}`)})
