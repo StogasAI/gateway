@@ -172,7 +172,7 @@ func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostSer
 	}
 	// Fast may run at Standard: OpenAI and Azure fall back above the Fast ramp rate and bill
 	// Standard. Every other tier must run as selected, and every report must agree.
-	if reported := catalog.ReportedTier(state.Resolution.Provider, serviceTier, speed); reported != "" {
+	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment.Upstream.ModelFormat, serviceTier, speed); reported != "" {
 		selected := state.Resolution.Deployment.Upstream.ServiceTier
 		if reported != selected && (selected != catalog.TierFast || reported != catalog.TierStandard) ||
 			state.ActualTier != "" && state.ActualTier != reported {
@@ -520,7 +520,7 @@ func observeActualExecution(state *State, serviceTier *schemas.BifrostServiceTie
 	if state == nil || state.Resolution == nil {
 		return
 	}
-	if reported := catalog.ReportedTier(state.Resolution.Provider, serviceTier, speed); reported != "" {
+	if reported := catalog.ReportedTier(state.Resolution.Provider, state.Resolution.Deployment.Upstream.ModelFormat, serviceTier, speed); reported != "" {
 		state.ActualTier = reported
 	}
 }

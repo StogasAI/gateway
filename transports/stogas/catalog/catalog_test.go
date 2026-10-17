@@ -52,7 +52,7 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 		len(snap.graph.Models) != 42 ||
 		len(snap.graph.Providers) != 4 ||
 		len(snap.graph.Routes) != 7 ||
-		len(snap.graph.Deployments) != 208 {
+		len(snap.graph.Deployments) != 212 {
 		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
 			len(snap.graph.Authors),
 			len(snap.graph.Models),
@@ -493,6 +493,8 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-4-8-fast", wire: "default"},
 		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-4-8", wire: "default"},
 		{fields: `"model":"azure/claude-fable-5-1","service_tier":"default"`, deployment: "azure-claude-fable-5-1-anthropic-hosted"},
+		// Azure sells Claude Fast as its own model, so the request names no tier.
+		{fields: `"model":"azure/claude-opus-5-5","service_tier":"fast"`, deployment: "azure-claude-opus-5-5-fast"},
 		{fields: `"model":"openai/gpt-5.6-sol","service_tier":"ultrafast"`, err: ErrServiceTierUnavailable},
 		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"flex"`, err: ErrServiceTierUnavailable},
 		{fields: `"model":"openai-gpt-5.5-2026-04-23-flex","service_tier":"fast"`, err: ErrServiceTierUnavailable},
@@ -724,6 +726,14 @@ func TestRequestedTierMovesOnlyModelSelectors(t *testing.T) {
 	}
 	if standardUS, ok := StandardTierDeployment(schemas.Anthropic, RouteResponses, fastUS); !ok || standardUS.ID != "anthropic-claude-opus-4-8-us" {
 		t.Fatalf("Standard sibling of %s = %#v, want anthropic-claude-opus-4-8-us", fastUS.ID, standardUS)
+	}
+	// Azure's Claude Fast model has its own name but is the same deployment at another tier.
+	azureFastUS, ok := testDeploymentForRoute(schemas.Azure, "azure-claude-opus-5-5-fast-us", RouteResponses)
+	if !ok {
+		t.Fatal("Azure Claude Opus 5.5 Fast US is missing")
+	}
+	if standardUS, ok := StandardTierDeployment(schemas.Azure, RouteResponses, azureFastUS); !ok || standardUS.ID != "azure-claude-opus-5-5-us" {
+		t.Fatalf("Standard sibling of %s = %#v, want azure-claude-opus-5-5-us", azureFastUS.ID, standardUS)
 	}
 }
 

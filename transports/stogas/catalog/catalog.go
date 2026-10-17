@@ -102,7 +102,8 @@ func deploymentAvailableNow(deployment compiledDeployment) bool {
 }
 
 // tierSibling returns the deployment available at an instant on the route that differs from
-// current only in running at tier.
+// current only in running at tier. The provider's model name can differ, because Azure sells
+// Claude Fast as its own model; the catalog allows one such deployment.
 func (s *snapshot) tierSibling(routeNode compiledRoute, current compiledDeployment, tier string, at time.Time) string {
 	for _, candidateID := range routeNode.DeploymentIDs {
 		candidate, ok := s.graph.Deployments[candidateID]
@@ -110,7 +111,6 @@ func (s *snapshot) tierSibling(routeNode compiledRoute, current compiledDeployme
 			deploymentAvailableAt(candidate, at) &&
 			candidate.Upstream.ServiceTier == tier &&
 			candidate.ModelID == current.ModelID &&
-			candidate.Upstream.Model == current.Upstream.Model &&
 			candidate.Upstream.ReasoningMode == current.Upstream.ReasoningMode &&
 			candidate.Upstream.Hosting == current.Upstream.Hosting &&
 			candidate.Upstream.ModelFormat == current.Upstream.ModelFormat &&
