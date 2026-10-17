@@ -348,8 +348,9 @@ func (r *providerRun) waitError() error {
 
 func (r *providerRun) waiting() bool { return r.waitError() == nil }
 
-// pause waits out a retry's backoff and reports whether the call may start.
-func (r *providerRun) pause(wait time.Duration) bool {
+// pause waits out a retry's backoff, then reports whether the call may start
+// and, if so, gives it an output idle window of idle.
+func (r *providerRun) pause(wait, idle time.Duration) bool {
 	if wait > 0 {
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
@@ -363,7 +364,7 @@ func (r *providerRun) pause(wait time.Duration) bool {
 			return false
 		}
 	}
-	return r.request.Err() == nil && r.waiting() && r.client.responseWait.startOutput()
+	return r.request.Err() == nil && r.waiting() && r.client.responseWait.startOutput(idle)
 }
 
 // startProviderCall calls the bound pair after wait. A call that the caller
@@ -377,7 +378,7 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 	if r.pair.Resolution.Provider == catalog.ProviderChutes {
 		chutese2ee.SetInvocationBudget(attempt, 1+r.pair.Resolution.Retries()-r.retries, r.waiting)
 	}
-	request, state := r.pair.request, r.state
+	request, state, idle := r.pair.request, r.state, r.pair.Resolution.RequestTimeouts().OutputIdle()
 	ready := make(chan providerResult[T], 1)
 	go func() {
 		result := providerResult[T]{ctx: attempt}
@@ -391,7 +392,7 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 			}
 			ready <- result
 		}()
-		if !r.pause(wait) {
+		if !r.pause(wait, idle) {
 			return
 		}
 		state.MarkProviderStarted()

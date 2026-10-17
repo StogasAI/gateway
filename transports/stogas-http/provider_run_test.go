@@ -156,23 +156,29 @@ func TestRetryAfterSecondsRoundsUp(t *testing.T) {
 
 func TestResponseDeadlineGivesEachCallAnIdleWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		wait := newResponseDeadline(time.Now(), time.Minute, 10*time.Second)
+		wait := newResponseDeadline(time.Now(), time.Minute)
 		defer wait.stop()
-		if !wait.startOutput() || wait.remaining() != 10*time.Second {
+		if !wait.startOutput(10*time.Second) || wait.remaining() != 10*time.Second {
 			t.Fatalf("first call window = %s", wait.remaining())
 		}
 		time.Sleep(8 * time.Second)
-		if !wait.startOutput() || wait.remaining() != 10*time.Second {
-			t.Fatalf("retry window = %s", wait.remaining())
+		// A fallback's policy can set another idle window, which output renews.
+		if !wait.startOutput(20*time.Second) || wait.remaining() != 20*time.Second {
+			t.Fatalf("fallback window = %s", wait.remaining())
 		}
-		time.Sleep(45 * time.Second)
+		time.Sleep(15 * time.Second)
+		wait.observe(time.Now())
+		if wait.remaining() != 20*time.Second {
+			t.Fatalf("renewed fallback window = %s", wait.remaining())
+		}
+		time.Sleep(25 * time.Second)
 		if !wait.timedOut() {
 			t.Fatal("a silent call outlived its idle window")
 		}
-		wait = newResponseDeadline(time.Now(), time.Minute, 10*time.Second)
+		wait = newResponseDeadline(time.Now(), time.Minute)
 		for range 6 {
 			time.Sleep(9 * time.Second)
-			if !wait.startOutput() {
+			if !wait.startOutput(10 * time.Second) {
 				t.Fatal("a call within the total deadline did not start")
 			}
 		}
@@ -181,12 +187,12 @@ func TestResponseDeadlineGivesEachCallAnIdleWindow(t *testing.T) {
 		}
 		time.Sleep(6 * time.Second)
 		synctest.Wait()
-		if !wait.timedOut() || wait.startOutput() {
+		if !wait.timedOut() || wait.startOutput(10*time.Second) {
 			t.Fatal("a call started after the total deadline")
 		}
-		wait = newResponseDeadline(time.Now(), time.Minute, 10*time.Second)
+		wait = newResponseDeadline(time.Now(), time.Minute)
 		wait.stop()
-		if wait.startOutput() || wait.timedOut() || wait.remaining() != 0 {
+		if wait.startOutput(10*time.Second) || wait.timedOut() || wait.remaining() != 0 {
 			t.Fatal("a caller that left became a timeout or kept a window")
 		}
 	})

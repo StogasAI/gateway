@@ -887,8 +887,8 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if err := source.Delegation.validateScope(scope); err != nil {
 			return nil, err
 		}
-		if scope == CredentialScope && source.plans() {
-			return nil, configError("credential policies cannot set routing.order, routing.sort or routing.fallbacks")
+		if scope == CredentialScope && source.requestWide() {
+			return nil, configError("credential policies cannot set routing.order, routing.sort, routing.fallbacks or timeouts.totalSeconds")
 		}
 		if source.orders() {
 			rank, ok := orderingRanks[scope]
@@ -1008,13 +1008,14 @@ func (s *Source) orders() bool {
 }
 
 // A credential policy applies only to that credential's candidates, so its
-// order or fallback count would differ from those of other credentials.
-func (s *Source) plans() bool {
-	plans := s.orders() || s.settings&permissionFallbacks != 0
+// order, fallback count or total wait would differ from those of other
+// credentials.
+func (s *Source) requestWide() bool {
+	set := s.orders() || s.settings&requestWidePermissions != 0
 	for _, rule := range s.Rules {
-		plans = plans || rule.Value.settings&planPermissions != 0
+		set = set || rule.Value.settings&requestWidePermissions != 0
 	}
-	return plans
+	return set
 }
 
 func (c *Config) ValidatePlugins() error {

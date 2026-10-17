@@ -66,7 +66,7 @@ func TestEncryptedProviderWaitPreservesStatusAndTransfersPendingWork(t *testing.
 					if outcome == "timeout" {
 						wait = 3 * responseKeepaliveInterval
 					}
-					ctx.responseWait = newResponseDeadline(time.Now(), wait, time.Hour)
+					ctx.responseWait = newResponseDeadline(time.Now(), wait)
 					defer ctx.responseWait.stop()
 					state := &stogas.State{Pair: stogas.Pair{Resolution: testResolution()}}
 					request, cancel := schemas.NewBifrostContextWithCancel(t.Context())

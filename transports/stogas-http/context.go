@@ -37,8 +37,10 @@ func inferenceRequestID(ctx *requestContext) (string, error) {
 }
 
 func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *catalog.ResolvedRequest, credential apiCredential, nodeID string) (*schemas.BifrostContext, *stogas.State, context.CancelFunc, error) {
-	timeouts := resolution.RequestTimeouts()
-	responseDeadline := startedAt.Add(timeouts.Total())
+	// Every pair has the first pair's total: credential policies, and rules
+	// whose condition reads the candidate, cannot set it.
+	total := resolution.RequestTimeouts().Total()
+	responseDeadline := startedAt.Add(total)
 	if !time.Now().Before(responseDeadline) {
 		return nil, nil, nil, context.DeadlineExceeded
 	}
@@ -82,7 +84,7 @@ func newRequestContext(ctx *requestContext, startedAt time.Time, resolution *cat
 		bifrostCtx.SetValue(stogasMetadataKey, true)
 	}
 
-	wait := newResponseDeadline(startedAt, timeouts.Total(), timeouts.OutputIdle())
+	wait := newResponseDeadline(startedAt, total)
 	ctx.responseWait = wait
 	client := ctx.request.Context()
 	observed := make(chan struct{})

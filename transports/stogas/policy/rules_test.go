@@ -247,7 +247,7 @@ func TestRulesRequestOverridesOnlyDefaults(t *testing.T) {
 }
 
 func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"totalSeconds":600}}}}`)
+	org := ruleSource(t, `{"delegation":{"request":["timeouts.outputIdleSeconds"]},"timeouts":{"totalSeconds":900},"rules":{"baseline":{"mode":"default","timeouts":{"outputIdleSeconds":90}},"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`)
 	key := ruleSource(t, `{"timeouts":{"totalSeconds":1200}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: KeyScope, Value: key}})
 	if err != nil {
@@ -268,11 +268,11 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 				t.Fatal(err)
 			}
 			wantTotal, wantIdle := 900*time.Second, 180*time.Second
-			if provider == "openai" {
-				wantTotal = 600 * time.Second
-			}
 			if config == base {
 				wantIdle = 90 * time.Second
+			}
+			if provider == "openai" {
+				wantIdle = 60 * time.Second
 			}
 			if active.Timeouts.Total() != wantTotal || active.Timeouts.OutputIdle() != wantIdle {
 				t.Fatalf("%s timeouts = %+v, want %s/%s", provider, active.Timeouts, wantTotal, wantIdle)
@@ -495,19 +495,20 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	}
 }
 
-func TestFallbacksCannotDependOnTheCandidate(t *testing.T) {
+func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
 		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
+		`{"rules":{"r":{"when":"'claude-opus' in model.groupIds","timeouts":{"totalSeconds":60}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil || !strings.Contains(err.Error(), "author, model, deployment, route or provider fields") {
-			t.Fatalf("candidate-dependent fallbacks accepted: %s: %v", raw, err)
+			t.Fatalf("candidate-dependent fallbacks or total timeout accepted: %s: %v", raw, err)
 		}
 	}
 	for _, raw := range []string{
-		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0}}}}`,
-		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2}}}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0},"timeouts":{"totalSeconds":60}}}}`,
+		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2},"timeouts":{"outputIdleSeconds":60}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
 			t.Fatalf("stable setting rejected: %s: %v", raw, err)
@@ -537,10 +538,16 @@ func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 			}
 		}
 	}
-	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: ruleSource(t, `{"routing":{"fallbacks":1}}`)}}); err == nil {
-		t.Fatal("credential fallbacks accepted")
+	for _, raw := range []string{
+		`{"routing":{"fallbacks":1}}`,
+		`{"timeouts":{"totalSeconds":60}}`,
+		`{"rules":{"r":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`,
+	} {
+		if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), "credential policies cannot") {
+			t.Fatalf("credential request-wide setting accepted: %s: %v", raw, err)
+		}
 	}
-	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
+	allowed := ruleSource(t, `{"routing":{"filter":"provider.id == 'openai'","retries":2},"timeouts":{"outputIdleSeconds":60},"rules":{"r":{"when":"provider.id == 'openai'","routing":{"allowedCatalogNodes":{"providers":["openai"]}}}}}`)
 	if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: allowed}}); err != nil {
 		t.Fatalf("credential restriction rejected: %v", err)
 	}
