@@ -368,7 +368,8 @@ OUTPUTS files that BUILD leaves in TARGET."
   (cargo-package
    "stogas-ntpd-rs" (pin "ntpdRs" "version")
    (pinned-git-origin "ntpdRs" "https://github.com/pendulum-project/ntpd-rs"
-                      #:name "ntpd-rs")
+                      #:name "ntpd-rs"
+                      #:patches (list (patch-file "ntpd-rs-dependency-updates.patch")))
    (release-path "locks/ntpd-rs.Cargo.lock")
    ;; The guest rootfs holds only static binaries. An explicit target keeps
    ;; crt-static off build scripts and procedural macros. Guix glibc cannot
