@@ -565,23 +565,5 @@ func headerPriority(priority map[string]int, name string) int {
 }
 
 func routeSupportsInterface(catalogRoute compiledRoute, route Route) bool {
-	for _, interfaceName := range catalogRoute.Interfaces {
-		if publicRouteName(interfaceName) == route {
-			return true
-		}
-	}
-	return false
-}
-
-func firstInterfaceRoute(catalogRoute compiledRoute) Route {
-	for _, interfaceName := range catalogRoute.Interfaces {
-		if route := publicRouteName(interfaceName); route != "" {
-			return route
-		}
-	}
-	return ""
-}
-
-func publicRouteName(interfaceName string) Route {
-	return Route(strings.ReplaceAll(strings.TrimSpace(interfaceName), "_", "-"))
+	return slices.Contains(catalogRoute.Interfaces, route.Interface())
 }

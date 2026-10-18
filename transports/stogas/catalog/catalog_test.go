@@ -1370,39 +1370,6 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 
 }
 
-func TestCanonicalDataLocationContainment(t *testing.T) {
-	tests := map[string]struct {
-		actual   string
-		boundary string
-		allowed  bool
-	}{
-		"exact country":            {actual: "US", boundary: "US", allowed: true},
-		"country outside country":  {actual: "CA", boundary: "US", allowed: false},
-		"EU country":               {actual: "SE", boundary: "eu", allowed: true},
-		"non-EU European country":  {actual: "CH", boundary: "eu", allowed: false},
-		"European country":         {actual: "CH", boundary: "europe", allowed: true},
-		"EU within Europe":         {actual: "eu", boundary: "europe", allowed: true},
-		"APAC country":             {actual: "JP", boundary: "apac", allowed: true},
-		"country outside APAC":     {actual: "US", boundary: "apac", allowed: false},
-		"world boundary":           {actual: "US", boundary: "world", allowed: true},
-		"unknown boundary":         {actual: "unknown", boundary: "unknown", allowed: true},
-		"unknown actual is not EU": {actual: "unknown", boundary: "eu", allowed: false},
-		"invalid country":          {actual: "ZZ", boundary: "world", allowed: false},
-	}
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			if got := DataLocationWithin(test.actual, test.boundary); got != test.allowed {
-				t.Fatalf("DataLocationWithin(%q, %q) = %v, want %v", test.actual, test.boundary, got, test.allowed)
-			}
-		})
-	}
-	for _, country := range strings.Split(strings.Trim(euCountryCodes, "|"), "|") {
-		if !DataLocationWithin(country, "europe") {
-			t.Fatalf("EU country %s is outside Europe", country)
-		}
-	}
-}
-
 func stringPointer(value string) *string {
 	return &value
 }
@@ -1424,6 +1391,51 @@ func loadTestCatalog(t *testing.T) *snapshot {
 	}
 	active.Store(snap)
 	return snap
+}
+
+// Policies check compared strings against the same vocabulary, so a catalog value outside it
+// would be impossible to name in a policy.
+func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
+	deployment := func(graph map[string]any) map[string]any {
+		return graph["deployments"].(map[string]any)["azure-gpt-5.6-sol"].(map[string]any)
+	}
+	upstream := func(graph map[string]any) map[string]any { return deployment(graph)["upstream"].(map[string]any) }
+	deploymentRoute := func(graph map[string]any) map[string]any {
+		return deployment(graph)["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)
+	}
+	for _, tc := range []struct {
+		name  string
+		apply func(graph map[string]any)
+	}{
+		{"hosting", func(g map[string]any) { upstream(g)["hosting"] = "Azure" }},
+		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }},
+		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }},
+		{"processing location", func(g map[string]any) {
+			deploymentRoute(g)["dataHandling"].(map[string]any)["processingLocation"] = "EU"
+		}},
+		{"extension", func(g map[string]any) {
+			g["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)["documentFormats"] = map[string]any{
+				"extensions": []any{"pdf"}, "mediaTypes": []any{"application/pdf"}}
+		}},
+		{"country", func(g map[string]any) {
+			g["authors"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "USA"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var runtime map[string]any
+			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+				t.Fatal(err)
+			}
+			tc.apply(runtime["graph"].(map[string]any))
+			raw, err := json.Marshal(runtime)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := snapshotFromCatalogBytes(raw); err == nil || !strings.Contains(err.Error(), "outside the policy vocabulary") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
 }
 
 func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {

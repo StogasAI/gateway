@@ -39,7 +39,7 @@
     "valid": true
   },
   {
-    "filter": "provider.id == \"a\\\"b\"",
+    "filter": "request.model == \"a\\\"b\"",
     "valid": true
   },
   {
@@ -382,6 +382,54 @@
   },
   {
     "filter": "where exists(deployment.pricing.openai_chat_completion_search_preview_model_calls.per_1k_search_context_high_calls)",
+    "valid": false
+  },
+  {
+    "filter": "deployment.dataHandling.processingLocation in [\"eu\", \"DE\", \"world\"] && deployment.dataHandling.storageLocation == \"none\"",
+    "valid": true
+  },
+  {
+    "filter": "\".pdf\" in route.documentFormats.extensions && deployment.retirementDate > \"2027-01-31\"",
+    "valid": true
+  },
+  {
+    "filter": "deployment.inputModalities.exists(m, m == \"image\") && request.interface == \"responses\"",
+    "valid": true
+  },
+  {
+    "filter": "deployment.inputModalities.all(m, [\"X\"].exists(m, m == \"X\"))",
+    "valid": true
+  },
+  {
+    "filter": "provider.id == \"OpenAI\"",
+    "valid": false
+  },
+  {
+    "filter": "deployment.dataHandling.processingLocation in [\"eu\", \"EU\"]",
+    "valid": false
+  },
+  {
+    "filter": "\"none\" == deployment.dataHandling.processingLocation",
+    "valid": false
+  },
+  {
+    "filter": "deployment.inputModalities.exists(m, m == \"imagee\")",
+    "valid": false
+  },
+  {
+    "filter": "\"pdf\" in route.documentFormats.extensions",
+    "valid": false
+  },
+  {
+    "filter": "deployment.retirementDate < \"2027-1-31\"",
+    "valid": false
+  },
+  {
+    "filter": "request.interface == \"chat-completions\"",
+    "valid": false
+  },
+  {
+    "filter": "deployment.upstream.serviceTier != \"priority\"",
     "valid": false
   }
 ]

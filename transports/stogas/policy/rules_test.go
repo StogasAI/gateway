@@ -166,7 +166,7 @@ func ruleSource(t *testing.T, raw string) *Source {
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}}}}}`)
+	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: role}, {Scope: RoleScope, Value: other}},
@@ -176,23 +176,23 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, route := range []string{"chat", "responses"} {
-			active, err := combined.Activate(ruleValues{"request.route": {Type: "string", String: route}})
+		for _, name := range []string{"chat_completions", "responses"} {
+			active, err := combined.Activate(ruleValues{"request.interface": {Type: "string", String: name}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if active.Input != nil && active.Input.ASCIIOnly != (route == "responses") {
-				t.Fatalf("wrong input requirement for %s", route)
+			if active.Input != nil && active.Input.ASCIIOnly != (name == "responses") {
+				t.Fatalf("wrong input requirement for %s", name)
 			}
-			if route == "responses" && active.Input == nil {
+			if name == "responses" && active.Input == nil {
 				t.Fatal("default input requirement disappeared")
 			}
 			preset := "email_address"
-			if route == "chat" {
+			if name == "chat_completions" {
 				preset = "credit_card_number"
 			}
 			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != "provider.id" {
-				t.Fatalf("wrong settings for %s: %+v", route, active)
+				t.Fatalf("wrong settings for %s: %+v", name, active)
 			}
 			if len(active.Routing.Query.Filters) != 1 {
 				t.Fatal("required filter was lost while replacing defaults")
@@ -399,7 +399,7 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 	for _, raw := range []string{
 		`{"rules":{"r":{"routing":{` + sort + `}}}}`,
 		`{"rules":{"r":{"mode":"required","routing":{"order":["deployment-a"]}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat'","mode":"default","routing":{` + sort + `}}}}`,
+		`{"rules":{"r":{"when":"request.interface == 'chat_completions'","mode":"default","routing":{` + sort + `}}}}`,
 		`{"rules":{"r":{"when":"provider.id == 'openai'","mode":"default","routing":{"sort":[]}}}}`,
 		`{"rules":{"r":{"when":"[1].exists(deployment, deployment == 1)","routing":{"sort":[{"by":"random()"}]}}}}`,
 	} {
@@ -425,17 +425,17 @@ func TestRuleOrderingsAreUnconditionalDefaults(t *testing.T) {
 func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 	org := ruleSource(t, `{"routing":{"allowedCatalogNodes":{"providers":["openai","anthropic"]},"filter":"provider.id != 'blocked'","fallbacks":2},"rules":{"order":{"mode":"default","routing":{"sort":[{"by":"provider.id"}]}}}}`)
 	folder := ruleSource(t, `{"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"routing":{"fallbacks":1},"rules":{"loose":{"mode":"default","routing":{"filter":"provider.id == 'never'"}}}}`)
-	key := ruleSource(t, `{"rules":{"chat":{"when":"request.route == 'chat'","access":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
+	key := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","access":{"deny":[{"days":["tue"],"start":"00:00","end":"23:59","timeZone":"UTC"}]},"routing":{"allowedCatalogNodes":{"deployments":["openai-a"]},"filter":"deployment.id != 'openai-b'"}}}}`)
 	base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: FolderScope, Value: folder}, {Scope: KeyScope, Value: key}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = base.Activate(ruleValues{})
 	var unknown *UnknownConditionError
-	if !errors.As(err, &unknown) || !errors.Is(err, ErrUnknownCondition) || unknown.Origin != (Origin{Source: 2, Rule: "chat"}) || unknown.Condition != "request.route == 'chat'" {
+	if !errors.As(err, &unknown) || !errors.Is(err, ErrUnknownCondition) || unknown.Origin != (Origin{Source: 2, Rule: "chat"}) || unknown.Condition != "request.interface == 'chat_completions'" {
 		t.Fatalf("undecided condition = %#v", err)
 	}
-	active, err := base.Activate(ruleValues{"request.route": {Type: "string", String: "chat"}})
+	active, err := base.Activate(ruleValues{"request.interface": {Type: "string", String: "chat_completions"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,7 +498,7 @@ func TestOriginsLocateTheDecidingPolicyAndRule(t *testing.T) {
 func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 	for _, raw := range []string{
 		`{"rules":{"r":{"when":"provider.id == 'chutes'","routing":{"fallbacks":0}}}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
+		`{"rules":{"r":{"when":"request.interface == 'chat_completions' && author.id == 'openai'","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"blended_price(3, 1) < decimal('5')","routing":{"fallbacks":1}}}}`,
 		`{"rules":{"r":{"when":"'claude-opus' in model.groupIds","timeouts":{"totalSeconds":60}}}}`,
 	} {
@@ -507,7 +507,7 @@ func TestFallbacksAndTotalTimeoutCannotDependOnTheCandidate(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"rules":{"r":{"when":"request.route == 'chat'","routing":{"fallbacks":0},"timeouts":{"totalSeconds":60}}}}`,
+		`{"rules":{"r":{"when":"request.interface == 'chat_completions'","routing":{"fallbacks":0},"timeouts":{"totalSeconds":60}}}}`,
 		`{"rules":{"r":{"when":"provider.id == 'openai'","routing":{"filter":"deployment.id != 'x'","allowedCatalogNodes":{"providers":["openai"]},"retries":2},"timeouts":{"outputIdleSeconds":60}}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err != nil {
@@ -541,7 +541,7 @@ func TestOnlyTheOrderingChainSetsOrderings(t *testing.T) {
 	for _, raw := range []string{
 		`{"routing":{"fallbacks":1}}`,
 		`{"timeouts":{"totalSeconds":60}}`,
-		`{"rules":{"r":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`,
+		`{"rules":{"r":{"when":"request.interface == 'chat_completions'","timeouts":{"totalSeconds":60}}}}`,
 	} {
 		if _, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: org}, {Scope: CredentialScope, Value: ruleSource(t, raw)}}); err == nil || !strings.Contains(err.Error(), "credential policies cannot") {
 			t.Fatalf("credential request-wide setting accepted: %s: %v", raw, err)

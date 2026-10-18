@@ -151,7 +151,7 @@ func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
 func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
 	org := json.RawMessage(`{"delegation":{"keys":["routing.filter","input"]}}`)
 	folder := json.RawMessage(`{"delegation":{"keys":["routing.filter","timeouts.totalSeconds"]}}`)
-	previous := `{"input":{"asciiOnly":true},"routing":{"filter":"provider.id != 'a'"},"rules":{"chat":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`
+	previous := `{"input":{"asciiOnly":true},"routing":{"filter":"provider.id != 'a'"},"rules":{"chat":{"when":"request.interface == 'chat_completions'","timeouts":{"totalSeconds":60}}}}`
 	inspect := func(proposal string, previous json.RawMessage) (*Inspection, error) {
 		return InspectSources([]InspectionSource{
 			{Scope: OrganizationScope, Config: org},
@@ -173,16 +173,16 @@ func TestPoliciesKeepSectionsTheirParentsNoLongerPermit(t *testing.T) {
 			t.Fatalf("%s: notes %+v, %v", proposal, inspection, err)
 		}
 	}
-	inspection, err := inspect(`{"rules":{"chat":{"when":"request.route == 'chat'","timeouts":{"totalSeconds":60}}}}`, json.RawMessage(previous))
+	inspection, err := inspect(`{"rules":{"chat":{"when":"request.interface == 'chat_completions'","timeouts":{"totalSeconds":60}}}}`, json.RawMessage(previous))
 	if err != nil || !reflect.DeepEqual(inspection.Notes, kept[:1]) {
 		t.Fatalf("removing a kept section: %+v, %v", inspection, err)
 	}
 	for proposal, message := range map[string]string{
-		strings.Replace(previous, `"asciiOnly":true`, `"asciiOnly":false`, 1):  "The folder policy does not let key policies set input",
-		strings.Replace(previous, `"totalSeconds":60`, `"totalSeconds":30`, 1): "The organization policy does not let key policies set timeouts.totalSeconds",
-		strings.Replace(previous, `request.route == 'chat'`, `true`, 1):        "The organization policy does not let key policies set timeouts.totalSeconds",
-		strings.Replace(previous, `"chat"`, `"chats"`, 1):                      "The organization policy does not let key policies set timeouts.totalSeconds",
-		strings.Replace(previous, `"when"`, `"mode":"default","when"`, 1):      "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `"asciiOnly":true`, `"asciiOnly":false`, 1):           "The folder policy does not let key policies set input",
+		strings.Replace(previous, `"totalSeconds":60`, `"totalSeconds":30`, 1):          "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `request.interface == 'chat_completions'`, `true`, 1): "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `"chat"`, `"chats"`, 1):                               "The organization policy does not let key policies set timeouts.totalSeconds",
+		strings.Replace(previous, `"when"`, `"mode":"default","when"`, 1):               "The organization policy does not let key policies set timeouts.totalSeconds",
 	} {
 		if _, err := inspect(proposal, json.RawMessage(previous)); !errors.Is(err, ErrPolicyEditForbidden) || err.Error() != message {
 			t.Fatalf("%s: %v", proposal, err)

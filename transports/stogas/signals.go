@@ -7,6 +7,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 var (
@@ -184,7 +185,7 @@ func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostSer
 	// promise that names no narrower location.
 	if inferenceGeo != nil {
 		if reported := strings.ToLower(strings.TrimSpace(*inferenceGeo)); reported != "" &&
-			!catalog.DataLocationWithin(reportedInferenceLocation(reported), state.Resolution.Deployment.DataHandling.ProcessingLocation) {
+			!location.Within(reportedInferenceLocation(reported), state.Resolution.Deployment.DataHandling.ProcessingLocation) {
 			return ErrProviderExecutionMismatch
 		}
 	}

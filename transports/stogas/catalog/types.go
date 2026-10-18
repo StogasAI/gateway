@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"strings"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -17,6 +18,9 @@ const (
 
 	canonicalAuthHeader = "authorization"
 )
+
+// Interface is the catalog interface that a route serves, such as chat_completions.
+func (r Route) Interface() string { return strings.ReplaceAll(string(r), "-", "_") }
 
 type Identity struct {
 	Sequence uint64 `json:"sequence"`

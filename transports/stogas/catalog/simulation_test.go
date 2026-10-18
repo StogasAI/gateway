@@ -89,8 +89,8 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			},
 			removed: []string{"credential openai/openai-gpt-5.6-sol#0 credential_expired"}, pairs: 1, tried: 1},
 		{name: "undecided condition", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
-			base:    compose(`{"rules":{"typed":{"when":"deployment.upstream.deploymentType != ''","input":{"asciiOnly":true}}}}`),
-			removed: []string{"condition openai/openai-gpt-5.6-sol#0 @0typed deployment.upstream.deploymentType != ''"}, pairs: 5, tried: 3},
+			base:    compose(`{"rules":{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}}`),
+			removed: []string{"condition openai/openai-gpt-5.6-sol#0 @0typed deployment.upstream.deploymentType == 'global_standard'"}, pairs: 5, tried: 3},
 		// A deny period comes before the filters that would also remove a pair.
 		{name: "deny period of a rule", model: "gpt-5.6-sol", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			base: compose(`{"routing":{"filter":"provider.id == 'openai'"}}`, `{"rules":{"closed":{"when":"provider.id == 'azure'","access":{"deny":`+week+`}}}}`),
