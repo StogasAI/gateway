@@ -98,7 +98,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		return
 	}
 	var input struct {
-		Route         catalog.Route
+		Interface     string
 		Model         string
 		ServiceTier   string
 		ReasoningMode string
@@ -108,8 +108,8 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	for name, raw := range fields {
 		var target any
 		switch name {
-		case "route":
-			target = &input.Route
+		case "interface":
+			target = &input.Interface
 		case "model":
 			target = &input.Model
 		case "serviceTier":
@@ -126,9 +126,10 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		decoder.DisallowUnknownFields()
 		valid = valid && decoder.Decode(target) == nil
 	}
-	if !valid || input.Route != catalog.RouteChat && input.Route != catalog.RouteResponses ||
+	route, known := catalog.RouteForInterface(input.Interface)
+	if !valid || !known ||
 		input.Policy != nil && (!input.Policy.Scope.Valid() || input.Policy.ID == "" || len(input.Policy.ID) > 64 || len(input.Policy.Config) == 0) {
-		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide route as chat-completions or responses, optional model, serviceTier and reasoningMode strings, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide interface as chat_completions or responses, optional model, serviceTier and reasoningMode strings, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
 		return
 	}
 	if s.runtime == nil || s.runtime.Billing() == nil {
@@ -200,7 +201,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			chains[simulationCandidate{provider, index}] = selected.Versions
 			return catalog.RequestPolicy{Config: selected.Config}, nil
 		},
-	}, input.Route, input.Model, input.ServiceTier, input.ReasoningMode)
+	}, route, input.Model, input.ServiceTier, input.ReasoningMode)
 	for _, removed := range simulation.Removed {
 		versions := config.Versions
 		if removed.Credential != nil {
