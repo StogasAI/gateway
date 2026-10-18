@@ -100,7 +100,7 @@ test('conditional opaque rules preserve their source identity without retaining 
 	const first = inspectPolicy({ sources });
 	assert.ok(!first.error);
 	assert.deepEqual(
-		first.effective.rules.map((rule) => [rule.id, rule.name]),
+		first.effective.rules.map((rule) => [rule.policy.id, rule.name]),
 		[
 			['1', 'a_plain'],
 			['1', 'z_opaque'],

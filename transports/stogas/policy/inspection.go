@@ -252,17 +252,14 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	for i, entry := range entries {
 		document := documents[i]
 		for _, rule := range sources[i].Value.Rules {
-			item := inspectionReference(entry)
-			item["name"], item["config"] = rule.Name, document.rules[rule.Name].fields
+			item := map[string]any{"policy": inspectionReference(entry), "name": rule.Name, "config": document.rules[rule.Name].fields}
 			rules = append(rules, item)
 			if rule.Encrypted != nil && !v.omitCiphertext {
 				opaqueRuleBytes += rule.Encrypted.envelopeBytes
 			}
 		}
 		if raw := document.fields["limits"]; len(raw) > 0 {
-			limit := inspectionReference(entry)
-			limit["config"] = raw
-			limits = append(limits, limit)
+			limits = append(limits, map[string]any{"policy": inspectionReference(entry), "config": raw})
 		}
 		settings := sources[i].Value.settings
 		if settings&permissionRetries != 0 {
@@ -275,9 +272,7 @@ func (v *Inspector) Finish() (*Inspection, error) {
 			if !customerkey.Registered(compiled.EncryptionKeys, document.encrypted.KeyID) {
 				return nil, configError("register the plugin encryption key identifier in the organization policy")
 			}
-			item := inspectionReference(entry)
-			item["encrypted"] = document.encrypted
-			opaque = append(opaque, item)
+			opaque = append(opaque, map[string]any{"policy": inspectionReference(entry), "encrypted": document.encrypted})
 		}
 	}
 	if len(routing) > 0 {
@@ -311,6 +306,8 @@ func (v *Inspector) Finish() (*Inspection, error) {
 	return &Inspection{Compiled: compiled, CompilerVersion: CompilerVersion, Digest: ChainDigest(sources), Effective: effective, Notes: notes}, nil
 }
 
+// inspectionReference names a source policy. Limits, rules and encrypted
+// sections nest it under "policy", so that their own fields stay distinct.
 func inspectionReference(entry InspectionSource) map[string]any {
 	value := map[string]any{"scope": entry.Scope}
 	if entry.ID != "" {

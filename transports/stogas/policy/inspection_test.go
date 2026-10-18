@@ -78,7 +78,7 @@ func TestInspectionAtSavedResourceScopes(t *testing.T) {
 			}
 			if scope != OrganizationScope {
 				limits := result.Effective["limits"].([]map[string]any)
-				if len(limits) != 1 || limits[0]["scope"] != scope || limits[0]["id"] != "resource" {
+				if len(limits) != 1 || !reflect.DeepEqual(limits[0]["policy"], map[string]any{"scope": scope, "id": "resource"}) {
 					t.Fatalf("lost counter identity: %v", limits)
 				}
 			}
@@ -111,7 +111,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 		t.Fatal(err)
 	}
 	opaque := result.Effective["uncheckedPlugins"].([]map[string]any)
-	if len(opaque) != 2 || opaque[0]["id"] != "first" || opaque[1]["id"] != "second" {
+	if len(opaque) != 2 || opaque[0]["policy"].(map[string]any)["id"] != "first" || opaque[1]["policy"].(map[string]any)["id"] != "second" {
 		t.Fatalf("opaque identities changed: %v", opaque)
 	}
 	for _, item := range opaque {
