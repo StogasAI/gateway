@@ -23,7 +23,7 @@
 			"narSha256": "1wvh2lvpa8dmm1ddrrjpcfnhn7z6apb8mhiw6xqbbgrndg0bnpv1"
 		},
 		"linux": {
-			"version": "6.18.54"
+			"version": "6.18.57"
 		},
 		"ntpdRs": {
 			"version": "1.9.0",
@@ -41,9 +41,9 @@
 			"narSha256": "0f10b6cyg3mrj0wn9jwafpg5aj9h2al1874sx9x59d3g9ylwmqgh"
 		},
 		"systemd": {
-			"version": "262",
-			"commit": "8cc40e0c5e9234bf45084751ac53b1fbfe70b492",
-			"narSha256": "0r46vziymcx3ab9j3p1ldgbppyc6ylx760qwbk5sdwa3cxdwav50"
+			"version": "262.1",
+			"commit": "73612ea502d53baf9b0df4336cfc296a7ee0d524",
+			"narSha256": "1v2i19b9iq83q9krhy69wn59xdianql69gyblx9ljxr37x0phkq4"
 		},
 		"virtFirmwareRs": {
 			"version": "26.9.1",
