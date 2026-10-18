@@ -42,7 +42,7 @@ func TestCELConditionsUseTypedCatalogFactsAndExactPrices(t *testing.T) {
 }
 
 func TestCELMissingFactsNeverWeakenConditions(t *testing.T) {
-	for _, source := range []string{`deployment.retirementDate == "x"`, `!(deployment.retirementDate == "x")`} {
+	for _, source := range []string{`deployment.retirementDate == "2027-01-31"`, `!(deployment.retirementDate == "2027-01-31")`} {
 		program, err := CompileCEL(source)
 		if err != nil {
 			t.Fatal(err)
@@ -85,6 +85,19 @@ func TestCELRejectsUnknownFieldsWrongTypesAndInvalidPriceConstants(t *testing.T)
 	} {
 		if _, err := CompileCEL(source); err == nil {
 			t.Errorf("accepted late facts before plugins: %s", source)
+		}
+	}
+}
+
+// A string that a field can never hold would make its comparison always or never match.
+func TestCELRejectsStringsThatFieldsCannotHold(t *testing.T) {
+	_, err := CompileCEL(`deployment.dataHandling.processingLocation == "EU"`)
+	if err == nil || !strings.Contains(err.Error(), "deployment.dataHandling.processingLocation cannot be 'EU'; use a location value, such as 'eu', 'world' or 'DE'") {
+		t.Fatalf("error = %v", err)
+	}
+	for path := range fieldDomains {
+		if fieldType, _ := FieldType(path); fieldType != "string" && fieldType != "string_list" {
+			t.Errorf("%s has a value domain but is a %q field", path, fieldType)
 		}
 	}
 }

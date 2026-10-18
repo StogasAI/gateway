@@ -184,6 +184,9 @@ func (c *celCompiler) compile(source string, condition bool) (*CELExpression, er
 	if validationErr != nil {
 		return nil, validationErr
 	}
+	if err := checkFieldLiterals(checked.NativeRep(), root, nil); err != nil {
+		return nil, err
+	}
 	program, err := environment.Program(checked, cel.EvalOptions(cel.OptOptimize, cel.OptPartialEval), cel.CostLimit(MaxCELCost))
 	if err != nil {
 		return nil, configError("invalid CEL program: %v", err)

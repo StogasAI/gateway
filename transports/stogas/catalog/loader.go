@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -24,28 +23,6 @@ const (
 	publicSizeLimit   = 8 * 1024 * 1024
 	maxAliasesPerNode = 8
 )
-
-const isoCountryCodes = "|AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|" +
-	"BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|" +
-	"CA|CC|CD|CF|CG|CH|CI|CK|CL|CM|CN|CO|CR|CU|CV|CW|CX|CY|CZ|" +
-	"DE|DJ|DK|DM|DO|DZ|EC|EE|EG|EH|ER|ES|ET|FI|FJ|FK|FM|FO|FR|" +
-	"GA|GB|GD|GE|GF|GG|GH|GI|GL|GM|GN|GP|GQ|GR|GS|GT|GU|GW|GY|" +
-	"HK|HM|HN|HR|HT|HU|ID|IE|IL|IM|IN|IO|IQ|IR|IS|IT|JE|JM|JO|JP|" +
-	"KE|KG|KH|KI|KM|KN|KP|KR|KW|KY|KZ|LA|LB|LC|LI|LK|LR|LS|LT|LU|LV|LY|" +
-	"MA|MC|MD|ME|MF|MG|MH|MK|ML|MM|MN|MO|MP|MQ|MR|MS|MT|MU|MV|MW|MX|MY|MZ|" +
-	"NA|NC|NE|NF|NG|NI|NL|NO|NP|NR|NU|NZ|OM|PA|PE|PF|PG|PH|PK|PL|PM|PN|PR|PS|PT|PW|PY|" +
-	"QA|RE|RO|RS|RU|RW|SA|SB|SC|SD|SE|SG|SH|SI|SJ|SK|SL|SM|SN|SO|SR|SS|ST|SV|SX|SY|SZ|" +
-	"TC|TD|TF|TG|TH|TJ|TK|TL|TM|TN|TO|TR|TT|TV|TW|TZ|UA|UG|UM|US|UY|UZ|" +
-	"VA|VC|VE|VG|VI|VN|VU|WF|WS|YE|YT|ZA|ZM|ZW|"
-
-const euCountryCodes = "|AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE|"
-
-// Europe contains its EU child, so it includes Cyprus.
-const europeCountryCodes = "|AD|AL|AT|AX|BA|BE|BG|BY|CH|CY|CZ|DE|DK|EE|ES|FI|FO|FR|GB|GG|GI|GR|" +
-	"HR|HU|IE|IM|IS|IT|JE|LI|LT|LU|LV|MC|MD|ME|MK|MT|NL|NO|PL|PT|RO|RS|RU|SE|SI|SJ|SK|SM|UA|VA|"
-
-const apacCountryCodes = "|AF|AM|AS|AU|AZ|BD|BN|BT|CC|CK|CN|CX|FJ|FM|GE|GU|HK|ID|IN|IO|JP|KG|KH|KI|KP|KR|KZ|" +
-	"LA|LK|MH|MM|MN|MO|MP|MV|MY|NC|NF|NP|NR|NU|NZ|PF|PG|PH|PK|PN|PW|SB|SG|TH|TJ|TK|TL|TM|TO|TR|TV|TW|UM|UZ|VU|WF|WS|VN|"
 
 var compiledRouteContracts = map[string]struct {
 	providerID string
@@ -80,10 +57,6 @@ var compiledRouteContracts = map[string]struct {
 		interfaces: []string{"responses"},
 	},
 }
-
-var canonicalUUIDPattern = regexp.MustCompile(
-	`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
-)
 
 const (
 	meterAnthropicWebSearchCalls                          = "anthropic_web_search_calls"
@@ -232,7 +205,11 @@ func stateFromGraph(graph compiledGraph) (*snapshot, error) {
 		routes[routeID] = route
 	}
 	graph.Routes = routes
-	return &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors}, nil
+	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors}
+	if err := validatePolicyVocabulary(state); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 // scheduledGraph returns the base graph with an entry's nodes in place of the base nodes. An
@@ -318,9 +295,6 @@ func validateCompiledAuthors(graph compiledGraph) error {
 		if err := validateQualifierAliases(authorQualifiers, "author", authorID, author.Aliases); err != nil {
 			return err
 		}
-		if !validHeadquarters(author.HeadquarteredCountry) {
-			return fmt.Errorf("author %s has an invalid headquarters country", authorID)
-		}
 	}
 	return nil
 }
@@ -331,19 +305,11 @@ func validateCompiledProviders(graph compiledGraph) error {
 		if err := validateQualifierAliases(providerQualifiers, "provider", providerID, provider.Aliases); err != nil {
 			return err
 		}
-		if !validCredentialModes(provider.CredentialModes) {
+		if !uniqueNonEmpty(provider.CredentialModes) {
 			return fmt.Errorf("provider %s has invalid credential modes", providerID)
-		}
-		if !validHeadquarters(provider.HeadquarteredCountry) {
-			return fmt.Errorf("provider %s has an invalid headquarters country", providerID)
 		}
 	}
 	return nil
-}
-
-// validHeadquarters accepts an absent value or an ISO country code.
-func validHeadquarters(country string) bool {
-	return country == "" || len(country) == 2 && strings.Contains(isoCountryCodes, "|"+country+"|")
 }
 
 func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) error {
@@ -393,9 +359,6 @@ func validateCompiledRoutes(graph compiledGraph) error {
 		if _, ok := graph.Providers[route.ProviderID]; !ok {
 			return fmt.Errorf("route %s references unknown provider %s", routeID, route.ProviderID)
 		}
-		if firstInterfaceRoute(route) == "" {
-			return fmt.Errorf("route %s has no supported interface", routeID)
-		}
 		if err := validateDocumentFormats(route.DocumentFormats); err != nil {
 			return fmt.Errorf("route %s: %w", routeID, err)
 		}
@@ -425,7 +388,7 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		deployment.MaxOutputTokens > deployment.ContextWindowTokens {
 		return fmt.Errorf("deployment %s is not executable", deploymentID)
 	}
-	if !validModalities(deployment.OutputModalities) {
+	if !uniqueNonEmpty(deployment.OutputModalities) {
 		return fmt.Errorf("deployment %s has invalid modalities", deploymentID)
 	}
 	if deployment.RetirementDate != nil && !validDate(*deployment.RetirementDate) {
@@ -447,7 +410,7 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		if !validSHA256Digest(route.ChainHash) {
 			return fmt.Errorf("%s has an invalid resolved chain", owner)
 		}
-		if !validModalities(route.InputModalities) {
+		if !uniqueNonEmpty(route.InputModalities) {
 			return fmt.Errorf("%s has invalid modalities", owner)
 		}
 		if err := validateDeploymentDataHandling(owner, route.DataHandling); err != nil {
@@ -505,18 +468,16 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 	switch providerID {
 	case "openai":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
-			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" ||
-			(selector.ReasoningMode != "" && selector.ReasoningMode != "pro") {
+			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid OpenAI upstream selector", deploymentID)
 		}
 	case "anthropic":
 		if selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
-			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" ||
-			(selector.InferenceGeo != "" && selector.InferenceGeo != "global" && selector.InferenceGeo != "us") {
+			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
 			return fmt.Errorf("deployment %s has an invalid Anthropic upstream selector", deploymentID)
 		}
 	case "chutes":
-		if !canonicalUUIDPattern.MatchString(selector.ChuteID) ||
+		if selector.ChuteID == "" ||
 			selector.GPUCount == nil || *selector.GPUCount < 1 || *selector.GPUCount > 8 || selector.InferenceGeo != "" ||
 			selector.ReasoningMode != "" ||
 			selector.Hosting != "" || selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
@@ -533,9 +494,8 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 func validateAzureUpstreamSelector(deploymentID string, deployment compiledDeployment) error {
 	selector := deployment.Upstream
 	if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
-		strings.TrimSpace(selector.ModelFormat) == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
-		strings.TrimSpace(selector.Hosting) == "" || strings.TrimSpace(selector.DeploymentType) == "" ||
-		(selector.ReasoningMode != "" && selector.ReasoningMode != "pro") {
+		selector.ModelFormat == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
+		selector.Hosting == "" || selector.DeploymentType == "" {
 		return fmt.Errorf("deployment %s has an invalid Azure upstream selector", deploymentID)
 	}
 	// Core sends the Anthropic wire format when the catalog model ID names Claude, so only the
@@ -579,10 +539,6 @@ func validateCanonicalRouteDeployments(graph compiledGraph) error {
 }
 
 func validateDeploymentDataHandling(owner string, handling DataHandling) error {
-	if !IsCanonicalDataLocation(handling.ProcessingLocation, false) ||
-		!IsCanonicalDataLocation(handling.StorageLocation, true) {
-		return fmt.Errorf("%s has an invalid data handling location", owner)
-	}
 	if handling.TEEVerified && !handling.TEE {
 		return fmt.Errorf("%s verifies a TEE that is not enabled", owner)
 	}
@@ -593,49 +549,15 @@ func validateDeploymentDataHandling(owner string, handling DataHandling) error {
 	return nil
 }
 
-// IsCanonicalDataLocation reports whether value uses the catalog's closed location vocabulary.
-func IsCanonicalDataLocation(value string, allowNone bool) bool {
-	if value == "world" || value == "apac" || value == "eu" || value == "europe" || value == "unknown" || (allowNone && value == "none") {
-		return true
-	}
-	return len(value) == 2 && strings.Contains(isoCountryCodes, "|"+value+"|")
-}
-
-// DataLocationWithin reports whether actual is at least as geographically narrow as boundary.
-func DataLocationWithin(actual, boundary string) bool {
-	if !IsCanonicalDataLocation(actual, true) || !IsCanonicalDataLocation(boundary, true) {
-		return false
-	}
-	if actual == boundary || boundary == "world" || boundary == "unknown" {
-		return true
-	}
-	if actual == "unknown" || actual == "world" || actual == "none" || boundary == "none" {
-		return false
-	}
-	switch boundary {
-	case "eu":
-		return strings.Contains(euCountryCodes, "|"+actual+"|")
-	case "europe":
-		return actual == "eu" || strings.Contains(europeCountryCodes, "|"+actual+"|")
-	case "apac":
-		return strings.Contains(apacCountryCodes, "|"+actual+"|")
-	default:
-		return false
-	}
-}
-
-func validModalities(values []string) bool {
-	seen := make(map[string]struct{}, len(values))
+// uniqueNonEmpty accepts a list with at least one value and no repeats. The policy vocabulary
+// pass checks the values themselves.
+func uniqueNonEmpty(values []string) bool {
+	seen := make(map[string]bool, len(values))
 	for _, value := range values {
-		switch value {
-		case "text", "image", "audio", "video":
-		default:
+		if seen[value] {
 			return false
 		}
-		if _, duplicate := seen[value]; duplicate {
-			return false
-		}
-		seen[value] = struct{}{}
+		seen[value] = true
 	}
 	return len(seen) > 0
 }
@@ -741,11 +663,6 @@ func validateReasoningEfforts(owner string, efforts []string) error {
 }
 
 func validateModelReasoning(modelID string, model compiledModel) error {
-	switch model.Reasoning {
-	case "optional", "required", "unsupported":
-	default:
-		return fmt.Errorf("model %s has an invalid reasoning value", modelID)
-	}
 	if err := validateReasoningEfforts("model "+modelID, model.ReasoningEfforts); err != nil {
 		return err
 	}
@@ -786,11 +703,6 @@ func validateDeploymentReasoningInheritance(deploymentID string, model compiledM
 }
 
 func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment, graph compiledGraph) error {
-	switch deployment.Reasoning {
-	case "optional", "required", "unsupported":
-	default:
-		return fmt.Errorf("deployment %s has an invalid reasoning value", deploymentID)
-	}
 	if deployment.Reasoning == "unsupported" {
 		exposed := deployment.ReasoningMaxTokens != nil
 		for _, route := range deployment.Routes {
@@ -820,20 +732,6 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 		}
 	}
 	return nil
-}
-
-func validCredentialModes(modes []string) bool {
-	if len(modes) == 0 {
-		return false
-	}
-	seen := make(map[string]bool, len(modes))
-	for _, mode := range modes {
-		if (mode != "managed" && mode != "byok") || seen[mode] {
-			return false
-		}
-		seen[mode] = true
-	}
-	return true
 }
 
 func validateQualifierAliases(

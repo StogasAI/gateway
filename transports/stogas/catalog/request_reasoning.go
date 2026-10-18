@@ -7,9 +7,8 @@ import (
 
 	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
-
-var canonicalReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
 type normalizedReasoning struct {
 	Effort  *string
@@ -174,7 +173,7 @@ func absInt(value int) int {
 }
 
 func reasoningEffortIndex(value string) int {
-	for index, effort := range canonicalReasoningEfforts {
+	for index, effort := range policy.ReasoningEfforts {
 		if value == effort {
 			return index
 		}

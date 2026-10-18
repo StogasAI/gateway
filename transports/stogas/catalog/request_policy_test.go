@@ -197,14 +197,14 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		return `{"closed":{"when":"` + when + `","access":{"deny":[{"days":["mon","tue","wed","thu","fri","sat","sun"],"start":"00:00","end":"24:00","timeZone":"UTC"}]}}}`
 	}
 	// The catalog states an Azure deployment type and no OpenAI deployment type.
-	undecided := `{"typed":{"when":"deployment.upstream.deploymentType != ''","input":{"asciiOnly":true}}}`
+	undecided := `{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}`
 	for _, test := range []struct {
 		name, rules, order, want, code string
 		credentials                    bool
 	}{
 		{name: "deny period leaves another provider", rules: denied("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "deny period leaves another credential", rules: denied("provider.id == 'openai'"), want: "openai-gpt-5.6-sol", credentials: true},
-		{name: "deny period on every candidate", rules: denied("provider.id != ''"), order: "azure", code: "schedule_denied"},
+		{name: "deny period on every candidate", rules: denied("provider.id != 'blocked'"), order: "azure", code: "schedule_denied"},
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
 		{name: "undecided condition leaves another credential", rules: undecided, want: "openai-gpt-5.6-sol", credentials: true},
 		{name: "undecided condition on every candidate", rules: `{"geo":{"when":"deployment.upstream.inferenceGeo == 'us'","input":{"asciiOnly":true}}}`, order: "azure", code: "invalid_request"},

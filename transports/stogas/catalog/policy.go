@@ -3,6 +3,8 @@ package catalog
 import (
 	"cmp"
 	"errors"
+	"fmt"
+	"maps"
 	"math/big"
 	"reflect"
 	"slices"
@@ -42,8 +44,8 @@ type policyDeploymentData struct {
 
 type policyRequestData struct {
 	BodyBytes int    `json:"bodyBytes"`
+	Interface string `json:"interface"`
 	Model     string `json:"model"`
-	Route     string `json:"route"`
 }
 
 type resolvedPolicyValues struct {
@@ -599,6 +601,37 @@ func candidatePolicyIDs(candidate *ResolvedRequest) policyIDs {
 	}
 }
 
+// validatePolicyVocabulary rejects a catalog value that policies read but cannot name, because a
+// policy that compares a field with a value outside its vocabulary fails at save.
+func validatePolicyVocabulary(state *snapshot) error {
+	paths := policy.FieldPaths()
+	for _, deploymentID := range slices.Sorted(maps.Keys(state.graph.Deployments)) {
+		for _, routeID := range sortedRouteIDs(state.graph.Deployments[deploymentID]) {
+			deployment, _ := state.deploymentFromCompiledAt(deploymentID, state.graph.Routes[routeID], time.Time{})
+			values, ok := newResolvedPolicyValues(&ResolvedRequest{Deployment: deployment})
+			if !ok {
+				return fmt.Errorf("deployment %s route %s is not readable by policies", deploymentID, routeID)
+			}
+			for _, path := range paths {
+				value, ok := values.PolicyValue(path)
+				if !ok || strings.HasPrefix(path, "request.") {
+					continue
+				}
+				items := value.Strings
+				if value.Type == "string" {
+					items = []string{value.String}
+				}
+				for _, item := range items {
+					if !policy.ValidFieldValue(path, item) {
+						return fmt.Errorf("deployment %s route %s has %s %q outside the policy vocabulary", deploymentID, routeID, path, item)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues, bool) {
 	ids := candidatePolicyIDs(candidate)
 	if candidate == nil || ids.author == "" || ids.model == "" || ids.deployment == "" || ids.route == "" || ids.provider == "" {
@@ -641,8 +674,8 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 		"provider": {id: ids.provider, fields: provider},
 		"request": {fields: policyRequestData{
 			BodyBytes: candidate.policyBodyBytes,
+			Interface: candidate.Route.Interface(),
 			Model:     candidate.RequestedModel,
-			Route:     string(candidate.Route),
 		}},
 		"route": {id: ids.route, fields: route},
 	}}, true

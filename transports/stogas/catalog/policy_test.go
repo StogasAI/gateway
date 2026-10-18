@@ -279,7 +279,7 @@ func TestRoutingQueryFiltersAndDeterministicallySortsCandidates(t *testing.T) {
 	}
 
 	missing := policyConfig(2)
-	missing.Routing.Query = mustRouting(t, `deployment.upstream.chuteId != 'none'`, []policy.Sort{stable})
+	missing.Routing.Query = mustRouting(t, `deployment.upstream.chuteId != '00000000-0000-4000-8000-000000000000'`, []policy.Sort{stable})
 	if _, err := resolvePolicyChat(t, missing, ""); !errors.Is(err, ErrModelUnavailable) {
 		t.Fatalf("missing-value comparison error = %v, want ErrModelUnavailable", err)
 	}
@@ -356,7 +356,7 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 		{path: "route.id", fieldType: "string", value: "openai-chat-completions"},
 		{path: "route.providerId", fieldType: "string", value: "openai"},
 		{path: "request.model", fieldType: "string", value: "gpt-5.6-sol"},
-		{path: "request.route", fieldType: "string", value: "chat-completions"},
+		{path: "request.interface", fieldType: "string", value: "chat_completions"},
 		{path: "deployment.capabilities.streaming", fieldType: "boolean", value: "true"},
 	}
 	for _, test := range tests {

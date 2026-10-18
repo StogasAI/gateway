@@ -13,6 +13,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 const (
@@ -147,10 +148,10 @@ func validAzureBinding(
 ) bool {
 	if binding.TokenScope != azureDataScope ||
 		!validAzureDeploymentName(binding.DeploymentName) ||
-		!catalog.IsCanonicalDataLocation(binding.ProcessingLocation, false) ||
-		!catalog.IsCanonicalDataLocation(binding.StorageLocation, true) ||
-		!catalog.DataLocationWithin(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
-		!catalog.DataLocationWithin(binding.StorageLocation, dataHandling.StorageLocation) ||
+		!location.Valid(binding.ProcessingLocation, false) ||
+		!location.Valid(binding.StorageLocation, true) ||
+		!location.Within(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
+		!location.Within(binding.StorageLocation, dataHandling.StorageLocation) ||
 		binding.DeploymentType != upstream.DeploymentType ||
 		binding.Hosting != upstream.Hosting ||
 		binding.ModelFormat != upstream.ModelFormat ||

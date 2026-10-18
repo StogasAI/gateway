@@ -1,9 +1,6 @@
 package catalog
 
-import (
-	"errors"
-	"regexp"
-)
+import "errors"
 
 // DocumentFormats lists the file types a route's provider reads natively from a document
 // part. Image and audio parts follow the deployment's input modalities; request-time text
@@ -13,20 +10,15 @@ type DocumentFormats struct {
 	Extensions []string `json:"extensions"`
 }
 
-var fileMediaType = regexp.MustCompile(`^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$`)
-var fileExtension = regexp.MustCompile(`^\.[a-z0-9][a-z0-9._+-]*$`)
-
+// The policy vocabulary pass checks the form of each entry.
 func validateDocumentFormats(value DocumentFormats) error {
-	for _, field := range []struct {
-		values  []string
-		pattern *regexp.Regexp
-	}{{value.MediaTypes, fileMediaType}, {value.Extensions, fileExtension}} {
-		if field.values == nil {
+	for _, values := range [][]string{value.MediaTypes, value.Extensions} {
+		if values == nil {
 			return errors.New("document formats must be explicit arrays")
 		}
-		for i, entry := range field.values {
-			if !field.pattern.MatchString(entry) || (i > 0 && field.values[i-1] >= entry) {
-				return errors.New("document formats must be sorted, unique and lowercase")
+		for i := 1; i < len(values); i++ {
+			if values[i-1] >= values[i] {
+				return errors.New("document formats must be sorted and unique")
 			}
 		}
 	}
