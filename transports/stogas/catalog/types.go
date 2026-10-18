@@ -22,6 +22,16 @@ const (
 // Interface is the catalog interface that a route serves, such as chat_completions.
 func (r Route) Interface() string { return strings.ReplaceAll(string(r), "-", "_") }
 
+// RouteForInterface reads an interface as policies and route.interfaces spell it.
+func RouteForInterface(name string) (Route, bool) {
+	for _, route := range []Route{RouteChat, RouteResponses} {
+		if route.Interface() == name {
+			return route, true
+		}
+	}
+	return "", false
+}
+
 type Identity struct {
 	Sequence uint64 `json:"sequence"`
 	Digest   string `json:"digest"`
