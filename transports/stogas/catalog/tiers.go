@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 
+	"github.com/bytedance/sonic"
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
@@ -89,4 +92,62 @@ func upstreamServiceTier(provider schemas.ModelProvider, upstream Upstream) *sch
 
 func tierRank(tier string) int {
 	return slices.Index(tierOrder, tier)
+}
+
+// Reasoning modes select deployments as tiers do. A deployment's upstream.reasoningMode is empty
+// in standard mode.
+const (
+	ModeStandard = "standard"
+	ModePro      = "pro"
+)
+
+// variant is the service tier and reasoning mode that a request selects. An empty field leaves the
+// choice to the model selector: the base deployment's tier, in standard mode.
+type variant struct {
+	tier string
+	mode string
+}
+
+// upstreamMode is the upstream.reasoningMode of the deployments that a model selector, group or
+// pool selects.
+func (v variant) upstreamMode() string {
+	if v.mode == ModePro {
+		return ModePro
+	}
+	return ""
+}
+
+// matches reports whether a deployment that the request names exactly runs at the variant.
+func (v variant) matches(upstream compiledUpstream) bool {
+	return (v.tier == "" || upstream.ServiceTier == v.tier) &&
+		(v.mode == "" || upstream.ReasoningMode == v.upstreamMode())
+}
+
+// unavailable is the error for a request whose variant leaves no deployment. The mode applies
+// before the tier, so a model that never runs in the mode names the mode.
+func (v variant) unavailable(modeServed bool) error {
+	switch {
+	case v.mode != "" && !modeServed:
+		return ErrReasoningModeUnavailable
+	case v.tier != "":
+		return ErrServiceTierUnavailable
+	default:
+		return ErrModelUnavailable
+	}
+}
+
+// requestedMode parses a client reasoning.mode. An omitted value leaves the mode to the model
+// selector.
+func requestedMode(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return "", nil
+	}
+	var mode string
+	if err := sonic.Unmarshal(raw, &mode); err != nil {
+		return "", ErrInvalidJSON
+	}
+	if mode != ModeStandard && mode != ModePro {
+		return "", ErrUnsupportedReasoningMode
+	}
+	return mode, nil
 }

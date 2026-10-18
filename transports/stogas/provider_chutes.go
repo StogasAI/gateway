@@ -160,8 +160,11 @@ func validateChutesChatPolicy(state *State) error {
 			return err
 		}
 	}
-	if err := validateReasoningParameters(raw, map[string]bool{"effort": true, "enabled": true}); err != nil {
-		return err
+	reasoning, _ := rawObject(raw["reasoning"])
+	for name := range reasoning {
+		if name != "effort" && name != "enabled" {
+			return invalidRequest("reasoning." + name + " is not supported for Chutes deployments")
+		}
 	}
 	if err := validateChutesResponseFormat(raw["response_format"], state.Resolution.Deployment.Capabilities.StructuredOutputs); err != nil {
 		return err

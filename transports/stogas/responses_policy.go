@@ -78,9 +78,6 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateResponsesTextConfig(state, raw["text"]); err != nil {
 		return err
 	}
-	if err := validateResponsesReasoning(raw); err != nil {
-		return err
-	}
 	if err := validateResponsesTruncation(state, raw["truncation"]); err != nil {
 		return err
 	}
@@ -190,24 +187,6 @@ func rawInteger(valueRaw json.RawMessage, name string) (int, bool, error) {
 		return 0, true, invalidRequest(name + " must be an integer")
 	}
 	return value, true, nil
-}
-
-func validateResponsesReasoning(raw map[string]json.RawMessage) error {
-	if err := validateReasoningParameters(raw, responsesReasoningFields); err != nil {
-		return err
-	}
-	reasoning, hasReasoning := rawObject(raw["reasoning"])
-	if effortRaw, ok := raw["reasoning.effort"]; ok {
-		if err := validateReasoningEffortValue(effortRaw, "reasoning.effort"); err != nil {
-			return err
-		}
-	}
-	if _, ok := raw["reasoning.effort"]; ok && hasReasoning {
-		if _, exists := reasoning["effort"]; exists {
-			return invalidRequest("reasoning.effort conflicts with reasoning.effort")
-		}
-	}
-	return nil
 }
 
 func validateResponsesTruncation(state *State, raw json.RawMessage) error {

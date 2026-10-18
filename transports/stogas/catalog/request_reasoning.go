@@ -219,6 +219,7 @@ var (
 		"effort":           true,
 		"generate_summary": true,
 		"max_tokens":       true,
+		"mode":             true,
 		"summary":          true,
 	}
 )

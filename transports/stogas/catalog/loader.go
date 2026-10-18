@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -17,8 +18,8 @@ import (
 )
 
 const (
-	runtimeSchema     = "stogas.catalog.runtime.v4"
-	publicSchema      = "stogas.catalog.public.v4"
+	runtimeSchema     = "stogas.catalog.runtime.v5"
+	publicSchema      = "stogas.catalog.public.v5"
 	runtimeSizeLimit  = 16 * 1024 * 1024
 	publicSizeLimit   = 8 * 1024 * 1024
 	maxAliasesPerNode = 8
@@ -395,6 +396,9 @@ func validateCompiledRoutes(graph compiledGraph) error {
 		if firstInterfaceRoute(route) == "" {
 			return fmt.Errorf("route %s has no supported interface", routeID)
 		}
+		if err := validateDocumentFormats(route.DocumentFormats); err != nil {
+			return fmt.Errorf("route %s: %w", routeID, err)
+		}
 	}
 	return nil
 }
@@ -418,50 +422,43 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 		deployment.MaxInputTokens <= 0 ||
 		deployment.MaxInputTokens > deployment.ContextWindowTokens ||
 		deployment.MaxOutputTokens <= 0 ||
-		deployment.MaxOutputTokens > deployment.ContextWindowTokens ||
-		len(deployment.InputModalities) == 0 ||
-		len(deployment.OutputModalities) == 0 {
+		deployment.MaxOutputTokens > deployment.ContextWindowTokens {
 		return fmt.Errorf("deployment %s is not executable", deploymentID)
 	}
-	if len(deployment.Capabilities.InputModalities) != 0 ||
-		len(deployment.Capabilities.OutputModalities) != 0 ||
-		!validModalities(deployment.InputModalities) ||
-		!validModalities(deployment.OutputModalities) {
+	if !validModalities(deployment.OutputModalities) {
 		return fmt.Errorf("deployment %s has invalid modalities", deploymentID)
 	}
-	if !validDeprecationDate(deployment.DeprecationDate) {
-		return fmt.Errorf("deployment %s has invalid deprecationDate", deploymentID)
+	if deployment.RetirementDate != nil && !validDate(*deployment.RetirementDate) {
+		return fmt.Errorf("deployment %s has an invalid retirementDate", deploymentID)
 	}
 	if err := selectors.add(deploymentID, "deployment:"+deploymentID); err != nil {
 		return err
 	}
-
 	providerID, err := validateDeploymentRoutes(graph, deploymentID, deployment)
 	if err != nil {
 		return err
 	}
-	if len(deployment.ChainHashes) != len(deployment.RouteIDs) {
-		return fmt.Errorf("deployment %s must identify each resolved chain", deploymentID)
-	}
-	for _, routeID := range deployment.RouteIDs {
-		if !validSHA256Digest(deployment.ChainHashes[routeID]) {
-			return fmt.Errorf("deployment %s has an invalid resolved chain for %s", deploymentID, routeID)
-		}
-	}
 	if err := validateDeploymentUpstreamSelector(deploymentID, providerID, deployment); err != nil {
 		return err
 	}
-	if err := validateDeploymentRouteDataHandling(deploymentID, deployment); err != nil {
-		return err
-	}
-	if err := validateDeploymentPricing(deploymentID, providerID, deployment); err != nil {
-		return err
-	}
-	if err := validateReasoningEfforts("deployment "+deploymentID, deployment.ReasoningEfforts); err != nil {
-		return err
-	}
-	if err := validateDeploymentRouteOverrides(deploymentID, deployment); err != nil {
-		return err
+	for _, routeID := range sortedRouteIDs(deployment) {
+		route := deployment.Routes[routeID]
+		owner := "deployment " + deploymentID + " route " + routeID
+		if !validSHA256Digest(route.ChainHash) {
+			return fmt.Errorf("%s has an invalid resolved chain", owner)
+		}
+		if !validModalities(route.InputModalities) {
+			return fmt.Errorf("%s has invalid modalities", owner)
+		}
+		if err := validateDeploymentDataHandling(owner, route.DataHandling); err != nil {
+			return err
+		}
+		if err := validateDeploymentPricing(owner, providerID, deployment.ModelID, route); err != nil {
+			return err
+		}
+		if err := validateReasoningEfforts(owner, route.ReasoningEfforts); err != nil {
+			return err
+		}
 	}
 	if err := validateReasoningConfiguration(deploymentID, providerID, model.AuthorID, deployment, graph); err != nil {
 		return err
@@ -469,14 +466,12 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 	return validateDeploymentReasoningInheritance(deploymentID, model, deployment)
 }
 
+// validateDeploymentRoutes returns the provider of a deployment whose routes belong to one
+// provider and serve different interfaces, so each interface has one route.
 func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployment compiledDeployment) (string, error) {
 	providerID := ""
-	routeIDs := make(map[string]struct{}, len(deployment.RouteIDs))
-	for _, routeID := range deployment.RouteIDs {
-		if _, repeated := routeIDs[routeID]; repeated {
-			return "", fmt.Errorf("deployment %s repeats route %s", deploymentID, routeID)
-		}
-		routeIDs[routeID] = struct{}{}
+	interfaces := make(map[string]bool)
+	for _, routeID := range sortedRouteIDs(deployment) {
 		route, ok := graph.Routes[routeID]
 		if !ok {
 			return "", fmt.Errorf("deployment %s references unknown route %s", deploymentID, routeID)
@@ -485,31 +480,21 @@ func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployme
 			return "", fmt.Errorf("deployment %s spans multiple providers", deploymentID)
 		}
 		providerID = route.ProviderID
+		for _, name := range route.Interfaces {
+			if interfaces[name] {
+				return "", fmt.Errorf("deployment %s serves %s on more than one route", deploymentID, name)
+			}
+			interfaces[name] = true
+		}
 	}
 	if providerID == "" {
 		return "", fmt.Errorf("deployment %s has no route", deploymentID)
 	}
-	if len(deployment.DataHandlingByRoute) != len(routeIDs) {
-		return "", fmt.Errorf("deployment %s does not define exact route data handling", deploymentID)
-	}
-	for routeID := range deployment.DataHandlingByRoute {
-		if _, attached := routeIDs[routeID]; !attached {
-			return "", fmt.Errorf("deployment %s defines data handling for unattached route %s", deploymentID, routeID)
-		}
-	}
-	if len(deployment.NativeFileInputsByRoute) != len(routeIDs) {
-		return "", fmt.Errorf("deployment %s does not define exact native file support", deploymentID)
-	}
-	for routeID, nativeFileInputs := range deployment.NativeFileInputsByRoute {
-		if _, attached := routeIDs[routeID]; !attached {
-			return "", fmt.Errorf("deployment %s defines native file support for unattached route %s", deploymentID, routeID)
-		}
-		if err := validateNativeFileInputs(nativeFileInputs); err != nil {
-			return "", fmt.Errorf("deployment %s route %s: %w", deploymentID, routeID, err)
-		}
-
-	}
 	return providerID, nil
+}
+
+func sortedRouteIDs(deployment compiledDeployment) []string {
+	return slices.Sorted(maps.Keys(deployment.Routes))
 }
 
 func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment compiledDeployment) error {
@@ -556,22 +541,9 @@ func validateAzureUpstreamSelector(deploymentID string, deployment compiledDeplo
 	// Core sends the Anthropic wire format when the catalog model ID names Claude, so only the
 	// Anthropic Messages route can serve those models.
 	anthropicWire := schemas.IsAnthropicModel(deployment.ModelID)
-	for _, routeID := range deployment.RouteIDs {
+	for routeID := range deployment.Routes {
 		if (routeID == "azure-anthropic-messages") != anthropicWire {
 			return fmt.Errorf("deployment %s has an invalid Azure protocol route", deploymentID)
-		}
-	}
-	return nil
-}
-
-func validateDeploymentRouteDataHandling(deploymentID string, deployment compiledDeployment) error {
-	for _, routeID := range deployment.RouteIDs {
-		handling, exists := deployment.DataHandlingByRoute[routeID]
-		if !exists {
-			return fmt.Errorf("deployment %s has no data handling for route %s", deploymentID, routeID)
-		}
-		if err := validateDeploymentDataHandling(deploymentID, routeID, handling); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -606,17 +578,17 @@ func validateCanonicalRouteDeployments(graph compiledGraph) error {
 	return nil
 }
 
-func validateDeploymentDataHandling(deploymentID, routeID string, handling DataHandling) error {
+func validateDeploymentDataHandling(owner string, handling DataHandling) error {
 	if !IsCanonicalDataLocation(handling.ProcessingLocation, false) ||
 		!IsCanonicalDataLocation(handling.StorageLocation, true) {
-		return fmt.Errorf("deployment %s route %s has an invalid data handling location", deploymentID, routeID)
+		return fmt.Errorf("%s has an invalid data handling location", owner)
 	}
 	if handling.TEEVerified && !handling.TEE {
-		return fmt.Errorf("deployment %s route %s verifies a TEE that is not enabled", deploymentID, routeID)
+		return fmt.Errorf("%s verifies a TEE that is not enabled", owner)
 	}
 	if handling.ZeroDataRetention &&
 		(handling.StorageLocation != "none" || handling.RetentionDays == nil || *handling.RetentionDays != 0 || handling.TrainingUse) {
-		return fmt.Errorf("deployment %s route %s has contradictory zero data retention", deploymentID, routeID)
+		return fmt.Errorf("%s has contradictory zero data retention", owner)
 	}
 	return nil
 }
@@ -668,28 +640,29 @@ func validModalities(values []string) bool {
 	return len(seen) > 0
 }
 
-func validateDeploymentPricing(deploymentID, providerID string, deployment compiledDeployment) error {
+func validateDeploymentPricing(owner, providerID, modelID string, route compiledDeploymentRoute) error {
+	pricing := route.Pricing
 	for _, required := range []string{
 		billing.MeterInputTokens,
 		billing.MeterOutputTokens,
 	} {
-		if len(deployment.Pricing[required]) == 0 {
-			return fmt.Errorf("deployment %s is missing required pricing meter %s", deploymentID, required)
+		if len(pricing[required]) == 0 {
+			return fmt.Errorf("%s is missing required pricing meter %s", owner, required)
 		}
 	}
-	if (deployment.Capabilities.ImplicitPromptCaching || deployment.Capabilities.ExplicitPromptCaching) &&
-		len(deployment.Pricing[billing.MeterCachedInputTokens]) == 0 {
-		return fmt.Errorf("deployment %s is missing required pricing meter %s", deploymentID, billing.MeterCachedInputTokens)
+	if (route.Capabilities.ImplicitPromptCaching || route.Capabilities.ExplicitPromptCaching) &&
+		len(pricing[billing.MeterCachedInputTokens]) == 0 {
+		return fmt.Errorf("%s is missing required pricing meter %s", owner, billing.MeterCachedInputTokens)
 	}
-	for meterKey, rates := range deployment.Pricing {
+	for meterKey, rates := range pricing {
 		switch {
 		case tokenPricingMeters[meterKey]:
 			if !validTokenRates(rates) {
-				return fmt.Errorf("deployment %s has invalid token rates for %s", deploymentID, meterKey)
+				return fmt.Errorf("%s has invalid token rates for %s", owner, meterKey)
 			}
 		case callPricingMeters[meterKey]:
 			if !validExactRates(rates, billing.RatePerThousandCalls) {
-				return fmt.Errorf("deployment %s has invalid call rates for %s", deploymentID, meterKey)
+				return fmt.Errorf("%s has invalid call rates for %s", owner, meterKey)
 			}
 		case meterKey == meterOpenAIChatCompletionSearchPreviewModelCalls:
 			if !validExactRates(
@@ -698,29 +671,29 @@ func validateDeploymentPricing(deploymentID, providerID string, deployment compi
 				ratePerThousandSearchContextMediumCalls,
 				ratePerThousandSearchContextHighCalls,
 			) {
-				return fmt.Errorf("deployment %s has invalid search-context rates for %s", deploymentID, meterKey)
+				return fmt.Errorf("%s has invalid search-context rates for %s", owner, meterKey)
 			}
 		default:
-			return fmt.Errorf("deployment %s uses unsupported pricing meter %s", deploymentID, meterKey)
+			return fmt.Errorf("%s uses unsupported pricing meter %s", owner, meterKey)
 		}
 	}
 	// Only the Anthropic wire reports cache writes by duration; billing an
 	// unpriced write as ordinary input would undercharge it.
-	if providerID == "anthropic" || (providerID == "azure" && schemas.IsAnthropicModel(deployment.ModelID)) {
-		if len(deployment.Pricing[billing.MeterCacheWriteInputTokens]) > 0 {
-			return fmt.Errorf("deployment %s uses OpenAI cache-write pricing", deploymentID)
+	if providerID == "anthropic" || (providerID == "azure" && schemas.IsAnthropicModel(modelID)) {
+		if len(pricing[billing.MeterCacheWriteInputTokens]) > 0 {
+			return fmt.Errorf("%s uses OpenAI cache-write pricing", owner)
 		}
 		for _, required := range []string{
 			billing.MeterCacheWrite5mInputTokens,
 			billing.MeterCacheWrite1hInputTokens,
 		} {
-			if len(deployment.Pricing[required]) == 0 {
-				return fmt.Errorf("deployment %s is missing Anthropic pricing meter %s", deploymentID, required)
+			if len(pricing[required]) == 0 {
+				return fmt.Errorf("%s is missing Anthropic pricing meter %s", owner, required)
 			}
 		}
-	} else if len(deployment.Pricing[billing.MeterCacheWrite5mInputTokens]) > 0 ||
-		len(deployment.Pricing[billing.MeterCacheWrite1hInputTokens]) > 0 {
-		return fmt.Errorf("deployment %s uses Anthropic cache-write meters", deploymentID)
+	} else if len(pricing[billing.MeterCacheWrite5mInputTokens]) > 0 ||
+		len(pricing[billing.MeterCacheWrite1hInputTokens]) > 0 {
+		return fmt.Errorf("%s uses Anthropic cache-write meters", owner)
 	}
 	return nil
 }
@@ -794,13 +767,11 @@ func validateDeploymentReasoningInheritance(deploymentID string, model compiledM
 	if model.Reasoning == "required" && deployment.Reasoning != "required" {
 		return fmt.Errorf("deployment %s weakens required model reasoning", deploymentID)
 	}
-	modelEfforts := make(map[string]struct{}, len(model.ReasoningEfforts))
-	for _, effort := range model.ReasoningEfforts {
-		modelEfforts[effort] = struct{}{}
-	}
-	for _, effort := range deployment.ReasoningEfforts {
-		if _, ok := modelEfforts[effort]; !ok {
-			return fmt.Errorf("deployment %s enables a model-unsupported reasoning effort", deploymentID)
+	for _, route := range deployment.Routes {
+		for _, effort := range route.ReasoningEfforts {
+			if !stringIn(model.ReasoningEfforts, effort) {
+				return fmt.Errorf("deployment %s enables a model-unsupported reasoning effort", deploymentID)
+			}
 		}
 	}
 	if deployment.ReasoningMaxTokens == nil {
@@ -814,39 +785,20 @@ func validateDeploymentReasoningInheritance(deploymentID string, model compiledM
 	return nil
 }
 
-func validateDeploymentRouteOverrides(deploymentID string, deployment compiledDeployment) error {
-	deploymentEfforts := make(map[string]struct{}, len(deployment.ReasoningEfforts))
-	for _, effort := range deployment.ReasoningEfforts {
-		deploymentEfforts[effort] = struct{}{}
-	}
-	for routeID, override := range deployment.RouteOverrides {
-		if !stringIn(deployment.RouteIDs, routeID) {
-			return fmt.Errorf("deployment %s overrides unattached route %s", deploymentID, routeID)
-		}
-		if err := validateReasoningEfforts("deployment "+deploymentID+" route "+routeID, override.ReasoningEfforts); err != nil {
-			return err
-		}
-		if sameStrings(override.ReasoningEfforts, deployment.ReasoningEfforts) {
-			return fmt.Errorf("deployment %s route %s redundantly repeats reasoning efforts", deploymentID, routeID)
-		}
-		for _, effort := range override.ReasoningEfforts {
-			if _, ok := deploymentEfforts[effort]; !ok {
-				return fmt.Errorf("deployment %s route %s enables an unsupported reasoning effort", deploymentID, routeID)
-			}
-		}
-	}
-	return nil
-}
-
 func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment, graph compiledGraph) error {
 	switch deployment.Reasoning {
 	case "optional", "required", "unsupported":
 	default:
 		return fmt.Errorf("deployment %s has an invalid reasoning value", deploymentID)
 	}
-	if deployment.Reasoning == "unsupported" &&
-		(len(deployment.ReasoningEfforts) > 0 || deployment.ReasoningMaxTokens != nil) {
-		return fmt.Errorf("deployment %s exposes controls for unsupported reasoning", deploymentID)
+	if deployment.Reasoning == "unsupported" {
+		exposed := deployment.ReasoningMaxTokens != nil
+		for _, route := range deployment.Routes {
+			exposed = exposed || len(route.ReasoningEfforts) > 0
+		}
+		if exposed {
+			return fmt.Errorf("deployment %s exposes controls for unsupported reasoning", deploymentID)
+		}
 	}
 	if budget := deployment.ReasoningMaxTokens; budget != nil {
 		supportsManualBudget := providerID == "anthropic" || (providerID == "azure" && modelAuthorID == "anthropic")
@@ -861,7 +813,7 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 		modelAuthorID != "openai" {
 		return fmt.Errorf("deployment %s has an invalid fixed reasoning mode", deploymentID)
 	}
-	for _, routeID := range deployment.RouteIDs {
+	for routeID := range deployment.Routes {
 		route := graph.Routes[routeID]
 		if len(route.Interfaces) != 1 || route.Interfaces[0] != "responses" {
 			return fmt.Errorf("deployment %s fixed reasoning mode requires the Responses API", deploymentID)
@@ -913,10 +865,6 @@ func validateQualifierAliases(
 	return nil
 }
 
-func validDeprecationDate(value *string) bool {
-	return value == nil || validDate(*value)
-}
-
 func validDate(value string) bool {
 	parsed, err := time.Parse(time.DateOnly, value)
 	return err == nil && parsed.Format(time.DateOnly) == value
@@ -925,7 +873,7 @@ func validDate(value string) bool {
 func routeDeploymentsForGraph(graph compiledGraph) map[string][]string {
 	out := make(map[string][]string, len(graph.Routes))
 	for deploymentID, deployment := range graph.Deployments {
-		for _, routeID := range deployment.RouteIDs {
+		for routeID := range deployment.Routes {
 			out[routeID] = append(out[routeID], deploymentID)
 		}
 	}

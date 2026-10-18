@@ -25,7 +25,7 @@ func TestCELConditionsUseTypedCatalogFactsAndExactPrices(t *testing.T) {
 		`blended_price(1, 1) > decimal("1.5")`,
 		`request.time.getHours("UTC") == 12`,
 		`request.time.getHours("-05:30") == 6 && request.time.getDayOfWeek("Asia/Tokyo") == 3`,
-		`!has(deployment.deprecationDate)`,
+		`!has(deployment.retirementDate)`,
 		`has(deployment.pricing.input_tokens) && !has(deployment.reasoningMaxTokens)`,
 	} {
 		t.Run(source, func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestCELConditionsUseTypedCatalogFactsAndExactPrices(t *testing.T) {
 }
 
 func TestCELMissingFactsNeverWeakenConditions(t *testing.T) {
-	for _, source := range []string{`deployment.deprecationDate == "x"`, `!(deployment.deprecationDate == "x")`} {
+	for _, source := range []string{`deployment.retirementDate == "x"`, `!(deployment.retirementDate == "x")`} {
 		program, err := CompileCEL(source)
 		if err != nil {
 			t.Fatal(err)

@@ -214,6 +214,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 
 const pluginPermissions = permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport
 const orderingPermissions = permissionOrder | permissionSort
+
 // One order, fallback count and total wait apply to every candidate of a
 // request. Each call's output idle wait and retries come from its own pair.
 const requestWidePermissions = orderingPermissions | permissionFallbacks | permissionTotalTimeout

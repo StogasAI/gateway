@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"math/big"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -271,10 +270,11 @@ func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 		`[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]`,
 		`[{"type":"input_audio","input_audio":{"data":"AAAA","format":"wav"}}]`,
 	} {
-		body := fmt.Sprintf(`{"model":"qwen3-32b","messages":[{"role":"user","content":%s}]}`, content)
+		// Kimi K3 reads images and video, but the Chutes route carries only text.
+		body := fmt.Sprintf(`{"model":"kimi-k3","messages":[{"role":"user","content":%s}]}`, content)
 		state := resolveChutesState(t, body)
-		if err := state.Adapter.ValidateRequest(state); err == nil {
-			t.Fatalf("non-text content was accepted: %s", content)
+		if err := state.Adapter.ValidateRequest(state); err == nil || !strings.Contains(err.Error(), "input is not supported by the selected deployment") {
+			t.Fatalf("non-text content was accepted or failed for another reason: %s: %v", content, err)
 		}
 	}
 }
@@ -679,10 +679,12 @@ func TestChutesTopLevelReasoningUsageIsAccounted(t *testing.T) {
 }
 
 type chutesCatalogDeployment struct {
-	ID       string
-	ModelID  string          `json:"modelId"`
-	Pricing  billing.Pricing `json:"pricing"`
-	RouteIDs []string        `json:"routeIds"`
+	ID      string
+	ModelID string `json:"modelId"`
+	Pricing billing.Pricing
+	Routes  map[string]struct {
+		Pricing billing.Pricing `json:"pricing"`
+	} `json:"routes"`
 }
 
 func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
@@ -701,10 +703,12 @@ func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
 		if err := sonic.Unmarshal(raw, &deployment); err != nil {
 			t.Fatalf("decode deployment %s: %v", id, err)
 		}
-		if !slices.Contains(deployment.RouteIDs, "chutes-chat-completions") {
+		route, ok := deployment.Routes["chutes-chat-completions"]
+		if !ok {
 			continue
 		}
 		deployment.ID = id
+		deployment.Pricing = route.Pricing
 		result = append(result, deployment)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })

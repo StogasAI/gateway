@@ -37,7 +37,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 	for _, test := range []struct {
 		name               string
 		route              Route
-		model, tier        string
+		model, tier, mode  string
 		credentials        map[string][]int
 		base               *policy.Config
 		credential         func(index int) (RequestPolicy, error)
@@ -55,6 +55,14 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			removed: []string{"no_credential azure"}, code: "model_unavailable"},
 		{name: "service tier", model: "gpt-5.6-luna", tier: "fast", credentials: map[string][]int{"azure": {0}, "openai": {0}},
 			removed: []string{"service_tier azure"}, pairs: 1, tried: 1},
+		{name: "reasoning mode", route: RouteResponses, model: "gpt-5.5-2026-04-23", mode: "pro", credentials: map[string][]int{"azure": {0}, "openai": {0}},
+			removed: []string{"reasoning_mode azure", "reasoning_mode openai"}, code: "reasoning_mode_unavailable"},
+		{name: "service tier in a reasoning mode", route: RouteResponses, model: "gpt-5.6-luna", tier: "fast", mode: "pro", credentials: map[string][]int{"azure": {0}, "openai": {0}},
+			removed: []string{"service_tier azure"}, pairs: 1, tried: 1},
+		{name: "reasoning mode in every data zone", route: RouteResponses, model: "gpt-6-astra", mode: "pro", credentials: map[string][]int{"azure": {0}},
+			removed: []string{"no_credential openai"}, pairs: 4, tried: 3},
+		{name: "any model in a reasoning mode", route: RouteResponses, mode: "pro", credentials: map[string][]int{"openai": {0}},
+			removed: []string{"no_credential azure"}, code: "model_ambiguous"},
 		{name: "approval and ambiguity", route: RouteResponses, model: "gpt-5.6", credentials: map[string][]int{"openai": {0}},
 			removed: []string{"approval openai/openai-gpt-5.6-cyber", "no_credential azure"}, code: "model_ambiguous",
 			ambiguous: []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"}},
@@ -133,7 +141,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 					return test.eligible(index, deployment.ID)
 				}
 			}
-			simulation := SimulateRouting(input, route, test.model, test.tier)
+			simulation := SimulateRouting(input, route, test.model, test.tier, test.mode)
 			got := describeRemovals(simulation.Removed)
 			if !reflect.DeepEqual(got, test.removed) && (len(got) > 0 || len(test.removed) > 0) {
 				t.Errorf("removed:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(test.removed, "\n"))
@@ -144,11 +152,15 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 			if test.ambiguous != nil && !reflect.DeepEqual(simulation.Ambiguous, test.ambiguous) || test.code == "model_ambiguous" && len(simulation.Ambiguous) < 2 {
 				t.Errorf("ambiguous models %v", simulation.Ambiguous)
 			}
+			// The error lists every tied model, however many.
+			if message := PublicError(simulation.Err).Message; len(simulation.Ambiguous) > 0 && !strings.HasSuffix(message, "matching models: "+strings.Join(simulation.Ambiguous, ", ")) {
+				t.Errorf("ambiguity error %q", message)
+			}
 			if len(simulation.Pairs) != test.pairs || simulation.Tried != test.tried {
 				t.Errorf("pairs %v, tried %d", describePairs(simulation.Pairs), simulation.Tried)
 			}
 			// A request tries the simulated pairs in order, or fails as simulated.
-			attempts, err := requestAttempts(input, route, test.model, test.tier)
+			attempts, err := requestAttempts(input, route, test.model, test.tier, test.mode)
 			if simulation.Err != nil {
 				if PublicError(err).Code != test.code || len(attempts) != 0 {
 					t.Fatalf("request attempts %v, error %v", attempts, err)
@@ -173,7 +185,7 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}}}
-	simulation := SimulateRouting(input, RouteChat, "gpt-5.6-sol", "")
+	simulation := SimulateRouting(input, RouteChat, "gpt-5.6-sol", "", "")
 	if simulation.Err != nil || simulation.Tried != 2 || simulation.Fallbacks != 1 ||
 		simulation.Order == nil || *simulation.Order != (policy.Origin{Rule: "newest"}) ||
 		simulation.FallbacksOrigin == nil || *simulation.FallbacksOrigin != (policy.Origin{}) {
@@ -183,11 +195,11 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 	if got := describePairs(simulation.Pairs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("pairs %v", got)
 	}
-	attempts, _ := requestAttempts(input, RouteChat, "gpt-5.6-sol", "")
+	attempts, _ := requestAttempts(input, RouteChat, "gpt-5.6-sol", "", "")
 	if !reflect.DeepEqual(attempts, want[:2]) {
 		t.Fatalf("request attempts %v", attempts)
 	}
-	if simulation := SimulateRouting(RequestInput{Policy: policyConfig(3), AvailableCredentials: input.AvailableCredentials}, RouteChat, "gpt-5.6-sol", ""); simulation.Order != nil || simulation.FallbacksOrigin != nil {
+	if simulation := SimulateRouting(RequestInput{Policy: policyConfig(3), AvailableCredentials: input.AvailableCredentials}, RouteChat, "gpt-5.6-sol", "", ""); simulation.Order != nil || simulation.FallbacksOrigin != nil {
 		t.Fatalf("default settings have origins: %+v", simulation)
 	}
 }
@@ -207,7 +219,7 @@ func TestRoutingSimulationBoundsItsRemovals(t *testing.T) {
 		indexes[index] = index
 	}
 	credentials := map[string][]int{"anthropic": indexes, "azure": indexes, "chutes": indexes, "openai": indexes}
-	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: credentials}, RouteChat, "", "")
+	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: credentials}, RouteChat, "", "", "")
 	if len(simulation.Removed) != maxRemovedCandidates || simulation.Truncated == 0 || PublicError(simulation.Err).Code != "model_unavailable" {
 		t.Fatalf("removed %d, truncated %d, error %v", len(simulation.Removed), simulation.Truncated, simulation.Err)
 	}
@@ -247,7 +259,7 @@ func describePairs(pairs []SimulatedPair) []string {
 
 // requestAttempts sends a text request with the simulation's inputs, fails
 // every pair it tries, and returns the pairs in order.
-func requestAttempts(input RequestInput, route Route, model, tier string) ([]string, error) {
+func requestAttempts(input RequestInput, route Route, model, tier, mode string) ([]string, error) {
 	body := map[string]any{"messages": []map[string]string{{"role": "user", "content": "hello"}}}
 	input.Path = "/v1/chat/completions"
 	if route == RouteResponses {
@@ -258,6 +270,9 @@ func requestAttempts(input RequestInput, route Route, model, tier string) ([]str
 	}
 	if tier != "" {
 		body["service_tier"] = tier
+	}
+	if mode != "" {
+		body["reasoning"] = map[string]string{"mode": mode}
 	}
 	input.Body, _ = json.Marshal(body)
 	input.Method = "POST"

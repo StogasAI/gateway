@@ -27,7 +27,7 @@ func scaleCatalogBytes(b *testing.B, count int) []byte {
 	eligible := make([]string, 0, len(ids))
 	for _, id := range ids {
 		deployment := original[id]
-		provider := source.Graph.Routes[deployment.RouteIDs[0]].ProviderID
+		provider := source.Graph.Routes[sortedRouteIDs(deployment)[0]].ProviderID
 		if _, ok := original[provider+"-"+deployment.ModelID]; ok {
 			eligible = append(eligible, id)
 		}

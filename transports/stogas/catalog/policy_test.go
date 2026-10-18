@@ -384,7 +384,7 @@ func TestResolvedPolicyValuesExposeTypedRegisteredCatalogAndRequestData(t *testi
 	}
 
 	groups, exists := values.PolicyValue("model.groupIds")
-	if !exists || groups.Type != "string_list" || !slices.Equal(groups.Strings, []string{"gpt", "gpt-5", "gpt-5.6"}) {
+	if !exists || groups.Type != "string_list" || !slices.Equal(groups.Strings, []string{"gpt", "gpt-5", "gpt-5.6", "gpt-sol"}) {
 		t.Fatalf("model groups = %#v, %t", groups, exists)
 	}
 	price, exists := values.PolicyValue("deployment.pricing.input_tokens.per_mill_tokens")

@@ -469,14 +469,12 @@ var exactFieldTypes = map[string]string{
 	"deployment.dataHandling.endToEndEncrypted": "boolean", "deployment.dataHandling.processingLocation": "string",
 	"deployment.dataHandling.retentionDays": "integer", "deployment.dataHandling.storageLocation": "string",
 	"deployment.dataHandling.tee": "boolean", "deployment.dataHandling.teeVerified": "boolean",
-	"deployment.dataHandling.trainingUse":       "boolean",
-	"deployment.dataHandling.zeroDataRetention": "boolean", "deployment.deprecationDate": "string",
-	"deployment.nativeFileInputs.extensions": "string_list", "deployment.nativeFileInputs.mediaTypes": "string_list",
+	"deployment.dataHandling.trainingUse": "boolean", "deployment.dataHandling.zeroDataRetention": "boolean",
 	"deployment.inputModalities": "string_list", "deployment.maxOutputTokens": "integer",
 	"deployment.modelId": "string", "deployment.outputModalities": "string_list",
 	"deployment.reasoning": "string", "deployment.reasoningEfforts": "string_list",
 	"deployment.reasoningMaxTokens.maximum": "integer", "deployment.reasoningMaxTokens.minimum": "integer",
-	"deployment.routeIds": "string_list", "deployment.upstream.chuteId": "string",
+	"deployment.retirementDate": "string", "deployment.upstream.chuteId": "string",
 	"deployment.upstream.deploymentType": "string", "deployment.upstream.gpuCount": "integer",
 	"deployment.upstream.hosting": "string", "deployment.upstream.inferenceGeo": "string",
 	"deployment.upstream.model": "string", "deployment.upstream.modelFormat": "string",
@@ -489,6 +487,7 @@ var exactFieldTypes = map[string]string{
 	"provider.aliases": "string_list", "provider.credentialModes": "string_list", "provider.headquarteredCountry": "string",
 	"provider.name": "string", "provider.id": "string",
 	"request.bodyBytes": "integer", "request.model": "string", "request.route": "string", "request.time": "timestamp",
+	"route.documentFormats.extensions": "string_list", "route.documentFormats.mediaTypes": "string_list",
 	"route.interfaces": "string_list", "route.providerId": "string", "route.id": "string",
 }
 
@@ -496,7 +495,7 @@ func init() {
 	for _, capability := range []string{
 		"explicitPromptCaching", "functionCalling", "implicitPromptCaching",
 		"parallelFunctionCalling", "streaming", "structuredOutputs", "systemMessages",
-		"toolChoice", "urlContext",
+		"toolChoice",
 	} {
 		exactFieldTypes["deployment.capabilities."+capability] = "boolean"
 	}
