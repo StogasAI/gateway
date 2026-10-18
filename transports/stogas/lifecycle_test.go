@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/maximhq/bifrost/transports/stogas/customerkey"
-	"github.com/maximhq/bifrost/transports/stogas/money"
-	"github.com/maximhq/bifrost/transports/stogas/policy"
+	"maps"
 	"math/big"
 	"slices"
 	"strconv"
@@ -18,6 +16,9 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
+	"github.com/maximhq/bifrost/transports/stogas/money"
+	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
 // testDeploymentForRoute resolves an exact deployment selector as a request on the route does.
@@ -1341,7 +1342,7 @@ func meterQuantity(meter *catalog.MeterEstimate) string {
 
 func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) {
 	type matrixDeployment struct {
-		RouteIDs []string `json:"routeIds"`
+		Routes map[string]json.RawMessage `json:"routes"`
 	}
 	type matrixRoute struct {
 		Interfaces []string `json:"interfaces"`
@@ -1366,7 +1367,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 	slices.Sort(deploymentIDs)
 
 	for _, deploymentID := range deploymentIDs {
-		for _, routeID := range deployments[deploymentID].RouteIDs {
+		for _, routeID := range slices.Sorted(maps.Keys(deployments[deploymentID].Routes)) {
 			routeSpec := routes[routeID]
 			provider := schemas.ModelProvider(routeSpec.ProviderID)
 			for _, interfaceName := range routeSpec.Interfaces {
@@ -1870,9 +1871,9 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 				Provider: schemas.OpenAI,
 				Model:    "gpt-5",
 				Deployment: catalog.Deployment{
-					ID:       "gpt-5-standard",
-					ModelID:  "gpt-5-2026-01-01",
-					RouteIDs: []string{"openai-chat-completions"},
+					ID:      "gpt-5-standard",
+					ModelID: "gpt-5-2026-01-01",
+					RouteID: "openai-chat-completions",
 					Pricing: catalog.Pricing{
 						billing.MeterInputTokens:  {billing.RatePerMillionTokens: "1000000"},
 						billing.MeterOutputTokens: {billing.RatePerMillionTokens: "2000000"},
@@ -3057,8 +3058,9 @@ func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
 
 func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 	type matrixDeployment struct {
-		Pricing  catalog.Pricing `json:"pricing"`
-		RouteIDs []string        `json:"routeIds"`
+		Routes map[string]struct {
+			Pricing catalog.Pricing `json:"pricing"`
+		} `json:"routes"`
 	}
 	type matrixRoute struct {
 		ProviderID string `json:"providerId"`
@@ -3090,112 +3092,105 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 	slices.Sort(deploymentIDs)
 
 	for _, deploymentID := range deploymentIDs {
-		deployment := deployments[deploymentID]
-		if len(deployment.RouteIDs) == 0 {
-			t.Fatalf("%s has no route", deploymentID)
-		}
-		providerID := routes[deployment.RouteIDs[0]].ProviderID
-		if providerID == "" {
-			t.Fatalf("%s has no provider", deploymentID)
-		}
-		for _, routeID := range deployment.RouteIDs[1:] {
-			if routes[routeID].ProviderID != providerID {
-				t.Fatalf("%s spans providers", deploymentID)
+		for _, routeID := range slices.Sorted(maps.Keys(deployments[deploymentID].Routes)) {
+			pricing := deployments[deploymentID].Routes[routeID].Pricing
+			providerID := routes[routeID].ProviderID
+			if providerID == "" {
+				t.Fatalf("%s route %s has no provider", deploymentID, routeID)
 			}
-		}
-
-		for _, meterKey := range cacheMeters {
-			meterRates := deployment.Pricing[meterKey]
-			priced := len(meterRates) > 0
-			if priced {
-				if providerMeters[providerID] == nil {
-					providerMeters[providerID] = map[string]bool{}
+			for _, meterKey := range cacheMeters {
+				meterRates := pricing[meterKey]
+				priced := len(meterRates) > 0
+				if priced {
+					if providerMeters[providerID] == nil {
+						providerMeters[providerID] = map[string]bool{}
+					}
+					providerMeters[providerID][meterKey] = true
 				}
-				providerMeters[providerID][meterKey] = true
-			}
 
-			modes := []struct {
-				name   string
-				prompt int
-			}{
-				{name: "standard", prompt: 1000},
-			}
-			for rateKey := range deployment.Pricing[billing.MeterInputTokens] {
-				if cutoff, ok := billing.ContextCutoff(rateKey); ok {
-					modes = append(modes, struct {
-						name   string
-						prompt int
-					}{name: rateKey, prompt: cutoff + 1})
+				modes := []struct {
+					name   string
+					prompt int
+				}{
+					{name: "standard", prompt: 1000},
 				}
-			}
+				for rateKey := range pricing[billing.MeterInputTokens] {
+					if cutoff, ok := billing.ContextCutoff(rateKey); ok {
+						modes = append(modes, struct {
+							name   string
+							prompt int
+						}{name: rateKey, prompt: cutoff + 1})
+					}
+				}
 
-			for _, mode := range modes {
-				t.Run(deploymentID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
-					signals := &StandardSignals{Prompt: mode.prompt}
-					switch meterKey {
-					case billing.MeterCachedInputTokens:
-						signals.Cached = mode.prompt
-					case billing.MeterCacheWriteInputTokens:
-						signals.CacheWrite = mode.prompt
-					case billing.MeterCacheWrite5mInputTokens:
-						signals.CacheWrite5m = mode.prompt
-					case billing.MeterCacheWrite1hInputTokens:
-						signals.CacheWrite1h = mode.prompt
-					}
-					state := &State{
-						Pair: Pair{
-							Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: deployment.Pricing}},
-						},
-						Signals: signals,
-					}
-					if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
-						t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
-					}
-					meter := findMeterEstimate(state.FinalMeters, meterKey)
-					if !priced {
-						if meter != nil {
-							t.Fatalf("unpriced cache detail produced %s: %#v", meterKey, state.FinalMeters)
+				for _, mode := range modes {
+					t.Run(deploymentID+"/"+routeID+"/"+meterKey+"/"+mode.name, func(t *testing.T) {
+						signals := &StandardSignals{Prompt: mode.prompt}
+						switch meterKey {
+						case billing.MeterCachedInputTokens:
+							signals.Cached = mode.prompt
+						case billing.MeterCacheWriteInputTokens:
+							signals.CacheWrite = mode.prompt
+						case billing.MeterCacheWrite5mInputTokens:
+							signals.CacheWrite5m = mode.prompt
+						case billing.MeterCacheWrite1hInputTokens:
+							signals.CacheWrite1h = mode.prompt
 						}
-						inputMeter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
-						if meterQuantity(inputMeter) != strconv.Itoa(mode.prompt) {
-							t.Fatalf("unpriced %s did not remain ordinary input: %#v", meterKey, state.FinalMeters)
+						state := &State{
+							Pair: Pair{
+								Resolution: &catalog.ResolvedRequest{Deployment: catalog.Deployment{Pricing: pricing}},
+							},
+							Signals: signals,
+						}
+						if _, err := calculateBaseUpstreamCost(state, nil); err != nil {
+							t.Fatalf("calculateBaseUpstreamCost returned error: %v", err)
+						}
+						meter := findMeterEstimate(state.FinalMeters, meterKey)
+						if !priced {
+							if meter != nil {
+								t.Fatalf("unpriced cache detail produced %s: %#v", meterKey, state.FinalMeters)
+							}
+							inputMeter := findMeterEstimate(state.FinalMeters, billing.MeterInputTokens)
+							if meterQuantity(inputMeter) != strconv.Itoa(mode.prompt) {
+								t.Fatalf("unpriced %s did not remain ordinary input: %#v", meterKey, state.FinalMeters)
+							}
+							savings, savingsErr := cacheReadSavingsUSD(state)
+							overhead, overheadErr := cacheWriteOverheadUSD(state)
+							if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
+								t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+							}
+							return
+						}
+						if meter == nil {
+							t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
+						}
+						meterCostUSD, err := billing.ParseUSD(meter.AmountUSD)
+						if err != nil {
+							t.Fatalf("parse settled cache cost: %v", err)
+						}
+						_, inputRate, ok := billing.PricingRate(pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(mode.prompt))
+						if !ok {
+							t.Fatal("deployment has no comparable ordinary input rate")
+						}
+						ordinaryCost := billing.CostPerMillion(mode.prompt, inputRate)
+						wantSavings := new(money.USD)
+						wantOverhead := new(money.USD)
+						if meterKey == billing.MeterCachedInputTokens && ordinaryCost.Cmp(meterCostUSD) > 0 {
+							wantSavings.Sub(ordinaryCost, meterCostUSD)
+						}
+						if meterKey != billing.MeterCachedInputTokens && meterCostUSD.Cmp(ordinaryCost) > 0 {
+							wantOverhead.Sub(meterCostUSD, ordinaryCost)
 						}
 						savings, savingsErr := cacheReadSavingsUSD(state)
 						overhead, overheadErr := cacheWriteOverheadUSD(state)
-						if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil || *savings != "0" || *overhead != "0" {
-							t.Fatalf("unpriced cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
+						if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
+							t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
 						}
-						return
-					}
-					if meter == nil {
-						t.Fatalf("final price omitted %s: %#v", meterKey, state.FinalMeters)
-					}
-					meterCostUSD, err := billing.ParseUSD(meter.AmountUSD)
-					if err != nil {
-						t.Fatalf("parse settled cache cost: %v", err)
-					}
-					_, inputRate, ok := billing.PricingRate(deployment.Pricing, billing.MeterInputTokens, billing.TokenRateForPrompt(mode.prompt))
-					if !ok {
-						t.Fatal("deployment has no comparable ordinary input rate")
-					}
-					ordinaryCost := billing.CostPerMillion(mode.prompt, inputRate)
-					wantSavings := new(money.USD)
-					wantOverhead := new(money.USD)
-					if meterKey == billing.MeterCachedInputTokens && ordinaryCost.Cmp(meterCostUSD) > 0 {
-						wantSavings.Sub(ordinaryCost, meterCostUSD)
-					}
-					if meterKey != billing.MeterCachedInputTokens && meterCostUSD.Cmp(ordinaryCost) > 0 {
-						wantOverhead.Sub(meterCostUSD, ordinaryCost)
-					}
-					savings, savingsErr := cacheReadSavingsUSD(state)
-					overhead, overheadErr := cacheWriteOverheadUSD(state)
-					if savingsErr != nil || overheadErr != nil || savings == nil || overhead == nil {
-						t.Fatalf("cache economics = savings %#v (%v), overhead %#v (%v)", savings, savingsErr, overhead, overheadErr)
-					}
-					if *savings != wantSavings.String() || *overhead != wantOverhead.String() {
-						t.Fatalf("cache economics = savings %s, overhead %s; want %s, %s", *savings, *overhead, wantSavings, wantOverhead)
-					}
-				})
+						if *savings != wantSavings.String() || *overhead != wantOverhead.String() {
+							t.Fatalf("cache economics = savings %s, overhead %s; want %s, %s", *savings, *overhead, wantSavings, wantOverhead)
+						}
+					})
+				}
 			}
 		}
 	}
@@ -3272,10 +3267,10 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 				Route:    catalog.RouteChat,
 				Model:    "claude",
 				Deployment: catalog.Deployment{
-					ID:       "anthropic-claude",
-					ModelID:  "claude",
-					Pricing:  pricing,
-					RouteIDs: []string{"anthropic-messages"},
+					ID:      "anthropic-claude",
+					ModelID: "claude",
+					Pricing: pricing,
+					RouteID: "anthropic-messages",
 				},
 			},
 		},

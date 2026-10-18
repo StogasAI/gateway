@@ -10,7 +10,7 @@ func TestEveryRuntimeDeploymentHasUniversalInputEstimate(t *testing.T) {
 	snap := loadTestCatalog(t)
 	seen := make(map[string]bool)
 	for id, compiled := range snap.graph.Deployments {
-		for _, routeID := range compiled.RouteIDs {
+		for routeID := range compiled.Routes {
 			// Include retained, deprecated deployments: their estimator remains
 			// reviewable even though the request resolver no longer admits them.
 			deployment := Deployment{ModelID: compiled.ModelID, ContextWindowTokens: compiled.ContextWindowTokens, MaxInputTokens: compiled.MaxInputTokens, snapshot: snap}

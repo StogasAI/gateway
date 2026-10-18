@@ -35,10 +35,10 @@ func promotedDeployment(t *testing.T, deploymentID string) map[string]any {
 		t.Fatal(err)
 	}
 	deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
-	deployment["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: "10"}
-	chains := deployment["chainHashes"].(map[string]any)
-	for routeID := range chains {
-		chains[routeID] = promotedChainHash
+	for _, route := range deployment["routes"].(map[string]any) {
+		route := route.(map[string]any)
+		route["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: "10"}
+		route["chainHash"] = promotedChainHash
 	}
 	return deployment
 }
@@ -117,7 +117,7 @@ func TestRequestsUseTheCatalogStateInEffect(t *testing.T) {
 
 func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 	unpriced := promotedDeployment(t, "openai-gpt-5.6-sol")
-	delete(unpriced["pricing"].(map[string]any), billing.MeterOutputTokens)
+	delete(unpriced["routes"].(map[string]any)["openai-responses"].(map[string]any)["pricing"].(map[string]any), billing.MeterOutputTokens)
 	empty := map[string]any{}
 	for _, test := range []struct {
 		name     string

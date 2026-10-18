@@ -46,8 +46,6 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 		if openaiReq.ChatParameters.MaxCompletionTokens != nil && *openaiReq.ChatParameters.MaxCompletionTokens < MinMaxCompletionTokens {
 			openaiReq.ChatParameters.MaxCompletionTokens = schemas.Ptr(MinMaxCompletionTokens)
 		}
-		// Drop user field if it exceeds OpenAI's 64 character limit
-		openaiReq.ChatParameters.User = SanitizeUserField(openaiReq.ChatParameters.User)
 		// Fable 5.1+ rejects forced tool use outright. Drop the choice so the model
 		// answers under the default "auto" rather than the provider returning a 400.
 		if openaiReq.ChatParameters.ToolChoice.IsForced() &&

@@ -41,9 +41,6 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		}
 		modality = "image"
 	case "input_audio":
-		if responses || responsesUsesAnthropicWire(state) {
-			return invalidRequest(path + " audio is not supported by this route")
-		}
 		if err := rejectUnsupportedInputKeys(block, path, "type", "input_audio"); err != nil {
 			return err
 		}
@@ -111,7 +108,7 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		if rawJSONValueSet(file["file_type"]) && !responsesUsesAnthropicWire(state) {
 			return invalidRequest(path + " native files must declare MIME type in a base64 data URL, not file_type")
 		}
-		formats := state.Resolution.Deployment.NativeFileInputs
+		formats := state.Resolution.Deployment.DocumentFormats
 		if len(formats.MediaTypes) == 0 {
 			return invalidRequest(path + " native files are not supported by this deployment")
 		}
@@ -140,8 +137,8 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 			return invalidRequest(path + " inline files must use file_data")
 		}
 	}
-	if modality != "" && !slices.Contains(state.Resolution.Deployment.Capabilities.InputModalities, modality) {
-		return invalidRequest(path + " input modality is not supported by this deployment")
+	if modality != "" && !slices.Contains(state.Resolution.Deployment.InputModalities, modality) {
+		return invalidRequest(path + " " + modality + " input is not supported by the selected deployment")
 	}
 	if id != "" && !state.PreparedCredential.UsesBYOK() {
 		return invalidRequest("Provider file IDs require BYOK")

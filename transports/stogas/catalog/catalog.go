@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"cmp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -69,20 +71,23 @@ func DeploymentForUpstreamModel(provider schemas.ModelProvider, upstreamModel st
 	return match, found
 }
 
-// deploymentForRouteTier resolves a model selector on the provider's routes. A requested tier
-// moves a model selector to the deployment that runs at that tier; an exact deployment selector
-// must already run at it.
-func (s *snapshot) deploymentForRouteTier(provider schemas.ModelProvider, model string, route Route, tier string) (Deployment, bool) {
+// deploymentForRoute resolves a model selector on the provider's routes. A model selector moves to
+// the deployment that runs at the requested variant; an exact deployment selector must already run
+// at it.
+func (s *snapshot) deploymentForRoute(provider schemas.ModelProvider, model string, route Route, want variant) (Deployment, bool) {
 	for _, routeNode := range s.routes(provider, route) {
 		deploymentID, pinned := s.deploymentIDFor(routeNode, model)
 		if deploymentID == "" {
 			continue
 		}
-		if current := s.graph.Deployments[deploymentID]; tier != "" && current.Upstream.ServiceTier != tier {
-			if pinned {
+		current := s.graph.Deployments[deploymentID]
+		if pinned {
+			if !want.matches(current.Upstream) {
 				continue
 			}
-			deploymentID = s.tierSibling(routeNode, current, tier, time.Now())
+		} else if tier := cmp.Or(want.tier, current.Upstream.ServiceTier); current.Upstream.ServiceTier != tier ||
+			current.Upstream.ReasoningMode != want.upstreamMode() {
+			deploymentID = s.sibling(routeNode, current, tier, want.upstreamMode(), time.Now())
 		}
 		deployment, ok := s.deploymentFromCompiled(deploymentID, routeNode)
 		if ok {
@@ -93,25 +98,25 @@ func (s *snapshot) deploymentForRouteTier(provider schemas.ModelProvider, model 
 }
 
 func deploymentAvailableAt(deployment compiledDeployment, now time.Time) bool {
-	return deployment.DeprecationDate == nil ||
-		*deployment.DeprecationDate > now.UTC().Format(time.DateOnly)
+	return deployment.RetirementDate == nil ||
+		*deployment.RetirementDate > now.UTC().Format(time.DateOnly)
 }
 
 func deploymentAvailableNow(deployment compiledDeployment) bool {
 	return deploymentAvailableAt(deployment, time.Now())
 }
 
-// tierSibling returns the deployment available at an instant on the route that differs from
-// current only in running at tier. The provider's model name can differ, because Azure sells
+// sibling returns the deployment available at an instant on the route that differs from current
+// only in its tier and reasoning mode. The provider's model name can differ, because Azure sells
 // Claude Fast as its own model; the catalog allows one such deployment.
-func (s *snapshot) tierSibling(routeNode compiledRoute, current compiledDeployment, tier string, at time.Time) string {
+func (s *snapshot) sibling(routeNode compiledRoute, current compiledDeployment, tier, mode string, at time.Time) string {
 	for _, candidateID := range routeNode.DeploymentIDs {
 		candidate, ok := s.graph.Deployments[candidateID]
 		if ok &&
 			deploymentAvailableAt(candidate, at) &&
 			candidate.Upstream.ServiceTier == tier &&
 			candidate.ModelID == current.ModelID &&
-			candidate.Upstream.ReasoningMode == current.Upstream.ReasoningMode &&
+			candidate.Upstream.ReasoningMode == mode &&
 			candidate.Upstream.Hosting == current.Upstream.Hosting &&
 			candidate.Upstream.ModelFormat == current.Upstream.ModelFormat &&
 			candidate.Upstream.ModelVersion == current.Upstream.ModelVersion &&
@@ -138,7 +143,7 @@ func StandardTierDeployment(provider schemas.ModelProvider, route Route, current
 		if routeNode.ProviderID != string(provider) {
 			continue
 		}
-		standardID := snap.tierSibling(routeNode, currentCompiled, TierStandard, at)
+		standardID := snap.sibling(routeNode, currentCompiled, TierStandard, currentCompiled.Upstream.ReasoningMode, at)
 		if standardID == "" {
 			continue
 		}
@@ -167,7 +172,7 @@ func (s *snapshot) routeModelProviders(route Route, requested string, allowed ma
 	// Exact deployment selectors visit only that deployment's routes.
 	_, selector := splitQualifiedModel(requested)
 	if deployment, pinned := s.graph.Deployments[selector]; pinned {
-		for _, routeID := range deployment.RouteIDs {
+		for _, routeID := range sortedRouteIDs(deployment) {
 			routeNode := s.graph.Routes[routeID]
 			provider := schemas.ModelProvider(routeNode.ProviderID)
 			if !routeSupportsInterface(routeNode, route) || (allowed != nil && len(allowed[routeNode.ProviderID]) == 0) {
@@ -351,8 +356,8 @@ func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) (
 		return "", false
 	}
 	if deployment, ok := s.graph.Deployments[selector]; ok {
-		if !deploymentAvailableNow(deployment) ||
-			!stringIn(deployment.RouteIDs, route.ID) ||
+		if _, attached := deployment.Routes[route.ID]; !attached ||
+			!deploymentAvailableNow(deployment) ||
 			!s.qualifierMatches(qualifier, route.ProviderID, deployment.ModelID) {
 			return "", false
 		}
@@ -453,24 +458,11 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 // deploymentFromCompiledAt resolves the deployment for a request that started at an instant.
 func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledRoute, at time.Time) (Deployment, bool) {
 	deployment, ok := s.graph.Deployments[deploymentID]
-	if !ok ||
-		!deploymentAvailableAt(deployment, at) ||
-		!stringIn(deployment.RouteIDs, route.ID) {
+	if !ok || !deploymentAvailableAt(deployment, at) {
 		return Deployment{}, false
 	}
-	_, ok = s.graph.Models[deployment.ModelID]
+	served, ok := deployment.Routes[route.ID]
 	if !ok {
-		return Deployment{}, false
-	}
-	capabilities := deployment.Capabilities
-	capabilities.InputModalities = append([]string(nil), deployment.InputModalities...)
-	capabilities.OutputModalities = append([]string(nil), deployment.OutputModalities...)
-	dataHandling, exists := deployment.DataHandlingByRoute[route.ID]
-	if !exists {
-		return Deployment{}, false
-	}
-	nativeFileInputs, exists := deployment.NativeFileInputsByRoute[route.ID]
-	if !exists {
 		return Deployment{}, false
 	}
 	var reasoningMaxTokens *ReasoningMaxTokens
@@ -478,14 +470,11 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		value := *deployment.ReasoningMaxTokens
 		reasoningMaxTokens = &value
 	}
-	reasoningEfforts := deployment.ReasoningEfforts
-	if override, exists := deployment.RouteOverrides[route.ID]; exists {
-		reasoningEfforts = override.ReasoningEfforts
-	}
 	return Deployment{
 		ID:        deploymentID,
 		ModelID:   deployment.ModelID,
-		ChainHash: deployment.ChainHashes[route.ID],
+		RouteID:   route.ID,
+		ChainHash: served.ChainHash,
 		Upstream: Upstream{
 			Model:          deployment.Upstream.Model,
 			ModelFormat:    deployment.Upstream.ModelFormat,
@@ -498,18 +487,22 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 			Hosting:        deployment.Upstream.Hosting,
 			DeploymentType: deployment.Upstream.DeploymentType,
 		},
-		Capabilities:        capabilities,
-		NativeFileInputs:    NativeFileInputs{MediaTypes: append([]string{}, nativeFileInputs.MediaTypes...), Extensions: append([]string{}, nativeFileInputs.Extensions...)},
+		Capabilities: served.Capabilities,
+		DocumentFormats: DocumentFormats{
+			MediaTypes: slices.Clone(route.DocumentFormats.MediaTypes),
+			Extensions: slices.Clone(route.DocumentFormats.Extensions),
+		},
+		InputModalities:     slices.Clone(served.InputModalities),
+		OutputModalities:    slices.Clone(deployment.OutputModalities),
 		ContextWindowTokens: deployment.ContextWindowTokens,
 		MaxInputTokens:      deployment.MaxInputTokens,
 		MaxOutputTokens:     deployment.MaxOutputTokens,
-		Pricing:             deployment.Pricing,
-		RouteIDs:            []string{route.ID},
+		Pricing:             served.Pricing,
 		Reasoning:           deployment.Reasoning,
-		ReasoningEfforts:    append([]string(nil), reasoningEfforts...),
+		ReasoningEfforts:    slices.Clone(served.ReasoningEfforts),
 		ReasoningMaxTokens:  reasoningMaxTokens,
 		ReasoningSupported:  deployment.Reasoning != "unsupported",
-		DataHandling:        dataHandling,
+		DataHandling:        served.DataHandling,
 		ApprovalRequired:    deployment.ApprovalRequired,
 		WeightPrecision:     deployment.WeightPrecision,
 		snapshot:            s,

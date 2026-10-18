@@ -518,8 +518,8 @@ func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
 
 func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
 	type matrixDeployment struct {
-		ModelID  string   `json:"modelId"`
-		RouteIDs []string `json:"routeIds"`
+		ModelID  string                     `json:"modelId"`
+		Routes   map[string]json.RawMessage `json:"routes"`
 		Upstream struct {
 			Model string `json:"model"`
 		} `json:"upstream"`
@@ -542,7 +542,7 @@ func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
 	checked := 0
 	for deploymentID, deployment := range deployments {
 		anthropicWire := schemas.IsAnthropicModel(deployment.ModelID)
-		for _, routeID := range deployment.RouteIDs {
+		for routeID := range deployment.Routes {
 			anthropicWire = anthropicWire || routes[routeID].ProviderID == "anthropic"
 		}
 		if !anthropicWire {

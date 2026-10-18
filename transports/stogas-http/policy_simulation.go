@@ -55,8 +55,8 @@ type simulationError struct {
 	Origin *simulationOrigin `json:"origin,omitempty"`
 }
 
-// policySimulation answers what a request that names only a model and a
-// service tier would try, and what removed every other candidate.
+// policySimulation answers what a request that names only a model, a service
+// tier and a reasoning mode would try, and what removed every other candidate.
 type policySimulation struct {
 	Draft           string                            `json:"draft,omitempty"`
 	Pairs           []simulationPair                  `json:"pairs"`
@@ -98,10 +98,11 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		return
 	}
 	var input struct {
-		Route       catalog.Route
-		Model       string
-		ServiceTier string
-		Policy      *billing.PolicyValidationSource
+		Route         catalog.Route
+		Model         string
+		ServiceTier   string
+		ReasoningMode string
+		Policy        *billing.PolicyValidationSource
 	}
 	valid := ctx.request.URL.RawQuery == ""
 	for name, raw := range fields {
@@ -113,6 +114,8 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			target = &input.Model
 		case "serviceTier":
 			target = &input.ServiceTier
+		case "reasoningMode":
+			target = &input.ReasoningMode
 		case "policy":
 			target = &input.Policy
 		default:
@@ -125,7 +128,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 	}
 	if !valid || input.Route != catalog.RouteChat && input.Route != catalog.RouteResponses ||
 		input.Policy != nil && (!input.Policy.Scope.Valid() || input.Policy.ID == "" || len(input.Policy.ID) > 64 || len(input.Policy.Config) == 0) {
-		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide route as chat-completions or responses, optional model and serviceTier strings, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
+		s.writeError(ctx, http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "invalid_request", "message": "Provide route as chat-completions or responses, optional model, serviceTier and reasoningMode strings, and an optional policy with scope, id and config", "type": "invalid_request_error"}})
 		return
 	}
 	if s.runtime == nil || s.runtime.Billing() == nil {
@@ -197,7 +200,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 			chains[simulationCandidate{provider, index}] = selected.Versions
 			return catalog.RequestPolicy{Config: selected.Config}, nil
 		},
-	}, input.Route, input.Model, input.ServiceTier)
+	}, input.Route, input.Model, input.ServiceTier, input.ReasoningMode)
 	for _, removed := range simulation.Removed {
 		versions := config.Versions
 		if removed.Credential != nil {

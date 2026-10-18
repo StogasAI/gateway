@@ -27,13 +27,12 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 			for _, pinned := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/%s/pinned=%t", route, tc.name, pinned), func(t *testing.T) {
 					snap := loadTestCatalog(t)
-					first := snap.graph.Deployments["openai-gpt-5.6-sol"]
-					first.Capabilities.ExplicitPromptCaching = true
-					second := snap.graph.Deployments["anthropic-claude-sonnet-4-6"]
-					second.Capabilities = first.Capabilities
-					tc.disable(&first.Capabilities)
-					snap.graph.Deployments["openai-gpt-5.6-sol"] = first
-					snap.graph.Deployments["anthropic-claude-sonnet-4-6"] = second
+					capable := snap.graph.Deployments["openai-gpt-5.6-sol"].Routes["openai-responses"].Capabilities
+					capable.ExplicitPromptCaching = true
+					lacking := capable
+					tc.disable(&lacking)
+					setTestCapabilities(snap.graph.Deployments["openai-gpt-5.6-sol"], lacking)
+					setTestCapabilities(snap.graph.Deployments["anthropic-claude-sonnet-4-6"], capable)
 					config := policyConfig(1)
 					config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: []string{"openai-gpt-5.6-sol", "anthropic-claude-sonnet-4-6"}}
 					fields := map[string]json.RawMessage{}
@@ -70,6 +69,14 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+// setTestCapabilities gives every route of a loaded deployment the same capabilities.
+func setTestCapabilities(deployment compiledDeployment, capabilities Capabilities) {
+	for routeID, route := range deployment.Routes {
+		route.Capabilities = capabilities
+		deployment.Routes[routeID] = route
 	}
 }
 

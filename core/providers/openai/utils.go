@@ -331,19 +331,8 @@ func ConvertBifrostMessagesToOpenAIMessages(messages []schemas.ChatMessage) []Op
 	return openaiMessages
 }
 
-// MaxUserFieldLength for OpenAI enforces a 64 character maximum on the user field
-const MaxUserFieldLength = 64
-
 // MaxToolCallIDLength is OpenAI's 64 character maximum on tool call IDs (call_id / input[].id).
 const MaxToolCallIDLength = 64
-
-// SanitizeUserField returns nil if user exceeds MaxUserFieldLength, otherwise returns the original value
-func SanitizeUserField(user *string) *string {
-	if user != nil && len(*user) > MaxUserFieldLength {
-		return nil
-	}
-	return user
-}
 
 // toolChoiceAnySupported is the name-based fallback for
 // ModelCaps.ToolChoiceAnySupported, used when the datasheet says nothing. It

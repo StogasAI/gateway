@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -27,20 +26,22 @@ const (
 )
 
 var (
-	ErrCatalogUnavailable     = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
-	ErrInvalidJSON            = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
-	ErrModelAmbiguous         = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing order or sort"}
-	ErrModelUnavailable       = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
-	ErrProviderUnavailable    = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
-	ErrScheduleDenied         = APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
-	ErrRouteUnavailable       = APIError{Code: "route_not_found", StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
-	ErrUnsupportedMethod      = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
-	ErrUnsupportedRequest     = APIError{Code: "unsupported_request", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
-	ErrParameterTooLarge      = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
-	ErrProviderSelection      = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
-	ErrServiceTierUnavailable = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
-	ErrUnsupportedTool        = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "We cannot price this tool"}
-	ErrUnsupportedServiceTier = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier must be auto, default, standard, flex, fast, priority, or ultrafast"}
+	ErrCatalogUnavailable       = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
+	ErrInvalidJSON              = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
+	ErrModelAmbiguous           = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing order or sort"}
+	ErrModelUnavailable         = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
+	ErrProviderUnavailable      = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
+	ErrScheduleDenied           = APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
+	ErrRouteUnavailable         = APIError{Code: "route_not_found", StatusCode: http.StatusNotFound, Type: ErrorTypeInvalidRequest, Message: "Route not found"}
+	ErrUnsupportedMethod        = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
+	ErrUnsupportedRequest       = APIError{Code: "unsupported_request", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
+	ErrParameterTooLarge        = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrProviderSelection        = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
+	ErrServiceTierUnavailable   = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
+	ErrReasoningModeUnavailable = APIError{Code: "reasoning_mode_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested reasoning.mode"}
+	ErrUnsupportedTool          = APIError{Code: "unsupported_tool", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "We cannot price this tool"}
+	ErrUnsupportedServiceTier   = APIError{Code: "unsupported_service_tier", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "service_tier must be auto, default, standard, flex, fast, priority, or ultrafast"}
+	ErrUnsupportedReasoningMode = APIError{Code: "unsupported_reasoning_mode", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "reasoning.mode must be standard or pro"}
 )
 
 type APIError struct {
@@ -328,16 +329,14 @@ func (r *ResolvedRequest) CatalogNodeIDsForDeployment(deployment Deployment) []s
 	if deployment.ID != "" {
 		ids = append(ids, "deployment:"+deployment.ID)
 	}
-	for _, routeID := range sortedStrings(deployment.RouteIDs) {
-		if routeID != "" {
-			ids = append(ids, "route:"+routeID)
-			if snap != nil {
-				if route, ok := snap.graph.Routes[routeID]; ok && route.ProviderID != "" {
-					ids = append(ids, "provider:"+route.ProviderID)
-				}
-			} else if r.Provider != "" {
-				ids = append(ids, "provider:"+string(r.Provider))
+	if routeID := deployment.RouteID; routeID != "" {
+		ids = append(ids, "route:"+routeID)
+		if snap != nil {
+			if route, ok := snap.graph.Routes[routeID]; ok && route.ProviderID != "" {
+				ids = append(ids, "provider:"+route.ProviderID)
 			}
+		} else if r.Provider != "" {
+			ids = append(ids, "provider:"+string(r.Provider))
 		}
 	}
 	return ids
@@ -348,12 +347,6 @@ func (r *ResolvedRequest) CatalogIdentity() Identity {
 		return Identity{}
 	}
 	return r.Deployment.snapshot.identity
-}
-
-func sortedStrings(values []string) []string {
-	out := append([]string(nil), values...)
-	sort.Strings(out)
-	return out
 }
 
 func (r *ResolvedRequest) InputTokenLimit() int {
@@ -761,16 +754,20 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	selections, err := routingSelectionsForRequest(route, base.Model, base.Tier, input.Policy, input.AvailableCredentials, input.trace)
+	selections, err := routingSelectionsForRequest(route, base.Model, base.variant, input.Policy, input.AvailableCredentials, input.trace)
 	if err != nil {
 		return nil, err
 	}
 	selections = filterRoutingSelectionsByPolicy(selections, input.Policy, input.trace)
 	if len(selections) == 0 {
-		if base.Tier != "" {
-			return nil, ErrServiceTierUnavailable
+		// The key's allowed nodes removed every selected deployment. Name the mode only when the
+		// key allows none of the deployments that the mode selects at the default tier.
+		modeServed := base.variant.mode == ""
+		if !modeServed {
+			inMode, err := routingSelectionsForRequest(route, base.Model, variant{mode: base.variant.mode}, input.Policy, input.AvailableCredentials, nil)
+			modeServed = err == nil && len(filterRoutingSelectionsByPolicy(inMode, input.Policy, nil)) > 0
 		}
-		return nil, ErrModelUnavailable
+		return nil, base.variant.unavailable(modeServed)
 	}
 	selections, err = filterProviderSelections(selections, providerPreference)
 	if err != nil {
@@ -900,6 +897,12 @@ func resolveResponsesRequests(input RequestInput, route Route) (*ResolvedRequest
 		}
 		if err != nil {
 			return nil, err
+		}
+		// The deployment owns the mode; the client's reasoning.mode only selected it.
+		if reasoning := request.ResponsesParameters.Reasoning; reasoning != nil {
+			copied := *reasoning
+			copied.Mode = nil
+			request.ResponsesParameters.Reasoning = &copied
 		}
 		if mode := resolution.Deployment.Upstream.ReasoningMode; mode != "" {
 			if request.ResponsesParameters.Reasoning == nil {
@@ -1139,10 +1142,12 @@ func maxInputTokenHold(contextWindowTokens int, outputTokenLimit int) int {
 }
 
 type routingFields struct {
-	Model string
-	Tier  string
+	Model   string
+	variant variant
 }
 
+// requestRoutingFields parses the fields that select deployments. Only Responses accepts
+// reasoning.mode; request validation rejects it on Chat Completions first.
 func requestRoutingFields(raw map[string]json.RawMessage) (routingFields, error) {
 	var fields routingFields
 	if value, ok := raw["model"]; ok {
@@ -1159,9 +1164,14 @@ func requestRoutingFields(raw map[string]json.RawMessage) (routingFields, error)
 		if err != nil {
 			return fields, err
 		}
-		fields.Tier = tier
+		fields.variant.tier = tier
 	}
-	return fields, nil
+	reasoning, _, err := rawReasoningObject(raw["reasoning"])
+	if err != nil {
+		return fields, err
+	}
+	fields.variant.mode, err = requestedMode(reasoning["mode"])
+	return fields, err
 }
 
 func rawStringValue(raw json.RawMessage) string {

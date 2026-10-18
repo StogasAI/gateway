@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"cmp"
 	"errors"
 	"math/big"
 	"reflect"
@@ -23,11 +24,9 @@ type routingSelection struct {
 type policyDeploymentData struct {
 	ApprovalRequired    bool                `json:"approvalRequired"`
 	Capabilities        Capabilities        `json:"capabilities"`
-	NativeFileInputs    NativeFileInputs    `json:"nativeFileInputs"`
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
 	DataHandling        DataHandling        `json:"dataHandling"`
-	DeprecationDate     *string             `json:"deprecationDate"`
 	InputModalities     []string            `json:"inputModalities"`
 	MaxOutputTokens     int                 `json:"maxOutputTokens"`
 	ModelID             string              `json:"modelId"`
@@ -36,7 +35,7 @@ type policyDeploymentData struct {
 	Reasoning           string              `json:"reasoning"`
 	ReasoningEfforts    []string            `json:"reasoningEfforts"`
 	ReasoningMaxTokens  *ReasoningMaxTokens `json:"reasoningMaxTokens"`
-	RouteIDs            []string            `json:"routeIds"`
+	RetirementDate      *string             `json:"retirementDate"`
 	Upstream            compiledUpstream    `json:"upstream"`
 	WeightPrecision     string              `json:"weightPrecision"`
 }
@@ -69,7 +68,7 @@ type policyNode struct {
 func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
-	requestedTier string,
+	want variant,
 	config *policy.Config,
 	availableCredentials map[string][]int,
 	trace *routingTrace,
@@ -79,31 +78,33 @@ func routingSelectionsForRequest(
 		return nil, ErrCatalogUnavailable
 	}
 	if requestedModel == "" {
-		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, nil, "", trace)
+		return routingSelectionsInPool(snap, route, want, availableCredentials, nil, "", trace)
 	}
 	if qualifier, selector := splitQualifiedModel(requestedModel); snap.groups[selector] {
-		return routingSelectionsInPool(snap, route, requestedTier, availableCredentials, qualifier, selector, trace)
+		return routingSelectionsInPool(snap, route, want, availableCredentials, qualifier, selector, trace)
 	}
 	providers := snap.routeModelProviders(route, requestedModel, availableCredentials, trace)
-	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, requestedTier, providers, config, trace)
+	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, want, providers, config, trace)
 	if len(providers) == 0 {
 		return nil, ErrModelUnavailable
 	}
 	selections := make([]routingSelection, 0)
+	modeServed := false
 	for _, provider := range providers {
-		deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)
-		if trace != nil && len(deployments) == 0 && requestedTier != "" {
-			if _, ok := snap.deploymentForRouteTier(provider, requestedModel, route, ""); ok {
+		deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, want)
+		_, servesMode := snap.deploymentForRoute(provider, requestedModel, route, variant{mode: want.mode})
+		modeServed = modeServed || servesMode
+		if trace != nil && len(deployments) == 0 {
+			if servesMode {
 				trace.removeProvider(provider, RemovedServiceTier)
+			} else if want.mode != "" {
+				trace.removeProvider(provider, RemovedReasoningMode)
 			}
 		}
 		selections = append(selections, deployments...)
 	}
 	if len(selections) == 0 {
-		if requestedTier != "" {
-			return nil, ErrServiceTierUnavailable
-		}
-		return nil, ErrModelUnavailable
+		return nil, want.unavailable(modeServed)
 	}
 	return selections, nil
 }
@@ -115,11 +116,9 @@ func routingSelectionsForRequest(
 //
 // A trace names providers without credentials and deployments that need approval. For a group,
 // it also names providers that serve the group only through another interface.
-func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, availableCredentials map[string][]int, qualifier []string, group string, trace *routingTrace) ([]routingSelection, error) {
-	tier := requestedTier
-	if tier == "" {
-		tier = TierStandard
-	}
+func routingSelectionsInPool(snap *snapshot, route Route, want variant, availableCredentials map[string][]int, qualifier []string, group string, trace *routingTrace) ([]routingSelection, error) {
+	tier, mode := cmp.Or(want.tier, TierStandard), want.upstreamMode()
+	modeServed := false
 	selections := make([]routingSelection, 0)
 	skipped := providerSkips{trace: trace}
 	for _, routeNode := range snap.graph.Routes {
@@ -131,11 +130,18 @@ func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, 
 		}
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := snap.graph.Deployments[id]
-			if !deploymentAvailableNow(compiled) || compiled.Upstream.ReasoningMode != "" || compiled.Upstream.ServiceTier != tier {
+			if !deploymentAvailableNow(compiled) || compiled.Upstream.ReasoningMode != mode {
 				continue
 			}
 			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
 				!snap.qualifierMatches(qualifier, routeNode.ProviderID, compiled.ModelID)) {
+				continue
+			}
+			// The mode applies before the tier, at the Standard tier that a pool selects by default.
+			if supported && credentialed && !compiled.ApprovalRequired && compiled.Upstream.ServiceTier == TierStandard {
+				modeServed = true
+			}
+			if compiled.Upstream.ServiceTier != tier {
 				continue
 			}
 			if !supported || !credentialed {
@@ -161,17 +167,14 @@ func routingSelectionsInPool(snap *snapshot, route Route, requestedTier string, 
 	}
 	skipped.record()
 	if len(selections) == 0 {
-		if requestedTier != "" {
-			return nil, ErrServiceTierUnavailable
-		}
-		return nil, ErrModelUnavailable
+		return nil, want.unavailable(modeServed)
 	}
 	// Stable ties must not depend on Go map iteration or catalog serialization.
 	sort.Slice(selections, func(i, j int) bool {
 		if selections[i].deployment.ID != selections[j].deployment.ID {
 			return selections[i].deployment.ID < selections[j].deployment.ID
 		}
-		return selections[i].deployment.RouteIDs[0] < selections[j].deployment.RouteIDs[0]
+		return selections[i].deployment.RouteID < selections[j].deployment.RouteID
 	})
 	return selections, nil
 }
@@ -182,7 +185,7 @@ func filterRoutingProvidersByAllowedNodes(
 	snap *snapshot,
 	route Route,
 	requestedModel string,
-	requestedTier string,
+	want variant,
 	providers []schemas.ModelProvider,
 	config *policy.Config,
 	trace *routingTrace,
@@ -224,9 +227,9 @@ func filterRoutingProvidersByAllowedNodes(
 			filtered = append(filtered, provider)
 		} else if trace != nil {
 			// Name the deployments that the provider would otherwise serve.
-			deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, requestedTier)
+			deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, want)
 			if len(deployments) == 0 {
-				deployments = routingDeploymentsForProvider(snap, route, provider, requestedModel, "")
+				deployments = routingDeploymentsForProvider(snap, route, provider, requestedModel, variant{})
 			}
 			for _, selection := range deployments {
 				trace.removeSelection(selection, RemovedAllowedNodes, nodesOrigin(config, selection.deployment))
@@ -298,13 +301,13 @@ func routingDeploymentsForProvider(
 	route Route,
 	provider schemas.ModelProvider,
 	requestedModel string,
-	requestedTier string,
+	want variant,
 ) []routingSelection {
-	base, ok := snap.deploymentForRouteTier(provider, requestedModel, route, requestedTier)
-	if !ok || len(base.RouteIDs) != 1 {
+	base, ok := snap.deploymentForRoute(provider, requestedModel, route, want)
+	if !ok {
 		return nil
 	}
-	routeNode, ok := snap.graph.Routes[base.RouteIDs[0]]
+	routeNode, ok := snap.graph.Routes[base.RouteID]
 	if !ok {
 		return nil
 	}
@@ -558,12 +561,10 @@ func candidateModels(resolved []*ResolvedRequest) []string {
 	return models
 }
 
+// ambiguousModelError lists every tied model: the models that the key's policy allows for the
+// request, which the public model list does not show. The catalog bounds the list.
 func ambiguousModelError(models []string) APIError {
-	message := ErrModelAmbiguous.Message
-	// Error output stays bounded when many models remain.
-	if len(models) <= 8 {
-		message += "; matching models: " + strings.Join(models, ", ")
-	}
+	message := ErrModelAmbiguous.Message + "; matching models: " + strings.Join(models, ", ")
 	return APIError{Code: ErrModelAmbiguous.Code, StatusCode: ErrModelAmbiguous.StatusCode, Type: ErrModelAmbiguous.Type, Message: message}
 }
 
@@ -576,7 +577,7 @@ type policyIDs struct {
 }
 
 func candidatePolicyIDs(candidate *ResolvedRequest) policyIDs {
-	if candidate == nil || candidate.Deployment.snapshot == nil || len(candidate.Deployment.RouteIDs) != 1 {
+	if candidate == nil || candidate.Deployment.snapshot == nil {
 		return policyIDs{}
 	}
 	snap := candidate.Deployment.snapshot
@@ -584,7 +585,7 @@ func candidatePolicyIDs(candidate *ResolvedRequest) policyIDs {
 	if !ok {
 		return policyIDs{}
 	}
-	routeID := candidate.Deployment.RouteIDs[0]
+	routeID := candidate.Deployment.RouteID
 	route, ok := snap.graph.Routes[routeID]
 	if !ok {
 		return policyIDs{}
@@ -619,20 +620,18 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 			id: ids.deployment,
 			fields: policyDeploymentData{
 				Capabilities:        deployment.Capabilities,
-				NativeFileInputs:    deployment.NativeFileInputs,
 				ContextWindowTokens: deployment.ContextWindowTokens,
 				MaxInputTokens:      deployment.MaxInputTokens,
 				DataHandling:        deployment.DataHandling,
-				DeprecationDate:     compiledDeployment.DeprecationDate,
-				InputModalities:     deployment.Capabilities.InputModalities,
+				InputModalities:     deployment.InputModalities,
 				MaxOutputTokens:     deployment.MaxOutputTokens,
 				ModelID:             deployment.ModelID,
-				OutputModalities:    deployment.Capabilities.OutputModalities,
+				OutputModalities:    deployment.OutputModalities,
 				Pricing:             deployment.Pricing,
 				Reasoning:           deployment.Reasoning,
 				ReasoningEfforts:    deployment.ReasoningEfforts,
 				ReasoningMaxTokens:  deployment.ReasoningMaxTokens,
-				RouteIDs:            deployment.RouteIDs,
+				RetirementDate:      compiledDeployment.RetirementDate,
 				Upstream:            compiledDeployment.Upstream,
 				ApprovalRequired:    deployment.ApprovalRequired,
 				WeightPrecision:     deployment.WeightPrecision,

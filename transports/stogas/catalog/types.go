@@ -23,18 +23,21 @@ type Identity struct {
 	Digest   string `json:"digest"`
 }
 
+// Deployment is a deployment as it serves one route.
 type Deployment struct {
 	ID                  string
 	ChainHash           string
 	ModelID             string
+	RouteID             string
 	Upstream            Upstream
 	Capabilities        Capabilities
-	NativeFileInputs    NativeFileInputs
+	DocumentFormats     DocumentFormats
+	InputModalities     []string
+	OutputModalities    []string
 	ContextWindowTokens int
 	MaxInputTokens      int
 	MaxOutputTokens     int
 	Pricing             Pricing
-	RouteIDs            []string
 	Reasoning           string
 	ReasoningEfforts    []string
 	ReasoningMaxTokens  *ReasoningMaxTokens
@@ -127,45 +130,41 @@ type compiledAuthor struct {
 	Name                 string   `json:"name"`
 }
 
+// A compiled deployment holds the facts that hold on all its routes, and for each route the
+// facts that combine the route with the model and deployment.
 type compiledDeployment struct {
-	ChainHashes             map[string]string                          `json:"chainHashes"`
-	Capabilities            Capabilities                               `json:"capabilities"`
-	ContextWindowTokens     int                                        `json:"contextWindowTokens"`
-	MaxInputTokens          int                                        `json:"maxInputTokens"`
-	InputModalities         []string                                   `json:"inputModalities"`
-	NativeFileInputsByRoute map[string]NativeFileInputs                `json:"nativeFileInputsByRoute"`
-	MaxOutputTokens         int                                        `json:"maxOutputTokens"`
-	ModelID                 string                                     `json:"modelId"`
-	OutputModalities        []string                                   `json:"outputModalities"`
-	Pricing                 Pricing                                    `json:"pricing"`
-	Reasoning               string                                     `json:"reasoning"`
-	ReasoningEfforts        []string                                   `json:"reasoningEfforts"`
-	ReasoningMaxTokens      *ReasoningMaxTokens                        `json:"reasoningMaxTokens"`
-	RouteOverrides          map[string]compiledDeploymentRouteOverride `json:"routeOverrides,omitempty"`
-	DeprecationDate         *string                                    `json:"deprecationDate"`
-	RouteIDs                []string                                   `json:"routeIds"`
-	DataHandlingByRoute     map[string]DataHandling                    `json:"dataHandlingByRoute"`
-	Upstream                compiledUpstream                           `json:"upstream"`
-	ApprovalRequired        bool                                       `json:"approvalRequired,omitempty"`
-	WeightPrecision         string                                     `json:"weightPrecision,omitempty"`
+	ApprovalRequired    bool                               `json:"approvalRequired"`
+	ContextWindowTokens int                                `json:"contextWindowTokens"`
+	MaxInputTokens      int                                `json:"maxInputTokens"`
+	MaxOutputTokens     int                                `json:"maxOutputTokens"`
+	ModelID             string                             `json:"modelId"`
+	OutputModalities    []string                           `json:"outputModalities"`
+	Reasoning           string                             `json:"reasoning"`
+	ReasoningMaxTokens  *ReasoningMaxTokens                `json:"reasoningMaxTokens"`
+	RetirementDate      *string                            `json:"retirementDate"`
+	Routes              map[string]compiledDeploymentRoute `json:"routes"`
+	Upstream            compiledUpstream                   `json:"upstream"`
+	WeightPrecision     string                             `json:"weightPrecision"`
 }
 
-type compiledDeploymentRouteOverride struct {
-	ReasoningEfforts []string `json:"reasoningEfforts"`
+type compiledDeploymentRoute struct {
+	Capabilities     Capabilities `json:"capabilities"`
+	ChainHash        string       `json:"chainHash"`
+	DataHandling     DataHandling `json:"dataHandling"`
+	InputModalities  []string     `json:"inputModalities"`
+	Pricing          Pricing      `json:"pricing"`
+	ReasoningEfforts []string     `json:"reasoningEfforts"`
 }
 
 type Capabilities struct {
-	FunctionCalling         bool     `json:"functionCalling"`
-	InputModalities         []string `json:"inputModalities"`
-	OutputModalities        []string `json:"outputModalities"`
-	ParallelFunctionCalling bool     `json:"parallelFunctionCalling"`
-	ImplicitPromptCaching   bool     `json:"implicitPromptCaching"`
-	ExplicitPromptCaching   bool     `json:"explicitPromptCaching"`
-	Streaming               bool     `json:"streaming"`
-	StructuredOutputs       bool     `json:"structuredOutputs"`
-	SystemMessages          bool     `json:"systemMessages"`
-	ToolChoice              bool     `json:"toolChoice"`
-	URLContext              bool     `json:"urlContext"`
+	FunctionCalling         bool `json:"functionCalling"`
+	ParallelFunctionCalling bool `json:"parallelFunctionCalling"`
+	ImplicitPromptCaching   bool `json:"implicitPromptCaching"`
+	ExplicitPromptCaching   bool `json:"explicitPromptCaching"`
+	Streaming               bool `json:"streaming"`
+	StructuredOutputs       bool `json:"structuredOutputs"`
+	SystemMessages          bool `json:"systemMessages"`
+	ToolChoice              bool `json:"toolChoice"`
 }
 
 type compiledUpstream struct {
@@ -201,8 +200,9 @@ type compiledProvider struct {
 }
 
 type compiledRoute struct {
-	ID            string   `json:"-"`
-	DeploymentIDs []string `json:"-"`
-	Interfaces    []string `json:"interfaces"`
-	ProviderID    string   `json:"providerId"`
+	ID              string          `json:"-"`
+	DeploymentIDs   []string        `json:"-"`
+	DocumentFormats DocumentFormats `json:"documentFormats"`
+	Interfaces      []string        `json:"interfaces"`
+	ProviderID      string          `json:"providerId"`
 }

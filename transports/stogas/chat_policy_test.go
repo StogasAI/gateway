@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -1530,7 +1531,6 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"reasoning effort bad type", `{"model":"openai/gpt-5.5","input":"hi","reasoning.effort":3}`, "reasoning.effort must be a string"},
 		{"responses bad reasoning object", `{"model":"openai/gpt-5.5","input":"hi","reasoning":"low"}`, "reasoning must be an object"},
 		{"responses bad reasoning max tokens", `{"model":"openai/gpt-5.5","input":"hi","reasoning":{"max_tokens":0}}`, "reasoning.max_tokens is outside the supported range"},
-		{"client reasoning mode", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"mode":"pro"}}`, "reasoning.mode is not supported"},
 		{"responses unsupported manual reasoning limit", `{"model":"openai/gpt-5.6-sol","input":"hi","reasoning":{"max_tokens":1024}}`, "manual reasoning token limits are not supported"},
 		{"responses manual reasoning budget below deployment minimum", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":4096,"reasoning":{"max_tokens":1023}}`, "at least the deployment minimum"},
 		{"responses manual reasoning budget equals output limit", `{"model":"anthropic-claude-opus-4-6","input":"hi","max_output_tokens":1024,"reasoning":{"max_tokens":1024}}`, "less than the output token limit"},
@@ -1757,18 +1757,16 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 
 func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 	type matrixDeployment struct {
-		ModelID  string   `json:"modelId"`
-		RouteIDs []string `json:"routeIds"`
-		Upstream struct {
+		ModelID        string                     `json:"modelId"`
+		RetirementDate *string                    `json:"retirementDate"`
+		Routes         map[string]json.RawMessage `json:"routes"`
+		Upstream       struct {
 			InferenceGeo  string `json:"inferenceGeo"`
 			Model         string `json:"model"`
 			ModelFormat   string `json:"modelFormat"`
 			ReasoningMode string `json:"reasoningMode"`
 			ServiceTier   string `json:"serviceTier"`
 		} `json:"upstream"`
-	}
-	type matrixModel struct {
-		DeprecationDate *string `json:"deprecationDate"`
 	}
 	type matrixRoute struct {
 		Interfaces []string `json:"interfaces"`
@@ -1802,16 +1800,12 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		t.Fatal("compiled public catalog is unavailable")
 	}
 	deployments := map[string]matrixDeployment{}
-	models := map[string]matrixModel{}
 	routes := map[string]matrixRoute{}
 	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
 		t.Fatalf("decode catalog routes: %v", err)
-	}
-	if err := json.Unmarshal(public.Graph["models"], &models); err != nil {
-		t.Fatalf("decode catalog models: %v", err)
 	}
 
 	deploymentIDs := make([]string, 0, len(deployments))
@@ -1822,7 +1816,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 
 	for _, deploymentID := range deploymentIDs {
 		source := deployments[deploymentID]
-		for _, routeID := range source.RouteIDs {
+		for _, routeID := range slices.Sorted(maps.Keys(source.Routes)) {
 			route := routes[routeID]
 			provider := schemas.ModelProvider(route.ProviderID)
 			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages"
@@ -1844,13 +1838,13 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 
 				resolved, active := testDeploymentForRoute(provider, deploymentID, route)
 				if !active {
-					deprecationDate := models[source.ModelID].DeprecationDate
-					if deprecationDate == nil {
-						t.Fatalf("%s is unavailable without a deprecation date", deploymentID)
+					retirementDate := source.RetirementDate
+					if retirementDate == nil {
+						t.Fatalf("%s is unavailable without a retirement date", deploymentID)
 					}
-					deprecatedAt, err := time.Parse(time.DateOnly, *deprecationDate)
-					if err != nil || deprecatedAt.After(time.Now().UTC()) {
-						t.Fatalf("%s has an invalid active deprecation cutoff %q", deploymentID, *deprecationDate)
+					retiredAt, err := time.Parse(time.DateOnly, *retirementDate)
+					if err != nil || retiredAt.After(time.Now().UTC()) {
+						t.Fatalf("%s is unavailable before its retirement date %q", deploymentID, *retirementDate)
 					}
 					continue
 				}
@@ -2041,7 +2035,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 
 func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testing.T) {
 	type matrixDeployment struct {
-		RouteIDs []string `json:"routeIds"`
+		Routes map[string]json.RawMessage `json:"routes"`
 	}
 	type matrixRoute struct {
 		Interfaces []string `json:"interfaces"`
@@ -2063,7 +2057,7 @@ func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testi
 
 	covered := 0
 	for deploymentID, deployment := range deployments {
-		for _, routeID := range deployment.RouteIDs {
+		for routeID := range deployment.Routes {
 			route := routes[routeID]
 			provider := schemas.ModelProvider(route.ProviderID)
 			if provider != schemas.Anthropic && routeID != "azure-anthropic-messages" {

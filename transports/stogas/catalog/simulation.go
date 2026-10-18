@@ -15,6 +15,8 @@ const (
 	RemovedInterface = "interface"
 	// The key has no credential for the provider.
 	RemovedNoCredential = "no_credential"
+	// The provider does not run the model in the requested reasoning mode.
+	RemovedReasoningMode = "reasoning_mode"
 	// The provider does not run the model at the requested service tier.
 	RemovedServiceTier = "service_tier"
 	// The deployment needs a request that names it exactly.
@@ -62,7 +64,8 @@ type SimulatedPair struct {
 }
 
 // RoutingSimulation shows how routing treats a request that names only a
-// model and a service tier. A request tries the first Tried pairs in order.
+// model, a service tier and a reasoning mode. A request tries the first Tried
+// pairs in order.
 // Order and FallbacksOrigin locate settings in the first pair's policy.
 type RoutingSimulation struct {
 	Pairs           []SimulatedPair
@@ -79,7 +82,7 @@ type RoutingSimulation struct {
 
 // SimulateRouting runs request routing up to its pair plan. It prepares no
 // credential, opens no encrypted content and calls no provider.
-func SimulateRouting(input RequestInput, route Route, model, tier string) *RoutingSimulation {
+func SimulateRouting(input RequestInput, route Route, model, tier, mode string) *RoutingSimulation {
 	trace := &routingTrace{}
 	input.now, input.policyBudget, input.trace = time.Now().UTC(), policy.NewCELBudget(), trace
 	activationMu.RLock()
@@ -90,6 +93,9 @@ func SimulateRouting(input RequestInput, route Route, model, tier string) *Routi
 	}
 	if tier != "" {
 		fields["service_tier"], _ = json.Marshal(tier)
+	}
+	if mode != "" {
+		fields["reasoning"], _ = json.Marshal(map[string]string{"mode": mode})
 	}
 	plan, err := planRoutes(input, route, fields)
 	result := &RoutingSimulation{Removed: trace.removed, Truncated: trace.truncated, Ambiguous: trace.ambiguous, Err: err}
