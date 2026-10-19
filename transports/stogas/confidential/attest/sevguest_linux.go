@@ -35,7 +35,7 @@ func (a SEVGuestDevice) Quote(ctx context.Context, reportData [64]byte) (quote [
 		}
 	}()
 
-	// Vendor certificates and CRLs come from the verified evidence bundle.
+	// Vendor certificates and CRLs come from the verified evidence.
 	// A session quote needs only SNP_GET_REPORT, never an extended cert-table call.
 	report, err := a.getReport(file.Fd(), reportData)
 	if err != nil {

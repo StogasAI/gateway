@@ -46,7 +46,7 @@ func (r *bootReporter) Quote(_ context.Context, commitment [64]byte) ([]byte, er
 
 func TestBootPreparationUsesOneQuoteAndAppraisesBeforeRegistration(t *testing.T) {
 	fixture := evidenceFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(fixture.Bundle) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(fixture.Evidence) }))
 	defer server.Close()
 	material, keys := bootFixtureKeys(t, fixture)
 	report, err := base64.RawURLEncoding.DecodeString(fixture.Boot.Report)
@@ -93,7 +93,7 @@ func TestBootPreparationUsesOneQuoteAndAppraisesBeforeRegistration(t *testing.T)
 func TestControlReadyCannotReplaceBootInclusionVerification(t *testing.T) {
 	fixture := evidenceFixture(t)
 	e := fixtureEvidence(t, fixture)
-	snapshot, err := e.verifier.RefreshAt(fixture.Bundle, e.now())
+	snapshot, err := e.verifier.RefreshAt(fixture.Evidence, e.now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestBootRuntimeRetainsIdentityAcrossPolicyRejectionAndPendingRegistration(t
 	defer control.Close()
 	evidenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/evidence/latest.json" {
-			_, _ = w.Write(fixture.Bundle)
+			_, _ = w.Write(fixture.Evidence)
 			return
 		}
 		http.NotFound(w, r) // Catalog unavailable: remain registered but locally unready.

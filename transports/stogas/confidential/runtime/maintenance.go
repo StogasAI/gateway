@@ -51,7 +51,7 @@ func (m *bootMaintenance) appraise(snapshot *verifier.EvidenceSnapshot, summary 
 		m.evidenceReason = "boot identity differs"
 		return errors.New(m.evidenceReason)
 	}
-	m.identity, m.evidenceExpires = checked, summary.Keys.Document.ExpiresAt
+	m.identity, m.evidenceExpires = checked, summary.expires()
 	m.evidenceReason = ""
 	m.catalogReady = summary.activeCatalogApproved(checked.GatewayReleaseID)
 	return nil
@@ -63,7 +63,7 @@ func (m *bootMaintenance) maintain(ctx context.Context) error {
 	m.mu.Unlock()
 	err := m.evidence.refresh(ctx, m.appraise)
 	// Catalog delivery failure may keep an older still-approved catalog in use.
-	// Never keep one omitted from the authenticated current approval set.
+	// Never keep one that the current signed evidence no longer lists.
 	if m.evidence.snapshot != nil {
 		m.mu.RLock()
 		gatewayID := m.identity.GatewayReleaseID

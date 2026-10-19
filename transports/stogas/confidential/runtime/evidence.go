@@ -44,14 +44,20 @@ type approvedCatalog struct {
 }
 
 type evidenceSummary struct {
-	Keys struct {
-		Document struct {
-			// The key manifest expiry ends every approval in the same evidence.
-			ExpiresAt time.Time `json:"expires_at"`
-		} `json:"document"`
-	} `json:"keys"`
+	Document struct {
+		Keys struct {
+			Document struct {
+				ExpiresAt time.Time `json:"expires_at"`
+			} `json:"document"`
+		} `json:"keys"`
+	} `json:"document"`
 	Gateways []approvedGateway `json:"gateways"`
 	Catalogs []approvedCatalog `json:"catalogs"`
+}
+
+// expires returns the key manifest expiry, which ends the evidence that contains it.
+func (summary evidenceSummary) expires() time.Time {
+	return summary.Document.Keys.Document.ExpiresAt
 }
 
 func summarize(snapshot *verifier.EvidenceSnapshot) (evidenceSummary, error) {
