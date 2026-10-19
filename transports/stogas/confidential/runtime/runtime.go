@@ -174,6 +174,9 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 			if e != nil {
 				return 0, e
 			}
+			// An unappraised boot keeps the node named by Control's first reply;
+			// completion checks it against the logged boot.
+			boot.identity.NodeID = response.NodeID
 			return response.RetryAfter, nil
 		})
 		var rejected *provision.HTTPResponseError

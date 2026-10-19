@@ -142,11 +142,13 @@ func (c Client) RegistrationChallenge(ctx context.Context, instanceID string) (*
 	return &response, nil
 }
 
-// RegisterBoot sends the locally appraised boot unchanged on every retry. Ready
-// still requires offline verification of inclusion and the decrypted certificate
-// before the runtime can open public admission. No provider credentials are sent.
+// RegisterBoot sends the same boot unchanged on every retry. Ready still requires
+// offline verification of inclusion and the decrypted certificate before the
+// runtime can open public admission. No provider credentials are sent. The
+// expected node is empty only until a boot that could not appraise itself
+// learns it from the first reply.
 func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expectedNodeID string) (*RegistrationResponse, error) {
-	if !instanceUUID(request.InstanceID) || expectedNodeID == "" || !json.Valid(request.Boot) {
+	if !instanceUUID(request.InstanceID) || !json.Valid(request.Boot) {
 		return nil, errors.New("invalid registration identity")
 	}
 	if csr, err := base64.RawURLEncoding.Strict().DecodeString(request.CSRDER); err != nil || len(csr) == 0 || len(csr) > 16*1024 {
@@ -160,7 +162,7 @@ func (c Client) RegisterBoot(ctx context.Context, request BootRegistration, expe
 	if err != nil {
 		return nil, err
 	}
-	if response.NodeID != expectedNodeID {
+	if response.NodeID == "" || expectedNodeID != "" && response.NodeID != expectedNodeID {
 		return nil, errors.New("registration returned another node")
 	}
 	switch response.Status {

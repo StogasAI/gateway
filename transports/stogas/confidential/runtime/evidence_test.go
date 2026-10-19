@@ -30,9 +30,13 @@ type bootEvidenceFixture struct {
 		Evidence json.RawMessage `json:"evidence"`
 		Now      int64           `json:"verified_at_ms"`
 	} `json:"expiring"`
-	Boot      fixtureBoot     `json:"boot"`
-	Inclusion json.RawMessage `json:"inclusion"`
-	Now       int64           `json:"verified_at_ms"`
+	// WithoutCollateral omits the boot platform's AMD collateral. CollateralAdded
+	// is the next revision, which Control publishes when that boot registers.
+	WithoutCollateral json.RawMessage `json:"without_collateral"`
+	CollateralAdded   json.RawMessage `json:"collateral_added"`
+	Boot              fixtureBoot     `json:"boot"`
+	Inclusion         json.RawMessage `json:"inclusion"`
+	Now               int64           `json:"verified_at_ms"`
 }
 
 // fixtureBoot is a real logged boot whose report commits the fixture's seeded keys.
