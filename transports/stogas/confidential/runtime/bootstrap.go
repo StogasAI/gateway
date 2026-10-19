@@ -68,6 +68,9 @@ func quoteBoot(ctx context.Context, environment attest.Environment, material *id
 }
 
 // prepare appraises retained hardware evidence before its first registration.
+// Control adds the AMD collateral for a platform's reported TCB when it
+// registers a boot on that platform, so a boot whose collateral is missing or
+// expired registers unappraised and verifies only its logged boot.
 func (q *quotedBoot) prepare(ctx context.Context, evidence *currentEvidence, environment attest.Environment, material *identity.Material, keys *verifier.NodeKeys) (*preparedBoot, error) {
 	var result *preparedBoot
 	err := evidence.refresh(ctx, func(snapshot *verifier.EvidenceSnapshot, summary evidenceSummary) error {
@@ -84,6 +87,11 @@ func (q *quotedBoot) prepare(ctx context.Context, evidence *currentEvidence, env
 			return err
 		}
 		checked, err := snapshot.VerifyRegistrationAt(document, q.challenge, evidence.now())
+		var rejected *verifier.VerificationError
+		if errors.As(err, &rejected) && (rejected.Code == "missing_collateral" || rejected.Code == "expired_collateral") {
+			digest := sha256.Sum256(document)
+			checked, err = verifier.BootIdentity{BootSHA256: hex.EncodeToString(digest[:])}, nil
+		}
 		if err != nil {
 			return err
 		}

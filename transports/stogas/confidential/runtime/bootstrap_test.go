@@ -120,117 +120,143 @@ func TestControlReadyCannotReplaceBootInclusionVerification(t *testing.T) {
 			t.Fatal("failed completion installed secrets")
 		}
 	}
+	// An unappraised boot keeps the node that Control names; its logged boot must agree.
+	unappraised := &preparedBoot{document: document, identity: verifier.BootIdentity{NodeID: "other", BootSHA256: checked.BootSHA256}}
+	response := &provision.RegistrationResponse{Status: "ready", NodeID: "other", Inclusion: fixture.Inclusion, Provisioning: sealed}
+	if _, err := installBootCompletion(unappraised, response, snapshot, e.now(), keys, nil, secrets, "api-staging.stogas.ai"); err == nil || secrets.Ready() {
+		t.Fatal("Control named the node of an unappraised boot")
+	}
 }
 
 // This uses a real SNP report and logged evidence. Only Control's delivery and
-// the test CA are local; no verifier success path is mocked.
+// the test CA are local; no verifier success path is mocked. Without collateral
+// for its platform, the boot registers unappraised and serves only after the
+// revision that adds the collateral verifies its logged boot.
 func TestBootRuntimeRetainsIdentityAcrossPolicyRejectionAndPendingRegistration(t *testing.T) {
 	fixture := evidenceFixture(t)
-	material, keys := bootFixtureKeys(t, fixture)
-	report, err := base64.RawURLEncoding.DecodeString(fixture.Boot.Report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reporter := &bootReporter{report: report}
-	digest := sha256.Sum256(fixture.Boot.document(t))
-	roots, chain := bootFixtureCertificate(t, material)
-	values := []provision.BootSecretValue{}
-	for _, name := range []string{"CHUTES_API_KEY", "API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY"} {
-		values = append(values, provision.BootSecretValue{Name: name, Plaintext: "fixture"})
-	}
-	plain, err := json.Marshal(provision.BootSecrets{CertificatePEM: string(chain), Region: provision.RegionUSVA, Secrets: values})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Control's sealing format, built independently with Go's X-Wing HPKE.
-	recipient, err := hpke.MLKEM768X25519().NewPublicKey(mustBase64(t, fixture.Boot.ReportData.HPKEPublicKey))
-	if err != nil {
-		t.Fatal(err)
-	}
-	enc, sender, err := hpke.NewSender(recipient, hpke.HKDFSHA256(), hpke.AES256GCM(), []byte("stogas.secret-release.v1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	digestHex := hex.EncodeToString(digest[:])
-	aad := []byte("{\"boot_sha256\":\"" + digestHex + "\",\"schema\":\"stogas.boot-provisioning.v1\"}\n")
-	ciphertext, err := sender.Seal(aad, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealed, err := json.Marshal(map[string]string{"schema": "stogas.boot-provisioning.v1", "boot_sha256": digestHex, "encapsulated_key": base64.RawURLEncoding.EncodeToString(enc), "ciphertext": base64.RawURLEncoding.EncodeToString(ciphertext)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	nodeID := ref.SNPNodeID([32]byte(report[0x140:0x160]))
-	var calls atomic.Int32
-	var first []byte
-	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/fleet/registration/challenge":
-			_ = json.NewEncoder(w).Encode(provision.RegistrationChallenge{Challenge: fixture.Boot.ReportData.RegistrationChallenge, ExpiresAt: time.Now().Add(time.Hour)})
-		case "/api/fleet/registration/complete":
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "complete", "node_id": nodeID})
-		case "/api/fleet/registration":
-			body, _ := io.ReadAll(r.Body)
-			count := calls.Add(1)
-			if count == 1 {
-				first = bytes.Clone(body)
-				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"error":"not_approved"}`))
-				return
+	for _, test := range []struct {
+		name string
+		// Origins serve before until Control first answers a registration.
+		before, after json.RawMessage
+	}{
+		{"appraised boot", fixture.Evidence, fixture.Evidence},
+		{"boot without platform collateral", fixture.WithoutCollateral, fixture.CollateralAdded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			material, keys := bootFixtureKeys(t, fixture)
+			report, err := base64.RawURLEncoding.DecodeString(fixture.Boot.Report)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if !bytes.Equal(first, body) {
-				t.Error("registration changed its exact boot or CSR after policy rejection or pending reply")
+			reporter := &bootReporter{report: report}
+			digest := sha256.Sum256(fixture.Boot.document(t))
+			roots, chain := bootFixtureCertificate(t, material)
+			values := []provision.BootSecretValue{}
+			for _, name := range []string{"CHUTES_API_KEY", "API_KEY_PEPPER", "BYOK_ENCRYPTION_SECRET", "DATABASE_SCHEMA", "DATABASE_URL", "INFERENCE_TOKEN_PUBLIC_KEY"} {
+				values = append(values, provision.BootSecretValue{Name: name, Plaintext: "fixture"})
 			}
-			if count == 2 {
-				w.Header().Set("Retry-After", "1")
-				_ = json.NewEncoder(w).Encode(provision.RegistrationResponse{Status: "pending", NodeID: nodeID})
-				return
+			plain, err := json.Marshal(provision.BootSecrets{CertificatePEM: string(chain), Region: provision.RegionUSVA, Secrets: values})
+			if err != nil {
+				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(provision.RegistrationResponse{Status: "ready", NodeID: nodeID, Inclusion: fixture.Inclusion, Provisioning: sealed})
-		default:
-			t.Error("unexpected Control maintenance request", r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	defer control.Close()
-	evidenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/evidence/latest.json" {
-			_, _ = w.Write(fixture.Evidence)
-			return
-		}
-		http.NotFound(w, r) // Catalog unavailable: remain registered but locally unready.
-	}))
-	defer evidenceServer.Close()
-	evidence := fixtureEvidence(t, fixture, evidenceServer.URL)
-	reserve := func() (func(), bool) { return func() {}, true }
-	runtime, err := startBoot(t.Context(), stogas.ConfidentialConfig{Environment: "staging", ControlURL: control.URL, ControlAllowHTTP: true, InstanceID: "00000000-0000-4000-8000-000000000001"}, Resources{Quote: reserve, Session: reserve}, evidence, material, keys, reporter, roots)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runtime.Close()
-	if calls.Load() != 3 || reporter.calls != 1 || runtime.NodeID() != nodeID {
-		t.Fatal("boot repeated hardware work or changed identity")
-	}
-	if !runtime.Secrets.Ready() || runtime.Sessions == nil || runtime.NativeIssuer == nil || runtime.Proofs == nil {
-		t.Fatal("incomplete boot runtime")
-	}
-	if runtime.Readiness().Ready {
-		t.Fatal("catalog delivery failure opened admission")
-	}
-	if _, err := keys.OpenProvisioning(digest, sealed); err == nil {
-		t.Fatal("provisioning decryption key retained")
-	}
-	if runtime.Diagnostics() == nil || runtime.Diagnostics().Region != provision.RegionUSVA {
-		t.Fatal("missing provisioned region in maintenance diagnostics")
-	}
-	runtime.Close()
-	runtime.Close()
-	if runtime.Secrets.Ready() || runtime.Readiness().Ready {
-		t.Fatal("closed runtime retained serving state")
-	}
-	if _, err := keys.SignReceipt(digest, digest, digest, []byte(`{}`)); err == nil {
-		t.Fatal("receipt signer retained after close")
+			// Control's sealing format, built independently with Go's X-Wing HPKE.
+			recipient, err := hpke.MLKEM768X25519().NewPublicKey(mustBase64(t, fixture.Boot.ReportData.HPKEPublicKey))
+			if err != nil {
+				t.Fatal(err)
+			}
+			enc, sender, err := hpke.NewSender(recipient, hpke.HKDFSHA256(), hpke.AES256GCM(), []byte("stogas.secret-release.v1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			digestHex := hex.EncodeToString(digest[:])
+			aad := []byte("{\"boot_sha256\":\"" + digestHex + "\",\"schema\":\"stogas.boot-provisioning.v1\"}\n")
+			ciphertext, err := sender.Seal(aad, plain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sealed, err := json.Marshal(map[string]string{"schema": "stogas.boot-provisioning.v1", "boot_sha256": digestHex, "encapsulated_key": base64.RawURLEncoding.EncodeToString(enc), "ciphertext": base64.RawURLEncoding.EncodeToString(ciphertext)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			nodeID := ref.SNPNodeID([32]byte(report[0x140:0x160]))
+			var calls atomic.Int32
+			var first []byte
+			control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/fleet/registration/challenge":
+					_ = json.NewEncoder(w).Encode(provision.RegistrationChallenge{Challenge: fixture.Boot.ReportData.RegistrationChallenge, ExpiresAt: time.Now().Add(time.Hour)})
+				case "/api/fleet/registration/complete":
+					_ = json.NewEncoder(w).Encode(map[string]string{"status": "complete", "node_id": nodeID})
+				case "/api/fleet/registration":
+					body, _ := io.ReadAll(r.Body)
+					count := calls.Add(1)
+					if count == 1 {
+						first = bytes.Clone(body)
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte(`{"error":"not_approved"}`))
+						return
+					}
+					if !bytes.Equal(first, body) {
+						t.Error("registration changed its exact boot or CSR after policy rejection or pending reply")
+					}
+					if count == 2 {
+						w.Header().Set("Retry-After", "1")
+						_ = json.NewEncoder(w).Encode(provision.RegistrationResponse{Status: "pending", NodeID: nodeID})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(provision.RegistrationResponse{Status: "ready", NodeID: nodeID, Inclusion: fixture.Inclusion, Provisioning: sealed})
+				default:
+					t.Error("unexpected Control maintenance request", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer control.Close()
+			evidenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/evidence/latest.json" {
+					if calls.Load() == 0 {
+						_, _ = w.Write(test.before)
+					} else {
+						_, _ = w.Write(test.after)
+					}
+					return
+				}
+				http.NotFound(w, r) // Catalog unavailable: remain registered but locally unready.
+			}))
+			defer evidenceServer.Close()
+			evidence := fixtureEvidence(t, fixture, evidenceServer.URL)
+			reserve := func() (func(), bool) { return func() {}, true }
+			// A boot that cannot register retries until its context ends.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			runtime, err := startBoot(ctx, stogas.ConfidentialConfig{Environment: "staging", ControlURL: control.URL, ControlAllowHTTP: true, InstanceID: "00000000-0000-4000-8000-000000000001"}, Resources{Quote: reserve, Session: reserve}, evidence, material, keys, reporter, roots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer runtime.Close()
+			if calls.Load() != 3 || reporter.calls != 1 || runtime.NodeID() != nodeID {
+				t.Fatal("boot repeated hardware work or changed identity")
+			}
+			if !runtime.Secrets.Ready() || runtime.Sessions == nil || runtime.NativeIssuer == nil || runtime.Proofs == nil {
+				t.Fatal("incomplete boot runtime")
+			}
+			if runtime.Readiness().Ready {
+				t.Fatal("catalog delivery failure opened admission")
+			}
+			if _, err := keys.OpenProvisioning(digest, sealed); err == nil {
+				t.Fatal("provisioning decryption key retained")
+			}
+			if runtime.Diagnostics() == nil || runtime.Diagnostics().Region != provision.RegionUSVA {
+				t.Fatal("missing provisioned region in maintenance diagnostics")
+			}
+			runtime.Close()
+			runtime.Close()
+			if runtime.Secrets.Ready() || runtime.Readiness().Ready {
+				t.Fatal("closed runtime retained serving state")
+			}
+			if _, err := keys.SignReceipt(digest, digest, digest, []byte(`{}`)); err == nil {
+				t.Fatal("receipt signer retained after close")
+			}
+		})
 	}
 }
 
