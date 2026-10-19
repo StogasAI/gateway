@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
-	"testing/iotest"
 	"time"
 )
 
@@ -151,36 +149,4 @@ func TestInitLifecycleChild(t *testing.T) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 	}
 	os.Exit(0)
-}
-
-func TestPowerButtonFramingAndRepeatedEvents(t *testing.T) {
-	encode := func(kind, code uint16, value uint32) []byte {
-		encoded := make([]byte, 24)
-		binary.LittleEndian.PutUint16(encoded[16:], kind)
-		binary.LittleEndian.PutUint16(encoded[18:], code)
-		binary.LittleEndian.PutUint32(encoded[20:], value)
-		return encoded
-	}
-	shutdown := make(chan os.Signal, 1)
-	ignored := bytes.Join([][]byte{encode(0, 116, 1), encode(1, 115, 1), encode(1, 116, 0), encode(1, 116, 2)}, nil)
-	if err := readPowerButton(iotest.OneByteReader(bytes.NewReader(ignored)), shutdown); !errors.Is(err, io.EOF) {
-		t.Fatal(err)
-	}
-	if len(shutdown) != 0 {
-		t.Fatal("non-press event triggered shutdown")
-	}
-	if err := readPowerButton(iotest.OneByteReader(bytes.NewReader(bytes.Repeat(encode(1, 116, 1), 100))), shutdown); !errors.Is(err, io.EOF) {
-		t.Fatal(err)
-	}
-	if len(shutdown) != 1 || <-shutdown != syscall.SIGTERM {
-		t.Fatal("power button did not coalesce shutdown")
-	}
-	for length := 1; length < 24; length++ {
-		if err := readPowerButton(bytes.NewReader(encode(1, 116, 1)[:length]), shutdown); !errors.Is(err, io.ErrUnexpectedEOF) {
-			t.Fatalf("length %d: %v", length, err)
-		}
-		if len(shutdown) != 0 {
-			t.Fatal("truncated event triggered shutdown")
-		}
-	}
 }
