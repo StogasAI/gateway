@@ -406,7 +406,7 @@ OUTPUTS files that BUILD leaves in TARGET."
 
 (define stogas-verifier
   (cargo-package
-   "stogas-verifier-ffi" "0"
+   "stogas-ffi" "0"
    (if %verifier-snapshot
        (local-file %verifier-snapshot "stogas-verifier-source" #:recursive? #t)
        (pinned-git-origin "stogasVerifier" "https://github.com/StogasAI/stogas"
@@ -415,13 +415,13 @@ OUTPUTS files that BUILD leaves in TARGET."
        (string-append %verifier-snapshot "/Cargo.lock")
        (release-path "locks/stogas-verifier.Cargo.lock"))
    #~(invoke "cargo" "build" "--release" "--locked" "--offline"
-             "-p" "stogas-verifier-ffi"
+             "-p" "stogas-ffi"
              "--no-default-features" "--features" "staging,gateway")
    #~(invoke "cargo" "test" "--release" "--locked" "--offline" "--tests"
-             "-p" "stogas-verifier" "-p" "stogas-verifier-ffi"
+             "-p" "stogas-core" "-p" "stogas-ffi"
              "--no-default-features"
-             "--features" "staging,stogas-verifier-ffi/gateway")
-   '("libstogas_verifier_ffi.a")
+             "--features" "staging,stogas-ffi/gateway")
+   '("libstogas_ffi.a")
    "https://github.com/StogasAI/stogas"
    "Offline Stogas evidence verifier library for the gateway"
    license:asl2.0

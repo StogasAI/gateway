@@ -17,5 +17,5 @@ if [ "$(git -C "$source" rev-parse HEAD 2>/dev/null)" != "$commit" ]; then
   git -C "$source" fetch --quiet --depth 1 https://github.com/StogasAI/stogas.git "$commit"
   git -C "$source" checkout --quiet FETCH_HEAD
 fi
-(cd "$source" && cargo build --quiet --locked --package stogas-verifier-ffi --no-default-features --features staging,gateway >&2)
+(cd "$source" && cargo build --quiet --locked --package stogas-ffi --no-default-features --features staging,gateway >&2)
 echo "$source/target/debug"
