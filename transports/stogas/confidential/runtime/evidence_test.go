@@ -3,8 +3,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -20,17 +18,17 @@ import (
 )
 
 type bootEvidenceFixture struct {
-	Root   verifier.TrustRoot `json:"root"`
-	Bundle json.RawMessage    `json:"bundle"`
-	// RotatedBundle makes a new online key active and retires the boot's key;
-	// PrunedBundle then omits it.
-	RotatedBundle json.RawMessage `json:"rotated_bundle"`
-	PrunedBundle  json.RawMessage `json:"pruned_bundle"`
-	// Expiring holds a copy of the first key manifest that expires while the
-	// AMD collateral is still valid, verified at its own time.
+	Root     verifier.TrustRoot `json:"root"`
+	Evidence json.RawMessage    `json:"evidence"`
+	// Rotated makes a new online key active and retires the boot's key; Pruned
+	// then omits it.
+	Rotated json.RawMessage `json:"rotated"`
+	Pruned  json.RawMessage `json:"pruned"`
+	// Expiring holds evidence whose key manifest expires while the AMD
+	// collateral is still valid, verified at its own time.
 	Expiring struct {
-		Bundle json.RawMessage `json:"bundle"`
-		Now    int64           `json:"verified_at_ms"`
+		Evidence json.RawMessage `json:"evidence"`
+		Now      int64           `json:"verified_at_ms"`
 	} `json:"expiring"`
 	Boot      fixtureBoot     `json:"boot"`
 	Inclusion json.RawMessage `json:"inclusion"`
@@ -127,7 +125,7 @@ func TestEvidenceReadsOriginsInOrderWithOriginScopedConditionalReads(t *testing.
 				w.WriteHeader(304)
 				return
 			}
-			_, _ = w.Write(fixture.Bundle)
+			_, _ = w.Write(fixture.Evidence)
 		}))
 	}
 	primary, replica := origin("primary"), origin("replica")
@@ -169,7 +167,7 @@ func TestEvidenceReadsOriginsInOrderWithOriginScopedConditionalReads(t *testing.
 func TestEvidenceBadDeliveryPreservesSnapshotWithoutExtendingValidity(t *testing.T) {
 	fixture := evidenceFixture(t)
 	var delivery atomic.Value
-	delivery.Store(fixture.Bundle)
+	delivery.Store(fixture.Evidence)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(delivery.Load().(json.RawMessage)) }))
 	defer server.Close()
 	e := fixtureEvidence(t, fixture, server.URL)
@@ -229,34 +227,29 @@ func TestEvidenceFetchBoundsAndCancellation(t *testing.T) {
 func TestEvidenceRetirementOutlivesLaggingCopies(t *testing.T) {
 	fixture := evidenceFixture(t)
 	var candidate map[string]json.RawMessage
-	if err := json.Unmarshal(fixture.Bundle, &candidate); err != nil {
+	if err := json.Unmarshal(fixture.Evidence, &candidate); err != nil {
 		t.Fatal(err)
 	}
-	var body map[string]json.RawMessage
-	if err := json.Unmarshal(candidate["body"], &body); err != nil {
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(candidate["document"], &document); err != nil {
 		t.Fatal(err)
 	}
 	var rotated struct {
-		Body struct {
+		Document struct {
 			Keys json.RawMessage `json:"keys"`
-		} `json:"body"`
+		} `json:"document"`
 	}
-	if err := json.Unmarshal(fixture.RotatedBundle, &rotated); err != nil {
+	if err := json.Unmarshal(fixture.Rotated, &rotated); err != nil {
 		t.Fatal(err)
 	}
-	body["keys"] = rotated.Body.Keys
-	// The root validly retires the old key, but the rest of this delivery still
-	// uses that key. Candidate installation fails; its retirement must remain.
-	bodyBytes, err := json.Marshal(body)
+	document["keys"] = rotated.Document.Keys
+	// The root validly retires the old key, but the old key still signs this
+	// delivery. Candidate installation fails; its retirement must remain.
+	documentBytes, err := json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sum := sha256.Sum256(bodyBytes)
-	candidate["body"] = bodyBytes
-	candidate["body_sha256"], err = json.Marshal(hex.EncodeToString(sum[:]))
-	if err != nil {
-		t.Fatal(err)
-	}
+	candidate["document"] = documentBytes
 	retirement, err := json.Marshal(candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -266,8 +259,8 @@ func TestEvidenceRetirementOutlivesLaggingCopies(t *testing.T) {
 	for _, retiring := range []int{0, 1} {
 		t.Run([]string{"primary", "replica after primary failure"}[retiring], func(t *testing.T) {
 			var deliveries [2]atomic.Value
-			deliveries[0].Store(fixture.Bundle)
-			deliveries[1].Store(fixture.Bundle)
+			deliveries[0].Store(fixture.Evidence)
+			deliveries[1].Store(fixture.Evidence)
 			var rejected, retired atomic.Bool
 			var servers [2]*httptest.Server
 			for i := range servers {
@@ -304,7 +297,7 @@ func TestEvidenceRetirementOutlivesLaggingCopies(t *testing.T) {
 			if !rejected.Load() || e.snapshot != previous {
 				t.Fatal("incomplete retirement delivery did not retain and reject old snapshot")
 			}
-			deliveries[retiring].Store(fixture.Bundle)
+			deliveries[retiring].Store(fixture.Evidence)
 			retired.Store(false)
 			if err := e.refresh(t.Context(), appraisal); err == nil {
 				t.Fatal("lagging origin restored retired trust")

@@ -223,7 +223,7 @@ func startBoot(ctx context.Context, config stogas.ConfidentialConfig, resources 
 		cleanupBatcher()
 		return nil, err
 	}
-	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, keys: keys, identity: checked, evidenceExpires: evidence.summary.Keys.Document.ExpiresAt}
+	maintenance := &bootMaintenance{evidence: evidence, boot: logged, certs: certs, client: client, hostname: hostname, keys: keys, identity: checked, evidenceExpires: evidence.summary.expires()}
 	// A catalog delivery outage leaves this registered VM alive but unready; the
 	// same maintenance loop recovers it without a new quote or registration.
 	_ = maintenance.maintain(ctx)
