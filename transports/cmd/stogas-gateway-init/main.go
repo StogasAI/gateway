@@ -60,6 +60,8 @@ func main() {
 		writeInitEvent(os.Stderr, "guest_init_failed", "error", initExecFailed)
 		os.Exit(1)
 	}
+	// The kernel's ACPI power button driver sends SIGTERM when the host stops
+	// the guest.
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(shutdown)
@@ -80,8 +82,6 @@ func main() {
 		"-log-style", "json",
 		"-log-level", "info",
 	}
-	closeButtons := watchPowerButtons(shutdown)
-	defer closeButtons()
 	daemon := exec.Command(clockDaemonPath, "--config", clockConfigPath)
 	daemon.Stdout, daemon.Stderr = os.Stdout, os.Stderr
 	command := exec.Command(args[0], args[1:]...)
