@@ -88,12 +88,15 @@ func newFakeSettlementDatabase(t *testing.T, answer func(settlementCall) settlem
 			go db.serve(conn)
 		}
 	}()
-	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+listener.Addr().String()+"/unused?sslmode=disable&connect_timeout=1")
-	if err != nil {
-		t.Fatal(err)
+	connect := func() *pgxpool.Pool {
+		pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+listener.Addr().String()+"/unused?sslmode=disable&connect_timeout=1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pool
 	}
 	db.service = &Service{
-		db:                 &GatewayDB{pool: pool},
+		db:                 &GatewayDB{pool: connect(), settlement: connect()},
 		settleQuery:        "select request_id, result from settle_gateway_request_logs($1::json, $2::json)",
 		keepFailedLogQuery: "select * from keep_failed_gateway_request_log($1::uuid, $2::json)",
 	}
@@ -341,6 +344,28 @@ func TestSettlementStoresTheLogWithItsHoldBindingAndCost(t *testing.T) {
 	}
 	if got := s.Diagnostics().Settlement; got.Reserved != 0 || got.Queued != 0 || got.Calls != 1 || got.FailedCalls != 0 {
 		t.Fatalf("diagnostics = %+v", got)
+	}
+}
+
+// An overloaded gateway's authorizations hold every shared connection.
+func TestSettlementRunsWhileAuthorizationsHoldEveryConnection(t *testing.T) {
+	db := newFakeSettlementDatabase(t, settleAll)
+	s := db.service
+	for range s.db.pool.Stat().MaxConns() {
+		conn, err := s.db.pool.Acquire(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+	}
+	authorization, event := settlementRequest(t, s)
+	select {
+	case err := <-finalizeAsync(s, authorization, event):
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("settlement waited for a shared connection")
 	}
 }
 

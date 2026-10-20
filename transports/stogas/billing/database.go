@@ -18,7 +18,7 @@ import (
 var ErrSchemaIncompatible = errors.New("database schema is incompatible with this gateway")
 
 const (
-	// Six connections serve about 750 authorizations a second. A transaction
+	// Six connections serve about 1,000 authorizations a second. A transaction
 	// pooler shares its few server connections among all gateways, so more
 	// would add no database capacity. All six stay open: an idle client
 	// connection holds no server connection, and a burst then waits for no
@@ -36,7 +36,12 @@ const (
 )
 
 type GatewayDB struct {
-	pool       *pgxpool.Pool
+	pool *pgxpool.Pool
+	// settlement holds one more connection for the settlement worker alone.
+	// pgxpool serves waiters in arrival order, so on the shared pool each call
+	// would wait behind every queued authorization, and an overloaded gateway
+	// would settle too slowly to free its settlement places.
+	settlement *pgxpool.Pool
 	schemaName string
 }
 
@@ -95,20 +100,33 @@ func NewGatewayDB(ctx context.Context, databaseURL string, databaseSchema string
 		poolConfig.ConnConfig.RuntimeParams = map[string]string{}
 	}
 	poolConfig.ConnConfig.RuntimeParams["application_name"] = "stogas-gateway"
+	settlementConfig := poolConfig.Copy()
+	settlementConfig.MaxConns, settlementConfig.MinConns = 1, 1
 
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	pool, err := openPool(ctx, poolConfig)
+	if err != nil {
+		return nil, err
+	}
+	settlement, err := openPool(ctx, settlementConfig)
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return &GatewayDB{pool: pool, settlement: settlement, schemaName: schemaName}, nil
+}
+
+func openPool(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("create postgres pool: %w", err)
 	}
-
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-
-	return &GatewayDB{pool: pool, schemaName: schemaName}, nil
+	return pool, nil
 }
 
 // functionQuery selects the result columns the caller scans by name, so a function
@@ -148,8 +166,14 @@ func (db *GatewayDB) checkQueries(ctx context.Context, queries ...string) error 
 }
 
 func (db *GatewayDB) Close() {
-	if db != nil && db.pool != nil {
+	if db == nil {
+		return
+	}
+	if db.pool != nil {
 		db.pool.Close()
+	}
+	if db.settlement != nil {
+		db.settlement.Close()
 	}
 }
 
