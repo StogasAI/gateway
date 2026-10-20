@@ -163,10 +163,10 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 		t.Fatal("rotated key prefix received a fresh request burst")
 	}
 
-	var rejections callerFailureCache
-	rejections.record(firstAdmissionKey, now)
-	if rejections.get(secondAdmissionKey, now) == 0 {
-		t.Fatal("rotated key prefix bypassed the rejection cache")
+	var refusals refusalCache
+	refusals.record(firstAdmissionKey, nil, refusalHoldBack, now)
+	if refusals.get(secondAdmissionKey, now) == nil {
+		t.Fatal("rotated key prefix bypassed the refusal")
 	}
 
 }

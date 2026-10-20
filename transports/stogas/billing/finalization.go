@@ -141,7 +141,6 @@ func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEve
 	if authorization.releaseFinalization != nil {
 		defer authorization.releaseFinalization()
 	}
-	s.recordRequestOutcome(authorization, event)
 	upstreamCostRaw := event.Usage.UpstreamCostUSD
 	if upstreamCostRaw == "" {
 		upstreamCostRaw = ZeroChargeUSD

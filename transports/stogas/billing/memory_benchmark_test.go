@@ -46,7 +46,7 @@ func BenchmarkIdentityCacheFootprint(b *testing.B) {
 		runtime.ReadMemStats(&before)
 		var keys verifiedAPIKeyCache
 		var rates localRequestLimiter
-		var failures callerFailureCache
+		var refusals refusalCache
 		now := time.Now()
 		for index := range localAdmissionShards * localAdmissionEntriesPerShard * 2 {
 			id := fmt.Sprintf("%08x-1111-4111-8111-111111111111", index)
@@ -56,7 +56,7 @@ func BenchmarkIdentityCacheFootprint(b *testing.B) {
 			secret := fmt.Sprintf("api:%0128x", index)
 			keys.put(secret, &APIKeyClaims{KeyID: id, OrganizationID: org, ResponsibleID: user, GrantID: &grant, admissionKey: secret})
 			rates.allow("org:"+org, now)
-			failures.record(secret, now)
+			refusals.record(secret, nil, refusalHoldBack, now)
 		}
 		runtime.GC()
 		runtime.ReadMemStats(&after)
@@ -64,7 +64,7 @@ func BenchmarkIdentityCacheFootprint(b *testing.B) {
 		b.ReportMetric(float64(keys.entryCount()), "keys")
 		runtime.KeepAlive(&keys)
 		runtime.KeepAlive(&rates)
-		runtime.KeepAlive(&failures)
+		runtime.KeepAlive(&refusals)
 	}
 }
 

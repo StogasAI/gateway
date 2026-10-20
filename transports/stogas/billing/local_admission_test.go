@@ -32,7 +32,7 @@ func BenchmarkAPIKeyAdmission(b *testing.B) {
 			case "invalid-mac":
 				s.apiKeyPepper = "different-pepper"
 			case "blocked-caller":
-				s.callerFailures.record(claims.admissionKey, time.Now().Add(time.Hour))
+				s.refusals.record(claims.admissionKey, nil, time.Hour, time.Now())
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -51,7 +51,7 @@ func BenchmarkAPIKeyAdmission(b *testing.B) {
 	}
 }
 
-func TestOrganizationAbuseLimitIsSharedByKeysAndDashboard(t *testing.T) {
+func TestLocalOrganizationLimitIsSharedByKeysAndDashboard(t *testing.T) {
 	const secret = "test-api-key-pepper"
 	org := "019de516-7df8-71d6-80e4-3c62090d4e94"
 	key := func(id, organization string) string {
@@ -71,7 +71,7 @@ func TestOrganizationAbuseLimitIsSharedByKeysAndDashboard(t *testing.T) {
 	}
 	// Fix the bucket in the future to avoid a timing-dependent refill in race tests.
 	shard.entries[identity] = localRequestEntry{updatedAt: time.Now().Add(time.Hour)}
-	if _, err := service.ParseAPIKey(second); !errors.Is(err, ErrAbuseRateLimit) {
+	if _, err := service.ParseAPIKey(second); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("another key escaped the organization's bucket: %v", err)
 	}
 	if _, err := service.ParseAPIKey(other); err != nil {
@@ -82,7 +82,7 @@ func TestOrganizationAbuseLimitIsSharedByKeysAndDashboard(t *testing.T) {
 	snapshot.Claims = &APIKeyClaims{OrganizationID: org}
 	service.keyConfigs.put(dashboardConfigCacheKey(credential), snapshot, time.Now())
 	shard.entries[identity] = localRequestEntry{updatedAt: time.Now().Add(time.Hour)}
-	if _, err := service.ConfigForDashboard(context.Background(), credential, nil); !errors.Is(err, ErrAbuseRateLimit) {
+	if _, err := service.ConfigForDashboard(context.Background(), credential, nil); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("dashboard escaped the organization's bucket: %v", err)
 	}
 	before := service.localRequests.attempts.Load()
@@ -105,13 +105,13 @@ func TestRefusedKeySpendsNoOrganizationAllowance(t *testing.T) {
 			t.Fatal(err)
 		}
 		// PostgreSQL found that the key has a new secret.
-		service.RecordCallerFailure(claims, nil, 401, ErrAPIKeyOldSecret.Code)
+		service.RecordRefusal(claims, nil, ErrAPIKeyOldSecret.Code)
 		spent := service.localRequests.attempts.Load()
 		for range localRequestBurst + 1 {
 			if _, err := service.ParseAPIKey(raw); !errors.Is(err, ErrAPIKeyOldSecret) {
 				t.Fatalf("refused secret got %v", err)
 			}
-			service.RecordCallerFailure(claims, nil, 401, ErrAPIKeyOldSecret.Code)
+			service.RecordRefusal(claims, nil, ErrAPIKeyOldSecret.Code)
 		}
 		if service.localRequests.attempts.Load() != spent {
 			t.Fatal("a refused secret spent its organization's allowance")
@@ -317,8 +317,9 @@ func TestOrganizationSlotWaitEndsWithItsContext(t *testing.T) {
 		t.Fatalf("canceled wait = %v", err)
 	}
 	// A request that ends early is not a timeout.
-	if waits, timeouts := slots.waits.Load(), slots.timeouts.Load(); waits != 2 || timeouts != 1 {
-		t.Fatalf("waits %d and timeouts %d, want 2 and 1", waits, timeouts)
+	diagnostics := localAdmissionDiagnostics(nil, nil, &slots, nil, nil)
+	if diagnostics.OrganizationWaits != 2 || diagnostics.OrganizationTimeouts != 1 || diagnostics.OrganizationLastTimeoutAt == nil {
+		t.Fatalf("organization diagnostics = %#v, want 2 waits and 1 timed timeout", diagnostics)
 	}
 	release()
 	assertNoOrganizationSlots(t, &slots)
@@ -330,123 +331,6 @@ func assertNoOrganizationSlots(t *testing.T, slots *organizationSlots) {
 		if count := len(slots.shards[index].slots); count != 0 {
 			t.Fatalf("shard %d keeps %d organizations", index, count)
 		}
-	}
-}
-
-func TestCallerFailuresBackOffDecayAndDoNotExtendOnLookup(t *testing.T) {
-	var cache callerFailureCache
-	now := time.Unix(1_700_000_000, 0)
-	for i := range 16 {
-		cache.record("key", now)
-		want := min(25*time.Millisecond*time.Duration(1<<i), 2*time.Second)
-		if got := cache.get("key", now); got != want {
-			t.Fatalf("failure %d: delay %s, want %s", i, got, want)
-		}
-		for range 100 {
-			cache.get("key", now.Add(want/2))
-		}
-		if got := cache.get("key", now.Add(want)); got != 0 {
-			t.Fatal("lookup extended the cooldown")
-		}
-	}
-	now = now.Add(2 * time.Second)
-	cache.record("key", now)
-	if got := cache.get("key", now); got != 25*time.Millisecond {
-		t.Fatalf("elapsed cooldown did not reset backoff: %s", got)
-	}
-	if cache.get("other", now) != 0 {
-		t.Fatal("unrelated identity was limited")
-	}
-}
-
-func TestCallerFailuresIncludeInfrastructureButExcludeCancellationAndBackoff(t *testing.T) {
-	claims := &APIKeyClaims{admissionKey: "api:secret"}
-	for _, status := range []int{200, 201, 204, 400, 401, 402, 403, 404, 408, 409, 413, 415, 422, 429, 499, 500, 502, 503, 504} {
-		service := &Service{}
-		service.RecordCallerFailure(claims, nil, status, "test")
-		got := service.callerBackoff(claims.admissionKey, time.Now()) != nil
-		want := status >= 400 && status != 408 && status != 499
-		if got != want {
-			t.Errorf("status %d: backoff = %t, want %t", status, got, want)
-		}
-	}
-	service := &Service{}
-	service.RecordCallerFailure(claims, nil, 429, ErrAbuseRateLimit.Code)
-	service.RecordCallerFailure(nil, nil, 400, "invalid_request")
-	if service.callerBackoff(claims.admissionKey, time.Now()) != nil {
-		t.Fatal("unattributed or backoff rejection recorded another failure")
-	}
-}
-
-// Rotation keeps the key ID, and the replaced secret still passes the MAC
-// check. Its refusal must not reach the current secret, sibling keys or
-// dashboard sessions, and dashboard failures must not delay API secrets.
-func TestCallerFailuresIsolateSecretsAndDashboardSessions(t *testing.T) {
-	const secret = "test-api-key-pepper"
-	org := "019de516-7df8-71d6-80e4-3c62090d4e94"
-	user := "019de516-b10f-786f-97f8-b95c71dfe1b6"
-	replaced := testSignedAPIKey(t, secret, "019de515-eabf-7c0e-89bd-400629a79580", org, user, "", apiKeyVersion)
-	current := resignTestAPIKey(t, secret, replaced, func(payload []byte) { payload[apiKeyPayloadBytes-1] ^= 0xff })
-	sibling := testSignedAPIKey(t, secret, "019de515-eabf-7c0e-89bd-400629a79581", org, user, "", apiKeyVersion)
-	service := &Service{apiKeyPepper: secret}
-	replacedClaims, err := service.ParseAPIKey(replaced)
-	if err != nil {
-		t.Fatal(err)
-	}
-	currentClaims, err := service.ParseAPIKey(current)
-	if err != nil || currentClaims.KeyID != replacedClaims.KeyID {
-		t.Fatalf("reissued secret: %v", err)
-	}
-	service.RecordCallerFailure(replacedClaims, nil, 401, ErrAPIKeyOldSecret.Code)
-	if _, err := service.ParseAPIKey(replaced); !errors.Is(err, ErrAPIKeyOldSecret) {
-		t.Fatalf("replaced secret was not refused: %v", err)
-	}
-	for _, raw := range []string{current, sibling} {
-		if _, err := service.ParseAPIKey(raw); err != nil {
-			t.Fatalf("another secret shared the delay: %v", err)
-		}
-	}
-	dashboard := &DashboardCredential{ActorUserID: "actor", SessionID: "session", KeyID: currentClaims.KeyID}
-	if service.callerBackoff(dashboardAdmissionKey(dashboard), time.Now()) != nil {
-		t.Fatal("a replaced secret delayed a dashboard session")
-	}
-	// Dashboard requests carry the selected key's claims.
-	service.RecordCallerFailure(currentClaims, dashboard, 403, "dashboard_key_denied")
-	if service.callerBackoff(dashboardAdmissionKey(dashboard), time.Now()) == nil {
-		t.Fatal("dashboard session was not delayed")
-	}
-	if _, err := service.ParseAPIKey(current); err != nil {
-		t.Fatalf("dashboard failure delayed the API secret: %v", err)
-	}
-}
-
-func TestTerminalProviderFailuresBackOffWithoutRelabelingTheEvent(t *testing.T) {
-	s := &Service{}
-	a := &Authorization{admissionKey: "api:secret", admissionStartedAt: time.Now().Add(-time.Second)}
-	event := RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "provider_error"}}}
-	for range 8 {
-		s.recordRequestOutcome(a, event)
-	}
-	if s.callerBackoff(a.admissionKey, time.Now()) == nil {
-		t.Fatal("provider outage did not suppress repeated holds")
-	}
-	if event.GatewayError != nil {
-		t.Fatal("provider outcome changed Stogas lifecycle classification")
-	}
-	success := RequestEvent{ProviderAttempts: []ProviderAttempt{{Status: "success"}}}
-	s.recordRequestOutcome(a, success)
-	if s.callerBackoff(a.admissionKey, time.Now()) == nil {
-		t.Fatal("late success erased a newer failure")
-	}
-	a.admissionStartedAt = time.Now().Add(time.Second)
-	s.recordRequestOutcome(a, success)
-	if s.callerBackoff(a.admissionKey, time.Now()) != nil {
-		t.Fatal("successful probe did not restore admission")
-	}
-	event.Cancelled = true
-	s.recordRequestOutcome(a, event)
-	if s.callerBackoff(a.admissionKey, time.Now()) != nil {
-		t.Fatal("client cancellation penalized admission")
 	}
 }
 
@@ -491,8 +375,8 @@ func TestParseAPIKeyRejectsFailuresBeforeDatabaseAndBodyWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.RecordCallerFailure(claims, nil, 402, "insufficient_balance")
-	if _, err := service.ParseAPIKey(raw); !errors.Is(err, ErrAbuseRateLimit) {
+	service.RecordRefusal(claims, nil, ErrInsufficientBalance.Code)
+	if _, err := service.ParseAPIKey(raw); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("failure did not block early: %v", err)
 	}
 }
@@ -509,5 +393,24 @@ func TestLocalRequestLimiterIsBounded(t *testing.T) {
 	}
 	if total > localAdmissionShards*localAdmissionEntriesPerShard {
 		t.Fatalf("limiter retained %d entries", total)
+	}
+}
+
+func TestLocalRateOutOfOrderArrivalDoesNotMintTokens(t *testing.T) {
+	var limiter localRequestLimiter
+	now := time.Unix(1700000000, 0)
+	for range localRequestBurst {
+		if limiter.allow("org", now) != 0 {
+			t.Fatal("initial burst missing")
+		}
+	}
+	if limiter.allow("org", now.Add(-time.Second)) <= 0 {
+		t.Fatal("older arrival admitted")
+	}
+	if limiter.allow("org", now) <= 0 {
+		t.Fatal("older arrival minted refill credit")
+	}
+	if limiter.allow("org", now.Add(time.Second)) != 0 {
+		t.Fatal("normal refill failed")
 	}
 }

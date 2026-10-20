@@ -94,8 +94,6 @@ type authorizeRow struct {
 
 type Authorization struct {
 	releaseFinalization     func()
-	admissionStartedAt      time.Time
-	admissionKey            string
 	holdID                  string
 	AuthorizedBilledCostUSD *money.USD
 	AvailableBalanceUSD     *money.USD
@@ -179,7 +177,7 @@ type Service struct {
 	organizationSlots          organizationSlots
 	localRequests              localRequestLimiter
 	apiKeys                    verifiedAPIKeyCache
-	callerFailures             callerFailureCache
+	refusals                   refusalCache
 	rejectionLogs              rejectionLogBuffer
 	finalizations              finalizationState
 	underReservedSettlements   atomic.Uint64
@@ -278,7 +276,7 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		RedactionCache: s.keyConfigs.redactionDiagnostics(),
 		RejectionLogs:  s.rejectionLogs.snapshot(),
 		Database:       s.db.Diagnostics(),
-		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.organizationSlots, &s.callerFailures, &s.apiKeys),
+		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.organizationSlots, &s.refusals, &s.apiKeys),
 		Settlement:     s.settlementDiagnostics(),
 	}
 }
@@ -309,14 +307,11 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if err := s.callerFailures.refused(claims.admissionKey, time.Now()); err != nil {
-		return claims, err
-	}
-	if err := s.callerBackoff(claims.admissionKey, time.Now()); err != nil {
+	if err := s.refusals.get(claims.admissionKey, time.Now()); err != nil {
 		return claims, err
 	}
 	if retryAfter := s.localRequests.allow("org:"+claims.OrganizationID, time.Now()); retryAfter > 0 {
-		return claims, &retryAfterError{delay: retryAfter}
+		return claims, &retryAfterError{ErrRateLimit, retryAfter}
 	}
 	return claims, nil
 }
@@ -333,11 +328,11 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), time.Now()); ok {
 		credential.Claims = snapshot.Claims
 	}
-	if err := s.callerBackoff(cacheKey, time.Now()); err != nil {
+	if err := s.refusals.get(cacheKey, time.Now()); err != nil {
 		return credential, err
 	}
 	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return credential, &retryAfterError{delay: retryAfter}
+		return credential, &retryAfterError{ErrRateLimit, retryAfter}
 	}
 	return credential, nil
 }
@@ -379,12 +374,6 @@ func (s *Service) Authorize(ctx context.Context, request HoldRequest) (*Authoriz
 		claims, apiKeyHash, _, err = s.parseVerifiedAPIKey(request.RawAPIKey)
 		if err != nil {
 			return nil, ErrInvalidAPIKey
-		}
-	}
-	// A move continues a request that caller backoff already admitted.
-	if request.Previous == nil {
-		if err := s.callerBackoff(callerAdmissionKey(claims, request.Dashboard), time.Now()); err != nil {
-			return nil, err
 		}
 	}
 	return s.authorizeResolvedRequest(ctx, apiKeyHash, claims, request)
@@ -510,6 +499,13 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
 	defer releaseSlot()
+	// A refusal recorded while this request waited holds it back too. A move
+	// continues a request that was already admitted.
+	if previous == nil {
+		if err := s.refusals.get(callerAdmissionKey(claims, dashboard), time.Now()); err != nil {
+			return nil, err
+		}
+	}
 	// PostgreSQL runs one of an organization's authorizations at a time, from
 	// all gateways together, and answers the others that the organization is
 	// busy. Those run again after a pause, keeping the slot and no connection.
@@ -569,7 +565,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		}
 		if !sleepContext(waitCtx, rand.N(limit)) {
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				s.organizationSlots.timeouts.Add(1)
+				s.organizationSlots.timedOut()
 			}
 			return nil, fmt.Errorf("%w: organization busy", ErrGatewayUnavailable)
 		}
@@ -611,9 +607,9 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, admissionStartedAt: started, admissionKey: callerAdmissionKey(claims, dashboard), holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		if previous != nil {
-			authorization.releaseFinalization, authorization.admissionStartedAt = previous.releaseFinalization, previous.admissionStartedAt
+			authorization.releaseFinalization = previous.releaseFinalization
 		}
 		releaseFinalization = nil // Ownership follows the accepted request through settlement.
 		if upstreamByok == "" {
@@ -653,35 +649,22 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 }
 
 func authorizationResultError(result string) error {
-	if err := policyResultErrors[result]; err != nil {
-		return err
+	if refusal := databaseRefusals[result]; refusal != nil {
+		if refusal.statusCode == 429 {
+			// PostgreSQL returns no retry time, so the client waits out the
+			// hold-back that the refusal starts.
+			return &retryAfterError{refusal, refusalHoldBack}
+		}
+		return refusal
 	}
 	switch result {
-	case "invalid_key":
-		return ErrInvalidAPIKey
-	case "key_secret_replaced":
-		return ErrAPIKeyOldSecret
 	case "params_mismatch", "authorization_closed", "expired", "hold_not_found":
 		// The gateway's own parameters or clock failed these checks, not the caller.
 		return fmt.Errorf("%w: authorization %s", ErrGatewayUnavailable, result)
-	case "insufficient_balance":
-		return ErrInsufficientBalance
-	case "byok_disabled":
-		return ErrByok
 	case "encryption_key_required":
 		return customerkey.ErrKey
-	case "byok_required":
-		return ErrByokRequired
-	case "byok_target_unavailable":
-		return ErrByokTarget
-	case "byok_not_allowed":
-		return errByokNotAllowed
-	case "dashboard_forbidden":
-		return ErrDashboardKeyDenied
 	case "config_stale":
 		return ErrAPIKeyConfigStale
-	case "key_configuration_too_large":
-		return ErrAPIKeyConfigSize
 	case "invalid_amount":
 		return errors.New("invalid estimated upstream cost")
 	default:
