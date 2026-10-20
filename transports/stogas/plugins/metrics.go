@@ -8,7 +8,7 @@ type Metrics struct {
 }
 
 type StogasExportMetrics struct {
-	CaptureUS uint32 `json:"capture_us"`
+	DurationUS uint32 `json:"duration_us"`
 }
 
 type StogasStructuredPIIRedactionMetrics struct {

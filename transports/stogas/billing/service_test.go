@@ -590,7 +590,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
 			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd}},
 		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: count, DurationUS: count},
-			StogasExport: &plugins.StogasExportMetrics{CaptureUS: count}},
+			StogasExport: &plugins.StogasExportMetrics{DurationUS: count}},
 	}
 	for i := range MaxMetadataEntries {
 		event.Metadata[quotes(MaxMetadataKeyBytes-2)+fmt.Sprintf("%02d", i)] = quotes(MaxMetadataValueBytes)
@@ -754,7 +754,7 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 	event := testGatewayRequestEvent()
 	event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{}, StogasExport: &plugins.StogasExportMetrics{}}
 	payload, err := encodeRequestLog(event, "")
-	if err != nil || !strings.Contains(payload, `"plugins":{"stogas_structured_pii_redaction":{"items_redacted":0,"duration_us":0},"stogas_export":{"capture_us":0}}`) {
+	if err != nil || !strings.Contains(payload, `"plugins":{"stogas_structured_pii_redaction":{"items_redacted":0,"duration_us":0},"stogas_export":{"duration_us":0}}`) {
 		t.Fatalf("configured plugins with measured zero disappeared: %s, %v", payload, err)
 	}
 }

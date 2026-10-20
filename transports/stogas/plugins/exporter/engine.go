@@ -81,21 +81,26 @@ type Capture struct {
 	request, response, metadata []byte
 	events                      [][]byte
 	reservation                 *reservation
-	captureDuration             time.Duration
+	duration                    time.Duration
 }
 
-// CaptureDuration measures only copying public request/response content before
-// finalization. Receipt metadata, event encoding and delivery are later.
-func (c *Capture) CaptureDuration() *uint32 {
+// Duration is the time capture added to the request: copying public content
+// and describing inline attachments. Event encoding and delivery come after
+// the response.
+func (c *Capture) Duration() *uint32 {
 	if c == nil {
 		return nil
 	}
-	value := uint32(min(max(c.captureDuration.Microseconds(), 0), int64(^uint32(0))))
+	value := uint32(min(max(c.duration.Microseconds(), 0), int64(^uint32(0))))
 	return &value
 }
 
-func (c *Capture) recordCapture(startedAt time.Time) {
-	c.captureDuration += time.Since(startedAt)
+// Active reports whether content is still captured, so callers can skip
+// encoding output that a dropped capture would discard.
+func (c *Capture) Active() bool { return c != nil && c.reservation != nil }
+
+func (c *Capture) measure(startedAt time.Time) {
+	c.duration += time.Since(startedAt)
 }
 
 // record owns one finished payload shared by its destination deliveries.
@@ -139,15 +144,21 @@ func New(ctx context.Context, options Options) *Engine {
 	e.ctx, e.cancel = context.WithCancel(ctx)
 	return e
 }
+
+// Start returns nil only when no export applies. A capture dropped here still
+// marks the request record as exported, so receivers can find the records that
+// never arrived.
 func (e *Engine) Start(config *exportconfig.Config) *Capture {
-	if e == nil || config == nil || len(config.Destinations) == 0 || e.ctx.Err() != nil {
+	if e == nil || config == nil || len(config.Destinations) == 0 {
 		return nil
 	}
+	dropped := &Capture{engine: e}
 	e.mu.Lock()
-	closed := e.closed
+	closed := e.closed || e.ctx.Err() != nil
 	e.mu.Unlock()
 	if closed {
-		return nil
+		e.failed.Add(uint64(len(config.Destinations)))
+		return dropped
 	}
 	r := &reservation{engine: e, lease: e.options.NewLease()}
 	// The measured per-destination state includes the capture and record.
@@ -161,7 +172,7 @@ func (e *Engine) Start(config *exportconfig.Config) *Capture {
 	if !r.grow(size) {
 		r.release()
 		e.memoryDropped.Add(uint64(len(config.Destinations)))
-		return nil
+		return dropped
 	}
 	c := &Capture{engine: e, reservation: r}
 	for _, d := range config.Destinations {
@@ -174,7 +185,7 @@ func (e *Engine) Start(config *exportconfig.Config) *Capture {
 	return c
 }
 func (c *Capture) Discard() {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return
 	}
 	clear(c.request)
@@ -188,7 +199,7 @@ func (c *Capture) Discard() {
 	c.reservation = nil
 }
 func (c *Capture) grow(n int) bool {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return false
 	}
 	if c.reservation.grow(n) {
@@ -202,7 +213,7 @@ func (c *Capture) grow(n int) bool {
 // Finish appends captured content to the canonical event. A captured signed
 // metadata object wins over the unsigned final metadata, preserving its signature.
 func (c *Capture) Finish(requestID string, event any, finalMetadata any) {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return
 	}
 	encoded, err := json.Marshal(event)
