@@ -25,9 +25,9 @@ const (
 	// that finish meanwhile share the next call, so an idle gateway settles
 	// each request at once and a busy one settles in batches.
 	settlementInterval = 50 * time.Millisecond
-	// Batches of 50 settled within 220 ms at p99 under the heaviest measured
-	// load. A call still running after this has lost its connection or found
-	// the database overloaded, and runs again.
+	// On its own connection, calls of 100 logs took at most about 100 ms under
+	// the heaviest measured load. A call still running after this has lost its
+	// connection or found the database overloaded, and runs again.
 	settlementCallTimeout = 5 * time.Second
 	closeTimeout          = 2 * time.Second
 	retryInitialDelay     = 250 * time.Millisecond
@@ -316,7 +316,7 @@ func (s *Service) keepFailedLog(ctx context.Context, item *settlement, state str
 	err := s.callWithRetry(ctx, func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, settlementCallTimeout)
 		defer cancel()
-		return s.db.pool.QueryRow(ctx, s.keepFailedLogQuery, item.requestID, item.payload).Scan(&result)
+		return s.db.settlement.QueryRow(ctx, s.keepFailedLogQuery, item.requestID, item.payload).Scan(&result)
 	})
 	switch {
 	case err == nil && result == "kept":
@@ -378,7 +378,7 @@ func settlementArrays(batch []*settlement) (string, string) {
 func (s *Service) callSettlement(ctx context.Context, logs string, rejections string) (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, settlementCallTimeout)
 	defer cancel()
-	rows, err := s.db.pool.Query(ctx, s.settleQuery, logs, rejections)
+	rows, err := s.db.settlement.Query(ctx, s.settleQuery, logs, rejections)
 	if err != nil {
 		return nil, fmt.Errorf("settle gateway request logs: %w", err)
 	}
