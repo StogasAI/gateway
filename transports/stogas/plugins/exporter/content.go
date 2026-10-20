@@ -11,10 +11,10 @@ import (
 // with each inline attachment replaced by its description. The transport has
 // already removed policy and encryption credentials.
 func (c *Capture) Input(body map[string]json.RawMessage, responses bool) {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return
 	}
-	defer c.recordCapture(time.Now())
+	defer c.measure(time.Now())
 	body, err := inputfiles.Describe(body, responses)
 	if err != nil {
 		c.engine.failed.Add(uint64(len(c.destinations)))
@@ -44,10 +44,10 @@ func (c *Capture) Input(body map[string]json.RawMessage, responses bool) {
 
 // Response and Event copy public JSON before response buffers are reused.
 func (c *Capture) Response(body []byte) {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return
 	}
-	defer c.recordCapture(time.Now())
+	defer c.measure(time.Now())
 	if !c.grow(len(body)) {
 		return
 	}
@@ -56,10 +56,10 @@ func (c *Capture) Response(body []byte) {
 	copy(c.response, body)
 }
 func (c *Capture) Event(body []byte) {
-	if c == nil || c.reservation == nil {
+	if !c.Active() {
 		return
 	}
-	defer c.recordCapture(time.Now())
+	defer c.measure(time.Now())
 	capacity := cap(c.events)
 	next := capacity
 	if len(c.events) == capacity {

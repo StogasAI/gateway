@@ -50,7 +50,7 @@ func finalizeExportMetrics(state *State) {
 	if state == nil || state.FinalEvent == nil {
 		return
 	}
-	if duration := state.Export.CaptureDuration(); duration != nil {
-		state.FinalEvent.Plugins.StogasExport = &plugins.StogasExportMetrics{CaptureUS: *duration}
+	if duration := state.Export.Duration(); duration != nil {
+		state.FinalEvent.Plugins.StogasExport = &plugins.StogasExportMetrics{DurationUS: *duration}
 	}
 }

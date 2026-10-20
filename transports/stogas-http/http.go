@@ -485,7 +485,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 		// event records them.
 		sendStreamError := func(bifrostErr *schemas.BifrostError) {
 			wait.stop()
-			if state.Export != nil {
+			if state.Export.Active() {
 				encoded, err := marshalPayload(bifrostErrorPayload(providerResponseMemoryError(memory, state, bifrostErr)))
 				if err == nil {
 					state.Export.Event(encoded)

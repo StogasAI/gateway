@@ -21,7 +21,7 @@ func captureUnaryResult(ctx *schemas.BifrostContext, state *stogas.State, respon
 		captureExportError(state, outcome)
 		return
 	}
-	if state == nil || state.Export == nil {
+	if state == nil || !state.Export.Active() {
 		return
 	}
 	encoded, err := marshalPayload(unaryResponsePayload(ctx, response))
@@ -32,7 +32,7 @@ func captureUnaryResult(ctx *schemas.BifrostContext, state *stogas.State, respon
 }
 
 func captureExportError(state *stogas.State, failure *schemas.BifrostError) {
-	if state == nil || state.Export == nil {
+	if state == nil || !state.Export.Active() {
 		return
 	}
 	encoded, err := marshalPayload(bifrostErrorPayload(failure))

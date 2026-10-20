@@ -189,6 +189,22 @@ func TestMemoryPressureDropsWholeCapture(t *testing.T) {
 	}
 }
 
+// A capture dropped at the start keeps the request record's export section,
+// which receivers need to find the records that never arrived.
+func TestMemoryPressureAtStartKeepsExportCoverage(t *testing.T) {
+	e := New(context.Background(), testOptions(true, deliveryStateBytes))
+	defer e.Close()
+	c := e.Start(testConfig("http://127.0.0.1:1"))
+	if c == nil || c.Active() || *c.Duration() != 0 {
+		t.Fatalf("dropped capture = %+v, want an inactive capture with zero duration", c)
+	}
+	c.Input(map[string]json.RawMessage{"model": json.RawMessage(`"model"`)}, false)
+	c.Finish("dropped", testRecord("dropped"), testMetadata())
+	if d := e.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != 0 || d.PendingDeliveries != 0 {
+		t.Fatalf("diagnostics = %+v, want one memory drop and nothing retained", d)
+	}
+}
+
 func TestConnectionsSpendSharedMemoryUntilClosed(t *testing.T) {
 	var received atomic.Int32
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -380,7 +396,7 @@ func TestConcurrentDeliveryAndShutdownRelease(t *testing.T) {
 		go func() { defer workers.Done(); e.Close() }()
 	}
 	workers.Wait()
-	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config) != nil {
+	if d := e.Diagnostics(); d.PendingDeliveries != 0 || d.ReservedBytes != 0 || d.Failed != 720 || e.Start(config).Active() {
 		t.Fatalf("shutdown leak: %+v", d)
 	}
 }
