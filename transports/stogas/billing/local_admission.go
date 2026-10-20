@@ -26,16 +26,17 @@ type LocalAdmissionDiagnostics struct {
 	// Authorizations that waited for an earlier one of their organization in
 	// this gateway, those that PostgreSQL found it busy for, and those that
 	// waited until their deadline.
-	OrganizationWaits     uint64     `json:"organizationWaits"`
-	OrganizationBusy      uint64     `json:"organizationBusy"`
-	OrganizationTimeouts  uint64     `json:"organizationTimeouts"`
-	RejectionCacheHits    uint64     `json:"rejectionCacheHits"`
-	RejectionCacheLookups uint64     `json:"rejectionCacheLookups"`
-	RequestAttempts       uint64     `json:"requestAttempts"`
-	RequestBurst          int        `json:"requestBurst"`
-	RequestLastRejectedAt *time.Time `json:"requestLastRejectedAt,omitempty"`
-	RequestRatePerSecond  int        `json:"requestRatePerSecond"`
-	RequestRejected       uint64     `json:"requestRejected"`
+	OrganizationWaits         uint64     `json:"organizationWaits"`
+	OrganizationBusy          uint64     `json:"organizationBusy"`
+	OrganizationTimeouts      uint64     `json:"organizationTimeouts"`
+	OrganizationLastTimeoutAt *time.Time `json:"organizationLastTimeoutAt,omitempty"`
+	RejectionCacheHits        uint64     `json:"rejectionCacheHits"`
+	RejectionCacheLookups     uint64     `json:"rejectionCacheLookups"`
+	RequestAttempts           uint64     `json:"requestAttempts"`
+	RequestBurst              int        `json:"requestBurst"`
+	RequestLastRejectedAt     *time.Time `json:"requestLastRejectedAt,omitempty"`
+	RequestRatePerSecond      int        `json:"requestRatePerSecond"`
+	RequestRejected           uint64     `json:"requestRejected"`
 }
 
 type localRequestEntry struct {
@@ -127,10 +128,16 @@ func (l *authorizationActivity) recordInFlight(value int64) {
 // connections from every other organization. The rest wait in order, holding
 // nothing. PostgreSQL bounds them across gateways in the same way.
 type organizationSlots struct {
-	waits    atomic.Uint64
-	busy     atomic.Uint64
-	timeouts atomic.Uint64
-	shards   [localAdmissionShards]organizationSlotShard
+	waits         atomic.Uint64
+	busy          atomic.Uint64
+	timeouts      atomic.Uint64
+	lastTimeoutAt atomic.Int64
+	shards        [localAdmissionShards]organizationSlotShard
+}
+
+func (o *organizationSlots) timedOut() {
+	o.timeouts.Add(1)
+	o.lastTimeoutAt.Store(time.Now().UTC().UnixMilli())
 }
 
 type organizationSlotShard struct {
@@ -175,7 +182,7 @@ func (o *organizationSlots) take(ctx context.Context, organizationID string) (fu
 		case slot.held <- struct{}{}:
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				o.timeouts.Add(1)
+				o.timedOut()
 			}
 			leave()
 			return nil, ctx.Err()
@@ -191,7 +198,7 @@ func localAdmissionDiagnostics(
 	requests *localRequestLimiter,
 	authorizations *authorizationActivity,
 	organizations *organizationSlots,
-	rejections *callerFailureCache,
+	rejections *refusalCache,
 	apiKeys *verifiedAPIKeyCache,
 ) LocalAdmissionDiagnostics {
 	result := LocalAdmissionDiagnostics{
@@ -212,6 +219,7 @@ func localAdmissionDiagnostics(
 		result.OrganizationWaits = organizations.waits.Load()
 		result.OrganizationBusy = organizations.busy.Load()
 		result.OrganizationTimeouts = organizations.timeouts.Load()
+		result.OrganizationLastTimeoutAt = localAdmissionTime(organizations.lastTimeoutAt.Load())
 	}
 	if rejections != nil {
 		result.RejectionCacheHits = rejections.hits.Load()

@@ -1,5 +1,7 @@
 package billing
 
+import "maps"
+
 // RequestError holds only reviewed public text. Wrapped errors can retain private
 // details, so HTTP responses must read Message instead of calling err.Error().
 type RequestError struct {
@@ -20,7 +22,7 @@ var (
 	ErrInsufficientBalance = &RequestError{"insufficient_balance", "Insufficient credit. Add funds to your organization to retry this request.", 402}
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
-	ErrAbuseRateLimit      = &RequestError{"abuse_rate_limited", "Too many requests. Wait before retrying.", 429}
+	ErrRateLimit           = &RequestError{"rate_limit_exceeded", "Too many requests. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
 	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
@@ -61,6 +63,28 @@ var policyResultErrors = func() map[string]*RequestError {
 	return errors
 }()
 
+// databaseRefusals maps PostgreSQL's refusals of a caller's request to their
+// public errors, and refusalCodes holds those errors' codes.
+var databaseRefusals = func() map[string]*RequestError {
+	refusals := map[string]*RequestError{
+		"invalid_key": ErrInvalidAPIKey, "key_secret_replaced": ErrAPIKeyOldSecret,
+		"insufficient_balance": ErrInsufficientBalance, "byok_disabled": ErrByok,
+		"byok_required": ErrByokRequired, "byok_target_unavailable": ErrByokTarget,
+		"byok_not_allowed": errByokNotAllowed, "dashboard_forbidden": ErrDashboardKeyDenied,
+		"key_configuration_too_large": ErrAPIKeyConfigSize,
+	}
+	maps.Copy(refusals, policyResultErrors)
+	return refusals
+}()
+
+var refusalCodes = func() map[string]bool {
+	codes := make(map[string]bool, len(databaseRefusals))
+	for _, refusal := range databaseRefusals {
+		codes[refusal.Code] = true
+	}
+	return codes
+}()
+
 // NormalizeStogasErrorCode bounds public history to identifiers owned by the
 // gateway. Unknown details remain private and fall back to the HTTP category.
 func NormalizeStogasErrorCode(code string, status int) string {
@@ -68,7 +92,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		return code
 	}
 	switch code {
-	case "abuse_rate_limited", "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
+	case "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
 		"byok_not_allowed", "byok_required", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",

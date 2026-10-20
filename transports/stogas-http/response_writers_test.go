@@ -14,8 +14,8 @@ import (
 
 type retryableBillingTestError struct{ delay time.Duration }
 
-func (e retryableBillingTestError) Error() string             { return billing.ErrAbuseRateLimit.Error() }
-func (e retryableBillingTestError) Unwrap() error             { return billing.ErrAbuseRateLimit }
+func (e retryableBillingTestError) Error() string             { return billing.ErrRateLimit.Error() }
+func (e retryableBillingTestError) Unwrap() error             { return billing.ErrRateLimit }
 func (e retryableBillingTestError) RetryAfter() time.Duration { return e.delay }
 
 func TestBillingFailureRetryAfterSurvivesWrapping(t *testing.T) {
@@ -36,7 +36,7 @@ func TestBillingFailureRetryAfterSurvivesWrapping(t *testing.T) {
 			if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if body.Error.Code != "abuse_rate_limited" || body.Error.Type != "rate_limit_error" || body.Error.Message != billing.ErrAbuseRateLimit.Message {
+			if body.Error.Code != "rate_limit_exceeded" || body.Error.Type != "rate_limit_error" || body.Error.Message != billing.ErrRateLimit.Message {
 				t.Fatalf("wrong public error: %s", testResponse(ctx).Body.Bytes())
 			}
 		})

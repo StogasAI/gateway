@@ -34,7 +34,7 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 	if authorizationResultError("private_scope_spend_limit") != nil || NormalizeStogasErrorCode("private_scope_spend_limit", 500) != "internal_error" {
 		t.Fatal("an unrecognized scope entered the public error vocabulary")
 	}
-	if authorizationResultError("key_spend_limit") != ErrAPIKeySpendLimit || authorizationResultError("key_rate_limited") != ErrAPIKeyRateLimit {
+	if authorizationResultError("key_spend_limit") != ErrAPIKeySpendLimit || !errors.Is(authorizationResultError("key_rate_limited"), ErrAPIKeyRateLimit) {
 		t.Fatal("key admission errors lost their identity")
 	}
 }

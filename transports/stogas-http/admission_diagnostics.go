@@ -74,7 +74,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 		return
 	}
 	dashboard := ctx.dashboard
-	s.runtime.Billing().RecordCallerFailure(claims, dashboard, status, code)
+	s.runtime.Billing().RecordRefusal(claims, dashboard, code)
 	if claims == nil {
 		return
 	}

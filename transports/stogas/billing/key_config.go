@@ -115,13 +115,10 @@ func (s *Service) ConfigForDashboard(
 		return nil, err
 	}
 	credential.Claims = snapshot.Claims
-	if err := s.callerBackoff(dashboardAdmissionKey(credential), time.Now()); err != nil {
-		return snapshot, err
-	}
 	// Dashboard tokens sign the actor/session, not the caller-selected key ID.
 	// Charge the shared organization only after resolving that key's authority.
 	if retryAfter := s.localRequests.allow("org:"+snapshot.Claims.OrganizationID, time.Now()); retryAfter > 0 {
-		return snapshot, &retryAfterError{delay: retryAfter}
+		return snapshot, &retryAfterError{ErrRateLimit, retryAfter}
 	}
 	return snapshot, nil
 }
