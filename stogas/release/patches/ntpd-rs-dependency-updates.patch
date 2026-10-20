@@ -1,5 +1,5 @@
 diff --git a/Cargo.lock b/Cargo.lock
-index d6be690..0f8674a 100644
+index d6be690..66614ae 100644
 --- a/Cargo.lock
 +++ b/Cargo.lock
 @@ -70,9 +70,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
@@ -82,10 +82,10 @@ index d6be690..0f8674a 100644
  [[package]]
  name = "rustls-webpki"
 -version = "0.103.13"
-+version = "0.103.15"
++version = "0.103.16"
  source = "registry+https://github.com/rust-lang/crates.io-index"
 -checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
-+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
++checksum = "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281"
  dependencies = [
   "aws-lc-rs",
   "ring",
