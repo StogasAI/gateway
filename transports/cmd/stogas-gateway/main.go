@@ -21,14 +21,11 @@ import (
 	secretstore "github.com/maximhq/bifrost/transports/stogas/confidential/secrets"
 )
 
-const defaultGuestCaBundlePath = "/etc/ssl/certs/ca-certificates.crt"
-
 const requiredOpenFiles = 65536
 
 type startupReasonCode string
 
 const (
-	startupCABundleInspectionFailed                   startupReasonCode = "ca_bundle_inspection_failed"
 	startupCertificateProvisioningFailed              startupReasonCode = "confidential_certificate_provisioning_failed"
 	startupConfigurationLoadFailed                    startupReasonCode = "configuration_load_failed"
 	startupConfidentialRuntimeInitFailed              startupReasonCode = "confidential_runtime_initialization_failed"
@@ -50,7 +47,6 @@ func main() {
 	if err := ensureOpenFileLimit(syscall.Getrlimit, syscall.Setrlimit); err != nil {
 		fatal(startupOpenFileLimitFailed)
 	}
-	setDefaultGuestCertFile()
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(stogashttp.DefaultGoMemoryLimitBytes)
 	}
@@ -141,21 +137,6 @@ func ensureOpenFileLimit(
 		return fmt.Errorf("raise RLIMIT_NOFILE to %d: %w", requiredOpenFiles, err)
 	}
 	return nil
-}
-
-func setDefaultGuestCertFile() {
-	setDefaultGuestCertFileAt(defaultGuestCaBundlePath)
-}
-
-func setDefaultGuestCertFileAt(path string) {
-	if os.Getenv("SSL_CERT_FILE") != "" {
-		return
-	}
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Setenv("SSL_CERT_FILE", path)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		writeStartupEvent(os.Stderr, "gateway_startup_warning", "warn", startupCABundleInspectionFailed)
-	}
 }
 
 func writeStartupEvent(output io.Writer, event string, severity string, reasonCode startupReasonCode) {
