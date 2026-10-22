@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -170,6 +171,72 @@ func TestFullJSONDeliveryAndDetachedOwnership(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A destination without content gets the request record and metadata, and
+// a capture copies content only while some destination sends it.
+func TestDestinationsWithoutContent(t *testing.T) {
+	var mu sync.Mutex
+	received := map[string]map[string]json.RawMessage{}
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var record map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			t.Error(err)
+		}
+		mu.Lock()
+		received[r.URL.Path] = record
+		mu.Unlock()
+	}))
+	defer receiver.Close()
+	off := false
+	withoutContent := exportconfig.Destination{URL: receiver.URL + "/metadata", Content: &off}
+	checkMetadataOnly := func() {
+		t.Helper()
+		got := received["/metadata"]
+		keys := make([]string, 0, len(got))
+		for key := range got {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		if !slices.Equal(keys, []string{"billed_cost_usd", "meters", "request_id", "stogas"}) || string(got["stogas"]) != string(testMetadata()) {
+			t.Fatalf("record without content = %s", got)
+		}
+	}
+	for _, streaming := range []bool{false, true} {
+		clear(received)
+		e := New(context.Background(), testOptions(true, 16<<20))
+		c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{{URL: receiver.URL + "/content"}, withoutContent}})
+		c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"prompt"`)}, true)
+		output, field := `{"output":"answer"}`, "response"
+		if streaming {
+			c.Event([]byte(output))
+			field = "events"
+		} else {
+			c.Response([]byte(output))
+		}
+		c.Finish("record", testRecord("record"), testMetadata())
+		e.Close()
+		if e.Diagnostics().Delivered != 2 {
+			t.Fatalf("diagnostics = %+v", e.Diagnostics())
+		}
+		full := received["/content"]
+		if string(full["request"]) != `{"input":"prompt"}` || strings.Trim(string(full[field]), "[]") != output {
+			t.Fatalf("record with content = %s", full)
+		}
+		checkMetadataOnly()
+	}
+	clear(received)
+	e := New(context.Background(), testOptions(true, 16<<20))
+	c := e.Start(&exportconfig.Config{Destinations: []exportconfig.Destination{withoutContent}})
+	reserved := e.Diagnostics().ReservedBytes
+	c.Input(map[string]json.RawMessage{"input": json.RawMessage(`"` + strings.Repeat("prompt ", 4096) + `"`)}, true)
+	c.Response([]byte(`{"output":"answer"}`))
+	if c.Active() || e.Diagnostics().ReservedBytes != reserved {
+		t.Fatalf("capture without content destinations copied content: %+v", e.Diagnostics())
+	}
+	c.Finish("record", testRecord("record"), testMetadata())
+	e.Close()
+	checkMetadataOnly()
 }
 
 func TestMemoryPressureDropsWholeCapture(t *testing.T) {

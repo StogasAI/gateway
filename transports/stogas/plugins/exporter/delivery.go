@@ -106,6 +106,7 @@ func (c *chargedConn) Close() error {
 // takes the record lock, so releasing the record erases the payload safely.
 type deliveryBody struct {
 	record       *record
+	content      bool
 	part, offset int
 }
 
@@ -113,20 +114,24 @@ func (b *deliveryBody) Read(dst []byte) (int, error) {
 	r := b.record
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.parts == nil {
+	parts := r.metadataParts
+	if b.content {
+		parts = r.parts
+	}
+	if parts == nil {
 		return 0, errRecordReleased
 	}
 	n := 0
-	for b.part < len(r.parts) && n < len(dst) {
-		copied := copy(dst[n:], r.parts[b.part][b.offset:])
+	for b.part < len(parts) && n < len(dst) {
+		copied := copy(dst[n:], parts[b.part][b.offset:])
 		n += copied
 		b.offset += copied
-		if b.offset == len(r.parts[b.part]) {
+		if b.offset == len(parts[b.part]) {
 			b.part++
 			b.offset = 0
 		}
 	}
-	if n == 0 && b.part == len(r.parts) {
+	if n == 0 && b.part == len(parts) {
 		return 0, io.EOF
 	}
 	return n, nil
@@ -139,14 +144,18 @@ type attempt struct {
 }
 
 func (c deliveryClient) send(ctx context.Context, d exportconfig.Destination, r *record) attempt {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, &deliveryBody{record: r})
+	content := d.SendsContent()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, &deliveryBody{record: r, content: content})
 	if err != nil || (!c.local && req.URL.Scheme != "https") {
 		return attempt{}
 	}
-	req.ContentLength = r.size
+	req.ContentLength = r.metadataSize
+	if content {
+		req.ContentLength = r.size
+	}
 	// The key lets receivers drop retried duplicates and lets net/http replay a
 	// request whose reused connection closed before the receiver saw it.
-	req.GetBody = func() (io.ReadCloser, error) { return &deliveryBody{record: r}, nil }
+	req.GetBody = func() (io.ReadCloser, error) { return &deliveryBody{record: r, content: content}, nil }
 	for key, value := range d.Headers {
 		req.Header.Set(key, value)
 	}

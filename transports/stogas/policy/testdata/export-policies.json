@@ -234,6 +234,54 @@
     "valid": false
   },
   {
+    "name": "without content",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": false
+            }
+          ]
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "with content",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": true
+            }
+          ]
+        }
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "null content",
+    "source": {
+      "plugins": {
+        "stogasExport": {
+          "destinations": [
+            {
+              "url": "https://collector.example/v1/traces",
+              "content": null
+            }
+          ]
+        }
+      }
+    },
+    "valid": false
+  },
+  {
     "name": "URL http://127.0.0.1:4318/v1/traces",
     "source": {
       "plugins": {
@@ -389,7 +437,7 @@
     "valid": false
   },
   {
-    "name": "unsupported content",
+    "name": "string content",
     "source": {
       "plugins": {
         "stogasExport": {

@@ -78,6 +78,7 @@ func (r *reservation) release() {
 type Capture struct {
 	engine                      *Engine
 	destinations                []exportconfig.Destination
+	content                     bool
 	request, response, metadata []byte
 	events                      [][]byte
 	reservation                 *reservation
@@ -96,22 +97,27 @@ func (c *Capture) Duration() *uint32 {
 }
 
 // Active reports whether content is still captured, so callers can skip
-// encoding output that a dropped capture would discard.
-func (c *Capture) Active() bool { return c != nil && c.reservation != nil }
+// encoding output that a dropped capture or destinations without content
+// would discard.
+func (c *Capture) Active() bool { return c.held() && c.content }
+
+// held reports whether the capture still owns memory for a record.
+func (c *Capture) held() bool { return c != nil && c.reservation != nil }
 
 func (c *Capture) measure(startedAt time.Time) {
 	c.duration += time.Since(startedAt)
 }
 
 // record owns one finished payload shared by its destination deliveries.
+// metadataParts leaves out the content of parts and shares its buffers.
 type record struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	requestID   string
-	size        int64
-	mu          sync.Mutex
-	parts       [][]byte
-	reservation *reservation
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	requestID            string
+	size, metadataSize   int64
+	mu                   sync.Mutex
+	parts, metadataParts [][]byte
+	reservation          *reservation
 	// Guarded by Engine.mu.
 	remaining int
 	element   *list.Element
@@ -123,7 +129,7 @@ type record struct {
 func (r *record) release() int64 {
 	r.mu.Lock()
 	parts := r.parts
-	r.parts = nil
+	r.parts, r.metadataParts = nil, nil
 	r.mu.Unlock()
 	if parts == nil {
 		return 0
@@ -176,16 +182,17 @@ func (e *Engine) Start(config *exportconfig.Config) *Capture {
 	}
 	c := &Capture{engine: e, reservation: r}
 	for _, d := range config.Destinations {
-		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers))}
+		copy := exportconfig.Destination{URL: strings.Clone(d.URL), Headers: make(map[string]string, len(d.Headers)), Content: d.Content}
 		for key, value := range d.Headers {
 			copy.Headers[strings.Clone(key)] = strings.Clone(value)
 		}
 		c.destinations = append(c.destinations, copy)
+		c.content = c.content || d.SendsContent()
 	}
 	return c
 }
 func (c *Capture) Discard() {
-	if !c.Active() {
+	if !c.held() {
 		return
 	}
 	clear(c.request)
@@ -199,7 +206,7 @@ func (c *Capture) Discard() {
 	c.reservation = nil
 }
 func (c *Capture) grow(n int) bool {
-	if !c.Active() {
+	if !c.held() {
 		return false
 	}
 	if c.reservation.grow(n) {
@@ -213,7 +220,7 @@ func (c *Capture) grow(n int) bool {
 // Finish appends captured content to the canonical event. A captured signed
 // metadata object wins over the unsigned final metadata, preserving its signature.
 func (c *Capture) Finish(requestID string, event any, finalMetadata any) {
-	if !c.Active() {
+	if !c.held() {
 		return
 	}
 	encoded, err := json.Marshal(event)
@@ -234,33 +241,42 @@ func (c *Capture) Finish(requestID string, event any, finalMetadata any) {
 		clear(metadata)
 	}
 	// Parts retain the original JSON buffers without copying the whole body.
-	if !c.grow(len(encoded) + (len(c.events)*2+10)*24) {
+	capacity := len(c.events)*2 + 10
+	if !c.grow(len(encoded) + (capacity+4)*24) {
 		clear(encoded)
 		return
 	}
-	parts := make([][]byte, 0, len(c.events)*2+10)
-	parts = append(parts, encoded[:len(encoded)-1], []byte(`,"stogas":`), c.metadata, []byte(`,"request":`), c.request)
-	if len(c.request) == 0 {
-		parts[len(parts)-1] = []byte(`null`)
-	}
-	if c.events != nil {
-		parts = append(parts, []byte(`,"events":[`))
-		for i, event := range c.events {
-			if i > 0 {
-				parts = append(parts, []byte{','})
+	parts := make([][]byte, 0, capacity)
+	parts = append(parts, encoded[:len(encoded)-1], []byte(`,"stogas":`), c.metadata)
+	metadataParts := append(parts[:len(parts):len(parts)], []byte{'}'})
+	if c.content {
+		parts = append(parts, []byte(`,"request":`), c.request)
+		if len(c.request) == 0 {
+			parts[len(parts)-1] = []byte(`null`)
+		}
+		if c.events != nil {
+			parts = append(parts, []byte(`,"events":[`))
+			for i, event := range c.events {
+				if i > 0 {
+					parts = append(parts, []byte{','})
+				}
+				parts = append(parts, event)
 			}
-			parts = append(parts, event)
-		}
-		parts = append(parts, []byte(`]}`))
-	} else {
-		parts = append(parts, []byte(`,"response":`), c.response, []byte{'}'})
-		if len(c.response) == 0 {
-			parts[len(parts)-2] = []byte(`null`)
+			parts = append(parts, []byte{']'})
+		} else {
+			parts = append(parts, []byte(`,"response":`), c.response)
+			if len(c.response) == 0 {
+				parts[len(parts)-1] = []byte(`null`)
+			}
 		}
 	}
-	r := &record{requestID: requestID, parts: parts, reservation: c.reservation, remaining: len(c.destinations)}
+	parts = append(parts, []byte{'}'})
+	r := &record{requestID: requestID, parts: parts, metadataParts: metadataParts, reservation: c.reservation, remaining: len(c.destinations)}
 	for _, part := range parts {
 		r.size += int64(len(part))
+	}
+	for _, part := range metadataParts {
+		r.metadataSize += int64(len(part))
 	}
 	destinations := c.destinations
 	c.request, c.response, c.metadata, c.events, c.destinations, c.reservation = nil, nil, nil, nil, nil, nil
