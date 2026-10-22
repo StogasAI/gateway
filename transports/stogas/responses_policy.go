@@ -35,9 +35,17 @@ func validateCommonResponsesPolicy(state *State) error {
 		"conversation",
 		"fallbacks",
 		"inference_geo",
+		"max_completion_tokens",
+		"max_tokens",
 		"previous_response_id",
+		"prompt",
+		"reasoning_effort",
+		"reasoning_max_tokens",
+		"response_format",
 		"speed",
 		"stop",
+		"verbosity",
+		"web_search_options",
 	} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
@@ -261,9 +269,6 @@ func validateResponsesToolPolicy(
 	if len(tools) == 0 {
 		if _, ok := raw["max_tool_calls"]; ok {
 			return invalidRequest("max_tool_calls requires supported tools")
-		}
-		if _, ok := raw["parallel_tool_calls"]; ok {
-			return invalidRequest("parallel_tool_calls requires supported tools")
 		}
 	} else if err := validateNonempty(tools); err != nil {
 		return err

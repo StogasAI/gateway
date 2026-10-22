@@ -314,9 +314,6 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 		return nil
 	}
 	raw := state.Resolution.RawBody()
-	if err := validateAnthropicParallelToolCalls(raw); err != nil {
-		return err
-	}
 	if err := validateAnthropicSamplingIntent(state, raw); err != nil {
 		return err
 	}
@@ -329,7 +326,7 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {
 		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
 	}
-	if err := rejectOpenAIOnlyParameters(raw,
+	if err := rejectAnthropicUnsupportedParameters(raw,
 		"frequency_penalty",
 		"logit_bias",
 		"logprobs",
@@ -347,7 +344,7 @@ func validateAnthropicChatCompletionPolicy(state *State) error {
 	if count, err := validatePromptCacheBreakpoints(raw["messages"]); err != nil {
 		return err
 	} else if count > 0 {
-		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
+		return invalidRequest("prompt_cache_breakpoint is not supported for Anthropic-format deployments")
 	}
 	if err := validateAnthropicChatCacheControls(raw); err != nil {
 		return err
@@ -375,9 +372,6 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	if streamOptions, ok := rawObject(raw["stream_options"]); ok && rawJSONValueSet(streamOptions["include_obfuscation"]) {
 		return invalidRequest("stream_options.include_obfuscation cannot be preserved on Anthropic-format deployments")
 	}
-	if err := validateAnthropicParallelToolCalls(raw); err != nil {
-		return err
-	}
 	if err := validateAnthropicSamplingIntent(state, raw); err != nil {
 		return err
 	}
@@ -394,7 +388,7 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	if rawJSONValueSet(raw["prompt_cache_retention"]) {
 		return invalidRequest("prompt_cache_retention is not supported for Anthropic-format deployments")
 	}
-	if err := rejectOpenAIOnlyParameters(raw,
+	if err := rejectAnthropicUnsupportedParameters(raw,
 		"frequency_penalty",
 		"include",
 		"presence_penalty",
@@ -406,7 +400,7 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	if count, err := validatePromptCacheBreakpoints(raw["input"]); err != nil {
 		return err
 	} else if count > 0 {
-		return invalidRequest("prompt_cache_breakpoint is only supported for OpenAI deployments")
+		return invalidRequest("prompt_cache_breakpoint is not supported for Anthropic-format deployments")
 	}
 	if err := validateAnthropicResponsesCacheControls(raw); err != nil {
 		return err
@@ -422,20 +416,13 @@ func validateAnthropicResponsesPolicy(state *State) error {
 	})
 }
 
-func rejectOpenAIOnlyParameters(raw map[string]json.RawMessage, names ...string) error {
+func rejectAnthropicUnsupportedParameters(raw map[string]json.RawMessage, names ...string) error {
 	for _, name := range names {
 		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is only supported for OpenAI deployments")
+			return invalidRequest(name + " is not supported for Anthropic-format deployments")
 		}
 	}
 	return nil
-}
-
-func validateAnthropicParallelToolCalls(raw map[string]json.RawMessage) error {
-	if !rawJSONValueSet(raw["parallel_tool_calls"]) {
-		return nil
-	}
-	return invalidRequest("parallel_tool_calls is not supported for Anthropic deployments")
 }
 
 func validateAnthropicSamplingIntent(state *State, raw map[string]json.RawMessage) error {

@@ -92,11 +92,6 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		if providerResponsesToolCallRequired(state) && state.responsesDeclaredCalls == 0 {
 			return ErrProviderResponseMalformed
 		}
-		if state.Resolution != nil {
-			if raw, ok := state.Resolution.RawBody()["parallel_tool_calls"]; ok && !rawBool(raw) && state.responsesClientCalls > 1 {
-				return ErrProviderResponseMalformed
-			}
-		}
 	}
 	return sanitizeProviderResponsesEcho(state, response)
 }

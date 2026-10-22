@@ -270,7 +270,8 @@ func (r *ResolvedRequest) Retries() int {
 // NextPair resolves the next deployment and credential pair. failure is the
 // local error that stopped this pair before its provider call, or nil after a
 // provider failure. With no pair left, it returns the request's first local
-// error, or an error no other pair can avoid.
+// error, or a later one that ends sooner by waiting, or an error no other pair
+// can avoid.
 func (r *ResolvedRequest) NextPair(failure error) (*ResolvedRequest, error) {
 	if r == nil || r.plan == nil {
 		if failure == nil {
@@ -1284,9 +1285,12 @@ func dropUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route) 
 // dropNoOpCompatibilityFields accepts common SDK defaults without letting
 // those fields select provider storage, routing, or non-text output. JSON null
 // is omission for every optional top-level request field, and an empty
-// end-user ID names no user. Required fields remain so the normal request
-// validator can report them accurately. Meaningful unsupported values remain
-// and are rejected by route policy.
+// end-user ID names no user. Explicit defaults go too, because some providers
+// reject them, as do tool controls without tools: OpenAI rejects tool_choice
+// and parallel_tool_calls there, and agent frameworks send them anyway.
+// Required fields remain so the normal request validator can report them
+// accurately. Meaningful unsupported values remain and are rejected by route
+// policy.
 func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route) {
 	for name, raw := range rawData {
 		if name != "model" && name != "messages" && name != "input" && rawJSONNull(raw) {
@@ -1295,17 +1299,39 @@ func dropNoOpCompatibilityFields(rawData map[string]json.RawMessage, route Route
 	}
 	dropRawFieldIf(rawData, "user", rawJSONNullOrEmptyString)
 	dropRawFieldIf(rawData, "safety_identifier", rawJSONNullOrEmptyString)
+	dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
+	dropRawFieldIf(rawData, "tools", rawJSONNullOrEmptyArray)
+	if _, ok := rawData["tools"]; !ok {
+		dropRawFieldIf(rawData, "tool_choice", func(raw json.RawMessage) bool {
+			choice := rawStringValue(raw)
+			return choice == "auto" || choice == "none"
+		})
+		dropRawFieldIf(rawData, "parallel_tool_calls", rawJSONBool)
+	}
 
 	switch route {
 	case RouteChat:
-		dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
 		dropRawFieldIf(rawData, "functions", rawJSONNullOrEmptyArray)
-		dropRawFieldIf(rawData, "modalities", rawJSONNullOrEmptyArray)
+		dropRawFieldIf(rawData, "modalities", func(raw json.RawMessage) bool {
+			modalities, ok := rawStringListValue(raw)
+			return ok && (len(modalities) == 0 || (len(modalities) == 1 && modalities[0] == "text"))
+		})
+		dropRawFieldIf(rawData, "n", func(raw json.RawMessage) bool {
+			n, ok := rawIntValue(raw)
+			return ok && n == 1
+		})
 		dropRawFieldIf(rawData, "prompt_cache_isolation_key", rawJSONNullOrEmptyString)
+		dropRawFieldIf(rawData, "response_format", rawJSONTextFormat)
 	case RouteResponses:
 		dropRawFieldIf(rawData, "background", rawJSONFalse)
-		dropRawFieldIf(rawData, "fallbacks", rawJSONNullOrEmptyArray)
 		dropRawFieldIf(rawData, "previous_response_id", rawJSONNullOrEmptyString)
+		dropRawFieldIf(rawData, "text", func(raw json.RawMessage) bool {
+			var text map[string]json.RawMessage
+			return json.Unmarshal(raw, &text) == nil && len(text) == 1 && rawJSONTextFormat(text["format"])
+		})
+		dropRawFieldIf(rawData, "truncation", func(raw json.RawMessage) bool {
+			return rawStringValue(raw) == "disabled"
+		})
 	}
 }
 
@@ -1321,6 +1347,18 @@ func rawJSONNull(raw json.RawMessage) bool {
 
 func rawJSONFalse(raw json.RawMessage) bool {
 	return bytes.Equal(bytes.TrimSpace(raw), []byte("false"))
+}
+
+func rawJSONBool(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return bytes.Equal(trimmed, []byte("true")) || bytes.Equal(trimmed, []byte("false"))
+}
+
+// rawJSONTextFormat reports a plain-text output format, every provider's
+// default.
+func rawJSONTextFormat(raw json.RawMessage) bool {
+	var format map[string]json.RawMessage
+	return json.Unmarshal(raw, &format) == nil && len(format) == 1 && rawStringValue(format["type"]) == "text"
 }
 
 func rawJSONNullOrEmptyArray(raw json.RawMessage) bool {
