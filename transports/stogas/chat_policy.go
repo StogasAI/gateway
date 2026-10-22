@@ -34,7 +34,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "inference_geo", "prompt_cache_isolation_key", "speed"} {
+	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "inference_geo", "instructions", "max_output_tokens", "prompt_cache_isolation_key", "speed", "text"} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
@@ -103,8 +103,30 @@ func unsupportedParameterError(name string) error {
 		return invalidRequest(`speed is not supported; use service_tier "fast"`)
 	case "inference_geo":
 		return invalidRequest("inference_geo is not supported; use a regional deployment ID or a routing filter")
+	case "prompt":
+		return invalidRequest("prompt is not supported; send the prompt text in instructions and input")
+	}
+	if hint, ok := otherEndpointParameters[name]; ok {
+		return invalidRequest(name + " is " + hint)
 	}
 	return invalidRequest(name + " is not supported")
+}
+
+// otherEndpointParameters names the controls that Chat Completions and
+// Responses spell differently. Dropping them as unknown would silently lose
+// an output limit, a system prompt or an output format, so each gets 400 with
+// the name this endpoint uses.
+var otherEndpointParameters = map[string]string{
+	"instructions":          "a Responses field; use a system or developer message",
+	"max_completion_tokens": "a Chat Completions field; use max_output_tokens",
+	"max_output_tokens":     "a Responses field; use max_completion_tokens",
+	"max_tokens":            "a Chat Completions field; use max_output_tokens",
+	"reasoning_effort":      "a Chat Completions field; use reasoning.effort",
+	"reasoning_max_tokens":  "a Chat Completions field; use reasoning.max_tokens",
+	"response_format":       "a Chat Completions field; use text.format",
+	"text":                  "a Responses field; use response_format and verbosity",
+	"verbosity":             "a Chat Completions field; use text.verbosity",
+	"web_search_options":    "a Chat Completions field; use a web_search tool",
 }
 
 func validateNumber(raw map[string]json.RawMessage, name string) error {

@@ -207,7 +207,7 @@ func validateOpenAIWireChatPolicy(state *State) error {
 	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is only supported for Anthropic deployments")
+			return invalidRequest(name + " is not supported for OpenAI-format deployments")
 		}
 	}
 	if err := rejectOpenAIChatCacheControls(raw); err != nil {
@@ -235,7 +235,7 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 	}
 	for _, name := range []string{"cache_control", "context_management", "stop_sequences", "task_budget", "top_k"} {
 		if rawJSONValueSet(raw[name]) {
-			return invalidRequest(name + " is only supported for Anthropic deployments")
+			return invalidRequest(name + " is not supported for OpenAI-format deployments")
 		}
 	}
 	if err := rejectOpenAIResponsesCacheControls(raw); err != nil {
@@ -253,13 +253,13 @@ func validateOpenAIWireResponsesPolicy(state *State) error {
 
 func validateOpenAIChatScalarPolicy(raw map[string]json.RawMessage) error {
 	if rawJSONValueSet(raw["repetition_penalty"]) {
-		return invalidRequest("repetition_penalty is only supported for Chutes deployments")
+		return invalidRequest("repetition_penalty is not supported for OpenAI-format deployments")
 	}
 	if rawJSONValueSet(raw["reasoning_display"]) {
-		return invalidRequest("reasoning_display is only supported for Anthropic-format deployments")
+		return invalidRequest("reasoning_display is not supported for OpenAI-format deployments")
 	}
 	if reasoning, ok := rawObject(raw["reasoning"]); ok && rawJSONValueSet(reasoning["display"]) {
-		return invalidRequest("reasoning.display is only supported for Anthropic-format deployments")
+		return invalidRequest("reasoning.display is not supported for OpenAI-format deployments")
 	}
 	if err := validateJSONBool(raw, "logprobs"); err != nil {
 		return err
@@ -377,17 +377,17 @@ func rawStringValue(raw json.RawMessage) (string, bool) {
 
 func rejectOpenAIChatCacheControls(raw map[string]json.RawMessage) error {
 	if rawJSONValueSet(raw["cache_control"]) {
-		return invalidRequest("cache_control is only supported for Anthropic deployments")
+		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
 	}
 	if rawChatCacheControlExists(raw["messages"], true) || rawChatCacheControlExists(raw["tools"], true) {
-		return invalidRequest("cache_control is only supported for Anthropic deployments")
+		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
 	}
 	return nil
 }
 
 func rejectOpenAIResponsesCacheControls(raw map[string]json.RawMessage) error {
 	if rawJSONValueSet(raw["cache_control"]) || rawResponsesCacheControlExists(raw["input"]) || rawResponsesCacheControlExists(raw["tools"]) {
-		return invalidRequest("cache_control is only supported for Anthropic deployments")
+		return invalidRequest("cache_control is not supported for OpenAI-format deployments")
 	}
 	return nil
 }

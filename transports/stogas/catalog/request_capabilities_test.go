@@ -17,7 +17,7 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 		}{
 			{"stream", `"stream":true`, `"stream":true`, func(c *Capabilities) { c.Streaming = false }},
 			{"functions", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}]`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}]`, func(c *Capabilities) { c.FunctionCalling = false }},
-			{"parallel calls", `"parallel_tool_calls":true`, `"parallel_tool_calls":true`, func(c *Capabilities) { c.ParallelFunctionCalling = false }},
+			{"parallel calls", `"tools":[{"type":"function","function":{"name":"test","parameters":{"type":"object"}}}],"parallel_tool_calls":true`, `"tools":[{"type":"function","name":"test","parameters":{"type":"object"}}],"parallel_tool_calls":true`, func(c *Capabilities) { c.ParallelFunctionCalling = false }},
 			{"tool choice", `"tool_choice":"required"`, `"tool_choice":"required"`, func(c *Capabilities) { c.ToolChoice = false }},
 			{"structured output", `"response_format":{"type":"json_schema","json_schema":{"name":"test","schema":{"type":"object"}}}`, `"text":{"format":{"type":"json_schema","name":"test","schema":{"type":"object"}}}`, func(c *Capabilities) { c.StructuredOutputs = false }},
 			{"system message", `"messages":[{"role":"developer","content":"hello"}]`, `"instructions":"hello"`, func(c *Capabilities) { c.SystemMessages = false }},

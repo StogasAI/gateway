@@ -314,11 +314,6 @@ func validateProviderChatToolCompletion(state *State, finishReason string) error
 		if providerChatToolCallRequired(state) && toolCalls == 0 {
 			return ErrProviderResponseMalformed
 		}
-		if state.Resolution != nil {
-			if raw, ok := state.Resolution.RawBody()["parallel_tool_calls"]; ok && !rawBool(raw) && toolCalls > 1 {
-				return ErrProviderResponseMalformed
-			}
-		}
 	}
 	if (finishReason == string(schemas.BifrostFinishReasonToolCalls)) != (toolCalls > 0) {
 		return ErrProviderResponseMalformed

@@ -430,6 +430,8 @@ func TestProviderChatToolCallsMustMatchAuthorizedRequest(t *testing.T) {
 		})
 	}
 
+	// Azure DeepSeek ignores false; failing its reply would bill the tokens
+	// and return nothing.
 	t.Run("parallel calls when disabled", func(t *testing.T) {
 		parallelRequest := strings.TrimSuffix(request, "}") + `,"parallel_tool_calls":false}`
 		response := valid("lookup")
@@ -439,8 +441,8 @@ func TestProviderChatToolCallsMustMatchAuthorizedRequest(t *testing.T) {
 			response.Choices[0].ChatNonStreamResponseChoice.Message.ChatAssistantMessage.ToolCalls,
 			second,
 		)
-		if err := validateProviderChatResponse(resolvedChatValidationState(t, parallelRequest), response, false); !errors.Is(err, ErrProviderResponseMalformed) {
-			t.Fatalf("parallel tool call error = %v, want malformed provider response", err)
+		if err := validateProviderChatResponse(resolvedChatValidationState(t, parallelRequest), response, false); err != nil {
+			t.Fatalf("reply with several calls after parallel_tool_calls false was rejected: %v", err)
 		}
 	})
 
@@ -1615,8 +1617,8 @@ func TestProviderResponsesEnforcesToolChoiceAndCallLimits(t *testing.T) {
 		providerFunctionOutputItem("fc_1", "call_1", "first"),
 		providerFunctionOutputItem("fc_2", "call_2", "second"),
 	}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, parallelRequest), parallelResponse); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("parallel calls while disabled error = %v, want malformed provider response", err)
+	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, parallelRequest), parallelResponse); err != nil {
+		t.Fatalf("reply with several calls after parallel_tool_calls false was rejected: %v", err)
 	}
 
 	hostedRequest := `{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":1,"tools":[{"type":"web_search"}]}`
