@@ -652,7 +652,6 @@ func TestRequestHoldExpiryOutlivesEverySupportedRoute(t *testing.T) {
 func testAuthorization() *Authorization {
 	return &Authorization{
 		AuthorizedBilledCostUSD: mustUSD(ZeroChargeUSD),
-		AvailableBalanceUSD:     mustUSD("100000000000"),
 		KeyID:                   "key-1",
 		ProductKey:              "gpt-4o-mini",
 		ProviderKey:             "openai",

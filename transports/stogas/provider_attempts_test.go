@@ -72,7 +72,6 @@ func TestBifrostRetryFeedsProviderAttemptsIntoFinalEvent(t *testing.T) {
 			},
 			Authorization: &billing.Authorization{
 				AuthorizedBilledCostUSD: new(money.USD),
-				AvailableBalanceUSD:     new(money.USD),
 				ProviderKey:             "openai",
 				RequestID:               "request-real-retry",
 			},
@@ -158,7 +157,6 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 			},
 			Authorization: &billing.Authorization{
 				AuthorizedBilledCostUSD: new(money.USD),
-				AvailableBalanceUSD:     new(money.USD),
 				ProviderKey:             "openai",
 				RequestID:               "request-1",
 			},
@@ -316,8 +314,8 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 	tracer.EndSpan(handle, schemas.SpanStatusOk, "")
 	event, err := billing.NewRequestEvent(billing.EventInput{
 		Authorization: &billing.Authorization{
-			AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD),
-			ProviderKey: "chutes", RequestID: "safe-retries",
+			AuthorizedBilledCostUSD: new(money.USD),
+			ProviderKey:             "chutes", RequestID: "safe-retries",
 		},
 		StartedAt: base, RequestType: string(schemas.ChatCompletionRequest),
 		UpstreamCostUSD: "0", ProviderAttempts: state.providerAttemptInputs(),

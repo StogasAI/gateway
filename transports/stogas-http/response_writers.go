@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"time"
@@ -89,6 +90,19 @@ func retryAfterSeconds(wait time.Duration) string {
 		seconds++
 	}
 	return strconv.FormatInt(int64(seconds), 10)
+}
+
+// spreadRetryAfter answers a refusal by one of our own limits: its wait in
+// whole seconds, at least one, plus a second for a random half of the waits
+// under a minute. SDKs retry exactly when Retry-After says, so the requests of
+// a burst that a limit refused together would otherwise come back together
+// and find it nearly empty again.
+func spreadRetryAfter(wait time.Duration) string {
+	seconds := max(1, int64(math.Ceil(wait.Seconds())))
+	if seconds < 60 {
+		seconds += rand.Int64N(2)
+	}
+	return strconv.FormatInt(seconds, 10)
 }
 
 func bifrostErrorPayload(bifrostErr *schemas.BifrostError) any {
@@ -489,11 +503,16 @@ type errorResponse struct {
 	status     int
 	payload    map[string]any
 	retryAfter string
+	// final tells SDK clients not to retry.
+	final bool
 }
 
 func (s *Server) writeErrorResponse(ctx *requestContext, response errorResponse) {
 	if response.retryAfter != "" {
 		ctx.writer.Header().Set("Retry-After", response.retryAfter)
+	}
+	if response.final {
+		ctx.writer.Header().Set("X-Should-Retry", "false")
 	}
 	s.writeError(ctx, response.status, response.payload)
 }
@@ -504,7 +523,7 @@ func localErrorResponse(err error) errorResponse {
 	switch {
 	case errors.As(err, &unsent):
 		status, payload := publicBifrostError(unsent.failure)
-		return errorResponse{status, payload, providerErrorRetryAfter(status, unsent.ctx)}
+		return errorResponse{status: status, payload: payload, retryAfter: providerErrorRetryAfter(status, unsent.ctx)}
 	case errors.Is(err, errRequestMemoryCapacity):
 		return capacityErrorResponse()
 	case errors.As(err, &refusal), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
@@ -528,13 +547,18 @@ func billingErrorResponse(err error) errorResponse {
 	}}
 	var retry interface{ RetryAfter() time.Duration }
 	if errors.As(err, &retry) {
-		response.retryAfter = retryAfterSeconds(max(time.Second, retry.RetryAfter()))
+		response.retryAfter = spreadRetryAfter(retry.RetryAfter())
 	}
+	// SDKs retry a 429 within seconds unless told not to. openai-node honors
+	// Retry-After only up to a minute and otherwise retries sooner, and
+	// Anthropic's SDKs honor any length, so a longer wait would be retried in
+	// vain or hold the caller. A per-minute window never waits longer.
+	response.final = apiErr.StatusCode == http.StatusTooManyRequests && (retry == nil || retry.RetryAfter() > time.Minute)
 	return response
 }
 
 func capacityErrorResponse() errorResponse {
-	return errorResponse{http.StatusServiceUnavailable, map[string]any{
+	return errorResponse{status: http.StatusServiceUnavailable, payload: map[string]any{
 		"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"},
-	}, "1"}
+	}, retryAfter: "1"}
 }

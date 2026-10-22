@@ -32,6 +32,9 @@ type RequestPerformance struct {
 	TotalMS         uint32  `json:"total_ms"`
 	ProviderMS      uint32  `json:"provider_ms"`
 	ProviderStartMS *uint32 `json:"provider_start_ms"`
+	// RateLimitWaitMS is how long the platform request rate held the first
+	// provider call, which starts when the wait ends.
+	RateLimitWaitMS uint32  `json:"rate_limit_wait_ms"`
 	FirstOutputMS   *uint32 `json:"first_output_ms"`
 	TTFTMS          *uint32 `json:"ttft_ms"`
 }

@@ -1,8 +1,6 @@
 package billing
 
 import (
-	"context"
-	"errors"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -12,8 +10,23 @@ import (
 const (
 	localAdmissionShards          = 64
 	localAdmissionEntriesPerShard = 512
-	localRequestRatePerSecond     = 240
-	localRequestBurst             = 240
+)
+
+// localRequestLimit is a token bucket that refills ratePerSecond and admits
+// burst requests at once when full.
+type localRequestLimit struct{ ratePerSecond, burst float64 }
+
+// Each gateway admits a credential's requests at up to 240 a second, in bursts
+// of up to 360, and an organization's at up to 480 and 720. PostgreSQL admits
+// an organization's requests at 120 a second, and 360 at once as they wait up
+// to two seconds to start, so a gateway that receives every request of an
+// organization refuses none that PostgreSQL would admit, apart from a few sent
+// while PostgreSQL's refusal of an earlier one was on its way back. Two
+// credentials at their limit fill their organization's, so one runaway
+// credential takes at most half of it.
+var (
+	credentialRequestLimit   = localRequestLimit{240, 360}
+	organizationRequestLimit = localRequestLimit{480, 720}
 )
 
 type LocalAdmissionDiagnostics struct {
@@ -24,19 +37,28 @@ type LocalAdmissionDiagnostics struct {
 	AuthorizationInFlight     int64  `json:"authorizationInFlight"`
 	AuthorizationPeakInFlight int64  `json:"authorizationPeakInFlight"`
 	// Authorizations that waited for an earlier one of their organization in
-	// this gateway, those that PostgreSQL found it busy for, and those that
-	// waited until their deadline.
-	OrganizationWaits         uint64     `json:"organizationWaits"`
-	OrganizationBusy          uint64     `json:"organizationBusy"`
-	OrganizationTimeouts      uint64     `json:"organizationTimeouts"`
-	OrganizationLastTimeoutAt *time.Time `json:"organizationLastTimeoutAt,omitempty"`
-	RejectionCacheHits        uint64     `json:"rejectionCacheHits"`
-	RejectionCacheLookups     uint64     `json:"rejectionCacheLookups"`
-	RequestAttempts           uint64     `json:"requestAttempts"`
-	RequestBurst              int        `json:"requestBurst"`
-	RequestLastRejectedAt     *time.Time `json:"requestLastRejectedAt,omitempty"`
-	RequestRatePerSecond      int        `json:"requestRatePerSecond"`
-	RequestRejected           uint64     `json:"requestRejected"`
+	// this gateway, statements that PostgreSQL found it busy for, and
+	// authorizations that waited until their deadline. Batches are statements
+	// that authorized more than one request.
+	OrganizationWaits           uint64                  `json:"organizationWaits"`
+	OrganizationBusy            uint64                  `json:"organizationBusy"`
+	OrganizationTimeouts        uint64                  `json:"organizationTimeouts"`
+	OrganizationLastTimeoutAt   *time.Time              `json:"organizationLastTimeoutAt,omitempty"`
+	OrganizationBatches         uint64                  `json:"organizationBatches"`
+	OrganizationBatchedRequests uint64                  `json:"organizationBatchedRequests"`
+	OrganizationLargestBatch    int64                   `json:"organizationLargestBatch"`
+	RejectionCacheHits          uint64                  `json:"rejectionCacheHits"`
+	RejectionCacheLookups       uint64                  `json:"rejectionCacheLookups"`
+	CredentialRequests          LocalRequestDiagnostics `json:"credentialRequests"`
+	OrganizationRequests        LocalRequestDiagnostics `json:"organizationRequests"`
+}
+
+type LocalRequestDiagnostics struct {
+	Attempts       uint64     `json:"attempts"`
+	Burst          int        `json:"burst"`
+	LastRejectedAt *time.Time `json:"lastRejectedAt,omitempty"`
+	RatePerSecond  int        `json:"ratePerSecond"`
+	Rejected       uint64     `json:"rejected"`
 }
 
 type localRequestEntry struct {
@@ -58,7 +80,7 @@ type localRequestLimiter struct {
 	shards         [localAdmissionShards]localRequestShard
 }
 
-func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duration {
+func (l *localRequestLimiter) allow(identity string, now time.Time, limit localRequestLimit) time.Duration {
 	if l == nil || identity == "" {
 		return time.Second
 	}
@@ -74,7 +96,7 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 	if !ok {
 		evictLocalAdmissionEntry(shard.entries)
 		shard.entries[identity] = localRequestEntry{
-			tokens:    localRequestBurst - 1,
+			tokens:    limit.burst - 1,
 			updatedAt: now,
 		}
 		return 0
@@ -82,7 +104,7 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 
 	elapsed := now.Sub(entry.updatedAt).Seconds()
 	if elapsed > 0 {
-		entry.tokens = math.Min(localRequestBurst, entry.tokens+elapsed*localRequestRatePerSecond)
+		entry.tokens = math.Min(limit.burst, entry.tokens+elapsed*limit.ratePerSecond)
 	}
 	if now.After(entry.updatedAt) {
 		entry.updatedAt = now
@@ -95,12 +117,51 @@ func (l *localRequestLimiter) allow(identity string, now time.Time) time.Duratio
 	shard.entries[identity] = entry
 	l.rejected.Add(1)
 	l.lastRejectedAt.Store(now.UTC().UnixMilli())
-	return time.Duration(math.Ceil((1 - entry.tokens) / localRequestRatePerSecond * float64(time.Second)))
+	return time.Duration(math.Ceil((1 - entry.tokens) / limit.ratePerSecond * float64(time.Second)))
 }
 
-// Authorization work waits for its organization slot and in pgxpool under its
-// query deadline. The request memory and organization rate gates bound
-// admission before this point.
+// refund returns the token of a request that allow admitted.
+func (l *localRequestLimiter) refund(identity string, limit localRequestLimit) {
+	shard := &l.shards[localAdmissionShard(identity)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if entry, ok := shard.entries[identity]; ok {
+		entry.tokens = math.Min(limit.burst, entry.tokens+1)
+		shard.entries[identity] = entry
+	}
+}
+
+func (l *localRequestLimiter) diagnostics(limit localRequestLimit) LocalRequestDiagnostics {
+	result := LocalRequestDiagnostics{Burst: int(limit.burst), RatePerSecond: int(limit.ratePerSecond)}
+	if l != nil {
+		result.Attempts = l.attempts.Load()
+		result.LastRejectedAt = localAdmissionTime(l.lastRejectedAt.Load())
+		result.Rejected = l.rejected.Load()
+	}
+	return result
+}
+
+// admitCredential charges a verified credential's local allowance.
+func (s *Service) admitCredential(credential string, now time.Time) error {
+	if retryAfter := s.credentialRequests.allow(credential, now, credentialRequestLimit); retryAfter > 0 {
+		return &retryAfterError{ErrRateLimit, retryAfter}
+	}
+	return nil
+}
+
+// admitOrganization charges the organization's local allowance for a request
+// that its credential's admitted. A refusal returns the credential's token, so
+// other credentials' requests cost a credential nothing.
+func (s *Service) admitOrganization(credential string, organizationID string, now time.Time) error {
+	if retryAfter := s.organizationRequests.allow(organizationID, now, organizationRequestLimit); retryAfter > 0 {
+		s.credentialRequests.refund(credential, credentialRequestLimit)
+		return &retryAfterError{ErrRateLimit, retryAfter}
+	}
+	return nil
+}
+
+// Authorization work waits in its organization's queue under its deadline.
+// The local allowances bound admission before this point.
 type authorizationActivity struct {
 	attempts     atomic.Uint64
 	inFlight     atomic.Int64
@@ -122,115 +183,27 @@ func (l *authorizationActivity) recordInFlight(value int64) {
 	}
 }
 
-// organizationSlots runs one authorization at a time for each organization.
-// An organization's authorizations wait for each other on its rows, so running
-// more at once would only take more of the pool and of the database's shared
-// connections from every other organization. The rest wait in order, holding
-// nothing. PostgreSQL bounds them across gateways in the same way.
-type organizationSlots struct {
-	waits         atomic.Uint64
-	busy          atomic.Uint64
-	timeouts      atomic.Uint64
-	lastTimeoutAt atomic.Int64
-	shards        [localAdmissionShards]organizationSlotShard
-}
-
-func (o *organizationSlots) timedOut() {
-	o.timeouts.Add(1)
-	o.lastTimeoutAt.Store(time.Now().UTC().UnixMilli())
-}
-
-type organizationSlotShard struct {
-	mu    sync.Mutex
-	slots map[string]*organizationSlot
-}
-
-// An entry lasts while its holder or a waiter needs it, so authorization
-// admission bounds the map.
-type organizationSlot struct {
-	held  chan struct{}
-	users int
-}
-
-// take waits for the organization's slot until ctx ends. Release is safe to
-// call more than once.
-func (o *organizationSlots) take(ctx context.Context, organizationID string) (func(), error) {
-	shard := &o.shards[localAdmissionShard(organizationID)]
-	shard.mu.Lock()
-	slot := shard.slots[organizationID]
-	if slot == nil {
-		if shard.slots == nil {
-			shard.slots = make(map[string]*organizationSlot)
-		}
-		slot = &organizationSlot{held: make(chan struct{}, 1)}
-		shard.slots[organizationID] = slot
+func (s *Service) localAdmissionDiagnostics() LocalAdmissionDiagnostics {
+	queues := &s.organizationQueues
+	return LocalAdmissionDiagnostics{
+		APIKeyCacheEntries:          s.apiKeys.entryCount(),
+		APIKeyCacheHits:             s.apiKeys.hits.Load(),
+		APIKeyCacheLookups:          s.apiKeys.lookups.Load(),
+		AuthorizationAttempts:       s.authorizations.attempts.Load(),
+		AuthorizationInFlight:       s.authorizations.inFlight.Load(),
+		AuthorizationPeakInFlight:   s.authorizations.peakInFlight.Load(),
+		OrganizationWaits:           queues.waits.Load(),
+		OrganizationBusy:            queues.busy.Load(),
+		OrganizationTimeouts:        queues.timeouts.Load(),
+		OrganizationLastTimeoutAt:   localAdmissionTime(queues.lastTimeoutAt.Load()),
+		OrganizationBatches:         queues.batches.Load(),
+		OrganizationBatchedRequests: queues.batched.Load(),
+		OrganizationLargestBatch:    queues.largestBatch.Load(),
+		RejectionCacheHits:          s.refusals.hits.Load(),
+		RejectionCacheLookups:       s.refusals.lookups.Load(),
+		CredentialRequests:          s.credentialRequests.diagnostics(credentialRequestLimit),
+		OrganizationRequests:        s.organizationRequests.diagnostics(organizationRequestLimit),
 	}
-	slot.users++
-	shard.mu.Unlock()
-	leave := func() {
-		shard.mu.Lock()
-		if slot.users--; slot.users == 0 {
-			delete(shard.slots, organizationID)
-		}
-		shard.mu.Unlock()
-	}
-	select {
-	case slot.held <- struct{}{}:
-	default:
-		o.waits.Add(1)
-		select {
-		case slot.held <- struct{}{}:
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				o.timedOut()
-			}
-			leave()
-			return nil, ctx.Err()
-		}
-	}
-	return sync.OnceFunc(func() {
-		<-slot.held
-		leave()
-	}), nil
-}
-
-func localAdmissionDiagnostics(
-	requests *localRequestLimiter,
-	authorizations *authorizationActivity,
-	organizations *organizationSlots,
-	rejections *refusalCache,
-	apiKeys *verifiedAPIKeyCache,
-) LocalAdmissionDiagnostics {
-	result := LocalAdmissionDiagnostics{
-		RequestBurst:         localRequestBurst,
-		RequestRatePerSecond: localRequestRatePerSecond,
-	}
-	if requests != nil {
-		result.RequestAttempts = requests.attempts.Load()
-		result.RequestLastRejectedAt = localAdmissionTime(requests.lastRejectedAt.Load())
-		result.RequestRejected = requests.rejected.Load()
-	}
-	if authorizations != nil {
-		result.AuthorizationAttempts = authorizations.attempts.Load()
-		result.AuthorizationInFlight = authorizations.inFlight.Load()
-		result.AuthorizationPeakInFlight = authorizations.peakInFlight.Load()
-	}
-	if organizations != nil {
-		result.OrganizationWaits = organizations.waits.Load()
-		result.OrganizationBusy = organizations.busy.Load()
-		result.OrganizationTimeouts = organizations.timeouts.Load()
-		result.OrganizationLastTimeoutAt = localAdmissionTime(organizations.lastTimeoutAt.Load())
-	}
-	if rejections != nil {
-		result.RejectionCacheHits = rejections.hits.Load()
-		result.RejectionCacheLookups = rejections.lookups.Load()
-	}
-	if apiKeys != nil {
-		result.APIKeyCacheEntries = apiKeys.entryCount()
-		result.APIKeyCacheHits = apiKeys.hits.Load()
-		result.APIKeyCacheLookups = apiKeys.lookups.Load()
-	}
-	return result
 }
 
 func localAdmissionTime(unixMilliseconds int64) *time.Time {
