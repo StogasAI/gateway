@@ -57,6 +57,9 @@ type ipAdmission struct {
 	shards           [ipAdmissionShards]ipAdmissionShard
 	request, setup   ipAdmissionCounters
 	capacityRejected atomic.Uint64
+	// An onion service relay forwards every Tor client from its one address, and
+	// Tor's own limits apply to those clients instead.
+	relay netip.Addr
 }
 
 func newIPAdmission() *ipAdmission { return &ipAdmission{seed: maphash.MakeSeed()} }
@@ -74,6 +77,9 @@ func (l *ipAdmission) allow(remote string, setup bool, now time.Time) (time.Dura
 	ip := peer.Addr().Unmap()
 	if ip.IsUnspecified() || ip.IsMulticast() {
 		return 0, errIPAdmission
+	}
+	if ip == l.relay {
+		return 0, nil
 	}
 	// A subscriber normally holds at least an IPv6 /64, so its addresses share
 	// one allowance instead of rotating through 2^64 of them.

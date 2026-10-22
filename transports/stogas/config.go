@@ -2,6 +2,7 @@ package stogas
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -50,6 +51,7 @@ type Config struct {
 	LogLevel                    string
 	LogOutputStyle              string
 	MaxRequestBodyMiB           int
+	OnionRelayAddress           netip.Addr
 	AnthropicBaseURL            string
 	ChutesAPIKey                string
 	ChutesBaseURL               string
@@ -334,6 +336,14 @@ func ApplyConfidentialRuntimeSecrets(config *Config, secrets ConfidentialSecretL
 		if err := os.Setenv(name, string(secret.Value)); err != nil {
 			return fmt.Errorf("failed to install confidential secret %s: %w", name, err)
 		}
+	}
+
+	if secret, ok := secrets.Get("ONION_RELAY_ADDRESS"); ok {
+		address, err := netip.ParseAddr(string(secret.Value))
+		if err != nil || address.Zone() != "" {
+			return fmt.Errorf("ONION_RELAY_ADDRESS must be one IP address")
+		}
+		config.OnionRelayAddress = address.Unmap()
 	}
 
 	applyRuntimeSecretsFromEnv(config)

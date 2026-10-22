@@ -177,6 +177,7 @@ func classifyConfidentialRuntimeInitializationError(err error) error {
 
 func (s *Server) routes() error {
 	s.ipAdmission = newIPAdmission()
+	s.ipAdmission.relay = s.config.OnionRelayAddress
 	dispatch := func(ctx *requestContext) {
 		switch {
 		case ctx.request.Method == http.MethodGet && ctx.request.URL.Path == "/v1/catalog":

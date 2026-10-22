@@ -68,6 +68,32 @@ func TestIPAdmissionBudgetsCanonicalAddressesAndRefill(t *testing.T) {
 	}
 }
 
+// Every Tor client of the relay shares its address. Any other address, even one
+// in the relay's IPv6 /64, keeps its own allowance.
+func TestIPAdmissionExemptsOnlyTheRelayAddress(t *testing.T) {
+	now := time.Unix(100, 0)
+	for _, c := range []struct{ relay, peer, neighbor string }{
+		{"192.0.2.9", "[::ffff:192.0.2.9]:80", "192.0.2.10:80"},
+		{"2001:db8::9", "[2001:db8::9]:80", "[2001:db8::a]:80"},
+	} {
+		l := newIPAdmission()
+		l.relay = netip.MustParseAddr(c.relay)
+		for i := range ipRequestBurst + 1 {
+			for _, setup := range []bool{false, true} {
+				if wait, err := l.allow(c.peer, setup, now); wait != 0 || err != nil {
+					t.Fatalf("%s limited at %d: %v %v", c.relay, i, wait, err)
+				}
+			}
+			if wait, err := l.allow(c.neighbor, false, now); (wait == 0) != (i < ipRequestBurst) || err != nil {
+				t.Fatalf("%s neighbor at %d: %v %v", c.relay, i, wait, err)
+			}
+		}
+		if l.diagnostics().Entries != 1 {
+			t.Fatalf("%s relay kept an allowance", c.relay)
+		}
+	}
+}
+
 func TestIPAdmissionConcurrencyAndBoundedChurn(t *testing.T) {
 	l := newIPAdmission()
 	now := time.Unix(100, 0)
