@@ -7,10 +7,12 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -21,11 +23,15 @@ const (
 	settlementMaxLogs       = 100
 	settlementMaxRejections = 256
 	settlementMaxBytes      = 8 << 20
-	// One call runs at a time, and calls start at least this far apart. Logs
-	// that finish meanwhile share the next call, so an idle gateway settles
-	// each request at once and a busy one settles in batches.
-	settlementInterval = 50 * time.Millisecond
-	// On its own connection, calls of 100 logs took at most about 100 ms under
+	// One call runs at a time. Calls start at least this far apart, or at once
+	// when a full call waits, so an idle gateway settles each request at once
+	// and a busy one in larger calls. Each call locks its organizations'
+	// balance rows, so fewer calls leave a bursting organization's
+	// authorizations waiting less and cost the database less CPU and WAL per
+	// log, while calls a second apart hold the rows too long. Finished requests
+	// keep their holds until then.
+	settlementInterval = 500 * time.Millisecond
+	// On its own connection, calls of 100 logs took at most about 200 ms under
 	// the heaviest measured load. A call still running after this has lost its
 	// connection or found the database overloaded, and runs again.
 	settlementCallTimeout = 5 * time.Second
@@ -71,6 +77,10 @@ type finalizationState struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	workers    sync.WaitGroup
+	// finished lists each organization's requests whose responses ended and
+	// whose logs have not settled, in the order they ended. Their holds no
+	// longer count as running requests.
+	finished map[string][]uuid.UUID
 	// The last call failed and runs again after a delay.
 	retrying    atomic.Bool
 	closing     atomic.Int64
@@ -158,8 +168,46 @@ func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEve
 		return &SettlementError{Reason: "encoding_failed"}
 	}
 	item := &settlement{requestID: authorization.RequestID, payload: payload, done: make(chan error, 1)}
+	if requestID, err := uuid.Parse(authorization.RequestID); err == nil {
+		s.finalizations.finish(authorization.OrganizationID, requestID)
+		defer s.finalizations.forget(authorization.OrganizationID, requestID)
+	}
 	s.submitSettlements(item)
 	return <-item.done
+}
+
+func (f *finalizationState) finish(organizationID string, requestID uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.finished == nil {
+		f.finished = make(map[string][]uuid.UUID)
+	}
+	f.finished[organizationID] = append(f.finished[organizationID], requestID)
+}
+
+func (f *finalizationState) forget(organizationID string, requestID uuid.UUID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	finished := f.finished[organizationID]
+	if index := slices.Index(finished, requestID); index >= 0 {
+		finished = slices.Delete(finished, index, index+1)
+	}
+	if len(finished) == 0 {
+		delete(f.finished, organizationID)
+	} else {
+		f.finished[organizationID] = finished
+	}
+}
+
+// finishedRequests returns the organization's last finished requests, which
+// do not count against its concurrency limits, as many as one settlement call
+// takes. When more wait, settlement is behind, and the older ones still count.
+func (f *finalizationState) finishedRequests(organizationID string) []uuid.UUID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	finished := f.finished[organizationID]
+	// A nil slice would reach PostgreSQL as null.
+	return append([]uuid.UUID{}, finished[max(0, len(finished)-settlementMaxLogs):]...)
 }
 
 // settleRejections stores rejections through settlement and reports which ones
@@ -230,7 +278,7 @@ func (s *Service) runSettlements() {
 			return
 		}
 		for {
-			if !sleepContext(f.ctx, time.Until(started.Add(settlementInterval))) {
+			if !f.waitUntilDue(started.Add(settlementInterval)) {
 				return
 			}
 			batch := f.take()
@@ -244,6 +292,29 @@ func (s *Service) runSettlements() {
 			f.mu.Unlock()
 		}
 	}
+}
+
+// waitUntilDue waits until the next call is due or a full call waits. It
+// reports false once the gateway stops.
+func (f *finalizationState) waitUntilDue(due time.Time) bool {
+	timer := time.NewTimer(time.Until(due))
+	defer timer.Stop()
+	for !f.full() {
+		select {
+		case <-timer.C:
+			return true
+		case <-f.wake:
+		case <-f.ctx.Done():
+			return false
+		}
+	}
+	return f.ctx.Err() == nil
+}
+
+func (f *finalizationState) full() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.logs) >= settlementMaxLogs || len(f.rejections) >= settlementMaxRejections
 }
 
 // take removes the oldest logs and rejections that fit in one call.

@@ -691,7 +691,7 @@ func TestWriteInferenceJSONFailsClosedWhenProofCannotBeBuilt(t *testing.T) {
 	state := &stogas.State{
 		Pair: stogas.Pair{
 			Resolution:    testResolution(),
-			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD), AvailableBalanceUSD: new(money.USD)},
+			Authorization: &billing.Authorization{AuthorizedBilledCostUSD: new(money.USD)},
 		},
 		FinalEvent:        &billing.RequestEvent{CreatedAt: "2026-08-24T12:34:56.789Z"},
 		StartedAt:         time.Now().Add(-time.Second),

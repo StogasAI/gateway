@@ -1882,7 +1882,6 @@ func TestFinalizeStateLogsPricingMeters(t *testing.T) {
 			},
 			Authorization: &billing.Authorization{
 				AuthorizedBilledCostUSD: mustMoney("3000"),
-				AvailableBalanceUSD:     mustMoney("0"),
 				CreatedAt:               time.Now().UTC(),
 				KeyID:                   "key",
 				OrganizationID:          "org",
@@ -1967,7 +1966,7 @@ func TestTokenSettlementCountsCacheAndReasoningOnceAndKeepsUnknownUsageDistinct(
 			now := time.Now().UTC()
 			state := &State{
 				Pair: Pair{
-					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("1"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request"},
+					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("1"), RequestID: "request"},
 				},
 				UpstreamCostUSD: "0",
 				StartedAt:       now,
@@ -2004,7 +2003,7 @@ func TestFinalizationDistinguishesPostHoldSetupFailureFromProviderFailure(t *tes
 			state := &State{
 				Pair: Pair{
 					Authorization: &billing.Authorization{
-						AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0"), RequestID: "request",
+						AuthorizedBilledCostUSD: mustMoney("0"), RequestID: "request",
 					},
 				},
 				UpstreamCostUSD: billing.ZeroChargeUSD,
@@ -2060,7 +2059,7 @@ func TestProcessingFailurePreservesCompletedAndUnknownProviderOutcomes(t *testin
 		t.Run(item.name, func(t *testing.T) {
 			state := &State{
 				Pair: Pair{
-					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0"), AvailableBalanceUSD: mustMoney("0")},
+					Authorization: &billing.Authorization{AuthorizedBilledCostUSD: mustMoney("0")},
 				},
 				UpstreamCostUSD:   "0",
 				RequestType:       string(item.requestType),
@@ -2102,7 +2101,6 @@ func TestUnaryProviderLatencyDoesNotFabricateTTFT(t *testing.T) {
 		Pair: Pair{
 			Authorization: &billing.Authorization{
 				AuthorizedBilledCostUSD: mustMoney("0"),
-				AvailableBalanceUSD:     mustMoney("0"),
 				RequestID:               "request",
 			},
 		},
@@ -3242,7 +3240,6 @@ func TestPrepareFinalStatePersistsBothCacheEconomics(t *testing.T) {
 		Pair: Pair{
 			Authorization: &billing.Authorization{
 				AuthorizedBilledCostUSD: mustMoney("1200"),
-				AvailableBalanceUSD:     mustMoney("0"),
 				KeyID:                   "key",
 				OrganizationID:          "org",
 				ProviderKey:             "anthropic",
@@ -3355,7 +3352,6 @@ func TestRequestLogPricingBagCompactsDuplicateMetersBeforeRounding(t *testing.T)
 	authorizer := &fakeBillingAuthorizer{}
 	state.Authorization = &billing.Authorization{
 		AuthorizedBilledCostUSD: mustMoney("0.000000000000000000000000000000000002"),
-		AvailableBalanceUSD:     mustMoney("0"),
 		RequestID:               "request",
 	}
 	state.Hold.EstimatedUpstreamCostUSD = "0.000000000000000000000000000000000002"
@@ -3512,7 +3508,6 @@ func TestPrepareFinalStateSettlesActualCostAndRejectsInvalidPricing(t *testing.T
 				Pair: Pair{
 					Authorization: &billing.Authorization{
 						AuthorizedBilledCostUSD: mustMoney("100"),
-						AvailableBalanceUSD:     mustMoney("0"),
 						RequestID:               "request",
 					},
 					Hold: HoldEstimate{EstimatedUpstreamCostUSD: tc.hold, Meters: holdMeters},

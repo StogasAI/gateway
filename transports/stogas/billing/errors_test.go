@@ -23,7 +23,7 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			var public *RequestError
-			if !errors.As(authorizationResultError(test.code), &public) || public.Code != test.code || public.StatusCode() != test.status {
+			if !errors.As(authorizationResultError(test.code, nil), &public) || public.Code != test.code || public.StatusCode() != test.status {
 				t.Fatalf("policy denial lost its public meaning: %#v", public)
 			}
 			if got := NormalizeStogasErrorCode(public.Code, public.StatusCode()); got != test.code {
@@ -31,10 +31,10 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 			}
 		})
 	}
-	if authorizationResultError("private_scope_spend_limit") != nil || NormalizeStogasErrorCode("private_scope_spend_limit", 500) != "internal_error" {
+	if authorizationResultError("private_scope_spend_limit", nil) != nil || NormalizeStogasErrorCode("private_scope_spend_limit", 500) != "internal_error" {
 		t.Fatal("an unrecognized scope entered the public error vocabulary")
 	}
-	if authorizationResultError("key_spend_limit") != ErrAPIKeySpendLimit || !errors.Is(authorizationResultError("key_rate_limited"), ErrAPIKeyRateLimit) {
+	if authorizationResultError("key_spend_limit", nil) != ErrAPIKeySpendLimit || !errors.Is(authorizationResultError("key_rate_limited", nil), ErrAPIKeyRateLimit) {
 		t.Fatal("key admission errors lost their identity")
 	}
 }

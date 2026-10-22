@@ -370,7 +370,8 @@ func TestSettlementRunsWhileAuthorizationsHoldEveryConnection(t *testing.T) {
 }
 
 // Requests that finish while a call runs share the next call, up to the
-// database's limit, and calls never overlap.
+// database's limit, and calls never overlap. A full call starts at once;
+// others wait for the interval.
 func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 	release := make(chan struct{})
 	var first sync.Once
@@ -407,12 +408,15 @@ func TestSettlementBatchesRequestsThatFinishDuringACall(t *testing.T) {
 			}
 			delete(pending, id)
 		}
-		if i > 0 && call.at.Sub(calls[i-1].at) < settlementInterval-10*time.Millisecond {
+		if i > 0 && len(call.logs) < settlementMaxLogs && call.at.Sub(calls[i-1].at) < settlementInterval-10*time.Millisecond {
 			t.Fatalf("calls started %s apart", call.at.Sub(calls[i-1].at))
 		}
 	}
 	if !slices.Equal(sizes, []int{1, settlementMaxLogs, settlementMaxLogs, 49}) || len(pending) != 0 {
 		t.Fatalf("call sizes = %v, unsettled = %d", sizes, len(pending))
+	}
+	if gap := calls[2].at.Sub(calls[1].at); gap >= settlementInterval/2 {
+		t.Fatalf("a full call waited %s", gap)
 	}
 	if db.overlap {
 		t.Fatal("settlement calls overlapped")

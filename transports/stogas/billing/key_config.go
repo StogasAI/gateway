@@ -117,10 +117,7 @@ func (s *Service) ConfigForDashboard(
 	credential.Claims = snapshot.Claims
 	// Dashboard tokens sign the actor/session, not the caller-selected key ID.
 	// Charge the shared organization only after resolving that key's authority.
-	if retryAfter := s.localRequests.allow("org:"+snapshot.Claims.OrganizationID, time.Now()); retryAfter > 0 {
-		return snapshot, &retryAfterError{ErrRateLimit, retryAfter}
-	}
-	return snapshot, nil
+	return snapshot, s.admitOrganization(dashboardAdmissionKey(credential), snapshot.Claims.OrganizationID, time.Now())
 }
 
 func (s *Service) cachedOrFetchKeyConfig(
@@ -225,7 +222,7 @@ func (s *Service) fetchKeyConfig(
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
 	}
-	if resultErr := authorizationResultError(row.Result); resultErr != nil {
+	if resultErr := authorizationResultError(row.Result, nil); resultErr != nil {
 		if row.Claims != nil && row.Claims.KeyID == expectedKeyID {
 			snapshot := &KeyConfigSnapshot{Claims: row.Claims}
 			s.keyConfigs.put(cacheKey, snapshot, time.Now())

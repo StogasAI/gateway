@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -143,7 +142,7 @@ func (s *Server) admitIP(ctx *requestContext, setup bool) bool {
 	if err != nil {
 		status, code, kind, message = http.StatusServiceUnavailable, "ip_admission_unavailable", "service_unavailable", "Gateway client admission is temporarily unavailable"
 	}
-	ctx.writer.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
+	ctx.writer.Header().Set("Retry-After", spreadRetryAfter(wait))
 	s.writeError(ctx, status, map[string]any{"error": map[string]any{"type": kind, "code": code, "message": message}})
 	return false
 }

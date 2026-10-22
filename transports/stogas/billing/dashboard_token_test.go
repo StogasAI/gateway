@@ -154,12 +154,12 @@ func TestDashboardAdmissionUsesSignedPrincipalInsteadOfKeyPrefix(t *testing.T) {
 	}
 
 	var requests localRequestLimiter
-	for index := 0; index < localRequestBurst; index++ {
-		if retryAfter := requests.allow(firstAdmissionKey, now); retryAfter != 0 {
+	for index := 0; index < int(credentialRequestLimit.burst); index++ {
+		if retryAfter := requests.allow(firstAdmissionKey, now, credentialRequestLimit); retryAfter != 0 {
 			t.Fatalf("request %d was rejected for %s", index+1, retryAfter)
 		}
 	}
-	if retryAfter := requests.allow(secondAdmissionKey, now); retryAfter <= 0 {
+	if retryAfter := requests.allow(secondAdmissionKey, now, credentialRequestLimit); retryAfter <= 0 {
 		t.Fatal("rotated key prefix received a fresh request burst")
 	}
 

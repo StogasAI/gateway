@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/bytedance/sonic"
 	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
@@ -235,7 +236,7 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 
 // take resolves the next pair, recording failure as the previous pair's local
 // error. A pair that fails its credential check or body preparation uses its
-// slot. With no pair left, take returns the first local error.
+// slot. With no pair left, take returns the error that fail kept.
 func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 	if failure != nil && stopsPlan(failure) {
 		return nil, failure
@@ -276,10 +277,22 @@ func (p *requestPlan) take(failure error) (*ResolvedRequest, error) {
 	}
 }
 
+// fail keeps the first local error, unless a later one ends sooner by
+// waiting: a client that waits for it can then pass on that pair.
 func (p *requestPlan) fail(err error) {
-	if p.firstErr == nil {
+	if p.firstErr == nil || retriesSooner(err, p.firstErr) {
 		p.firstErr = err
 	}
+}
+
+// retriesSooner reports whether waiting ends err before other. An error that
+// waiting cannot end never ends sooner.
+func retriesSooner(err, other error) bool {
+	var wait, otherWait interface{ RetryAfter() time.Duration }
+	if !errors.As(err, &wait) {
+		return false
+	}
+	return !errors.As(other, &otherWait) || wait.RetryAfter() < otherWait.RetryAfter()
 }
 
 func (v *requestVariants) policyFor(provider schemas.ModelProvider, index int) (RequestPolicy, error) {

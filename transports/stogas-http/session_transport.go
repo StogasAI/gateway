@@ -290,7 +290,7 @@ func (w *sessionResponse) start() error {
 		w.status = http.StatusOK
 	}
 	headers := make(map[string]string)
-	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After"} {
+	for _, name := range []string{"Content-Type", "Cache-Control", "Retry-After", "X-Should-Retry"} {
 		if value := w.header.Get(name); value != "" {
 			headers[name] = value
 		}

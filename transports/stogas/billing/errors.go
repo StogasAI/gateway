@@ -23,6 +23,7 @@ var (
 	ErrAPIKeySpendLimit    = &RequestError{"key_spend_limit", "API key spend limit exceeded", 402}
 	ErrAPIKeyRateLimit     = &RequestError{"key_rate_limited", "API key rate limit exceeded", 429}
 	ErrRateLimit           = &RequestError{"rate_limit_exceeded", "Too many requests. Wait before retrying.", 429}
+	ErrPlatformRateLimit   = &RequestError{"platform_rate_limited", "The organization's requests exceed its platform request rate. Wait before retrying.", 429}
 	ErrAPIKeyConfigStale   = &RequestError{"key_configuration_changed", "API key configuration changed. The gateway needs to refresh it. This request was not sent to a provider or charged. Retry shortly.", 503}
 	ErrAPIKeyConfigSize    = &RequestError{"key_configuration_too_large", "The API key's policies and credential metadata exceed the configuration size limit. Reduce its assigned credentials or policy content.", 400}
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
@@ -71,7 +72,7 @@ var databaseRefusals = func() map[string]*RequestError {
 		"insufficient_balance": ErrInsufficientBalance, "byok_disabled": ErrByok,
 		"byok_required": ErrByokRequired, "byok_target_unavailable": ErrByokTarget,
 		"byok_not_allowed": errByokNotAllowed, "dashboard_forbidden": ErrDashboardKeyDenied,
-		"key_configuration_too_large": ErrAPIKeyConfigSize,
+		"key_configuration_too_large": ErrAPIKeyConfigSize, "platform_rate_limited": ErrPlatformRateLimit,
 	}
 	maps.Copy(refusals, policyResultErrors)
 	return refusals
@@ -97,7 +98,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
 		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_secret_replaced", "policy_work_limit_exceeded",
-		"method_not_allowed",
+		"method_not_allowed", "platform_rate_limited",
 		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
 		"request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",

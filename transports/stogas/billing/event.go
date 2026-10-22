@@ -29,6 +29,7 @@ type EventInput struct {
 	ProviderAttempts      []ProviderAttemptInput
 	ProviderCompletedAt   time.Time
 	ProviderStartedAt     time.Time
+	RateLimitWait         time.Duration
 	TTFTMS                *uint32
 	FirstOutputAt         time.Time
 	CacheReadSavingsUSD   *string
@@ -146,6 +147,7 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 			TotalMS:         totalTimeMS,
 			ProviderMS:      providerMS,
 			ProviderStartMS: providerStartMS,
+			RateLimitWaitMS: min(uint32Duration(input.RateLimitWait), totalTimeMS),
 			FirstOutputMS:   requestFirstOutput(input, startedAt, providerStartMS, providerMS),
 			TTFTMS:          ttftMS,
 		},

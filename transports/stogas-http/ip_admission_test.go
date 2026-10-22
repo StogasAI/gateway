@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -133,7 +134,7 @@ func TestIPAdmissionPrecedesBodiesAndCannotUseForwardingHeaders(t *testing.T) {
 			request.Header.Set("Forwarded", "for=203.0.113.6")
 			response := &testResponseWriter{httptest.NewRecorder()}
 			handler.ServeHTTP(response, request)
-			if called || response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" || !strings.Contains(response.Body.String(), "ip_rate_limit_exceeded") {
+			if called || response.Code != http.StatusTooManyRequests || !slices.Contains([]string{"1", "2"}, response.Header().Get("Retry-After")) || !strings.Contains(response.Body.String(), "ip_rate_limit_exceeded") {
 				t.Fatalf("IP rejection: %d %s", response.Code, response.Body)
 			}
 			if (response.Header().Get("Connection") == "close") != (protocol == 1) {

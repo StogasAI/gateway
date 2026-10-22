@@ -367,11 +367,17 @@ func (r *providerRun) pause(wait, idle time.Duration) bool {
 	return r.request.Err() == nil && r.waiting() && r.client.responseWait.startOutput(idle)
 }
 
-// startProviderCall calls the bound pair after wait. A call that the caller
-// stopped waiting for does not start and returns a result without called.
+// startProviderCall calls the bound pair after wait, and not before its
+// authorization lets the request start. A call that the caller stopped waiting
+// for does not start and returns a result without called.
 func startProviderCall[T any](r *providerRun, wait time.Duration, call providerCall[T]) <-chan providerResult[T] {
 	if !r.plan.HasNextPair() {
 		r.releasePlan()
+	}
+	var limited time.Duration
+	if authorization := r.pair.Authorization; authorization != nil {
+		limited = time.Until(authorization.StartAt)
+		wait = max(wait, limited)
 	}
 	r.attempts = r.state.ProviderAttemptCount()
 	attempt := schemas.NewBifrostContext(r.pair.ctx, schemas.NoDeadline)
@@ -392,7 +398,14 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 			}
 			ready <- result
 		}()
-		if !r.pause(wait, idle) {
+		paused := time.Now()
+		resumed := r.pause(wait, idle)
+		if limited > 0 {
+			// The log shows only the part of the pause that the rate caused, up to
+			// when the caller stopped waiting.
+			state.RateLimitWait += min(limited, time.Since(paused))
+		}
+		if !resumed {
 			return
 		}
 		state.MarkProviderStarted()

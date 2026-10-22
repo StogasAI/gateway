@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"testing"
 	"time"
@@ -18,26 +19,48 @@ func (e retryableBillingTestError) Error() string             { return billing.E
 func (e retryableBillingTestError) Unwrap() error             { return billing.ErrRateLimit }
 func (e retryableBillingTestError) RetryAfter() time.Duration { return e.delay }
 
-func TestBillingFailureRetryAfterSurvivesWrapping(t *testing.T) {
+func TestBillingRefusalsTellClientsWhenToRetry(t *testing.T) {
 	for _, tc := range []struct {
-		delay time.Duration
-		want  string
-	}{{25 * time.Millisecond, "1"}, {time.Second, "1"}, {time.Second + time.Nanosecond, "2"}, {2 * time.Second, "2"}} {
-		t.Run(tc.delay.String(), func(t *testing.T) {
-			ctx := newTestRequest(t)
-			s := &Server{}
-			s.writeBillingError(ctx, fmt.Errorf("internal detail: %w", retryableBillingTestError{tc.delay}))
-			if testResponse(ctx).Code != 429 || string(ctx.writer.Header().Get("Retry-After")) != tc.want {
-				t.Fatalf("response = %s", testResponse(ctx).Body.Bytes())
+		name, retry string
+		err         error
+		want        []string
+	}{
+		{"hold-back", "", retryableBillingTestError{25 * time.Millisecond}, []string{"1", "2"}},
+		{"one second", "", retryableBillingTestError{time.Second}, []string{"1", "2"}},
+		{"just over a second", "", retryableBillingTestError{time.Second + time.Nanosecond}, []string{"2", "3"}},
+		{"under a minute", "", retryableBillingTestError{59 * time.Second}, []string{"59", "60"}},
+		{"a minute", "", retryableBillingTestError{59*time.Second + time.Millisecond}, []string{"60"}},
+		{"over a minute", "false", retryableBillingTestError{90 * time.Second}, []string{"90"}},
+		{"no wait", "false", billing.ErrRateLimit, []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[string]bool{}
+			// Each wait of a spread is missed by all 64 draws with chance 2⁻⁶⁴.
+			for range 64 {
+				ctx := newTestRequest(t)
+				s := &Server{}
+				s.writeBillingError(ctx, fmt.Errorf("internal detail: %w", tc.err))
+				header := ctx.writer.Header()
+				if testResponse(ctx).Code != 429 || header.Get("X-Should-Retry") != tc.retry {
+					t.Fatalf("response = %d %s, X-Should-Retry = %q", testResponse(ctx).Code, testResponse(ctx).Body.Bytes(), header.Get("X-Should-Retry"))
+				}
+				seen[header.Get("Retry-After")] = true
+				var body struct {
+					Error struct{ Code, Type, Message string }
+				}
+				if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &body); err != nil {
+					t.Fatal(err)
+				}
+				if body.Error.Code != "rate_limit_exceeded" || body.Error.Type != "rate_limit_error" || body.Error.Message != billing.ErrRateLimit.Message {
+					t.Fatalf("wrong public error: %s", testResponse(ctx).Body.Bytes())
+				}
 			}
-			var body struct {
-				Error struct{ Code, Type, Message string }
+			want := map[string]bool{}
+			for _, value := range tc.want {
+				want[value] = true
 			}
-			if err := json.Unmarshal(testResponse(ctx).Body.Bytes(), &body); err != nil {
-				t.Fatal(err)
-			}
-			if body.Error.Code != "rate_limit_exceeded" || body.Error.Type != "rate_limit_error" || body.Error.Message != billing.ErrRateLimit.Message {
-				t.Fatalf("wrong public error: %s", testResponse(ctx).Body.Bytes())
+			if !maps.Equal(seen, want) {
+				t.Fatalf("Retry-After values = %v, want %v", seen, tc.want)
 			}
 		})
 	}

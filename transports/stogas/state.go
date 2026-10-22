@@ -58,6 +58,7 @@ type State struct {
 	FinalMeters             []catalog.MeterEstimate
 	ProviderStartedAt       time.Time
 	ProviderCompletedAt     time.Time
+	RateLimitWait           time.Duration
 	TTFTMS                  *uint32
 	FirstOutputAt           time.Time
 	LastOutputAt            time.Time

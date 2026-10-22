@@ -26,7 +26,7 @@ func (s *Service) SimulationConfig(ctx context.Context, credential *DashboardCre
 	); err != nil {
 		return nil, false, err
 	}
-	if err := authorizationResultError(row.Result); err != nil {
+	if err := authorizationResultError(row.Result, nil); err != nil {
 		return nil, false, err
 	}
 	if row.Result != "ok" || row.KeyID == nil || *row.KeyID != credential.KeyID || row.Claims == nil {

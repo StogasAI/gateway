@@ -10,7 +10,6 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
-	"math/rand/v2"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -22,16 +21,11 @@ import (
 
 const (
 	authorizeTimeout = 1500 * time.Millisecond
-	// Waiting for an organization slot and a connection ends this long before
-	// the authorization deadline, so a statement that starts can finish. One
-	// cut off loses its connection and needs a close, which under overload
+	// Waiting in the organization's queue and for a connection ends this long
+	// before the authorization deadline, so a statement that starts can finish.
+	// One cut off loses its connection and needs a close, which under overload
 	// costs the pool more than the requests it fails.
-	authorizeStatementReserve = 250 * time.Millisecond
-	// An authorization that finds its organization busy runs again after a
-	// random pause below a limit that starts here and doubles each time up to
-	// organizationBusyMaxPause.
-	organizationBusyPause      = time.Millisecond
-	organizationBusyMaxPause   = 32 * time.Millisecond
+	authorizeStatementReserve  = 250 * time.Millisecond
 	holdSettlementExpiryBuffer = 20 * time.Minute
 
 	// GatewayRequestLifetime bounds direct inference, so a hold that outlives it
@@ -65,10 +59,11 @@ const authorizeHoldArguments = `
   $20::jsonb,
   $21::numeric,
   $22::text,
-  $23::uuid
+  $23::uuid,
+  $24::uuid[]
 `
 
-const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, available_balance_usd, upstream_byok, upstream_byok_binding, config_current"
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms"
 
 const closeRequestArguments = `
   $1::uuid,
@@ -86,17 +81,25 @@ type authorizeRow struct {
 	AuthorizedBilledCostUSD *string
 	CreatedAt               *time.Time
 	ExpiresAt               *time.Time
-	AvailableBalanceUSD     *string
 	UpstreamByok            *string
 	UpstreamByokBinding     *string
 	ConfigCurrent           bool
+	// WaitMS is how long an admitted request waits to start, or how long a
+	// refusal lasts. A refusal without it never ends by waiting.
+	WaitMS *int64
+}
+
+func (r *authorizeRow) fields() []any {
+	return []any{
+		&r.Result, &r.HoldID, &r.UserID, &r.KeyID, &r.GrantID, &r.OrganizationID, &r.AuthorizedBilledCostUSD,
+		&r.CreatedAt, &r.ExpiresAt, &r.UpstreamByok, &r.UpstreamByokBinding, &r.ConfigCurrent, &r.WaitMS,
+	}
 }
 
 type Authorization struct {
 	releaseFinalization     func()
 	holdID                  string
 	AuthorizedBilledCostUSD *money.USD
-	AvailableBalanceUSD     *money.USD
 	CreatedAt               time.Time
 	GrantID                 *string
 	KeyID                   string
@@ -109,6 +112,10 @@ type Authorization struct {
 	UpstreamByokSecret      string
 	AzureBinding            *AzureBinding
 	UpstreamTargetJSON      string
+	// PostgreSQL spreads an organization's requests over time at its platform
+	// request rate: a request admitted beyond it calls no provider before
+	// StartAt. A move keeps it.
+	StartAt time.Time
 }
 
 type UpstreamTarget struct {
@@ -168,14 +175,16 @@ func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 type Service struct {
 	db                         *GatewayDB
 	authorizeHoldQuery         string
+	authorizeHoldsQuery        string
 	closeRequestQuery          string
 	keyConfigQuery             string
 	toolQueries                chan struct{}
 	keyConfigs                 keyConfigCache
 	keyConfigFlights           singleflight.Group
 	authorizations             authorizationActivity
-	organizationSlots          organizationSlots
-	localRequests              localRequestLimiter
+	organizationQueues         organizationQueues
+	credentialRequests         localRequestLimiter
+	organizationRequests       localRequestLimiter
 	apiKeys                    verifiedAPIKeyCache
 	refusals                   refusalCache
 	rejectionLogs              rejectionLogBuffer
@@ -228,6 +237,7 @@ func NewService(
 	service := &Service{
 		db:                      db,
 		authorizeHoldQuery:      db.functionQuery("authorize_gateway_hold", authorizeHoldColumns, authorizeHoldArguments),
+		authorizeHoldsQuery:     db.functionQuery("authorize_gateway_holds", "ordinal, "+authorizeHoldColumns, "$1::jsonb, $2::uuid[]"),
 		closeRequestQuery:       db.functionQuery("close_gateway_request", "*", closeRequestArguments),
 		keyConfigQuery:          db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
 		toolQueries:             make(chan struct{}, poolConns/3),
@@ -243,6 +253,7 @@ func NewService(
 	if err := db.checkQueries(
 		ctx,
 		service.authorizeHoldQuery,
+		service.authorizeHoldsQuery,
 		service.closeRequestQuery,
 		service.keyConfigQuery,
 		service.settleQuery,
@@ -276,7 +287,7 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		RedactionCache: s.keyConfigs.redactionDiagnostics(),
 		RejectionLogs:  s.rejectionLogs.snapshot(),
 		Database:       s.db.Diagnostics(),
-		LocalAdmission: localAdmissionDiagnostics(&s.localRequests, &s.authorizations, &s.organizationSlots, &s.refusals, &s.apiKeys),
+		LocalAdmission: s.localAdmissionDiagnostics(),
 		Settlement:     s.settlementDiagnostics(),
 	}
 }
@@ -307,13 +318,14 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if err != nil {
 		return nil, ErrInvalidAPIKey
 	}
-	if err := s.refusals.get(claims.admissionKey, time.Now()); err != nil {
+	now := time.Now()
+	if err := s.refusals.get(claims.admissionKey, now); err != nil {
 		return claims, err
 	}
-	if retryAfter := s.localRequests.allow("org:"+claims.OrganizationID, time.Now()); retryAfter > 0 {
-		return claims, &retryAfterError{ErrRateLimit, retryAfter}
+	if err := s.admitCredential(claims.admissionKey, now); err != nil {
+		return claims, err
 	}
-	return claims, nil
+	return claims, s.admitOrganization(claims.admissionKey, claims.OrganizationID, now)
 }
 
 func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, error) {
@@ -325,16 +337,14 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 		return nil, ErrInvalidAPIKey
 	}
 	cacheKey := dashboardAdmissionKey(credential)
-	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), time.Now()); ok {
+	now := time.Now()
+	if snapshot, ok := s.keyConfigs.get(dashboardConfigCacheKey(credential), now); ok {
 		credential.Claims = snapshot.Claims
 	}
-	if err := s.refusals.get(cacheKey, time.Now()); err != nil {
+	if err := s.refusals.get(cacheKey, now); err != nil {
 		return credential, err
 	}
-	if retryAfter := s.localRequests.allow(cacheKey, time.Now()); retryAfter > 0 {
-		return credential, &retryAfterError{ErrRateLimit, retryAfter}
-	}
-	return credential, nil
+	return credential, s.admitCredential(cacheKey, now)
 }
 
 // UsageReservation records quantities once before authorization. Text remains
@@ -452,7 +462,9 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	if err != nil {
 		return nil, ErrGatewayUnavailable
 	}
-	started := time.Now()
+	// Times are whole microseconds, as PostgreSQL stores them, so that a
+	// batch and a single authorization receive the same values.
+	started := time.Now().Truncate(time.Microsecond)
 	expiresAt := requestHoldExpiresAt(started.UTC(), request.RequestLifetime)
 	holdID, err := newUUIDV7String()
 	if err != nil {
@@ -470,109 +482,73 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	releaseAuthorization := s.authorizations.start()
 	defer releaseAuthorization()
 
-	row := authorizeRow{}
 	// PostgreSQL creates no hold after this time by its own clock, so a close
 	// that finds this time passed cannot miss one.
-	authorizeBefore := time.Now().Add(authorizeTimeout)
-	queryCtx, cancel := context.WithDeadline(ctx, authorizeBefore)
-	defer cancel()
-	// SQL finds the key by the ID that the API key's MAC or the dashboard credential names.
-	var requestKeyID, dashboardActorUserID, dashboardSessionID *string
-	if dashboard != nil {
-		requestKeyID = &dashboard.KeyID
-		dashboardActorUserID = &dashboard.ActorUserID
-		dashboardSessionID = &dashboard.SessionID
-	} else if claims != nil {
-		requestKeyID = &claims.KeyID
+	authorizeBefore := time.Now().Add(authorizeTimeout).Truncate(time.Microsecond)
+	pending := &pendingAuthorization{
+		arguments: authorizationArguments{
+			RequestID:                requestID,
+			HoldID:                   holdID,
+			ProviderKey:              providerKey,
+			ProductKey:               productKey,
+			EstimatedUpstreamCostUSD: request.EstimatedUpstreamCostUSD,
+			ExpiresAt:                expiresAt,
+			HoldParamsHash:           holdParamsHash,
+			EncryptionKeyID:          nullableString(credentialKeyID),
+			AuthorizeBefore:          authorizeBefore,
+			ReservedTokens:           usage.Tokens,
+			ActiveUntil:              expiresAt.Add(-holdSettlementExpiryBuffer + time.Minute),
+			CredentialsGeneration:    snapshot.CredentialsGeneration,
+			CachedByok:               selectionJSON,
+			PolicyVersions:           selectedPolicy.Versions,
+			ActiveRules:              matchedRules,
+			InputTextBytes:           usage.InputTextBytes,
+			NodeID:                   nullableString(s.nodeID),
+		},
+		admissionKey: callerAdmissionKey(claims, dashboard),
+		waitUntil:    authorizeBefore.Add(-authorizeStatementReserve),
+		done:         make(chan authorizationOutcome, 1),
 	}
-	var apiKeyHashValue, previousHoldID *string
+	arguments := &pending.arguments
+	if upstreamTargetJSON != "" {
+		arguments.UpstreamTarget = json.RawMessage(upstreamTargetJSON)
+	}
+	// SQL finds the key by the ID that the API key's MAC or the dashboard credential names.
+	if dashboard != nil {
+		arguments.KeyID = &dashboard.KeyID
+		arguments.DashboardActorUserID = &dashboard.ActorUserID
+		arguments.DashboardSessionID = &dashboard.SessionID
+	} else if claims != nil {
+		arguments.KeyID = &claims.KeyID
+	}
 	if apiKeyHash != "" {
-		apiKeyHashValue = &apiKeyHash
+		arguments.HashedKey = &apiKeyHash
 	}
 	if previous != nil {
-		previousHoldID = &previous.holdID
+		pending.previous = &previous.holdID
+		pending.alone = true
 	}
-	waitCtx, cancelWait := context.WithDeadline(queryCtx, authorizeBefore.Add(-authorizeStatementReserve))
-	defer cancelWait()
-	releaseSlot, err := s.organizationSlots.take(waitCtx, snapshot.Claims.OrganizationID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+	waitCtx, cancelWait := context.WithDeadline(ctx, pending.waitUntil)
+	outcome := s.authorizeInOrder(waitCtx, snapshot.Claims.OrganizationID, pending)
+	cancelWait()
+	if outcome.refusal != nil {
+		return nil, outcome.refusal
 	}
-	defer releaseSlot()
-	// A refusal recorded while this request waited holds it back too. A move
-	// continues a request that was already admitted.
-	if previous == nil {
-		if err := s.refusals.get(callerAdmissionKey(claims, dashboard), time.Now()); err != nil {
-			return nil, err
-		}
-	}
-	// PostgreSQL runs one of an organization's authorizations at a time, from
-	// all gateways together, and answers the others that the organization is
-	// busy. Those run again after a pause, keeping the slot and no connection.
-	for limit := organizationBusyPause; ; limit = min(2*limit, organizationBusyMaxPause) {
+	if outcome.err != nil {
 		// A statement that never left the gateway cannot have created a hold, so
 		// it needs no close. An exhausted pool or an unreachable database then
-		// gets no extra calls from the requests it already failed.
-		conn, err := s.db.pool.Acquire(waitCtx)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
+		// gets no extra calls from the requests it already failed. A move that
+		// may have committed leaves either hold for settlement, which accepts
+		// the previous pair's log without usage.
+		if outcome.sent && !pgconn.SafeToRetry(outcome.err) && previous == nil {
+			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
+			releaseFinalization = nil
 		}
-		err = conn.QueryRow(
-			queryCtx,
-			s.authorizeHoldQuery,
-			apiKeyHashValue,
-			requestKeyID,
-			dashboardActorUserID,
-			dashboardSessionID,
-			requestID,
-			holdID,
-			providerKey,
-			productKey,
-			request.EstimatedUpstreamCostUSD,
-			expiresAt,
-			holdParamsHash,
-			nullableString(upstreamTargetJSON),
-			nullableString(credentialKeyID),
-			authorizeBefore,
-			usage.Tokens,
-			expiresAt.Add(-holdSettlementExpiryBuffer+time.Minute),
-			snapshot.CredentialsGeneration,
-			string(selectionJSON),
-			selectedPolicy.Versions,
-			matchedRules,
-			usage.InputTextBytes,
-			nullableString(s.nodeID),
-			previousHoldID,
-		).Scan(
-			&row.Result, &row.HoldID, &row.UserID, &row.KeyID, &row.GrantID, &row.OrganizationID, &row.AuthorizedBilledCostUSD, &row.CreatedAt, &row.ExpiresAt, &row.AvailableBalanceUSD, &row.UpstreamByok, &row.UpstreamByokBinding, &row.ConfigCurrent,
-		)
-		conn.Release()
-		if err != nil {
-			releaseSlot()
-			// A move that may have committed leaves either hold for settlement,
-			// which accepts the previous pair's log without usage.
-			if !pgconn.SafeToRetry(err) && previous == nil {
-				s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
-				releaseFinalization = nil
-			}
-			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, err)
-		}
-		if row.Result != "organization_busy" {
-			break
-		}
-		if limit == organizationBusyPause {
-			s.organizationSlots.busy.Add(1)
-		}
-		if !sleepContext(waitCtx, rand.N(limit)) {
-			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
-				s.organizationSlots.timedOut()
-			}
-			return nil, fmt.Errorf("%w: organization busy", ErrGatewayUnavailable)
-		}
+		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, outcome.err)
 	}
-	releaseSlot()
+	row := outcome.row
 
-	if resultErr := authorizationResultError(row.Result); resultErr != nil {
+	if resultErr := authorizationResultError(row.Result, row.WaitMS); resultErr != nil {
 		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {
 			s.confirmKeyConfig(apiKeyHash, dashboard, snapshot, false, started)
 		}
@@ -603,13 +579,15 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		availableBalanceUSD, amountErr := parseDatabaseMoney(row.AvailableBalanceUSD, "available balance")
-		if amountErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
-		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, AvailableBalanceUSD: availableBalanceUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		if previous != nil {
 			authorization.releaseFinalization = previous.releaseFinalization
+			authorization.StartAt = previous.StartAt
+		} else if row.WaitMS != nil && *row.WaitMS > 0 {
+			// The wait starts at this gateway's clock when the result arrives, a
+			// little after PostgreSQL's, so the requests start no faster than
+			// PostgreSQL spaced them.
+			authorization.StartAt = time.Now().Add(time.Duration(*row.WaitMS) * time.Millisecond)
 		}
 		releaseFinalization = nil // Ownership follows the accepted request through settlement.
 		if upstreamByok == "" {
@@ -648,12 +626,10 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 	}
 }
 
-func authorizationResultError(result string) error {
+func authorizationResultError(result string, waitMS *int64) error {
 	if refusal := databaseRefusals[result]; refusal != nil {
-		if refusal.statusCode == 429 {
-			// PostgreSQL returns no retry time, so the client waits out the
-			// hold-back that the refusal starts.
-			return &retryAfterError{refusal, refusalHoldBack}
+		if refusal.statusCode == 429 && waitMS != nil {
+			return &retryAfterError{refusal, time.Duration(*waitMS) * time.Millisecond}
 		}
 		return refusal
 	}

@@ -73,13 +73,21 @@ func TestOnlyDatabaseRefusalsHoldBack(t *testing.T) {
 	}
 }
 
-// PostgreSQL gives no retry time. A limit's refusal still tells the client to
-// wait, and the request still tries its next pair.
-func TestDatabaseLimitRefusalsAskClientsToWait(t *testing.T) {
-	err := authorizationResultError("organization_rate_limited")
+// A limit's refusal tells the client when PostgreSQL expects it to end, and
+// the request still tries its next pair. A refusal that waiting cannot end
+// gives no time. The platform request rate covers every pair.
+func TestDatabaseLimitRefusalsTellClientsWhenTheyEnd(t *testing.T) {
+	wait := int64(1500)
+	err := authorizationResultError("organization_rate_limited", &wait)
 	var retry interface{ RetryAfter() time.Duration }
-	if !errors.As(err, &retry) || retry.RetryAfter() != refusalHoldBack || !PairRefused(err) || ErrorStatus(err) != 429 {
+	if !errors.As(err, &retry) || retry.RetryAfter() != 1500*time.Millisecond || !PairRefused(err) || ErrorStatus(err) != 429 {
 		t.Fatalf("limit refusal = %v", err)
+	}
+	if err := authorizationResultError("key_token_limit", nil); errors.As(err, &retry) || !PairRefused(err) || ErrorStatus(err) != 429 {
+		t.Fatalf("lasting refusal = %v", err)
+	}
+	if err := authorizationResultError("platform_rate_limited", &wait); !errors.As(err, &retry) || PairRefused(err) || !errors.Is(err, ErrPlatformRateLimit) {
+		t.Fatalf("platform refusal = %v", err)
 	}
 }
 
@@ -125,17 +133,17 @@ func TestRefusalsIsolateSecretsAndDashboardSessions(t *testing.T) {
 	}
 }
 
-// A refusal recorded while a request waited for its organization's slot holds
+// A refusal recorded while a request waited in its organization's queue holds
 // that request back before it asks PostgreSQL. A move of an admitted request
 // still asks.
-func TestRefusalHoldsBackRequestsWaitingForTheSlot(t *testing.T) {
+func TestRefusalHoldsBackRequestsWaitingInTheirQueue(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := listener.Addr().String()
-	listener.Close()
-	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+address+"/unused?sslmode=disable&connect_timeout=1")
+	defer listener.Close()
+	go acceptPostgres(listener, nil)
+	pool, err := pgxpool.New(context.Background(), "postgres://unused:unused@"+listener.Addr().String()+"/unused?sslmode=disable&connect_timeout=1&pool_max_conns=1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,20 +162,21 @@ func TestRefusalHoldsBackRequestsWaitingForTheSlot(t *testing.T) {
 		_, err = service.authorizeResolvedRequest(context.Background(), "hash", &claims, HoldRequest{RequestID: "request", ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute, Previous: previous})
 		return err
 	}
-	releaseSlot, err := service.organizationSlots.take(context.Background(), "org")
+	// The queue waits for the only connection.
+	conn, err := pool.Acquire(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	waiting := make(chan error, 1)
 	go func() { waiting <- authorize(nil) }()
-	waitFor(t, func() bool { return service.organizationSlots.waits.Load() == 1 })
+	waitFor(t, func() bool { return service.authorizations.inFlight.Load() == 1 })
 	service.refusals.record(claims.admissionKey, nil, time.Hour, time.Now())
-	releaseSlot()
+	conn.Release()
 	if err := <-waiting; !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("waiting request got %v", err)
 	}
 	if err := authorize(&Authorization{holdID: "hold"}); !errors.Is(err, ErrGatewayUnavailable) {
-		t.Fatalf("move got %v, want the unreachable database", err)
+		t.Fatalf("move got %v, want the unanswered statement", err)
 	}
 }
 
