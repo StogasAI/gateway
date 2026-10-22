@@ -26,10 +26,14 @@ type Config struct {
 
 // Destination is immutable after validation. URL is the complete ingestion URL;
 // no path is appended. Headers authenticate export delivery, never inference.
+// Content false sends records without request and response bodies.
 type Destination struct {
 	URL     string            `json:"url"`
 	Headers map[string]string `json:"headers,omitempty"`
+	Content *bool             `json:"content,omitempty"`
 }
+
+func (d Destination) SendsContent() bool { return d.Content == nil || *d.Content }
 
 func (c *Config) Validate() error {
 	if c == nil {
@@ -79,11 +83,14 @@ func (d *Destination) Validate() error {
 	return nil
 }
 
-// Combine unions independent required destinations and removes exact duplicates.
-// A descendant cannot alter an inherited destination or its credentials.
+// Combine unions independent required destinations. The same URL and headers
+// name one receiver, which gets one record: two would share an Idempotency-Key.
+// That record has content if any duplicate asks for it, so a descendant can
+// neither withhold content from an inherited destination nor alter its
+// credentials.
 func Combine(configs ...*Config) (*Config, error) {
 	result := &Config{Destinations: []Destination{}}
-	seen := map[[32]byte]bool{}
+	seen := map[[32]byte]int{}
 	for _, c := range configs {
 		if err := c.Validate(); err != nil {
 			return nil, err
@@ -93,10 +100,14 @@ func Combine(configs ...*Config) (*Config, error) {
 		}
 		for _, d := range c.Destinations {
 			id := d.Identity()
-			if !seen[id] {
-				seen[id] = true
-				result.Destinations = append(result.Destinations, d)
+			if i, found := seen[id]; found {
+				if d.SendsContent() {
+					result.Destinations[i].Content = nil
+				}
+				continue
 			}
+			seen[id] = len(result.Destinations)
+			result.Destinations = append(result.Destinations, d)
 		}
 	}
 	if len(result.Destinations) > MaxDestinations {
@@ -106,7 +117,7 @@ func Combine(configs ...*Config) (*Config, error) {
 }
 
 func (d Destination) Identity() [32]byte {
-	d.Headers = d.ExportHeaders()
+	d.Headers, d.Content = d.ExportHeaders(), nil
 	b, _ := json.Marshal(d)
 	return sha256.Sum256(b)
 }

@@ -34,17 +34,22 @@ func TestExportSourceContract(t *testing.T) {
 func TestExportCompositionRulesAndInspection(t *testing.T) {
 	const dest = `{"url":"https://collector.example/v1/traces"}`
 	const plugin = `{"stogasExport":{"destinations":[` + dest + `]}}`
+	const withoutContent = `{"stogasExport":{"destinations":[{"url":"https://collector.example/v1/traces","content":false}]}}`
 	for _, tc := range []struct {
 		name, org, key, provider string
 		want                     int
+		withoutContent           bool
 	}{
-		{"required survives neutral", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 1},
-		{"exact duplicate", `{"plugins":` + plugin + `}`, `{"plugins":` + plugin + `}`, "openai", 1},
-		{"distinct auth", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer different"}}]}}}`, "openai", 2},
-		{"default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{}`, "openai", 1},
-		{"neutral replaces default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 0},
-		{"conditional applies", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "openai", 1},
-		{"conditional skips", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "anthropic", 0},
+		{"required survives neutral", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 1, false},
+		{"exact duplicate", `{"plugins":` + plugin + `}`, `{"plugins":` + plugin + `}`, "openai", 1, false},
+		{"distinct auth", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer different"}}]}}}`, "openai", 2, false},
+		{"without content", `{"plugins":` + withoutContent + `}`, `{}`, "openai", 1, true},
+		{"one record per receiver, with content", `{"plugins":` + withoutContent + `}`, `{"plugins":` + plugin + `}`, "openai", 1, false},
+		{"inherited content stays", `{"plugins":` + plugin + `}`, `{"plugins":` + withoutContent + `}`, "openai", 1, false},
+		{"default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{}`, "openai", 1, false},
+		{"neutral replaces default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 0, false},
+		{"conditional applies", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "openai", 1, false},
+		{"conditional skips", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "anthropic", 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, tc.org)}, {Scope: KeyScope, Value: ruleSource(t, tc.key)}})
@@ -62,6 +67,11 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 			n := 0
 			if exports != nil {
 				n = len(exports.Destinations)
+				for _, d := range exports.Destinations {
+					if d.SendsContent() == tc.withoutContent {
+						t.Fatalf("destination %s sends content: %v", d.URL, d.SendsContent())
+					}
+				}
 			}
 			if n != tc.want {
 				t.Fatalf("destinations=%d want=%d", n, tc.want)
