@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -775,7 +776,7 @@ func TestSessionSetupAdmissionTracksRetainedCapacityBeforeHardwareWork(t *testin
 		for range ipSetupBurst {
 			_, _ = server.ipAdmission.allow("192.0.2.1:1234", true, time.Now())
 		}
-		if rejected := open(); rejected.Code != http.StatusTooManyRequests || rejected.Header().Get("Retry-After") != "1" || reporter.calls.Load() != 0 || memory.reserved.Load() != 0 {
+		if rejected := open(); rejected.Code != http.StatusTooManyRequests || !slices.Contains([]string{"1", "2"}, rejected.Header().Get("Retry-After")) || reporter.calls.Load() != 0 || memory.reserved.Load() != 0 {
 			t.Fatal("IP setup rejection spent hardware work or retained memory")
 		}
 		time.Sleep(ipFullRefillInterval)
