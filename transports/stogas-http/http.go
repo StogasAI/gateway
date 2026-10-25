@@ -293,14 +293,21 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 	ctx.finishClientWait()
 	failure, outcome := run.end()
 	if failure == nil {
+		// The export keeps the error that the caller gets.
+		var response *errorResponse
+		if !cancelledLocally(run.local) {
+			local := localErrorResponse(run.local)
+			response = &local
+			captureExportPayload(run.state, local.payload)
+		}
 		if run.state.Authorization != nil {
 			s.finalizeAfterResponse(ctx, run, run.request)
 		} else {
 			stogas.FinalizeExportState(run.request, run.state)
 			run.cancel()
 		}
-		if respond && !cancelledLocally(run.local) {
-			s.writeLocalError(ctx, run.local)
+		if respond && response != nil {
+			s.writeErrorResponse(ctx, *response)
 		}
 		return
 	}

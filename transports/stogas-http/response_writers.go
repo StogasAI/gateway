@@ -489,12 +489,6 @@ func (s *Server) writeRequestMemoryCapacity(ctx *requestContext) {
 	s.writeErrorResponse(ctx, capacityErrorResponse())
 }
 
-// writeLocalError answers a request that ended before any provider call
-// reached a provider.
-func (s *Server) writeLocalError(ctx *requestContext, err error) {
-	s.writeErrorResponse(ctx, localErrorResponse(err))
-}
-
 type errorResponse struct {
 	status     int
 	payload    map[string]any
@@ -513,6 +507,8 @@ func (s *Server) writeErrorResponse(ctx *requestContext, response errorResponse)
 	s.writeError(ctx, response.status, response.payload)
 }
 
+// localErrorResponse answers a request that ended before any provider call
+// reached a provider.
 func localErrorResponse(err error) errorResponse {
 	var unsent *unsentCall
 	var refusal billingFailure
