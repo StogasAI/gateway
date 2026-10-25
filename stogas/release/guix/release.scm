@@ -145,9 +145,14 @@
             ;; Kernel DHCP writes the resolver settings to /proc/net/pnp
             ;; before init starts, so one image works in every subnet.
             (symlink "/proc/net/pnp" (string-append rootfs "/etc/resolv.conf"))
-            (let ((certificates #$(file-append
-                                   (specification->package "nss-certs")
-                                   "/etc/ssl/certs")))
+            ;; Guix removes distrusted roots with a graft, which reaches
+            ;; references but not copied files, so the bundle comes from the
+            ;; grafted package itself.
+            (let ((certificates
+                   #$(file-append
+                      (let ((nss-certs (specification->package "nss-certs")))
+                        (or (package-replacement nss-certs) nss-certs))
+                      "/etc/ssl/certs")))
               (call-with-output-file ca-bundle
                 (lambda (port)
                   (for-each
