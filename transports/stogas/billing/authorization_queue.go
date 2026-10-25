@@ -281,6 +281,7 @@ func (s *Service) runOrganization(queue *organizationQueue) {
 			// pool's or the database's and fails the next statement's
 			// authorizations without a call.
 			if !errors.Is(err, context.DeadlineExceeded) {
+				s.authorizations.failed()
 				for _, p := range queue.take(maxAuthorizationBatch) {
 					p.done <- authorizationOutcome{err: err}
 				}
@@ -348,11 +349,13 @@ func (s *Service) runAuthorizations(conn *pgxpool.Conn, batch []*pendingAuthoriz
 		}
 	}
 	if err != nil {
+		s.authorizations.failed()
 		for _, p := range batch {
 			p.done <- authorizationOutcome{err: err, sent: true}
 		}
 		return nil, false
 	}
+	s.authorizations.answered()
 	busy := false
 	for i, p := range batch {
 		if rows[i].Result == "organization_busy" {
