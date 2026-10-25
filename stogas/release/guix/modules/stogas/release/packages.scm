@@ -74,6 +74,41 @@
       (version (pin "go" "version"))
       (source (pinned-git-origin "go" "https://github.com/golang/go")))))
 
+;; Kbuild records the source and headers of each file it builds in a .cmd
+;; file, and GCC, as edk2 runs it, in a .deps file. Advisories name the files
+;; that a fix changes or the library that a project bundles, so a list of
+;; these files shows which advisories reach a build.
+(define (install-compiled-sources dependency-files)
+  "Return a phase that writes compiled-sources to the output: each file in the
+source tree that a file matching the DEPENDENCY-FILES regexp names."
+  #~(lambda _
+      (let* ((root (string-append (canonicalize-path ".") "/"))
+             (prefix (string-length root))
+             (sources (make-hash-table))
+             (separators (char-set #\space #\tab #\newline #\\
+                                   #\: #\( #\) #\, #\;)))
+        (for-each
+         (lambda (file)
+           (for-each
+            (lambda (token)
+              ;; Paths such as arch/x86/boot/../include name a file by
+              ;; another route, and toolchain headers lie outside the tree.
+              (when (and (string-match "\\.(c|h|S|rs|nasm|asm|inc)$" token)
+                         (file-exists? token))
+                (let ((path (canonicalize-path token)))
+                  (when (string-prefix? root path)
+                    (hash-set! sources (string-drop path prefix) #t)))))
+            (string-tokenize (call-with-input-file file get-string-all)
+                             (char-set-complement separators))))
+         (find-files "." #$dependency-files))
+        (call-with-output-file (string-append #$output "/compiled-sources")
+          (lambda (port)
+            (for-each (lambda (path)
+                        (display path port)
+                        (newline port))
+                      (sort (hash-map->list (lambda (path _) path) sources)
+                            string<?)))))))
+
 (define stogas-linux
   (let ((base (specification->package
                (string-append "linux-libre@" (pin "linux" "version"))))
@@ -104,43 +139,9 @@
                   (invoke "make" "allnoconfig"
                           (string-append "KCONFIG_ALLCONFIG=" #$config))
                   (verify-config ".config" #$config)))
+              ;; Kernel CVE records name the files that each fix changes.
               (add-after 'install 'install-compiled-sources
-                (lambda _
-                  ;; Kbuild records the source and headers of each file it
-                  ;; builds in a .cmd file. Kernel CVE records name the files
-                  ;; that each fix changes, so this list shows which CVEs
-                  ;; reach this kernel.
-                  (let* ((root (string-append (canonicalize-path ".") "/"))
-                         (prefix (string-length root))
-                         (sources (make-hash-table))
-                         (separators (char-set #\space #\tab #\newline #\\
-                                               #\: #\( #\) #\, #\;)))
-                    (for-each
-                     (lambda (cmd)
-                       (for-each
-                        (lambda (token)
-                          ;; Paths such as arch/x86/boot/../include name a
-                          ;; file by another route, and toolchain headers lie
-                          ;; outside the tree.
-                          (when (and (string-match "\\.(c|h|S|rs)$" token)
-                                     (file-exists? token))
-                            (let ((path (canonicalize-path token)))
-                              (when (string-prefix? root path)
-                                (hash-set! sources (string-drop path prefix)
-                                           #t)))))
-                        (string-tokenize
-                         (call-with-input-file cmd get-string-all)
-                         (char-set-complement separators))))
-                     (find-files "." "\\.cmd$"))
-                    (call-with-output-file
-                        (string-append #$output "/compiled-sources")
-                      (lambda (port)
-                        (for-each (lambda (path)
-                                    (display path port)
-                                    (newline port))
-                                  (sort (hash-map->list (lambda (path _) path)
-                                                        sources)
-                                        string<?)))))))))))
+                #$(install-compiled-sources "\\.cmd$"))))))
       (synopsis "Linux kernel for the Stogas SEV-SNP gateway guest")
       (description
        "Linux-libre configured from @code{allnoconfig} with only the options
@@ -206,6 +207,8 @@ build unified kernel images.")
                         (list (patch-file "edk2-amdsev-kernel-only.patch"))))
     (arguments
      (substitute-keyword-arguments (package-arguments ovmf-x86-64)
+       ((#:modules modules)
+        `((ice-9 regex) (ice-9 textual-ports) ,@modules))
        ((#:phases phases)
         #~(modify-phases #$phases
             (replace 'build
@@ -217,6 +220,10 @@ build unified kernel images.")
               (lambda _
                 (install-file "Build/AmdSev/RELEASE_GCC/FV/OVMF.fd"
                               (string-append #$output "/share/firmware"))))
+            ;; edk2 bundles libraries such as OpenSSL as submodules, and
+            ;; this platform compiles only some of them.
+            (add-after 'install 'install-compiled-sources
+              #$(install-compiled-sources "\\.deps$"))
             (delete 'install-qemu-firmware-metadata)))))
     (synopsis "AmdSev OVMF firmware that boots only the measured kernel")
     (description "OVMF built from @file{OvmfPkg/AmdSev/AmdSevX64.dsc}.  It
