@@ -43,7 +43,7 @@ jobs:
         run: GOWORK=off go test -shuffle=on -count=1 . ./internal/llmtests ./internal/memtest ./keyselectors ./mcp/... ./network ./providers/... ./schemas
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24.14.1
+          node-version: 24.22.1
           cache: npm
       - name: Test the shared WebAssembly policy compiler
         run: |
