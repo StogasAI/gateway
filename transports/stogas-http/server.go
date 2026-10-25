@@ -71,6 +71,7 @@ type Server struct {
 	secure                *confidentialruntime.Runtime
 	requests              *requestDrain
 	admission             requestAdmissionCounters
+	providers             providerReach
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections

@@ -244,6 +244,50 @@ func TestBusyAndRolledBackBatchesRunAgain(t *testing.T) {
 	if busy := service.organizationQueues.busy.Load(); busy != 1 {
 		t.Fatalf("busy statements = %d", busy)
 	}
+	// The rolled-back batch ran again, so only the bad request's statement
+	// failed, and the statement after it was answered.
+	if diagnostics := service.localAdmissionDiagnostics(); diagnostics.AuthorizationFailures != 1 ||
+		diagnostics.AuthorizationLastFailedAt == nil || diagnostics.AuthorizationFailingSince != nil {
+		t.Fatalf("authorization failures %d, last %v, failing since %v", diagnostics.AuthorizationFailures,
+			diagnostics.AuthorizationLastFailedAt, diagnostics.AuthorizationFailingSince)
+	}
+}
+
+// The monitor reads when authorizations started failing. Failures keep that
+// time, and the first statement that PostgreSQL answers clears it.
+func TestAuthorizationFailuresLastUntilPostgreSQLAnswers(t *testing.T) {
+	var statements atomic.Int64
+	service := scriptedService(t, 1, func(statement fakeStatement) ([]fakeRow, *pgproto3.ErrorResponse) {
+		if statements.Add(1) <= 2 {
+			return nil, &pgproto3.ErrorResponse{Severity: "ERROR", SeverityUnlocalized: "ERROR", Code: "25006", Message: "cannot execute INSERT in a read-only transaction"}
+		}
+		return limitRows(statement), nil
+	})
+	if err := authorizeProduct(t, service, "a", 0); !errors.Is(err, ErrGatewayUnavailable) {
+		t.Fatalf("first authorization got %v", err)
+	}
+	first := service.localAdmissionDiagnostics()
+	if first.AuthorizationFailures != 1 || first.AuthorizationFailingSince == nil || first.AuthorizationLastFailedAt == nil ||
+		!first.AuthorizationFailingSince.Equal(*first.AuthorizationLastFailedAt) {
+		t.Fatalf("after one failure: %+v", first)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := authorizeProduct(t, service, "b", 0); !errors.Is(err, ErrGatewayUnavailable) {
+		t.Fatalf("second authorization got %v", err)
+	}
+	second := service.localAdmissionDiagnostics()
+	if second.AuthorizationFailures != 2 || !second.AuthorizationFailingSince.Equal(*first.AuthorizationFailingSince) ||
+		!second.AuthorizationLastFailedAt.After(*first.AuthorizationLastFailedAt) {
+		t.Fatalf("after two failures: %+v", second)
+	}
+	if err := authorizeProduct(t, service, "c", 0); !retriesAfter(err, 0) {
+		t.Fatalf("answered authorization got %v", err)
+	}
+	answered := service.localAdmissionDiagnostics()
+	if answered.AuthorizationFailures != 2 || answered.AuthorizationFailingSince != nil ||
+		!answered.AuthorizationLastFailedAt.Equal(*second.AuthorizationLastFailedAt) {
+		t.Fatalf("after an answer: %+v", answered)
+	}
 }
 
 // A batch whose connection fails before PostgreSQL answers may have committed

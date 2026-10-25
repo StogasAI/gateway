@@ -36,6 +36,13 @@ type LocalAdmissionDiagnostics struct {
 	AuthorizationAttempts     uint64 `json:"authorizationAttempts"`
 	AuthorizationInFlight     int64  `json:"authorizationInFlight"`
 	AuthorizationPeakInFlight int64  `json:"authorizationPeakInFlight"`
+	// Authorization statements that failed, from a connection, PostgreSQL or
+	// the statement itself, and when the last one failed. FailingSince is when
+	// the first failed after PostgreSQL last answered one, and stays empty
+	// while the latest was answered.
+	AuthorizationFailures     uint64     `json:"authorizationFailures"`
+	AuthorizationLastFailedAt *time.Time `json:"authorizationLastFailedAt,omitempty"`
+	AuthorizationFailingSince *time.Time `json:"authorizationFailingSince,omitempty"`
 	// Authorizations that waited for an earlier one of their organization in
 	// this gateway, statements that PostgreSQL found it busy for, and
 	// authorizations that waited until their deadline. Batches are statements
@@ -166,6 +173,23 @@ type authorizationActivity struct {
 	attempts     atomic.Uint64
 	inFlight     atomic.Int64
 	peakInFlight atomic.Int64
+	failures     atomic.Uint64
+	// Unix milliseconds, zero when unset.
+	lastFailedAt, failingSince atomic.Int64
+}
+
+// answered records a statement that PostgreSQL answered, whatever its results.
+func (l *authorizationActivity) answered() {
+	l.failingSince.Store(0)
+}
+
+// failed records a statement that PostgreSQL did not answer. A batch that one
+// request's error rolled back runs again one by one and is not a failure.
+func (l *authorizationActivity) failed() {
+	now := time.Now().UTC().UnixMilli()
+	l.failures.Add(1)
+	l.lastFailedAt.Store(now)
+	l.failingSince.CompareAndSwap(0, now)
 }
 
 func (l *authorizationActivity) start() func() {
@@ -192,6 +216,9 @@ func (s *Service) localAdmissionDiagnostics() LocalAdmissionDiagnostics {
 		AuthorizationAttempts:       s.authorizations.attempts.Load(),
 		AuthorizationInFlight:       s.authorizations.inFlight.Load(),
 		AuthorizationPeakInFlight:   s.authorizations.peakInFlight.Load(),
+		AuthorizationFailures:       s.authorizations.failures.Load(),
+		AuthorizationLastFailedAt:   localAdmissionTime(s.authorizations.lastFailedAt.Load()),
+		AuthorizationFailingSince:   localAdmissionTime(s.authorizations.failingSince.Load()),
 		OrganizationWaits:           queues.waits.Load(),
 		OrganizationBusy:            queues.busy.Load(),
 		OrganizationTimeouts:        queues.timeouts.Load(),

@@ -385,6 +385,7 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		chutese2ee.SetInvocationBudget(attempt, 1+r.pair.Resolution.Retries()-r.retries, r.waiting)
 	}
 	request, state, idle := r.pair.request, r.state, r.pair.Resolution.RequestTimeouts().OutputIdle()
+	server, provider := r.server, r.pair.Resolution.Provider
 	ready := make(chan providerResult[T], 1)
 	go func() {
 		result := providerResult[T]{ctx: attempt}
@@ -411,6 +412,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		state.MarkProviderStarted()
 		result.called = true
 		result.response, result.failure = call(attempt, request)
+		if server != nil {
+			server.providers.observe(provider, result.failure)
+		}
 	}()
 	return ready
 }
