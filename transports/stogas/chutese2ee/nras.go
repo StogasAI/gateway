@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -87,6 +88,7 @@ func newNRASVerifier() *nrasVerifier {
 				TLSHandshakeTimeout:    10 * time.Second,
 				MaxResponseHeaderBytes: 64 << 10,
 				TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS13},
+				HTTP2:                  http2health.Config(),
 			},
 			Timeout: nrasTimeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

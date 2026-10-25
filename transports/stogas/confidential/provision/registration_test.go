@@ -344,3 +344,10 @@ func TestRegistrationAcknowledgementBindsPurposeAndExactBoot(t *testing.T) {
 		})
 	}
 }
+
+// A retried registration must not wait on an HTTP/2 connection that stopped answering.
+func TestDefaultClientChecksItsHTTP2Connections(t *testing.T) {
+	if transport, ok := defaultClient.Transport.(*http.Transport); !ok || transport.HTTP2 == nil || transport.HTTP2.SendPingTimeout == 0 {
+		t.Fatal("the Control client does not check its HTTP/2 connections")
+	}
+}

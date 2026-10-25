@@ -162,3 +162,12 @@ func TestBoundedTransport(t *testing.T) {
 		}
 	}
 }
+
+// A retry must not wait on an HTTP/2 connection that stopped answering.
+func TestCacheChecksItsHTTP2Connections(t *testing.T) {
+	c := New(context.Background())
+	defer c.Close()
+	if c.transport.HTTP2 == nil || c.transport.HTTP2.SendPingTimeout == 0 {
+		t.Fatal("the Azure sign-in client does not check its HTTP/2 connections")
+	}
+}

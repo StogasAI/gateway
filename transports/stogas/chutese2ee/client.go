@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 )
 
 const maximumSafeReadAttempts = 3
@@ -59,6 +61,7 @@ func newAPIClient(apiKey, rawBaseURL string, requireProductionOrigin, requirePos
 		TLSHandshakeTimeout:    10 * time.Second,
 		MaxResponseHeaderBytes: 64 << 10,
 		TLSClientConfig:        tlsConfig,
+		HTTP2:                  http2health.Config(),
 	}
 	client := &http.Client{
 		Transport: transport,

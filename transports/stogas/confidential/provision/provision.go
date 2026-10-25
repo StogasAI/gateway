@@ -10,9 +10,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 )
 
 const DefaultMaxResponseBytes = 160 * 1024
+
+// defaultClient closes a connection to Control that stops answering, so a
+// retried registration does not wait on it.
+var defaultClient = func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.HTTP2 = http2health.Config()
+	return &http.Client{Transport: transport}
+}()
 
 type Client struct {
 	BaseURL            string
@@ -93,7 +103,7 @@ func (c Client) postJSON(ctx context.Context, path string, body any, out any) (h
 
 	httpClient := c.HTTPClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = defaultClient
 	}
 	safeClient := *httpClient
 	safeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {

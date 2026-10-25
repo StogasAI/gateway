@@ -76,3 +76,19 @@ func TestRetryAfterParsingDoesNotOverflowOrAdvanceRetries(t *testing.T) {
 		})
 	}
 }
+
+// A retry must not wait on an HTTP/2 connection that stopped answering.
+func TestPooledClientsCheckTheirHTTP2Connections(t *testing.T) {
+	api, err := newAPIClient("managed-key", productionAPIBaseURL, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, client := range map[string]*http.Client{
+		"Chutes": api.client, "NVIDIA attestation": newNRASVerifier().client, "Intel collateral": newCollateralGetter().client,
+	} {
+		transport, ok := client.Transport.(*http.Transport)
+		if !ok || transport.HTTP2 == nil || transport.HTTP2.SendPingTimeout == 0 {
+			t.Errorf("the %s client does not check its HTTP/2 connections", name)
+		}
+	}
+}

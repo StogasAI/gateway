@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 )
 
 const (
@@ -91,6 +92,7 @@ func New(ctx context.Context) *Cache {
 	transport.MaxIdleConns = maximumLoads
 	transport.MaxIdleConnsPerHost = maximumLoads
 	transport.IdleConnTimeout = 30 * time.Second
+	transport.HTTP2 = http2health.Config()
 	client := &http.Client{Transport: transport, Timeout: loadTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return ErrUnavailable
 	}}
