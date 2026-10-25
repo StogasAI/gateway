@@ -26,14 +26,15 @@ var (
 // With its composite signature, a dashboard credential is about 4.9 KB, the longest valid value.
 const maximumCredentialLength = 8 << 10
 
+// authorizationToken reads "Bearer <key>", or a bare key as the other key
+// headers carry it. Any other scheme is malformed.
 func authorizationToken(raw string) (string, bool) {
-	value := strings.TrimSpace(string(raw))
-	if value == "" {
-		return "", false
-	}
-	parts := strings.Fields(value)
-	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+	parts := strings.Fields(raw)
+	switch {
+	case len(parts) == 2 && strings.EqualFold(parts[0], "Bearer"):
 		return parts[1], validCredentialValue(parts[1])
+	case len(parts) == 1 && !strings.EqualFold(parts[0], "Bearer"):
+		return parts[0], validCredentialValue(parts[0])
 	}
 	return "", false
 }

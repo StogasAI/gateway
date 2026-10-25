@@ -1273,9 +1273,34 @@ func TestAPIKeyTokenAcceptsCatalogAuthAliases(t *testing.T) {
 			want:    "sk-sto-bearer",
 		},
 		{
-			name:    "authorization requires bearer scheme",
+			name:    "authorization bare key",
 			headers: map[string]string{"Authorization": "sk-sto-raw"},
+			want:    "sk-sto-raw",
+		},
+		{
+			name:    "authorization lower-case scheme",
+			headers: map[string]string{"Authorization": "bearer sk-sto-lower"},
+			want:    "sk-sto-lower",
+		},
+		{
+			name:    "authorization other scheme",
+			headers: map[string]string{"Authorization": "Basic c2stc3RvLWJhc2lj"},
 			wantErr: errMalformedAPIKeyHeader,
+		},
+		{
+			name:    "authorization scheme without key",
+			headers: map[string]string{"Authorization": "Bearer "},
+			wantErr: errMalformedAPIKeyHeader,
+		},
+		{
+			name:    "authorization blank",
+			headers: map[string]string{"Authorization": " "},
+			wantErr: errMalformedAPIKeyHeader,
+		},
+		{
+			name:    "authorization bare key beside the same alias",
+			headers: map[string]string{"Authorization": "sk-sto-same", "x-api-key": "sk-sto-same"},
+			want:    "sk-sto-same",
 		},
 		{
 			name:    "api-key",
@@ -1401,8 +1426,15 @@ func TestAPIKeyTokenRejectsConflictingRepeatedHeaderValues(t *testing.T) {
 	ctx = newTestRequest(t)
 	ctx.request.Header.Add("Authorization", "Bearer sk-sto-same")
 	ctx.request.Header.Add("Authorization", "sk-sto-same")
+	if token, err := apiKeyToken(ctx, catalog.RouteChat); token != "sk-sto-same" || err != nil {
+		t.Fatalf("the same key with and without the scheme returned token=%q error=%v", token, err)
+	}
+
+	ctx = newTestRequest(t)
+	ctx.request.Header.Add("Authorization", "Bearer sk-sto-one")
+	ctx.request.Header.Add("Authorization", "sk-sto-two")
 	if token, err := apiKeyToken(ctx, catalog.RouteChat); token != "" || !errors.Is(err, errConflictingAPIKeyHeader) {
-		t.Fatalf("mixed-scheme repeated authorization values returned token=%q error=%v", token, err)
+		t.Fatalf("different keys with and without the scheme returned token=%q error=%v", token, err)
 	}
 }
 
