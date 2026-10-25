@@ -2,6 +2,7 @@ package stogashttp
 
 import (
 	"context"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -98,15 +99,25 @@ func TestRetryWaitBacksOffAndHonorsRetryAfter(t *testing.T) {
 		{name: "first retry", min: 375 * time.Millisecond, max: 500 * time.Millisecond},
 		{name: "third retry", retries: 2, min: 1500 * time.Millisecond, max: 2 * time.Second},
 		{name: "longest backoff", retries: 10, min: 6 * time.Second, max: retryMaxWait},
-		{name: "provider asks for longer", headers: map[string]string{"Retry-After": "3"}, min: 3 * time.Second, max: 3 * time.Second},
+		{name: "provider asks for longer", headers: map[string]string{"Retry-After": "3"}, min: 3 * time.Second, max: 4 * time.Second},
 		{name: "provider asks for less", retries: 2, headers: map[string]string{"retry-after-ms": "10"}, min: 1500 * time.Millisecond, max: 2 * time.Second},
+		{name: "provider asks for nearly the limit", headers: map[string]string{"retry-after-ms": "7500"}, min: 7500 * time.Millisecond, max: retryMaxWait},
+		{name: "provider asks for the limit", headers: map[string]string{"Retry-After": "8"}, min: retryMaxWait, max: retryMaxWait},
 		{name: "provider asks past the limit", headers: map[string]string{"Retry-After": "30"}, min: 30 * time.Second, max: 30 * time.Second},
+		{name: "provider asks for too long to represent", headers: map[string]string{"Retry-After": "1e300"}, min: math.MaxInt64, max: math.MaxInt64},
 	} {
 		ctx := retryAfterContext(test.headers)
+		least, most := time.Duration(math.MaxInt64), time.Duration(0)
 		for range 100 {
-			if wait := retryWait(test.retries, ctx); wait < test.min || wait > test.max {
+			wait := retryWait(test.retries, ctx)
+			if wait < test.min || wait > test.max {
 				t.Fatalf("%s: wait = %s, want %s to %s", test.name, wait, test.min, test.max)
 			}
+			least, most = min(least, wait), max(most, wait)
+		}
+		// Spread waits vary: 100 within a tenth of their range has chance below 10⁻²⁵.
+		if test.max > test.min && most-least < (test.max-test.min)/10 {
+			t.Fatalf("%s: waits from %s to %s, not spread over %s to %s", test.name, least, most, test.min, test.max)
 		}
 	}
 }
@@ -139,17 +150,24 @@ func TestProviderRetryAfter(t *testing.T) {
 	})
 }
 
-func TestRetryAfterSecondsRoundsUp(t *testing.T) {
-	for wait, want := range map[time.Duration]string{
-		0:                                "0",
-		time.Nanosecond:                  "1",
-		time.Second:                      "1",
-		time.Second + time.Millisecond:   "2",
-		time.Duration(math.MaxInt64):     "9223372037",
-		90*time.Second + time.Nanosecond: "91",
+func TestSpreadRetryAfterRoundsUpAndSpreads(t *testing.T) {
+	for wait, want := range map[time.Duration][]string{
+		0:                                {"1", "2"},
+		time.Nanosecond:                  {"1", "2"},
+		time.Second:                      {"1", "2"},
+		time.Second + time.Millisecond:   {"2", "3"},
+		59 * time.Second:                 {"59", "60"},
+		59*time.Second + time.Nanosecond: {"60"},
+		90*time.Second + time.Nanosecond: {"91"},
+		time.Duration(math.MaxInt64):     {"9223372037"},
 	} {
-		if got := retryAfterSeconds(wait); got != want {
-			t.Errorf("retryAfterSeconds(%s) = %q, want %q", wait, got, want)
+		seen := map[string]bool{}
+		// Each value of a spread is missed by all 64 draws with chance 2⁻⁶⁴.
+		for range 64 {
+			seen[spreadRetryAfter(wait)] = true
+		}
+		if !maps.Equal(seen, map[string]bool{want[0]: true, want[len(want)-1]: true}) {
+			t.Errorf("spreadRetryAfter(%s) = %v, want %v", wait, seen, want)
 		}
 	}
 }

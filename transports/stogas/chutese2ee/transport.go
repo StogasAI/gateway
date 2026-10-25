@@ -628,7 +628,8 @@ func setSyntheticError(response *fasthttp.Response, status int, errorType, messa
 	response.SetStatusCode(status)
 	response.Header.SetContentType("application/json")
 	if retryAfter > 0 {
-		seconds := max(1, int(retryAfter.Round(time.Second)/time.Second))
+		// Rounding up never asks for a retry before the wait ends.
+		seconds := (retryAfter + time.Second - 1) / time.Second
 		response.Header.Set("Retry-After", fmt.Sprintf("%d", seconds))
 	}
 	body, _ := json.Marshal(map[string]any{

@@ -776,10 +776,10 @@ func TestTicketReservationErrorClassification(t *testing.T) {
 			wantCode:   "upstream_configuration_error",
 		},
 		{
-			name: "rate limit retains bounded retry advice",
+			name: "rate limit retains bounded retry advice, rounded up",
 			err: errors.Join(ErrNoUsableTicket, &ticketRefillBackoffError{
 				Cause:      &httpStatusError{StatusCode: http.StatusTooManyRequests},
-				RetryAfter: 7 * time.Second,
+				RetryAfter: 6*time.Second + 200*time.Millisecond,
 			}),
 			wantStatus: http.StatusTooManyRequests,
 			wantCode:   "upstream_rate_limit_error",

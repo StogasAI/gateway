@@ -391,6 +391,9 @@ func TestRequestPreparationIsChargedBeforeWork(t *testing.T) {
 	if testResponse(ctx).Code != http.StatusServiceUnavailable || !strings.Contains(testResponse(ctx).Body.String(), "gateway_capacity_exceeded") {
 		t.Fatalf("preparation started without its memory charge: %d, %s", testResponse(ctx).Code, testResponse(ctx).Body.String())
 	}
+	if retryAfter := ctx.writer.Header().Get("Retry-After"); retryAfter != "1" && retryAfter != "2" {
+		t.Fatalf("capacity refusal Retry-After = %q", retryAfter)
+	}
 	if server.memory.reserved.Load() != 0 {
 		t.Fatal("rejected preparation retained memory")
 	}
