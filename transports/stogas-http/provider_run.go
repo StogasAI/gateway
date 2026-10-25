@@ -330,7 +330,13 @@ func statusFailureAction(failure *schemas.BifrostError) failureAction {
 func retryWait(retries int, attempt *schemas.BifrostContext) time.Duration {
 	wait := time.Duration(float64(min(retryInitialWait<<retries, retryMaxWait)) * (1 - 0.25*rand.Float64()))
 	if after, ok := providerRetryAfter(attempt); ok && after > wait {
-		return after
+		if after >= retryMaxWait {
+			return after
+		}
+		// Calls that a provider refused together get the same wait, often in
+		// whole seconds, and would otherwise retry together. A random part of
+		// a second spreads them and never makes a wait too long to retry.
+		return min(after+rand.N(time.Second), retryMaxWait)
 	}
 	return wait
 }

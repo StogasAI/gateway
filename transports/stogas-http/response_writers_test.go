@@ -68,25 +68,41 @@ func TestBillingRefusalsTellClientsWhenToRetry(t *testing.T) {
 
 func TestWriteProviderErrorTellsClientsWhenToRetry(t *testing.T) {
 	for _, tc := range []struct {
-		name, providerRetryAfter  string
-		err                       *schemas.BifrostError
-		wantRetryAfter, wantRetry string
+		name      string
+		headers   map[string]string
+		err       *schemas.BifrostError
+		want      []string
+		wantRetry string
 	}{
-		{"rate limit", "7", testBifrostError(http.StatusTooManyRequests, "slow down", "rate_limit_error", ""), "7", ""},
-		{"overload until a past date", "Wed, 21 Oct 2015 07:28:00 GMT", testBifrostError(529, "overloaded", "overloaded_error", ""), "0", ""},
-		{"invalid delay", "soon", testBifrostError(http.StatusServiceUnavailable, "unavailable", "", ""), "", ""},
-		{"request error", "7", testBifrostError(http.StatusBadRequest, "bad request", "invalid_request_error", ""), "", ""},
-		{"rejected credential", "7", testBifrostError(http.StatusUnauthorized, "bad key", "authentication_error", ""), "", "false"},
-		{"exhausted quota", "7", testBifrostError(http.StatusTooManyRequests, "quota", "", "insufficient_quota"), "", "false"},
+		{"rate limit", map[string]string{"Retry-After": "7"}, testBifrostError(http.StatusTooManyRequests, "slow down", "rate_limit_error", ""), []string{"7", "8"}, ""},
+		{"milliseconds", map[string]string{"retry-after-ms": "250", "Retry-After": "9"}, testBifrostError(http.StatusTooManyRequests, "slow down", "rate_limit_error", ""), []string{"1", "2"}, ""},
+		{"overloaded for over a minute", map[string]string{"Retry-After": "90"}, testBifrostError(529, "overloaded", "overloaded_error", ""), []string{"90"}, ""},
+		{"no wait", map[string]string{"Retry-After": "0"}, testBifrostError(http.StatusServiceUnavailable, "unavailable", "", ""), []string{""}, ""},
+		{"overload until a past date", map[string]string{"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"}, testBifrostError(529, "overloaded", "overloaded_error", ""), []string{""}, ""},
+		{"invalid delay", map[string]string{"Retry-After": "soon"}, testBifrostError(http.StatusServiceUnavailable, "unavailable", "", ""), []string{""}, ""},
+		{"request error", map[string]string{"Retry-After": "7"}, testBifrostError(http.StatusBadRequest, "bad request", "invalid_request_error", ""), []string{""}, ""},
+		{"rejected credential", map[string]string{"Retry-After": "7"}, testBifrostError(http.StatusUnauthorized, "bad key", "authentication_error", ""), []string{""}, "false"},
+		{"exhausted quota", map[string]string{"Retry-After": "7"}, testBifrostError(http.StatusTooManyRequests, "quota", "", "insufficient_quota"), []string{""}, "false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := newTestRequest(t)
-			bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-			bifrostCtx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, map[string]string{"Retry-After": tc.providerRetryAfter})
-			(&Server{}).writeProviderError(ctx, bifrostCtx, tc.err)
-			header := ctx.writer.Header()
-			if header.Get("Retry-After") != tc.wantRetryAfter || header.Get("X-Should-Retry") != tc.wantRetry {
-				t.Fatalf("Retry-After = %q, X-Should-Retry = %q", header.Get("Retry-After"), header.Get("X-Should-Retry"))
+			seen := map[string]bool{}
+			for range 64 {
+				ctx := newTestRequest(t)
+				bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				bifrostCtx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, tc.headers)
+				(&Server{}).writeProviderError(ctx, bifrostCtx, tc.err)
+				header := ctx.writer.Header()
+				if header.Get("X-Should-Retry") != tc.wantRetry {
+					t.Fatalf("X-Should-Retry = %q", header.Get("X-Should-Retry"))
+				}
+				seen[header.Get("Retry-After")] = true
+			}
+			want := map[string]bool{}
+			for _, value := range tc.want {
+				want[value] = true
+			}
+			if !maps.Equal(seen, want) {
+				t.Fatalf("Retry-After values = %v, want %v", seen, tc.want)
 			}
 		})
 	}

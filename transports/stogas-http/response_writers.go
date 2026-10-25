@@ -23,7 +23,7 @@ func (s *Server) writeBifrostError(ctx *requestContext, bifrostErr *schemas.Bifr
 	s.writeError(ctx, statusCode, payload)
 }
 
-// writeProviderError passes on the provider's Retry-After, which SDKs wait for
+// writeProviderError passes on the provider's wait, which SDKs wait for
 // instead of their short backoff when a provider is rate limited or overloaded.
 func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.BifrostContext, bifrostErr *schemas.BifrostError) {
 	statusCode, payload := publicBifrostError(bifrostErr)
@@ -33,12 +33,16 @@ func (s *Server) writeProviderError(ctx *requestContext, bifrostCtx *schemas.Bif
 	s.writeError(ctx, statusCode, payload)
 }
 
+// providerErrorRetryAfter spreads a provider's wait as spreadRetryAfter does
+// ours: one provider account refuses many callers together. A zero wait sends
+// no header, because openai-node and the AI SDK retry at once on
+// Retry-After: 0, while without it they wait their randomized backoff.
 func providerErrorRetryAfter(statusCode int, bifrostCtx *schemas.BifrostContext) string {
 	if statusCode != http.StatusTooManyRequests && statusCode != http.StatusServiceUnavailable && statusCode != 529 {
 		return ""
 	}
-	if wait, ok := providerRetryAfter(bifrostCtx); ok {
-		return retryAfterSeconds(wait)
+	if wait, ok := providerRetryAfter(bifrostCtx); ok && wait > 0 {
+		return spreadRetryAfter(wait)
 	}
 	return ""
 }
@@ -83,20 +87,12 @@ func parseRetryAfter(value string, unit time.Duration) (time.Duration, bool) {
 	return time.Duration(amount * float64(unit)), true
 }
 
-// retryAfterSeconds rounds up, so a client never retries early.
-func retryAfterSeconds(wait time.Duration) string {
-	seconds := wait / time.Second
-	if wait%time.Second != 0 {
-		seconds++
-	}
-	return strconv.FormatInt(int64(seconds), 10)
-}
-
-// spreadRetryAfter answers a refusal by one of our own limits: its wait in
-// whole seconds, at least one, plus a second for a random half of the waits
-// under a minute. SDKs retry exactly when Retry-After says, so the requests of
-// a burst that a limit refused together would otherwise come back together
-// and find it nearly empty again.
+// spreadRetryAfter turns a refusal's wait into Retry-After: whole seconds
+// rounded up, so a client never retries early, at least one, plus a second for
+// a random half of the waits under a minute. SDKs retry exactly when
+// Retry-After says, so the requests of a burst that a limit refused together
+// would otherwise come back together and find it nearly empty again. Exact
+// waits in retry-after-ms would bring them back together sooner.
 func spreadRetryAfter(wait time.Duration) string {
 	seconds := max(1, int64(math.Ceil(wait.Seconds())))
 	if seconds < 60 {
@@ -560,5 +556,5 @@ func billingErrorResponse(err error) errorResponse {
 func capacityErrorResponse() errorResponse {
 	return errorResponse{status: http.StatusServiceUnavailable, payload: map[string]any{
 		"error": map[string]any{"message": "Gateway capacity is temporarily exhausted. Retry the request later.", "type": "service_unavailable", "code": "gateway_capacity_exceeded"},
-	}, retryAfter: "1"}
+	}, retryAfter: spreadRetryAfter(0)}
 }

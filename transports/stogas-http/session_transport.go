@@ -198,7 +198,7 @@ func (s *Server) openSession(ctx *requestContext, input io.Reader, deadline time
 // the client may retry both. Other read failures are the client's.
 func writeSessionReadError(ctx *requestContext, err error) {
 	if errors.Is(err, errRequestMemoryCapacity) || errors.Is(err, channel.ErrSessionCapacity) {
-		ctx.writer.Header().Set("Retry-After", "1")
+		ctx.writer.Header().Set("Retry-After", spreadRetryAfter(0))
 		ctx.writer.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}

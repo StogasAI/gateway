@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -352,7 +353,7 @@ func TestMemoryPressureEndsEncryptedUploadBeforeItsFirstRecord(t *testing.T) {
 		return
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusServiceUnavailable || response.Header.Get("Retry-After") != "1" {
+	if response.StatusCode != http.StatusServiceUnavailable || !slices.Contains([]string{"1", "2"}, response.Header.Get("Retry-After")) {
 		t.Fatalf("ended encrypted upload answered %d with Retry-After %q", response.StatusCode, response.Header.Get("Retry-After"))
 	}
 	for start := time.Now(); f.server.memory.reserved.Load() != baseline; time.Sleep(time.Millisecond) {
