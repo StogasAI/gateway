@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/network"
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter/exportconfig"
 )
 
@@ -86,7 +87,7 @@ func newDeliveryClient(local bool, newLease func() Lease) deliveryClient {
 		}
 		return &chargedConn{Conn: conn, release: sync.OnceFunc(lease.Release)}, nil
 	}
-	transport := &http.Transport{DialContext: dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, MaxIdleConns: maxIdleConns, MaxIdleConnsPerHost: maxConnsPerHost, MaxConnsPerHost: maxConnsPerHost, IdleConnTimeout: deliveryWindow, TLSHandshakeTimeout: attemptTimeout, ResponseHeaderTimeout: attemptTimeout, MaxResponseHeaderBytes: responseLimit, DisableCompression: true}
+	transport := &http.Transport{DialContext: dial, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, MaxIdleConns: maxIdleConns, MaxIdleConnsPerHost: maxConnsPerHost, MaxConnsPerHost: maxConnsPerHost, IdleConnTimeout: deliveryWindow, TLSHandshakeTimeout: attemptTimeout, ResponseHeaderTimeout: attemptTimeout, MaxResponseHeaderBytes: responseLimit, DisableCompression: true, HTTP2: http2health.Config()}
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return deliveryClient{client: client, transport: transport, local: local}
 }

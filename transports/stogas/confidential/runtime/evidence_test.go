@@ -309,3 +309,15 @@ func TestEvidenceRetirementOutlivesLaggingCopies(t *testing.T) {
 		})
 	}
 }
+
+// A retry must not wait on an HTTP/2 connection that stopped answering.
+func TestEvidenceChecksItsHTTP2Connections(t *testing.T) {
+	evidence, err := newCurrentEvidence("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evidence.close()
+	if transport, ok := evidence.client.Transport.(*http.Transport); !ok || transport.HTTP2 == nil || transport.HTTP2.SendPingTimeout == 0 {
+		t.Fatal("the evidence client does not check its HTTP/2 connections")
+	}
+}

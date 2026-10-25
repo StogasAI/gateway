@@ -595,3 +595,12 @@ func TestHostedDeliveryRejectsLoopbackHostnames(t *testing.T) {
 		t.Fatal("hosted delivery reached a loopback receiver through its hostname")
 	}
 }
+
+// A retry must not wait on an HTTP/2 connection that stopped answering.
+func TestDeliveryChecksItsHTTP2Connections(t *testing.T) {
+	client := newDeliveryClient(false, testOptions(false, 1<<20).NewLease)
+	defer client.close()
+	if client.transport.HTTP2 == nil || client.transport.HTTP2.SendPingTimeout == 0 {
+		t.Fatal("export delivery does not check its HTTP/2 connections")
+	}
+}

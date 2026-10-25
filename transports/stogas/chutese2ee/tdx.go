@@ -25,6 +25,7 @@ import (
 	tdxpb "github.com/google/go-tdx-guest/proto/tdx"
 	"github.com/google/go-tdx-guest/validate"
 	"github.com/google/go-tdx-guest/verify"
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -79,6 +80,7 @@ func newCollateralGetter() *collateralGetter {
 				TLSHandshakeTimeout:    10 * time.Second,
 				MaxResponseHeaderBytes: 64 << 10,
 				TLSClientConfig:        &tls.Config{MinVersion: tls.VersionTLS12},
+				HTTP2:                  http2health.Config(),
 			},
 			Timeout: collateralHTTPTimeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

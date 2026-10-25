@@ -13,6 +13,7 @@ import (
 
 	verifier "github.com/StogasAI/stogas/go"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
+	"github.com/maximhq/bifrost/transports/stogas/http2health"
 )
 
 const (
@@ -108,6 +109,7 @@ func newCurrentEvidence(environment string) (*currentEvidence, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxResponseHeaderBytes = 16 * 1024
+	transport.HTTP2 = http2health.Config()
 	client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return errors.New("evidence redirects are not permitted")
 	}}
