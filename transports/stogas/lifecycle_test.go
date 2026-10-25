@@ -155,7 +155,7 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 	previous := &billing.Authorization{RequestID: "11111111-1111-1111-1111-111111111111"}
 	authorizer := &fakeBillingAuthorizer{errors: []error{&statusError{err: billing.ErrInvalidAPIKey, statusCode: 401}}}
 
-	if err := AuthorizeState(ctx, authorizer, state, keyConfig, keys, previous); !errors.Is(err, billing.ErrInvalidAPIKey) {
+	if err := AuthorizeState(ctx, ctx, authorizer, state, keyConfig, keys, previous); !errors.Is(err, billing.ErrInvalidAPIKey) {
 		t.Fatalf("AuthorizeState error = %v, want invalid API key", err)
 	}
 	if len(authorizer.requests) != 1 {

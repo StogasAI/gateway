@@ -76,8 +76,10 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 }
 
 // AuthorizeState places the hold for the bound pair. With a previous
-// authorization, the database moves that request's hold to this pair.
-func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, state *State, keyConfig *gatewaybilling.KeyConfigSnapshot, encryptionKeys customerkey.Keys, previous *gatewaybilling.Authorization) error {
+// authorization, the database moves that request's hold to this pair. caller
+// ends when the caller leaves; an authorization that still waits for its
+// organization's statement then leaves the queue.
+func AuthorizeState(ctx *schemas.BifrostContext, caller context.Context, billing billingAuthorizer, state *State, keyConfig *gatewaybilling.KeyConfigSnapshot, encryptionKeys customerkey.Keys, previous *gatewaybilling.Authorization) error {
 	if billing == nil {
 		return gatewaybilling.ErrGatewayUnavailable
 	}
@@ -113,7 +115,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, billing billingAuthorizer, stat
 	}
 
 	textBytes, _ := state.Resolution.InputTextBytes()
-	authorization, err := billing.Authorize(ctx, gatewaybilling.HoldRequest{
+	authorization, err := billing.Authorize(caller, gatewaybilling.HoldRequest{
 		RawAPIKey:                state.RawAPIKey,
 		Dashboard:                state.DashboardCredential,
 		RequestID:                requestID,
