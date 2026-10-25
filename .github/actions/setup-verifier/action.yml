@@ -1,10 +1,15 @@
 name: Build the pinned Linux verifier
 description: Build the static C archive used by the gateway Go dependency.
+outputs:
+  cgo-ldflags:
+    description: CGO_LDFLAGS for the steps that build the gateway.
+    value: ${{ steps.build.outputs.cgo-ldflags }}
 runs:
   using: composite
   steps:
     - name: Build the static archive
+      id: build
       shell: bash
       run: |
         native="$(stogas/scripts/verifier-native.sh)"
-        echo "CGO_LDFLAGS=-L$native" >> "$GITHUB_ENV"
+        echo "cgo-ldflags=-L$native" >> "$GITHUB_OUTPUT"
