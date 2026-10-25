@@ -253,6 +253,82 @@ func TestBusyAndRolledBackBatchesRunAgain(t *testing.T) {
 	}
 }
 
+// A caller that leaves while its authorization waits takes it out of the
+// queue, and also while a statement that finds the organization busy has it.
+// It gets the cancellation, which the gateway answers with nothing, and no
+// later statement includes it.
+func TestAuthorizationWhoseCallerLeavesLeavesTheQueue(t *testing.T) {
+	first, busy, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	var statements [][]string
+	service := scriptedService(t, 1, func(statement fakeStatement) ([]fakeRow, *pgproto3.ErrorResponse) {
+		mu.Lock()
+		statements = append(statements, statement.products)
+		count := len(statements)
+		mu.Unlock()
+		switch count {
+		case 1:
+			close(first)
+			<-released
+		case 2:
+			close(busy)
+			<-released
+			rows := make([]fakeRow, len(statement.products))
+			for index := range rows {
+				rows[index] = fakeRow{result: "organization_busy", waitMS: -1}
+			}
+			return rows, nil
+		}
+		return limitRows(statement), nil
+	})
+	results := make([]error, 5)
+	answered := make([]chan struct{}, len(results))
+	callers := make([]context.CancelFunc, len(results))
+	var authorizations sync.WaitGroup
+	for index := range results {
+		var ctx context.Context
+		ctx, callers[index] = context.WithCancel(context.Background())
+		defer callers[index]()
+		answered[index] = make(chan struct{})
+		authorizations.Go(func() {
+			defer close(answered[index])
+			results[index] = authorizeProductUntil(ctx, t, service, "a", index)
+		})
+		if index == 0 {
+			<-first
+		} else {
+			waitFor(t, func() bool { return service.organizationQueues.waits.Load() == uint64(index) })
+		}
+	}
+	// a-2's caller leaves while it waits. The first statement then ends, the
+	// next takes the others, and a-3's caller leaves while it runs.
+	callers[2]()
+	<-answered[2]
+	released <- struct{}{}
+	<-busy
+	callers[3]()
+	close(released)
+	authorizations.Wait()
+	for index, err := range results {
+		if index == 2 || index == 3 {
+			if !errors.Is(err, context.Canceled) || errors.Is(err, ErrGatewayUnavailable) {
+				t.Fatalf("authorization %d whose caller left got %v", index, err)
+			}
+		} else if !retriesAfter(err, index) {
+			t.Fatalf("authorization %d got %v", index, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	want := [][]string{{"a-0"}, {"a-1", "a-3", "a-4"}, {"a-1", "a-4"}}
+	if !slices.EqualFunc(statements, want, slices.Equal) {
+		t.Fatalf("statements = %v, want %v", statements, want)
+	}
+	if diagnostics := service.localAdmissionDiagnostics(); diagnostics.OrganizationTimeouts != 0 || diagnostics.AuthorizationFailures != 0 {
+		t.Fatalf("callers that left counted as timeouts %d or failures %d", diagnostics.OrganizationTimeouts, diagnostics.AuthorizationFailures)
+	}
+}
+
 // The monitor reads when authorizations started failing. Failures keep that
 // time, and the first statement that PostgreSQL answers clears it.
 func TestAuthorizationFailuresLastUntilPostgreSQLAnswers(t *testing.T) {
@@ -409,6 +485,12 @@ func retriesAfter(err error, milliseconds int) bool {
 // authorizeProduct authorizes a request of organization whose product key
 // names it and index.
 func authorizeProduct(t *testing.T, service *Service, organization string, index int) error {
+	return authorizeProductUntil(context.Background(), t, service, organization, index)
+}
+
+// authorizeProductUntil authorizes as authorizeProduct does for a caller that
+// leaves when ctx ends.
+func authorizeProductUntil(ctx context.Context, t *testing.T, service *Service, organization string, index int) error {
 	var cache keyConfigCache
 	snapshot := credentialPolicySnapshot(t, &cache, organization, json.RawMessage(`null`), nil)
 	prepared, err := service.PrepareCredential(snapshot, "chutes", 0, nil)
@@ -419,7 +501,7 @@ func authorizeProduct(t *testing.T, service *Service, organization string, index
 	if err != nil {
 		return err
 	}
-	_, err = service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: requestID, ProviderKey: "chutes", ProductKey: fmt.Sprintf("%s-%d", organization, index), EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
+	_, err = service.authorizeResolvedRequest(ctx, "hash", snapshot.Claims, HoldRequest{RequestID: requestID, ProviderKey: "chutes", ProductKey: fmt.Sprintf("%s-%d", organization, index), EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
 	return err
 }
 

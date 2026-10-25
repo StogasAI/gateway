@@ -375,7 +375,9 @@ type HoldRequest struct {
 	Previous                 *Authorization
 }
 
-// Authorize places the hold that admits a request to its pair's provider.
+// Authorize places the hold that admits a request to its pair's provider. A
+// request whose ctx ends while it waits for its organization's statement
+// leaves the queue.
 func (s *Service) Authorize(ctx context.Context, request HoldRequest) (*Authorization, error) {
 	var claims *APIKeyClaims
 	apiKeyHash := ""
@@ -543,6 +545,11 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if outcome.sent && !pgconn.SafeToRetry(outcome.err) && previous == nil {
 			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
 			releaseFinalization = nil
+		}
+		// The caller left before a statement authorized the request, so the
+		// database holds nothing for it, and nobody waits for an answer.
+		if errors.Is(outcome.err, context.Canceled) {
+			return nil, outcome.err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, outcome.err)
 	}

@@ -150,7 +150,7 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if r.held != nil {
 		previous = r.held.Authorization
 	}
-	err = stogas.AuthorizeState(r.request, r.server.runtime.Billing(), state, r.keyConfig, r.credential.EncryptionKeys, previous)
+	err = stogas.AuthorizeState(r.request, r.client.request.Context(), r.server.runtime.Billing(), state, r.keyConfig, r.credential.EncryptionKeys, previous)
 	if previous == nil && state.Authorization != nil {
 		r.server.recordAdmission(r.client)
 		r.client.markPaid()
