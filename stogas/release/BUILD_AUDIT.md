@@ -37,7 +37,7 @@ Guix runs two build farms, `ci.guix.gnu.org` and `bordeaux.guix.gnu.org`, and ea
 `guix/release.scm`:
 
 1. Builds the gateway with CGO, statically linked to the verifier library, and the init program in pure Go.
-2. Packs init, the gateway, `ntp-daemon`, `guix/ntp.toml`, and the Guix CA certificates into a reproducible zstd cpio initramfs.
+2. Packs init, the gateway, `ntp-daemon`, `guix/ntp.toml`, and the Guix CA certificates into a reproducible zstd cpio initramfs. When Guix removes distrusted roots with a graft, the certificates come from the grafted package, because a graft does not reach copied files.
 3. Combines the kernel, the initramfs, `cmdline.txt`, and `os-release` into a unified kernel image (UKI) with the systemd EFI stub.
 4. Wraps AmdSev OVMF into an SNP IGVM file with four vCPUs and adds the UKI as measured pages. The build fails if any page is unmeasured or shared, because the host could change it without changing the launch measurement.
 5. Computes the launch measurement with `igvmmeasure --check-kvm` and writes `release-manifest.json`.
