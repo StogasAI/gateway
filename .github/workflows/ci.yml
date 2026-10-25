@@ -25,13 +25,18 @@ jobs:
           cache-dependency-path: |
             core/go.sum
             transports/go.sum
-      - uses: ./.github/actions/setup-verifier
+      - id: verifier
+        uses: $/.github/actions/setup-verifier
       - name: Test Stogas packages with race detection
         working-directory: transports
+        env:
+          CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
         run: GOWORK=off go test -tags=stogas_gateway -race -shuffle=on -count=1 ./...
       # The race detector changes allocation; stop-the-world collection exposes short heap peaks.
       - name: Measure request preparation memory
         working-directory: transports
+        env:
+          CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
         run: GOWORK=off GODEBUG=gcstoptheworld=1 go test -tags=stogas_gateway -count=1 -run '^TestRequestPreparationFitsItsMemoryCharges$' ./stogas-http
       - name: Test deterministic retained core packages
         working-directory: core

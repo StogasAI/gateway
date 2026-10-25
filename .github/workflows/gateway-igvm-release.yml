@@ -58,7 +58,9 @@ jobs:
             dist/gateway/${{ github.ref_name }}/gateway.igvm
 
       - name: Collect official GitHub attestation evidence
-        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/gateway/${{ github.ref_name }}/github-attestation.jsonl"
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" "dist/gateway/$GITHUB_REF_NAME/github-attestation.jsonl"
 
       - name: Prepare release payload
         run: |
