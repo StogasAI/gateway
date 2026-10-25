@@ -35,7 +35,14 @@ func captureExportError(state *stogas.State, failure *schemas.BifrostError) {
 	if state == nil || !state.Export.Active() {
 		return
 	}
-	encoded, err := marshalPayload(bifrostErrorPayload(failure))
+	captureExportPayload(state, bifrostErrorPayload(failure))
+}
+
+func captureExportPayload(state *stogas.State, payload any) {
+	if state == nil || !state.Export.Active() {
+		return
+	}
+	encoded, err := marshalPayload(payload)
 	if err == nil {
 		state.Export.Response(encoded)
 		clear(encoded)
