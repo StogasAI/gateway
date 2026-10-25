@@ -194,7 +194,7 @@ func (s *Server) requireInferenceHeaders(ctx *requestContext) (apiCredential, bo
 	}
 	if !validateAcceptHeaders(ctx.request.Header.Values("Accept")) {
 		s.writeError(ctx, http.StatusBadRequest, map[string]any{
-			"error": map[string]any{"message": "Accept must be application/json or text/event-stream", "type": "invalid_request_error"},
+			"error": map[string]any{"message": "Accept must include application/json or text/event-stream", "type": "invalid_request_error"},
 		})
 		return apiCredential{}, false
 	}
@@ -236,30 +236,25 @@ func internalOrProviderControlHeader(name string) bool {
 	return strings.HasPrefix(name, "x-bf-") || strings.HasPrefix(name, "x-stogas-")
 }
 
-func validateAcceptHeader(raw string) bool {
-	value := strings.TrimSpace(string(raw))
-	if value == "" {
-		return true
-	}
-	for _, item := range strings.Split(value, ",") {
-		mediaType, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(item)), ";")
-		switch strings.TrimSpace(mediaType) {
-		case "application/json", "text/event-stream", "*/*":
-			continue
-		default:
-			return false
-		}
-	}
-	return true
-}
-
+// validateAcceptHeaders reports whether the client accepts what the gateway
+// sends: JSON, or an event stream when the body asks to stream. HTTP lets a
+// server send any listed type, and clients such as axios list text/plain
+// beside JSON by default, so other listed types do not fail the request.
 func validateAcceptHeaders(values []string) bool {
+	listed := false
 	for _, value := range values {
-		if !validateAcceptHeader(value) {
-			return false
+		for _, item := range strings.Split(value, ",") {
+			mediaType, _, _ := strings.Cut(item, ";")
+			switch strings.ToLower(strings.TrimSpace(mediaType)) {
+			case "":
+			case "application/json", "text/event-stream", "application/*", "text/*", "*/*":
+				return true
+			default:
+				listed = true
+			}
 		}
 	}
-	return true
+	return !listed
 }
 
 func validContentEncodingHeaders(values []string) bool {

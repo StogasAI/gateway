@@ -1371,15 +1371,6 @@ func TestInferenceHeadersRejectInvalidContentHeaders(t *testing.T) {
 			},
 			statusCode: http.StatusBadRequest,
 		},
-		{
-			name: "conflicting accept values",
-			headers: [][2]string{
-				{"Content-Type", "application/json"},
-				{"Accept", "application/json"},
-				{"Accept", "text/html"},
-			},
-			statusCode: http.StatusBadRequest,
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := newTestRequest(t)
@@ -1515,31 +1506,41 @@ func TestInferenceHeadersRejectInternalControlHeaders(t *testing.T) {
 
 func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
 	tests := []struct {
-		accept string
+		accept []string
 		ok     bool
 	}{
-		{"", true},
-		{"application/json", true},
-		{"text/event-stream", true},
-		{"application/json, text/event-stream", true},
-		{"*/*", true},
-		{"text/html", false},
+		{nil, true},
+		{[]string{""}, true},
+		{[]string{"application/json"}, true},
+		{[]string{"text/event-stream"}, true},
+		{[]string{"application/json, text/event-stream"}, true},
+		{[]string{"*/*"}, true},
+		{[]string{"application/*"}, true},
+		{[]string{"text/*;q=0.5"}, true},
+		// axios sends this list by default.
+		{[]string{"application/json, text/plain, */*"}, true},
+		{[]string{"text/html", "Application/JSON; charset=utf-8"}, true},
+		{[]string{"text/html"}, false},
+		{[]string{"text/html, image/png", "text/plain"}, false},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.accept, func(t *testing.T) {
+		t.Run(strings.Join(tt.accept, " | "), func(t *testing.T) {
 			ctx := newTestRequest(t)
 			testRequestURI(ctx, "/v1/responses")
 			ctx.request.Method = http.MethodPost
 			ctx.request.Header.Set("Authorization", "Bearer sk-test")
 			ctx.request.Header.Set("Content-Type", "application/json")
-			if tt.accept != "" {
-				ctx.request.Header.Set("Accept", tt.accept)
+			for _, value := range tt.accept {
+				ctx.request.Header.Add("Accept", value)
 			}
 
 			_, ok := (&Server{}).requireInferenceHeaders(ctx)
 			if ok != tt.ok {
 				t.Fatalf("expected ok=%v for Accept %q, got %v with status %d", tt.ok, tt.accept, ok, testResponse(ctx).Code)
+			}
+			if !ok && testResponse(ctx).Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for Accept %q, got %d", tt.accept, testResponse(ctx).Code)
 			}
 		})
 	}
