@@ -92,7 +92,8 @@
          ((#:imported-modules modules %default-gnu-imported-modules)
           `((guix build kconfig) ,@modules))
          ((#:modules modules)
-          `((guix build kconfig) ,@modules))
+          `((guix build kconfig) (ice-9 regex) (ice-9 textual-ports)
+            ,@modules))
          ((#:phases phases)
           #~(modify-phases #$phases
               (replace 'configure
@@ -102,7 +103,44 @@
                   (setenv "KBUILD_BUILD_TIMESTAMP" "1970-01-01 00:00:01 UTC")
                   (invoke "make" "allnoconfig"
                           (string-append "KCONFIG_ALLCONFIG=" #$config))
-                  (verify-config ".config" #$config)))))))
+                  (verify-config ".config" #$config)))
+              (add-after 'install 'install-compiled-sources
+                (lambda _
+                  ;; Kbuild records the source and headers of each file it
+                  ;; builds in a .cmd file. Kernel CVE records name the files
+                  ;; that each fix changes, so this list shows which CVEs
+                  ;; reach this kernel.
+                  (let* ((root (string-append (canonicalize-path ".") "/"))
+                         (prefix (string-length root))
+                         (sources (make-hash-table))
+                         (separators (char-set #\space #\tab #\newline #\\
+                                               #\: #\( #\) #\, #\;)))
+                    (for-each
+                     (lambda (cmd)
+                       (for-each
+                        (lambda (token)
+                          ;; Paths such as arch/x86/boot/../include name a
+                          ;; file by another route, and toolchain headers lie
+                          ;; outside the tree.
+                          (when (and (string-match "\\.(c|h|S|rs)$" token)
+                                     (file-exists? token))
+                            (let ((path (canonicalize-path token)))
+                              (when (string-prefix? root path)
+                                (hash-set! sources (string-drop path prefix)
+                                           #t)))))
+                        (string-tokenize
+                         (call-with-input-file cmd get-string-all)
+                         (char-set-complement separators))))
+                     (find-files "." "\\.cmd$"))
+                    (call-with-output-file
+                        (string-append #$output "/compiled-sources")
+                      (lambda (port)
+                        (for-each (lambda (path)
+                                    (display path port)
+                                    (newline port))
+                                  (sort (hash-map->list (lambda (path _) path)
+                                                        sources)
+                                        string<?)))))))))))
       (synopsis "Linux kernel for the Stogas SEV-SNP gateway guest")
       (description
        "Linux-libre configured from @code{allnoconfig} with only the options
