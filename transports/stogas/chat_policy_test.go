@@ -1675,6 +1675,9 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"openai web search unknown field", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
 		{"openai preview filters", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
 		{"openai web search invalid domain", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
+		// Core drops blocked_domains for OpenAI, and the result check cannot match paths.
+		{"openai web search blocked domains", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["example.com"]}}]}`, "blocked_domains is not supported"},
+		{"anthropic web search domain path", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com/blog"]}}]}`, "contains an invalid domain"},
 		{"openai web search bad location country", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
 		{"unsupported tool choice", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
 		{"hosted tool choice not declared", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
