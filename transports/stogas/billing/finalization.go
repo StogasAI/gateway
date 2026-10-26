@@ -379,8 +379,8 @@ func (s *Service) settle(ctx context.Context, batch []*settlement) {
 }
 
 // keepFailedLog stores a log that a settlement call failed on with its hold.
-// If that fails too, the log is abandoned and the hold stays until this boot
-// stops.
+// If that fails too, the log is abandoned. Control alerts once the hold
+// expires and releases it without charge when this boot stops or a day later.
 func (s *Service) keepFailedLog(ctx context.Context, item *settlement, state string) {
 	f := &s.finalizations
 	var result string
