@@ -252,8 +252,8 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	if event.Performance.TTFTMS == nil || *event.Performance.TTFTMS != ttftMS {
 		t.Fatalf("expected request TTFT, got %#v", event.Performance.TTFTMS)
 	}
-	if event.StogasGrantID == nil || *event.StogasGrantID != grantID {
-		t.Fatalf("expected grant attribution, got %#v", event.StogasGrantID)
+	if event.GrantID == nil || *event.GrantID != grantID {
+		t.Fatalf("expected grant attribution, got %#v", event.GrantID)
 	}
 	if event.Plugins.StogasStructuredPIIRedaction == nil ||
 		event.Plugins.StogasStructuredPIIRedaction.ItemsRedacted != 2 ||
@@ -576,8 +576,8 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 	}
 	event := RequestEvent{
 		SchemaVersion: RequestLogSchemaVersion, RequestID: uuid.NewString(), CreatedAt: "2026-10-16T12:00:00.000Z", LastRequestAt: "2026-10-16T12:00:00.000Z",
-		RequestCount: 1, GatewayError: &EventError{Code: "upstream_configuration_error", Status: 599}, StogasAPIKeyID: uuid.NewString(),
-		StogasGrantID: new(uuid.NewString()), StogasUserID: uuid.NewString(), StogasOrganizationID: uuid.NewString(), RequestType: "chat_completion_stream",
+		RequestCount: 1, GatewayError: &EventError{Code: "upstream_configuration_error", Status: 599}, APIKeyID: uuid.NewString(),
+		GrantID: new(uuid.NewString()), MemberID: uuid.NewString(), OrganizationID: uuid.NewString(), RequestType: "chat_completion_stream",
 		RequestSettings: RequestSettings{
 			MaxOutputTokens: &integer, ReasoningEnabled: &flag, ReasoningEffort: setting, ReasoningMaxTokens: &integer, ReasoningSummary: setting,
 			ReasoningDisplay: setting, TaskBudgetTokens: &integer, Temperature: &number, TopP: &number, TopK: &integer, FrequencyPenalty: &number,
@@ -663,10 +663,10 @@ func testAuthorization() *Authorization {
 
 func testGatewayRequestEvent() RequestEvent {
 	return RequestEvent{
-		SchemaVersion:  RequestLogSchemaVersion,
-		CreatedAt:      time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-		RequestID:      "request-1",
-		StogasAPIKeyID: "key-1", Usage: RequestUsage{UpstreamCostUSD: ZeroChargeUSD,
+		SchemaVersion: RequestLogSchemaVersion,
+		CreatedAt:     time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		RequestID:     "request-1",
+		APIKeyID:      "key-1", Usage: RequestUsage{UpstreamCostUSD: ZeroChargeUSD,
 			BilledCostUSD: ZeroChargeUSD},
 	}
 }
