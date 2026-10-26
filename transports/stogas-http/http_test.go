@@ -349,6 +349,69 @@ func TestPrivateDiagnosticsV1ExposeActionableReasons(t *testing.T) {
 	}
 }
 
+// The shared pools check /ready and stop sending new connections to a node
+// that drains or cannot finalize billing or prove its runtime. Memory pressure
+// refuses single requests and leaves the node ready. The owner pool checks
+// /live, which stays up while the node serves, so its sessions' requests keep
+// arriving and get refusals that the SDK can verify instead of the load
+// balancer's own 503.
+func TestLiveOutlastsEveryReadinessFailure(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, server *Server)
+		ready bool
+	}{
+		{name: "serving", setup: func(*testing.T, *Server) {}, ready: true},
+		{name: "memory pressure", ready: true, setup: func(t *testing.T, server *Server) {
+			server.memory = &requestMemoryAdmission{budget: minimumRequestWeightBytes}
+			lease, ok := server.memory.acquire(0)
+			if !ok {
+				t.Fatal("initial memory reservation failed")
+			}
+			t.Cleanup(lease.release)
+		}},
+		{name: "draining", setup: func(_ *testing.T, server *Server) { server.requests.start() }},
+		{name: "incomplete confidential runtime", setup: func(_ *testing.T, server *Server) {
+			server.secure = &confidentialruntime.Runtime{}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}, requests: newRequestDrain()}
+			test.setup(t, server)
+			if err := server.routes(); err != nil {
+				t.Fatal(err)
+			}
+			probe := func(handler http.Handler, method, path string) *httptest.ResponseRecorder {
+				ctx := newTestRequest(t)
+				ctx.request.Method = method
+				testRequestURI(ctx, path)
+				handler.ServeHTTP(ctx.writer, ctx.request)
+				return testResponse(ctx)
+			}
+			if live := probe(server.readinessServer.Handler, http.MethodGet, "/live"); live.Code != http.StatusNoContent || live.Body.Len() != 0 {
+				t.Fatalf("GET /live = %d %q", live.Code, live.Body.Bytes())
+			}
+			ready := probe(server.readinessServer.Handler, http.MethodGet, "/ready")
+			if test.ready && (ready.Code != http.StatusNoContent || ready.Body.Len() != 0) {
+				t.Fatalf("GET /ready = %d %q, want 204", ready.Code, ready.Body.Bytes())
+			}
+			if !test.ready && (ready.Code != http.StatusServiceUnavailable || ready.Body.String() != `{"ok":false}`) {
+				t.Fatalf("GET /ready = %d %q, want 503 without reasons", ready.Code, ready.Body.Bytes())
+			}
+			// The public listener refuses or does not know the probe; under memory
+			// pressure it refuses before routing.
+			if public := probe(server.server.Handler, http.MethodGet, "/live"); public.Code == http.StatusNoContent {
+				t.Fatal("public GET /live answered as a probe")
+			}
+			for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+				if other := probe(server.readinessServer.Handler, method, "/live"); other.Code == http.StatusNoContent {
+					t.Fatalf("%s /live answered as a probe", method)
+				}
+			}
+		})
+	}
+}
+
 func TestReadinessRouteIsPrivateAndExclusive(t *testing.T) {
 	server := &Server{config: stogas.Config{MaxRequestBodyMiB: 1}}
 	if err := server.routes(); err != nil {
