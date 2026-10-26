@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -649,6 +650,69 @@ func TestPublicDrainRefusesSessionRequestsUntilSessionsEnd(t *testing.T) {
 	}
 }
 
+// A client cannot choose a gateway: a setup that names any node, even this
+// one, is refused before key exchange, and a session request must carry
+// exactly one Stogas-Node-ID equal to the node that made its session.
+func TestSessionNodeIDReachesOnlyTheSessionOwner(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		t.Run(map[bool]string{false: "HTTP/1.1", true: "HTTP/2"}[http2], func(t *testing.T) {
+			var dispatched atomic.Int64
+			f := newSessionHTTPFixture(t, func(ctx *requestContext) {
+				dispatched.Add(1)
+				ctx.writer.WriteHeader(http.StatusNoContent)
+			}, http2)
+			owner := f.server.sessionNodeID
+			send := func(wire []byte, values []string) *http.Response {
+				request, err := http.NewRequest(http.MethodPost, f.endpoint.URL+sessionPath, bytes.NewReader(wire))
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Header.Set("Content-Type", sessionContentType)
+				if values != nil {
+					request.Header[http.CanonicalHeaderKey(sessionNodeHeader)] = values
+				}
+				response, err := f.endpoint.Client().Do(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return response
+			}
+			status := func(response *http.Response) int {
+				_, _ = io.Copy(io.Discard, response.Body)
+				response.Body.Close()
+				return response.StatusCode
+			}
+			for _, values := range [][]string{{owner}, {""}, {"another-owner"}, {owner, owner}} {
+				_, hello := sessionTestHello(t)
+				if got := status(send(hello, values)); got != http.StatusServiceUnavailable || f.server.sessions.Diagnostics().Open != 1 {
+					t.Fatalf("setup naming %q: status %d, %d sessions", values, got, f.server.sessions.Diagnostics().Open)
+				}
+			}
+			wire, decoder := f.request(t, []byte(`{"method":"POST","path":"/v1/responses","headers":{}}`), nil)
+			for _, values := range [][]string{
+				nil,
+				{""},
+				{"another-owner"},
+				{strings.ToUpper(owner)},
+				{owner + "-2"},
+				{owner, owner},
+				{owner + ", " + owner},
+			} {
+				if got := status(send(wire, values)); got != http.StatusMisdirectedRequest {
+					t.Fatalf("request naming %q: status %d, want 421", values, got)
+				}
+			}
+			// No refused request used up the request's number or reached the application.
+			if dispatched.Load() != 0 {
+				t.Fatal("a misdirected request reached the application")
+			}
+			if result, _ := readSessionResponse(t, send(wire, []string{owner}), decoder); result.Status != http.StatusNoContent || dispatched.Load() != 1 {
+				t.Fatalf("owner's request: status %d", result.Status)
+			}
+		})
+	}
+}
+
 func TestSessionHTTPMetadataAndOuterRoutingCannotGrantAuthority(t *testing.T) {
 	var dispatched atomic.Int64
 	f := newSessionHTTPFixture(t, func(ctx *requestContext) {
@@ -663,6 +727,7 @@ func TestSessionHTTPMetadataAndOuterRoutingCannotGrantAuthority(t *testing.T) {
 		`{"method":"POST","path":"/v1/responses","headers":{"Authorization":"one","authorization":"two"}}`,
 		`{"method":"POST","path":"/v1/responses","headers":{"Content-Length":"0"}}`,
 		`{"method":"POST","path":"/v1/responses","headers":{"Forwarded":"for=somebody"}}`,
+		`{"method":"POST","path":"/v1/responses","headers":{"Stogas-Node-ID":"fixture-owner"}}`,
 		`{"method":"GET","path":"/diagnostics/v1","headers":{}}`,
 	} {
 		wire, decoder := f.request(t, []byte(metadata), nil)
