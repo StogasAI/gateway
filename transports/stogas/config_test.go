@@ -87,18 +87,10 @@ func TestLoadFromEnvStagingConfidentialDefaultsRequireCloudflareAccess(t *testin
 	}
 }
 
-func TestLoadFromEnvRejectsAttesterModeEnvOverride(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("STOGAS_CONFIDENTIAL_ATTESTER_MODE", "mock")
-
-	_, err := LoadFromEnv()
-	if err == nil || !strings.Contains(err.Error(), "STOGAS_CONFIDENTIAL_ATTESTER_MODE is not supported") {
-		t.Fatalf("expected attester env rejection, got %v", err)
-	}
-}
-
 func TestLoadFromEnvRejectsUnsupportedConfidentialKnobs(t *testing.T) {
 	for _, name := range []string{
+		"STOGAS_CONFIDENTIAL_ATTESTER_MODE",
+		"STOGAS_CONFIDENTIAL_CONTROL_URL",
 		"STOGAS_CONFIDENTIAL_ENABLED",
 		"STOGAS_IGVM_MODE",
 		"STOGAS_CONFIDENTIAL_ENTROPY_TIMEOUT_SECONDS",
@@ -119,16 +111,6 @@ func TestLoadFromEnvRejectsUnsupportedConfidentialKnobs(t *testing.T) {
 				t.Fatalf("expected unsupported confidential knob rejection for %s, got %v", name, err)
 			}
 		})
-	}
-}
-
-func TestLoadFromEnvRejectsUnsupportedControlURLOverride(t *testing.T) {
-	setRequiredEnv(t)
-	t.Setenv("STOGAS_CONFIDENTIAL_CONTROL_URL", "https://control.stogas.localhost")
-
-	_, err := LoadFromEnv()
-	if err == nil || !strings.Contains(err.Error(), "STOGAS_CONFIDENTIAL_CONTROL_URL is not supported") {
-		t.Fatalf("expected unsupported Control URL rejection, got %v", err)
 	}
 }
 
