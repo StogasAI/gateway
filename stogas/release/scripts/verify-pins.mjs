@@ -19,8 +19,10 @@ check(
 // Gateway tests must use the release compiler, and the Go bindings must match
 // the Rust verifier library that the release links.
 const goMod = read('transports/go.mod');
+// Go drops a toolchain line that repeats the go line, which then names the toolchain.
+const toolchain = goMod.match(/^toolchain go(\S+)$/m)?.[1] ?? goMod.match(/^go (\S+)$/m)?.[1];
 check(
-	goMod.includes(`\ntoolchain go${pins.go.version}\n`),
+	toolchain === pins.go.version,
 	`transports/go.mod must use the release toolchain go${pins.go.version}.`
 );
 const required = new Map(

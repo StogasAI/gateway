@@ -45,6 +45,42 @@ func TestPublicResponsesStreamPreservesWireShapeWithoutCoreMetadata(t *testing.T
 	}
 }
 
+func TestPublicResponsesResponseKeepsCoreWireShapeWithoutCoreMetadata(t *testing.T) {
+	toolUsage := &schemas.ToolUsage{WebSearch: &schemas.WebSearchToolUsage{NumRequests: 2}}
+	response := &schemas.BifrostResponsesResponse{
+		ID:          schemas.Ptr("resp_1"),
+		Object:      "response",
+		ExtraFields: schemas.BifrostResponseExtraFields{RawResponse: "private-response"},
+		Usage:       &schemas.ResponsesResponseUsage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8, ToolUsage: toolUsage},
+	}
+	wire, err := marshalPayload(publicPayload(response))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(wire, []byte("extra_fields")) || bytes.Contains(wire, []byte("private-")) {
+		t.Fatalf("core metadata reached the public response: %s", wire)
+	}
+	object := publicPayloadObject(t, publicPayload(response))
+	usage := object["usage"].(map[string]any)
+	if object["id"] != "resp_1" || usage["total_tokens"] != float64(8) {
+		t.Fatalf("response identity or usage changed: %s", wire)
+	}
+	// Core's marshaler, as OpenAI does, sends tool usage once at the top level and output as [].
+	if _, nested := usage["tool_usage"]; nested || object["tool_usage"] == nil {
+		t.Fatalf("tool usage is not top-level: %s", wire)
+	}
+	if output, ok := object["output"].([]any); !ok || len(output) != 0 {
+		t.Fatalf("absent output is not an empty array: %s", wire)
+	}
+	if response.ExtraFields.RawResponse != "private-response" || response.Usage.ToolUsage != toolUsage {
+		t.Fatal("public serialization mutated the response")
+	}
+	var absent *schemas.BifrostResponsesResponse
+	if wire, err := marshalPayload(publicPayload(absent)); err != nil || string(wire) != "null" {
+		t.Fatalf("absent response = %s, %v", wire, err)
+	}
+}
+
 func TestPublicResponsesDeltaPreservesUserContentAndOmittedFields(t *testing.T) {
 	// The same key is valid inside model output; only core metadata is private.
 	delta := `{"extra_fields":{"response":{"extra_fields":"customer content"}}}`

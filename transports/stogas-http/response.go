@@ -16,7 +16,7 @@ func publicPayload(value any) any {
 	case *schemas.BifrostChatResponse:
 		return publicChatResponse{BifrostChatResponse: typed}
 	case *schemas.BifrostResponsesResponse:
-		return publicResponsesResponse{BifrostResponsesResponse: typed}
+		return publicResponsesResponse{response: typed}
 	case *schemas.BifrostResponsesStreamResponse:
 		return publicResponsesStreamResponse{response: typed}
 	default:
@@ -30,8 +30,20 @@ type publicChatResponse struct {
 }
 
 type publicResponsesResponse struct {
-	*schemas.BifrostResponsesResponse
-	ExtraFields *struct{} `json:"extra_fields,omitempty"`
+	response *schemas.BifrostResponsesResponse
+}
+
+func (payload publicResponsesResponse) MarshalJSON() ([]byte, error) {
+	if payload.response == nil {
+		return []byte("null"), nil
+	}
+	// Core's marshaler sends tool_usage at the top level and output as an array.
+	// Embedding it would promote MarshalJSON and bypass our field projection.
+	data, err := payload.response.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+	return sjson.DeleteBytes(data, "extra_fields")
 }
 
 type publicResponsesStreamResponse struct {
