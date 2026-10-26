@@ -729,10 +729,18 @@ func TestProviderResponsesToolCallsMustMatchAuthorizedRequest(t *testing.T) {
 		t.Fatalf("undeclared function error = %v, want malformed provider response", err)
 	}
 
-	foreign := response("lookup")
-	foreign.Output[0].ResponsesToolMessage.ResponsesMCPToolCall = &schemas.ResponsesMCPToolCall{ServerLabel: "evil"}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), foreign); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("mixed tool union error = %v, want malformed provider response", err)
+	for name, mix := range map[string]func(*schemas.ResponsesToolMessage){
+		"mcp":   func(tool *schemas.ResponsesToolMessage) { tool.ServerLabel = schemas.Ptr("evil") },
+		"shell": func(tool *schemas.ResponsesToolMessage) { tool.ResponsesShellCall = &schemas.ResponsesShellCall{} },
+		"apply_patch": func(tool *schemas.ResponsesToolMessage) {
+			tool.ResponsesApplyPatchCall = &schemas.ResponsesApplyPatchCall{}
+		},
+	} {
+		foreign := response("lookup")
+		mix(foreign.Output[0].ResponsesToolMessage)
+		if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, request), foreign); !errors.Is(err, ErrProviderResponseMalformed) {
+			t.Fatalf("mixed %s tool union error = %v, want malformed provider response", name, err)
+		}
 	}
 
 	noneRequest := strings.TrimSuffix(request, "}") + `,"tool_choice":"none"}`

@@ -1024,11 +1024,12 @@ func validateProviderResponsesToolMessage(state *State, tool *schemas.ResponsesT
 	}
 	if tool.Namespace != nil || tool.Execution != nil || tool.Output != nil || tool.Error != nil ||
 		tool.ResponsesFileSearchToolCall != nil || tool.ResponsesComputerToolCall != nil ||
-		tool.ResponsesComputerToolCallOutput != nil || tool.ResponsesMCPToolCall != nil ||
+		tool.ResponsesComputerToolCallOutput != nil || tool.ServerLabel != nil ||
 		tool.ResponsesImageGenerationCall != nil || tool.ResponsesMCPListTools != nil ||
 		tool.ResponsesMCPApprovalResponse != nil || tool.ResponsesAdvisorCall != nil ||
 		tool.ResponsesToolSearchCall != nil || tool.ResponsesCodeInterpreterToolCall != nil ||
-		tool.ResponsesCodeExecutionCall != nil {
+		tool.ResponsesCodeExecutionCall != nil || tool.ResponsesShellCall != nil ||
+		tool.ResponsesApplyPatchCall != nil || tool.ItemCaller != nil || tool.CreatedBy != nil {
 		return ErrProviderResponseMalformed
 	}
 
