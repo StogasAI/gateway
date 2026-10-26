@@ -274,7 +274,7 @@ func TestRejectionLogsBoundEachOrganization(t *testing.T) {
 	var individual, counted int
 	for _, raw := range rejectionRows(db) {
 		var row struct {
-			Organization string `json:"stogas_organization_id"`
+			Organization string `json:"organization_id"`
 			Count        uint32 `json:"request_count"`
 		}
 		if err := json.Unmarshal(raw, &row); err != nil {

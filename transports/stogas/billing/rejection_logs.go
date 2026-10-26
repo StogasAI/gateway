@@ -100,8 +100,8 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 		SchemaVersion: RequestLogSchemaVersion,
 		RequestID:     input.RequestID, CreatedAt: stamp, LastRequestAt: stamp, RequestCount: 1,
 		PolicyVersions: input.PolicyVersions,
-		StogasAPIKeyID: input.Claims.KeyID, StogasOrganizationID: input.Claims.OrganizationID,
-		StogasUserID: input.Claims.ResponsibleID, StogasGrantID: input.Claims.GrantID,
+		APIKeyID:       input.Claims.KeyID, OrganizationID: input.Claims.OrganizationID,
+		MemberID: input.Claims.ResponsibleID, GrantID: input.Claims.GrantID,
 		RequestType: input.RequestType, Metadata: map[string]string{}, Transport: input.Transport,
 		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
 		ProviderAttempts: []ProviderAttempt{},
@@ -261,7 +261,7 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 		}
 		delete(b.groups, key)
 		releaseGroup(b.perKey, key.keyID)
-		releaseGroup(b.perOrganization, group.StogasOrganizationID)
+		releaseGroup(b.perOrganization, group.OrganizationID)
 		if len(batch) == rejectionLogBatchSize {
 			break
 		}

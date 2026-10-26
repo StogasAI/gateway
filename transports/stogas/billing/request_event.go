@@ -55,31 +55,31 @@ const (
 )
 
 type RequestEvent struct {
-	SchemaVersion        uint8              `json:"schema_version"`
-	RequestID            string             `json:"request_id"`
-	CreatedAt            string             `json:"created_at"`
-	LastRequestAt        string             `json:"last_request_at"`
-	RequestCount         uint32             `json:"request_count"`
-	GatewayError         *EventError        `json:"gateway_error"`
-	StogasAPIKeyID       string             `json:"stogas_api_key_id"`
-	StogasGrantID        *string            `json:"stogas_grant_id"`
-	StogasUserID         string             `json:"stogas_user_id"`
-	StogasOrganizationID string             `json:"stogas_organization_id"`
-	RequestType          string             `json:"request_type"`
-	RequestSettings      RequestSettings    `json:"request_settings"`
-	SessionID            string             `json:"session_id"`
-	Metadata             map[string]string  `json:"metadata"`
-	Transport            string             `json:"transport"`
-	Cancelled            bool               `json:"cancelled"`
-	ClientStopMS         *uint32            `json:"client_stop_ms"`
-	CatalogVersion       *uint64            `json:"catalog_version"`
-	PolicyVersions       *PolicyVersions    `json:"policy_versions"`
-	ProviderAttempts     []ProviderAttempt  `json:"provider_attempts"`
-	NodeID               string             `json:"node_id"`
-	Performance          RequestPerformance `json:"performance"`
-	Usage                RequestUsage       `json:"usage"`
-	Plugins              plugins.Metrics    `json:"plugins,omitzero"`
-	GatewayVersion       string             `json:"gateway_version"`
+	SchemaVersion    uint8              `json:"schema_version"`
+	RequestID        string             `json:"request_id"`
+	CreatedAt        string             `json:"created_at"`
+	LastRequestAt    string             `json:"last_request_at"`
+	RequestCount     uint32             `json:"request_count"`
+	GatewayError     *EventError        `json:"gateway_error"`
+	APIKeyID         string             `json:"api_key_id"`
+	GrantID          *string            `json:"grant_id"`
+	MemberID         string             `json:"member_id"`
+	OrganizationID   string             `json:"organization_id"`
+	RequestType      string             `json:"request_type"`
+	RequestSettings  RequestSettings    `json:"request_settings"`
+	SessionID        string             `json:"session_id"`
+	Metadata         map[string]string  `json:"metadata"`
+	Transport        string             `json:"transport"`
+	Cancelled        bool               `json:"cancelled"`
+	ClientStopMS     *uint32            `json:"client_stop_ms"`
+	CatalogVersion   *uint64            `json:"catalog_version"`
+	PolicyVersions   *PolicyVersions    `json:"policy_versions"`
+	ProviderAttempts []ProviderAttempt  `json:"provider_attempts"`
+	NodeID           string             `json:"node_id"`
+	Performance      RequestPerformance `json:"performance"`
+	Usage            RequestUsage       `json:"usage"`
+	Plugins          plugins.Metrics    `json:"plugins,omitzero"`
+	GatewayVersion   string             `json:"gateway_version"`
 }
 
 // RequestSettings records the settings that control what the model generates,
