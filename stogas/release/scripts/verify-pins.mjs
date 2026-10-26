@@ -33,7 +33,8 @@ for (const module of ['github.com/StogasAI/stogas/go', 'github.com/StogasAI/stog
 	);
 }
 
-// A tag or branch can move; a full commit cannot.
+// A tag or branch can move; a full commit cannot. A local action named with $/ runs from the
+// workflow's own commit, while ./ runs whatever the job checked out.
 const workflowFiles = ['.github/workflows', '.github/actions'].flatMap((directory) =>
 	readdirSync(resolve(repoRoot, directory), { recursive: true })
 		.filter((file) => /\.ya?ml$/.test(file))
@@ -42,8 +43,8 @@ const workflowFiles = ['.github/workflows', '.github/actions'].flatMap((director
 for (const file of workflowFiles) {
 	for (const [, action] of read(file).matchAll(/^[\s-]*uses:\s*['"]?([^\s'"#]+)/gm)) {
 		check(
-			action.startsWith('./') || /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/.test(action),
-			`${file} must pin ${action} to a full commit.`
+			action.startsWith('$/') || /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/.test(action),
+			`${file} must pin ${action} to a full commit, or name a local action with $/.`
 		);
 	}
 }
