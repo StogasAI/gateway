@@ -149,6 +149,8 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 	state.SetDashboardCredential(dashboard)
 	state.PreparedCredential = &billing.PreparedCredential{}
 	state.Hold = HoldEstimate{ProviderKey: "openai", ProductKey: "gpt-5", EstimatedUpstreamCostUSD: "1000"}
+	kept := 0
+	state.KeepMemory = func() func() { kept++; return func() {} }
 	keys, _ := customerkey.ParseKeys(map[string]string{"default": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"})
 	defer keys.Clear()
 	keyConfig := &billing.KeyConfigSnapshot{}
@@ -165,6 +167,14 @@ func TestAuthorizeStateForwardsThePairAndReleasesItsCredential(t *testing.T) {
 	if request.Dashboard != dashboard || request.Snapshot != keyConfig || request.EncryptionKeys.Identity() != keys.Identity() ||
 		request.Previous != previous || request.ProviderKey != "openai" || request.EstimatedUpstreamCostUSD != "1000" {
 		t.Fatalf("hold request = %#v", request)
+	}
+	// Billing keeps the request's memory through it while a close runs.
+	if request.KeepMemory == nil {
+		t.Fatal("the hold request cannot keep the request's memory")
+	}
+	request.KeepMemory()()
+	if kept != 1 {
+		t.Fatalf("the hold request kept the state's memory %d times", kept)
 	}
 	if state.PreparedCredential != nil || state.Authorization != nil {
 		t.Fatal("a refused pair kept its prepared credential or an authorization")

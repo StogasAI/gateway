@@ -56,6 +56,10 @@ type requestMemoryAdmission struct {
 	streamStateReserved  atomic.Int64
 	downstreamReserved   atomic.Int64
 	confidentialReserved atomic.Int64
+	// What requests hold while they wait only for the database: for their
+	// logs to settle, or for closes of holds that the database may have made
+	// without answering. It is part of the classes above.
+	databaseWaitReserved atomic.Int64
 
 	requestFailures      atomic.Uint64
 	responseFailures     atomic.Uint64
@@ -84,6 +88,7 @@ type requestMemoryDiagnostics struct {
 	ConfidentialHeadroomBytes           int64  `json:"confidentialHeadroomBytes"`
 	ConfidentialReservedBytes           int64  `json:"confidentialReservedBytes"`
 	ConfidentialReservationFailures     uint64 `json:"confidentialReservationFailures"`
+	DatabaseWaitReservedBytes           int64  `json:"databaseWaitReservedBytes"`
 	DownstreamReservationFailures       uint64 `json:"downstreamReservationFailures"`
 	DownstreamReservedBytes             int64  `json:"downstreamReservedBytes"`
 	MinimumRequestReservationBytes      int64  `json:"minimumRequestReservationBytes"`
@@ -469,24 +474,83 @@ func (l *requestMemoryLease) retain(bytes int) (func(), bool) {
 		return nil, false
 	}
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.released.Load() || int64(bytes) > l.weight-l.retained {
-		l.mu.Unlock()
 		return nil, false
 	}
-	l.retained += int64(bytes)
-	l.mu.Unlock()
+	return l.retainLocked(int64(bytes)), true
+}
+
+// retainLocked retains bytes that the caller found unretained under l.mu.
+func (l *requestMemoryLease) retainLocked(bytes int64) func() {
+	l.retained += bytes
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			l.mu.Lock()
 			defer l.mu.Unlock()
-			l.retained -= int64(bytes)
+			l.retained -= bytes
 			if l.released.Load() {
-				l.weight -= int64(bytes)
-				l.admission.release(l.class, int64(bytes))
+				l.weight -= bytes
+				l.admission.release(l.class, bytes)
 			}
 		})
-	}, true
+	}
+}
+
+// keep retains all that the request itself holds after it ends, until the
+// returned function runs, as waiting only for the database. A close of a hold
+// that the database may have made without answering keeps it, as a log keeps
+// the request's leases until it settles.
+func (l *requestMemoryLease) keep() func() {
+	if l == nil || l.admission == nil {
+		return func() {}
+	}
+	l.mu.Lock()
+	bytes := l.weight - l.retained
+	if l.released.Load() || bytes <= 0 {
+		l.mu.Unlock()
+		return func() {}
+	}
+	release := l.retainLocked(bytes)
+	l.mu.Unlock()
+	waited := l.admission.awaitDatabase(bytes)
+	return func() {
+		waited()
+		release()
+	}
+}
+
+// awaitDatabase counts what the lease holds as waiting only for the database
+// until the returned function runs.
+func (l *requestMemoryLease) awaitDatabase() func() {
+	if l == nil || l.admission == nil {
+		return func() {}
+	}
+	l.mu.Lock()
+	bytes := l.weight
+	l.mu.Unlock()
+	return l.admission.awaitDatabase(bytes)
+}
+
+func (a *requestMemoryAdmission) awaitDatabase(bytes int64) func() {
+	if bytes <= 0 {
+		return func() {}
+	}
+	a.databaseWaitReserved.Add(bytes)
+	var once sync.Once
+	return func() { once.Do(func() { a.databaseWaitReserved.Add(-bytes) }) }
+}
+
+// waitsForDatabase reports when requests that wait only for the database hold
+// so much that the smallest request no longer fits. The gateway cannot serve
+// until the database answers them, while other gateways may; requests that
+// clients still run never count.
+func (a *requestMemoryAdmission) waitsForDatabase() bool {
+	if a == nil {
+		return false
+	}
+	return a.databaseWaitReserved.Load() > a.budgetBytes()-minimumRequestWeightBytes
 }
 
 // saturated reports only when the admission budget cannot fit the smallest
@@ -513,6 +577,7 @@ func (a *requestMemoryAdmission) diagnostics() requestMemoryDiagnostics {
 		ConfidentialHeadroomBytes:           a.confidentialHeadroom,
 		ConfidentialReservedBytes:           a.confidentialReserved.Load(),
 		ConfidentialReservationFailures:     a.confidentialFailures.Load(),
+		DatabaseWaitReservedBytes:           a.databaseWaitReserved.Load(),
 		DownstreamReservationFailures:       a.downstreamFailures.Load(),
 		DownstreamReservedBytes:             a.downstreamReserved.Load(),
 		MinimumRequestReservationBytes:      minimumRequestWeightBytes,

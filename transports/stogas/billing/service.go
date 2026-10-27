@@ -388,6 +388,10 @@ type HoldRequest struct {
 	UpstreamTarget           *UpstreamTarget
 	RequestLifetime          time.Duration
 	Previous                 *Authorization
+	// KeepMemory keeps the request's memory charge after the request ends,
+	// until the returned function runs. A close of a hold that the database
+	// may have made without answering keeps it.
+	KeepMemory func() (release func())
 }
 
 // Authorize places the hold that admits a request to its pair's provider. A
@@ -558,7 +562,12 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		// may have committed leaves either hold for settlement, which accepts
 		// the previous pair's log without usage.
 		if outcome.sent && !pgconn.SafeToRetry(outcome.err) && previous == nil {
-			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, releaseFinalization)
+			release, releasePlace := releaseFinalization, releaseFinalization
+			if request.KeepMemory != nil {
+				releaseMemory := request.KeepMemory()
+				release = func() { releasePlace(); releaseMemory() }
+			}
+			s.closeUnconfirmedAuthorization(requestID, snapshot.Claims.KeyID, authorizeBefore, release)
 			releaseFinalization = nil
 		}
 		// The caller left before a statement authorized the request, so the

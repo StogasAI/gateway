@@ -62,7 +62,12 @@ func TestAuthorizationClosesOnlyAfterSendingItsStatement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: "request", ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute})
+			var kept, released atomic.Int32
+			keep := func() func() {
+				kept.Add(1)
+				return func() { released.Add(1) }
+			}
+			_, err = service.authorizeResolvedRequest(context.Background(), "hash", snapshot.Claims, HoldRequest{RequestID: "request", ProviderKey: "chutes", ProductKey: "product", EstimatedUpstreamCostUSD: "0.01", Snapshot: snapshot, Prepared: prepared, RequestLifetime: time.Minute, KeepMemory: keep})
 			if !errors.Is(err, ErrGatewayUnavailable) {
 				t.Fatalf("authorization error = %v", err)
 			}
@@ -70,11 +75,15 @@ func TestAuthorizationClosesOnlyAfterSendingItsStatement(t *testing.T) {
 			if sent {
 				want = 1
 			}
-			// The close keeps the request's settlement place until it ends, and
-			// admission stays open while the database is unreachable.
+			// The close keeps the request's settlement place and memory until it
+			// ends, and admission stays open while the database is unreachable.
 			got := service.Diagnostics().Settlement
-			if closing := service.finalizations.closing.Load(); closing != int64(want) || got.Reserved != want || !service.FinalizationReady() {
-				t.Fatalf("closes = %d and places taken = %d, want %d", closing, got.Reserved, want)
+			if got.Closing != int64(want) || got.Reserved != want || kept.Load() != int32(want) || released.Load() != 0 || !service.FinalizationReady() {
+				t.Fatalf("closes = %d, places taken = %d and memory kept %d times, want %d", got.Closing, got.Reserved, kept.Load(), want)
+			}
+			service.closeFinalizations()
+			if released.Load() != kept.Load() {
+				t.Fatalf("an ended close released memory %d of %d times", released.Load(), kept.Load())
 			}
 		})
 	}
