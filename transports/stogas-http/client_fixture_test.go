@@ -105,7 +105,17 @@ func installFixtureCatalog() error {
 	if err != nil {
 		return err
 	}
-	return catalog.InstallApproved(runtimeData, publicData, catalog.Identity{
+	listed, err := catalog.PublicParts(publicData)
+	if err != nil {
+		return err
+	}
+	parts := make(map[string][]byte, len(listed))
+	for _, part := range listed {
+		if parts[part.SHA256], err = os.ReadFile(filepath.Join(dir, "catalog.public.parts", part.SHA256+".json")); err != nil {
+			return err
+		}
+	}
+	return catalog.InstallApproved(runtimeData, publicData, parts, catalog.Identity{
 		Sequence: 1,
 		Digest:   fmt.Sprintf("sha256:%x", sha256.Sum256(runtimeData)),
 	}, fmt.Sprintf("sha256:%x", sha256.Sum256(publicData)))

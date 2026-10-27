@@ -2,9 +2,10 @@ package catalog
 
 import (
 	"crypto/sha256"
-	_ "embed"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -17,11 +18,16 @@ import (
 )
 
 const (
-	runtimeSchema     = "stogas.catalog.runtime.v5"
-	publicSchema      = "stogas.catalog.public.v5"
-	runtimeSizeLimit  = 16 * 1024 * 1024
-	publicSizeLimit   = 8 * 1024 * 1024
-	maxAliasesPerNode = 8
+	runtimeSchema    = "stogas.catalog.runtime.v5"
+	publicSchema     = "stogas.catalog.public.v6"
+	publicPartSchema = "stogas.catalog.public.part.v6"
+	runtimeSizeLimit = 16 * 1024 * 1024
+	// The public catalog is a root, which evidence approves by digest, and the parts that the root
+	// names by digest. Each part and the root with every part have their own limits.
+	publicSizeLimit        = 8 * 1024 * 1024
+	publicPartSizeLimit    = 1024 * 1024
+	publicCatalogSizeLimit = 32 * 1024 * 1024
+	maxAliasesPerNode      = 8
 )
 
 var compiledRouteContracts = map[string]struct {
@@ -94,11 +100,114 @@ var embeddedRuntimeCatalogJSON []byte
 //go:embed fallback/catalog.public.json
 var embeddedPublicCatalogJSON []byte
 
+//go:embed fallback/catalog.public.parts
+var embeddedPublicParts embed.FS
+
 func loadSnapshot() (*snapshot, error) {
-	return snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, Identity{})
+	parts, err := embeddedParts()
+	if err != nil {
+		return nil, err
+	}
+	return snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
 }
 
-func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*snapshot, error) {
+// embeddedParts reads the parts that the embedded public catalog lists.
+func embeddedParts() (map[string][]byte, error) {
+	listed, err := PublicParts(embeddedPublicCatalogJSON)
+	if err != nil {
+		return nil, err
+	}
+	parts := make(map[string][]byte, len(listed))
+	for _, part := range listed {
+		data, err := embeddedPublicParts.ReadFile("fallback/catalog.public.parts/" + part.SHA256 + ".json")
+		if err != nil {
+			return nil, fmt.Errorf("read embedded public catalog part: %w", err)
+		}
+		parts[part.SHA256] = data
+	}
+	return parts, nil
+}
+
+// PublicPart names one part of a public catalog by the SHA-256, in hex, and size of its bytes.
+type PublicPart struct {
+	SHA256 string `json:"sha256"`
+	Size   int64  `json:"size"`
+}
+
+// PublicParts lists the parts that a public catalog root names, after checking each name and
+// size and the size of the root with every part.
+func PublicParts(root []byte) ([]PublicPart, error) {
+	var header struct {
+		Parts []PublicPart `json:"parts"`
+	}
+	if err := json.Unmarshal(root, &header); err != nil {
+		return nil, fmt.Errorf("decode public catalog parts: %w", err)
+	}
+	total := int64(len(root))
+	seen := make(map[string]bool, len(header.Parts))
+	for _, part := range header.Parts {
+		decoded, err := hex.DecodeString(part.SHA256)
+		if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != part.SHA256 ||
+			seen[part.SHA256] || part.Size < 1 || part.Size > publicPartSizeLimit {
+			return nil, errors.New("public catalog lists an invalid part")
+		}
+		seen[part.SHA256] = true
+		total += part.Size
+	}
+	if total > publicCatalogSizeLimit {
+		return nil, errors.New("public catalog exceeds the accepted size")
+	}
+	return header.Parts, nil
+}
+
+// publicPartsFor checks that parts holds exactly the parts that the root lists, each with its
+// digest and size, and that they hold exactly the deployments that the root places in them.
+// publicSummary is what the root keeps of a deployment that the gateway checks.
+type publicSummary struct {
+	Part int `json:"part"`
+}
+
+func publicPartsFor(root []byte, summaries map[string]publicSummary, parts map[string][]byte) (map[string][]byte, error) {
+	listed, err := PublicParts(root)
+	if err != nil {
+		return nil, err
+	}
+	if len(parts) != len(listed) {
+		return nil, errors.New("public catalog parts differ from the root")
+	}
+	held := make(map[string][]byte, len(listed))
+	deployments := 0
+	for index, part := range listed {
+		data, ok := parts[part.SHA256]
+		sum := sha256.Sum256(data)
+		if !ok || int64(len(data)) != part.Size || hex.EncodeToString(sum[:]) != part.SHA256 {
+			return nil, errors.New("public catalog parts differ from the root")
+		}
+		var decoded struct {
+			Schema      string                     `json:"schema"`
+			Deployments map[string]json.RawMessage `json:"deployments"`
+		}
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			return nil, fmt.Errorf("decode public catalog part: %w", err)
+		}
+		if decoded.Schema != publicPartSchema {
+			return nil, fmt.Errorf("public catalog part schema %q is unsupported", decoded.Schema)
+		}
+		for id := range decoded.Deployments {
+			if summary, ok := summaries[id]; !ok || summary.Part != index {
+				return nil, fmt.Errorf("public catalog part %d holds deployment %s that the root places elsewhere", index, id)
+			}
+		}
+		deployments += len(decoded.Deployments)
+		held[part.SHA256] = append([]byte(nil), data...)
+	}
+	if deployments != len(summaries) {
+		return nil, errors.New("public catalog parts omit a deployment")
+	}
+	return held, nil
+}
+
+func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte, identity Identity) (*snapshot, error) {
 	if len(runtimeData) == 0 || len(runtimeData) > runtimeSizeLimit {
 		return nil, fmt.Errorf("runtime catalog size is outside the accepted range")
 	}
@@ -132,6 +241,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 		base.schedule = append(base.schedule, datedState{start: entry.Start, state: state})
 		states = append(states, state)
 	}
+	var publicParts map[string][]byte
 	if len(publicData) > 0 {
 		if len(publicData) > publicSizeLimit {
 			return nil, fmt.Errorf("public catalog exceeds the accepted size")
@@ -140,7 +250,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 			Schema string `json:"schema"`
 			Graph  struct {
 				Authors     map[string]json.RawMessage `json:"authors"`
-				Deployments map[string]json.RawMessage `json:"deployments"`
+				Deployments map[string]publicSummary   `json:"deployments"`
 				Models      map[string]json.RawMessage `json:"models"`
 				Providers   map[string]json.RawMessage `json:"providers"`
 				Routes      map[string]json.RawMessage `json:"routes"`
@@ -156,6 +266,9 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 			!hasEveryKey(publicHeader.Graph.Models, catalog.Graph.Models) ||
 			!sameKeys(publicHeader.Graph.Deployments, catalog.Graph.Deployments) {
 			return nil, fmt.Errorf("public catalog does not match the runtime graph")
+		}
+		if publicParts, err = publicPartsFor(publicData, publicHeader.Graph.Deployments, parts); err != nil {
+			return nil, err
 		}
 	}
 
@@ -175,7 +288,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, identity Identity) (*sn
 	}
 	publicRaw, raw := append([]byte(nil), publicData...), append([]byte(nil), runtimeData...)
 	for _, state := range states {
-		state.identity, state.publicDigest, state.publicRaw, state.raw = identity, catalog.PublicDigest, publicRaw, raw
+		state.identity, state.publicDigest, state.publicRaw, state.publicParts, state.raw = identity, catalog.PublicDigest, publicRaw, publicParts, raw
 	}
 	return base, nil
 }

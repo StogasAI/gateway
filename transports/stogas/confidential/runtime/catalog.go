@@ -9,9 +9,14 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"golang.org/x/sync/errgroup"
 )
+
+// catalogPartDownloads bounds the parts of a public catalog that download at once.
+const catalogPartDownloads = 8
 
 // Catalog failure classes double as readiness reasons. They are fixed text because
 // the fleet monitor discards reasons it does not recognize.
@@ -110,10 +115,44 @@ func (e *currentEvidence) installCatalog(parent context.Context, approved approv
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	if err := catalog.InstallApproved(runtimeBytes, publicBytes, approved.identity(), release.PublicDigest); err != nil {
+	listed, err := catalog.PublicParts(publicBytes)
+	if err != nil {
+		return errors.Join(errCatalogIncompatible, err)
+	}
+	parts, err := e.publicParts(ctx, listed)
+	if err != nil {
+		return errors.Join(errCatalogUnavailable, err)
+	}
+	if err := catalog.InstallApproved(runtimeBytes, publicBytes, parts, approved.identity(), release.PublicDigest); err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
 	return nil
+}
+
+// publicParts gets each part that a public root lists. The active catalog supplies the parts it
+// shares with the new one, so a release downloads only the parts that changed.
+func (e *currentEvidence) publicParts(ctx context.Context, listed []catalog.PublicPart) (map[string][]byte, error) {
+	parts := make(map[string][]byte, len(listed))
+	var mu sync.Mutex
+	downloads, ctx := errgroup.WithContext(ctx)
+	downloads.SetLimit(catalogPartDownloads)
+	for _, part := range listed {
+		if data, ok := catalog.ActivePublicPart(part.SHA256); ok {
+			parts[part.SHA256] = data
+			continue
+		}
+		downloads.Go(func() error {
+			data, err := e.artifact(ctx, "sha256:"+part.SHA256, part.Size, catalog.MaxPublicPartBytes)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			parts[part.SHA256] = data
+			return nil
+		})
+	}
+	return parts, downloads.Wait()
 }
 
 func (e *currentEvidence) artifact(ctx context.Context, digest string, size, limit int64) ([]byte, error) {

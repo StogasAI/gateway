@@ -1364,7 +1364,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+	if err := json.Unmarshal(publicDeploymentsJSON(t), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
@@ -1545,12 +1545,8 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 	type matrixDeployment struct {
 		Pricing catalog.Pricing `json:"pricing"`
 	}
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
 	deployments := map[string]matrixDeployment{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+	if err := json.Unmarshal(publicDeploymentsJSON(t), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 
@@ -3079,7 +3075,7 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+	if err := json.Unmarshal(publicDeploymentsJSON(t), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
@@ -4122,4 +4118,18 @@ func tokenHoldCapacity(state *State, input bool) (int, bool) {
 		found = true
 	}
 	return total, found
+}
+
+// publicDeploymentsJSON is every deployment record of the active public catalog as one object.
+func publicDeploymentsJSON(t *testing.T) json.RawMessage {
+	t.Helper()
+	deployments, ok := catalog.PublicDeployments()
+	if !ok {
+		t.Fatal("compiled public catalog is unavailable")
+	}
+	data, err := json.Marshal(deployments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

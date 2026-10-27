@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +139,21 @@ func (s *Server) catalog(ctx *requestContext) {
 		return
 	}
 	s.writeJSON(ctx, http.StatusOK, payload)
+}
+
+// catalogPartsPath serves the parts that the active public catalog lists, each by its SHA-256 in
+// hex.
+const catalogPartsPath = "/v1/catalog/parts/"
+
+func (s *Server) catalogPart(ctx *requestContext) {
+	part, ok := catalog.ActivePublicPart(strings.TrimPrefix(ctx.request.URL.Path, catalogPartsPath))
+	if !ok {
+		s.notFound(ctx)
+		return
+	}
+	// The path names the part's bytes, so they never change.
+	ctx.writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	s.writeResponse(ctx, http.StatusOK, "application/json", part)
 }
 
 func (s *Server) models(ctx *requestContext) {

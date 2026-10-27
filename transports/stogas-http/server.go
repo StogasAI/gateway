@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -183,6 +184,8 @@ func (s *Server) routes() error {
 		switch {
 		case ctx.request.Method == http.MethodGet && ctx.request.URL.Path == "/v1/catalog":
 			s.catalog(ctx)
+		case ctx.request.Method == http.MethodGet && strings.HasPrefix(ctx.request.URL.Path, catalogPartsPath):
+			s.catalogPart(ctx)
 		case ctx.request.Method == http.MethodGet && ctx.request.URL.Path == "/v1/models":
 			s.models(ctx)
 		case ctx.request.Method == http.MethodPost && ctx.request.URL.Path == policyValidationPath:

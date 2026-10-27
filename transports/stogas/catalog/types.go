@@ -107,8 +107,10 @@ type snapshot struct {
 	modelSelectors map[string]string
 	publicDigest   string
 	publicRaw      []byte
-	raw            []byte
-	schedule       []datedState
+	// publicParts holds the parts that the public root lists, by SHA-256 in hex.
+	publicParts map[string][]byte
+	raw         []byte
+	schedule    []datedState
 }
 
 type datedState struct {
