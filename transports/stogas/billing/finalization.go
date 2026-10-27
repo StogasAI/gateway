@@ -44,8 +44,8 @@ type SettlementError struct {
 	// Reason is a database refusal, such as payload_mismatch, or
 	// database_error when a call failed on this log alone. The hold then keeps
 	// the log for an operator. Otherwise it is abandoned, closed,
-	// encoding_failed or unknown_result, and the hold stays until this boot
-	// stops.
+	// encoding_failed or unknown_result, and a hold that the log did not
+	// settle keeps its reserved amount until an operator releases it.
 	Reason string
 	// SQLState is the database error behind a database_error or abandoned log.
 	SQLState string
@@ -385,7 +385,8 @@ func (s *Service) settle(ctx context.Context, batch []*settlement) {
 
 // keepFailedLog stores a log that a settlement call failed on with its hold.
 // If that fails too, the log is abandoned. Control alerts once the hold
-// expires and releases it without charge when this boot stops or a day later.
+// expires, and the hold keeps its reserved amount until an operator releases
+// it.
 func (s *Service) keepFailedLog(ctx context.Context, item *settlement, state string) {
 	f := &s.finalizations
 	var result string
