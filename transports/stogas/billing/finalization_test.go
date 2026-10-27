@@ -544,9 +544,9 @@ func TestSettlementRetriesTheSameCallUntilTheDatabaseRecovers(t *testing.T) {
 }
 
 // A failing database does not close admission, because every gateway would
-// close at once. Admission closes when the requests waiting for settlement
-// take every place, and reopens as each one settles.
-func TestSettlementAdmissionClosesOnlyWhenEveryPlaceIsTaken(t *testing.T) {
+// close at once. Places count the requests that wait for the database and set
+// no limit of their own: the gateway's memory admission bounds those requests.
+func TestSettlementPlacesCountRequestsWithoutALimit(t *testing.T) {
 	var calls atomic.Int32
 	recovered := make(chan struct{})
 	db := newFakeSettlementDatabase(t, func(call settlementCall) settlementReply {
@@ -563,9 +563,10 @@ func TestSettlementAdmissionClosesOnlyWhenEveryPlaceIsTaken(t *testing.T) {
 	if !s.FinalizationReady() {
 		t.Fatal("a failing settlement call closed admission")
 	}
-	// Requests in flight take all but one of the remaining places.
-	inFlight := make([]func(), 0, finalizationCapacity-2)
-	for range finalizationCapacity - 2 {
+	// More requests than an 8-GiB budget admits at the 512-KiB minimum charge.
+	const inFlightRequests = 1 << 15
+	inFlight := make([]func(), 0, inFlightRequests)
+	for range inFlightRequests {
 		release, err := s.reserveFinalization()
 		if err != nil {
 			t.Fatal(err)
@@ -573,14 +574,14 @@ func TestSettlementAdmissionClosesOnlyWhenEveryPlaceIsTaken(t *testing.T) {
 		inFlight = append(inFlight, release)
 	}
 	authorization, event = settlementRequest(t, s)
-	if _, err := s.reserveFinalization(); !errors.Is(err, ErrGatewayUnavailable) || s.FinalizationReady() {
-		t.Fatal("a gateway with every place taken admitted a request")
+	if got := s.Diagnostics().Settlement.Reserved; got != inFlightRequests+2 || !s.FinalizationReady() {
+		t.Fatalf("places = %d, ready = %t", got, s.FinalizationReady())
 	}
 	// A release frees one place, however often it runs.
 	inFlight[0]()
 	inFlight[0]()
-	if _, err := s.reserveFinalization(); err != nil || s.FinalizationReady() {
-		t.Fatalf("a repeated release did not free exactly one place: %v", err)
+	if got := s.Diagnostics().Settlement.Reserved; got != inFlightRequests+1 {
+		t.Fatalf("a repeated release left %d places", got)
 	}
 	last := finalizeAsync(s, authorization, event)
 	waitFor(t, func() bool { return s.Diagnostics().Settlement.Queued == 2 })
@@ -590,7 +591,7 @@ func TestSettlementAdmissionClosesOnlyWhenEveryPlaceIsTaken(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := s.Diagnostics().Settlement; !s.FinalizationReady() || got.Retrying || got.Reserved != finalizationCapacity-2 {
+	if got := s.Diagnostics().Settlement; !s.FinalizationReady() || got.Retrying || got.Reserved != inFlightRequests-1 {
 		t.Fatalf("diagnostics after recovery = %+v", got)
 	}
 }

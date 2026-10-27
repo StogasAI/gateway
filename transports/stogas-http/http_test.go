@@ -67,6 +67,30 @@ func TestNewRequestContextAlwaysGeneratesRequestID(t *testing.T) {
 	}
 }
 
+// A close of a hold that the database may have made keeps the request's
+// memory after the request ends, until the close ends.
+func TestNewRequestContextKeepsTheRequestsMemoryForACloseOfItsHold(t *testing.T) {
+	ctx := newTestRequest(t)
+	_, state, cancel, err := newRequestContext(ctx, time.Now(), testResolution(), apiCredential{Raw: "sk-test"}, "")
+	if err != nil {
+		t.Fatalf("newRequestContext returned error: %v", err)
+	}
+	defer cancel()
+	admission := ctx.memory.admission
+	release := state.KeepMemory()
+	if got := admission.databaseWaitReserved.Load(); got != minimumRequestWeightBytes {
+		t.Fatalf("a close kept %d bytes of the request's memory", got)
+	}
+	ctx.memory.release()
+	if got := admission.reserved.Load(); got != minimumRequestWeightBytes {
+		t.Fatalf("an ended request with a close holds %d bytes", got)
+	}
+	release()
+	if admission.reserved.Load() != 0 || admission.databaseWaitReserved.Load() != 0 {
+		t.Fatalf("an ended close left %d bytes, %d waiting for the database", admission.reserved.Load(), admission.databaseWaitReserved.Load())
+	}
+}
+
 func TestNewRequestContextDoesNotExposeClientHeadersToBifrost(t *testing.T) {
 	ctx := newTestRequest(t)
 	ctx.request.Header.Set("Authorization", "Bearer sk-secret")
@@ -215,6 +239,57 @@ func TestTransientMemoryPressureShedsWorkWithoutFailingReadiness(t *testing.T) {
 	}
 	if !server.privateDiagnostics().Requests.Memory.Saturated {
 		t.Fatal("memory pressure was not observable")
+	}
+}
+
+// Requests that clients still run never close readiness. It closes only when
+// requests that wait for the database alone hold so much memory that the
+// smallest request cannot fit, and opens again as soon as one fits.
+func TestReadinessClosesOnlyWhenDatabaseWaitsFillMemory(t *testing.T) {
+	const requests = 4
+	server := &Server{memory: &requestMemoryAdmission{budget: requests * minimumRequestWeightBytes}}
+	leases := make([]*requestMemoryLease, requests)
+	for i := range leases {
+		lease, ok := server.memory.acquire(0)
+		if !ok {
+			t.Fatal("initial memory reservation failed")
+		}
+		leases[i] = lease
+	}
+	ready := func() bool {
+		ctx := newTestRequest(t)
+		server.readiness(ctx)
+		return testResponse(ctx).Code == http.StatusNoContent && server.admissionReady()
+	}
+	if !server.memory.saturated() || !ready() {
+		t.Fatal("running requests that fill memory closed readiness")
+	}
+	waits := make([]func(), requests)
+	for i := range requests - 1 {
+		waits[i] = leases[i].awaitDatabase()
+	}
+	if !ready() {
+		t.Fatal("readiness closed although a request fits once the running one ends")
+	}
+	waits[requests-1] = leases[requests-1].awaitDatabase()
+	if ready() {
+		t.Fatal("requests waiting for the database fill memory, and the gateway stayed ready")
+	}
+	if got := server.privateDiagnostics().Requests.Memory.DatabaseWaitReservedBytes; got != requests*minimumRequestWeightBytes {
+		t.Fatalf("diagnostics report %d bytes waiting for the database", got)
+	}
+	waits[0]()
+	waits[0]()
+	leases[0].release()
+	if !ready() {
+		t.Fatal("readiness stayed closed after a wait ended")
+	}
+	for i := 1; i < requests; i++ {
+		waits[i]()
+		leases[i].release()
+	}
+	if server.memory.reserved.Load() != 0 || server.memory.databaseWaitReserved.Load() != 0 {
+		t.Fatalf("reserved %d bytes, %d waiting for the database", server.memory.reserved.Load(), server.memory.databaseWaitReserved.Load())
 	}
 }
 

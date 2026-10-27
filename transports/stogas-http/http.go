@@ -23,13 +23,22 @@ func (s *Server) admissionReady() bool {
 	if s == nil || s.requests.diagnostics().Draining {
 		return false
 	}
-	if s.runtime != nil && !s.runtime.Billing().FinalizationReady() {
+	if !s.finalizationReady() {
 		return false
 	}
 	if s.secure != nil && !s.secure.Readiness().Ready {
 		return false
 	}
 	return true
+}
+
+// finalizationReady reports whether settlement takes new requests and whether
+// requests that wait only for the database leave room for one more.
+func (s *Server) finalizationReady() bool {
+	if s.runtime != nil && !s.runtime.Billing().FinalizationReady() {
+		return false
+	}
+	return !s.memory.waitsForDatabase()
 }
 
 func (s *Server) readiness(ctx *requestContext) {
@@ -98,7 +107,7 @@ func (s *Server) diagnostics(ctx *requestContext) {
 		ready = ready && result.Ready
 		reasons = append(reasons, result.Reasons...)
 	}
-	if s != nil && s.runtime != nil && !s.runtime.Billing().FinalizationReady() {
+	if s != nil && !s.finalizationReady() {
 		ready = false
 		reasons = append(reasons, "request_finalization_pending")
 	}
@@ -328,8 +337,17 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 func (s *Server) finalizeAfterResponse(ctx *requestContext, run *providerRun, outcome *schemas.BifrostContext) {
 	ctx.finalize = func() {
 		run.cancel()
-		stogas.FinalizeState(context.WithoutCancel(outcome), s.runtime.Billing(), run.state)
+		s.finalizeState(outcome, run.state, ctx.memory, run.preparation)
 	}
+}
+
+// finalizeState settles a request that has ended. What its leases hold until
+// then waits only for the database.
+func (s *Server) finalizeState(outcome *schemas.BifrostContext, state *stogas.State, leases ...*requestMemoryLease) {
+	for _, lease := range leases {
+		defer lease.awaitDatabase()()
+	}
+	stogas.FinalizeState(context.WithoutCancel(outcome), s.runtime.Billing(), state)
 }
 
 // ingestProviderResult returns the provider outcome, nil for a valid
@@ -374,7 +392,7 @@ func (s *Server) finishDetachedUnary(run *providerRun, memory *requestMemoryLeas
 	defer memory.release()
 	defer run.cancel()
 	outcome := run.request
-	defer func() { stogas.FinalizeState(context.WithoutCancel(outcome), s.runtime.Billing(), run.state) }()
+	defer func() { s.finalizeState(outcome, run.state, memory) }()
 	result := <-pending
 	switch {
 	case !result.called:
@@ -448,7 +466,7 @@ func (s *Server) startSSEStream(ctx *requestContext, run *providerRun, started p
 	go func() {
 		defer completion()
 		defer responseMemory.release()
-		defer func() { stogas.FinalizeState(context.WithoutCancel(outcome), s.runtime.Billing(), state) }()
+		defer func() { s.finalizeState(outcome, state, memory) }()
 		defer func() { finishProviderStream(run.cancel, pending, stream) }()
 		// Finish downstream delivery independently of provider teardown. Provider
 		// admission and retained state remain charged until teardown completes.

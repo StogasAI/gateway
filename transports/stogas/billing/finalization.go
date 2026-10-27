@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	finalizationCapacity = 8192
 	// settle_gateway_request_logs takes at most this much per call, with both
 	// arrays measured as sent.
 	settlementMaxLogs       = 100
@@ -100,8 +99,10 @@ func (f *finalizationState) fail(counter *atomic.Uint64) {
 }
 
 type SettlementDiagnostics struct {
-	Reserved        int        `json:"reserved"`
-	Capacity        int        `json:"capacity"`
+	Reserved int `json:"reserved"`
+	// Closing counts authorizations the database never answered, whose holds
+	// wait for a close.
+	Closing         int64      `json:"closing"`
 	Queued          int        `json:"queued"`
 	Retrying        bool       `json:"retrying"`
 	Calls           uint64     `json:"calls"`
@@ -114,17 +115,19 @@ type SettlementDiagnostics struct {
 	EncodingFailed  bool       `json:"encodingFailed"`
 }
 
-// Every admitted request reserves its place in settlement before touching the
-// wallet, which bounds the requests that wait for settlement. Failing database
-// calls do not close admission by themselves: every gateway shares the
-// database, so a short outage would make the whole fleet unready at once.
-// Requests then fail at authorization, and admission closes when the requests
-// waiting for the database fill every place.
+// Every admitted request takes a place in settlement before touching the
+// wallet and keeps it until the database settles its log or closes its hold.
+// Places count these requests; they set no limit of their own. The caller's
+// memory admission bounds them, because a request keeps its memory until
+// then, and a close keeps it through HoldRequest.KeepMemory. Failing database
+// calls do not close admission: every gateway shares the database, so a short
+// outage would make the whole fleet unready at once. Requests then fail at
+// authorization.
 func (s *Service) reserveFinalization() (func(), error) {
 	f := &s.finalizations
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed || f.encodingFailed.Load() || f.reserved >= finalizationCapacity {
+	if f.closed || f.encodingFailed.Load() {
 		return nil, ErrGatewayUnavailable
 	}
 	f.reserved++
@@ -132,6 +135,8 @@ func (s *Service) reserveFinalization() (func(), error) {
 	return func() { once.Do(func() { f.mu.Lock(); f.reserved--; f.mu.Unlock() }) }, nil
 }
 
+// FinalizationReady reports whether settlement takes new requests: the gateway
+// is not closing, and it has encoded every log so far.
 func (s *Service) FinalizationReady() bool {
 	if s == nil {
 		return true
@@ -139,7 +144,7 @@ func (s *Service) FinalizationReady() bool {
 	f := &s.finalizations
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return !f.closed && !f.encodingFailed.Load() && f.reserved < finalizationCapacity
+	return !f.closed && !f.encodingFailed.Load()
 }
 
 // FinalizeRequest settles the request's hold with its log and returns once the
@@ -547,8 +552,9 @@ func sleepContext(ctx context.Context, delay time.Duration) bool {
 
 // PostgreSQL can still commit a hold after authorization stopped waiting for
 // it, and the gateway never runs that request. Closing it releases any such
-// hold at zero charge once authorizeBefore passes. The request's finalization
-// reservation bounds these closes.
+// hold at zero charge once authorizeBefore passes. The close keeps the
+// request's place and memory until it ends, so memory admission bounds closes
+// as it bounds requests.
 func (s *Service) closeUnconfirmedAuthorization(requestID string, keyID string, authorizeBefore time.Time, release func()) {
 	f := &s.finalizations
 	f.mu.Lock()
@@ -669,7 +675,7 @@ func (s *Service) settlementDiagnostics() SettlementDiagnostics {
 		lastFailedAt = &at
 	}
 	return SettlementDiagnostics{
-		Reserved: reserved, Capacity: finalizationCapacity, Queued: queued, Retrying: f.retrying.Load(),
+		Reserved: reserved, Closing: f.closing.Load(), Queued: queued, Retrying: f.retrying.Load(),
 		Calls: f.calls.Load(), FailedCalls: f.failedCalls.Load(), Refused: f.refused.Load(), Abandoned: f.abandoned.Load(),
 		LastFailedAt:  lastFailedAt,
 		UnderReserved: s.underReservedSettlements.Load(), NegativeBalance: s.negativeBalanceSettlements.Load(),

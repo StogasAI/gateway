@@ -130,6 +130,7 @@ func AuthorizeState(ctx *schemas.BifrostContext, caller context.Context, billing
 		UpstreamTarget:           billingUpstreamTarget(state.Resolution),
 		RequestLifetime:          state.RequestLifetime,
 		Previous:                 previous,
+		KeepMemory:               state.KeepMemory,
 	})
 	if authorization != nil {
 		state.Authorization = authorization

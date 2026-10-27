@@ -246,6 +246,51 @@ func TestRequestMemoryRetentionTransfersUnderSaturation(t *testing.T) {
 	}
 }
 
+// A close keeps all that its request itself holds, and nothing that another
+// owner retained: that owner releases its part when it ends.
+func TestAClosedHoldKeepsItsRequestsOwnMemoryUntilItEnds(t *testing.T) {
+	admission := &requestMemoryAdmission{budget: 2 * minimumRequestWeightBytes}
+	request, ok := admission.acquire(0)
+	if !ok {
+		t.Fatal("admit")
+	}
+	releaseTransport, ok := request.retain(int(minimumRequestWeightBytes / 4))
+	if !ok {
+		t.Fatal("retain")
+	}
+	release := request.keep()
+	kept := minimumRequestWeightBytes * 3 / 4
+	if got := admission.databaseWaitReserved.Load(); got != kept {
+		t.Fatalf("database waits = %d, want %d", got, kept)
+	}
+	request.release()
+	releaseTransport()
+	if got := admission.reserved.Load(); got != kept {
+		t.Fatalf("an ended request with a close holds %d bytes, want %d", got, kept)
+	}
+	// New requests cannot have what the close keeps.
+	other, ok := admission.acquire(0)
+	if !ok {
+		t.Fatal("admit beside the close")
+	}
+	if _, ok := admission.acquire(0); ok {
+		t.Fatal("a new request took the close's memory")
+	}
+	release()
+	release()
+	other.release()
+	if admission.reserved.Load() != 0 || admission.databaseWaitReserved.Load() != 0 {
+		t.Fatalf("reserved %d bytes, %d waiting for the database", admission.reserved.Load(), admission.databaseWaitReserved.Load())
+	}
+	// A request that already ended keeps nothing.
+	ended, _ := admission.acquire(0)
+	ended.release()
+	ended.keep()()
+	if admission.reserved.Load() != 0 || admission.databaseWaitReserved.Load() != 0 {
+		t.Fatal("an ended request kept memory")
+	}
+}
+
 func TestRequestMemoryAdmissionUsesBoundedWeightedCapacity(t *testing.T) {
 	admission := &requestMemoryAdmission{}
 	lease, ok := admission.acquire(16 * 1024 * 1024)
