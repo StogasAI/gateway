@@ -118,7 +118,9 @@ func TestRejectionLogsKeepFirstRequestsIndividualAndBoundDeliveryBatches(t *test
 				repeat.Count++
 				repeat.Last = stamp
 			}
-			service.RecordRejection(copy)
+			if kept := service.RecordRejection(copy); kept != (i < rejectionLogIndividualLimit) {
+				t.Fatalf("rejection %d kept a row of its own: %v", i, kept)
+			}
 			total++
 		}
 		if repeat.Count > 0 {
@@ -159,7 +161,9 @@ func TestRejectionLogsNeverAcceptSuccessfulRequests(t *testing.T) {
 	input := rejectionFixture()
 	for status := 200; status < 400; status++ {
 		input.StatusCode = status
-		service.RecordRejection(input)
+		if service.RecordRejection(input) {
+			t.Fatalf("status %d kept a rejection row", status)
+		}
 	}
 	service.Close()
 	if got := service.Diagnostics().RejectionLogs; got.RecordedRequests != 0 || got.PendingGroups != 0 {
@@ -225,7 +229,9 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 	for i := 1; i <= rejectionLogPerKeyCapacity; i++ {
 		copy := input
 		copy.CreatedAt = input.CreatedAt.Add(time.Duration(i) * rejectionLogWindow)
-		service.RecordRejection(copy)
+		if kept := service.RecordRejection(copy); kept != (i < rejectionLogPerKeyCapacity) {
+			t.Fatalf("group %d of one key kept a row: %v", i, kept)
+		}
 	}
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != rejectionLogPerKeyCapacity || got.DroppedRequests != 1 {
 		t.Fatalf("per-key cap: %+v", got)
@@ -241,7 +247,9 @@ func TestRejectionLogsBoundMemoryAndDiscardUntrustedLabels(t *testing.T) {
 		t.Fatalf("process cap: %+v", got)
 	}
 	drainSettlements(t, service)
-	service.RecordRejection(input)
+	if service.RecordRejection(input) {
+		t.Fatal("a closed buffer kept a rejection row")
+	}
 	if got := service.Diagnostics().RejectionLogs; got.PendingGroups != 0 || got.DroppedRequests != 3 || got.StoredRequests != got.RecordedRequests-3 {
 		t.Fatalf("shutdown loss accounting: %+v", got)
 	}
@@ -254,14 +262,16 @@ func TestRejectionLogsBoundEachOrganization(t *testing.T) {
 	service := db.service
 	input := rejectionFixture()
 	input.CreatedAt = time.Now().Add(time.Hour).Truncate(rejectionLogWindow)
-	for range rejectionLogPerOrganizationCapacity + 1 {
+	for key := range rejectionLogPerOrganizationCapacity + 1 {
 		copy := input
 		claims := *input.Claims
 		claims.KeyID = uuid.Must(uuid.NewV7()).String()
 		copy.Claims = &claims
 		for range 2 {
 			copy.RequestID = uuid.Must(uuid.NewV7()).String()
-			service.RecordRejection(copy)
+			if kept := service.RecordRejection(copy); kept != (key < rejectionLogPerKeyCapacity) {
+				t.Fatalf("key %d kept a row: %v", key, kept)
+			}
 		}
 	}
 	other := rejectionFixture()

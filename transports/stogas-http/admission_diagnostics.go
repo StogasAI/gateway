@@ -44,9 +44,11 @@ func (s *Server) recordAdmission(ctx *requestContext) {
 
 // Capture the inner status before E2EE wraps it in an HTTP 200 response.
 // Fixed counters retain neither identities nor client/provider-controlled labels.
-func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string) {
+// It reports whether the request log keeps the rejection as a row of its own,
+// which decides whether the rejection is exported.
+func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string) bool {
 	if !(ctx.request.Method == http.MethodPost) || !isInferencePath(ctx.request.URL.Path) || status < 400 || ctx.admissionCounted {
-		return
+		return false
 	}
 	ctx.admissionCounted = true
 	var counter *atomic.Uint64
@@ -71,12 +73,12 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	counter.Add(1)
 	claims := ctx.claims
 	if s.runtime == nil || s.runtime.Billing() == nil {
-		return
+		return false
 	}
 	dashboard := ctx.dashboard
 	s.runtime.Billing().RecordRefusal(claims, dashboard, code)
 	if claims == nil {
-		return
+		return false
 	}
 	requestType := ctx.requestType
 	if requestType == "" {
@@ -87,7 +89,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	}
 	requestID, err := inferenceRequestID(ctx)
 	if err != nil {
-		return
+		return false
 	}
 	startedAt := ctx.startedAt
 	if startedAt.IsZero() {
@@ -97,7 +99,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	if s.secure != nil {
 		nodeID = s.secure.NodeID()
 	}
-	s.runtime.Billing().RecordRejection(billing.RejectionInput{
+	return s.runtime.Billing().RecordRejection(billing.RejectionInput{
 		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
 		StatusCode: status, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(),

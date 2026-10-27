@@ -312,7 +312,10 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 		if run.state.Authorization != nil {
 			s.finalizeAfterResponse(ctx, run, run.request)
 		} else {
-			stogas.FinalizeExportState(run.request, run.state)
+			// The rejection is recorded before the response, so that the export
+			// can follow the request log.
+			logged := respond && response != nil && s.recordAdmissionRejection(ctx, response.status, response.code())
+			stogas.FinalizeRejectedExport(run.request, run.state, logged)
 			run.cancel()
 		}
 		if respond && response != nil {

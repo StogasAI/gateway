@@ -137,7 +137,6 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if err != nil {
 		return err
 	}
-	state.Export.Input(resolution.RawBody(), resolution.Route == catalog.RouteResponses)
 	if err := stogas.PrepareProviderRequest(pair.ctx, state, request); err != nil {
 		return err
 	}
@@ -154,6 +153,10 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if previous == nil && state.Authorization != nil {
 		r.server.recordAdmission(r.client)
 		r.client.markPaid()
+	}
+	// A request without a hold costs nothing, so its export never copies it.
+	if state.Authorization != nil {
+		state.Export.Input(resolution.RawBody(), resolution.Route == catalog.RouteResponses)
 	}
 	if err != nil {
 		return billingFailure{err}
