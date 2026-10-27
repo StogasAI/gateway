@@ -104,6 +104,16 @@ func hasSignedAPIKeyShape(rawKey string) bool {
 		strings.HasPrefix(rawKey, apiKeyPrefix)
 }
 
+// apiKeyPepperFingerprint names a pepper without revealing it: the first eight
+// bytes of its HMAC-SHA256 over a fixed label, in hex. Control and the monitor's
+// probe key name theirs the same way, so the monitor can see a gateway whose
+// pepper differs from Control's and so refuses every key that Control issues.
+func apiKeyPepperFingerprint(apiKeyPepper string) string {
+	hasher := hmac.New(sha256.New, []byte(apiKeyPepper))
+	_, _ = hasher.Write([]byte("stogas api key pepper fingerprint v1"))
+	return hex.EncodeToString(hasher.Sum(nil)[:8])
+}
+
 func hashAPIKey(token string, apiKeyPepper string) string {
 	hasher := hmac.New(sha512.New, []byte(apiKeyPepper))
 	_, _ = hasher.Write([]byte(token))

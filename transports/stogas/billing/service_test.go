@@ -49,6 +49,23 @@ func TestParseSignedAPIKey(t *testing.T) {
 	}
 }
 
+// Control and the monitor compute the same fingerprints; these vectors appear
+// in their tests too.
+func TestAPIKeyPepperFingerprint(t *testing.T) {
+	for pepper, want := range map[string]string{
+		"test-pepper-0123456789abcdef0123456789":  "a0c5e3f1e838e326",
+		"another-pepper-0123456789abcdef01234567": "4093c9c8af3c8bf1",
+	} {
+		if got := apiKeyPepperFingerprint(pepper); got != want {
+			t.Fatalf("fingerprint of %q = %s, want %s", pepper, got, want)
+		}
+	}
+	service := &Service{apiKeyPepperFingerprint: apiKeyPepperFingerprint("test-pepper-0123456789abcdef0123456789")}
+	if got := service.Diagnostics().APIKeyPepperFingerprint; got != "a0c5e3f1e838e326" {
+		t.Fatalf("diagnostics fingerprint = %q", got)
+	}
+}
+
 func TestParseGrantSignedAPIKey(t *testing.T) {
 	secret := "test-token-pepper"
 	keyID := "019de515-eabf-7c0e-89bd-400629a79580"
