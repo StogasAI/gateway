@@ -141,19 +141,19 @@ func (s *Server) catalog(ctx *requestContext) {
 	s.writeJSON(ctx, http.StatusOK, payload)
 }
 
-// catalogPartsPath serves the parts that the active public catalog lists, each by its SHA-256 in
+// catalogArchivePath serves the archive that the active public catalog names, by its SHA-256 in
 // hex.
-const catalogPartsPath = "/v1/catalog/parts/"
+const catalogArchivePath = "/v1/catalog/archive/"
 
-func (s *Server) catalogPart(ctx *requestContext) {
-	part, ok := catalog.ActivePublicPart(strings.TrimPrefix(ctx.request.URL.Path, catalogPartsPath))
+func (s *Server) catalogArchive(ctx *requestContext) {
+	archive, ok := catalog.ActiveArchive(strings.TrimPrefix(ctx.request.URL.Path, catalogArchivePath))
 	if !ok {
 		s.notFound(ctx)
 		return
 	}
-	// The path names the part's bytes, so they never change.
+	// The path names the archive's bytes, so they never change.
 	ctx.writer.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	s.writeResponse(ctx, http.StatusOK, "application/json", part)
+	s.writeResponse(ctx, http.StatusOK, "application/json", archive)
 }
 
 func (s *Server) models(ctx *requestContext) {

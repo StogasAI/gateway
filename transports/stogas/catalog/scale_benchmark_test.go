@@ -130,14 +130,6 @@ func BenchmarkCatalogScaleLoad(b *testing.B) {
 // bodies. Measure that ownership separately from load-time allocations.
 func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	b.ReportAllocs()
-	parts, err := embeddedParts()
-	if err != nil {
-		b.Fatal(err)
-	}
-	artifactBytes := len(embeddedRuntimeCatalogJSON) + len(embeddedPublicCatalogJSON)
-	for _, part := range parts {
-		artifactBytes += len(part)
-	}
 	runtime.GC()
 	runtime.GC()
 	var before runtime.MemStats
@@ -146,7 +138,7 @@ func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	var release *snapshot
 	for n := 0; n < b.N; n++ {
 		var err error
-		release, err = snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
+		release, err = snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, nil, Identity{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -156,7 +148,7 @@ func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	b.ReportMetric(float64(artifactBytes), "artifact_bytes")
+	b.ReportMetric(float64(len(embeddedRuntimeCatalogJSON)+len(embeddedPublicCatalogJSON)), "artifact_bytes")
 	b.ReportMetric(float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)), "retained_heap_bytes")
 	runtime.KeepAlive(release)
 }

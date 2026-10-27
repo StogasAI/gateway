@@ -9,14 +9,19 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"golang.org/x/sync/errgroup"
 )
 
-// catalogPartDownloads bounds the parts of a public catalog that download at once.
-const catalogPartDownloads = 8
+// artifactBytesPerSecond is the slowest delivery that a catalog download waits for beyond the
+// evidence timeouts, so a large catalog has time to arrive and a stalled origin still fails over.
+const artifactBytesPerSecond = 4 << 20
+
+// transferTime is how long size bytes take at the slowest delivery a download waits for.
+func transferTime(size int64) time.Duration {
+	return time.Duration(size) * time.Second / artifactBytesPerSecond
+}
 
 // Catalog failure classes double as readiness reasons. They are fixed text because
 // the fleet monitor discards reasons it does not recognize.
@@ -105,7 +110,7 @@ func (e *currentEvidence) refusedCatalogSequences() []uint64 {
 
 func (e *currentEvidence) installCatalog(parent context.Context, approved approvedCatalog) error {
 	release := approved.Release
-	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout)
+	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(release.RuntimeSizeBytes+release.PublicSizeBytes))
 	defer cancel()
 	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
 	if err != nil {
@@ -115,44 +120,32 @@ func (e *currentEvidence) installCatalog(parent context.Context, approved approv
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	listed, err := catalog.PublicParts(publicBytes)
+	reference, err := catalog.PublicArchive(publicBytes)
 	if err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
-	parts, err := e.publicParts(ctx, listed)
+	archiveBytes, err := e.archive(parent, reference)
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	if err := catalog.InstallApproved(runtimeBytes, publicBytes, parts, approved.identity(), release.PublicDigest); err != nil {
+	if err := catalog.InstallApproved(runtimeBytes, publicBytes, archiveBytes, approved.identity(), release.PublicDigest); err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
 	return nil
 }
 
-// publicParts gets each part that a public root lists. The active catalog supplies the parts it
-// shares with the new one, so a release downloads only the parts that changed.
-func (e *currentEvidence) publicParts(ctx context.Context, listed []catalog.PublicPart) (map[string][]byte, error) {
-	parts := make(map[string][]byte, len(listed))
-	var mu sync.Mutex
-	downloads, ctx := errgroup.WithContext(ctx)
-	downloads.SetLimit(catalogPartDownloads)
-	for _, part := range listed {
-		if data, ok := catalog.ActivePublicPart(part.SHA256); ok {
-			parts[part.SHA256] = data
-			continue
-		}
-		downloads.Go(func() error {
-			data, err := e.artifact(ctx, "sha256:"+part.SHA256, part.Size, catalog.MaxPublicPartBytes)
-			if err != nil {
-				return err
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			parts[part.SHA256] = data
-			return nil
-		})
+// archive gets the archive that a public catalog names, or nil when it names none. The active
+// catalog supplies it when the two share it, so a release downloads it only when it changed.
+func (e *currentEvidence) archive(parent context.Context, reference *catalog.ArchiveReference) ([]byte, error) {
+	if reference == nil {
+		return nil, nil
 	}
-	return parts, downloads.Wait()
+	if data, ok := catalog.ActiveArchive(reference.SHA256); ok {
+		return data, nil
+	}
+	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(reference.Size))
+	defer cancel()
+	return e.artifact(ctx, "sha256:"+reference.SHA256, reference.Size, catalog.MaxArchiveBytes)
 }
 
 func (e *currentEvidence) artifact(ctx context.Context, digest string, size, limit int64) ([]byte, error) {
@@ -182,7 +175,7 @@ func (e *currentEvidence) artifact(ctx context.Context, digest string, size, lim
 }
 
 func (e *currentEvidence) fetchArtifact(parent context.Context, url string, limit int64) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(parent, evidenceAttemptTimeout)
+	ctx, cancel := context.WithTimeout(parent, evidenceAttemptTimeout+transferTime(limit))
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

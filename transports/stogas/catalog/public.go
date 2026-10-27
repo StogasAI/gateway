@@ -2,20 +2,19 @@ package catalog
 
 import (
 	"encoding/json"
-	"maps"
 	"sort"
 	"time"
 )
 
-// PublicCatalog is the root of the public catalog with the identity of its release. The root
-// names each part by SHA-256, and ActivePublicPart holds it.
+// PublicCatalog is the public catalog with the identity of its release. It names its archive by
+// SHA-256, and ActiveArchive holds it.
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`
 	Sequence      uint64                     `json:"sequence"`
 	RuntimeDigest string                     `json:"runtimeDigest"`
 	PublicDigest  string                     `json:"publicDigest"`
+	Archive       *ArchiveReference          `json:"archive"`
 	Graph         map[string]json.RawMessage `json:"graph"`
-	Parts         json.RawMessage            `json:"parts"`
 	Schedule      json.RawMessage            `json:"schedule"`
 	Periods       json.RawMessage            `json:"periods"`
 }
@@ -43,26 +42,6 @@ func PublicCatalogPayload() (PublicCatalog, bool) {
 	}
 	payload.Sequence, payload.RuntimeDigest, payload.PublicDigest = snap.identity.Sequence, snap.identity.Digest, snap.publicDigest
 	return payload, true
-}
-
-// PublicDeployments is every deployment record of the active public catalog, as its parts hold
-// them.
-func PublicDeployments() (map[string]json.RawMessage, bool) {
-	snap := active.Load()
-	if snap == nil || len(snap.publicRaw) == 0 {
-		return nil, false
-	}
-	deployments := make(map[string]json.RawMessage)
-	for _, part := range snap.publicParts {
-		var decoded struct {
-			Deployments map[string]json.RawMessage `json:"deployments"`
-		}
-		if err := json.Unmarshal(part, &decoded); err != nil {
-			return nil, false
-		}
-		maps.Copy(deployments, decoded.Deployments)
-	}
-	return deployments, true
 }
 
 func ActiveIdentity() (Identity, bool) {

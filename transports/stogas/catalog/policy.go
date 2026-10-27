@@ -88,6 +88,9 @@ func routingSelectionsForRequest(
 	providers := snap.routeModelProviders(route, requestedModel, availableCredentials, trace)
 	providers = filterRoutingProvidersByAllowedNodes(snap, route, requestedModel, want, providers, config, trace)
 	if len(providers) == 0 {
+		if date, retired := snap.retiredOn(requestedModel, time.Now()); retired {
+			return nil, modelRetired(date)
+		}
 		return nil, ErrModelUnavailable
 	}
 	selections := make([]routingSelection, 0)

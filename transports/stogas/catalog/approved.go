@@ -9,30 +9,29 @@ import (
 // Artifact bounds are shared by delivery and decoding.
 const MaxRuntimeBytes = runtimeSizeLimit
 const MaxPublicBytes = publicSizeLimit
-const MaxPublicPartBytes = publicPartSizeLimit
+const MaxArchiveBytes = archiveSizeLimit
 
 func ActiveMatchesApproved(identity Identity, publicDigest string) bool {
 	current := active.Load()
 	return current != nil && current.identity == identity && current.publicDigest == publicDigest
 }
 
-// ActivePublicPart is a part of the active public catalog, by SHA-256 in hex, so a new release
-// downloads only the parts that changed.
-func ActivePublicPart(sha256 string) ([]byte, bool) {
+// ActiveArchive is the active catalog's archive when its SHA-256, in hex, is sha256, so a new
+// release downloads the archive only when it changed.
+func ActiveArchive(sha256 string) ([]byte, bool) {
 	current := active.Load()
-	if current == nil {
+	if current == nil || current.archive == nil || current.archive.sha256 != sha256 {
 		return nil, false
 	}
-	part, ok := current.publicParts[sha256]
-	return part, ok
+	return current.archive.data, true
 }
 
 // InstallApproved installs artifacts selected by the shared offline verifier.
 // The caller must authenticate the complete approval set before supplying these
-// digests. The public root names each of its parts, by SHA-256 in hex, so parts
-// need no approval of their own. Parsing and replacement remain atomic, including
-// an approved rollback.
-func InstallApproved(runtimeData, publicData []byte, parts map[string][]byte, identity Identity, publicDigest string) error {
+// digests. The public catalog names its archive by SHA-256, so the archive needs
+// no approval of its own. Parsing and replacement remain atomic, including an
+// approved rollback.
+func InstallApproved(runtimeData, publicData, archiveData []byte, identity Identity, publicDigest string) error {
 	if identity.Sequence == 0 || len(runtimeData) > runtimeSizeLimit || len(publicData) > publicSizeLimit {
 		return errors.New("invalid approved catalog size or sequence")
 	}
@@ -40,7 +39,7 @@ func InstallApproved(runtimeData, publicData []byte, parts map[string][]byte, id
 	if "sha256:"+hex.EncodeToString(runtimeHash[:]) != identity.Digest || "sha256:"+hex.EncodeToString(publicHash[:]) != publicDigest {
 		return errors.New("catalog artifacts differ from approved digests")
 	}
-	candidate, err := snapshotFromRelease(runtimeData, publicData, parts, identity)
+	candidate, err := snapshotFromRelease(runtimeData, publicData, archiveData, identity)
 	if err != nil {
 		return err
 	}
