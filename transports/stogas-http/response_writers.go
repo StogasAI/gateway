@@ -497,6 +497,15 @@ type errorResponse struct {
 	final bool
 }
 
+// code is the error code that writeError reports for the response.
+func (r errorResponse) code() string {
+	code := ""
+	if detail, ok := r.payload["error"].(map[string]any); ok {
+		code, _ = detail["code"].(string)
+	}
+	return stogasbilling.NormalizeStogasErrorCode(code, r.status)
+}
+
 func (s *Server) writeErrorResponse(ctx *requestContext, response errorResponse) {
 	if response.retryAfter != "" {
 		ctx.writer.Header().Set("Retry-After", response.retryAfter)

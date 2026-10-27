@@ -111,9 +111,12 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 	}
 }
 
-func (s *Service) RecordRejection(input RejectionInput) {
+// RecordRejection reports whether the rejection keeps a row of its own, with
+// its request ID. Later ones in its group only add to the group's count, and
+// a full buffer drops them.
+func (s *Service) RecordRejection(input RejectionInput) bool {
 	if s == nil || input.Claims == nil || input.RequestID == "" || input.StatusCode < 400 || input.StatusCode > 599 {
-		return
+		return false
 	}
 	input.Code = NormalizeStogasErrorCode(input.Code, input.StatusCode)
 	switch input.RequestType {
@@ -127,7 +130,7 @@ func (s *Service) RecordRejection(input RejectionInput) {
 	b.diagnostics.RecordedRequests++
 	if b.closed {
 		b.recordDropped(1)
-		return
+		return false
 	}
 	if b.groups == nil {
 		b.groups = make(map[rejectionLogKey]*rejectionLogGroup)
@@ -153,7 +156,7 @@ func (s *Service) RecordRejection(input RejectionInput) {
 		if len(b.groups) >= rejectionLogCapacity || b.perKey[input.Claims.KeyID] >= rejectionLogPerKeyCapacity ||
 			organization >= rejectionLogPerOrganizationCapacity {
 			b.recordDropped(1)
-			return
+			return false
 		}
 		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input)}
 		group.RequestCount = 0
@@ -170,11 +173,11 @@ func (s *Service) RecordRejection(input RejectionInput) {
 			group.queuedAt = now
 		}
 		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp})
-		return
+		return true
 	}
 	if group.RequestCount == ^uint32(0) {
 		b.recordDropped(1)
-		return
+		return false
 	}
 	if group.RequestCount == 0 {
 		group.RequestID, group.CreatedAt, group.LastRequestAt = input.RequestID, stamp, stamp
@@ -186,6 +189,7 @@ func (s *Service) RecordRejection(input RejectionInput) {
 	if stamp < group.CreatedAt {
 		group.CreatedAt = stamp
 	}
+	return false
 }
 
 func (b *rejectionLogBuffer) recordDropped(count uint64) {
