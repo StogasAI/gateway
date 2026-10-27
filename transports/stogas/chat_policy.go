@@ -1042,7 +1042,7 @@ func validateChatTools(raw json.RawMessage) ([]chatToolRef, error) {
 		path := fmt.Sprintf("tools[%d]", index)
 		kind := rawString(tool["type"])
 		if kind == "custom" {
-			return nil, invalidRequest("custom tools are not supported for the selected Chat deployment")
+			return nil, invalidRequest("custom tools are not supported in Chat Completions; use /v1/responses")
 		}
 		switch kind {
 		case "function":
@@ -1155,7 +1155,7 @@ func validateChatToolChoice(raw json.RawMessage, tools []chatToolRef) error {
 		}
 		return nil
 	case "custom":
-		return invalidRequest("custom tool_choice is not supported for the selected Chat deployment")
+		return invalidRequest("custom tool_choice is not supported in Chat Completions; use /v1/responses")
 	default:
 		return invalidRequest("tool_choice must be auto, none, required, or a supported tool object")
 	}
