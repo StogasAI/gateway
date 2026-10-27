@@ -55,8 +55,8 @@ func BenchmarkIdentityCacheFootprint(b *testing.B) {
 			grant := fmt.Sprintf("%08x-4444-4444-8444-444444444444", index)
 			secret := fmt.Sprintf("api:%0128x", index)
 			keys.put(secret, &APIKeyClaims{KeyID: id, OrganizationID: org, ResponsibleID: user, GrantID: &grant, admissionKey: secret})
-			credentials.allow(secret, now, credentialRequestLimit)
-			organizations.allow(org, now, organizationRequestLimit)
+			credentials.allow(secret, now, credentialRequestLimit(defaultPlatformRequestsPerSecond))
+			organizations.allow(org, now, organizationRequestLimit(defaultPlatformRequestsPerSecond))
 			refusals.record(secret, nil, refusalHoldBack, now)
 		}
 		runtime.GC()

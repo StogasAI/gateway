@@ -32,11 +32,13 @@ const (
 	// OpenTelemetry's initial retry interval and Fluent Bit's backoff base,
 	// randomized by half in either direction as OpenTelemetry does.
 	retryDelay = 5 * time.Second
-	// An organization may start 480 requests a second on each gateway, and
-	// rejected requests are exported too. HTTP/1.1 carries one delivery per
-	// connection, so 128 connections keep up while a receiver answers within
-	// about 270 ms, as one on another continent does. HTTP/2 multiplexes
-	// deliveries within each connection. Connections open only on demand.
+	// An organization may start 480 requests a second on each gateway, twice
+	// that at the highest platform rate an organization can have, and rejected
+	// requests are exported too. HTTP/1.1 carries one delivery per connection,
+	// so 128 connections keep up while a receiver answers within about 270 ms,
+	// as one on another continent does, or 135 ms at that rate. HTTP/2
+	// multiplexes deliveries within each connection. Connections open only on
+	// demand.
 	maxConnsPerHost = 128
 	// Idle connections stay charged until they close. This keeps one request's
 	// whole fan-out, eight hosts at the per-host limit, ready for reuse.

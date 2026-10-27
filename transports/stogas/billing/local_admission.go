@@ -16,18 +16,82 @@ const (
 // burst requests at once when full.
 type localRequestLimit struct{ ratePerSecond, burst float64 }
 
-// Each gateway admits a credential's requests at up to 240 a second, in bursts
-// of up to 360, and an organization's at up to 480 and 720. PostgreSQL admits
-// an organization's requests at 120 a second, and 360 at once as they wait up
-// to two seconds to start, so a gateway that receives every request of an
-// organization refuses none that PostgreSQL would admit, apart from a few sent
-// while PostgreSQL's refusal of an earlier one was on its way back. Two
-// credentials at their limit fill their organization's, so one runaway
-// credential takes at most half of it.
-var (
-	credentialRequestLimit   = localRequestLimit{240, 360}
-	organizationRequestLimit = localRequestLimit{480, 720}
-)
+// PostgreSQL admits an organization's requests at its platform rate R, 120 a
+// second unless the organization has a rate of its own, and 3R at once as they
+// wait up to two seconds to start. Each gateway admits a credential's requests
+// at up to 2R a second, in bursts of up to 3R, and an organization's at up to
+// 4R and 6R, so a gateway that receives every request of an organization
+// refuses none that PostgreSQL would admit, apart from a few sent while
+// PostgreSQL's refusal of an earlier one was on its way back. Two credentials
+// at their limit fill their organization's, so one runaway credential takes at
+// most half of it.
+const defaultPlatformRequestsPerSecond = 120
+
+func credentialRequestLimit(rate float64) localRequestLimit {
+	return localRequestLimit{2 * rate, 3 * rate}
+}
+
+func organizationRequestLimit(rate float64) localRequestLimit {
+	return localRequestLimit{4 * rate, 6 * rate}
+}
+
+// organizationRates holds the platform rate of each organization whose latest
+// authorization on this gateway reported one above the default, so its local
+// limits rise with it. Every other organization keeps the default's limits: a
+// lower rate needs no lower local limits, because PostgreSQL refuses requests
+// above it before it locks or writes anything, as it does for any flood.
+type organizationRates struct {
+	shards [localAdmissionShards]struct {
+		mu      sync.Mutex
+		entries map[string]float64
+	}
+}
+
+func (r *organizationRates) rate(organizationID string) float64 {
+	if organizationID == "" {
+		return defaultPlatformRequestsPerSecond
+	}
+	shard := &r.shards[localAdmissionShard(organizationID)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if rate, ok := shard.entries[organizationID]; ok {
+		return rate
+	}
+	return defaultPlatformRequestsPerSecond
+}
+
+// learn records the rate an authorization reported. Results that do not read
+// the rate report none.
+func (r *organizationRates) learn(organizationID string, rate *int32) {
+	if organizationID == "" || rate == nil || *rate < 1 {
+		return
+	}
+	shard := &r.shards[localAdmissionShard(organizationID)]
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	if *rate <= defaultPlatformRequestsPerSecond {
+		delete(shard.entries, organizationID)
+		return
+	}
+	if shard.entries == nil {
+		shard.entries = make(map[string]float64)
+	}
+	if _, ok := shard.entries[organizationID]; !ok {
+		evictLocalAdmissionEntry(shard.entries)
+	}
+	shard.entries[organizationID] = float64(*rate)
+}
+
+func (r *organizationRates) count() int {
+	total := 0
+	for index := range r.shards {
+		shard := &r.shards[index]
+		shard.mu.Lock()
+		total += len(shard.entries)
+		shard.mu.Unlock()
+	}
+	return total
+}
 
 type LocalAdmissionDiagnostics struct {
 	APIKeyCacheEntries        int    `json:"apiKeyCacheEntries"`
@@ -47,17 +111,20 @@ type LocalAdmissionDiagnostics struct {
 	// this gateway, statements that PostgreSQL found it busy for, and
 	// authorizations that waited until their deadline. Batches are statements
 	// that authorized more than one request.
-	OrganizationWaits           uint64                  `json:"organizationWaits"`
-	OrganizationBusy            uint64                  `json:"organizationBusy"`
-	OrganizationTimeouts        uint64                  `json:"organizationTimeouts"`
-	OrganizationLastTimeoutAt   *time.Time              `json:"organizationLastTimeoutAt,omitempty"`
-	OrganizationBatches         uint64                  `json:"organizationBatches"`
-	OrganizationBatchedRequests uint64                  `json:"organizationBatchedRequests"`
-	OrganizationLargestBatch    int64                   `json:"organizationLargestBatch"`
-	RejectionCacheHits          uint64                  `json:"rejectionCacheHits"`
-	RejectionCacheLookups       uint64                  `json:"rejectionCacheLookups"`
-	CredentialRequests          LocalRequestDiagnostics `json:"credentialRequests"`
-	OrganizationRequests        LocalRequestDiagnostics `json:"organizationRequests"`
+	OrganizationWaits           uint64     `json:"organizationWaits"`
+	OrganizationBusy            uint64     `json:"organizationBusy"`
+	OrganizationTimeouts        uint64     `json:"organizationTimeouts"`
+	OrganizationLastTimeoutAt   *time.Time `json:"organizationLastTimeoutAt,omitempty"`
+	OrganizationBatches         uint64     `json:"organizationBatches"`
+	OrganizationBatchedRequests uint64     `json:"organizationBatchedRequests"`
+	OrganizationLargestBatch    int64      `json:"organizationLargestBatch"`
+	RejectionCacheHits          uint64     `json:"rejectionCacheHits"`
+	RejectionCacheLookups       uint64     `json:"rejectionCacheLookups"`
+	// The limits of organizations with the default platform rate, and how many
+	// organizations this gateway knows a higher rate for.
+	CredentialRequests   LocalRequestDiagnostics `json:"credentialRequests"`
+	OrganizationRequests LocalRequestDiagnostics `json:"organizationRequests"`
+	OwnRateOrganizations int                     `json:"ownRateOrganizations"`
 }
 
 type LocalRequestDiagnostics struct {
@@ -148,9 +215,12 @@ func (l *localRequestLimiter) diagnostics(limit localRequestLimit) LocalRequestD
 	return result
 }
 
-// admitCredential charges a verified credential's local allowance.
-func (s *Service) admitCredential(credential string, now time.Time) error {
-	if retryAfter := s.credentialRequests.allow(credential, now, credentialRequestLimit); retryAfter > 0 {
+// admitCredential charges a verified credential's local allowance. Its
+// organization sets the limit; a credential whose organization is not known
+// yet gets the default's.
+func (s *Service) admitCredential(credential string, organizationID string, now time.Time) error {
+	limit := credentialRequestLimit(s.organizationRates.rate(organizationID))
+	if retryAfter := s.credentialRequests.allow(credential, now, limit); retryAfter > 0 {
 		return &retryAfterError{ErrRateLimit, retryAfter}
 	}
 	return nil
@@ -160,8 +230,9 @@ func (s *Service) admitCredential(credential string, now time.Time) error {
 // that its credential's admitted. A refusal returns the credential's token, so
 // other credentials' requests cost a credential nothing.
 func (s *Service) admitOrganization(credential string, organizationID string, now time.Time) error {
-	if retryAfter := s.organizationRequests.allow(organizationID, now, organizationRequestLimit); retryAfter > 0 {
-		s.credentialRequests.refund(credential, credentialRequestLimit)
+	rate := s.organizationRates.rate(organizationID)
+	if retryAfter := s.organizationRequests.allow(organizationID, now, organizationRequestLimit(rate)); retryAfter > 0 {
+		s.credentialRequests.refund(credential, credentialRequestLimit(rate))
 		return &retryAfterError{ErrRateLimit, retryAfter}
 	}
 	return nil
@@ -228,8 +299,9 @@ func (s *Service) localAdmissionDiagnostics() LocalAdmissionDiagnostics {
 		OrganizationLargestBatch:    queues.largestBatch.Load(),
 		RejectionCacheHits:          s.refusals.hits.Load(),
 		RejectionCacheLookups:       s.refusals.lookups.Load(),
-		CredentialRequests:          s.credentialRequests.diagnostics(credentialRequestLimit),
-		OrganizationRequests:        s.organizationRequests.diagnostics(organizationRequestLimit),
+		CredentialRequests:          s.credentialRequests.diagnostics(credentialRequestLimit(defaultPlatformRequestsPerSecond)),
+		OrganizationRequests:        s.organizationRequests.diagnostics(organizationRequestLimit(defaultPlatformRequestsPerSecond)),
+		OwnRateOrganizations:        s.organizationRates.count(),
 	}
 }
 
@@ -254,7 +326,7 @@ func localAdmissionShard(value string) uint64 {
 	return hash % localAdmissionShards
 }
 
-func evictLocalAdmissionEntry(entries map[string]localRequestEntry) {
+func evictLocalAdmissionEntry[V any](entries map[string]V) {
 	if len(entries) < localAdmissionEntriesPerShard {
 		return
 	}
