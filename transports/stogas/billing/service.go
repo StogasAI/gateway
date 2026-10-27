@@ -63,7 +63,7 @@ const authorizeHoldArguments = `
   $24::uuid[]
 `
 
-const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms"
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second"
 
 const closeRequestArguments = `
   $1::uuid,
@@ -87,12 +87,16 @@ type authorizeRow struct {
 	// WaitMS is how long an admitted request waits to start, or how long a
 	// refusal lasts. A refusal without it never ends by waiting.
 	WaitMS *int64
+	// RequestsPerSecond is the organization's platform rate, which results that
+	// checked it report.
+	RequestsPerSecond *int32
 }
 
 func (r *authorizeRow) fields() []any {
 	return []any{
 		&r.Result, &r.HoldID, &r.UserID, &r.KeyID, &r.GrantID, &r.OrganizationID, &r.AuthorizedBilledCostUSD,
 		&r.CreatedAt, &r.ExpiresAt, &r.UpstreamByok, &r.UpstreamByokBinding, &r.ConfigCurrent, &r.WaitMS,
+		&r.RequestsPerSecond,
 	}
 }
 
@@ -185,6 +189,7 @@ type Service struct {
 	organizationQueues         organizationQueues
 	credentialRequests         localRequestLimiter
 	organizationRequests       localRequestLimiter
+	organizationRates          organizationRates
 	apiKeys                    verifiedAPIKeyCache
 	refusals                   refusalCache
 	rejectionLogs              rejectionLogBuffer
@@ -322,7 +327,7 @@ func (s *Service) ParseAPIKey(rawAPIKey string) (*APIKeyClaims, error) {
 	if err := s.refusals.get(claims.admissionKey, now); err != nil {
 		return claims, err
 	}
-	if err := s.admitCredential(claims.admissionKey, now); err != nil {
+	if err := s.admitCredential(claims.admissionKey, claims.OrganizationID, now); err != nil {
 		return claims, err
 	}
 	return claims, s.admitOrganization(claims.admissionKey, claims.OrganizationID, now)
@@ -344,7 +349,11 @@ func (s *Service) ParseDashboardCredential(raw string) (*DashboardCredential, er
 	if err := s.refusals.get(cacheKey, now); err != nil {
 		return credential, err
 	}
-	return credential, s.admitCredential(cacheKey, now)
+	organizationID := ""
+	if credential.Claims != nil {
+		organizationID = credential.Claims.OrganizationID
+	}
+	return credential, s.admitCredential(cacheKey, organizationID, now)
 }
 
 // UsageReservation records quantities once before authorization. Text remains
@@ -554,6 +563,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, outcome.err)
 	}
 	row := outcome.row
+	s.organizationRates.learn(snapshot.Claims.OrganizationID, row.RequestsPerSecond)
 
 	if resultErr := authorizationResultError(row.Result, row.WaitMS); resultErr != nil {
 		if !row.ConfigCurrent && derefString(row.KeyID) == snapshot.Claims.KeyID {

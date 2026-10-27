@@ -86,8 +86,8 @@ func TestLocalLimitsChargeCredentialsAndTheirOrganization(t *testing.T) {
 	if !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("another key escaped the organization's bucket: %v", err)
 	}
-	if allowance, _ := entry(&service.credentialRequests, secondClaims.admissionKey); allowance.tokens != credentialRequestLimit.burst {
-		t.Fatalf("the organization's refusal spent %v of the credential's allowance", credentialRequestLimit.burst-allowance.tokens)
+	if allowance, _ := entry(&service.credentialRequests, secondClaims.admissionKey); allowance.tokens != credentialRequestLimit(defaultPlatformRequestsPerSecond).burst {
+		t.Fatalf("the organization's refusal spent %v of the credential's allowance", credentialRequestLimit(defaultPlatformRequestsPerSecond).burst-allowance.tokens)
 	}
 	if _, err := service.ParseAPIKey(other); err != nil {
 		t.Fatalf("one organization blocked another: %v", err)
@@ -98,14 +98,14 @@ func TestLocalLimitsChargeCredentialsAndTheirOrganization(t *testing.T) {
 	service.keyConfigs.put(dashboardConfigCacheKey(credential), snapshot, time.Now())
 	// ParseDashboardCredential charges the session, and the key it selects
 	// names the organization.
-	if err := service.admitCredential(dashboardAdmissionKey(credential), time.Now()); err != nil {
+	if err := service.admitCredential(dashboardAdmissionKey(credential), org, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	empty()
 	if _, err := service.ConfigForDashboard(context.Background(), credential, nil); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("dashboard escaped the organization's bucket: %v", err)
 	}
-	if allowance, _ := entry(&service.credentialRequests, dashboardAdmissionKey(credential)); allowance.tokens != credentialRequestLimit.burst {
+	if allowance, _ := entry(&service.credentialRequests, dashboardAdmissionKey(credential)); allowance.tokens != credentialRequestLimit(defaultPlatformRequestsPerSecond).burst {
 		t.Fatal("the organization's refusal spent the dashboard session's allowance")
 	}
 	before := service.credentialRequests.attempts.Load() + service.organizationRequests.attempts.Load()
@@ -118,49 +118,53 @@ func TestLocalLimitsChargeCredentialsAndTheirOrganization(t *testing.T) {
 	// A credential at its limit leaves the organization's other half.
 	service = &Service{apiKeyPepper: secret}
 	now := time.Now()
-	for range int(credentialRequestLimit.burst) {
-		if err := service.admitCredential(firstClaims.admissionKey, now); err != nil {
+	for range int(credentialRequestLimit(defaultPlatformRequestsPerSecond).burst) {
+		if err := service.admitCredential(firstClaims.admissionKey, org, now); err != nil {
 			t.Fatal(err)
 		}
 		if err := service.admitOrganization(firstClaims.admissionKey, org, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := service.admitCredential(firstClaims.admissionKey, now); !errors.Is(err, ErrRateLimit) {
+	if err := service.admitCredential(firstClaims.admissionKey, org, now); !errors.Is(err, ErrRateLimit) {
 		t.Fatalf("credential beyond its burst = %v", err)
 	}
-	for range int(organizationRequestLimit.burst - credentialRequestLimit.burst) {
+	for range int(organizationRequestLimit(defaultPlatformRequestsPerSecond).burst - credentialRequestLimit(defaultPlatformRequestsPerSecond).burst) {
 		if err := service.admitOrganization(secondClaims.admissionKey, org, now); err != nil {
 			t.Fatalf("a runaway credential took more than its share: %v", err)
 		}
 	}
 	diagnostics := service.localAdmissionDiagnostics()
 	if diagnostics.CredentialRequests.Rejected != 1 || diagnostics.OrganizationRequests.Rejected != 0 ||
-		diagnostics.CredentialRequests.Burst != int(credentialRequestLimit.burst) ||
-		diagnostics.OrganizationRequests.RatePerSecond != int(organizationRequestLimit.ratePerSecond) {
+		diagnostics.CredentialRequests.Burst != int(credentialRequestLimit(defaultPlatformRequestsPerSecond).burst) ||
+		diagnostics.OrganizationRequests.RatePerSecond != int(organizationRequestLimit(defaultPlatformRequestsPerSecond).ratePerSecond) {
 		t.Fatalf("local admission diagnostics = %#v", diagnostics)
 	}
 }
 
-// PostgreSQL admits an organization's requests at 120 a second, and 360 at
-// once as they wait up to two seconds to start. After it refuses a
+// PostgreSQL admits an organization's requests at its platform rate R, and 3R
+// at once as they wait up to two seconds to start. After it refuses a
 // credential's request, memory refuses that credential's next requests for
 // refusalHoldBack. A gateway that receives every request of an organization's
-// credentials refuses none of the others that PostgreSQL would admit.
+// credentials refuses none of the others that PostgreSQL would admit, whatever
+// platform rate the organization has, once an authorization reported it.
 func TestLocalLimitsRefuseNothingPostgreSQLWouldAdmit(t *testing.T) {
-	const rate, depth = 120.0, 360.0
 	random := rand.New(rand.NewPCG(1, 2))
 	admitted, refused := map[int]int{}, map[int]int{}
-	for run := range 300 {
+	for run := range 600 {
 		service := &Service{}
 		credentials := []int{1, 2, 3, 12, 50}[run%5]
+		rate := []float64{1, 60, defaultPlatformRequestsPerSecond, 121, 240}[run/5%5]
+		learned := int32(rate)
+		service.organizationRates.learn("org", &learned)
+		depth := 3 * rate
 		start := time.Unix(1_700_000_000, 0)
 		now, updated, tokens := start, start, depth
 		heldUntil := make([]time.Time, credentials)
 		for sent := 0; sent < 3000; {
 			// Bursts, floods and steady rates near PostgreSQL's from some of the
 			// credentials, with pauses longer than a refill between them.
-			perSecond := []float64{0, 60, 119, 121, 240, 1000, 5000}[random.IntN(7)]
+			perSecond := []float64{0, rate / 2, rate - 1, rate + 1, 2 * rate, 1000, 5000}[random.IntN(7)]
 			active := 1 + random.IntN(credentials)
 			for range 1 + random.IntN(500) {
 				sent++
@@ -173,7 +177,7 @@ func TestLocalLimitsRefuseNothingPostgreSQLWouldAdmit(t *testing.T) {
 					continue
 				}
 				credential := fmt.Sprint("api:", index)
-				local := service.admitCredential(credential, now) == nil && service.admitOrganization(credential, "org", now) == nil
+				local := service.admitCredential(credential, "org", now) == nil && service.admitOrganization(credential, "org", now) == nil
 				switch {
 				case tokens >= 1 && !local:
 					t.Fatalf("run %d: refused a request that PostgreSQL would admit with %.3f tokens", run, tokens)
@@ -198,6 +202,44 @@ func TestLocalLimitsRefuseNothingPostgreSQLWouldAdmit(t *testing.T) {
 	}
 }
 
+// A gateway keeps only the rates above the default that authorizations report,
+// and forgets one that falls back.
+func TestOrganizationRatesRaiseOnlyTheirOrganizationsLimits(t *testing.T) {
+	var service Service
+	report := func(organizationID string, rate int32) {
+		service.organizationRates.learn(organizationID, &rate)
+	}
+	report("raised", 240)
+	report("lowered", 10)
+	service.organizationRates.learn("unreported", nil)
+	if got := service.organizationRates.rate("raised"); got != 240 {
+		t.Fatalf("raised rate = %v", got)
+	}
+	for _, organizationID := range []string{"lowered", "unreported", "unknown", ""} {
+		if got := service.organizationRates.rate(organizationID); got != defaultPlatformRequestsPerSecond {
+			t.Fatalf("%q rate = %v", organizationID, got)
+		}
+	}
+	if diagnostics := service.localAdmissionDiagnostics(); diagnostics.OwnRateOrganizations != 1 ||
+		diagnostics.OrganizationRequests.RatePerSecond != 4*defaultPlatformRequestsPerSecond {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	now := time.Now()
+	for range int(organizationRequestLimit(240).burst) {
+		if err := service.admitOrganization("credential", "raised", now); err != nil {
+			t.Fatalf("raised organization refused within its burst: %v", err)
+		}
+	}
+	if err := service.admitOrganization("credential", "raised", now); !errors.Is(err, ErrRateLimit) {
+		t.Fatalf("raised organization beyond its burst = %v", err)
+	}
+	report("raised", defaultPlatformRequestsPerSecond)
+	if got := service.organizationRates.rate("raised"); got != defaultPlatformRequestsPerSecond ||
+		service.organizationRates.count() != 0 {
+		t.Fatalf("rate after returning to the default = %v", got)
+	}
+}
+
 func TestRefusedKeySpendsNoLocalAllowance(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const secret = "test-api-key-pepper"
@@ -211,7 +253,7 @@ func TestRefusedKeySpendsNoLocalAllowance(t *testing.T) {
 		// PostgreSQL found that the key has a new secret.
 		service.RecordRefusal(claims, nil, ErrAPIKeyOldSecret.Code)
 		spent := service.credentialRequests.attempts.Load() + service.organizationRequests.attempts.Load()
-		for range int(organizationRequestLimit.burst) + 1 {
+		for range int(organizationRequestLimit(defaultPlatformRequestsPerSecond).burst) + 1 {
 			if _, err := service.ParseAPIKey(raw); !errors.Is(err, ErrAPIKeyOldSecret) {
 				t.Fatalf("refused secret got %v", err)
 			}
@@ -329,7 +371,7 @@ func TestParseVerifiedAPIKeyCachesOnlyValidClaims(t *testing.T) {
 
 func TestLocalRequestLimiterBoundsBurstAndRefills(t *testing.T) {
 	var limiter localRequestLimiter
-	limit := credentialRequestLimit
+	limit := credentialRequestLimit(defaultPlatformRequestsPerSecond)
 	now := time.Unix(1_700_000_000, 0)
 
 	for index := range int(limit.burst) {
@@ -517,7 +559,7 @@ func TestLocalRequestLimiterIsBounded(t *testing.T) {
 	var limiter localRequestLimiter
 	now := time.Unix(1_700_000_000, 0)
 	for index := 0; index < localAdmissionShards*localAdmissionEntriesPerShard*2; index++ {
-		limiter.allow(string(rune(index+1)), now, credentialRequestLimit)
+		limiter.allow(string(rune(index+1)), now, credentialRequestLimit(defaultPlatformRequestsPerSecond))
 	}
 	total := 0
 	for index := range limiter.shards {
@@ -530,7 +572,7 @@ func TestLocalRequestLimiterIsBounded(t *testing.T) {
 
 func TestLocalRateOutOfOrderArrivalDoesNotMintTokens(t *testing.T) {
 	var limiter localRequestLimiter
-	limit := organizationRequestLimit
+	limit := organizationRequestLimit(defaultPlatformRequestsPerSecond)
 	now := time.Unix(1700000000, 0)
 	for range int(limit.burst) {
 		if limiter.allow("org", now, limit) != 0 {
