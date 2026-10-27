@@ -204,6 +204,7 @@ type Service struct {
 	// holds of a boot that stopped.
 	nodeID                  string
 	apiKeyPepper            string
+	apiKeyPepperFingerprint string
 	inferenceTokenPublicKey *inferenceTokenKey
 	byok                    *byokDecryptor
 }
@@ -215,6 +216,8 @@ type DiagnosticsSnapshot struct {
 	Database       *DatabaseDiagnostics      `json:"database,omitempty"`
 	LocalAdmission LocalAdmissionDiagnostics `json:"localAdmission"`
 	Settlement     SettlementDiagnostics     `json:"settlement"`
+	// APIKeyPepperFingerprint names the pepper that signs and hashes API keys.
+	APIKeyPepperFingerprint string `json:"apiKeyPepperFingerprint,omitempty"`
 }
 
 func NewService(
@@ -253,6 +256,7 @@ func NewService(
 		inferenceTokenPublicKey: publicKey,
 		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
+		apiKeyPepperFingerprint: apiKeyPepperFingerprint(apiKeyPepper),
 		byok:                    byok,
 	}
 	if err := db.checkQueries(
@@ -294,6 +298,8 @@ func (s *Service) Diagnostics() DiagnosticsSnapshot {
 		Database:       s.db.Diagnostics(),
 		LocalAdmission: s.localAdmissionDiagnostics(),
 		Settlement:     s.settlementDiagnostics(),
+		// The monitor compares it with Control's and with its probe key's.
+		APIKeyPepperFingerprint: s.apiKeyPepperFingerprint,
 	}
 }
 
