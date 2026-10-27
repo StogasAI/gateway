@@ -99,7 +99,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
 		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_secret_replaced", "policy_work_limit_exceeded",
 		"method_not_allowed", "platform_rate_limited",
-		"model_ambiguous", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
+		"model_ambiguous", "model_retired", "model_unavailable", "parameter_limit_exceeded", "permission_denied",
 		"provider_not_allowed", "provider_unavailable", "rate_limit_exceeded",
 		"request_body_timeout", "request_timeout", "request_too_large", "response_encoding_failed",
 		"stogas_response_proof_failed", "route_not_found", "schedule_denied", "service_tier_unavailable",

@@ -107,10 +107,11 @@ type snapshot struct {
 	modelSelectors map[string]string
 	publicDigest   string
 	publicRaw      []byte
-	// publicParts holds the parts that the public root lists, by SHA-256 in hex.
-	publicParts map[string][]byte
-	raw         []byte
-	schedule    []datedState
+	// archive is the archive that the public catalog names, or nil while it names none.
+	archive  *catalogArchive
+	retired  retiredNodes
+	raw      []byte
+	schedule []datedState
 }
 
 type datedState struct {
@@ -123,6 +124,19 @@ type compiledCatalog struct {
 	PublicDigest string          `json:"publicDigest"`
 	Graph        compiledGraph   `json:"graph"`
 	Schedule     []scheduleEntry `json:"schedule"`
+	Retired      retiredNodes    `json:"retired"`
+}
+
+type catalogArchive struct {
+	sha256 string
+	data   []byte
+}
+
+// retiredNodes holds the day that each archived deployment and model retired, by ID. The archive
+// holds their records, and the graph no longer does.
+type retiredNodes struct {
+	Deployments map[string]string `json:"deployments"`
+	Models      map[string]string `json:"models"`
 }
 
 // A schedule entry lists every node that differs from the base graph from Start until the

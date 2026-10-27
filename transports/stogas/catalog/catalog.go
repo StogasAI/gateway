@@ -106,6 +106,36 @@ func deploymentAvailableNow(deployment compiledDeployment) bool {
 	return deploymentAvailableAt(deployment, time.Now())
 }
 
+// retiredOn is the day that the deployment or model a request names retired: one whose
+// deployments have all retired by now, or one that the archive holds.
+func (s *snapshot) retiredOn(requested string, now time.Time) (string, bool) {
+	_, selector := splitQualifiedModel(requested)
+	if deployment, ok := s.graph.Deployments[selector]; ok {
+		if deploymentAvailableAt(deployment, now) {
+			return "", false
+		}
+		return *deployment.RetirementDate, true
+	}
+	if modelID, ok := s.modelSelectors[selector]; ok {
+		last := ""
+		for _, deployment := range s.graph.Deployments {
+			if deployment.ModelID != modelID {
+				continue
+			}
+			if deploymentAvailableAt(deployment, now) {
+				return "", false
+			}
+			last = max(last, *deployment.RetirementDate)
+		}
+		return last, last != ""
+	}
+	if date, ok := s.retired.Deployments[selector]; ok {
+		return date, true
+	}
+	date, ok := s.retired.Models[selector]
+	return date, ok
+}
+
 // sibling returns the deployment available at an instant on the route that differs from current
 // only in its tier and reasoning mode. The provider's model name can differ, because Azure sells
 // Claude Fast as its own model; the catalog allows one such deployment.

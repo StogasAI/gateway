@@ -73,11 +73,7 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 }
 
 func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *testing.T) {
-	parts, err := embeddedParts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
+	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, nil, Identity{})
 	if err != nil {
 		t.Fatalf("public informational models were rejected: %v", err)
 	}
@@ -92,7 +88,7 @@ func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, parts, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, nil, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
 	}
@@ -1178,11 +1174,7 @@ func TestSnapshotValidationBindsThePublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts, err := embeddedParts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, parts, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, nil, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "public catalog digest does not match") {
 		t.Fatalf("mismatched public catalog was accepted: %v", err)
 	}
@@ -1371,11 +1363,7 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts, err := embeddedParts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, parts, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, nil, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("mismatched public projection was accepted: %v", err)
 	}
