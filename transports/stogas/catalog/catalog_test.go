@@ -14,7 +14,7 @@ import (
 )
 
 func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
-	return snapshotFromRelease(data, nil, Identity{})
+	return snapshotFromRelease(data, nil, nil, Identity{})
 }
 
 func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
@@ -73,7 +73,11 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 }
 
 func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *testing.T) {
-	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, Identity{})
+	parts, err := embeddedParts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
 	if err != nil {
 		t.Fatalf("public informational models were rejected: %v", err)
 	}
@@ -88,7 +92,7 @@ func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, parts, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
 	}
@@ -1174,7 +1178,11 @@ func TestSnapshotValidationBindsThePublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, Identity{}); err == nil ||
+	parts, err := embeddedParts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, parts, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "public catalog digest does not match") {
 		t.Fatalf("mismatched public catalog was accepted: %v", err)
 	}
@@ -1363,7 +1371,11 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, Identity{}); err == nil ||
+	parts, err := embeddedParts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, parts, Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("mismatched public projection was accepted: %v", err)
 	}

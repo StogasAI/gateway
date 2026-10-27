@@ -692,13 +692,9 @@ type chutesCatalogDeployment struct {
 
 func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
 	t.Helper()
-	publicCatalog, ok := catalog.PublicCatalogPayload()
+	deployments, ok := catalog.PublicDeployments()
 	if !ok {
 		t.Fatal("active public catalog is unavailable")
-	}
-	var deployments map[string]json.RawMessage
-	if err := sonic.Unmarshal(publicCatalog.Graph["deployments"], &deployments); err != nil {
-		t.Fatalf("decode public deployments: %v", err)
 	}
 	result := make([]chutesCatalogDeployment, 0)
 	for id, raw := range deployments {
