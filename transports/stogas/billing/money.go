@@ -14,6 +14,8 @@ const (
 	maximumUSD    = "1000000000000"
 )
 
+var maximumUSDAmount, _ = money.Parse(maximumUSD)
+
 func createHoldParamsHash(providerKey string, productKey string, upstreamTargetJSON ...string) string {
 	hasher := sha256.New()
 	_, _ = hasher.Write([]byte(providerKey))
@@ -61,8 +63,7 @@ func ParseUSD(value string) (*money.USD, error) {
 	if err != nil {
 		return nil, err
 	}
-	maximum, _ := money.Parse(maximumUSD)
-	if parsed.Sign() < 0 || parsed.Cmp(maximum) > 0 || parsed.String() != value {
+	if parsed.Sign() < 0 || parsed.Cmp(maximumUSDAmount) > 0 || parsed.String() != value {
 		return nil, fmt.Errorf("USD amount exceeds settlement contract")
 	}
 	return parsed, nil
