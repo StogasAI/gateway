@@ -458,6 +458,7 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"instructions":               `"be brief"`,
 		"max_output_tokens":          `16`,
 		"modalities":                 `["text","audio"]`,
+		"moderation":                 `{"model":"omni-moderation-latest"}`,
 		"n":                          `2`,
 		"parallel_tool_calls":        `false,"tools":[{"type":"function","function":{"name":"lookup"}}]`,
 		"prediction":                 `{"type":"content","content":"hello"}`,
