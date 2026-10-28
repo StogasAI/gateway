@@ -36,6 +36,7 @@ var (
 	ErrUnsupportedMethod        = APIError{Code: "method_not_allowed", StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Message: "Method is not supported for this route"}
 	ErrUnsupportedRequest       = APIError{Code: "unsupported_request", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Unsupported request type"}
 	ErrParameterTooLarge        = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Parameter exceeds catalog limit"}
+	ErrOutputLimitTooSmall      = APIError{Code: "parameter_limit_exceeded", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Output token limit is below the provider minimum"}
 	ErrProviderSelection        = APIError{Code: "provider_not_allowed", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested provider"}
 	ErrServiceTierUnavailable   = APIError{Code: "service_tier_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested service_tier"}
 	ErrReasoningModeUnavailable = APIError{Code: "reasoning_mode_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Model is not available for the requested reasoning.mode"}
@@ -54,6 +55,14 @@ type APIError struct {
 	Code       string
 	Type       string
 	Message    string
+	// Param names the request field that caused the error, when known.
+	Param string
+}
+
+// unknownParameter refuses a top-level field outside the route's contract,
+// with OpenAI's wording.
+func unknownParameter(name string) APIError {
+	return APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "Unknown parameter: '" + name + "'.", Param: name}
 }
 
 func (e APIError) Error() string {
@@ -417,19 +426,6 @@ func (r *ResolvedRequest) SetWireModel(model string) error {
 	return nil
 }
 
-func (r *ResolvedRequest) NormalizeMinimumOutputTokenLimit(min int) {
-	if r == nil || min <= 0 || r.outputTokenLimit <= 0 || r.outputTokenLimit >= min {
-		return
-	}
-	r.outputTokenLimit = min
-	if r.chat != nil && r.chat.ChatParameters.MaxCompletionTokens != nil {
-		r.chat.ChatParameters.MaxCompletionTokens = &r.outputTokenLimit
-	}
-	if r.responses != nil && r.responses.ResponsesParameters.MaxOutputTokens != nil {
-		r.responses.ResponsesParameters.MaxOutputTokens = &r.outputTokenLimit
-	}
-}
-
 func (r *ResolvedRequest) HasWebSearchOptions() bool {
 	return r != nil && r.pricing.HasWebSearchOptions
 }
@@ -730,10 +726,13 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	if err := dropUnknownTopLevelFields(rawData, route); err != nil {
+	if err := rejectUnknownTopLevelFields(rawData, route); err != nil {
 		return nil, err
 	}
 	dropNoOpCompatibilityFields(rawData, route)
+	if err := dropClientMetadata(rawData); err != nil {
+		return nil, err
+	}
 	tokenFields := []string{"max_output_tokens"}
 	if route == RouteChat {
 		if _, err := normalizeChatStopString(rawData); err != nil {
@@ -1274,17 +1273,49 @@ func filterRequestExtraParams(rawData map[string]json.RawMessage, provider schem
 	return FilterExtraParams(provider, model, route, extraParams), nil
 }
 
-func dropUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route) error {
+// rejectUnknownTopLevelFields refuses a field outside the route's contract, as
+// OpenAI and Anthropic do, because dropping it could hide a control the
+// client relies on. JSON null names no value, so it counts as omitted here as
+// it does for known fields. The error names the first such field in byte
+// order, so the same body always gets the same error.
+func rejectUnknownTopLevelFields(rawData map[string]json.RawMessage, route Route) error {
 	knownFields := KnownFields(route)
 	if len(knownFields) == 0 {
 		return ErrCatalogUnavailable
 	}
-	for name := range rawData {
-		if !knownFields[name] {
+	unknown := ""
+	for name, raw := range rawData {
+		if knownFields[name] {
+			continue
+		}
+		if rawJSONNull(raw) {
 			delete(rawData, name)
+			continue
+		}
+		if unknown == "" || name < unknown {
+			unknown = name
 		}
 	}
+	if unknown != "" {
+		return unknownParameter(unknown)
+	}
 	return nil
+}
+
+// dropClientMetadata accepts the string map that Codex sends on every
+// Responses request. OpenAI accepts it without documenting it, and it changes
+// no output, price or data handling, so it never reaches a provider.
+func dropClientMetadata(rawData map[string]json.RawMessage) error {
+	raw, ok := rawData["client_metadata"]
+	if !ok {
+		return nil
+	}
+	delete(rawData, "client_metadata")
+	var metadata map[string]*string
+	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) && json.Unmarshal(raw, &metadata) == nil {
+		return nil
+	}
+	return APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: ErrorTypeInvalidRequest, Message: "client_metadata must be an object of strings", Param: "client_metadata"}
 }
 
 // dropNoOpCompatibilityFields accepts common SDK defaults without letting

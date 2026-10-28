@@ -220,6 +220,8 @@ func isContentType(raw string, expected string) bool {
 	return true
 }
 
+// unsupportedInferenceHeader names the first refused header in byte order, so
+// the same request always gets the same error.
 func unsupportedInferenceHeader(ctx *requestContext) string {
 	unsupported := ""
 	for key := range ctx.request.Header {
@@ -227,14 +229,20 @@ func unsupportedInferenceHeader(ctx *requestContext) string {
 		if normalized == "" || !internalOrProviderControlHeader(normalized) {
 			continue
 		}
-		unsupported = normalized
-		break
+		if unsupported == "" || normalized < unsupported {
+			unsupported = normalized
+		}
 	}
 	return unsupported
 }
 
+// internalOrProviderControlHeader reports headers that ask for behavior the
+// gateway cannot give. Other headers are ignored, as RFC 9110 section 5.1
+// asks, and none reach a provider. x-bf- and x-stogas- look like gateway
+// controls. anthropic-beta turns on Claude features, which the gateway enables
+// from body fields instead, so ignoring it would silently leave them off.
 func internalOrProviderControlHeader(name string) bool {
-	return strings.HasPrefix(name, "x-bf-") || strings.HasPrefix(name, "x-stogas-")
+	return strings.HasPrefix(name, "x-bf-") || strings.HasPrefix(name, "x-stogas-") || name == "anthropic-beta"
 }
 
 // validateAcceptHeaders reports whether the client accepts what the gateway

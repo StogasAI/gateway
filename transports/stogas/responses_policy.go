@@ -90,7 +90,49 @@ func validateCommonResponsesPolicy(state *State) error {
 	if err := validateResponsesTruncation(state, raw["truncation"]); err != nil {
 		return err
 	}
+	if err := validateResponsesAccessPrograms(state, raw["access_programs"]); err != nil {
+		return err
+	}
 	return validateResponsesInput(state, raw["input"])
+}
+
+// validateResponsesAccessPrograms accepts OpenAI's cyber access program
+// selection. Only OpenAI runs these programs: Azure OpenAI refuses the field
+// and Claude has no equivalent, so a program selected for another provider is
+// refused rather than dropped.
+func validateResponsesAccessPrograms(state *State, raw json.RawMessage) error {
+	program, err := responsesCyberAccessProgram(raw)
+	if err != nil || program == "" {
+		return err
+	}
+	if state.Resolution.Provider != schemas.OpenAI {
+		return invalidRequest("access_programs is supported only on OpenAI deployments")
+	}
+	return nil
+}
+
+// responsesCyberAccessProgram returns access_programs.cyber, or "" when the
+// request selects no program. OpenAI treats an empty object as omission.
+func responsesCyberAccessProgram(raw json.RawMessage) (string, error) {
+	if !rawJSONValueSet(raw) {
+		return "", nil
+	}
+	programs, ok := rawObject(raw)
+	if !ok {
+		return "", invalidRequest("access_programs must be an object")
+	}
+	if err := rejectUnsupportedInputKeys(programs, "access_programs", "cyber"); err != nil {
+		return "", err
+	}
+	cyber, exists := programs["cyber"]
+	if !exists {
+		return "", nil
+	}
+	switch program, _ := rawStringValue(cyber); program {
+	case "standard", "daybreak_blue", "daybreak_red":
+		return program, nil
+	}
+	return "", invalidRequest("access_programs.cyber must be standard, daybreak_blue or daybreak_red")
 }
 
 func validateResponsesTextConfig(state *State, raw json.RawMessage) error {

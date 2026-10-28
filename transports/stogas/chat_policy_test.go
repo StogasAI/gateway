@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"fmt"
 	"maps"
 	"reflect"
@@ -1063,7 +1064,7 @@ func TestZeroOutputTokensRequireAllowedAnthropicCacheControl(t *testing.T) {
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 			err = state.Adapter.ValidateRequest(state)
-			if err == nil || !strings.Contains(err.Error(), "Parameter exceeds catalog limit") {
+			if !errors.Is(err, catalog.ErrOutputLimitTooSmall) {
 				t.Fatalf("expected zero output cap rejection, got %v", err)
 			}
 		})
@@ -1140,7 +1141,7 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	}
 }
 
-func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testing.T) {
+func TestNoOpCompatibilityFieldsDoNotReachProvider(t *testing.T) {
 	for _, item := range []struct {
 		name       string
 		path       string
@@ -1153,21 +1154,14 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			deployment: "anthropic-claude-opus-4-8",
 			outputCap:  "max_tokens",
 			path:       "/v1/chat/completions",
-			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":["text"],"n":1,"response_format":{"type":"text"},"tools":[],"tool_choice":"none","parallel_tool_calls":false,"prompt_cache_isolation_key":"","store":null,"stream_options":null,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","messages":[{"role":"user","content":"hi","audio":null,"image_url":null,"sdk_extension":null}],"max_completion_tokens":16,"sdk_trace":null,"user":"caller","safety_identifier":"caller","audio":null,"function_call":null,"functions":[],"fallbacks":[],"container":null,"modalities":["text"],"n":1,"response_format":{"type":"text"},"tools":[],"tool_choice":"none","parallel_tool_calls":false,"prompt_cache_isolation_key":"","store":null,"stream_options":null}`,
 		},
 		{
 			name:       "anthropic responses",
 			deployment: "anthropic-claude-opus-4-8",
 			outputCap:  "max_tokens",
 			path:       "/v1/responses",
-			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"},"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"truncation":"disabled","text":{"format":{"type":"text"}},"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"extra_params":{"max_tokens":999999,"tools":[{"type":"code_execution_20250825","name":"code_execution"}],"anthropic_beta":["code-execution-2025-08-25"]}}`,
-		},
-		{
-			name:       "openai chat MCP credentials",
-			path:       "/v1/chat/completions",
-			deployment: "openai-gpt-5.5-2026-04-23",
-			outputCap:  "max_completion_tokens",
-			body:       `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":16,"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}],"extra_params":{"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}]}}`,
+			body:       `{"model":"anthropic-claude-opus-4-8","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi","image_url":null,"sdk_extension":null}],"sdk_extension":null}],"max_output_tokens":16,"sdk_trace":null,"user":"caller","safety_identifier":"caller","background":false,"conversation":null,"previous_response_id":"","fallbacks":[],"container":null,"store":null,"stream_options":null,"truncation":"disabled","text":{"format":{"type":"text"}},"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"client_metadata":{"x-codex-turn":"1","trace":null}}`,
 		},
 		{
 			name:       "openai chat SDK defaults",
@@ -1214,9 +1208,6 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 			} else {
 				wire = preparedProviderBody(t, ctx, request.ResponsesRequest)
 			}
-			if strings.Contains(string(wire), "mcp-secret-must-not-leave") {
-				t.Fatal("MCP authorization token reached the provider body")
-			}
 			var payload map[string]any
 			if err := json.Unmarshal(wire, &payload); err != nil {
 				t.Fatalf("decode provider body: %v", err)
@@ -1225,10 +1216,9 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 				t.Fatalf("client extras changed the output cap: %s", wire)
 			}
 			for _, field := range []string{
-				"mcp_servers", "include_server_side_tool_invocations", "sdk_trace",
+				"sdk_trace", "client_metadata",
 				"user", "safety_identifier", "audio", "function_call", "functions", "fallbacks", "container",
-				"background", "conversation", "previous_response_id",
-				"extra_params", "tools", "anthropic_beta",
+				"background", "conversation", "previous_response_id", "tools",
 				"n", "modalities", "response_format", "text", "truncation", "tool_choice", "parallel_tool_calls",
 			} {
 				if _, exists := payload[field]; exists {
@@ -1236,6 +1226,73 @@ func TestUnknownCompatibilityFieldsCannotChangeExecutionOrReachProvider(t *testi
 				}
 			}
 		})
+	}
+}
+
+func TestUnknownTopLevelFieldsAreRefusedBeforeRouting(t *testing.T) {
+	for _, item := range []struct {
+		name  string
+		path  string
+		body  string
+		param string
+	}{
+		{
+			name:  "MCP servers with credentials",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"mcp_servers":[{"type":"url","name":"private-tools","url":"https://example.com","authorization_token":"mcp-secret-must-not-leave"}]}`,
+			param: "mcp_servers",
+		},
+		{
+			name:  "Bifrost extra params",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"extra_params":{"model":"attacker-model","max_tokens":9999}}`,
+			param: "extra_params",
+		},
+		{
+			name:  "first unknown field in byte order",
+			path:  "/v1/responses",
+			body:  `{"model":"anthropic-claude-opus-4-8","input":"hi","zz_extension":1,"include_server_side_tool_invocations":true,"sdk_trace":{"id":"trace_1"}}`,
+			param: "include_server_side_tool_invocations",
+		},
+		{
+			name:  "seed on Responses, which OpenAI also refuses",
+			path:  "/v1/responses",
+			body:  `{"model":"openai/gpt-5.5","input":"hi","seed":1}`,
+			param: "seed",
+		},
+		{
+			name:  "Responses input on Chat",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"input":"hi"}`,
+			param: "input",
+		},
+		{
+			name:  "client metadata on Chat",
+			path:  "/v1/chat/completions",
+			body:  `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"client_metadata":{}}`,
+			param: "client_metadata",
+		},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: item.path, Body: []byte(item.body)})
+			var apiErr catalog.APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("expected an API error, got %v", err)
+			}
+			if apiErr.StatusCode != http.StatusBadRequest || apiErr.Code != "invalid_request" || apiErr.Param != item.param || apiErr.Message != "Unknown parameter: '"+item.param+"'." {
+				t.Fatalf("unexpected error for %s: %#v", item.param, apiErr)
+			}
+		})
+	}
+}
+
+func TestClientMetadataMustBeAStringMap(t *testing.T) {
+	for _, value := range []string{`"codex"`, `[]`, `{"turn":1}`, `{"turn":{"id":"1"}}`} {
+		_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","client_metadata":` + value + `}`)})
+		var apiErr catalog.APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadRequest || apiErr.Param != "client_metadata" {
+			t.Fatalf("client_metadata %s: expected 400 naming the field, got %v", value, err)
+		}
 	}
 }
 

@@ -1,8 +1,10 @@
 package stogas
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -129,77 +131,97 @@ func TestValidateResponsesToolsRejectsContainerShellTools(t *testing.T) {
 	}
 }
 
-func TestOpenAIGuardrailRejectsUnnormalizedOutputCapsBelowMinimum(t *testing.T) {
-	err := validateOpenAIGuardrails(openAIAdapterContext{Route: openAIAdapterRouteChat, OutputTokenLimit: 15})
-	if !errors.Is(err, errOpenAIOutputTokenLimitTooLow) {
-		t.Fatalf("expected output limit minimum rejection, got %v", err)
+func TestOpenAIGuardrailAppliesProviderOutputMinimums(t *testing.T) {
+	for _, item := range []struct {
+		route openAIAdapterRoute
+		limit int
+		ok    bool
+	}{
+		{openAIAdapterRouteChat, 0, false},
+		{openAIAdapterRouteChat, 1, true},
+		{openAIAdapterRouteResponses, 15, false},
+		{openAIAdapterRouteResponses, 16, true},
+	} {
+		err := validateOpenAIGuardrails(openAIAdapterContext{Route: item.route, OutputTokenLimit: item.limit})
+		if item.ok && err != nil || !item.ok && !errors.Is(err, errOpenAIOutputTokenLimitTooLow) {
+			t.Fatalf("route %v, limit %d: got %v", item.route, item.limit, err)
+		}
 	}
 }
 
-func TestOpenAIAdapterNormalizesOutputCapsBelowProviderMinimum(t *testing.T) {
+// OpenAI and Azure OpenAI accept Chat limits below 16 (live checks, October 28,
+// 2026), so the limit, the hold and the wire all keep the caller's value.
+func TestOpenAIWireChatSendsSmallOutputCapsAsGiven(t *testing.T) {
 	for _, item := range []struct {
 		name string
-		path string
 		body string
 	}{
-		{
-			name: "chat max_completion_tokens",
-			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":15}`,
-		},
-		{
-			name: "chat max_tokens alias",
-			path: "/v1/chat/completions",
-			body: `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":15}`,
-		},
-		{
-			name: "responses max_output_tokens",
-			path: "/v1/responses",
-			body: `{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":15}`,
-		},
+		{"OpenAI max_completion_tokens", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":5}`},
+		{"OpenAI max_tokens alias", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"max_tokens":5}`},
+		{"Azure OpenAI", `{"model":"azure-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":5}`},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   item.path,
-				Body:   []byte(item.body),
-			})
+			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(item.body)})
 			if err != nil {
 				t.Fatalf("ResolveRequest returned error: %v", err)
-			}
-			if resolution.OutputTokenLimit() != 15 {
-				t.Fatalf("expected catalog to preserve parsed output limit 15 before adapter validation, got %d", resolution.OutputTokenLimit())
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
 			if err := state.Adapter.ValidateRequest(state); err != nil {
 				t.Fatalf("ValidateRequest returned error: %v", err)
 			}
-			if resolution.OutputTokenLimit() != 16 {
-				t.Fatalf("expected OpenAI adapter to normalize output limit to 16, got %d", resolution.OutputTokenLimit())
-			}
-			req, err := resolution.ToBifrost(&schemas.BifrostContext{})
-			if err != nil {
-				t.Fatalf("ToBifrost returned error: %v", err)
-			}
-			switch {
-			case req.ChatRequest != nil:
-				if req.ChatRequest.Params == nil || req.ChatRequest.Params.MaxCompletionTokens == nil || *req.ChatRequest.Params.MaxCompletionTokens != 16 {
-					t.Fatalf("expected normalized chat max_completion_tokens, got %#v", req.ChatRequest.Params)
-				}
-			case req.ResponsesRequest != nil:
-				if req.ResponsesRequest.Params == nil || req.ResponsesRequest.Params.MaxOutputTokens == nil || *req.ResponsesRequest.Params.MaxOutputTokens != 16 {
-					t.Fatalf("expected normalized responses max_output_tokens, got %#v", req.ResponsesRequest.Params)
-				}
-			default:
-				t.Fatalf("expected Bifrost chat or responses request, got %#v", req)
+			if resolution.OutputTokenLimit() != 5 {
+				t.Fatalf("output limit = %d, want 5", resolution.OutputTokenLimit())
 			}
 			if err := state.Adapter.EstimateHold(state); err != nil {
 				t.Fatalf("EstimateHold returned error: %v", err)
 			}
-			if state.Hold.EstimatedUpstreamCostUSD == "" || state.Hold.EstimatedUpstreamCostUSD == "0" {
-				t.Fatalf("expected normalized output limit to contribute to hold, got %#v", state.Hold)
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			request, err := resolution.ToBifrost(ctx)
+			if err != nil {
+				t.Fatalf("ToBifrost returned error: %v", err)
+			}
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, request.RequestType)
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(preparedProviderBody(t, ctx, request.ChatRequest), &payload); err != nil {
+				t.Fatalf("decode provider body: %v", err)
+			}
+			if payload["max_completion_tokens"] != float64(5) {
+				t.Fatalf("max_completion_tokens = %v, want 5", payload["max_completion_tokens"])
 			}
 		})
+	}
+}
+
+// OpenAI and Azure OpenAI refuse Responses limits below 16; Claude accepts any
+// positive limit.
+func TestResponsesOutputMinimumFollowsTheProvider(t *testing.T) {
+	for _, item := range []struct {
+		model string
+		limit int
+		ok    bool
+	}{
+		{"openai/gpt-5.5", 15, false},
+		{"openai/gpt-5.5", 16, true},
+		{"azure-gpt-5.6-sol", 15, false},
+		{"azure-gpt-5.6-sol", 16, true},
+		{"anthropic-claude-opus-4-8", 1, true},
+	} {
+		body := fmt.Sprintf(`{"model":%q,"input":"hi","max_output_tokens":%d}`, item.model, item.limit)
+		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(body)})
+		if err != nil {
+			t.Fatalf("%s: ResolveRequest returned error: %v", body, err)
+		}
+		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+		err = state.Adapter.ValidateRequest(state)
+		if item.ok && err != nil || !item.ok && !errors.Is(err, catalog.ErrOutputLimitTooSmall) {
+			t.Fatalf("%s: got %v", body, err)
+		}
+		if item.ok && resolution.OutputTokenLimit() != item.limit {
+			t.Fatalf("%s: output limit = %d", body, resolution.OutputTokenLimit())
+		}
 	}
 }
 
@@ -233,7 +255,7 @@ func TestOpenAIAdapterRejectsZeroOutputCaps(t *testing.T) {
 				t.Fatalf("expected catalog to preserve zero output cap, got %d", resolution.OutputTokenLimit())
 			}
 			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); !errors.Is(err, catalog.ErrParameterTooLarge) {
+			if err := state.Adapter.ValidateRequest(state); !errors.Is(err, catalog.ErrOutputLimitTooSmall) {
 				t.Fatalf("expected OpenAI adapter to reject zero output cap, got %v", err)
 			}
 		})

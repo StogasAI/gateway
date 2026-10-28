@@ -1,6 +1,7 @@
 package stogas
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -77,6 +78,9 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
 		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest)
+		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
+			body, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
+		}
 		settings = billing.ResponsesRequestSettings(responses.Params)
 	default:
 		return catalog.ErrUnsupportedRequest
@@ -261,6 +265,23 @@ func prepareAnthropicResponsesBody(ctx *schemas.BifrostContext, request *schemas
 		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".type", basic); err != nil {
 			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 		}
+	}
+	return body, nil
+}
+
+// setOpenAIAccessPrograms sends the validated cyber access program, which core
+// does not model, so OpenAI applies the program the client chose.
+func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, *schemas.BifrostError) {
+	program, err := responsesCyberAccessProgram(raw)
+	if err != nil {
+		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+	}
+	if program == "" {
+		return body, nil
+	}
+	body, err = providerutils.SetJSONField(body, "access_programs", map[string]string{"cyber": program})
+	if err != nil {
+		return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 	}
 	return body, nil
 }

@@ -23,7 +23,6 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 		"provider":"chutes",
 		"messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Reply with JSON."}],
 		"metadata":{"tenant":"must-not-reach-provider"},
-		"extra_params":{"model":"attacker-model","max_tokens":9999,"max_completion_tokens":9999,"repetition_penalty":999},
 		"store":false,
 		"max_completion_tokens":7,
 		"temperature":3,
@@ -101,7 +100,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 }
 
 func TestChutesChatWireStreamingForcesUsage(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}],"stream":true,"extra_params":{"stream":false,"stream_options":{"include_usage":false}}}`)
+	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error: %v", err)
 	}

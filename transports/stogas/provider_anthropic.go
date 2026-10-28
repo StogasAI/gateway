@@ -306,7 +306,7 @@ func validateAnthropicOutputTokenLimit(state *State) error {
 	if anthropicRawRequestContainsCacheControl(state.Resolution.Route, state.Resolution.RawBody()) {
 		return nil
 	}
-	return catalog.ErrParameterTooLarge
+	return catalog.ErrOutputLimitTooSmall
 }
 
 func validateAnthropicChatCompletionPolicy(state *State) error {
