@@ -25,10 +25,10 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	deployment := snap.graph.Deployments["openai-gpt-5.6-sol"]
+	deployment := *snap.graph.Deployments["openai-gpt-5.6-sol"]
 	deployment.ContextWindowTokens = contextTokens
 	deployment.MaxInputTokens = contextTokens
-	snap.graph.Deployments["openai-gpt-5.6-sol"] = deployment
+	snap.graph.Deployments["openai-gpt-5.6-sol"] = &deployment
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	scopes := []policy.Scope{policy.OrganizationScope, policy.FolderScope, policy.GrantScope, policy.RoleScope, policy.MemberScope, policy.CredentialScope, policy.KeyScope}

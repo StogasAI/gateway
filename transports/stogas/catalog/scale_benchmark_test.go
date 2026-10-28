@@ -3,9 +3,12 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"runtime"
+	"slices"
 	"sort"
 	"testing"
+	"time"
 )
 
 // These synthetic variants measure catalog capacity, not provider availability.
@@ -20,7 +23,7 @@ func scaleCatalogBytes(b *testing.B, count int) []byte {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	original := make(map[string]compiledDeployment, len(ids))
+	original := make(map[string]*compiledDeployment, len(ids))
 	for _, id := range ids {
 		original[id] = source.Graph.Deployments[id]
 	}
@@ -96,34 +99,63 @@ func BenchmarkCatalogScaleDecode(b *testing.B) {
 func BenchmarkCatalogScaleLoad(b *testing.B) {
 	for _, count := range []int{1000, 10000} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
-			data := scaleCatalogBytes(b, count)
-			b.ReportAllocs()
-			b.SetBytes(int64(len(data)))
-			// A second collection clears temporary encoder buffers from sync.Pool.
-			runtime.GC()
-			runtime.GC()
-			var before runtime.MemStats
-			runtime.ReadMemStats(&before)
-			b.ResetTimer()
-			var decoded *snapshot
-			for n := 0; n < b.N; n++ {
-				var err error
-				decoded, err = snapshotFromRelease(data, nil, nil, Identity{})
-				if err != nil {
-					b.Fatal(err)
-				}
-			}
-			b.StopTimer()
-			b.ReportMetric(float64(len(data)), "catalog_bytes")
-			runtime.GC()
-			runtime.GC()
-			var after runtime.MemStats
-			runtime.ReadMemStats(&after)
-			b.ReportMetric(float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)), "retained_heap_bytes")
-			runtime.KeepAlive(data)
-			runtime.KeepAlive(decoded)
+			benchmarkCatalogLoad(b, scaleCatalogBytes(b, count))
 		})
 	}
+}
+
+// BenchmarkCatalogScaleDatedStates loads 10,000 deployments with dated states that each change one
+// deployment, as an announced price change does.
+func BenchmarkCatalogScaleDatedStates(b *testing.B) {
+	for _, states := range []int{0, 8, 32} {
+		b.Run(fmt.Sprint(states), func(b *testing.B) {
+			var catalog compiledCatalog
+			if err := json.Unmarshal(scaleCatalogBytes(b, 10000), &catalog); err != nil {
+				b.Fatal(err)
+			}
+			ids := slices.Sorted(maps.Keys(catalog.Graph.Deployments))
+			start := time.Date(2030, time.January, 1, 0, 0, 0, 0, time.UTC)
+			for n := range states {
+				catalog.Schedule = append(catalog.Schedule, scheduleEntry{
+					Start: start.AddDate(0, 0, n),
+					Graph: compiledGraph{Deployments: map[string]*compiledDeployment{ids[n]: catalog.Graph.Deployments[ids[n]]}},
+				})
+			}
+			data, err := json.Marshal(catalog)
+			if err != nil {
+				b.Fatal(err)
+			}
+			benchmarkCatalogLoad(b, data)
+		})
+	}
+}
+
+func benchmarkCatalogLoad(b *testing.B, data []byte) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(data)))
+	// A second collection clears temporary encoder buffers from sync.Pool.
+	runtime.GC()
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+	b.ResetTimer()
+	var decoded *snapshot
+	for n := 0; n < b.N; n++ {
+		var err error
+		decoded, err = snapshotFromRelease(data, nil, nil, Identity{})
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(len(data)), "catalog_bytes")
+	runtime.GC()
+	runtime.GC()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	b.ReportMetric(float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)), "retained_heap_bytes")
+	runtime.KeepAlive(data)
+	runtime.KeepAlive(decoded)
 }
 
 // Requests pin the release they resolved against, including both artifact

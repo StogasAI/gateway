@@ -395,11 +395,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte
 		if entry.Start.IsZero() || (index > 0 && !entry.Start.After(catalog.Schedule[index-1].Start)) {
 			return nil, fmt.Errorf("catalog schedule entry %d does not start after the entry before it", index)
 		}
-		graph, err := scheduledGraph(catalog.Graph, entry.Graph)
-		if err != nil {
-			return nil, fmt.Errorf("catalog schedule entry %d: %w", index, err)
-		}
-		state, err := stateFromGraph(graph)
+		state, err := base.datedState(entry.Graph)
 		if err != nil {
 			return nil, fmt.Errorf("catalog state from %s: %w", entry.Start.Format(time.RFC3339), err)
 		}
@@ -459,7 +455,7 @@ func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte
 	return base, nil
 }
 
-// stateFromGraph validates one catalog state and indexes it for requests.
+// stateFromGraph validates the base catalog state and indexes it for requests.
 func stateFromGraph(graph compiledGraph) (*snapshot, error) {
 	if err := validateCompiledGraph(graph); err != nil {
 		return nil, err
@@ -475,6 +471,38 @@ func stateFromGraph(graph compiledGraph) (*snapshot, error) {
 			groups[groupID] = true
 		}
 	}
+	graph.Routes = indexedRoutes(graph)
+	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors}
+	if err := validatePolicyVocabulary(state, graph); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+// datedState returns the state that a schedule entry makes of the base state. The entry keeps
+// every ID, alias and link, so the state shares the base's selectors, and the checks across
+// nodes that the base passed still hold; only the nodes that the entry changes, and the
+// deployments that read them, need checking again.
+func (base *snapshot) datedState(entry compiledGraph) (*snapshot, error) {
+	graph, err := scheduledGraph(base.graph, entry)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateScheduledNodes(graph, entry); err != nil {
+		return nil, err
+	}
+	if len(entry.Deployments) > 0 || len(entry.Routes) > 0 {
+		graph.Routes = indexedRoutes(graph)
+	}
+	state := &snapshot{graph: graph, groups: base.groups, modelSelectors: base.modelSelectors}
+	if err := validatePolicyVocabulary(state, entry); err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+// indexedRoutes returns a graph's routes, each with its ID and its deployments in serving order.
+func indexedRoutes(graph compiledGraph) map[string]compiledRoute {
 	routeDeployments := routeDeploymentsForGraph(graph)
 	routes := make(map[string]compiledRoute, len(graph.Routes))
 	for routeID, route := range graph.Routes {
@@ -483,32 +511,78 @@ func stateFromGraph(graph compiledGraph) (*snapshot, error) {
 		sortDeploymentIDs(route.DeploymentIDs, graph.Deployments)
 		routes[routeID] = route
 	}
-	graph.Routes = routes
-	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors}
-	if err := validatePolicyVocabulary(state); err != nil {
-		return nil, err
-	}
-	return state, nil
+	return routes
 }
 
 // scheduledGraph returns the base graph with an entry's nodes in place of the base nodes. An
-// entry changes facts about nodes; it never adds one.
+// entry changes facts about nodes; it never adds one or changes an ID, alias or link.
 func scheduledGraph(base, entry compiledGraph) (compiledGraph, error) {
-	graph := compiledGraph{
+	for id, author := range entry.Authors {
+		if current, ok := base.Authors[id]; !ok || !slices.Equal(author.Aliases, current.Aliases) {
+			return compiledGraph{}, fmt.Errorf("a dated state adds author %s or changes its aliases", id)
+		}
+	}
+	for id, provider := range entry.Providers {
+		if current, ok := base.Providers[id]; !ok || !slices.Equal(provider.Aliases, current.Aliases) {
+			return compiledGraph{}, fmt.Errorf("a dated state adds provider %s or changes its aliases", id)
+		}
+	}
+	for id, model := range entry.Models {
+		current, ok := base.Models[id]
+		if !ok || !slices.Equal(model.Aliases, current.Aliases) || model.AuthorID != current.AuthorID ||
+			!slices.Equal(model.GroupIDs, current.GroupIDs) {
+			return compiledGraph{}, fmt.Errorf("a dated state adds model %s or changes its aliases or links", id)
+		}
+	}
+	for id, route := range entry.Routes {
+		if current, ok := base.Routes[id]; !ok || route.ProviderID != current.ProviderID {
+			return compiledGraph{}, fmt.Errorf("a dated state adds route %s or changes its provider", id)
+		}
+	}
+	for id, deployment := range entry.Deployments {
+		current, ok := base.Deployments[id]
+		if !ok || deployment.ModelID != current.ModelID || !sameKeys(deployment.Routes, current.Routes) {
+			return compiledGraph{}, fmt.Errorf("a dated state adds deployment %s or changes its links", id)
+		}
+	}
+	return compiledGraph{
 		Authors:     overlay(base.Authors, entry.Authors),
 		Deployments: overlay(base.Deployments, entry.Deployments),
 		Models:      overlay(base.Models, entry.Models),
 		Providers:   overlay(base.Providers, entry.Providers),
 		Routes:      overlay(base.Routes, entry.Routes),
+	}, nil
+}
+
+// validateScheduledNodes checks a dated state's changed nodes and each deployment that reads a
+// changed model or route.
+func validateScheduledNodes(graph, entry compiledGraph) error {
+	for providerID, provider := range entry.Providers {
+		if err := validateCompiledProvider(providerID, provider); err != nil {
+			return err
+		}
 	}
-	if len(graph.Authors) != len(base.Authors) ||
-		len(graph.Deployments) != len(base.Deployments) ||
-		len(graph.Models) != len(base.Models) ||
-		len(graph.Providers) != len(base.Providers) ||
-		len(graph.Routes) != len(base.Routes) {
-		return compiledGraph{}, fmt.Errorf("a dated state adds catalog nodes")
+	for modelID, model := range entry.Models {
+		if err := validateCompiledModel(modelID, model); err != nil {
+			return err
+		}
 	}
-	return graph, nil
+	for routeID, route := range entry.Routes {
+		if err := validateCompiledRoute(graph, routeID, route); err != nil {
+			return err
+		}
+	}
+	for deploymentID, deployment := range graph.Deployments {
+		_, changed := entry.Deployments[deploymentID]
+		_, modelChanged := entry.Models[deployment.ModelID]
+		if !changed && !modelChanged && !hasAnyKey(deployment.Routes, entry.Routes) {
+			continue
+		}
+		if err := validateCompiledDeployment(graph, make(selectorRegistry), deploymentID, deployment); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func overlay[T any](base, entry map[string]T) map[string]T {
@@ -584,9 +658,16 @@ func validateCompiledProviders(graph compiledGraph) error {
 		if err := validateQualifierAliases(providerQualifiers, "provider", providerID, provider.Aliases); err != nil {
 			return err
 		}
-		if !uniqueNonEmpty(provider.CredentialModes) {
-			return fmt.Errorf("provider %s has invalid credential modes", providerID)
+		if err := validateCompiledProvider(providerID, provider); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateCompiledProvider(providerID string, provider compiledProvider) error {
+	if !uniqueNonEmpty(provider.CredentialModes) {
+		return fmt.Errorf("provider %s has invalid credential modes", providerID)
 	}
 	return nil
 }
@@ -600,11 +681,7 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 		if _, ok := graph.Authors[model.AuthorID]; !ok {
 			return fmt.Errorf("model %s references unknown author %s", modelID, model.AuthorID)
 		}
-		// Groups name their newest model, so every model needs a release date.
-		if !validDate(model.ReleaseDate) {
-			return fmt.Errorf("model %s has an invalid releaseDate", modelID)
-		}
-		if err := validateModelReasoning(modelID, model); err != nil {
+		if err := validateCompiledModel(modelID, model); err != nil {
 			return err
 		}
 		if err := selectors.add(modelID, "model:"+modelID); err != nil {
@@ -627,20 +704,35 @@ func validateCompiledModels(graph compiledGraph, selectors selectorRegistry) err
 	return nil
 }
 
+func validateCompiledModel(modelID string, model compiledModel) error {
+	// Groups name their newest model, so every model needs a release date.
+	if !validDate(model.ReleaseDate) {
+		return fmt.Errorf("model %s has an invalid releaseDate", modelID)
+	}
+	return validateModelReasoning(modelID, model)
+}
+
 func validateCompiledRoutes(graph compiledGraph) error {
 	for routeID, route := range graph.Routes {
-		contract, allowed := compiledRouteContracts[routeID]
-		if !allowed ||
-			route.ProviderID != contract.providerID ||
-			!sameStrings(route.Interfaces, contract.interfaces) {
-			return fmt.Errorf("route %s is not a compiled gateway transport contract", routeID)
+		if err := validateCompiledRoute(graph, routeID, route); err != nil {
+			return err
 		}
-		if _, ok := graph.Providers[route.ProviderID]; !ok {
-			return fmt.Errorf("route %s references unknown provider %s", routeID, route.ProviderID)
-		}
-		if err := validateDocumentFormats(route.DocumentFormats); err != nil {
-			return fmt.Errorf("route %s: %w", routeID, err)
-		}
+	}
+	return nil
+}
+
+func validateCompiledRoute(graph compiledGraph, routeID string, route compiledRoute) error {
+	contract, allowed := compiledRouteContracts[routeID]
+	if !allowed ||
+		route.ProviderID != contract.providerID ||
+		!sameStrings(route.Interfaces, contract.interfaces) {
+		return fmt.Errorf("route %s is not a compiled gateway transport contract", routeID)
+	}
+	if _, ok := graph.Providers[route.ProviderID]; !ok {
+		return fmt.Errorf("route %s references unknown provider %s", routeID, route.ProviderID)
+	}
+	if err := validateDocumentFormats(route.DocumentFormats); err != nil {
+		return fmt.Errorf("route %s: %w", routeID, err)
 	}
 	return nil
 }
@@ -654,7 +746,7 @@ func validateCompiledDeployments(graph compiledGraph, selectors selectorRegistry
 	return nil
 }
 
-func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry, deploymentID string, deployment compiledDeployment) error {
+func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry, deploymentID string, deployment *compiledDeployment) error {
 	model, ok := graph.Models[deployment.ModelID]
 	if !ok {
 		return fmt.Errorf("deployment %s references unknown model %s", deploymentID, deployment.ModelID)
@@ -710,7 +802,7 @@ func validateCompiledDeployment(graph compiledGraph, selectors selectorRegistry,
 
 // validateDeploymentRoutes returns the provider of a deployment whose routes belong to one
 // provider and serve different interfaces, so each interface has one route.
-func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployment compiledDeployment) (string, error) {
+func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployment *compiledDeployment) (string, error) {
 	providerID := ""
 	interfaces := make(map[string]bool)
 	for _, routeID := range sortedRouteIDs(deployment) {
@@ -735,11 +827,11 @@ func validateDeploymentRoutes(graph compiledGraph, deploymentID string, deployme
 	return providerID, nil
 }
 
-func sortedRouteIDs(deployment compiledDeployment) []string {
+func sortedRouteIDs(deployment *compiledDeployment) []string {
 	return slices.Sorted(maps.Keys(deployment.Routes))
 }
 
-func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment compiledDeployment) error {
+func validateDeploymentUpstreamSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	if _, offered := offeredTiers(schemas.ModelProvider(providerID), selector.ModelFormat)[selector.ServiceTier]; !offered {
 		return fmt.Errorf("deployment %s has a service tier that its provider does not offer", deploymentID)
@@ -770,7 +862,7 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 	return nil
 }
 
-func validateAzureUpstreamSelector(deploymentID string, deployment compiledDeployment) error {
+func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDeployment) error {
 	selector := deployment.Upstream
 	if selector.ChuteID != "" || selector.GPUCount != nil || selector.InferenceGeo != "" ||
 		selector.ModelFormat == "" || strings.TrimSpace(selector.ModelVersion) == "" ||
@@ -956,7 +1048,7 @@ func validateModelReasoning(modelID string, model compiledModel) error {
 	return nil
 }
 
-func validateDeploymentReasoningInheritance(deploymentID string, model compiledModel, deployment compiledDeployment) error {
+func validateDeploymentReasoningInheritance(deploymentID string, model compiledModel, deployment *compiledDeployment) error {
 	if model.Reasoning == "unsupported" && deployment.Reasoning != "unsupported" {
 		return fmt.Errorf("deployment %s enables model-unsupported reasoning", deploymentID)
 	}
@@ -981,7 +1073,7 @@ func validateDeploymentReasoningInheritance(deploymentID string, model compiledM
 	return nil
 }
 
-func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment compiledDeployment, graph compiledGraph) error {
+func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID string, deployment *compiledDeployment, graph compiledGraph) error {
 	if deployment.Reasoning == "unsupported" {
 		exposed := deployment.ReasoningMaxTokens != nil
 		for _, route := range deployment.Routes {
@@ -1057,6 +1149,15 @@ func routeDeploymentsForGraph(graph compiledGraph) map[string][]string {
 	return out
 }
 
+func hasAnyKey[A, B any](left map[string]A, right map[string]B) bool {
+	for key := range left {
+		if _, ok := right[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func sameKeys[A, B any](left map[string]A, right map[string]B) bool {
 	if len(left) != len(right) {
 		return false
@@ -1092,7 +1193,7 @@ func sameStrings(left, right []string) bool {
 	return true
 }
 
-func sortDeploymentIDs(ids []string, deployments map[string]compiledDeployment) {
+func sortDeploymentIDs(ids []string, deployments map[string]*compiledDeployment) {
 	sort.SliceStable(ids, func(i, j int) bool {
 		left := deployments[ids[i]]
 		right := deployments[ids[j]]

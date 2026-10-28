@@ -44,9 +44,9 @@ func TestProviderOwnsContextAcceptanceAfterRedaction(t *testing.T) {
 					}
 					contextWindow = before + 1
 				}
-				deployment := snap.graph.Deployments["openai-gpt-5.6-sol"]
+				deployment := *snap.graph.Deployments["openai-gpt-5.6-sol"]
 				deployment.ContextWindowTokens, deployment.MaxInputTokens, deployment.MaxOutputTokens = contextWindow, contextWindow, 128
-				snap.graph.Deployments["openai-gpt-5.6-sol"] = deployment
+				snap.graph.Deployments["openai-gpt-5.6-sol"] = &deployment
 				reservedBody, checked := 0, 0
 				resolved, err := ResolveRequest(RequestInput{
 					Body: encoded, Method: "POST", Path: path, RedactionPolicy: matcher,

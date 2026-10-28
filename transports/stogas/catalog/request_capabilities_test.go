@@ -73,7 +73,7 @@ func TestCatalogCapabilitiesFilterBeforeCredentialPreparation(t *testing.T) {
 }
 
 // setTestCapabilities gives every route of a loaded deployment the same capabilities.
-func setTestCapabilities(deployment compiledDeployment, capabilities Capabilities) {
+func setTestCapabilities(deployment *compiledDeployment, capabilities Capabilities) {
 	for routeID, route := range deployment.Routes {
 		route.Capabilities = capabilities
 		deployment.Routes[routeID] = route

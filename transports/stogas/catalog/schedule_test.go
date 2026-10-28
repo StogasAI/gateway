@@ -115,9 +115,26 @@ func TestRequestsUseTheCatalogStateInEffect(t *testing.T) {
 	}
 }
 
+// runtimeNode returns a copy of a node of the embedded runtime catalog.
+func runtimeNode(t *testing.T, kind, id string) map[string]any {
+	t.Helper()
+	var runtime map[string]any
+	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	return runtime["graph"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)
+}
+
 func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 	unpriced := promotedDeployment(t, "openai-gpt-5.6-sol")
 	delete(unpriced["routes"].(map[string]any)["openai-responses"].(map[string]any)["pricing"].(map[string]any), billing.MeterOutputTokens)
+	relinked := promotedDeployment(t, "openai-gpt-5.6-sol")
+	relinked["modelId"] = "gpt-5.6-terra"
+	// The model's deployments all leave reasoning optional.
+	required := runtimeNode(t, "models", "gpt-5.6-sol")
+	required["reasoning"] = "required"
+	unnamed := promotedDeployment(t, "openai-gpt-5.6-sol")
+	unnamed["weightPrecision"] = "fp99"
 	empty := map[string]any{}
 	for _, test := range []struct {
 		name     string
@@ -139,7 +156,28 @@ func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 			schedule: []map[string]any{{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"deployments": map[string]any{
 				"openai-gpt-5.6-sol-promotion": promotedDeployment(t, "openai-gpt-5.6-sol"),
 			}}}},
-			message: "adds catalog nodes",
+			message: "adds deployment openai-gpt-5.6-sol-promotion",
+		},
+		{
+			name: "relinked node",
+			schedule: []map[string]any{{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"deployments": map[string]any{
+				"openai-gpt-5.6-sol": relinked,
+			}}}},
+			message: "changes its links",
+		},
+		{
+			name: "model that its unchanged deployments contradict",
+			schedule: []map[string]any{{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"models": map[string]any{
+				"gpt-5.6-sol": required,
+			}}}},
+			message: "weakens required model reasoning",
+		},
+		{
+			name: "value outside the policy vocabulary",
+			schedule: []map[string]any{{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"deployments": map[string]any{
+				"openai-gpt-5.6-sol": unnamed,
+			}}}},
+			message: "outside the policy vocabulary",
 		},
 		{
 			name: "invalid state",
