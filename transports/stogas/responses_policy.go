@@ -390,7 +390,7 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 		if err := validateResponsesHostedToolMaxUses(tool["max_uses"], path+".max_uses"); err != nil {
 			return err
 		}
-		if err := validateResponsesDomainFilters(tool["filters"], path+".filters", true); err != nil {
+		if err := validateResponsesDomainFilters(tool["filters"], path+".filters"); err != nil {
 			return err
 		}
 		if err := validateResponsesUserLocation(tool["user_location"], path+".user_location", false); err != nil {
@@ -413,7 +413,7 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 		return err
 	}
 	if toolType == schemas.ResponsesToolTypeWebSearch {
-		return validateResponsesDomainFilters(tool["filters"], path+".filters", false)
+		return validateResponsesDomainFilters(tool["filters"], path+".filters")
 	}
 	return nil
 }
@@ -442,7 +442,7 @@ func validateResponsesWebFetchTool(state *State, tool map[string]json.RawMessage
 			return invalidRequest(path + ".max_content_tokens is outside the supported range")
 		}
 	}
-	if err := validateResponsesDomainFilters(tool["filters"], path+".filters", true); err != nil {
+	if err := validateResponsesDomainFilters(tool["filters"], path+".filters"); err != nil {
 		return err
 	}
 	return validateResponsesToolCacheControl(tool["cache_control"], path+".cache_control")
@@ -539,7 +539,7 @@ func validateResponsesUserLocation(raw json.RawMessage, path string, allowRegion
 	return nil
 }
 
-func validateResponsesDomainFilters(raw json.RawMessage, path string, allowBlocked bool) error {
+func validateResponsesDomainFilters(raw json.RawMessage, path string) error {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -547,10 +547,7 @@ func validateResponsesDomainFilters(raw json.RawMessage, path string, allowBlock
 	if !ok || filters == nil {
 		return invalidRequest(path + " must be an object")
 	}
-	allowed := []string{"allowed_domains"}
-	if allowBlocked {
-		allowed = append(allowed, "blocked_domains")
-	}
+	allowed := []string{"allowed_domains", "blocked_domains"}
 	if err := rejectUnsupportedResponsesToolKeys(filters, path, allowed...); err != nil {
 		return err
 	}

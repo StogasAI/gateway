@@ -4040,7 +4040,7 @@ type ResponsesToolWebSearch struct {
 // ResponsesToolWebSearchFilters represents filters for web search
 type ResponsesToolWebSearchFilters struct {
 	AllowedDomains []string `json:"allowed_domains,omitempty"` // Allowed domains for the search
-	BlockedDomains []string `json:"blocked_domains,omitempty"` // Blocked domains for the search, only used in anthropic
+	BlockedDomains []string `json:"blocked_domains,omitempty"` // Blocked domains for the search
 
 	// Gemini only
 	// Filter search results to a specific time range.
