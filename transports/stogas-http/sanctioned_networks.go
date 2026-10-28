@@ -13,9 +13,9 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
-// Control loads each monthly list once a day, so checking more often finds
-// nothing new.
-const sanctionedNetworksRefreshInterval = 24 * time.Hour
+// Control loads a new monthly list within a day of its release. An hourly check
+// is one small query, and it brings a new list to every gateway within the hour.
+const sanctionedNetworksRefreshInterval = time.Hour
 
 // sanctionedNetworkList reads the list and the source that names its version.
 type sanctionedNetworkList interface {
@@ -27,10 +27,16 @@ type sanctionedNetworkList interface {
 // network that was already refused.
 type sanctionedNetworks struct {
 	ranges atomic.Pointer[[]billing.NetworkRange]
-	// source is written only by start and the refresh goroutine.
-	source string
+	status atomic.Pointer[sanctionedNetworksStatus]
 	stop   context.CancelFunc
 	done   chan struct{}
+}
+
+// sanctionedNetworksStatus names the list in use and when a check last succeeded.
+// A failing check leaves CheckedAt behind, which the monitor reports.
+type sanctionedNetworksStatus struct {
+	Source    string    `json:"source"`
+	CheckedAt time.Time `json:"checkedAt"`
 }
 
 // startSanctionedNetworks loads the list before the gateway accepts requests.
@@ -62,19 +68,28 @@ func startSanctionedNetworks(ctx context.Context, list sanctionedNetworkList, lo
 // load reads the full list only when its source changed.
 func (n *sanctionedNetworks) load(ctx context.Context, list sanctionedNetworkList) error {
 	source, err := list.SanctionedNetworksSource(ctx)
-	if err != nil || (n.ranges.Load() != nil && source == n.source) {
-		return err
-	}
-	ranges, err := list.SanctionedNetworks(ctx)
 	if err != nil {
 		return err
 	}
-	if ranges, err = mergeNetworkRanges(ranges); err != nil {
-		return err
+	if current := n.status.Load(); current == nil || current.Source != source {
+		ranges, err := list.SanctionedNetworks(ctx)
+		if err != nil {
+			return err
+		}
+		if ranges, err = mergeNetworkRanges(ranges); err != nil {
+			return err
+		}
+		n.ranges.Store(&ranges)
 	}
-	n.ranges.Store(&ranges)
-	n.source = source
+	n.status.Store(&sanctionedNetworksStatus{Source: source, CheckedAt: time.Now().UTC()})
 	return nil
+}
+
+func (n *sanctionedNetworks) diagnostics() *sanctionedNetworksStatus {
+	if n == nil {
+		return nil
+	}
+	return n.status.Load()
 }
 
 func (n *sanctionedNetworks) close() {

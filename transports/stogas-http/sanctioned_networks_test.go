@@ -112,22 +112,35 @@ func TestSanctionedNetworksStartFailsAndRefreshReadsOnlyChangedLists(t *testing.
 			time.Sleep(sanctionedNetworksRefreshInterval)
 			synctest.Wait()
 		}
+		checked := func(source string, at time.Time) {
+			t.Helper()
+			if status := n.diagnostics(); status == nil || status.Source != source || !status.CheckedAt.Equal(at.UTC()) {
+				t.Fatalf("status = %+v, want %s checked at %s", status, source, at)
+			}
+		}
+		started := time.Now()
+		checked("september", started)
 		refresh()
 		if list.readCount() != 1 || !n.contains(blocked) {
 			t.Fatal("refresh read an unchanged list")
 		}
+		// An unchanged list still counts as checked.
+		lastChecked := time.Now()
+		checked("september", lastChecked)
 		for _, failed := range []*networkList{{err: failure}, {source: "october", read: failure}} {
 			list.set(failed.source, nil, failed.err, failed.read)
 			refresh()
 			if !n.contains(blocked) {
 				t.Fatal("failed refresh dropped the previous list")
 			}
+			checked("september", lastChecked)
 		}
 		list.set("october", october, nil, nil)
 		refresh()
 		if list.readCount() != 3 || n.contains(blocked) || !n.contains(netip.MustParseAddr("203.0.113.1")) {
 			t.Fatal("refresh did not replace the changed list")
 		}
+		checked("october", time.Now())
 	})
 }
 
