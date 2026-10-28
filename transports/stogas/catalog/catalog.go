@@ -97,6 +97,8 @@ func (s *snapshot) deploymentForRoute(provider schemas.ModelProvider, model stri
 	return Deployment{}, false
 }
 
+// deploymentAvailableAt says whether a deployment serves at now: until 00:00 UTC on its retirement
+// date.
 func deploymentAvailableAt(deployment compiledDeployment, now time.Time) bool {
 	return deployment.RetirementDate == nil ||
 		*deployment.RetirementDate > now.UTC().Format(time.DateOnly)

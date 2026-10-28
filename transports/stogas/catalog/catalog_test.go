@@ -17,6 +17,16 @@ func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 	return snapshotFromRelease(data, nil, nil, Identity{})
 }
 
+// embeddedParts is every file that the embedded public root names, by SHA-256 in hex.
+func embeddedParts(tb testing.TB) map[string][]byte {
+	tb.Helper()
+	parts, err := embeddedPublicParts()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return parts
+}
+
 func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
 	return activeState().deploymentForRoute(provider, model, route, variant{})
 }
@@ -73,7 +83,7 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 }
 
 func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *testing.T) {
-	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, nil, Identity{})
+	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, embeddedParts(t), Identity{})
 	if err != nil {
 		t.Fatalf("public informational models were rejected: %v", err)
 	}
@@ -88,7 +98,7 @@ func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, nil, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, embeddedParts(t), Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
 	}
@@ -1174,7 +1184,7 @@ func TestSnapshotValidationBindsThePublicCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, nil, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, embeddedParts(t), Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "public catalog digest does not match") {
 		t.Fatalf("mismatched public catalog was accepted: %v", err)
 	}
@@ -1363,7 +1373,7 @@ func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, nil, Identity{}); err == nil ||
+	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, embeddedParts(t), Identity{}); err == nil ||
 		!strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("mismatched public projection was accepted: %v", err)
 	}

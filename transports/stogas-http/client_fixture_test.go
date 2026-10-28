@@ -105,16 +105,17 @@ func installFixtureCatalog() error {
 	if err != nil {
 		return err
 	}
-	// The fixture holds an archive only when its public catalog names one.
-	var archiveData []byte
-	if reference, err := catalog.PublicArchive(publicData); err != nil {
+	files, err := catalog.PublicCatalogFiles(publicData)
+	if err != nil {
 		return err
-	} else if reference != nil {
-		if archiveData, err = os.ReadFile(filepath.Join(dir, "catalog.archive.json")); err != nil {
+	}
+	parts := make(map[string][]byte, len(files))
+	for _, file := range files {
+		if parts[file.SHA256], err = os.ReadFile(filepath.Join(dir, "catalog.public.parts", file.SHA256+".json")); err != nil {
 			return err
 		}
 	}
-	return catalog.InstallApproved(runtimeData, publicData, archiveData, catalog.Identity{
+	return catalog.InstallApproved(runtimeData, publicData, parts, catalog.Identity{
 		Sequence: 1,
 		Digest:   fmt.Sprintf("sha256:%x", sha256.Sum256(runtimeData)),
 	}, fmt.Sprintf("sha256:%x", sha256.Sum256(publicData)))

@@ -6,15 +6,16 @@ import (
 	"time"
 )
 
-// PublicCatalog is the public catalog with the identity of its release. It names its archive by
-// SHA-256, and ActiveArchive holds it.
+// PublicCatalog is the root of the public catalog with the identity of its release. The root
+// names its parts and the archive's files by SHA-256, and ActivePublicPart holds them.
 type PublicCatalog struct {
 	Schema        string                     `json:"schema"`
 	Sequence      uint64                     `json:"sequence"`
 	RuntimeDigest string                     `json:"runtimeDigest"`
 	PublicDigest  string                     `json:"publicDigest"`
-	Archive       *ArchiveReference          `json:"archive"`
+	Archive       json.RawMessage            `json:"archive"`
 	Graph         map[string]json.RawMessage `json:"graph"`
+	Parts         json.RawMessage            `json:"parts"`
 	Schedule      json.RawMessage            `json:"schedule"`
 	Periods       json.RawMessage            `json:"periods"`
 }

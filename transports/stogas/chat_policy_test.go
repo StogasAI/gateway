@@ -1882,7 +1882,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
@@ -2129,7 +2129,7 @@ func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testi
 	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(public.Graph["deployments"], &deployments); err != nil {
+	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
