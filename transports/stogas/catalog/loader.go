@@ -1,12 +1,14 @@
 package catalog
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"iter"
 	"maps"
 	"slices"
 	"sort"
@@ -18,21 +20,15 @@ import (
 )
 
 const (
-	runtimeSchema      = "stogas.catalog.runtime.v6"
-	publicSchema       = "stogas.catalog.public.v8"
-	publicPartSchema   = "stogas.catalog.public.part.v8"
-	archiveIndexSchema = "stogas.catalog.archive.index.v1"
-	archivePartSchema  = "stogas.catalog.archive.part.v1"
-	// Evidence approves the runtime catalog and the public root by digest, and the root names
-	// its parts and the archive's index and parts by digest. Each file, the root with its parts,
-	// and the archive with its files have their own limits.
-	runtimeSizeLimit       = 32 * 1024 * 1024
-	publicSizeLimit        = 16 * 1024 * 1024
-	publicPartSizeLimit    = 1024 * 1024
-	archiveIndexSizeLimit  = 16 * 1024 * 1024
-	publicCatalogSizeLimit = 64 * 1024 * 1024
-	archiveSizeLimit       = 64 * 1024 * 1024
-	maxAliasesPerNode      = 8
+	catalogSchema     = "stogas.catalog.v9"
+	catalogPartSchema = "stogas.catalog.part.v9"
+	// Evidence approves a release by the digest of its root, and the root names each part by
+	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
+	// one before it downloads it.
+	rootSizeLimit     = 16 * 1024 * 1024
+	partSizeLimit     = 1024 * 1024
+	catalogSizeLimit  = 128 * 1024 * 1024
+	maxAliasesPerNode = 8
 )
 
 var compiledRouteContracts = map[string]struct {
@@ -99,290 +95,361 @@ var callPricingMeters = map[string]bool{
 	meterOpenAIResponsesWebSearchPreviewNonReasoningCalls: true,
 }
 
-// The fallback embeds every file that its public root names.
+// The fallback is a build's root and every part that it names.
 //
 //go:embed fallback
 var fallbackFiles embed.FS
 
-var (
-	embeddedRuntimeCatalogJSON = fallbackFile("catalog.runtime.json")
-	embeddedPublicCatalogJSON  = fallbackFile("catalog.public.json")
-)
-
-func fallbackFile(name string) []byte {
-	data, _ := fallbackFiles.ReadFile("fallback/" + name)
-	return data
-}
-
+// loadSnapshot reads the fallback with every record, so that no date can stop a gateway from
+// starting; requests still refuse each record once it retires.
 func loadSnapshot() (*snapshot, error) {
-	parts, err := embeddedPublicParts()
+	root, err := fallbackFiles.ReadFile("fallback/catalog.json")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read embedded catalog root: %w", err)
 	}
-	return snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
-}
-
-// embeddedPublicParts reads every file that the embedded public root names, by SHA-256 in hex.
-func embeddedPublicParts() (map[string][]byte, error) {
-	files, err := PublicCatalogFiles(embeddedPublicCatalogJSON)
+	files, err := partFiles(root)
 	if err != nil {
 		return nil, err
 	}
 	parts := make(map[string][]byte, len(files))
 	for _, file := range files {
-		data, err := fallbackFiles.ReadFile("fallback/catalog.public.parts/" + file.SHA256 + ".json")
+		data, err := fallbackFiles.ReadFile("fallback/catalog.parts/" + file.SHA256 + ".json")
 		if err != nil {
-			return nil, fmt.Errorf("read embedded public catalog part: %w", err)
+			return nil, fmt.Errorf("read embedded catalog part: %w", err)
 		}
 		parts[file.SHA256] = data
 	}
-	return parts, nil
+	return snapshotFromFiles(root, parts, Identity{}, time.Time{})
 }
 
-// PublicFile names a file of the public catalog by the SHA-256, in hex, and size of its bytes.
-type PublicFile struct {
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
+// PartFile names a part by the SHA-256, in hex, and size of its bytes, with the latest date
+// that one of its records retires, or none while one of them never does.
+type PartFile struct {
+	SHA256  string  `json:"sha256"`
+	Size    int64   `json:"size"`
+	Through *string `json:"through"`
 }
 
-// publicListing is what a public root names: its parts, and the archive's index and parts, or
-// no archive while nothing has moved there.
-type publicListing struct {
-	Parts   []PublicFile `json:"parts"`
-	Archive *struct {
-		Index PublicFile   `json:"index"`
-		Parts []PublicFile `json:"parts"`
-	} `json:"archive"`
-}
-
-// listPublicFiles reads what a root names, after checking each name and size and the size of
-// the catalog and of the archive with all their files.
-func listPublicFiles(root []byte) (publicListing, error) {
-	var listing publicListing
+// partFiles reads the parts that a root names, after checking the root's size and schema, each
+// part's name, size and date, and the size of the root with every part.
+func partFiles(root []byte) ([]PartFile, error) {
+	if len(root) == 0 || len(root) > rootSizeLimit {
+		return nil, errors.New("catalog root size is outside the accepted range")
+	}
+	var listing struct {
+		Schema string     `json:"schema"`
+		Parts  []PartFile `json:"parts"`
+	}
 	if err := json.Unmarshal(root, &listing); err != nil {
-		return publicListing{}, fmt.Errorf("decode public catalog files: %w", err)
+		return nil, fmt.Errorf("decode catalog root: %w", err)
 	}
-	seen := make(map[string]bool)
-	total := func(files []PublicFile, limit int64) (int64, bool) {
-		var sum int64
-		for _, file := range files {
-			decoded, err := hex.DecodeString(file.SHA256)
-			if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != file.SHA256 ||
-				seen[file.SHA256] || file.Size < 1 || file.Size > limit {
-				return 0, false
-			}
-			seen[file.SHA256] = true
-			sum += file.Size
+	if listing.Schema != catalogSchema {
+		return nil, fmt.Errorf("catalog schema %q is unsupported", listing.Schema)
+	}
+	seen := make(map[string]bool, len(listing.Parts))
+	total := int64(len(root))
+	for _, file := range listing.Parts {
+		decoded, err := hex.DecodeString(file.SHA256)
+		if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != file.SHA256 ||
+			seen[file.SHA256] || file.Size < 1 || file.Size > partSizeLimit ||
+			(file.Through != nil && !validDate(*file.Through)) {
+			return nil, errors.New("catalog root names an invalid part")
 		}
-		return sum, true
+		seen[file.SHA256] = true
+		total += file.Size
 	}
-	invalid := errors.New("public catalog names an invalid file")
-	parts, ok := total(listing.Parts, publicPartSizeLimit)
-	if !ok {
-		return publicListing{}, invalid
+	if total > catalogSizeLimit {
+		return nil, errors.New("catalog exceeds the accepted size")
 	}
-	if int64(len(root))+parts > publicCatalogSizeLimit {
-		return publicListing{}, errors.New("public catalog exceeds the accepted size")
-	}
-	if archive := listing.Archive; archive != nil {
-		index, indexOK := total([]PublicFile{archive.Index}, archiveIndexSizeLimit)
-		parts, partsOK := total(archive.Parts, publicPartSizeLimit)
-		if !indexOK || !partsOK || len(archive.Parts) == 0 {
-			return publicListing{}, invalid
-		}
-		if index+parts > archiveSizeLimit {
-			return publicListing{}, errors.New("catalog archive exceeds the accepted size")
-		}
-	}
-	return listing, nil
+	return listing.Parts, nil
 }
 
-// PublicCatalogFiles lists every file that a public root names: its parts, then the archive's
-// index and parts.
-func PublicCatalogFiles(root []byte) ([]PublicFile, error) {
-	listing, err := listPublicFiles(root)
+// PartsInEffect lists the parts of a root that hold a record that has not retired at an
+// instant, which is each part whose records do not all retire by then.
+func PartsInEffect(root []byte, at time.Time) ([]PartFile, error) {
+	files, err := partFiles(root)
 	if err != nil {
 		return nil, err
 	}
-	files := slices.Clone(listing.Parts)
-	if archive := listing.Archive; archive != nil {
-		files = append(append(files, archive.Index), archive.Parts...)
-	}
-	return files, nil
+	return slices.DeleteFunc(files, func(file PartFile) bool { return retiredAt(file.Through, at) }), nil
 }
 
-// publicSummary is what the root keeps of a deployment that the gateway checks.
-type publicSummary struct {
-	Part int `json:"part"`
+// retiredAt says whether a record that retires on a date, or never when there is none, has
+// retired at an instant: once the date has ended everywhere on Earth, at 12:00 UTC on the next
+// day. A provider that names a date can mean its start or its end in any time zone, so the
+// gateway never stops a record before the provider does.
+func retiredAt(date *string, at time.Time) bool {
+	return date != nil && *date <= at.Add(-36*time.Hour).UTC().Format(time.DateOnly)
 }
 
-// publicPartsFor checks that parts holds exactly the files that the root names, each with its
-// digest and size; that the root's parts hold exactly the deployments that the root places in
-// them; and that the archive holds exactly the records that the runtime catalog lists as
-// retired, each in the archive part that the index names.
-func publicPartsFor(root []byte, summaries map[string]publicSummary, retired retiredNodes, parts map[string][]byte) (map[string][]byte, error) {
-	listing, err := listPublicFiles(root)
+// snapshotFromFiles reads a release at an instant from its root and parts, which holds some of
+// the parts that the root names, by SHA-256 in hex, including each part in effect then. The
+// snapshot serves the parts that it was given.
+func snapshotFromFiles(root []byte, parts map[string][]byte, identity Identity, at time.Time) (*snapshot, error) {
+	files, err := partFiles(root)
 	if err != nil {
 		return nil, err
 	}
-	differ := errors.New("public catalog parts differ from the root")
+	sum := sha256.Sum256(root)
+	if digest := "sha256:" + hex.EncodeToString(sum[:]); identity.Digest == "" {
+		identity.Digest = digest
+	} else if identity.Digest != digest {
+		return nil, errors.New("catalog root digest does not match the signed release")
+	}
 	held := make(map[string][]byte, len(parts))
-	read := func(file PublicFile, value any) error {
+	for _, file := range files {
 		data, ok := parts[file.SHA256]
+		if !ok {
+			continue
+		}
 		sum := sha256.Sum256(data)
-		if !ok || int64(len(data)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA256 {
-			return differ
+		if int64(len(data)) != file.Size || hex.EncodeToString(sum[:]) != file.SHA256 {
+			return nil, errors.New("catalog part differs from the root")
 		}
-		held[file.SHA256] = append([]byte(nil), data...)
-		if err := json.Unmarshal(data, value); err != nil {
-			return fmt.Errorf("decode public catalog part: %w", err)
-		}
-		return nil
-	}
-	deployments := 0
-	for index, file := range listing.Parts {
-		var part struct {
-			Schema      string                     `json:"schema"`
-			Deployments map[string]json.RawMessage `json:"deployments"`
-		}
-		if err := read(file, &part); err != nil {
-			return nil, err
-		}
-		if part.Schema != publicPartSchema {
-			return nil, fmt.Errorf("public catalog part schema %q is unsupported", part.Schema)
-		}
-		for id := range part.Deployments {
-			if summary, ok := summaries[id]; !ok || summary.Part != index {
-				return nil, fmt.Errorf("public catalog part %d holds deployment %s that the root places elsewhere", index, id)
-			}
-		}
-		deployments += len(part.Deployments)
-	}
-	// Each part holds only its own deployments, so equal counts mean every deployment is there.
-	if deployments != len(summaries) {
-		return nil, errors.New("public catalog parts omit a deployment")
-	}
-	if archive := listing.Archive; archive != nil {
-		if err := checkArchive(archive.Index, archive.Parts, retired, read); err != nil {
-			return nil, err
-		}
-	} else if len(retired.Deployments) > 0 || len(retired.Models) > 0 {
-		return nil, errors.New("catalog archive does not match the runtime catalog")
+		held[file.SHA256] = bytes.Clone(data)
 	}
 	if len(held) != len(parts) {
-		return nil, differ
+		return nil, errors.New("catalog part is not in the root")
 	}
-	return held, nil
+	compiled, err := assemble(root, files, held, at)
+	if err != nil {
+		return nil, err
+	}
+	base, err := snapshotFromCompiled(compiled)
+	if err != nil {
+		return nil, err
+	}
+	served := servedRoot(root, identity)
+	for _, state := range base.states() {
+		state.identity, state.served, state.parts = identity, served, held
+	}
+	return base, nil
 }
 
-// checkArchive checks that the archive index lists exactly the deployments that the runtime
-// catalog lists as retired, and the models that it lists under their IDs and aliases, each with
-// its retirement day, and that each archive part holds exactly the records that the index places
-// in it.
-func checkArchive(indexFile PublicFile, partFiles []PublicFile, retired retiredNodes, read func(PublicFile, any) error) error {
-	var index struct {
-		Schema      string `json:"schema"`
-		Deployments map[string]struct {
-			Part           int    `json:"part"`
-			RetirementDate string `json:"retirementDate"`
-		} `json:"deployments"`
-		Models map[string]struct {
-			Aliases        []string `json:"aliases"`
-			Part           int      `json:"part"`
-			RetirementDate string   `json:"retirementDate"`
-		} `json:"models"`
+// assemble reads a release at an instant: the authors and providers that the root holds whole,
+// and the records of the parts in effect then that have not retired, of which each model has a
+// deployment, with their changes in each dated state. Each selector of a deployment or model
+// that has retired keeps the day that it retired.
+func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at time.Time) (compiledCatalog, error) {
+	prices := sharedJSON[Pricing]()
+	var root catalogRoot
+	if err := decodeStrict(rootData, &root, prices); err != nil {
+		return compiledCatalog{}, fmt.Errorf("decode catalog root: %w", err)
 	}
-	if err := read(indexFile, &index); err != nil {
-		return err
-	}
-	mismatch := errors.New("catalog archive does not match the runtime catalog")
-	if index.Schema != archiveIndexSchema || len(index.Deployments) != len(retired.Deployments) {
-		return mismatch
-	}
-	for id, entry := range index.Deployments {
-		if date, ok := retired.Deployments[id]; !ok || date != entry.RetirementDate {
-			return mismatch
-		}
-	}
-	selectors := 0
-	for id, entry := range index.Models {
-		for _, selector := range append([]string{id}, entry.Aliases...) {
-			if date, ok := retired.Models[selector]; !ok || date != entry.RetirementDate {
-				return mismatch
+	summaries := root.Summaries
+	kinds := []struct {
+		name      string
+		summaries map[string]summary
+	}{{"model", summaries.Models}, {"route", summaries.Routes}, {"deployment", summaries.Deployments}}
+	// A part's date bounds the dates of its records, so a part that leaves holds no record that
+	// still serves.
+	records := make([]int, len(files))
+	for _, kind := range kinds {
+		for id, summary := range kind.summaries {
+			if summary.Part < 0 || summary.Part >= len(files) {
+				return compiledCatalog{}, fmt.Errorf("%s %s names no part of the root", kind.name, id)
 			}
-			selectors++
+			date, through := summary.RetirementDate, files[summary.Part].Through
+			if (date != nil && !validDate(*date)) || (through != nil && (date == nil || *date > *through)) {
+				return compiledCatalog{}, fmt.Errorf("%s %s retires after its part", kind.name, id)
+			}
+			records[summary.Part]++
 		}
 	}
-	if selectors != len(retired.Models) {
-		return mismatch
+	graph := compiledGraph{
+		Authors:     summaries.Authors,
+		Deployments: make(map[string]*compiledDeployment),
+		Models:      make(map[string]compiledModel),
+		Providers:   summaries.Providers,
+		Routes:      make(map[string]compiledRoute),
 	}
-	records := 0
-	for position, file := range partFiles {
-		var part struct {
-			Schema      string                     `json:"schema"`
-			Deployments map[string]json.RawMessage `json:"deployments"`
-			Models      map[string]json.RawMessage `json:"models"`
+	starts := make(map[string]int, len(root.Schedule))
+	for position, entry := range root.Schedule {
+		starts[entry.Start] = position
+	}
+	changes := make([]compiledGraph, len(root.Schedule))
+	for index, file := range files {
+		if retiredAt(file.Through, at) {
+			continue
 		}
-		if err := read(file, &part); err != nil {
-			return err
+		data, ok := parts[file.SHA256]
+		if !ok {
+			return compiledCatalog{}, fmt.Errorf("catalog part %d is in effect but missing", index)
 		}
-		if part.Schema != archivePartSchema {
-			return fmt.Errorf("catalog archive part schema %q is unsupported", part.Schema)
+		var part catalogPart
+		if err := decodeStrict(data, &part, prices); err != nil {
+			return compiledCatalog{}, fmt.Errorf("decode catalog part %d: %w", index, err)
 		}
-		for id := range part.Deployments {
-			if entry, ok := index.Deployments[id]; !ok || entry.Part != position {
-				return fmt.Errorf("catalog archive part %d holds deployment %s that the index places elsewhere", position, id)
+		if part.Schema != catalogPartSchema {
+			return compiledCatalog{}, fmt.Errorf("catalog part schema %q is unsupported", part.Schema)
+		}
+		// Each record in the part, and each of its changes, belongs to a summary that places it
+		// here.
+		placed := func(changed partGraph) error {
+			for _, kind := range []struct {
+				name string
+				ids  iter.Seq[string]
+				in   map[string]summary
+			}{
+				{"model", maps.Keys(changed.Models), summaries.Models},
+				{"route", maps.Keys(changed.Routes), summaries.Routes},
+				{"deployment", maps.Keys(changed.Deployments), summaries.Deployments},
+			} {
+				for id := range kind.ids {
+					if summary, ok := kind.in[id]; !ok || summary.Part != index {
+						return fmt.Errorf("catalog part %d holds %s %s that the root places elsewhere", index, kind.name, id)
+					}
+				}
+			}
+			return nil
+		}
+		if err := placed(part.Graph); err != nil {
+			return compiledCatalog{}, err
+		}
+		if err := inAncestorGroups(part.Graph.Models, summaries.Groups); err != nil {
+			return compiledCatalog{}, err
+		}
+		if len(part.Graph.Models)+len(part.Graph.Routes)+len(part.Graph.Deployments) != records[index] {
+			return compiledCatalog{}, fmt.Errorf("catalog part %d omits a record", index)
+		}
+		for id, deployment := range part.Graph.Deployments {
+			if !equalDates(deployment.RetirementDate, summaries.Deployments[id].RetirementDate) {
+				return compiledCatalog{}, fmt.Errorf("deployment %s retires on another date than its summary", id)
 			}
 		}
-		for id := range part.Models {
-			if entry, ok := index.Models[id]; !ok || entry.Part != position {
-				return fmt.Errorf("catalog archive part %d holds model %s that the index places elsewhere", position, id)
+		maps.Copy(graph.Models, part.Graph.Models)
+		maps.Copy(graph.Routes, part.Graph.Routes)
+		maps.Copy(graph.Deployments, part.Graph.Deployments)
+		for _, entry := range part.Schedule {
+			position, ok := starts[entry.Start]
+			if !ok {
+				return compiledCatalog{}, fmt.Errorf("catalog part %d changes records from %s, which the root does not list", index, entry.Start)
+			}
+			if err := placed(entry.Graph); err != nil {
+				return compiledCatalog{}, err
+			}
+			if err := inAncestorGroups(entry.Graph.Models, summaries.Groups); err != nil {
+				return compiledCatalog{}, err
+			}
+			changed := &changes[position]
+			changed.Models = merged(changed.Models, entry.Graph.Models)
+			changed.Routes = merged(changed.Routes, entry.Graph.Routes)
+			changed.Deployments = merged(changed.Deployments, entry.Graph.Deployments)
+		}
+	}
+	retired := make(map[string]string)
+	for id, summary := range summaries.Deployments {
+		if retiredAt(summary.RetirementDate, at) {
+			delete(graph.Deployments, id)
+			retired[id] = *summary.RetirementDate
+		}
+	}
+	for id, summary := range summaries.Routes {
+		if retiredAt(summary.RetirementDate, at) {
+			delete(graph.Routes, id)
+		}
+	}
+	for id, summary := range summaries.Models {
+		if retiredAt(summary.RetirementDate, at) {
+			for _, selector := range append([]string{id}, summary.Aliases...) {
+				retired[selector] = *summary.RetirementDate
 			}
 		}
-		records += len(part.Deployments) + len(part.Models)
 	}
-	if records != len(index.Deployments)+len(index.Models) {
-		return errors.New("catalog archive parts omit a record")
+	// A model serves only through a deployment.
+	deployed := make(map[string]bool, len(graph.Models))
+	for _, deployment := range graph.Deployments {
+		deployed[deployment.ModelID] = true
+	}
+	maps.DeleteFunc(graph.Models, func(id string, _ compiledModel) bool { return !deployed[id] })
+	schedule := make([]scheduleEntry, len(root.Schedule))
+	for position, entry := range root.Schedule {
+		start, err := time.Parse(time.RFC3339, entry.Start)
+		if err != nil {
+			return compiledCatalog{}, fmt.Errorf("catalog schedule entry %d has an invalid start", position)
+		}
+		changed := changes[position]
+		schedule[position] = scheduleEntry{Start: start, Graph: compiledGraph{
+			Authors:     entry.Summaries.Authors,
+			Deployments: inGraph(changed.Deployments, graph.Deployments),
+			Models:      inGraph(changed.Models, graph.Models),
+			Providers:   entry.Summaries.Providers,
+			Routes:      inGraph(changed.Routes, graph.Routes),
+		}}
+	}
+	return compiledCatalog{Graph: graph, Schedule: schedule, Retired: retired}, nil
+}
+
+// inAncestorGroups puts each model in every group that contains a group that it names, so that
+// each of those groups selects it. Its groups are in order.
+func inAncestorGroups(models map[string]compiledModel, groups map[string]groupSummary) error {
+	for id, model := range models {
+		in := make(map[string]bool, len(model.GroupIDs))
+		for pending := slices.Clone(model.GroupIDs); len(pending) > 0; {
+			groupID := pending[len(pending)-1]
+			pending = pending[:len(pending)-1]
+			group, ok := groups[groupID]
+			if !ok {
+				return fmt.Errorf("model %s is in unknown group %s", id, groupID)
+			}
+			if !in[groupID] {
+				in[groupID] = true
+				pending = append(pending, group.ParentIDs...)
+			}
+		}
+		model.GroupIDs = slices.AppendSeq(make([]string, 0, len(in)), maps.Keys(in))
+		slices.Sort(model.GroupIDs)
+		models[id] = model
 	}
 	return nil
 }
 
-// validateRetired checks that each archived deployment and model has the date it retired and
-// that no request can reach it in the graph: a deployment by its ID, and a model by its ID or an
-// alias.
-func validateRetired(retired retiredNodes, base *snapshot) error {
-	active := func(selector string) bool {
+// merged adds a part's changes of one kind to a dated state's.
+func merged[T any](state, part map[string]T) map[string]T {
+	if state == nil {
+		return part
+	}
+	maps.Copy(state, part)
+	return state
+}
+
+// inGraph keeps the changes to the records that the graph holds.
+func inGraph[T, U any](changes map[string]T, graph map[string]U) map[string]T {
+	maps.DeleteFunc(changes, func(id string, _ T) bool {
+		_, ok := graph[id]
+		return !ok
+	})
+	return changes
+}
+
+func equalDates(left, right *string) bool {
+	return (left == nil) == (right == nil) && (left == nil || *left == *right)
+}
+
+// servedRoot is a root as readers fetch it: the identity of its release, then the root's own
+// members, which follow its opening brace.
+func servedRoot(root []byte, identity Identity) []byte {
+	header, _ := json.Marshal(identity)
+	members := bytes.TrimLeft(root, " \t\r\n")[1:]
+	return slices.Concat(header[:len(header)-1], []byte{','}, members)
+}
+
+// validateRetired checks that each selector that retired has the day it retired, and that no
+// request can reach it in the graph: a deployment by its ID, and a model by its ID or an alias.
+func validateRetired(retired map[string]string, base *snapshot) error {
+	for selector, date := range retired {
 		_, deployment := base.graph.Deployments[selector]
 		_, model := base.modelSelectors[selector]
-		return deployment || model
-	}
-	for id, date := range retired.Deployments {
-		if active(id) || !validDate(date) {
-			return fmt.Errorf("retired deployment %s is invalid", id)
-		}
-	}
-	for selector, date := range retired.Models {
-		if active(selector) || !validDate(date) {
-			return fmt.Errorf("retired model %s is invalid", selector)
+		if deployment || model || !validDate(date) {
+			return fmt.Errorf("retired selector %s is invalid", selector)
 		}
 	}
 	return nil
 }
 
-func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte, identity Identity) (*snapshot, error) {
-	if len(runtimeData) == 0 || len(runtimeData) > runtimeSizeLimit {
-		return nil, fmt.Errorf("runtime catalog size is outside the accepted range")
-	}
-	catalog, err := decodeCompiledCatalog(runtimeData)
-	if err != nil {
-		return nil, fmt.Errorf("decode runtime catalog: %w", err)
-	}
-	if catalog.Schema != runtimeSchema {
-		return nil, fmt.Errorf("runtime catalog schema %q is unsupported", catalog.Schema)
-	}
-	if !validSHA256Digest(catalog.PublicDigest) {
-		return nil, fmt.Errorf("runtime catalog public digest is invalid")
-	}
+// snapshotFromCompiled validates a release's base state and each dated state, and indexes them
+// for requests.
+func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
 	base, err := stateFromGraph(catalog.Graph)
 	if err != nil {
 		return nil, err
@@ -390,7 +457,6 @@ func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte
 	if err := validateRetired(catalog.Retired, base); err != nil {
 		return nil, err
 	}
-	states := []*snapshot{base}
 	for index, entry := range catalog.Schedule {
 		if entry.Start.IsZero() || (index > 0 && !entry.Start.After(catalog.Schedule[index-1].Start)) {
 			return nil, fmt.Errorf("catalog schedule entry %d does not start after the entry before it", index)
@@ -400,59 +466,20 @@ func snapshotFromRelease(runtimeData, publicData []byte, parts map[string][]byte
 			return nil, fmt.Errorf("catalog state from %s: %w", entry.Start.Format(time.RFC3339), err)
 		}
 		base.schedule = append(base.schedule, datedState{start: entry.Start, state: state})
-		states = append(states, state)
 	}
-	var publicParts map[string][]byte
-	if len(publicData) > 0 {
-		if len(publicData) > publicSizeLimit {
-			return nil, fmt.Errorf("public catalog exceeds the accepted size")
-		}
-		var publicHeader struct {
-			Schema string `json:"schema"`
-			Graph  struct {
-				Authors     map[string]json.RawMessage `json:"authors"`
-				Deployments map[string]publicSummary   `json:"deployments"`
-				Models      map[string]json.RawMessage `json:"models"`
-				Providers   map[string]json.RawMessage `json:"providers"`
-				Routes      map[string]json.RawMessage `json:"routes"`
-			} `json:"graph"`
-		}
-		if err := json.Unmarshal(publicData, &publicHeader); err != nil {
-			return nil, fmt.Errorf("decode public catalog: %w", err)
-		}
-		if publicHeader.Schema != publicSchema ||
-			!sameKeys(publicHeader.Graph.Authors, catalog.Graph.Authors) ||
-			!sameKeys(publicHeader.Graph.Providers, catalog.Graph.Providers) ||
-			!sameKeys(publicHeader.Graph.Routes, catalog.Graph.Routes) ||
-			!hasEveryKey(publicHeader.Graph.Models, catalog.Graph.Models) ||
-			!sameKeys(publicHeader.Graph.Deployments, catalog.Graph.Deployments) {
-			return nil, fmt.Errorf("public catalog does not match the runtime graph")
-		}
-		if publicParts, err = publicPartsFor(publicData, publicHeader.Graph.Deployments, catalog.Retired, parts); err != nil {
-			return nil, err
-		}
-	}
-
-	runtimeDigest := sha256.Sum256(runtimeData)
-	digest := "sha256:" + hex.EncodeToString(runtimeDigest[:])
-	if identity.Digest == "" {
-		identity.Digest = digest
-	} else if identity.Digest != digest {
-		return nil, fmt.Errorf("runtime catalog digest does not match the signed release")
-	}
-	if len(publicData) > 0 {
-		sum := sha256.Sum256(publicData)
-		actualPublicDigest := "sha256:" + hex.EncodeToString(sum[:])
-		if actualPublicDigest != catalog.PublicDigest {
-			return nil, fmt.Errorf("public catalog digest does not match the runtime catalog")
-		}
-	}
-	publicRaw, raw := append([]byte(nil), publicData...), append([]byte(nil), runtimeData...)
-	for _, state := range states {
-		state.identity, state.publicDigest, state.publicRaw, state.publicParts, state.raw = identity, catalog.PublicDigest, publicRaw, publicParts, raw
+	for _, state := range base.states() {
 		state.retired = catalog.Retired
 	}
 	return base, nil
+}
+
+// states lists a base state and each dated state that follows it.
+func (base *snapshot) states() []*snapshot {
+	states := []*snapshot{base}
+	for _, entry := range base.schedule {
+		states = append(states, entry.state)
+	}
+	return states
 }
 
 // stateFromGraph validates the base catalog state and indexes it for requests.
@@ -1164,17 +1191,6 @@ func sameKeys[A, B any](left map[string]A, right map[string]B) bool {
 	}
 	for key := range left {
 		if _, ok := right[key]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-// The public graph can include reviewed models that have no executable
-// deployment. Every executable runtime model must still exist publicly.
-func hasEveryKey[A, B any](superset map[string]A, required map[string]B) bool {
-	for key := range required {
-		if _, ok := superset[key]; !ok {
 			return false
 		}
 	}

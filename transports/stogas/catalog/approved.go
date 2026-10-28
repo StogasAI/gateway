@@ -1,45 +1,39 @@
 package catalog
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
+	"time"
 )
 
-// Artifact bounds are shared by delivery and decoding.
-const MaxRuntimeBytes = runtimeSizeLimit
-const MaxPublicBytes = publicSizeLimit
+// MaxRootBytes bounds a root's delivery and decoding.
+const MaxRootBytes = rootSizeLimit
 
-func ActiveMatchesApproved(identity Identity, publicDigest string) bool {
+func ActiveMatchesApproved(identity Identity) bool {
 	current := active.Load()
-	return current != nil && current.identity == identity && current.publicDigest == publicDigest
+	return current != nil && current.identity == identity
 }
 
-// ActivePublicPart is a file that the active public root names, by SHA-256 in hex: a part, or
-// the archive's index or one of its parts. A new release downloads only the files that changed.
-func ActivePublicPart(sha256 string) ([]byte, bool) {
+// ActiveCatalogPart is a part that the active release came with, by SHA-256 in hex. A new
+// release downloads only the parts that changed.
+func ActiveCatalogPart(sha256 string) ([]byte, bool) {
 	current := active.Load()
 	if current == nil {
 		return nil, false
 	}
-	part, ok := current.publicParts[sha256]
+	part, ok := current.parts[sha256]
 	return part, ok
 }
 
-// InstallApproved installs artifacts selected by the shared offline verifier.
-// The caller must authenticate the complete approval set before supplying these
-// digests. The public root names each of its parts by SHA-256 in hex, so parts
-// need no approval of their own. Parsing and replacement remain atomic,
-// including an approved rollback.
-func InstallApproved(runtimeData, publicData []byte, parts map[string][]byte, identity Identity, publicDigest string) error {
-	if identity.Sequence == 0 || len(runtimeData) > runtimeSizeLimit || len(publicData) > publicSizeLimit {
-		return errors.New("invalid approved catalog size or sequence")
+// InstallApproved installs a release that the shared offline verifier selected, as it stands at
+// an instant. The caller must authenticate the complete approval set before supplying the
+// identity, whose digest is the root's. The root names each part by SHA-256, so parts need no
+// approval of their own, and parts must hold each one in effect then. Parsing and replacement
+// remain atomic, including an approved rollback.
+func InstallApproved(root []byte, parts map[string][]byte, identity Identity, at time.Time) error {
+	if identity.Sequence == 0 || identity.Digest == "" || len(root) > rootSizeLimit {
+		return errors.New("invalid approved catalog size or identity")
 	}
-	runtimeHash, publicHash := sha256.Sum256(runtimeData), sha256.Sum256(publicData)
-	if "sha256:"+hex.EncodeToString(runtimeHash[:]) != identity.Digest || "sha256:"+hex.EncodeToString(publicHash[:]) != publicDigest {
-		return errors.New("catalog artifacts differ from approved digests")
-	}
-	candidate, err := snapshotFromRelease(runtimeData, publicData, parts, identity)
+	candidate, err := snapshotFromFiles(root, parts, identity, at)
 	if err != nil {
 		return err
 	}

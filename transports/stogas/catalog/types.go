@@ -105,40 +105,19 @@ type snapshot struct {
 	groups         map[string]bool
 	identity       Identity
 	modelSelectors map[string]string
-	publicDigest   string
-	publicRaw      []byte
-	// publicParts holds every file that the public root names, by SHA-256 in hex.
-	publicParts map[string][]byte
-	retired     retiredNodes
-	raw         []byte
-	schedule    []datedState
+	// served is the root with the identity of its release, as readers fetch it.
+	served []byte
+	// parts holds each part of the root that the release came with, by SHA-256 in hex.
+	parts map[string][]byte
+	// retired holds the day that each deployment, model and group that had retired when the
+	// release loaded retired, by each selector that named it. The graph no longer holds them.
+	retired  map[string]string
+	schedule []datedState
 }
 
 type datedState struct {
 	start time.Time
 	state *snapshot
-}
-
-type compiledCatalog struct {
-	Schema       string          `json:"schema"`
-	PublicDigest string          `json:"publicDigest"`
-	Graph        compiledGraph   `json:"graph"`
-	Schedule     []scheduleEntry `json:"schedule"`
-	Retired      retiredNodes    `json:"retired"`
-}
-
-// retiredNodes holds the day that each archived deployment retired, by ID, and each archived
-// model, by ID and alias. The archive holds their records, and the graph no longer does.
-type retiredNodes struct {
-	Deployments map[string]string `json:"deployments"`
-	Models      map[string]string `json:"models"`
-}
-
-// A schedule entry lists every node that differs from the base graph from Start until the
-// next entry starts.
-type scheduleEntry struct {
-	Start time.Time     `json:"start"`
-	Graph compiledGraph `json:"graph"`
 }
 
 type compiledGraph struct {
@@ -151,7 +130,10 @@ type compiledGraph struct {
 	Routes      map[string]compiledRoute       `json:"routes"`
 }
 
+// The root holds each author and provider whole. The gateway tells when records retire from
+// their deployments, so it skips their dates.
 type compiledAuthor struct {
+	RetirementDate       shown    `json:"retirementDate"`
 	Aliases              []string `json:"aliases"`
 	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
 	Name                 string   `json:"name"`
@@ -208,6 +190,18 @@ type compiledUpstream struct {
 }
 
 type compiledModel struct {
+	// Readers show these. A model's limits, modalities and capabilities are defaults that its
+	// deployments and their routes already hold.
+	Capabilities                shown `json:"capabilities"`
+	ContextWindowTokens         shown `json:"contextWindowTokens"`
+	DerivedFrom                 shown `json:"derivedFrom"`
+	InputModalities             shown `json:"inputModalities"`
+	KnowledgeCutoff             shown `json:"knowledgeCutoff"`
+	MaxInputTokens              shown `json:"maxInputTokens"`
+	OutputModalities            shown `json:"outputModalities"`
+	ReasoningEffortsByInterface shown `json:"reasoningEffortsByInterface"`
+	Snapshot                    shown `json:"snapshot"`
+
 	Aliases            []string            `json:"aliases"`
 	AuthorID           string              `json:"authorId"`
 	GroupIDs           []string            `json:"groupIds"`
@@ -220,6 +214,7 @@ type compiledModel struct {
 }
 
 type compiledProvider struct {
+	RetirementDate       shown    `json:"retirementDate"`
 	Aliases              []string `json:"aliases"`
 	CredentialModes      []string `json:"credentialModes"`
 	HeadquarteredCountry string   `json:"headquarteredCountry,omitempty"`
@@ -227,6 +222,14 @@ type compiledProvider struct {
 }
 
 type compiledRoute struct {
+	// Readers show these. A route's capabilities, data handling, modalities and prices are
+	// defaults that each deployment's route already holds.
+	Capabilities    shown `json:"capabilities"`
+	DataHandling    shown `json:"dataHandling"`
+	Endpoint        shown `json:"endpoint"`
+	InputModalities shown `json:"inputModalities"`
+	Pricing         shown `json:"pricing"`
+
 	ID              string          `json:"-"`
 	DeploymentIDs   []string        `json:"-"`
 	DocumentFormats DocumentFormats `json:"documentFormats"`

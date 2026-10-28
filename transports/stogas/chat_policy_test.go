@@ -1937,16 +1937,12 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		} `json:"chat_template_kwargs"`
 	}
 
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "routes"), &routes); err != nil {
 		t.Fatalf("decode catalog routes: %v", err)
 	}
 
@@ -2184,16 +2180,12 @@ func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testi
 		ProviderID string   `json:"providerId"`
 	}
 
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "routes"), &routes); err != nil {
 		t.Fatalf("decode catalog routes: %v", err)
 	}
 

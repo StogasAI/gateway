@@ -12,6 +12,7 @@ import (
 	"time"
 
 	verifier "github.com/StogasAI/stogas/go"
+	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/clock"
 	"github.com/maximhq/bifrost/transports/stogas/http2health"
 )
@@ -37,10 +38,8 @@ type approvedCatalog struct {
 	Release struct {
 		Sequence               uint64 `json:"sequence"`
 		MinimumGatewaySequence uint64 `json:"minimum_gateway_sequence"`
-		RuntimeDigest          string `json:"runtime_digest"`
-		RuntimeSizeBytes       int64  `json:"runtime_size_bytes"`
-		PublicDigest           string `json:"public_digest"`
-		PublicSizeBytes        int64  `json:"public_size_bytes"`
+		RootDigest             string `json:"root_digest"`
+		RootSizeBytes          int64  `json:"root_size_bytes"`
 	} `json:"release"`
 }
 
@@ -86,7 +85,7 @@ type currentEvidence struct {
 	client          *http.Client
 	origins         []evidenceOrigin
 	installed       [sha256.Size]byte
-	refusedCatalogs []catalogRejection
+	refusedCatalogs []catalog.Identity
 	now             func() time.Time
 	// now is trusted only while NTS keeps the guest clock synchronized.
 	synchronized func() bool

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -21,15 +22,21 @@ func TestCatalogServesEveryPartThatItsRootNames(t *testing.T) {
 	}
 	current := get("/v1/catalog")
 	server.catalog(current)
-	var payload catalog.PublicCatalog
-	if err := json.Unmarshal(testResponse(current).Body.Bytes(), &payload); err != nil || testResponse(current).Code != http.StatusOK {
+	var payload struct {
+		Digest   string  `json:"digest"`
+		Sequence *uint64 `json:"sequence"`
+		Schema   string  `json:"schema"`
+	}
+	body := testResponse(current).Body.Bytes()
+	if err := json.Unmarshal(body, &payload); err != nil || testResponse(current).Code != http.StatusOK ||
+		testResponse(current).Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("catalog = %d, %v", testResponse(current).Code, err)
 	}
-	root, err := json.Marshal(map[string]json.RawMessage{"archive": payload.Archive, "parts": payload.Parts})
-	if err != nil {
-		t.Fatal(err)
+	identity, _ := catalog.ActiveIdentity()
+	if payload.Digest != identity.Digest || payload.Sequence == nil || *payload.Sequence != identity.Sequence || payload.Schema != "stogas.catalog.v9" {
+		t.Fatalf("catalog names %s %v %s, want the active release", payload.Digest, payload.Sequence, payload.Schema)
 	}
-	files, err := catalog.PublicCatalogFiles(root)
+	files, err := catalog.PartsInEffect(body, time.Time{})
 	if err != nil || len(files) == 0 {
 		t.Fatalf("the catalog names no parts: %v", err)
 	}

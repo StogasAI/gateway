@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"maps"
 	"runtime"
@@ -15,7 +16,7 @@ import (
 func scaleCatalogBytes(b *testing.B, count int) []byte {
 	b.Helper()
 	var source compiledCatalog
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &source); err != nil {
+	if err := decodeStrict(embeddedCatalogJSON, &source, sharedJSON[Pricing]()); err != nil {
 		b.Fatal(err)
 	}
 	ids := make([]string, 0, len(source.Graph.Deployments))
@@ -59,10 +60,14 @@ func BenchmarkCatalogScaleDecode(b *testing.B) {
 			}{
 				{"standard", func(data []byte) (compiledCatalog, error) {
 					var value compiledCatalog
-					err := json.Unmarshal(data, &value)
+					err := jsonv2.Unmarshal(data, &value, jsonv2.RejectUnknownMembers(true))
 					return value, err
 				}},
-				{"shared", decodeCompiledCatalog},
+				{"shared", func(data []byte) (compiledCatalog, error) {
+					var value compiledCatalog
+					err := decodeStrict(data, &value, sharedJSON[Pricing]())
+					return value, err
+				}},
 			} {
 				b.Run(method.name, func(b *testing.B) {
 					b.ReportAllocs()
@@ -110,7 +115,7 @@ func BenchmarkCatalogScaleDatedStates(b *testing.B) {
 	for _, states := range []int{0, 8, 32} {
 		b.Run(fmt.Sprint(states), func(b *testing.B) {
 			var catalog compiledCatalog
-			if err := json.Unmarshal(scaleCatalogBytes(b, 10000), &catalog); err != nil {
+			if err := decodeStrict(scaleCatalogBytes(b, 10000), &catalog, sharedJSON[Pricing]()); err != nil {
 				b.Fatal(err)
 			}
 			ids := slices.Sorted(maps.Keys(catalog.Graph.Deployments))
@@ -142,7 +147,7 @@ func benchmarkCatalogLoad(b *testing.B, data []byte) {
 	var decoded *snapshot
 	for n := 0; n < b.N; n++ {
 		var err error
-		decoded, err = snapshotFromRelease(data, nil, nil, Identity{})
+		decoded, err = snapshotFromCatalogBytes(data)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -158,10 +163,15 @@ func benchmarkCatalogLoad(b *testing.B, data []byte) {
 	runtime.KeepAlive(decoded)
 }
 
-// Requests pin the release they resolved against, including both artifact
-// bodies. Measure that ownership separately from load-time allocations.
+// Requests pin the release they resolved against, including its root and
+// parts. Measure that ownership separately from load-time allocations.
 func BenchmarkCatalogReleaseRetained(b *testing.B) {
-	parts := embeddedParts(b)
+	root, parts := embeddedFiles(b)
+	size := len(root)
+	for _, part := range parts {
+		size += len(part)
+	}
+	now := time.Now()
 	b.ReportAllocs()
 	runtime.GC()
 	runtime.GC()
@@ -171,7 +181,7 @@ func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	var release *snapshot
 	for n := 0; n < b.N; n++ {
 		var err error
-		release, err = snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
+		release, err = snapshotFromFiles(root, parts, Identity{}, now)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -181,7 +191,7 @@ func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	b.ReportMetric(float64(len(embeddedRuntimeCatalogJSON)+len(embeddedPublicCatalogJSON)), "artifact_bytes")
+	b.ReportMetric(float64(size), "artifact_bytes")
 	b.ReportMetric(float64(int64(after.HeapAlloc)-int64(before.HeapAlloc)), "retained_heap_bytes")
 	runtime.KeepAlive(release)
 }

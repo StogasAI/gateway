@@ -12,14 +12,14 @@ import (
 
 var promotedChainHash = "sha256:" + strings.Repeat("b", 64)
 
-func runtimeWithSchedule(t *testing.T, schedule []map[string]any) []byte {
+func catalogWithSchedule(t *testing.T, schedule []map[string]any) []byte {
 	t.Helper()
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	runtime["schedule"] = schedule
-	data, err := json.Marshal(runtime)
+	whole["schedule"] = schedule
+	data, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,11 +30,11 @@ func runtimeWithSchedule(t *testing.T, schedule []map[string]any) []byte {
 // the chains that the build compiles for a changed state.
 func promotedDeployment(t *testing.T, deploymentID string) map[string]any {
 	t.Helper()
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
+	deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
 	for _, route := range deployment["routes"].(map[string]any) {
 		route := route.(map[string]any)
 		route["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: "10"}
@@ -48,7 +48,7 @@ func outputRate(deployment Deployment) string {
 }
 
 func TestScheduledStatesApplyFromTheirStartUntilTheNextEntry(t *testing.T) {
-	snap, err := snapshotFromCatalogBytes(runtimeWithSchedule(t, []map[string]any{
+	snap, err := snapshotFromCatalogBytes(catalogWithSchedule(t, []map[string]any{
 		{"start": "2026-11-01T00:00:00Z", "graph": map[string]any{"deployments": map[string]any{
 			"openai-gpt-5.6-sol": promotedDeployment(t, "openai-gpt-5.6-sol"),
 		}}},
@@ -90,7 +90,7 @@ func TestScheduledStatesApplyFromTheirStartUntilTheNextEntry(t *testing.T) {
 }
 
 func TestRequestsUseTheCatalogStateInEffect(t *testing.T) {
-	snap, err := snapshotFromCatalogBytes(runtimeWithSchedule(t, []map[string]any{
+	snap, err := snapshotFromCatalogBytes(catalogWithSchedule(t, []map[string]any{
 		{"start": "2000-01-01T00:00:00Z", "graph": map[string]any{"deployments": map[string]any{
 			"openai-gpt-5.6-sol": promotedDeployment(t, "openai-gpt-5.6-sol"),
 		}}},
@@ -115,14 +115,14 @@ func TestRequestsUseTheCatalogStateInEffect(t *testing.T) {
 	}
 }
 
-// runtimeNode returns a copy of a node of the embedded runtime catalog.
-func runtimeNode(t *testing.T, kind, id string) map[string]any {
+// catalogNode returns a copy of a node of the embedded catalog.
+func catalogNode(t *testing.T, kind, id string) map[string]any {
 	t.Helper()
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	return runtime["graph"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)
+	return whole["graph"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)
 }
 
 func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
@@ -131,7 +131,7 @@ func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 	relinked := promotedDeployment(t, "openai-gpt-5.6-sol")
 	relinked["modelId"] = "gpt-5.6-terra"
 	// The model's deployments all leave reasoning optional.
-	required := runtimeNode(t, "models", "gpt-5.6-sol")
+	required := catalogNode(t, "models", "gpt-5.6-sol")
 	required["reasoning"] = "required"
 	unnamed := promotedDeployment(t, "openai-gpt-5.6-sol")
 	unnamed["weightPrecision"] = "fp99"
@@ -188,7 +188,7 @@ func TestSnapshotValidationRejectsInvalidSchedules(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := snapshotFromCatalogBytes(runtimeWithSchedule(t, test.schedule)); err == nil ||
+			if _, err := snapshotFromCatalogBytes(catalogWithSchedule(t, test.schedule)); err == nil ||
 				!strings.Contains(err.Error(), test.message) {
 				t.Fatalf("invalid schedule was accepted or failed for another reason: %v", err)
 			}
