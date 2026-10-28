@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -96,6 +97,11 @@ func oneOf(values ...string) fieldDomain {
 
 func patternDomain(pattern, hint string) fieldDomain {
 	return fieldDomain{regexp.MustCompile(pattern).MatchString, hint}
+}
+
+// VocabularyPaths lists in order the fields whose values have a vocabulary.
+func VocabularyPaths() []string {
+	return slices.Sorted(maps.Keys(fieldDomains))
 }
 
 // ValidFieldValue reports whether a string can be the value of a field, or an item of a list field.

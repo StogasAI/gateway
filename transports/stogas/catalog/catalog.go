@@ -99,12 +99,12 @@ func (s *snapshot) deploymentForRoute(provider schemas.ModelProvider, model stri
 
 // deploymentAvailableAt says whether a deployment serves at now: until 00:00 UTC on its retirement
 // date.
-func deploymentAvailableAt(deployment compiledDeployment, now time.Time) bool {
+func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
 	return deployment.RetirementDate == nil ||
 		*deployment.RetirementDate > now.UTC().Format(time.DateOnly)
 }
 
-func deploymentAvailableNow(deployment compiledDeployment) bool {
+func deploymentAvailableNow(deployment *compiledDeployment) bool {
 	return deploymentAvailableAt(deployment, time.Now())
 }
 
@@ -141,7 +141,7 @@ func (s *snapshot) retiredOn(requested string, now time.Time) (string, bool) {
 // sibling returns the deployment available at an instant on the route that differs from current
 // only in its tier and reasoning mode. The provider's model name can differ, because Azure sells
 // Claude Fast as its own model; the catalog allows one such deployment.
-func (s *snapshot) sibling(routeNode compiledRoute, current compiledDeployment, tier, mode string, at time.Time) string {
+func (s *snapshot) sibling(routeNode compiledRoute, current *compiledDeployment, tier, mode string, at time.Time) string {
 	for _, candidateID := range routeNode.DeploymentIDs {
 		candidate, ok := s.graph.Deployments[candidateID]
 		if ok &&

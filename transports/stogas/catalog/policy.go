@@ -605,31 +605,65 @@ func candidatePolicyIDs(candidate *ResolvedRequest) policyIDs {
 	}
 }
 
-// validatePolicyVocabulary rejects a catalog value that policies read but cannot name, because a
-// policy that compares a field with a value outside its vocabulary fails at save.
-func validatePolicyVocabulary(state *snapshot) error {
-	paths := policy.FieldPaths()
-	for _, deploymentID := range slices.Sorted(maps.Keys(state.graph.Deployments)) {
-		for _, routeID := range sortedRouteIDs(state.graph.Deployments[deploymentID]) {
+// validatePolicyVocabulary rejects a value of a changed node that policies read but cannot name,
+// because a policy that compares a field with a value outside its vocabulary fails at save. A
+// deployment's values differ by route. Requests set the request fields.
+func validatePolicyVocabulary(state *snapshot, changed compiledGraph) error {
+	paths := make(map[string][]string)
+	for _, path := range policy.VocabularyPaths() {
+		root, _, _ := strings.Cut(path, ".")
+		paths[root] = append(paths[root], path)
+	}
+	if err := validateNodeVocabulary("author", changed.Authors, paths["author"]); err != nil {
+		return err
+	}
+	if err := validateNodeVocabulary("model", changed.Models, paths["model"]); err != nil {
+		return err
+	}
+	if err := validateNodeVocabulary("provider", changed.Providers, paths["provider"]); err != nil {
+		return err
+	}
+	if err := validateNodeVocabulary("route", changed.Routes, paths["route"]); err != nil {
+		return err
+	}
+	for _, deploymentID := range slices.Sorted(maps.Keys(changed.Deployments)) {
+		for _, routeID := range sortedRouteIDs(changed.Deployments[deploymentID]) {
 			deployment, _ := state.deploymentFromCompiledAt(deploymentID, state.graph.Routes[routeID], time.Time{})
 			values, ok := newResolvedPolicyValues(&ResolvedRequest{Deployment: deployment})
 			if !ok {
 				return fmt.Errorf("deployment %s route %s is not readable by policies", deploymentID, routeID)
 			}
-			for _, path := range paths {
-				value, ok := values.PolicyValue(path)
-				if !ok || strings.HasPrefix(path, "request.") {
-					continue
-				}
-				items := value.Strings
-				if value.Type == "string" {
-					items = []string{value.String}
-				}
-				for _, item := range items {
-					if !policy.ValidFieldValue(path, item) {
-						return fmt.Errorf("deployment %s route %s has %s %q outside the policy vocabulary", deploymentID, routeID, path, item)
-					}
-				}
+			if err := validateVocabulary("deployment "+deploymentID+" route "+routeID, values, paths["deployment"]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateNodeVocabulary[T any](root string, nodes map[string]T, paths []string) error {
+	for _, id := range slices.Sorted(maps.Keys(nodes)) {
+		values := &resolvedPolicyValues{root: map[string]policyNode{root: {id: id, fields: nodes[id]}}}
+		if err := validateVocabulary(root+" "+id, values, paths); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateVocabulary(owner string, values *resolvedPolicyValues, paths []string) error {
+	for _, path := range paths {
+		value, ok := values.resolveField(path)
+		if !ok {
+			continue
+		}
+		items := value.Strings
+		if value.Type == "string" {
+			items = []string{value.String}
+		}
+		for _, item := range items {
+			if !policy.ValidFieldValue(path, item) {
+				return fmt.Errorf("%s has %s %q outside the policy vocabulary", owner, path, item)
 			}
 		}
 	}

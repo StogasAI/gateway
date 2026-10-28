@@ -142,11 +142,13 @@ type scheduleEntry struct {
 }
 
 type compiledGraph struct {
-	Authors     map[string]compiledAuthor     `json:"authors"`
-	Deployments map[string]compiledDeployment `json:"deployments"`
-	Models      map[string]compiledModel      `json:"models"`
-	Providers   map[string]compiledProvider   `json:"providers"`
-	Routes      map[string]compiledRoute      `json:"routes"`
+	Authors map[string]compiledAuthor `json:"authors"`
+	// A dated state copies the map of each kind that it changes, and deployments are the most
+	// numerous and the most often changed, so their map holds pointers.
+	Deployments map[string]*compiledDeployment `json:"deployments"`
+	Models      map[string]compiledModel       `json:"models"`
+	Providers   map[string]compiledProvider    `json:"providers"`
+	Routes      map[string]compiledRoute       `json:"routes"`
 }
 
 type compiledAuthor struct {

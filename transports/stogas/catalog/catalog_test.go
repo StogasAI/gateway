@@ -444,14 +444,14 @@ func TestRequestCompatibilityPrecedesProviderPreference(t *testing.T) {
 func TestUnusablePreferredProviderLeavesTheDefaultOrder(t *testing.T) {
 	snap := loadTestCatalog(t)
 
-	openAI := snap.graph.Deployments["openai-gpt-5.6-sol"]
+	openAI := *snap.graph.Deployments["openai-gpt-5.6-sol"]
 	openAI.MaxOutputTokens = 1
-	snap.graph.Deployments["openai-gpt-5.6-sol"] = openAI
+	snap.graph.Deployments["openai-gpt-5.6-sol"] = &openAI
 
-	chutes := snap.graph.Deployments["chutes-deepseek-v3.2"]
+	chutes := *snap.graph.Deployments["chutes-deepseek-v3.2"]
 	chutes.ModelID = "gpt-5.6-sol"
 	chutes.Upstream.Model = "gpt-5.6-sol"
-	snap.graph.Deployments["chutes-gpt-5.6-sol"] = chutes
+	snap.graph.Deployments["chutes-gpt-5.6-sol"] = &chutes
 	chutesRoute := snap.graph.Routes["chutes-chat-completions"]
 	chutesRoute.DeploymentIDs = append(chutesRoute.DeploymentIDs, "chutes-gpt-5.6-sol")
 	snap.graph.Routes["chutes-chat-completions"] = chutesRoute
@@ -745,7 +745,7 @@ func TestGPT56ReasoningEffortsFollowTheSelectedRoute(t *testing.T) {
 
 func TestDeploymentLifecycleCutoffsFailClosed(t *testing.T) {
 	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
-	for name, deployment := range map[string]compiledDeployment{
+	for name, deployment := range map[string]*compiledDeployment{
 		"active": {
 			RetirementDate: nil,
 		},
@@ -757,7 +757,7 @@ func TestDeploymentLifecycleCutoffsFailClosed(t *testing.T) {
 			t.Fatalf("%s deployment was unavailable", name)
 		}
 	}
-	for name, deployment := range map[string]compiledDeployment{
+	for name, deployment := range map[string]*compiledDeployment{
 		"retired": {
 			RetirementDate: stringPointer("2026-07-23"),
 		},
