@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -126,21 +127,20 @@ func TestRejectedCatalogIsNotDownloadedAgain(t *testing.T) {
 	approved := approvedCatalog{ID: "catalog"}
 	approved.Release.Sequence = 9
 	approved.Release.MinimumGatewaySequence = 4
-	approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest, int64(len(payload))
-	approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest, int64(len(payload))
+	approved.Release.RootDigest, approved.Release.RootSizeBytes = digest, int64(len(payload))
 	e.summary.Gateways, e.summary.Catalogs = []approvedGateway{gateway}, []approvedCatalog{approved}
 	for range 2 {
 		if err := e.updateCatalog(t.Context(), "gateway"); !errors.Is(err, errCatalogIncompatible) {
 			t.Fatalf("installed or misreported an incompatible catalog: %v", err)
 		}
 	}
-	if reads.Load() != 2 {
+	if reads.Load() != 1 {
 		t.Fatalf("refused catalog was downloaded again: %d reads", reads.Load())
 	}
 }
 
 func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
-	runtimeData, publicData, parts := fallbackCatalog(t)
+	root, parts := fallbackCatalog(t)
 	artifacts := maps.Clone(parts)
 	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,23 +156,18 @@ func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
 	e := fixtureEvidence(t, evidenceFixture(t), server.URL)
 	gateway := approvedGateway{ID: "gateway"}
 	gateway.Release.Sequence = 4
-	makeCatalog := func(sequence uint64, runtimeData, publicData []byte, served bool) approvedCatalog {
+	makeCatalog := func(sequence uint64, root []byte, served bool) approvedCatalog {
 		approved := approvedCatalog{ID: "catalog-" + strconv.FormatUint(sequence, 10)}
 		approved.Release.Sequence, approved.Release.MinimumGatewaySequence = sequence, 4
-		digest := func(data []byte) string {
-			sum := sha256.Sum256(data)
-			if served {
-				artifacts[hex.EncodeToString(sum[:])] = data
-			}
-			return "sha256:" + hex.EncodeToString(sum[:])
+		sum := sha256.Sum256(root)
+		if served {
+			artifacts[hex.EncodeToString(sum[:])] = root
 		}
-		approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest(runtimeData), int64(len(runtimeData))
-		approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest(publicData), int64(len(publicData))
+		approved.Release.RootDigest, approved.Release.RootSizeBytes = "sha256:"+hex.EncodeToString(sum[:]), int64(len(root))
 		return approved
 	}
 	// The active catalog is process state; no other test approves these bytes as catalog 7.
-	refused := []byte(`{"catalog":"not installable"}`)
-	older, newer := makeCatalog(7, runtimeData, publicData, true), makeCatalog(9, refused, refused, true)
+	older, newer := makeCatalog(7, root, true), makeCatalog(9, []byte(`{"catalog":"not installable"}`), true)
 	e.summary.Gateways, e.summary.Catalogs = []approvedGateway{gateway}, []approvedCatalog{older, newer}
 	if err := e.updateCatalog(t.Context(), "gateway"); err != nil || !older.active() || !e.summary.activeCatalogApproved("gateway") {
 		t.Fatalf("older approved catalog was not installed after a refusal: %v", err)
@@ -186,7 +181,7 @@ func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
 	}
 	// A failed download says nothing about compatibility, so it does not fall back,
 	// and the installed approved catalog keeps serving.
-	unavailable := makeCatalog(10, []byte(`{"catalog":"missing"}`), []byte(`{"catalog":"missing"}`), false)
+	unavailable := makeCatalog(10, []byte(`{"catalog":"missing"}`), false)
 	e.summary.Catalogs = []approvedCatalog{older, newer, unavailable}
 	if err := e.updateCatalog(t.Context(), "gateway"); !errors.Is(err, errCatalogUnavailable) || !older.active() || !e.summary.activeCatalogApproved("gateway") {
 		t.Fatalf("download failure replaced or withdrew the installed catalog: %v", err)
@@ -198,9 +193,9 @@ func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
 	}
 }
 
-// fallbackCatalog is the embedded catalog: its runtime catalog, its public root, and the parts
-// that the root names, by SHA-256 in hex.
-func fallbackCatalog(t *testing.T) (runtimeData, publicData []byte, parts map[string][]byte) {
+// fallbackCatalog is the embedded catalog: its root and every part that it names, by SHA-256 in
+// hex.
+func fallbackCatalog(t *testing.T) (root []byte, parts map[string][]byte) {
 	t.Helper()
 	read := func(path string) []byte {
 		data, err := os.ReadFile("../../catalog/fallback/" + path)
@@ -209,52 +204,44 @@ func fallbackCatalog(t *testing.T) (runtimeData, publicData []byte, parts map[st
 		}
 		return data
 	}
-	runtimeData, publicData = read("catalog.runtime.json"), read("catalog.public.json")
-	files, err := catalog.PublicCatalogFiles(publicData)
+	root = read("catalog.json")
+	// No record has retired at the zero time, so every part is in effect.
+	files, err := catalog.PartsInEffect(root, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	parts = make(map[string][]byte, len(files))
 	for _, file := range files {
-		parts[file.SHA256] = read("catalog.public.parts/" + file.SHA256 + ".json")
+		parts[file.SHA256] = read("catalog.parts/" + file.SHA256 + ".json")
 	}
-	return runtimeData, publicData, parts
+	return root, parts
 }
 
-// archivedCatalog is the embedded catalog whose public root names an archive of one retired
-// deployment, with author renamed in the root so that releases can share an archive. It returns
-// the archive's index and part beside the embedded parts.
-func archivedCatalog(t *testing.T, retired, author string) (runtimeData, publicData []byte, parts map[string][]byte, archive []string) {
+// changedCatalog is the embedded catalog with an author renamed in its root and a space after
+// each part at the given positions, which the root names by their new digests and sizes. It
+// returns the root, every part, and the parts that changed.
+func changedCatalog(t *testing.T, author string, positions ...int) (root []byte, parts map[string][]byte, changed []string) {
 	t.Helper()
-	runtimeFallback, publicFallback, parts := fallbackCatalog(t)
-	var runtime, public map[string]any
-	if err := json.Unmarshal(runtimeFallback, &runtime); err != nil {
+	fallback, parts := fallbackCatalog(t)
+	var listed map[string]any
+	if err := json.Unmarshal(fallback, &listed); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(publicFallback, &public); err != nil {
-		t.Fatal(err)
+	listed["summaries"].(map[string]any)["authors"].(map[string]any)["anthropic"].(map[string]any)["name"] = author
+	for _, position := range positions {
+		file := listed["parts"].([]any)[position].(map[string]any)
+		data := append(bytes.Clone(parts[file["sha256"].(string)]), ' ')
+		delete(parts, file["sha256"].(string))
+		sum := sha256.Sum256(data)
+		file["sha256"], file["size"] = hex.EncodeToString(sum[:]), len(data)
+		parts[file["sha256"].(string)] = data
+		changed = append(changed, file["sha256"].(string))
 	}
-	file := func(data string) map[string]any {
-		sum := sha256.Sum256([]byte(data))
-		parts[hex.EncodeToString(sum[:])] = []byte(data)
-		archive = append(archive, hex.EncodeToString(sum[:]))
-		return map[string]any{"sha256": hex.EncodeToString(sum[:]), "size": len(data)}
-	}
-	index := file(`{"deployments":{"` + retired + `":{"modelId":"model","part":0,"retirementDate":"2026-06-01","routeIds":[]}},"models":{},"schema":"stogas.catalog.archive.index.v1"}`)
-	part := file(`{"deployments":{"` + retired + `":{}},"models":{},"schema":"stogas.catalog.archive.part.v1"}`)
-	public["archive"] = map[string]any{"index": index, "parts": []any{part}}
-	public["graph"].(map[string]any)["authors"].(map[string]any)["anthropic"].(map[string]any)["name"] = author
-	publicData, err := json.Marshal(public)
+	root, err := json.Marshal(listed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicSum := sha256.Sum256(publicData)
-	runtime["publicDigest"] = "sha256:" + hex.EncodeToString(publicSum[:])
-	runtime["retired"] = map[string]any{"deployments": map[string]any{retired: "2026-06-01"}, "models": map[string]any{}}
-	if runtimeData, err = json.Marshal(runtime); err != nil {
-		t.Fatal(err)
-	}
-	return runtimeData, publicData, parts, archive
+	return root, parts, changed
 }
 
 func TestNewCatalogDownloadsOnlyThePartsThatChanged(t *testing.T) {
@@ -277,44 +264,36 @@ func TestNewCatalogDownloadsOnlyThePartsThatChanged(t *testing.T) {
 	gateway := approvedGateway{ID: "gateway"}
 	gateway.Release.Sequence = 4
 	e.summary.Gateways = []approvedGateway{gateway}
-	// The active catalog is process state; no other test approves these bytes as catalogs 20 to 23.
-	runtimeData, publicData, parts := fallbackCatalog(t)
-	if err := catalog.InstallApproved(runtimeData, publicData, parts, catalog.Identity{Sequence: 20, Digest: "sha256:" + hexDigest(runtimeData)}, "sha256:"+hexDigest(publicData)); err != nil {
+	// The active catalog is process state; no other test approves these bytes as catalogs 20 to 22.
+	root, parts := fallbackCatalog(t)
+	if err := catalog.InstallApproved(root, parts, catalog.Identity{Sequence: 20, Digest: "sha256:" + hexDigest(root)}, e.now()); err != nil {
 		t.Fatal(err)
 	}
 	for _, release := range []struct {
-		sequence         uint64
-		retired, author  string
-		downloadsArchive bool
+		sequence  uint64
+		author    string
+		positions []int
 	}{
-		{sequence: 21, retired: "retired-a", author: "First", downloadsArchive: true},
-		{sequence: 22, retired: "retired-a", author: "Second", downloadsArchive: false},
-		{sequence: 23, retired: "retired-b", author: "Second", downloadsArchive: true},
+		{sequence: 21, author: "First"},
+		{sequence: 22, author: "Second", positions: []int{0}},
 	} {
-		runtimeData, publicData, parts, archive := archivedCatalog(t, release.retired, release.author)
-		for _, data := range [][]byte{runtimeData, publicData} {
-			artifacts[hexDigest(data)] = data
-		}
+		root, parts, changed := changedCatalog(t, release.author, release.positions...)
+		artifacts[hexDigest(root)] = root
 		maps.Copy(artifacts, parts)
 		approved := approvedCatalog{ID: "catalog-" + strconv.FormatUint(release.sequence, 10)}
 		approved.Release.Sequence, approved.Release.MinimumGatewaySequence = release.sequence, 4
-		approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = "sha256:"+hexDigest(runtimeData), int64(len(runtimeData))
-		approved.Release.PublicDigest, approved.Release.PublicSizeBytes = "sha256:"+hexDigest(publicData), int64(len(publicData))
+		approved.Release.RootDigest, approved.Release.RootSizeBytes = "sha256:"+hexDigest(root), int64(len(root))
 		e.summary.Catalogs = []approvedCatalog{approved}
 		requested = nil
 		if err := e.updateCatalog(t.Context(), "gateway"); err != nil || !approved.active() {
 			t.Fatalf("catalog %d was not installed: %v", release.sequence, err)
 		}
-		// The embedded parts are in every release, so only the archive's files can be new.
-		want := []string{hexDigest(runtimeData), hexDigest(publicData)}
-		if release.downloadsArchive {
-			want = append(want, slices.Sorted(slices.Values(archive))...)
-		}
-		if len(requested) < 2 || !slices.Equal(append(requested[:2:2], slices.Sorted(slices.Values(requested[2:]))...), want) {
+		// The release shares every other part with the one before it.
+		if want := append([]string{hexDigest(root)}, changed...); !slices.Equal(requested, want) {
 			t.Fatalf("catalog %d downloaded %v, want %v", release.sequence, requested, want)
 		}
 		for name, data := range parts {
-			if held, ok := catalog.ActivePublicPart(name); !ok || !bytes.Equal(held, data) {
+			if held, ok := catalog.ActiveCatalogPart(name); !ok || !bytes.Equal(held, data) {
 				t.Fatalf("catalog %d does not hold its part %s", release.sequence, name)
 			}
 		}
@@ -334,8 +313,7 @@ func TestCatalogFailureNamesItsReadinessReason(t *testing.T) {
 	approved := approvedCatalog{ID: "catalog"}
 	approved.Release.Sequence, approved.Release.MinimumGatewaySequence = 9, 4
 	digest := "sha256:" + strings.Repeat("0", 64)
-	approved.Release.RuntimeDigest, approved.Release.RuntimeSizeBytes = digest, 1
-	approved.Release.PublicDigest, approved.Release.PublicSizeBytes = digest, 1
+	approved.Release.RootDigest, approved.Release.RootSizeBytes = digest, 1
 	e.summary.Catalogs = []approvedCatalog{approved}
 	if reason := catalogReason(e.updateCatalog(t.Context(), "gateway")); reason != errCatalogUnavailable.Error() {
 		t.Fatalf("failed download reported as %q", reason)

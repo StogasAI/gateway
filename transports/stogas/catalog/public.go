@@ -1,24 +1,9 @@
 package catalog
 
 import (
-	"encoding/json"
 	"sort"
 	"time"
 )
-
-// PublicCatalog is the root of the public catalog with the identity of its release. The root
-// names its parts and the archive's files by SHA-256, and ActivePublicPart holds them.
-type PublicCatalog struct {
-	Schema        string                     `json:"schema"`
-	Sequence      uint64                     `json:"sequence"`
-	RuntimeDigest string                     `json:"runtimeDigest"`
-	PublicDigest  string                     `json:"publicDigest"`
-	Archive       json.RawMessage            `json:"archive"`
-	Graph         map[string]json.RawMessage `json:"graph"`
-	Parts         json.RawMessage            `json:"parts"`
-	Schedule      json.RawMessage            `json:"schedule"`
-	Periods       json.RawMessage            `json:"periods"`
-}
 
 type PublicModelsResponse struct {
 	Object string        `json:"object"`
@@ -32,17 +17,14 @@ type PublicModel struct {
 	OwnedBy string `json:"owned_by"`
 }
 
-func PublicCatalogPayload() (PublicCatalog, bool) {
+// ActiveCatalog is the active release's root as readers fetch it: the release's digest and
+// sequence, then the root's members. ActiveCatalogPart serves the parts that it names.
+func ActiveCatalog() ([]byte, bool) {
 	snap := active.Load()
-	if snap == nil || len(snap.publicRaw) == 0 {
-		return PublicCatalog{}, false
+	if snap == nil || len(snap.served) == 0 {
+		return nil, false
 	}
-	payload := PublicCatalog{}
-	if err := json.Unmarshal(snap.publicRaw, &payload); err != nil || payload.Schema != publicSchema {
-		return PublicCatalog{}, false
-	}
-	payload.Sequence, payload.RuntimeDigest, payload.PublicDigest = snap.identity.Sequence, snap.identity.Digest, snap.publicDigest
-	return payload, true
+	return snap.served, true
 }
 
 func ActiveIdentity() (Identity, bool) {

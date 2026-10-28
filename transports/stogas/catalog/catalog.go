@@ -97,11 +97,10 @@ func (s *snapshot) deploymentForRoute(provider schemas.ModelProvider, model stri
 	return Deployment{}, false
 }
 
-// deploymentAvailableAt says whether a deployment serves at now: until 00:00 UTC on its retirement
-// date.
+// deploymentAvailableAt says whether a deployment serves at now: until its retirement date has
+// ended everywhere on Earth.
 func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
-	return deployment.RetirementDate == nil ||
-		*deployment.RetirementDate > now.UTC().Format(time.DateOnly)
+	return !retiredAt(deployment.RetirementDate, now)
 }
 
 func deploymentAvailableNow(deployment *compiledDeployment) bool {
@@ -109,7 +108,7 @@ func deploymentAvailableNow(deployment *compiledDeployment) bool {
 }
 
 // retiredOn is the day that the deployment or model a request names retired: one whose
-// deployments have all retired by now, or one that the archive holds.
+// deployments have all retired by now, or one that had retired when the release loaded.
 func (s *snapshot) retiredOn(requested string, now time.Time) (string, bool) {
 	_, selector := splitQualifiedModel(requested)
 	if deployment, ok := s.graph.Deployments[selector]; ok {
@@ -131,10 +130,7 @@ func (s *snapshot) retiredOn(requested string, now time.Time) (string, bool) {
 		}
 		return last, last != ""
 	}
-	if date, ok := s.retired.Deployments[selector]; ok {
-		return date, true
-	}
-	date, ok := s.retired.Models[selector]
+	date, ok := s.retired[selector]
 	return date, ok
 }
 

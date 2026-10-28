@@ -133,20 +133,19 @@ func (s *Server) diagnostics(ctx *requestContext) {
 }
 
 func (s *Server) catalog(ctx *requestContext) {
-	payload, ok := catalog.PublicCatalogPayload()
+	payload, ok := catalog.ActiveCatalog()
 	if !ok {
 		s.writeCatalogError(ctx, catalog.ErrCatalogUnavailable)
 		return
 	}
-	s.writeJSON(ctx, http.StatusOK, payload)
+	s.writeResponse(ctx, http.StatusOK, "application/json", payload)
 }
 
-// catalogPartsPath serves each file that the active public root names, by its SHA-256 in hex:
-// its parts, and the archive's index and parts.
+// catalogPartsPath serves each part that the active release came with, by its SHA-256 in hex.
 const catalogPartsPath = "/v1/catalog/parts/"
 
 func (s *Server) catalogPart(ctx *requestContext) {
-	part, ok := catalog.ActivePublicPart(strings.TrimPrefix(ctx.request.URL.Path, catalogPartsPath))
+	part, ok := catalog.ActiveCatalogPart(strings.TrimPrefix(ctx.request.URL.Path, catalogPartsPath))
 	if !ok {
 		s.notFound(ctx)
 		return

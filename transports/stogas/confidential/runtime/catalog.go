@@ -19,7 +19,7 @@ import (
 // evidence timeouts, so a large catalog has time to arrive and a stalled origin still fails over.
 const artifactBytesPerSecond = 4 << 20
 
-// partDownloads is how many parts of a public catalog download at once.
+// partDownloads is how many parts of a catalog download at once.
 const partDownloads = 8
 
 // transferTime is how long size bytes take at the slowest delivery a download waits for.
@@ -46,23 +46,15 @@ func catalogReason(err error) string {
 	return "approved compatible catalog is not installed"
 }
 
-// catalogRejection identifies a refused catalog. Installation of verified bytes is
-// deterministic, so the same approval is not downloaded again by this process.
-type catalogRejection struct {
-	identity     catalog.Identity
-	publicDigest string
-}
-
+// identity names an approved release by its sequence and the digest of its root, which also
+// identifies a refused release: installing verified bytes is deterministic, so this process does
+// not download the same approval again.
 func (approved approvedCatalog) identity() catalog.Identity {
-	return catalog.Identity{Sequence: approved.Release.Sequence, Digest: approved.Release.RuntimeDigest}
+	return catalog.Identity{Sequence: approved.Release.Sequence, Digest: approved.Release.RootDigest}
 }
 
 func (approved approvedCatalog) active() bool {
-	return catalog.ActiveMatchesApproved(approved.identity(), approved.Release.PublicDigest)
-}
-
-func (approved approvedCatalog) rejection() catalogRejection {
-	return catalogRejection{identity: approved.identity(), publicDigest: approved.Release.PublicDigest}
+	return catalog.ActiveMatchesApproved(approved.identity())
 }
 
 func (summary evidenceSummary) activeCatalogApproved(gatewayID string) bool {
@@ -78,8 +70,8 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 	candidates := e.summary.catalogs(gatewayID)
 	// Forget refusals of catalogs that are no longer approved, so the list stays
 	// bounded by the approval set and a later approval of the same bytes is retried.
-	e.refusedCatalogs = slices.DeleteFunc(e.refusedCatalogs, func(refused catalogRejection) bool {
-		return !slices.ContainsFunc(candidates, func(approved approvedCatalog) bool { return approved.rejection() == refused })
+	e.refusedCatalogs = slices.DeleteFunc(e.refusedCatalogs, func(refused catalog.Identity) bool {
+		return !slices.ContainsFunc(candidates, func(approved approvedCatalog) bool { return approved.identity() == refused })
 	})
 	if len(candidates) == 0 {
 		return errCatalogUnapproved
@@ -89,14 +81,14 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 		if approved.active() {
 			return nil
 		}
-		if slices.Contains(e.refusedCatalogs, approved.rejection()) {
+		if slices.Contains(e.refusedCatalogs, approved.identity()) {
 			continue
 		}
 		err := e.installCatalog(parent, approved)
 		if !errors.Is(err, errCatalogIncompatible) {
 			return err
 		}
-		e.refusedCatalogs = append(e.refusedCatalogs, approved.rejection())
+		e.refusedCatalogs = append(e.refusedCatalogs, approved.identity())
 		refusal = err
 	}
 	return refusal
@@ -106,25 +98,24 @@ func (e *currentEvidence) updateCatalog(parent context.Context, gatewayID string
 func (e *currentEvidence) refusedCatalogSequences() []uint64 {
 	sequences := make([]uint64, 0, len(e.refusedCatalogs))
 	for _, refused := range e.refusedCatalogs {
-		sequences = append(sequences, refused.identity.Sequence)
+		sequences = append(sequences, refused.Sequence)
 	}
 	slices.Sort(sequences)
 	return sequences
 }
 
+// installCatalog installs an approved release with the parts in effect now: those that hold a
+// record that has not retired.
 func (e *currentEvidence) installCatalog(parent context.Context, approved approvedCatalog) error {
 	release := approved.Release
-	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(release.RuntimeSizeBytes+release.PublicSizeBytes))
+	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(release.RootSizeBytes))
 	defer cancel()
-	runtimeBytes, err := e.artifact(ctx, release.RuntimeDigest, release.RuntimeSizeBytes, catalog.MaxRuntimeBytes)
+	root, err := e.artifact(ctx, release.RootDigest, release.RootSizeBytes, catalog.MaxRootBytes)
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	publicBytes, err := e.artifact(ctx, release.PublicDigest, release.PublicSizeBytes, catalog.MaxPublicBytes)
-	if err != nil {
-		return errors.Join(errCatalogUnavailable, err)
-	}
-	files, err := catalog.PublicCatalogFiles(publicBytes)
+	now := e.now()
+	files, err := catalog.PartsInEffect(root, now)
 	if err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
@@ -132,20 +123,20 @@ func (e *currentEvidence) installCatalog(parent context.Context, approved approv
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	if err := catalog.InstallApproved(runtimeBytes, publicBytes, parts, approved.identity(), release.PublicDigest); err != nil {
+	if err := catalog.InstallApproved(root, parts, approved.identity(), now); err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
 	return nil
 }
 
-// parts gets every file that a public root names. The active catalog supplies each file that it
-// shares with the release, so a release downloads only the files that changed.
-func (e *currentEvidence) parts(parent context.Context, files []catalog.PublicFile) (map[string][]byte, error) {
+// parts gets each of a root's parts that files names. The active release supplies each part
+// that it shares with the new one, so a release downloads only the parts that changed.
+func (e *currentEvidence) parts(parent context.Context, files []catalog.PartFile) (map[string][]byte, error) {
 	parts := make(map[string][]byte, len(files))
-	var missing []catalog.PublicFile
+	var missing []catalog.PartFile
 	var size int64
 	for _, file := range files {
-		if data, ok := catalog.ActivePublicPart(file.SHA256); ok {
+		if data, ok := catalog.ActiveCatalogPart(file.SHA256); ok {
 			parts[file.SHA256] = data
 			continue
 		}
@@ -159,7 +150,7 @@ func (e *currentEvidence) parts(parent context.Context, files []catalog.PublicFi
 	group.SetLimit(partDownloads)
 	for index, file := range missing {
 		group.Go(func() error {
-			// The root checked each size against its kind's limit.
+			// The root checked each size against the limit of a part.
 			data, err := e.artifact(groupContext, "sha256:"+file.SHA256, file.Size, file.Size)
 			downloaded[index] = data
 			return err

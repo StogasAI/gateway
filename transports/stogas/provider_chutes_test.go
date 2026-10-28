@@ -693,7 +693,7 @@ type chutesCatalogDeployment struct {
 func currentChutesDeployments(t *testing.T) []chutesCatalogDeployment {
 	t.Helper()
 	var deployments map[string]json.RawMessage
-	if err := sonic.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := sonic.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode public deployments: %v", err)
 	}
 	result := make([]chutesCatalogDeployment, 0)

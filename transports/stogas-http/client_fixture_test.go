@@ -97,28 +97,25 @@ func installFixtureCatalog() error {
 	if dir == "" {
 		dir = "../stogas/catalog/fallback"
 	}
-	runtimeData, err := os.ReadFile(filepath.Join(dir, "catalog.runtime.json"))
+	root, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
 	if err != nil {
 		return err
 	}
-	publicData, err := os.ReadFile(filepath.Join(dir, "catalog.public.json"))
-	if err != nil {
-		return err
-	}
-	files, err := catalog.PublicCatalogFiles(publicData)
+	// The fixture serves every part that its root names.
+	files, err := catalog.PartsInEffect(root, time.Time{})
 	if err != nil {
 		return err
 	}
 	parts := make(map[string][]byte, len(files))
 	for _, file := range files {
-		if parts[file.SHA256], err = os.ReadFile(filepath.Join(dir, "catalog.public.parts", file.SHA256+".json")); err != nil {
+		if parts[file.SHA256], err = os.ReadFile(filepath.Join(dir, "catalog.parts", file.SHA256+".json")); err != nil {
 			return err
 		}
 	}
-	return catalog.InstallApproved(runtimeData, publicData, parts, catalog.Identity{
+	return catalog.InstallApproved(root, parts, catalog.Identity{
 		Sequence: 1,
-		Digest:   fmt.Sprintf("sha256:%x", sha256.Sum256(runtimeData)),
-	}, fmt.Sprintf("sha256:%x", sha256.Sum256(publicData)))
+		Digest:   fmt.Sprintf("sha256:%x", sha256.Sum256(root)),
+	}, time.Now())
 }
 
 func serveClientFixture(path string) error {

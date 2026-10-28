@@ -1350,33 +1350,33 @@ func meterQuantity(meter *catalog.MeterEstimate) string {
 	return meter.Quantity
 }
 
-// publicDeployments is every deployment in the active public catalog, as the parts that its root
-// names hold them.
-func publicDeployments(t *testing.T) json.RawMessage {
+// activeCatalogRecords is every record of a kind in the parts that the active catalog holds,
+// which include each part in effect.
+func activeCatalogRecords(t *testing.T, kind string) json.RawMessage {
 	t.Helper()
-	public, ok := catalog.PublicCatalogPayload()
+	root, ok := catalog.ActiveCatalog()
 	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
+		t.Fatal("the active catalog is unavailable")
 	}
-	var files []catalog.PublicFile
-	if err := json.Unmarshal(public.Parts, &files); err != nil {
-		t.Fatalf("decode public catalog parts: %v", err)
+	files, err := catalog.PartsInEffect(root, time.Now())
+	if err != nil {
+		t.Fatalf("decode the active catalog's parts: %v", err)
 	}
-	deployments := map[string]json.RawMessage{}
+	records := map[string]json.RawMessage{}
 	for _, file := range files {
-		data, ok := catalog.ActivePublicPart(file.SHA256)
-		var part struct {
-			Deployments map[string]json.RawMessage `json:"deployments"`
-		}
+		data, ok := catalog.ActiveCatalogPart(file.SHA256)
 		if !ok {
-			t.Fatalf("public catalog part %s is unavailable", file.SHA256)
+			t.Fatalf("catalog part %s is unavailable", file.SHA256)
+		}
+		var part struct {
+			Graph map[string]map[string]json.RawMessage `json:"graph"`
 		}
 		if err := json.Unmarshal(data, &part); err != nil {
-			t.Fatalf("decode public catalog part %s: %v", file.SHA256, err)
+			t.Fatalf("decode catalog part %s: %v", file.SHA256, err)
 		}
-		maps.Copy(deployments, part.Deployments)
+		maps.Copy(records, part.Graph[kind])
 	}
-	data, err := json.Marshal(deployments)
+	data, err := json.Marshal(records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1391,16 +1391,12 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 		Interfaces []string `json:"interfaces"`
 		ProviderID string   `json:"providerId"`
 	}
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "routes"), &routes); err != nil {
 		t.Fatalf("decode catalog routes: %v", err)
 	}
 	deploymentIDs := make([]string, 0, len(deployments))
@@ -1581,7 +1577,7 @@ func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) 
 		} `json:"routes"`
 	}
 	deployments := map[string]matrixDeployment{}
-	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
 
@@ -3112,16 +3108,12 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 	type matrixRoute struct {
 		ProviderID string `json:"providerId"`
 	}
-	public, ok := catalog.PublicCatalogPayload()
-	if !ok {
-		t.Fatal("compiled public catalog is unavailable")
-	}
 	deployments := map[string]matrixDeployment{}
 	routes := map[string]matrixRoute{}
-	if err := json.Unmarshal(publicDeployments(t), &deployments); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "deployments"), &deployments); err != nil {
 		t.Fatalf("decode catalog deployments: %v", err)
 	}
-	if err := json.Unmarshal(public.Graph["routes"], &routes); err != nil {
+	if err := json.Unmarshal(activeCatalogRecords(t, "routes"), &routes); err != nil {
 		t.Fatalf("decode catalog routes: %v", err)
 	}
 

@@ -13,20 +13,6 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
-func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
-	return snapshotFromRelease(data, nil, nil, Identity{})
-}
-
-// embeddedParts is every file that the embedded public root names, by SHA-256 in hex.
-func embeddedParts(tb testing.TB) map[string][]byte {
-	tb.Helper()
-	parts, err := embeddedPublicParts()
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return parts
-}
-
 func testDeploymentForRoute(provider schemas.ModelProvider, model string, route Route) (Deployment, bool) {
 	return activeState().deploymentForRoute(provider, model, route, variant{})
 }
@@ -82,29 +68,28 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 	}
 }
 
-func TestSnapshotValidationAllowsPublicModelsWithoutExecutableDeployments(t *testing.T) {
-	snap, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, embeddedParts(t), Identity{})
-	if err != nil {
-		t.Fatalf("public informational models were rejected: %v", err)
+func TestGraphLeavesOutModelsWithoutDeployments(t *testing.T) {
+	root, _ := embeddedFiles(t)
+	var listed struct {
+		Summaries struct {
+			Models map[string]json.RawMessage `json:"models"`
+		} `json:"summaries"`
 	}
-
-	var public map[string]any
-	if err := json.Unmarshal(embeddedPublicCatalogJSON, &public); err != nil {
+	if err := json.Unmarshal(root, &listed); err != nil {
 		t.Fatal(err)
 	}
-	models := public["graph"].(map[string]any)["models"].(map[string]any)
-	delete(models, "gpt-5.6-sol")
-	missingRuntimeModel, err := json.Marshal(public)
-	if err != nil {
-		t.Fatal(err)
+	snap := loadTestCatalog(t)
+	deployed := make(map[string]bool)
+	for _, deployment := range snap.graph.Deployments {
+		deployed[deployment.ModelID] = true
 	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, missingRuntimeModel, embeddedParts(t), Identity{}); err == nil ||
-		!strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("public catalog missing a runtime model was accepted: %v", err)
+	for id := range listed.Summaries.Models {
+		if _, inGraph := snap.graph.Models[id]; inGraph != deployed[id] {
+			t.Fatalf("model %s is in the graph: %t, has a deployment: %t", id, inGraph, deployed[id])
+		}
 	}
-
-	if len(snap.graph.Models) != 42 {
-		t.Fatalf("runtime catalog unexpectedly contains informational-only models: %d", len(snap.graph.Models))
+	if len(snap.graph.Models) == len(listed.Summaries.Models) {
+		t.Fatal("the fallback lists no model without a deployment, so this test checks nothing")
 	}
 }
 
@@ -116,13 +101,13 @@ func TestSnapshotValidationKeepsProviderTargetsStructural(t *testing.T) {
 		"openai-gpt-5.6-sol-pro",
 	} {
 		t.Run(deploymentID, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
 			deployment["upstream"].(map[string]any)["model"] = "future-openai-model"
-			data, err := json.Marshal(runtime)
+			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -144,14 +129,14 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 		{name: "training use", apply: func(handling map[string]any) { handling["trainingUse"] = true }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3-32b"].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3-32b"].(map[string]any)
 			route := deployment["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)
 			test.apply(route["dataHandling"].(map[string]any))
-			data, err := json.Marshal(runtime)
+			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -164,22 +149,22 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 }
 
 func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	deployments := runtime["graph"].(map[string]any)["deployments"].(map[string]any)
+	deployments := whole["graph"].(map[string]any)["deployments"].(map[string]any)
 	uncached := deployments["azure-gpt-oss-120b"].(map[string]any)["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)
 	if _, present := uncached["pricing"].(map[string]any)[billing.MeterCachedInputTokens]; present {
 		t.Fatal("test fixture unexpectedly has a cached-input price")
 	}
-	if _, err := snapshotFromCatalogBytes(embeddedRuntimeCatalogJSON); err != nil {
+	if _, err := snapshotFromCatalogBytes(embeddedCatalogJSON); err != nil {
 		t.Fatalf("uncached deployment was rejected: %v", err)
 	}
 
 	cached := deployments["azure-gpt-5.6-sol"].(map[string]any)["routes"].(map[string]any)["azure-responses"].(map[string]any)
 	delete(cached["pricing"].(map[string]any), billing.MeterCachedInputTokens)
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,34 +950,10 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 
 // The public catalog states each route's facts with its provider's facts applied, and each
 // deployment's facts per route, so readers never combine nodes themselves.
-func TestPublicCatalogResolvesRouteFacts(t *testing.T) {
-	loadTestCatalog(t)
-	payload, ok := PublicCatalogPayload()
-	if !ok || payload.Schema != publicSchema {
-		t.Fatalf("public catalog unavailable: %#v", payload)
-	}
-	if !strings.HasPrefix(payload.RuntimeDigest, "sha256:") ||
-		!strings.HasPrefix(payload.PublicDigest, "sha256:") ||
-		payload.RuntimeDigest == payload.PublicDigest {
-		t.Fatalf("public catalog identities are incomplete: %#v", payload)
-	}
-	var graph struct {
-		Providers   map[string]map[string]any `json:"providers"`
-		Routes      map[string]map[string]any `json:"routes"`
-		Deployments map[string]struct {
-			DataHandling map[string]any `json:"dataHandling"`
-			Routes       map[string]struct {
-				DataHandling DataHandling `json:"dataHandling"`
-			} `json:"routes"`
-		} `json:"deployments"`
-	}
-	for key, target := range map[string]any{"providers": &graph.Providers, "routes": &graph.Routes, "deployments": &graph.Deployments} {
-		if err := json.Unmarshal(payload.Graph[key], target); err != nil {
-			t.Fatalf("decode public %s: %v", key, err)
-		}
-	}
-	for id, provider := range graph.Providers {
-		if _, ok := provider["dataHandling"]; ok {
+func TestCatalogStatesDataHandlingOnRoutes(t *testing.T) {
+	release := embeddedRelease(t)
+	for id, provider := range release.root["summaries"].(map[string]any)["providers"].(map[string]any) {
+		if _, ok := provider.(map[string]any)["dataHandling"]; ok {
 			t.Fatalf("provider %s repeats facts that its routes state", id)
 		}
 	}
@@ -1001,21 +962,31 @@ func TestPublicCatalogResolvesRouteFacts(t *testing.T) {
 	if err := json.Unmarshal(encoded, &fields); err != nil {
 		t.Fatal(err)
 	}
-	for id, route := range graph.Routes {
-		handling, _ := route["dataHandling"].(map[string]any)
-		for field := range fields {
-			if _, ok := handling[field]; !ok {
-				t.Fatalf("route %s data handling lacks %s", id, field)
+	for _, part := range release.parts {
+		graph := part["graph"].(map[string]any)
+		routes, _ := graph["routes"].(map[string]any)
+		for id, route := range routes {
+			handling, _ := route.(map[string]any)["dataHandling"].(map[string]any)
+			for field := range fields {
+				if _, ok := handling[field]; !ok {
+					t.Fatalf("route %s data handling lacks %s", id, field)
+				}
 			}
 		}
-	}
-	for id, deployment := range graph.Deployments {
-		if deployment.DataHandling != nil {
-			t.Fatalf("deployment %s states data handling outside its routes", id)
-		}
-		for routeID, route := range deployment.Routes {
-			if err := validateDeploymentDataHandling(id+" route "+routeID, route.DataHandling); err != nil {
-				t.Fatal(err)
+		deployments, _ := graph["deployments"].(map[string]any)
+		for id, deployment := range deployments {
+			if _, ok := deployment.(map[string]any)["dataHandling"]; ok {
+				t.Fatalf("deployment %s states data handling outside its routes", id)
+			}
+			for routeID, route := range deployment.(map[string]any)["routes"].(map[string]any) {
+				var handling DataHandling
+				encoded, _ := json.Marshal(route.(map[string]any)["dataHandling"])
+				if err := json.Unmarshal(encoded, &handling); err != nil {
+					t.Fatal(err)
+				}
+				if err := validateDeploymentDataHandling(id+" route "+routeID, handling); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 	}
@@ -1053,17 +1024,17 @@ func TestChutesTEEStatusIsMaterializedPerDeployment(t *testing.T) {
 }
 
 func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["azure-gpt-5.6-sol"].(map[string]any)
 	routes := deployment["routes"].(map[string]any)
 	routes["azure-chat-completions"].(map[string]any)["dataHandling"].(map[string]any)["storageLocation"] = "US"
 	routes["azure-responses"].(map[string]any)["dataHandling"].(map[string]any)["storageLocation"] = "eu"
-	data, err := json.Marshal(runtime)
+	data, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,17 +1060,17 @@ func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
 }
 
 func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["openai-gpt-5.5-2026-04-23"].(map[string]any)
 	routes := deployment["routes"].(map[string]any)
 	routes["missing-route"] = routes["openai-responses"]
 	delete(routes, "openai-responses")
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1112,17 +1083,17 @@ func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
 	for _, limit := range []any{nil, 0, -1, 1050001} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.6-sol"].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.6-sol"].(map[string]any)
 			if limit == nil {
 				delete(deployment, "maxInputTokens")
 			} else {
 				deployment["maxInputTokens"] = limit
 			}
-			data, err := json.Marshal(runtime)
+			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1135,25 +1106,25 @@ func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
 
 func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
 	for _, hash := range []string{"", "invalid", "sha256:" + strings.Repeat("a", 63)} {
-		var runtime compiledCatalog
-		if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+		var whole compiledCatalog
+		if err := decodeStrict(embeddedCatalogJSON, &whole, sharedJSON[Pricing]()); err != nil {
 			t.Fatal(err)
 		}
-		route := runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"].Routes["openai-responses"]
+		route := whole.Graph.Deployments["openai-gpt-5.5-2026-04-23"].Routes["openai-responses"]
 		route.ChainHash = hash
-		runtime.Graph.Deployments["openai-gpt-5.5-2026-04-23"].Routes["openai-responses"] = route
-		if err := validateCompiledGraph(runtime.Graph); err == nil {
+		whole.Graph.Deployments["openai-gpt-5.5-2026-04-23"].Routes["openai-responses"] = route
+		if err := validateCompiledGraph(whole.Graph); err == nil {
 			t.Fatalf("invalid historical chain was accepted: %q", hash)
 		}
 	}
 }
 
 func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	models := graph["models"].(map[string]any)
 	model := models["claude-haiku-4-5"].(map[string]any)
 	aliases := make([]any, maxAliasesPerNode+1)
@@ -1161,7 +1132,7 @@ func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 		aliases[index] = fmt.Sprintf("bounded-alias-%d", index)
 	}
 	model["aliases"] = aliases
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1171,52 +1142,17 @@ func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 	}
 }
 
-func TestSnapshotValidationBindsThePublicCatalog(t *testing.T) {
-	var public map[string]any
-	if err := json.Unmarshal(embeddedPublicCatalogJSON, &public); err != nil {
-		t.Fatal(err)
-	}
-	graph := public["graph"].(map[string]any)
-	authors := graph["authors"].(map[string]any)
-	author := authors["anthropic"].(map[string]any)
-	author["name"] = "changed"
-	changed, err := json.Marshal(public)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, changed, embeddedParts(t), Identity{}); err == nil ||
-		!strings.Contains(err.Error(), "public catalog digest does not match") {
-		t.Fatalf("mismatched public catalog was accepted: %v", err)
-	}
-}
-
-func TestSnapshotValidationRequiresThePublicDigestCommitment(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
-		t.Fatal(err)
-	}
-	runtime["publicDigest"] = "sha256:invalid"
-	broken, err := json.Marshal(runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromCatalogBytes(broken); err == nil ||
-		!strings.Contains(err.Error(), "public digest is invalid") {
-		t.Fatalf("invalid public digest commitment was accepted: %v", err)
-	}
-}
-
 func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["azure-deepseek-v4-pro"].(map[string]any)
 	upstream := deployment["upstream"].(map[string]any)
 	upstream["model"] = "reviewed-provider-selector"
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1228,14 +1164,14 @@ func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T)
 func TestSnapshotValidationPreservesExactUSDRates(t *testing.T) {
 	for _, rate := range []string{"0", "0.001", "0.042", "0.000000000000000000000000000000000001", "1000000000000", "-1", "01", "0.010", "1e15", "1000000000000.000000000000000000000000000000000001"} {
 		t.Run(rate, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
 			route := deployment["routes"].(map[string]any)["openai-responses"].(map[string]any)
 			route["pricing"].(map[string]any)[billing.MeterOutputTokens] = map[string]any{billing.RatePerMillionTokens: rate}
-			data, err := json.Marshal(runtime)
+			data, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1280,13 +1216,13 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := runtime["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
 			test.apply(deployment["routes"].(map[string]any)["openai-responses"].(map[string]any))
-			broken, err := json.Marshal(runtime)
+			broken, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1298,17 +1234,17 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 }
 
 func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["chutes-qwen3-32b"].(map[string]any)
 	dataHandling := deployment["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)["dataHandling"].(map[string]any)
 	dataHandling["tee"] = false
 	dataHandling["teeVerified"] = true
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1319,18 +1255,18 @@ func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) 
 }
 
 func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
 	deployment := deployments["chutes-kimi-k3"].(map[string]any)
 	deployment["reasoning"] = "unsupported"
 	for _, route := range deployment["routes"].(map[string]any) {
 		route.(map[string]any)["reasoningEfforts"] = []any{}
 	}
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1341,17 +1277,17 @@ func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
 }
 
 func TestSnapshotValidationRejectsRoutesWithoutCompiledTransportContracts(t *testing.T) {
-	var runtime map[string]any
-	if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+	var whole map[string]any
+	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
-	graph := runtime["graph"].(map[string]any)
+	graph := whole["graph"].(map[string]any)
 	routes := graph["routes"].(map[string]any)
 	routes["openai-uncompiled"] = map[string]any{
 		"interfaces": []any{"responses"},
 		"providerId": "openai",
 	}
-	broken, err := json.Marshal(runtime)
+	broken, err := json.Marshal(whole)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1359,25 +1295,6 @@ func TestSnapshotValidationRejectsRoutesWithoutCompiledTransportContracts(t *tes
 		!strings.Contains(err.Error(), "not a compiled gateway transport contract") {
 		t.Fatalf("uncompiled route was accepted: %v", err)
 	}
-}
-
-func TestSnapshotValidationRejectsMismatchedPublicProjection(t *testing.T) {
-	var public map[string]any
-	if err := json.Unmarshal(embeddedPublicCatalogJSON, &public); err != nil {
-		t.Fatal(err)
-	}
-	graph := public["graph"].(map[string]any)
-	deployments := graph["deployments"].(map[string]any)
-	delete(deployments, "openai-gpt-5.5-2026-04-23")
-	broken, err := json.Marshal(public)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := snapshotFromRelease(embeddedRuntimeCatalogJSON, broken, embeddedParts(t), Identity{}); err == nil ||
-		!strings.Contains(err.Error(), "does not match") {
-		t.Fatalf("mismatched public projection was accepted: %v", err)
-	}
-
 }
 
 func stringPointer(value string) *string {
@@ -1432,12 +1349,12 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			tc.apply(runtime["graph"].(map[string]any))
-			raw, err := json.Marshal(runtime)
+			tc.apply(whole["graph"].(map[string]any))
+			raw, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1461,12 +1378,12 @@ func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var runtime map[string]any
-			if err := json.Unmarshal(embeddedRuntimeCatalogJSON, &runtime); err != nil {
+			var whole map[string]any
+			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			tc.apply(runtime["graph"].(map[string]any)["routes"].(map[string]any)["openai-responses"].(map[string]any))
-			raw, err := json.Marshal(runtime)
+			tc.apply(whole["graph"].(map[string]any)["routes"].(map[string]any)["openai-responses"].(map[string]any))
+			raw, err := json.Marshal(whole)
 			if err != nil {
 				t.Fatal(err)
 			}
