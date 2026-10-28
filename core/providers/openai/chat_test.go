@@ -497,6 +497,25 @@ func TestToOpenAIChatRequest_VertexDropsNoneReasoningEffort(t *testing.T) {
 // OpenAI rejects at the effective reasoning effort are dropped for OpenAI and Azure.
 // Stogas: sampling fields reach the provider unless a datasheet row marks them
 // unsupported.
+// OpenAI and Azure OpenAI accept Chat output limits below 16 (live checks,
+// October 28, 2026); only Responses refuses them. Upstream raises them to 16.
+func TestToOpenAIChatRequest_KeepsOutputLimitBelowSixteen(t *testing.T) {
+	for _, provider := range []schemas.ModelProvider{schemas.OpenAI, schemas.Azure} {
+		out := ToOpenAIChatRequest(schemas.NewBifrostContext(nil, schemas.NoDeadline), &schemas.BifrostChatRequest{
+			Provider: provider,
+			Model:    "gpt-5.5",
+			Input: []schemas.ChatMessage{{
+				Role:    schemas.ChatMessageRoleUser,
+				Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hello")},
+			}},
+			Params: &schemas.ChatParameters{MaxCompletionTokens: schemas.Ptr(5)},
+		})
+		require.NotNil(t, out)
+		require.NotNil(t, out.MaxCompletionTokens, provider)
+		require.Equal(t, 5, *out.MaxCompletionTokens, provider)
+	}
+}
+
 func TestToOpenAIChatRequest_StripsUnsupportedSamplingParams(t *testing.T) {
 	conditional := &schemas.ModelCapabilities{ConditionallyUnsupportedFields: map[string]string{
 		schemas.FieldTopP:        schemas.ConditionWhenEffortNone,

@@ -3,7 +3,6 @@ package stogas
 import (
 	"encoding/json"
 
-	openaiprovider "github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 )
@@ -30,7 +29,6 @@ func (a AzureAdapter) ValidateRequest(state *State) error {
 		}
 		return validateAnthropicResponsesPolicy(state)
 	}
-	state.Resolution.NormalizeMinimumOutputTokenLimit(openaiprovider.MinMaxCompletionTokens)
 	if err := validateOpenAIPromptCaching(state); err != nil {
 		return err
 	}

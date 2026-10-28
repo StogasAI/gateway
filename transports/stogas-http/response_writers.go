@@ -536,8 +536,12 @@ func localErrorResponse(err error) errorResponse {
 
 func catalogErrorResponse(err error) errorResponse {
 	apiErr := catalog.PublicError(err)
+	var param any
+	if apiErr.Param != "" {
+		param = apiErr.Param
+	}
 	return errorResponse{status: apiErr.StatusCode, payload: map[string]any{
-		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode)},
+		"error": map[string]any{"message": apiErr.Message, "type": apiErr.Type, "code": stogasbilling.NormalizeStogasErrorCode(apiErr.Code, apiErr.StatusCode), "param": param},
 	}}
 }
 

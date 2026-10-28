@@ -70,9 +70,6 @@ func (a OpenAIAdapter) ValidateRequest(state *State) error {
 	if err := a.DefaultAdapter.ValidateRequest(state); err != nil {
 		return err
 	}
-	if state != nil && state.Resolution != nil {
-		state.Resolution.NormalizeMinimumOutputTokenLimit(openaiprovider.MinMaxCompletionTokens)
-	}
 	if err := validateOpenAIPromptCaching(state); err != nil {
 		return err
 	}
@@ -512,14 +509,14 @@ func openAIGuardrailError(err error) error {
 	case errors.Is(err, errOpenAIUnsupportedInput):
 		return invalidRequest("We cannot bill this input modality")
 	case errors.Is(err, errOpenAIOutputTokenLimitTooLow):
-		return catalog.ErrParameterTooLarge
+		return catalog.ErrOutputLimitTooSmall
 	default:
 		return err
 	}
 }
 
 func validateOpenAIGuardrails(req openAIAdapterContext) error {
-	if err := validateOutputTokensMin16(req); err != nil {
+	if err := validateOutputTokenMinimum(req); err != nil {
 		return err
 	}
 	if err := validateReasoningSupport(req); err != nil {
@@ -620,8 +617,15 @@ func openAIFinalMeters(req openAIAdapterContext) []billing.MeterEstimate {
 	return meters
 }
 
-func validateOutputTokensMin16(req openAIAdapterContext) error {
-	if req.OutputTokenLimit < 16 {
+// validateOutputTokenMinimum applies the provider's own minimum instead of
+// raising a smaller limit: OpenAI and Azure OpenAI accept any positive Chat
+// limit but refuse a Responses limit below 16 (live checks, October 28, 2026).
+func validateOutputTokenMinimum(req openAIAdapterContext) error {
+	minimum := 1
+	if req.Route == openAIAdapterRouteResponses {
+		minimum = openaiprovider.MinMaxCompletionTokens
+	}
+	if req.OutputTokenLimit < minimum {
 		return errOpenAIOutputTokenLimitTooLow
 	}
 	return nil

@@ -104,7 +104,10 @@ func TestColdRedactionBuildFollowsCheapChecksAndFailsClosed(t *testing.T) {
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		for _, model := range []string{"not-a-model", "openai-gpt-5.6-sol"} {
 			called := 0
-			body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hello"}],"input":"hello"}`)
+			body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hello"}]}`)
+			if path == "/v1/responses" {
+				body = []byte(`{"model":"` + model + `","input":"hello"}`)
+			}
 			_, err := ResolveRequest(RequestInput{Method: "POST", Path: path, Body: body, Policy: policyConfig(2), LoadRedactionPolicy: func() (*redaction.Policy, error) {
 				called++
 				return nil, errors.New("cold compiler unavailable")

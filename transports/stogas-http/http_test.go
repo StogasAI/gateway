@@ -1618,7 +1618,6 @@ func TestInferenceHeadersIgnoreClientMetadata(t *testing.T) {
 	ctx.request.Header.Set("DNT", "1")
 	ctx.request.Header.Set("HTTP-Referer", "https://client.example")
 	ctx.request.Header.Set("Origin", "https://app.stogas.ai")
-	ctx.request.Header.Set("Anthropic-Beta", "future-feature")
 	ctx.request.Header.Set("Anthropic-Version", "2023-06-01")
 	ctx.request.Header.Set("OpenAI-Organization", "org_client")
 	ctx.request.Header.Set("OpenAI-Project", "proj_client")
@@ -1643,8 +1642,21 @@ func TestInferenceHeadersIgnoreClientMetadata(t *testing.T) {
 	}
 }
 
+func TestCatalogErrorResponseNamesTheParameter(t *testing.T) {
+	named := catalogErrorResponse(catalog.APIError{StatusCode: http.StatusBadRequest, Code: "invalid_request", Type: catalog.ErrorTypeInvalidRequest, Message: "Unknown parameter: 'sdk_extension'.", Param: "sdk_extension"})
+	detail := named.payload["error"].(map[string]any)
+	if named.status != http.StatusBadRequest || detail["code"] != "invalid_request" || detail["param"] != "sdk_extension" {
+		t.Fatalf("unexpected unknown-parameter response: %d %#v", named.status, detail)
+	}
+	unnamed := catalogErrorResponse(catalog.ErrModelUnavailable).payload["error"].(map[string]any)
+	if param, ok := unnamed["param"]; !ok || param != nil {
+		t.Fatalf("an error without a field must have a null param: %#v", unnamed)
+	}
+}
+
 func TestInferenceHeadersRejectInternalControlHeaders(t *testing.T) {
 	tests := []string{
+		"Anthropic-Beta",
 		"X-BF-Direct-Key",
 		"X-BF-EH-Authorization",
 		"X-BF-EH-OpenAI-Organization",

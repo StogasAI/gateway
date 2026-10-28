@@ -681,6 +681,92 @@ func TestPrepareProviderRequestSendsOpenAIWebSearchDomainFilters(t *testing.T) {
 	}
 }
 
+func TestOpenAIAccessProgramsReachOnlyOpenAI(t *testing.T) {
+	for _, item := range []struct {
+		name, model, programs, want, err string
+	}{
+		{name: "OpenAI selection", model: "openai/gpt-5.5", programs: `{"cyber":"daybreak_red"}`, want: `{"cyber":"daybreak_red"}`},
+		{name: "OpenAI standard", model: "openai/gpt-5.5", programs: `{"cyber":"standard"}`, want: `{"cyber":"standard"}`},
+		{name: "OpenAI empty selection is omission", model: "openai/gpt-5.5", programs: `{}`},
+		{name: "OpenAI null program is omission", model: "openai/gpt-5.5", programs: `{"cyber":null}`},
+		{name: "Claude without a selection", model: "anthropic-claude-opus-4-8", programs: `{}`},
+		{name: "Claude refuses a selection", model: "anthropic-claude-opus-4-8", programs: `{"cyber":"standard"}`, err: "access_programs is supported only on OpenAI deployments"},
+		{name: "Azure OpenAI refuses a selection", model: "azure-gpt-5.6-sol", programs: `{"cyber":"standard"}`, err: "access_programs is supported only on OpenAI deployments"},
+		{name: "unknown program", model: "openai/gpt-5.5", programs: `{"cyber":"daybreak_green"}`, err: "access_programs.cyber must be standard, daybreak_blue or daybreak_red"},
+		{name: "unknown member", model: "openai/gpt-5.5", programs: `{"bio":"standard"}`, err: "access_programs.bio is not supported"},
+		{name: "not an object", model: "openai/gpt-5.5", programs: `"standard"`, err: "access_programs must be an object"},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST", Path: "/v1/responses",
+				Body: []byte(`{"model":"` + item.model + `","input":"hi","max_output_tokens":16,"access_programs":` + item.programs + `}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			err = state.Adapter.ValidateRequest(state)
+			if item.err != "" {
+				if err == nil || err.Error() != item.err || catalog.PublicError(err).StatusCode != 400 {
+					t.Fatalf("expected %q, got %v", item.err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			var payload map[string]json.RawMessage
+			body := preparedProviderBody(t, ctx, request.ResponsesRequest)
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode prepared body: %v", err)
+			}
+			if got := string(payload["access_programs"]); got != item.want {
+				t.Fatalf("access_programs = %q, want %q: %s", got, item.want, body)
+			}
+		})
+	}
+}
+
+// Codex sends client_metadata on every Responses request. It is accepted and
+// never sent to a provider.
+func TestClientMetadataNeverReachesProvider(t *testing.T) {
+	resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+		Method: "POST", Path: "/v1/responses",
+		Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"client_metadata":{"x-codex-installation-id":"must-not-leave","traceparent":null}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolved.RawBody()["client_metadata"]; ok {
+		t.Fatal("client_metadata stayed in the request body")
+	}
+	state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+	if err := state.Adapter.ValidateRequest(state); err != nil {
+		t.Fatal(err)
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+	request, err := resolved.ToBifrost(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareProviderRequest(ctx, state, request); err != nil {
+		t.Fatal(err)
+	}
+	if body := preparedProviderBody(t, ctx, request.ResponsesRequest); strings.Contains(string(body), "must-not-leave") || strings.Contains(string(body), "client_metadata") {
+		t.Fatalf("client metadata reached the provider: %s", body)
+	}
+}
+
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
 	wrongLimit := 100000

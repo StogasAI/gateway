@@ -51,9 +51,9 @@ func ToOpenAIChatRequest(ctx *schemas.BifrostContext, bifrostReq *schemas.Bifros
 	if bifrostReq.Params != nil {
 		openaiReq.ChatParameters = *bifrostReq.Params
 		openaiReq.ServiceTier = serviceTierForModel(caps, openaiReq.ServiceTier)
-		if openaiReq.ChatParameters.MaxCompletionTokens != nil && *openaiReq.ChatParameters.MaxCompletionTokens < MinMaxCompletionTokens {
-			openaiReq.ChatParameters.MaxCompletionTokens = schemas.Ptr(MinMaxCompletionTokens)
-		}
+		// The output limit goes as given. OpenAI and Azure OpenAI accept Chat
+		// limits below 16, which only Responses refuses; raising the limit would
+		// let the model write and bill more than the caller allowed.
 		// Fable 5.1+ rejects forced tool use outright. Drop the choice so the model
 		// answers under the default "auto" rather than the provider returning a 400.
 		if openaiReq.ChatParameters.ToolChoice.IsForced() &&
