@@ -205,6 +205,65 @@ func (c *Capture) Discard() {
 	c.reservation.release()
 	c.reservation = nil
 }
+
+// Held is an export kept for a record that is not complete yet. It keeps the
+// capture's destinations and response, and memory admission for those bytes
+// alone: delivery state is admitted again when it leaves.
+type Held struct {
+	engine       *Engine
+	destinations []exportconfig.Destination
+	content      bool
+	response     []byte
+	reservation  *reservation
+}
+
+// Hold ends the capture and keeps its export for Held.Finish. It returns nil
+// when the capture holds nothing or admission refuses the bytes it keeps.
+func (c *Capture) Hold() *Held {
+	if !c.held() {
+		return nil
+	}
+	h := &Held{engine: c.engine, destinations: c.destinations, content: c.content, response: c.response}
+	c.destinations, c.response = nil, nil
+	c.Discard()
+	size := len(h.response)
+	for _, d := range h.destinations {
+		size += len(d.URL)
+		for key, value := range d.Headers {
+			size += len(key) + len(value)
+		}
+	}
+	h.reservation = &reservation{engine: h.engine, lease: h.engine.options.NewLease()}
+	if !h.reservation.grow(size) {
+		h.engine.memoryDropped.Add(uint64(len(h.destinations)))
+		h.Discard()
+		return nil
+	}
+	return h
+}
+
+// Finish sends the export with the record, as Capture.Finish does.
+func (h *Held) Finish(requestID string, event any, finalMetadata any) {
+	if h == nil || h.reservation == nil {
+		return
+	}
+	c := &Capture{engine: h.engine, destinations: h.destinations, content: h.content, response: h.response, reservation: h.reservation}
+	h.destinations, h.response, h.reservation = nil, nil, nil
+	if c.grow(len(c.destinations) * deliveryStateBytes) {
+		c.Finish(requestID, event, finalMetadata)
+	}
+}
+
+func (h *Held) Discard() {
+	if h == nil || h.reservation == nil {
+		return
+	}
+	clear(h.response)
+	h.destinations, h.response = nil, nil
+	h.reservation.release()
+	h.reservation = nil
+}
+
 func (c *Capture) grow(n int) bool {
 	if !c.held() {
 		return false

@@ -44,11 +44,16 @@ func (s *Server) recordAdmission(ctx *requestContext) {
 
 // Capture the inner status before E2EE wraps it in an HTTP 200 response.
 // Fixed counters retain neither identities nor client/provider-controlled labels.
-// It reports whether the request log keeps the rejection as a row of its own,
-// which decides whether the rejection is exported.
-func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string) bool {
+// The request log sends the export with the row that holds the rejection, and
+// discards it when no row does.
+func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code string, export billing.RejectionExport) {
+	defer func() {
+		if export != nil {
+			export.Discard()
+		}
+	}()
 	if !(ctx.request.Method == http.MethodPost) || !isInferencePath(ctx.request.URL.Path) || status < 400 || ctx.admissionCounted {
-		return false
+		return
 	}
 	ctx.admissionCounted = true
 	var counter *atomic.Uint64
@@ -73,12 +78,12 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	counter.Add(1)
 	claims := ctx.claims
 	if s.runtime == nil || s.runtime.Billing() == nil {
-		return false
+		return
 	}
 	dashboard := ctx.dashboard
 	s.runtime.Billing().RecordRefusal(claims, dashboard, code)
 	if claims == nil {
-		return false
+		return
 	}
 	requestType := ctx.requestType
 	if requestType == "" {
@@ -89,7 +94,7 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	}
 	requestID, err := inferenceRequestID(ctx)
 	if err != nil {
-		return false
+		return
 	}
 	startedAt := ctx.startedAt
 	if startedAt.IsZero() {
@@ -99,9 +104,10 @@ func (s *Server) recordAdmissionRejection(ctx *requestContext, status int, code 
 	if s.secure != nil {
 		nodeID = s.secure.NodeID()
 	}
-	return s.runtime.Billing().RecordRejection(billing.RejectionInput{
+	s.runtime.Billing().RecordRejection(billing.RejectionInput{
 		PolicyVersions: ctx.policyVersions, Claims: claims, RequestID: requestID, RequestType: requestType, Code: code,
 		StatusCode: status, CreatedAt: startedAt, NodeID: nodeID, GatewayVersion: stogas.GatewayVersion,
 		Transport: ctx.transport(),
-	})
+	}, export)
+	export = nil
 }
