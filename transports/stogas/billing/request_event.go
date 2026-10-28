@@ -295,6 +295,7 @@ func settingTexts(values []string) []string {
 type RequestUsage struct {
 	UpstreamCostUSD       string             `json:"upstream_cost_usd"`
 	BilledCostUSD         string             `json:"billed_cost_usd"`
+	TaxUSD                string             `json:"tax_usd"` // At the hold's rate.
 	CacheReadSavingsUSD   *string            `json:"cache_read_savings_usd,omitempty"`
 	CacheWriteOverheadUSD *string            `json:"cache_write_overhead_usd,omitempty"`
 	Meters                EventMeters        `json:"meters"`

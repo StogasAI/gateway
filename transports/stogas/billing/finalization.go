@@ -166,7 +166,9 @@ func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEve
 		return &SettlementError{Reason: "encoding_failed"}
 	}
 	event.Usage.UpstreamCostUSD = upstreamCostUSD.String()
-	event.Usage.BilledCostUSD = calculateBilledCostUSD(authorization, upstreamCostUSD).String()
+	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
+	event.Usage.BilledCostUSD = billedCostUSD.String()
+	event.Usage.TaxUSD = calculateTaxUSD(authorization, billedCostUSD).String()
 	payload, err := encodeRequestLog(event, createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON))
 	if err != nil {
 		s.finalizations.encodingFailed.Store(true)
