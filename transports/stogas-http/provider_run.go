@@ -420,6 +420,9 @@ func startProviderCall[T any](r *providerRun, wait time.Duration, call providerC
 		}
 		state.MarkProviderStarted()
 		result.called = true
+		if server != nil {
+			defer server.providerCalls.begin(provider, time.Now())()
+		}
 		result.response, result.failure = call(attempt, request)
 		if server != nil {
 			server.providers.observe(provider, result.failure)

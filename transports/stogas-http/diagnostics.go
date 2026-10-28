@@ -96,6 +96,7 @@ type requestDiagnostics struct {
 	IPAdmission   ipAdmissionDiagnostics      `json:"ipAdmission"`
 	Admission     requestAdmissionDiagnostics `json:"admission"`
 	Providers     providerReachDiagnostics    `json:"providers"`
+	ProviderCalls providerCallDiagnostics     `json:"providerCalls"`
 	Drain         requestDrainDiagnostics     `json:"drain"`
 	Memory        requestMemoryDiagnostics    `json:"memory"`
 	JSONDecode    requestWorkDiagnostics      `json:"jsonDecode"`
@@ -136,6 +137,7 @@ func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics
 		IPAdmission:   s.ipAdmission.diagnostics(),
 		Admission:     s.admission.diagnostics(),
 		Providers:     s.providers.diagnostics(),
+		ProviderCalls: s.providerCalls.diagnostics(time.Now()),
 		Drain:         s.requests.diagnostics(),
 		Memory:        s.memory.diagnostics(),
 		JSONDecode:    s.jsonDecode.diagnostics(),

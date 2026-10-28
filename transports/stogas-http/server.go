@@ -73,6 +73,7 @@ type Server struct {
 	requests              *requestDrain
 	admission             requestAdmissionCounters
 	providers             providerReach
+	providerCalls         providerCalls
 	ipAdmission           *ipAdmission
 	sanctionedNetworks    *sanctionedNetworks
 	idleConnections       idleConnections
