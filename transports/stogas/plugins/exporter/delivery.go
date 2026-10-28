@@ -33,7 +33,7 @@ const (
 	// randomized by half in either direction as OpenTelemetry does.
 	retryDelay = 5 * time.Second
 	// An organization's requests start at its platform rate, 120 a second by
-	// default and at most 240, and its rejections add at most 160 records a
+	// default and at most 240, and its rejections add at most 416 records a
 	// minute on each gateway. HTTP/1.1 carries one delivery per connection,
 	// so 128 connections keep up at 240 a second while a receiver answers
 	// within about 530 ms, as one on another continent does. HTTP/2

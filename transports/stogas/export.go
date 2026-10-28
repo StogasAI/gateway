@@ -6,6 +6,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proof"
 	"github.com/maximhq/bifrost/transports/stogas/plugins"
+	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter"
 )
 
 // FinalizeExportState reuses the canonical event that settlement stores as the
@@ -23,46 +24,49 @@ func FinalizeExportState(ctx context.Context, state *State) {
 	finishExport(ctx, state)
 }
 
-// FinalizeRejectedExport exports a request that ended without a hold. Such a
-// request costs nothing, so it is exported only when the request log keeps its
-// rejection as a row of its own: the caller cannot make the gateway send more
-// records than the request log shows. Its content was never captured, because
-// capture copies the request only after its hold.
-func FinalizeRejectedExport(ctx context.Context, state *State, logged bool) {
+// HoldRejectedExport takes the export of a request that ended without a hold,
+// to send with the request record that holds its rejection. Such a request
+// costs nothing, so its export follows the request log: the caller cannot make
+// the gateway send more records than the request log shows. Its content was
+// never captured, because capture copies the request only after its hold.
+func HoldRejectedExport(ctx context.Context, state *State) billing.RejectionExport {
 	if state == nil || state.Export == nil {
-		return
+		return nil
 	}
-	failure := state.ResponseError()
-	if !logged || state.APIKeyClaims == nil || failure == nil {
-		state.Export.Discard()
-		return
+	held := state.Export.Hold()
+	state.Export = nil
+	if held == nil {
+		return nil
 	}
-	status, code := 500, "gateway_error"
-	if failure.StatusCode != nil {
-		status = *failure.StatusCode
-	}
-	if failure.Error != nil && failure.Error.Code != nil {
-		code = *failure.Error.Code
-	}
-	event := billing.NewRejectionEvent(billing.RejectionInput{
-		Claims: state.APIKeyClaims, RequestID: state.RequestID, RequestType: string(state.Resolution.RequestType),
-		Code: code, StatusCode: status, CreatedAt: state.StartedAt,
-		PolicyVersions: state.PolicyVersions, NodeID: state.NodeID, GatewayVersion: state.GatewayVersion,
-		Transport: state.Transport,
-	})
-	state.FinalEvent = &event
-	finishExport(ctx, state)
+	return &rejectedExport{held: held, metadata: FinalMetadata(ctx, state)}
+}
+
+// rejectedExport sends the request record unchanged, so that the export of a
+// count has its request_count. The metadata stays the request's, whose ID the
+// record keeps; a count keeps its first repeat's.
+type rejectedExport struct {
+	held     *exporter.Held
+	metadata proof.Metadata
+}
+
+func (e *rejectedExport) Finish(row billing.RequestEvent) {
+	metadata := e.metadata
+	recordMetadata(&metadata, &row)
+	e.held.Finish(row.RequestID, &row, exportMetadata{metadata, row.NodeID})
+}
+
+func (e *rejectedExport) Discard() { e.held.Discard() }
+
+type exportMetadata struct {
+	proof.Metadata
+	NodeID string `json:"node_id"`
 }
 
 func finishExport(ctx context.Context, state *State) {
 	capture := state.Export
 	finalizeExportMetrics(state)
 	state.Export = nil
-	metadata := struct {
-		proof.Metadata
-		NodeID string `json:"node_id"`
-	}{FinalMetadata(ctx, state), state.NodeID}
-	capture.Finish(state.RequestID, state.FinalEvent, metadata)
+	capture.Finish(state.RequestID, state.FinalEvent, exportMetadata{FinalMetadata(ctx, state), state.NodeID})
 }
 
 func finalizeExportMetrics(state *State) {

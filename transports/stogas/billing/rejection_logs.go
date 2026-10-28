@@ -63,6 +63,9 @@ type rejectionLogRequest struct {
 type rejectionLogGroup struct {
 	// RequestEvent counts only repeats beyond the individual allowance.
 	RequestEvent
+	// The export of the first repeat, whose request ID the count keeps. It
+	// leaves with the count.
+	export RejectionExport
 	// Individual rows not yet handed to settlement, and how many the window
 	// has recorded. They leave at once; only the count waits for the window
 	// to end.
@@ -111,12 +114,42 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 	}
 }
 
+// RejectionExport is a rejected request's export. It leaves with the row that
+// holds the rejection, so a caller cannot make the gateway send more records
+// than the request log shows. Finish or Discard runs once, outside the
+// buffer's lock.
+type RejectionExport interface {
+	Finish(row RequestEvent)
+	Discard()
+}
+
+type countExport struct {
+	export RejectionExport
+	row    RequestEvent
+}
+
 // RecordRejection reports whether the rejection keeps a row of its own, with
 // its request ID. Later ones in its group only add to the group's count, and
-// a full buffer drops them.
-func (s *Service) RecordRejection(input RejectionInput) bool {
+// a full buffer drops them. An export leaves at once with a row of its own.
+// The first repeat's leaves with the count when the minute ends; the other
+// repeats' are discarded, as are dropped rejections'.
+func (s *Service) RecordRejection(input RejectionInput, export RejectionExport) bool {
+	kept, row := s.recordRejection(input, &export)
+	if export != nil {
+		if row != nil {
+			export.Finish(*row)
+		} else {
+			export.Discard()
+		}
+	}
+	return kept
+}
+
+// recordRejection returns the rejection's own row when it keeps one and has
+// an export, and clears the export when its group holds it for the count.
+func (s *Service) recordRejection(input RejectionInput, export *RejectionExport) (bool, *RequestEvent) {
 	if s == nil || input.Claims == nil || input.RequestID == "" || input.StatusCode < 400 || input.StatusCode > 599 {
-		return false
+		return false, nil
 	}
 	input.Code = NormalizeStogasErrorCode(input.Code, input.StatusCode)
 	switch input.RequestType {
@@ -130,7 +163,7 @@ func (s *Service) RecordRejection(input RejectionInput) bool {
 	b.diagnostics.RecordedRequests++
 	if b.closed {
 		b.recordDropped(1)
-		return false
+		return false, nil
 	}
 	if b.groups == nil {
 		b.groups = make(map[rejectionLogKey]*rejectionLogGroup)
@@ -156,7 +189,7 @@ func (s *Service) RecordRejection(input RejectionInput) bool {
 		if len(b.groups) >= rejectionLogCapacity || b.perKey[input.Claims.KeyID] >= rejectionLogPerKeyCapacity ||
 			organization >= rejectionLogPerOrganizationCapacity {
 			b.recordDropped(1)
-			return false
+			return false, nil
 		}
 		group = &rejectionLogGroup{RequestEvent: NewRejectionEvent(input)}
 		group.RequestCount = 0
@@ -173,14 +206,21 @@ func (s *Service) RecordRejection(input RejectionInput) bool {
 			group.queuedAt = now
 		}
 		group.individual = append(group.individual, rejectionLogRequest{input.RequestID, stamp})
-		return true
+		if *export == nil {
+			return true, nil
+		}
+		// The row that nextBatch sends.
+		row := group.RequestEvent
+		row.RequestID, row.CreatedAt, row.LastRequestAt, row.RequestCount = input.RequestID, stamp, stamp, 1
+		return true, &row
 	}
 	if group.RequestCount == ^uint32(0) {
 		b.recordDropped(1)
-		return false
+		return false, nil
 	}
 	if group.RequestCount == 0 {
 		group.RequestID, group.CreatedAt, group.LastRequestAt = input.RequestID, stamp, stamp
+		group.export, *export = *export, nil
 	}
 	group.RequestCount++
 	if stamp > group.LastRequestAt {
@@ -189,7 +229,7 @@ func (s *Service) RecordRejection(input RejectionInput) bool {
 	if stamp < group.CreatedAt {
 		group.CreatedAt = stamp
 	}
-	return false
+	return false, nil
 }
 
 func (b *rejectionLogBuffer) recordDropped(count uint64) {
@@ -230,11 +270,13 @@ func (g *rejectionLogGroup) readyAt(key rejectionLogKey, now time.Time) time.Tim
 	return time.Time{}
 }
 
-func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEvent {
+// nextBatch returns the rows to settle and the exports of its counts.
+func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) ([]RequestEvent, []countExport) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	current := now.Truncate(rejectionLogWindow).Unix()
 	var batch []RequestEvent
+	var exports []countExport
 	for key, group := range b.groups {
 		ended := closing || key.window < current
 		rows := len(group.individual)
@@ -259,6 +301,9 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 		}
 		if group.RequestCount > 0 {
 			batch = append(batch, group.RequestEvent)
+			if group.export != nil {
+				exports = append(exports, countExport{group.export, group.RequestEvent})
+			}
 		}
 		if rows > 0 {
 			b.pendingGroups++
@@ -270,7 +315,7 @@ func (b *rejectionLogBuffer) nextBatch(now time.Time, closing bool) []RequestEve
 			break
 		}
 	}
-	return batch
+	return batch, exports
 }
 
 func releaseGroup(counts map[string]int, id string) {
@@ -294,9 +339,14 @@ func (s *Service) runRejectionLogs() {
 			}
 		}
 		for {
-			batch := b.nextBatch(time.Now(), closing)
+			batch, exports := b.nextBatch(time.Now(), closing)
 			if len(batch) == 0 {
 				break
+			}
+			// Exports follow the rows that settlement receives, as a row of
+			// its own leaves with its request.
+			for _, count := range exports {
+				count.export.Finish(count.row)
 			}
 			stored := s.settleRejections(batch)
 			b.mu.Lock()
@@ -316,17 +366,38 @@ func (s *Service) runRejectionLogs() {
 	}
 }
 
-// stopRejectionLogs settles every buffered rejection and returns a channel
-// that closes once that is done, or nil when none were recorded.
+// CloseRejectionLogs refuses new rejections and sends the exports of the
+// counts, which can no longer change, so that they leave before the exporter
+// closes. DrainFinalizations stores the rows.
+func (s *Service) CloseRejectionLogs() {
+	if s != nil {
+		s.stopRejectionLogs()
+	}
+}
+
+// stopRejectionLogs refuses new rejections, sends the counts' exports, and
+// returns a channel that closes once every buffered rejection is settled, or
+// nil when none were recorded.
 func (s *Service) stopRejectionLogs() <-chan struct{} {
 	b := &s.rejectionLogs
+	var exports []countExport
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if !b.closed {
 		b.closed = true
+		for _, group := range b.groups {
+			if group.export != nil {
+				exports = append(exports, countExport{group.export, group.RequestEvent})
+				group.export = nil
+			}
+		}
 		if b.stop != nil {
 			close(b.stop)
 		}
 	}
-	return b.done
+	done := b.done
+	b.mu.Unlock()
+	for _, count := range exports {
+		count.export.Finish(count.row)
+	}
+	return done
 }

@@ -604,3 +604,80 @@ func TestDeliveryChecksItsHTTP2Connections(t *testing.T) {
 		t.Fatal("export delivery does not check its HTTP/2 connections")
 	}
 }
+
+// A held export keeps admission for its destinations and response alone
+// until it leaves, then sends what its capture would have sent. Delivery
+// state is admitted again when it leaves, so memory pressure or a closed
+// exporter then drops it whole.
+func TestHeldExportKeepsOnlyWhatItSendsLater(t *testing.T) {
+	received := make(chan map[string]json.RawMessage, 1)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") != "first-repeat" || r.Header.Get("Authorization") != "Bearer receiver" {
+			t.Error("wrong headers")
+		}
+		var record map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+			t.Error(err)
+		}
+		received <- record
+	}))
+	defer receiver.Close()
+	config := testConfig(receiver.URL)
+	config.Destinations[0].Headers = map[string]string{"Authorization": "Bearer receiver"}
+	response := []byte(`{"error":{"message":"Add credit to continue.","type":"insufficient_balance","code":"insufficient_balance","param":null}}`)
+	kept := int64(len(response) + len(receiver.URL) + len("Authorization") + len("Bearer receiver"))
+	started := kept - int64(len(response)) + deliveryStateBytes
+	spent := &atomic.Int64{}
+	budget := func(bytes int64) Options {
+		return Options{Local: true, NewLease: func() Lease { return &budgetLease{spent: spent, budget: bytes} }}
+	}
+	hold := func(e *Engine) *Held {
+		t.Helper()
+		c := e.Start(config)
+		c.Response(response)
+		held := c.Hold()
+		if held == nil || c.Active() {
+			t.Fatal("holding must end the capture and keep its export")
+		}
+		if got := e.Diagnostics().ReservedBytes; got != kept {
+			t.Fatalf("a held export reserves %d bytes, want %d", got, kept)
+		}
+		return held
+	}
+
+	e := New(context.Background(), budget(1<<30))
+	defer e.Close()
+	hold(e).Finish("first-repeat", map[string]any{"request_id": "first-repeat", "request_count": 6}, testMetadata())
+	record := <-received
+	if string(record["request_count"]) != "6" || string(record["request"]) != "null" || string(record["response"]) != string(response) || string(record["stogas"]) != string(testMetadata()) {
+		t.Fatalf("held record: %s", record)
+	}
+	await(t, func() bool { d := e.Diagnostics(); return d.Delivered == 1 && d.ReservedBytes == 0 })
+	hold(e).Discard()
+	if d := e.Diagnostics(); d.ReservedBytes != 0 {
+		t.Fatalf("a discarded export kept memory: %+v", d)
+	}
+	if e.Start(&exportconfig.Config{}).Hold() != nil {
+		t.Fatal("a capture without destinations holds nothing")
+	}
+
+	// Another capture takes the memory that delivery state needs.
+	spent.Store(0)
+	pressed := New(context.Background(), budget(kept+started+deliveryStateBytes/2))
+	defer pressed.Close()
+	held := hold(pressed)
+	other := pressed.Start(config)
+	held.Finish("first-repeat", testRecord("first-repeat"), testMetadata())
+	if d := pressed.Diagnostics(); d.MemoryDropped != 1 || d.ReservedBytes != started || d.PendingDeliveries != 0 {
+		t.Fatalf("memory pressure: %+v", d)
+	}
+	other.Discard()
+
+	closed := New(context.Background(), testOptions(true, 1<<20))
+	held = hold(closed)
+	closed.Close()
+	held.Finish("first-repeat", testRecord("first-repeat"), testMetadata())
+	if d := closed.Diagnostics(); d.Failed != 1 || d.ReservedBytes != 0 {
+		t.Fatalf("closed exporter: %+v", d)
+	}
+}

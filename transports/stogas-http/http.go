@@ -328,10 +328,13 @@ func (s *Server) failRun(ctx *requestContext, run *providerRun, respond bool) {
 		if run.state.Authorization != nil {
 			s.finalizeAfterResponse(ctx, run, run.request)
 		} else {
-			// The rejection is recorded before the response, so that the export
-			// can follow the request log.
-			logged := respond && response != nil && s.recordAdmissionRejection(ctx, response.status, response.code())
-			stogas.FinalizeRejectedExport(run.request, run.state, logged)
+			// The rejection is recorded before the response, and its export
+			// leaves with the request record that holds the rejection.
+			if respond && response != nil {
+				s.recordAdmissionRejection(ctx, response.status, response.code(), stogas.HoldRejectedExport(run.request, run.state))
+			} else {
+				run.state.Export.Discard()
+			}
 			run.cancel()
 		}
 		if respond && response != nil {
@@ -1028,6 +1031,11 @@ func (s *Server) shutdownWithContext(ctx context.Context) {
 			}
 			return
 		}
+	}
+	// Rejection counts end with the requests. Their exports leave before the
+	// exporter closes, and the drain below stores their rows.
+	if s.runtime != nil {
+		s.runtime.Billing().CloseRejectionLogs()
 	}
 	if s.exports != nil {
 		s.exports.Close()

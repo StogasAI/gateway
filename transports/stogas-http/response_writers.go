@@ -468,7 +468,7 @@ func (s *Server) writeError(ctx *requestContext, statusCode int, payload any) {
 	if len(ctx.writer.Header().Get("X-Request-ID")) == 0 {
 		_, _ = inferenceRequestID(ctx)
 	}
-	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode))
+	s.recordAdmissionRejection(ctx, statusCode, stogasbilling.NormalizeStogasErrorCode(code, statusCode), nil)
 	data, err := sonic.Marshal(payload)
 	if err != nil {
 		data = []byte(`{"error":{"message":"We could not complete the response.","type":"internal_error","code":"internal_error","param":null}}`)
