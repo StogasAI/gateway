@@ -129,6 +129,7 @@ func BenchmarkCatalogScaleLoad(b *testing.B) {
 // Requests pin the release they resolved against, including both artifact
 // bodies. Measure that ownership separately from load-time allocations.
 func BenchmarkCatalogReleaseRetained(b *testing.B) {
+	parts := embeddedParts(b)
 	b.ReportAllocs()
 	runtime.GC()
 	runtime.GC()
@@ -138,7 +139,7 @@ func BenchmarkCatalogReleaseRetained(b *testing.B) {
 	var release *snapshot
 	for n := 0; n < b.N; n++ {
 		var err error
-		release, err = snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, nil, Identity{})
+		release, err = snapshotFromRelease(embeddedRuntimeCatalogJSON, embeddedPublicCatalogJSON, parts, Identity{})
 		if err != nil {
 			b.Fatal(err)
 		}

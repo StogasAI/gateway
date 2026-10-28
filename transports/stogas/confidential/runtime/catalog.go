@@ -12,11 +12,15 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"golang.org/x/sync/errgroup"
 )
 
 // artifactBytesPerSecond is the slowest delivery that a catalog download waits for beyond the
 // evidence timeouts, so a large catalog has time to arrive and a stalled origin still fails over.
 const artifactBytesPerSecond = 4 << 20
+
+// partDownloads is how many parts of a public catalog download at once.
+const partDownloads = 8
 
 // transferTime is how long size bytes take at the slowest delivery a download waits for.
 func transferTime(size int64) time.Duration {
@@ -120,32 +124,54 @@ func (e *currentEvidence) installCatalog(parent context.Context, approved approv
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	reference, err := catalog.PublicArchive(publicBytes)
+	files, err := catalog.PublicCatalogFiles(publicBytes)
 	if err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
-	archiveBytes, err := e.archive(parent, reference)
+	parts, err := e.parts(parent, files)
 	if err != nil {
 		return errors.Join(errCatalogUnavailable, err)
 	}
-	if err := catalog.InstallApproved(runtimeBytes, publicBytes, archiveBytes, approved.identity(), release.PublicDigest); err != nil {
+	if err := catalog.InstallApproved(runtimeBytes, publicBytes, parts, approved.identity(), release.PublicDigest); err != nil {
 		return errors.Join(errCatalogIncompatible, err)
 	}
 	return nil
 }
 
-// archive gets the archive that a public catalog names, or nil when it names none. The active
-// catalog supplies it when the two share it, so a release downloads it only when it changed.
-func (e *currentEvidence) archive(parent context.Context, reference *catalog.ArchiveReference) ([]byte, error) {
-	if reference == nil {
-		return nil, nil
+// parts gets every file that a public root names. The active catalog supplies each file that it
+// shares with the release, so a release downloads only the files that changed.
+func (e *currentEvidence) parts(parent context.Context, files []catalog.PublicFile) (map[string][]byte, error) {
+	parts := make(map[string][]byte, len(files))
+	var missing []catalog.PublicFile
+	var size int64
+	for _, file := range files {
+		if data, ok := catalog.ActivePublicPart(file.SHA256); ok {
+			parts[file.SHA256] = data
+			continue
+		}
+		missing = append(missing, file)
+		size += file.Size
 	}
-	if data, ok := catalog.ActiveArchive(reference.SHA256); ok {
-		return data, nil
-	}
-	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(reference.Size))
+	ctx, cancel := context.WithTimeout(parent, evidenceAcquisitionTimeout+transferTime(size))
 	defer cancel()
-	return e.artifact(ctx, "sha256:"+reference.SHA256, reference.Size, catalog.MaxArchiveBytes)
+	downloaded := make([][]byte, len(missing))
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(partDownloads)
+	for index, file := range missing {
+		group.Go(func() error {
+			// The root checked each size against its kind's limit.
+			data, err := e.artifact(groupContext, "sha256:"+file.SHA256, file.Size, file.Size)
+			downloaded[index] = data
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	for index, file := range missing {
+		parts[file.SHA256] = downloaded[index]
+	}
+	return parts, nil
 }
 
 func (e *currentEvidence) artifact(ctx context.Context, digest string, size, limit int64) ([]byte, error) {
