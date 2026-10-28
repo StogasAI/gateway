@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -726,18 +727,17 @@ func (v *resolvedPolicyValues) resolveField(path string) (policy.Value, bool) {
 	if v == nil || !ok {
 		return policy.Value{}, false
 	}
-	parts := strings.Split(path, ".")
-	node, ok := v.root[parts[0]]
+	root, rest, _ := strings.Cut(path, ".")
+	node, ok := v.root[root]
 	if !ok {
 		return policy.Value{}, false
 	}
-	if len(parts) == 2 && parts[1] == "id" {
+	if rest == "id" {
 		return policy.Value{Type: fieldType, String: node.id}, true
 	}
 	current := reflect.ValueOf(node.fields)
-	for _, part := range parts[1:] {
-		current, ok = policyChild(current, part)
-		if !ok {
+	for name := range strings.SplitSeq(rest, ".") {
+		if current, ok = policyChild(current, name); !ok {
 			return policy.Value{}, false
 		}
 	}
@@ -762,19 +762,38 @@ func policyChild(value reflect.Value, name string) (reflect.Value, bool) {
 		child := value.MapIndex(reflect.ValueOf(name))
 		return child, child.IsValid()
 	case reflect.Struct:
-		typeOf := value.Type()
-		for index := 0; index < value.NumField(); index++ {
-			field := typeOf.Field(index)
-			jsonName := strings.Split(field.Tag.Get("json"), ",")[0]
-			if jsonName == "" {
-				jsonName = field.Name
-			}
-			if jsonName == name {
-				return value.Field(index), true
-			}
+		if index, ok := policyFields(value.Type())[name]; ok {
+			return value.Field(index), true
 		}
 	}
 	return reflect.Value{}, false
+}
+
+var policyFieldIndexes sync.Map // reflect.Type -> immutable map of JSON names to field indexes
+
+// policyFields indexes the fields of a struct type by JSON name, so policies parse each type's
+// tags once rather than on every read.
+func policyFields(shape reflect.Type) map[string]int {
+	if fields, ok := policyFieldIndexes.Load(shape); ok {
+		return fields.(map[string]int)
+	}
+	fields := make(map[string]int, shape.NumField())
+	for index := range shape.NumField() {
+		field := shape.Field(index)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		fields[name] = index
+	}
+	stored, _ := policyFieldIndexes.LoadOrStore(shape, fields)
+	return stored.(map[string]int)
 }
 
 func typedPolicyValue(value reflect.Value, fieldType string, path string) (policy.Value, bool) {
