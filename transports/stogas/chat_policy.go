@@ -34,7 +34,7 @@ func validateCommonChatCompletionPolicy(state *State) error {
 	if _, ok := raw["messages"]; !ok {
 		return invalidRequest("messages is required")
 	}
-	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "inference_geo", "instructions", "max_output_tokens", "prompt_cache_isolation_key", "speed", "text"} {
+	for _, name := range []string{"audio", "function_call", "functions", "container", "fallbacks", "inference_geo", "instructions", "max_output_tokens", "moderation", "prompt_cache_isolation_key", "speed", "text"} {
 		if _, ok := raw[name]; ok {
 			return unsupportedParameterError(name)
 		}
@@ -105,6 +105,9 @@ func unsupportedParameterError(name string) error {
 		return invalidRequest("inference_geo is not supported; use a regional deployment ID or a routing filter")
 	case "prompt":
 		return invalidRequest("prompt is not supported; send the prompt text in instructions and input")
+	case "moderation":
+		// Dropping it as unknown would answer a request that asked to be blocked.
+		return invalidRequest("moderation is not supported; no request or response is moderated")
 	}
 	if hint, ok := otherEndpointParameters[name]; ok {
 		return invalidRequest(name + " is " + hint)

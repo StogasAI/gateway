@@ -37,6 +37,7 @@ func validateCommonResponsesPolicy(state *State) error {
 		"inference_geo",
 		"max_completion_tokens",
 		"max_tokens",
+		"moderation",
 		"previous_response_id",
 		"prompt",
 		"reasoning_effort",
