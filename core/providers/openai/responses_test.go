@@ -4674,6 +4674,42 @@ func TestFilterUnsupportedToolsKeepsBareOpenAITools(t *testing.T) {
 	}
 }
 
+// OpenAI accepts blocked_domains alone or beside allowed_domains, so neither list may be lost.
+func TestFilterUnsupportedToolsKeepsWebSearchDomainFilters(t *testing.T) {
+	blockedOnly := &schemas.ResponsesToolWebSearchFilters{BlockedDomains: []string{"example.com"}}
+	both := &schemas.ResponsesToolWebSearchFilters{
+		AllowedDomains:  []string{"wikipedia.org"},
+		BlockedDomains:  []string{"en.wikipedia.org"},
+		TimeRangeFilter: &schemas.Interval{},
+	}
+	req := &OpenAIResponsesRequest{
+		ResponsesParameters: schemas.ResponsesParameters{
+			Tools: []schemas.ResponsesTool{
+				{Type: schemas.ResponsesToolTypeWebSearch, ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{Filters: blockedOnly}},
+				{Type: schemas.ResponsesToolTypeWebSearch, ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{Filters: both}},
+				{Type: schemas.ResponsesToolTypeWebSearch, ResponsesToolWebSearch: &schemas.ResponsesToolWebSearch{Filters: &schemas.ResponsesToolWebSearchFilters{}}},
+			},
+		},
+	}
+
+	req.filterUnsupportedTools(true, schemas.OpenAI)
+
+	wire := make([]string, len(req.Tools))
+	for i, tool := range req.Tools {
+		encoded, err := json.Marshal(tool.ResponsesToolWebSearch.Filters)
+		require.NoError(t, err)
+		wire[i] = string(encoded)
+	}
+	want := []string{
+		`{"blocked_domains":["example.com"]}`,
+		`{"allowed_domains":["wikipedia.org"],"blocked_domains":["en.wikipedia.org"]}`,
+		`null`,
+	}
+	require.Equal(t, want, wire)
+	req.Tools[1].ResponsesToolWebSearch.Filters.BlockedDomains[0] = "changed.example"
+	require.Equal(t, "en.wikipedia.org", both.BlockedDomains[0], "the converted request shares the caller's blocked_domains")
+}
+
 // TestBareOpenAIToolsSerialize checks the wire shape: a bare type emits just its
 // discriminator, and apply_patch keeps allowed_callers (OpenAI accepts it there).
 func TestBareOpenAIToolsSerialize(t *testing.T) {

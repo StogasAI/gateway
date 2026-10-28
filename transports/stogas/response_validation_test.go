@@ -1688,11 +1688,22 @@ func TestProviderResponsesEnforcesTerminalItemStatusAndDomainFilters(t *testing.
 		t.Fatalf("outside-domain source error = %v, want malformed provider response", err)
 	}
 
-	blockedRequest := `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`
-	blocked := validUnaryResponsesProviderResponse("resp_blocked")
-	blocked.Output = []schemas.ResponsesMessage{providerWebSearchOutputItem("ws_blocked", "https://blocked.example.com/page")}
-	if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, blockedRequest), blocked); !errors.Is(err, ErrProviderResponseMalformed) {
-		t.Fatalf("blocked-domain source error = %v, want malformed provider response", err)
+	for _, blockedRequest := range []string{
+		`{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20260209","name":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["blocked.example.com"]}}]}`,
+		`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["blocked.example.com"]}}]}`,
+	} {
+		state := resolvedResponseValidationState(t, blockedRequest)
+		kept := validUnaryResponsesProviderResponse("resp_kept")
+		kept.Output = []schemas.ResponsesMessage{providerWebSearchOutputItem("ws_kept", "https://docs.example.com/page")}
+		if err := validateProviderResponsesResponse(state, kept); err != nil {
+			t.Fatalf("source beside the blocked subdomain rejected: %v\nrequest=%s", err, blockedRequest)
+		}
+		blocked := validUnaryResponsesProviderResponse("resp_blocked")
+		blocked.Output = []schemas.ResponsesMessage{providerWebSearchOutputItem("ws_blocked", "https://deep.blocked.example.com/page")}
+		if err := validateProviderResponsesResponse(state, blocked); !errors.Is(err, ErrProviderResponseMalformed) {
+			t.Fatalf("blocked-domain source error = %v, want malformed provider response\nrequest=%s", err, blockedRequest)
+		}
 	}
 }
 

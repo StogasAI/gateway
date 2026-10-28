@@ -637,6 +637,50 @@ func TestPrepareProviderRequestSendsBasicAnthropicWebToolVersions(t *testing.T) 
 	}
 }
 
+// OpenAI enforces blocked_domains, alone or beside allowed_domains, so the
+// provider must receive both lists as the client sent them.
+func TestPrepareProviderRequestSendsOpenAIWebSearchDomainFilters(t *testing.T) {
+	for _, filters := range []string{
+		`{"blocked_domains":["example.com"]}`,
+		`{"allowed_domains":["wikipedia.org","britannica.com"],"blocked_domains":["en.wikipedia.org"]}`,
+	} {
+		t.Run(filters, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST", Path: "/v1/responses",
+				Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"tools":[{"type":"web_search","filters":` + filters + `}]}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			var payload struct {
+				Tools []struct {
+					Filters json.RawMessage `json:"filters"`
+				} `json:"tools"`
+			}
+			body := preparedProviderBody(t, ctx, request.ResponsesRequest)
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode prepared body: %v", err)
+			}
+			if len(payload.Tools) != 1 || string(payload.Tools[0].Filters) != filters {
+				t.Fatalf("prepared body lost the domain filters %s: %s", filters, body)
+			}
+		})
+	}
+}
+
 func TestPrepareProviderRequestUsesPinnedCatalogTranslationContext(t *testing.T) {
 	const wireModel = "opaque-upstream-deployment"
 	wrongLimit := 100000

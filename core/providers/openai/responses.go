@@ -1418,18 +1418,15 @@ func (resp *OpenAIResponsesRequest) filterUnsupportedTools(webSearchContentTypes
 
 				// MaxUses is intentionally omitted (nil) - OpenAI doesn't support it
 
-				// Handle Filters: OpenAI doesn't support BlockedDomains or TimeRangeFilter
-				if tool.ResponsesToolWebSearch.Filters != nil {
-					hasAllowedDomains := len(tool.ResponsesToolWebSearch.Filters.AllowedDomains) > 0
-
-					if hasAllowedDomains {
-						// Keep only AllowedDomains (copy the slice to avoid sharing)
-						newWebSearch.Filters = &schemas.ResponsesToolWebSearchFilters{
-							AllowedDomains: append([]string(nil), tool.ResponsesToolWebSearch.Filters.AllowedDomains...),
-							// BlockedDomains and TimeRangeFilter are intentionally omitted - OpenAI doesn't support it
-						}
+				// Handle Filters: OpenAI accepts allowed_domains and blocked_domains, alone or
+				// together, but not TimeRangeFilter
+				if filters := tool.ResponsesToolWebSearch.Filters; filters != nil && (len(filters.AllowedDomains) > 0 || len(filters.BlockedDomains) > 0) {
+					// Copy the slices to avoid sharing; an empty list stays omitted
+					newWebSearch.Filters = &schemas.ResponsesToolWebSearchFilters{
+						AllowedDomains: append([]string(nil), filters.AllowedDomains...),
+						BlockedDomains: append([]string(nil), filters.BlockedDomains...),
+						// TimeRangeFilter is intentionally omitted - OpenAI doesn't support it
 					}
-					// If only blocked domains or both empty, Filters stays nil
 				}
 
 				if tool.ResponsesToolWebSearch.ExternalWebAccess != nil {
