@@ -251,10 +251,20 @@ func chutesE2EEAPIBaseURL(chutesBaseURL string) (string, error) {
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
+// ProviderWorkers is how many calls core runs at once for each provider. A
+// unary call holds its worker until the provider answers and a stream until
+// its response starts; further calls wait in core's queue. One worker per
+// provider connection keeps them from waiting while connections are free, and
+// an idle worker costs an 8-KiB stack.
+const ProviderWorkers = schemas.DefaultMaxConnsPerHost
+
 func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTLS bool) schemas.ProviderConfig {
 	config := schemas.ProviderConfig{
-		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
-		NetworkConfig:            schemas.DefaultNetworkConfig,
+		ConcurrencyAndBufferSize: schemas.ConcurrencyAndBufferSize{
+			Concurrency: ProviderWorkers,
+			BufferSize:  schemas.DefaultBufferSize,
+		},
+		NetworkConfig: schemas.DefaultNetworkConfig,
 	}
 	config.NetworkConfig.DefaultRequestTimeoutInSeconds = int(billing.GatewayRequestLifetime.Seconds())
 	// Core never retries. The gateway makes each retry and fallback itself, so

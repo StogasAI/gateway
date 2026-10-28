@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
+	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 )
 
@@ -90,4 +91,75 @@ func unixMillisecondsTime(value int64) *time.Time {
 	}
 	at := time.UnixMilli(value).UTC()
 	return &at
+}
+
+// providerCalls counts each provider's calls that hold or wait for one of
+// core's workers. Past stogas.ProviderWorkers, calls queue in core, which no
+// other limit shows: they hold little memory and use no CPU while they wait.
+type providerCalls struct {
+	mu      sync.Mutex
+	running map[schemas.ModelProvider]int
+	// The most calls one provider had at once, this minute and the last.
+	minute         int64
+	peak, previous providerCallPeak
+}
+
+type providerCallPeak struct {
+	provider schemas.ModelProvider
+	calls    int
+}
+
+type providerCallDiagnostics struct {
+	Workers            int    `json:"workers"`
+	RecentPeak         int    `json:"recentPeak"`
+	RecentPeakProvider string `json:"recentPeakProvider,omitempty"`
+}
+
+// begin counts a call until the returned function runs.
+func (p *providerCalls) begin(provider schemas.ModelProvider, now time.Time) func() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.running == nil {
+		p.running = make(map[schemas.ModelProvider]int)
+	}
+	p.running[provider]++
+	p.advance(now)
+	if calls := p.running[provider]; calls > p.peak.calls {
+		p.peak = providerCallPeak{provider: provider, calls: calls}
+	}
+	return func() {
+		p.mu.Lock()
+		p.running[provider]--
+		p.mu.Unlock()
+	}
+}
+
+func (p *providerCalls) advance(now time.Time) {
+	switch minute := now.Unix() / 60; minute {
+	case p.minute:
+	case p.minute + 1:
+		p.minute, p.previous, p.peak = minute, p.peak, providerCallPeak{}
+	default:
+		p.minute, p.previous, p.peak = minute, providerCallPeak{}, providerCallPeak{}
+	}
+}
+
+// diagnostics reports the most calls one provider had at once in the last one
+// to two minutes, including calls that started earlier and still run.
+func (p *providerCalls) diagnostics(now time.Time) providerCallDiagnostics {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.advance(now)
+	peak := p.peak
+	if p.previous.calls > peak.calls {
+		peak = p.previous
+	}
+	for provider, calls := range p.running {
+		if calls > peak.calls {
+			peak = providerCallPeak{provider: provider, calls: calls}
+		}
+	}
+	return providerCallDiagnostics{
+		Workers: stogas.ProviderWorkers, RecentPeak: peak.calls, RecentPeakProvider: string(peak.provider),
+	}
 }
