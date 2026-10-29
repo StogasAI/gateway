@@ -76,6 +76,11 @@ func TestNormalizeUpstreamStatus(t *testing.T) {
 		{name: "untyped quota wording is not guessed", message: "quota exhausted", wantStatus: "provider_error"},
 		{name: "bad request", statusCode: intPtr(400), message: "messages.0.content is required", wantStatus: "invalid_request"},
 		{name: "cataloged provider model not found", statusCode: intPtr(404), message: "model not found", errorType: "invalid_request_error", code: "model_not_found", wantStatus: "model_unavailable"},
+		{name: "Groq retired model under 400", statusCode: intPtr(400), message: "The model `mixtral-8x7b-32768` has been decommissioned and is no longer supported.", errorType: "invalid_request_error", code: "model_decommissioned", wantStatus: "model_unavailable"},
+		{name: "Azure retiring model under 400", statusCode: intPtr(400), message: "The model 'Format:OpenAI,Name:gpt-4o,Version:2024-11-20' is in deprecation.", code: "ServiceModelDeprecating", wantStatus: "model_unavailable"},
+		{name: "Azure retired model under 410", statusCode: intPtr(410), message: "The model associated with the deployment is deprecated and no longer available.", wantStatus: "model_unavailable"},
+		{name: "OpenAI region refusal", statusCode: intPtr(403), message: "Country, region, or territory not supported", errorType: "request_forbidden", code: "unsupported_country_region_territory", wantStatus: "model_unavailable"},
+		{name: "retirement wording alone is not trusted", statusCode: intPtr(400), message: "This model version has reached the end of its life", errorType: "ValidationException", wantStatus: "invalid_request"},
 		{name: "conflict", statusCode: intPtr(409), message: "conflicting request state", wantStatus: "invalid_request"},
 		{name: "request too large", statusCode: intPtr(413), message: "request exceeds maximum size", wantStatus: "request_too_large"},
 		{name: "request-too-large type without status", errorType: "request_too_large", wantStatus: "request_too_large"},
@@ -206,6 +211,9 @@ func TestNormalizeUpstreamStatusExhaustiveStructuredIdentifierMatrix(t *testing.
 		{identifier: "invalid_image", want: "invalid_image"},
 		{identifier: "overloaded_error", want: "provider_overloaded"},
 		{identifier: "upstream_response_invalid", want: "invalid_response"},
+		{identifier: "model_decommissioned", want: "model_unavailable"},
+		{identifier: "ServiceModelDeprecating", want: "model_unavailable"},
+		{identifier: "unsupported_country_region_territory", want: "model_unavailable"},
 	}
 	statuses := []*int{
 		nil,
@@ -509,7 +517,7 @@ func expectedStatusFallback(statusCode *int, defaultStatus string) string {
 		return "rate_limited"
 	case *statusCode == 408 || *statusCode == 504:
 		return "timeout"
-	case *statusCode == 404:
+	case *statusCode == 404 || *statusCode == 410:
 		return "model_unavailable"
 	case *statusCode == 503:
 		return "provider_unavailable"
