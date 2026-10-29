@@ -50,8 +50,9 @@ func PublicModelsPayload() (PublicModelsResponse, bool) {
 		tied bool
 	}
 	groups := make(map[string]newestModel)
+	now := time.Now()
 	for deploymentID, deployment := range snap.graph.Deployments {
-		if !deploymentAvailableNow(deployment) {
+		if !deploymentAvailableAt(deployment, now) {
 			continue
 		}
 		modelIDsBySelector[deploymentID] = deployment.ModelID

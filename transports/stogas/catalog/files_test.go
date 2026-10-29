@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/maximhq/bifrost/core/schemas"
 )
 
 // embeddedFiles is the fallback's root and every part that it names, by SHA-256 in hex.
@@ -194,6 +196,53 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	}
 	if _, ok := snap.parts[dated.SHA256]; ok || len(snap.parts) != len(held) {
 		t.Fatal("the release holds a part that it did not come with")
+	}
+}
+
+func TestRoutesServeUntilTheirDateHasEndedEverywhere(t *testing.T) {
+	loadTestCatalog(t)
+	snap := activeState()
+	route, ok := snap.route(schemas.OpenAI, RouteResponses)
+	if !ok {
+		t.Fatal("the OpenAI Responses route is missing")
+	}
+	now := time.Now()
+	deploymentID := ""
+	for _, id := range route.DeploymentIDs {
+		if deploymentAvailableAt(snap.graph.Deployments[id], now) {
+			deploymentID = id
+			break
+		}
+	}
+	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, now); !ok {
+		t.Fatalf("%s did not serve through %s", deploymentID, route.ID)
+	}
+	// The route's date has ended everywhere two days later.
+	route.RetirementDate = stringPointer(now.AddDate(0, 0, -2).Format(time.DateOnly))
+	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, now); ok {
+		t.Fatalf("%s served through a retired route", deploymentID)
+	}
+	if id, _ := snap.deploymentIDFor(route, deploymentID); id != "" {
+		t.Fatalf("a retired route selected %s", id)
+	}
+	route.RetirementDate = stringPointer(now.AddDate(0, 0, 1).Format(time.DateOnly))
+	if _, ok := snap.deploymentFromCompiledAt(deploymentID, route, now); !ok {
+		t.Fatal("a route stopped serving before its date")
+	}
+
+	deployment := &compiledDeployment{}
+	route = compiledRoute{RetirementDate: stringPointer("2026-08-01")}
+	ends := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	for at, serves := range map[time.Time]bool{
+		ends.Add(-time.Nanosecond): true,
+		ends:                       false,
+	} {
+		if servesAt(deployment, route, at) != serves {
+			t.Fatalf("at %s, serves = %t", at, !serves)
+		}
+	}
+	if !servesAt(deployment, compiledRoute{}, ends.AddDate(100, 0, 0)) {
+		t.Fatal("a route without a retirement date retired")
 	}
 }
 

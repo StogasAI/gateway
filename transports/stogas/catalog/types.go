@@ -235,4 +235,6 @@ type compiledRoute struct {
 	DocumentFormats DocumentFormats `json:"documentFormats"`
 	Interfaces      []string        `json:"interfaces"`
 	ProviderID      string          `json:"providerId"`
+	// The day that the provider names for shutting the route down, or for its own end.
+	RetirementDate *string `json:"retirementDate"`
 }
