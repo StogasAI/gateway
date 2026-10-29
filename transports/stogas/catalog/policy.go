@@ -127,6 +127,7 @@ func routingSelectionsInPool(snap *snapshot, route Route, want variant, availabl
 	modeServed := false
 	selections := make([]routingSelection, 0)
 	skipped := providerSkips{trace: trace}
+	now := time.Now()
 	for _, routeNode := range snap.graph.Routes {
 		provider := schemas.ModelProvider(routeNode.ProviderID)
 		supported := routeSupportsInterface(routeNode, route)
@@ -136,7 +137,7 @@ func routingSelectionsInPool(snap *snapshot, route Route, want variant, availabl
 		}
 		for _, id := range routeNode.DeploymentIDs {
 			compiled := snap.graph.Deployments[id]
-			if !deploymentAvailableNow(compiled) || compiled.Upstream.ReasoningMode != mode {
+			if !servesAt(compiled, routeNode, now) || compiled.Upstream.ReasoningMode != mode {
 				continue
 			}
 			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
@@ -332,7 +333,7 @@ func routingDeploymentsForProvider(
 		}
 		candidate, exists := snap.graph.Deployments[deploymentID]
 		if !exists ||
-			!deploymentAvailableNow(candidate) ||
+			!servesAt(candidate, routeNode, time.Now()) ||
 			candidate.ModelID != base.ModelID ||
 			candidate.Upstream.ReasoningMode != baseCompiled.Upstream.ReasoningMode ||
 			candidate.Upstream.ServiceTier != baseCompiled.Upstream.ServiceTier {

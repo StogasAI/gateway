@@ -54,10 +54,11 @@ func DeploymentForUpstreamModel(provider schemas.ModelProvider, upstreamModel st
 	}
 	var match Deployment
 	found := false
+	now := time.Now()
 	for _, routeNode := range snap.routes(provider, route) {
 		for _, deploymentID := range routeNode.DeploymentIDs {
 			compiled, ok := snap.graph.Deployments[deploymentID]
-			if !ok || !deploymentAvailableNow(compiled) || compiled.Upstream.Model != upstreamModel {
+			if !ok || !servesAt(compiled, routeNode, now) || compiled.Upstream.Model != upstreamModel {
 				continue
 			}
 			deployment, ok := snap.deploymentFromCompiled(deploymentID, routeNode)
@@ -103,8 +104,11 @@ func deploymentAvailableAt(deployment *compiledDeployment, now time.Time) bool {
 	return !retiredAt(deployment.RetirementDate, now)
 }
 
-func deploymentAvailableNow(deployment *compiledDeployment) bool {
-	return deploymentAvailableAt(deployment, time.Now())
+// servesAt says whether a deployment serves through a route at now: until the date of each has
+// ended everywhere on Earth. A deployment that the route alone serves carries the route's date
+// already; one that another route serves too goes on through that one.
+func servesAt(deployment *compiledDeployment, route compiledRoute, now time.Time) bool {
+	return deploymentAvailableAt(deployment, now) && !retiredAt(route.RetirementDate, now)
 }
 
 // retiredOn is the day that the deployment or model a request names retired: one whose
@@ -141,7 +145,7 @@ func (s *snapshot) sibling(routeNode compiledRoute, current *compiledDeployment,
 	for _, candidateID := range routeNode.DeploymentIDs {
 		candidate, ok := s.graph.Deployments[candidateID]
 		if ok &&
-			deploymentAvailableAt(candidate, at) &&
+			servesAt(candidate, routeNode, at) &&
 			candidate.Upstream.ServiceTier == tier &&
 			candidate.ModelID == current.ModelID &&
 			candidate.Upstream.ReasoningMode == mode &&
@@ -383,9 +387,10 @@ func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) (
 	if selector == "" {
 		return "", false
 	}
+	now := time.Now()
 	if deployment, ok := s.graph.Deployments[selector]; ok {
 		if _, attached := deployment.Routes[route.ID]; !attached ||
-			!deploymentAvailableNow(deployment) ||
+			!servesAt(deployment, route, now) ||
 			!s.qualifierMatches(qualifier, route.ProviderID, deployment.ModelID) {
 			return "", false
 		}
@@ -399,7 +404,7 @@ func (s *snapshot) deploymentIDFor(route compiledRoute, requestedModel string) (
 	for _, deploymentID := range route.DeploymentIDs {
 		deployment, exists := s.graph.Deployments[deploymentID]
 		if exists &&
-			deploymentAvailableNow(deployment) &&
+			servesAt(deployment, route, now) &&
 			deployment.ModelID == modelID {
 			matchingDeploymentIDs = append(matchingDeploymentIDs, deploymentID)
 		}
@@ -486,7 +491,7 @@ func (s *snapshot) deploymentFromCompiled(deploymentID string, route compiledRou
 // deploymentFromCompiledAt resolves the deployment for a request that started at an instant.
 func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledRoute, at time.Time) (Deployment, bool) {
 	deployment, ok := s.graph.Deployments[deploymentID]
-	if !ok || !deploymentAvailableAt(deployment, at) {
+	if !ok || !servesAt(deployment, route, at) {
 		return Deployment{}, false
 	}
 	served, ok := deployment.Routes[route.ID]

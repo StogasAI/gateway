@@ -761,6 +761,9 @@ func validateCompiledRoute(graph compiledGraph, routeID string, route compiledRo
 	if err := validateDocumentFormats(route.DocumentFormats); err != nil {
 		return fmt.Errorf("route %s: %w", routeID, err)
 	}
+	if route.RetirementDate != nil && !validDate(*route.RetirementDate) {
+		return fmt.Errorf("route %s has an invalid retirementDate", routeID)
+	}
 	return nil
 }
 
