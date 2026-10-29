@@ -360,6 +360,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "rate_limited"
 	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"):
 		return "content_filter"
+	case identifiers.has("model_decommissioned", "servicemodeldeprecating", "unsupported_country_region_territory"):
+		// The provider retired the model, or does not serve it to our region,
+		// whatever status it sends: Groq and Azure send a retirement as 400.
+		return "model_unavailable"
 	case statusCode == 401:
 		return "authentication_error"
 	case statusCode == 403:
@@ -378,9 +382,10 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "request_too_large"
 	case statusCode >= 500:
 		return "provider_error"
-	case statusCode == 404:
+	case statusCode == 404 || statusCode == 410:
 		// The catalog already resolved a known upstream model. A provider 404
-		// therefore means that the selected deployment is unavailable or drifted.
+		// therefore means that the selected deployment is unavailable or drifted,
+		// and a 410 that the provider retired it.
 		return "model_unavailable"
 	case statusCode == 400 || statusCode == 409 || statusCode == 415 || statusCode == 422:
 		return "invalid_request"
