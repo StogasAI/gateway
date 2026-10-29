@@ -1686,6 +1686,24 @@ func TestInferenceHeadersRejectInternalControlHeaders(t *testing.T) {
 	}
 }
 
+func TestInferenceHeadersNameTheFirstRefusedHeaderInByteOrder(t *testing.T) {
+	ctx := newTestRequest(t)
+	testRequestURI(ctx, "/v1/responses")
+	ctx.request.Method = http.MethodPost
+	ctx.request.Header.Set("Authorization", "Bearer sk-test")
+	ctx.request.Header.Set("Content-Type", "application/json")
+	ctx.request.Header.Set("X-Stogas-Internal-Mode", "client-controlled")
+	ctx.request.Header.Set("X-BF-Direct-Key", "client-controlled")
+	ctx.request.Header.Set("Anthropic-Beta", "client-controlled")
+
+	if _, ok := (&Server{}).requireInferenceHeaders(ctx); ok {
+		t.Fatal("expected refused headers to be rejected")
+	}
+	if body := string(testResponse(ctx).Body.Bytes()); !strings.Contains(body, "Unsupported request header: anthropic-beta\"") {
+		t.Fatalf("expected the first refused header in byte order, got %s", body)
+	}
+}
+
 func TestInferenceHeadersValidateAcceptValues(t *testing.T) {
 	tests := []struct {
 		accept []string
