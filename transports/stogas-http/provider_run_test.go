@@ -62,6 +62,8 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "authentication", failure: failure(http.StatusUnauthorized, ""), want: nextPair},
 		{name: "permission", failure: failure(http.StatusForbidden, ""), want: nextPair},
 		{name: "deployment gone", failure: failure(http.StatusNotFound, ""), want: nextPair},
+		{name: "model retired", failure: failure(http.StatusGone, ""), want: nextPair},
+		{name: "model decommissioned", failure: failure(http.StatusBadRequest, "model_decommissioned"), want: nextPair},
 		{name: "invalid request", failure: failure(http.StatusBadRequest, ""), want: stopRun},
 		{name: "context length", failure: failure(http.StatusBadRequest, "context_length_exceeded"), want: stopRun},
 		{name: "content filter", failure: failure(http.StatusBadRequest, "content_filter"), want: stopRun},

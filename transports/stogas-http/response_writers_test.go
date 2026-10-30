@@ -108,6 +108,25 @@ func TestWriteProviderErrorTellsClientsWhenToRetry(t *testing.T) {
 	}
 }
 
+func TestPublicBifrostErrorNamesAProviderRetirementAsTheCatalogDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  *schemas.BifrostError
+	}{
+		{"Groq under 400", testBifrostError(http.StatusBadRequest, "The model `mixtral-8x7b-32768` has been decommissioned and is no longer supported.", "invalid_request_error", "model_decommissioned")},
+		{"Azure under 410", testBifrostError(http.StatusGone, "The model associated with the deployment is deprecated and no longer available.", "", "")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			status, payload := publicBifrostError(tc.err)
+			errorObject := publicErrorObject(t, payload)
+			if status != http.StatusBadRequest || errorObject["code"] != "model_retired" || errorObject["type"] != "invalid_request_error" ||
+				errorObject["message"] != "The provider retired the requested model. Choose another model." {
+				t.Fatalf("status = %d, error = %#v", status, errorObject)
+			}
+		})
+	}
+}
+
 func TestPublicBifrostErrorKeepsProviderLimitAndPolicyDetails(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
