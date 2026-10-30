@@ -10,6 +10,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -679,7 +680,12 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 func authorizationResultError(result string, waitMS *int64) error {
 	if refusal := databaseRefusals[result]; refusal != nil {
 		if refusal.statusCode == 429 && waitMS != nil {
-			return &retryAfterError{refusal, time.Duration(*waitMS) * time.Millisecond}
+			// A reset can be up to 1,000 years away, past the longest Duration.
+			delay := time.Duration(math.MaxInt64)
+			if *waitMS < int64(delay/time.Millisecond) {
+				delay = time.Duration(*waitMS) * time.Millisecond
+			}
+			return &retryAfterError{refusal, delay}
 		}
 		return refusal
 	}

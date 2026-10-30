@@ -67,7 +67,7 @@ func TestInspectionAtSavedResourceScopes(t *testing.T) {
 		t.Run(string(scope), func(t *testing.T) {
 			entries := []InspectionSource{root}
 			if scope != OrganizationScope {
-				entries = append(entries, InspectionSource{Scope: scope, ID: "resource", Config: json.RawMessage(`{"limits":{"lifetimeTokens":50}}`)})
+				entries = append(entries, InspectionSource{Scope: scope, ID: "resource", Config: json.RawMessage(`{"limits":{"total":{"tokens":50}}}`)})
 			}
 			result, err := InspectSources(entries, nil)
 			if err != nil {

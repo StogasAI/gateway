@@ -575,7 +575,7 @@ func TestSourceRevisionSharesPIIAndKeepsInFlightSnapshotAfterClose(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed, err := cache.acquireSource([]byte(`{"limits":{"spend":{"lifetimeUsd":"10"}},"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
+	changed, err := cache.acquireSource([]byte(`{"limits":{"spend":{"usd":"10"}},"plugins":{"stogasRedaction":{"literals":[{"values":["COMPANY_SECRET"]}]}}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

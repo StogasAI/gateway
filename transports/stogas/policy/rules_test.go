@@ -571,9 +571,9 @@ func TestRuleConditionsAreTypedAndNeverTreatUnknownAsFalse(t *testing.T) {
 }
 
 func TestRuleCounterIdentityIgnoresFormatting(t *testing.T) {
-	first := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='openai'","limits":{"spend":{"lifetimeUsd":"10"}}}}}`)
-	formatted := ruleSource(t, `{"rules":{"paid":{"when":"( provider.id == \"openai\" )","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
-	different := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='anthropic'","limits":{"spend":{"lifetimeUsd":"20"}}}}}`)
+	first := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='openai'","limits":{"spend":{"usd":"10"}}}}}`)
+	formatted := ruleSource(t, `{"rules":{"paid":{"when":"( provider.id == \"openai\" )","limits":{"spend":{"usd":"20"}}}}}`)
+	different := ruleSource(t, `{"rules":{"paid":{"when":"provider.id=='anthropic'","limits":{"spend":{"usd":"20"}}}}}`)
 	if first.Rules[0].ConditionDigest() != formatted.Rules[0].ConditionDigest() || first.Rules[0].ConditionDigest() == different.Rules[0].ConditionDigest() {
 		t.Fatal("counter condition identity changed incorrectly")
 	}
@@ -589,7 +589,7 @@ func TestRuleCounterIdentityIgnoresFormatting(t *testing.T) {
 
 func TestRuleShapeRejectsNestedAuthorityAndReplaceableBudgets(t *testing.T) {
 	for _, body := range []string{
-		`{"mode":"default","limits":{"lifetimeTokens":1}}`,
+		`{"mode":"default","limits":{"total":{"tokens":1}}}`,
 		`{"when":"true"}`, `{"mode":null,"input":{"asciiOnly":true}}`,
 		`{"delegation":{"request":true}}`, `{"rules":{"again":{"input":{"asciiOnly":true}}}}`,
 		`{"when":"true","encryption":{"keys":{}}}`, `{"version":1,"input":{"asciiOnly":true}}`,
