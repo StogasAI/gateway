@@ -323,7 +323,7 @@ func statusFailureAction(failure *schemas.BifrostError) failureAction {
 	switch billing.NormalizeUpstreamStatus(failure) {
 	case "connection_error", "timeout", "rate_limited", "provider_unavailable", "provider_overloaded", "provider_error", "invalid_response":
 		return retryPair
-	case "authentication_error", "permission_error", "over_budget", "model_unavailable":
+	case "authentication_error", "permission_error", "over_budget", "model_unavailable", "model_retired":
 		return nextPair
 	default:
 		return stopRun

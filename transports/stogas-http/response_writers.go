@@ -184,6 +184,10 @@ func publicStableGatewayError(bifrostErr *schemas.BifrostError) (int, string, st
 	case "rate_limited":
 		return http.StatusTooManyRequests, "rate_limit_error", "upstream_rate_limit_error",
 			"The upstream provider rate limit was exceeded", true
+	case "model_retired":
+		// The same error as a request for a model that the catalog already lists as retired.
+		return http.StatusBadRequest, "invalid_request_error", "model_retired",
+			"The provider retired the requested model. Choose another model.", true
 	default:
 		return 0, "", "", "", false
 	}
