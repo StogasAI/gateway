@@ -56,18 +56,18 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 			"delegation": map[string]any{"request": true},
 			"routing":    map[string]any{"filter": strings.Join(predicates, " && "), "sort": []map[string]any{{"by": "deployment.id", "direction": "asc"}}},
 			"limits": map[string]any{
-				"spend": map[string]any{"lifetimeUsd": "1000000", "recurring": map[string]any{
-					"daily":   map[string]any{"maxUsd": "100000", "timeZone": "UTC", "window": map[string]any{"count": 1, "unit": "day"}},
-					"monthly": map[string]any{"maxUsd": "100000", "timeZone": "UTC", "window": map[string]any{"count": 1, "unit": "month"}},
-				}},
-				"requests":       map[string]any{"rate": map[string]any{"max": 60, "window": map[string]any{"count": 1, "unit": "second"}}},
-				"tokens":         map[string]any{"tokens": map[string]any{"max": 1_000_000_000, "window": map[string]any{"count": 1, "unit": "minute"}}},
-				"lifetimeTokens": 1_000_000_000_000, "concurrentRequests": 10000,
+				"spend":    map[string]any{"usd": "1000000"},
+				"daily":    map[string]any{"usd": "100000", "per": map[string]any{"count": 1, "unit": "day", "timeZone": "UTC"}},
+				"monthly":  map[string]any{"usd": "100000", "per": map[string]any{"count": 1, "unit": "month", "timeZone": "UTC"}},
+				"rate":     map[string]any{"requests": 60, "per": map[string]any{"count": 1, "unit": "second", "refill": "gradual"}},
+				"tokens":   map[string]any{"tokens": 1_000_000_000, "per": map[string]any{"count": 1, "unit": "minute"}},
+				"total":    map[string]any{"tokens": 1_000_000_000_000},
+				"parallel": map[string]any{"concurrentRequests": 10000},
 			},
 			"rules": map[string]any{
 				"selected_provider": map[string]any{
 					"when":    "provider.id == 'openai'",
-					"limits":  map[string]any{"spend": map[string]any{"lifetimeUsd": "100000"}},
+					"limits":  map[string]any{"spend": map[string]any{"usd": "100000"}},
 					"plugins": map[string]any{"stogasRedaction": map[string]any{"email_address": true}},
 				},
 			},

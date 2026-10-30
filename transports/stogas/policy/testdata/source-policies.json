@@ -346,39 +346,38 @@
     "sources": [
       {
         "limits": {
-          "spend": {
-            "lifetimeUsd": "10"
+          "lifetime": {
+            "usd": "10"
           }
         }
       },
       {
         "limits": {
-          "requests": {
-            "rate": {
-              "max": 1,
-              "window": {
-                "count": 1,
-                "unit": "second"
-              }
+          "rate": {
+            "requests": 1,
+            "per": {
+              "count": 1,
+              "unit": "second",
+              "refill": "gradual"
             }
           }
         }
       },
       {
         "limits": {
-          "tokens": {
-            "day": {
-              "max": 1000,
-              "window": {
-                "count": 1,
-                "unit": "day"
-              }
+          "day": {
+            "tokens": 1000,
+            "per": {
+              "count": 1,
+              "unit": "day",
+              "anchor": "2026-01-01T05:00:00.000Z",
+              "timeZone": "America/New_York"
             }
           }
         }
       }
     ],
-    "digest": "69e362843927e44447540834e80cbaab133ad5c6e872862ed198d1f4d1768113",
+    "digest": "5bf997fe95981c95a186c4f7fc6130901ac3547ffd97df44d41c3d419457d09f",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
@@ -715,7 +714,9 @@
               }
             },
             "limits": {
-              "lifetimeTokens": 1000
+              "total": {
+                "tokens": 1000
+              }
             }
           }
         }
@@ -723,7 +724,7 @@
       null,
       {}
     ],
-    "digest": "f9803fd66da0c025deecace55fb0020a8adb2da29d432a12165ac86d28b91345",
+    "digest": "c9bcd983590dc2d06a7914438f20224c90b6338eb1570c35010200ea4ac5d08a",
     "compiled": {
       "access": null,
       "compilerVersion": 1,

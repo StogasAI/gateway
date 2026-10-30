@@ -86,6 +86,11 @@ func TestDatabaseLimitRefusalsTellClientsWhenTheyEnd(t *testing.T) {
 	if err := authorizationResultError("key_token_limit", nil); errors.As(err, &retry) || !PairRefused(err) || ErrorStatus(err) != 429 {
 		t.Fatalf("lasting refusal = %v", err)
 	}
+	// A limit that resets every 1,000 years can wait longer than a Duration holds.
+	millennium := int64(1000 * 366 * 24 * 3_600_000)
+	if err := authorizationResultError("key_rate_limited", &millennium); !errors.As(err, &retry) || retry.RetryAfter() < 292*365*24*time.Hour {
+		t.Fatalf("millennium refusal = %v", err)
+	}
 	if err := authorizationResultError("platform_rate_limited", &wait); !errors.As(err, &retry) || PairRefused(err) || !errors.Is(err, ErrPlatformRateLimit) {
 		t.Fatalf("platform refusal = %v", err)
 	}

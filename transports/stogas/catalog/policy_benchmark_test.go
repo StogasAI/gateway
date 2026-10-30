@@ -69,7 +69,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 	indexes := make([]int, len(configs))
 	for index := range configs {
 		indexes[index] = index
-		source, err := policy.CompileSource([]byte(fmt.Sprintf(`{"limits":{"spend":{"lifetimeUsd":"%d"}},"routing":{"filter":"true"}}`, index+1)))
+		source, err := policy.CompileSource([]byte(fmt.Sprintf(`{"limits":{"spend":{"usd":"%d"}},"routing":{"filter":"true"}}`, index+1)))
 		if err != nil {
 			b.Fatal(err)
 		}
