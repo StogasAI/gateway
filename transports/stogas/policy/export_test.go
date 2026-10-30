@@ -33,21 +33,21 @@ func TestExportSourceContract(t *testing.T) {
 
 func TestExportCompositionRulesAndInspection(t *testing.T) {
 	const dest = `{"url":"https://collector.example/v1/traces"}`
-	const plugin = `{"stogasExport":{"destinations":[` + dest + `]}}`
-	const withoutContent = `{"stogasExport":{"destinations":[{"url":"https://collector.example/v1/traces","content":false}]}}`
+	const plugin = `{"export":{"destinations":[` + dest + `]}}`
+	const withoutContent = `{"export":{"destinations":[{"url":"https://collector.example/v1/traces","content":false}]}}`
 	for _, tc := range []struct {
 		name, org, key, provider string
 		want                     int
 		withoutContent           bool
 	}{
-		{"required survives neutral", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 1, false},
+		{"required survives neutral", `{"plugins":` + plugin + `}`, `{"plugins":{"export":{"destinations":[]}}}`, "openai", 1, false},
 		{"exact duplicate", `{"plugins":` + plugin + `}`, `{"plugins":` + plugin + `}`, "openai", 1, false},
-		{"distinct auth", `{"plugins":` + plugin + `}`, `{"plugins":{"stogasExport":{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer different"}}]}}}`, "openai", 2, false},
+		{"distinct auth", `{"plugins":` + plugin + `}`, `{"plugins":{"export":{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer different"}}]}}}`, "openai", 2, false},
 		{"without content", `{"plugins":` + withoutContent + `}`, `{}`, "openai", 1, true},
 		{"one record per receiver, with content", `{"plugins":` + withoutContent + `}`, `{"plugins":` + plugin + `}`, "openai", 1, false},
 		{"inherited content stays", `{"plugins":` + plugin + `}`, `{"plugins":` + withoutContent + `}`, "openai", 1, false},
 		{"default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{}`, "openai", 1, false},
-		{"neutral replaces default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{"plugins":{"stogasExport":{"destinations":[]}}}`, "openai", 0, false},
+		{"neutral replaces default", `{"rules":{"export":{"mode":"default","plugins":` + plugin + `}}}`, `{"plugins":{"export":{"destinations":[]}}}`, "openai", 0, false},
 		{"conditional applies", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "openai", 1, false},
 		{"conditional skips", `{"rules":{"export":{"when":"provider.id == 'openai'","plugins":` + plugin + `}}}`, `{}`, "anthropic", 0, false},
 	} {
@@ -97,13 +97,13 @@ func TestExportCompositionRulesAndInspection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, section := range []string{"plugins.stogasRedaction", "plugins.stogasExport", "plugins"} {
+	for _, section := range []string{"plugins.redaction", "plugins.export", "plugins"} {
 		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = ApplyRequest(base, request)
-		if section == "plugins.stogasRedaction" {
+		if section == "plugins.redaction" {
 			if !errors.Is(err, ErrRequestPolicyDenied) {
 				t.Fatalf("export permission bypass: %v", err)
 			}
@@ -118,9 +118,9 @@ func TestExportAggregateDestinationBound(t *testing.T) {
 	for i := range destinations {
 		destinations[i] = map[string]string{"url": fmt.Sprintf("https://collector.example/%d", i)}
 	}
-	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasExport": map[string]any{"destinations": destinations}}})
+	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"export": map[string]any{"destinations": destinations}}})
 	source := ruleSource(t, string(raw))
-	child := ruleSource(t, `{"plugins":{"stogasExport":{"destinations":[{"url":"https://other.example/"}]}}}`)
+	child := ruleSource(t, `{"plugins":{"export":{"destinations":[{"url":"https://other.example/"}]}}}`)
 	combined, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}, {Scope: KeyScope, Value: child}})
 	if err == nil {
 		_, err = combined.Activate(ruleValues{})

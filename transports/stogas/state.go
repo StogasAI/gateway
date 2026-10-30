@@ -180,7 +180,7 @@ func NewState(resolution *catalog.ResolvedRequest, rawAPIKey string, claims *bil
 func NewPair(resolution *catalog.ResolvedRequest, adapter Adapter) Pair {
 	pair := Pair{Resolution: resolution, Adapter: adapter}
 	if summary := resolution.StructuredPIIRedactionSummary(); summary != nil {
-		pair.PluginMetrics.StogasStructuredPIIRedaction = &plugins.StogasStructuredPIIRedactionMetrics{
+		pair.PluginMetrics.Redaction = &plugins.RedactionMetrics{
 			ItemsRedacted: summary.ItemsRedacted,
 			DurationUS:    summary.DurationUS,
 		}

@@ -142,7 +142,7 @@
       null,
       {
         "plugins": {
-          "stogasRedaction": {
+          "redaction": {
             "literals": [
               {
                 "values": [
@@ -155,12 +155,12 @@
         }
       }
     ],
-    "digest": "e16a80fee4b722aab25658a718f844eb2c2850566e0fb420b875905392c1ed2c",
+    "digest": "9786feba05ae3372df74e62815b45c5d46fdf07aadca0c121148d1d0db12a328",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
       "plugins": {
-        "stogasRedaction": {
+        "redaction": {
           "presets": [],
           "literals": [
             {
@@ -233,7 +233,7 @@
     "sources": [
       {
         "plugins": {
-          "stogasRedaction": {
+          "redaction": {
             "email_address": true,
             "customPattern": "ABCD",
             "literals": [
@@ -254,7 +254,7 @@
       },
       {
         "plugins": {
-          "stogasRedaction": {
+          "redaction": {
             "email_address": false,
             "customPattern": "BCDE",
             "literals": [
@@ -282,7 +282,7 @@
       },
       {
         "plugins": {
-          "stogasRedaction": {
+          "redaction": {
             "customPattern": "CDEF",
             "literals": [
               {
@@ -295,12 +295,12 @@
         }
       }
     ],
-    "digest": "329188c967f021b4c159c7d87824cfcf5c9721dbf24dd7d366ab6ab3e8c40002",
+    "digest": "1e362f50e218220ccc89b632fc9b0e97b72bc2b9c730c509aa632a25f0e2015a",
     "compiled": {
       "access": null,
       "compilerVersion": 1,
       "plugins": {
-        "stogasRedaction": {
+        "redaction": {
           "customPatterns": [
             "ABCD",
             "BCDE",
@@ -709,7 +709,7 @@
               "asciiOnly": true
             },
             "plugins": {
-              "stogasRedaction": {
+              "redaction": {
                 "email_address": true
               }
             },
@@ -724,7 +724,7 @@
       null,
       {}
     ],
-    "digest": "c9bcd983590dc2d06a7914438f20224c90b6338eb1570c35010200ea4ac5d08a",
+    "digest": "8f154f065593107821041fc26e1e9cca0a2e06004bec0ee63ec7ee9cc0ac3169",
     "compiled": {
       "access": null,
       "compilerVersion": 1,

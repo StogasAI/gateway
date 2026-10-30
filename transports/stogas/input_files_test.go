@@ -73,12 +73,12 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 			name, plugins, data      string
 			ascii, reject, encrypted bool
 		}{
-			{"opt in", `"stogasTextExtraction":true`, "aGVsbG8=", false, false, false},
-			{"redaction after extraction", `"stogasTextExtraction":true,"stogasRedaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
-			{"encrypted extraction and redaction", `"stogasTextExtraction":true,"stogasRedaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
-			{"ASCII after extraction", `"stogasTextExtraction":true`, "w6k=", true, true, false},
-			{"opaque cannot bypass ASCII", `"stogasTextExtraction":false`, "aGVsbG8=", true, true, false},
-			{"opaque cannot bypass redaction", `"stogasRedaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
+			{"opt in", `"textExtraction":true`, "aGVsbG8=", false, false, false},
+			{"redaction after extraction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
+			{"encrypted extraction and redaction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
+			{"ASCII after extraction", `"textExtraction":true`, "w6k=", true, true, false},
+			{"opaque cannot bypass ASCII", `"textExtraction":false`, "aGVsbG8=", true, true, false},
+			{"opaque cannot bypass redaction", `"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
 		} {
 			t.Run(route+"/"+tc.name, func(t *testing.T) {
 				ascii := "false"
@@ -94,7 +94,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 					}
 					defer key.Clear()
 					// Independently generated with Node crypto for this organization and purpose.
-					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"eIEP5gXKXonHW8cXk5BBcZHLWfwQy1fHRp2dsuH0ND3IommpMwlslorozMhdMiqaBvG9XeX-yGH40t7L9VaywZtcyT2EaqkBwJLQ_jqqh3jDlt-Kgzzrxqs"}`
+					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"eIEI9xLZeoLnTN4AooFabdKSWecKwFnfQIqMtq6iLibJ5zKhQw99hJ3zyPdSZGSEVvzqFLP5wF31yYjT-iqNXNb138WGqOu_2PBgVpU"}`
 					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"encrypted":` + envelope + `}}`)
 					if _, missingErr := policy.OpenSource(document, "org-test", nil); missingErr == nil {
 						t.Fatal("encrypted extraction accepted without key")
@@ -399,7 +399,7 @@ func TestNativeFileFormatsFollowSelectedRouteAfterTextExtraction(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var config *policy.Config
 			if tc.extract {
-				source, err := policy.CompileSource([]byte(`{"plugins":{"stogasTextExtraction":true}}`))
+				source, err := policy.CompileSource([]byte(`{"plugins":{"textExtraction":true}}`))
 				if err != nil {
 					t.Fatal(err)
 				}

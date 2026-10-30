@@ -153,7 +153,7 @@ func TestReasoningAliasesUseTheSameEarlyCatalogConstraints(t *testing.T) {
 
 func TestConditionalPolicyRedactsOnlyTheSelectedBranch(t *testing.T) {
 	loadTestCatalog(t)
-	source, err := policy.CompileSource([]byte(`{"rules":{"openai":{"when":"provider.id == 'openai'","plugins":{"stogasRedaction":{"literals":[{"values":["OPENAI_PRIVATE"]}]}}},"other":{"when":"provider.id == 'anthropic'","plugins":{"stogasRedaction":{"literals":[{"values":["OTHER_PRIVATE"]}]}}}}}`))
+	source, err := policy.CompileSource([]byte(`{"rules":{"openai":{"when":"provider.id == 'openai'","plugins":{"redaction":{"literals":[{"values":["OPENAI_PRIVATE"]}]}}},"other":{"when":"provider.id == 'anthropic'","plugins":{"redaction":{"literals":[{"values":["OTHER_PRIVATE"]}]}}}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 	loadTestCatalog(t)
 	for _, path := range []string{"/v1/chat/completions", "/v1/responses"} {
 		t.Run(path, func(t *testing.T) {
-			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1},"plugins":{"stogasRedaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
+			org, err := policy.CompileSource([]byte(`{"routing":{"fallbacks": 1},"plugins":{"redaction":{"literals":[{"values":["SAVED_PRIVATE"]}]}}}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -377,7 +377,7 @@ func TestRequestPolicyCompilesOnceAndCombinesRedactionBeforeScanning(t *testing.
 				t.Fatal(err)
 			}
 			original, _ := json.Marshal(selected)
-			raw := map[string]any{"model": "gpt-5.6-sol", "provider": map[string]any{"only": []string{"openai", "azure"}, "order": []string{"openai", "azure"}}, "policy": map[string]any{"input": map[string]any{"asciiOnly": true}, "plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{"REQUEST_PRIVATE"}}}}}}}
+			raw := map[string]any{"model": "gpt-5.6-sol", "provider": map[string]any{"only": []string{"openai", "azure"}, "order": []string{"openai", "azure"}}, "policy": map[string]any{"input": map[string]any{"asciiOnly": true}, "plugins": map[string]any{"redaction": map[string]any{"literals": []any{map[string]any{"values": []string{"REQUEST_PRIVATE"}}}}}}}
 			if path == "/v1/responses" {
 				raw["input"] = "SAVED_PRIVATE REQUEST_PRIVATE"
 			} else {

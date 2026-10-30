@@ -317,11 +317,11 @@ func inspectionReference(entry InspectionSource) map[string]any {
 }
 
 func validateInspectionPlugins(plugins *Plugins) error {
-	if plugins == nil || plugins.StogasRedaction == nil {
+	if plugins == nil || plugins.Redaction == nil {
 		return nil
 	}
-	patterns := make([]redaction.CustomPattern, 0, len(plugins.StogasRedaction.CustomPatterns))
-	for _, pattern := range plugins.StogasRedaction.CustomPatterns {
+	patterns := make([]redaction.CustomPattern, 0, len(plugins.Redaction.CustomPatterns))
+	for _, pattern := range plugins.Redaction.CustomPatterns {
 		patterns = append(patterns, redaction.CustomPattern{Expression: pattern})
 	}
 	return redaction.ValidateCustomPatterns(patterns)
@@ -336,28 +336,28 @@ func inspectionPlugins(parts []*Plugins) (*Plugins, error) {
 	plugins := &Plugins{}
 	var exports []*exportconfig.Config
 	for _, part := range parts {
-		if part.StogasExport != nil {
-			exports = append(exports, part.StogasExport)
+		if part.Export != nil {
+			exports = append(exports, part.Export)
 		}
-		if part.StogasTextExtraction != nil {
-			enabled := *part.StogasTextExtraction || plugins.StogasTextExtraction != nil && *plugins.StogasTextExtraction
-			plugins.StogasTextExtraction = &enabled
+		if part.TextExtraction != nil {
+			enabled := *part.TextExtraction || plugins.TextExtraction != nil && *plugins.TextExtraction
+			plugins.TextExtraction = &enabled
 		}
-		if part.StogasRedaction == nil {
+		if part.Redaction == nil {
 			continue
 		}
-		plugins.StogasRedaction = selected
-		for _, preset := range part.StogasRedaction.Presets {
+		plugins.Redaction = selected
+		for _, preset := range part.Redaction.Presets {
 			presets[preset] = true
 		}
-		for _, pattern := range part.StogasRedaction.CustomPatterns {
+		for _, pattern := range part.Redaction.CustomPatterns {
 			patterns[pattern] = true
 		}
-		selected.Literals = append(selected.Literals, part.StogasRedaction.Literals...)
+		selected.Literals = append(selected.Literals, part.Redaction.Literals...)
 	}
 	if len(exports) > 0 {
 		var err error
-		plugins.StogasExport, err = exportconfig.Combine(exports...)
+		plugins.Export, err = exportconfig.Combine(exports...)
 		if err != nil {
 			return nil, err
 		}

@@ -177,7 +177,7 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 		}
 	}
 	bad := append([]json.RawMessage(nil), raw...)
-	bad[2] = json.RawMessage(`{"plugins":{"stogasRedaction":{"customPattern":"("}}}`)
+	bad[2] = json.RawMessage(`{"plugins":{"redaction":{"customPattern":"("}}}`)
 	if _, err := s.ValidatePolicySources(validationSources(bad), org, key); err == nil {
 		t.Fatal("malformed regex accepted")
 	}
@@ -202,7 +202,7 @@ func TestPolicyValidationChecksEveryRuleAgainstCombinedLimits(t *testing.T) {
 		for i := range literals {
 			literals[i] = fmt.Sprintf("%s-%04d", prefix, i)
 		}
-		return map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}
+		return map[string]any{"redaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}
 	}
 	rule := func(name string) map[string]any {
 		return map[string]any{"when": `provider.id == "` + name + `"`, "plugins": plugins(name)}
@@ -262,7 +262,7 @@ func BenchmarkEncryptedPolicyFullDictionary(b *testing.B) {
 	for i := range literals {
 		literals[i] = fmt.Sprintf("%064x", sha256.Sum256([]byte(fmt.Sprint(i))))
 	}
-	plaintext, _ := json.Marshal(map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals, "fuzzy": true}}}})
+	plaintext, _ := json.Marshal(map[string]any{"redaction": map[string]any{"literals": []map[string]any{{"values": literals, "fuzzy": true}}}})
 	root, _ := base64.RawURLEncoding.DecodeString("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
 	salt, nonce := make([]byte, 32), make([]byte, 12)
 	context := "stogas.customer-content.v1\x00" + org + "\x00plugins\x00" + key["default"].ID()

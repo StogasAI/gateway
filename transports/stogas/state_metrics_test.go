@@ -23,7 +23,7 @@ func TestRequestPluginMetricsDistinguishDisabledAndCleanRedaction(t *testing.T) 
 				t.Fatal(err)
 			}
 			state := NewState(resolved, "", nil, AdapterFor(resolved.Provider))
-			metrics := state.PluginMetrics.StogasStructuredPIIRedaction
+			metrics := state.PluginMetrics.Redaction
 			if (metrics != nil) != (policy != nil) || metrics != nil && metrics.ItemsRedacted != 0 {
 				t.Fatalf("%s: policy=%t metrics=%+v", path, policy != nil, metrics)
 			}

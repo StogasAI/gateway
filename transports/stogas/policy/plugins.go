@@ -21,7 +21,7 @@ func (c *Config) TextExtractionEnabled() bool {
 		parts = []*Plugins{c.Plugins}
 	}
 	for _, part := range parts {
-		if part != nil && part.StogasTextExtraction != nil && *part.StogasTextExtraction {
+		if part != nil && part.TextExtraction != nil && *part.TextExtraction {
 			return true
 		}
 	}
@@ -39,8 +39,8 @@ func (c *Config) ExportConfig() (*exportconfig.Config, error) {
 	}
 	configs := make([]*exportconfig.Config, 0, len(parts))
 	for _, p := range parts {
-		if p != nil && p.StogasExport != nil {
-			configs = append(configs, p.StogasExport)
+		if p != nil && p.Export != nil {
+			configs = append(configs, p.Export)
 		}
 	}
 	if len(configs) == 0 {

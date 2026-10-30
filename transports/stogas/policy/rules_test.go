@@ -87,7 +87,7 @@ func TestCELCompilationBudgetSharesRepeatedExpressionsAndBoundsDistinctWork(t *t
 func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 	// Includes alternate number spellings, HTML characters, Unicode property
 	// names with different UTF-8/UTF-16 ordering, and a literal line separator.
-	settings := `{"limits":{"custom":{"\ue000":1e+0,"\ud83d\ude00":-0}},"plugins":{"stogasRedaction":{"literals":[{"values":["<>&\u2028é"]}]}},"routing":{"filter":"true"}}`
+	settings := `{"limits":{"custom":{"\ue000":1e+0,"\ud83d\ude00":-0}},"plugins":{"redaction":{"literals":[{"values":["<>&\u2028é"]}]}},"routing":{"filter":"true"}}`
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(settings), &fields); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 		`{"rules":{"selected":{"Input":{"asciiOnly":true}}}}`,
 		`{"rules":{"selected":{"input":{"ASCIIOnly":true}}}}`,
 		`{"rules":{"selected":{"input":{"asciiOnly":null}}}}`,
-		`{"rules":{"selected":{"plugins":{"stogasRedaction":{"email_address":null}}}}}`,
+		`{"rules":{"selected":{"plugins":{"redaction":{"email_address":null}}}}}`,
 		`{"rules":{"selected":{"limits":{"lifetime":{"usd":null}}}}}`,
 		`{"rules":{"selected":{"rules":{"nested":{"input":{"asciiOnly":true}}}}}}`,
 		`{"rules":null}`,
@@ -165,8 +165,8 @@ func ruleSource(t *testing.T, raw string) *Source {
 }
 
 func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
-	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
-	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"stogasRedaction":{"credit_card_number":true}}}}}`)
+	org := ruleSource(t, `{"delegation":{"request":true},"rules":{"baseline":{"mode":"default","input":{"asciiOnly":true},"plugins":{"redaction":{"email_address":true}},"routing":{"sort":[{"by":"provider.id","direction":"asc"}]}}}}`)
+	role := ruleSource(t, `{"rules":{"chat":{"when":"request.interface == 'chat_completions'","input":{"asciiOnly":false},"plugins":{"redaction":{"credit_card_number":true}}}}}`)
 	other := ruleSource(t, `{"routing":{"filter":"provider.id != 'blocked'"}}`)
 	for _, sources := range [][]ScopedSource{
 		{{Scope: OrganizationScope, Value: org}, {Scope: RoleScope, Value: role}, {Scope: RoleScope, Value: other}},
@@ -191,7 +191,7 @@ func TestRulesDefaultsAndRequirementsAreOrderIndependent(t *testing.T) {
 			if name == "chat_completions" {
 				preset = "credit_card_number"
 			}
-			if len(active.PluginSources) != 1 || active.PluginSources[0].StogasRedaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != "provider.id" {
+			if len(active.PluginSources) != 1 || active.PluginSources[0].Redaction.Presets[0] != preset || active.Routing.Query.OrderBy[0].By != "provider.id" {
 				t.Fatalf("wrong settings for %s: %+v", name, active)
 			}
 			if len(active.Routing.Query.Filters) != 1 {
@@ -291,9 +291,9 @@ func TestTimeoutRulesComposeIndependentlyWithoutMutatingSavedPolicies(t *testing
 }
 
 func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t *testing.T) {
-	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"stogasRedaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
+	settings := `"access":{"deny":[{"days":["mon"],"start":"09:00","end":"17:00","timeZone":"UTC"}]},"input":{"asciiOnly":true},"plugins":{"redaction":{"email_address":true}},"routing":{"allowedCatalogNodes":{"providers":["openai"]},"filter":"provider.id == 'openai'","sort":[{"by":"provider.id","direction":"asc"}],"retries":1,"fallbacks":0}`
 	org := ruleSource(t, `{"rules":{"baseline":{"mode":"default",`+settings+`}}}`)
-	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"stogasRedaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
+	empty := ruleSource(t, `{"access":{"deny":[]},"input":{"asciiOnly":false},"plugins":{"redaction":{}},"routing":{"allowedCatalogNodes":{},"filter":"true","sort":[],"retries":3,"fallbacks":2}}`)
 	required := ruleSource(t, `{`+settings+`}`)
 	for _, withRequired := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
@@ -325,7 +325,7 @@ func TestRulesExplicitEmptySettingsReplaceDefaultsWithoutWeakeningRequirements(t
 			}
 			hasPreset := false
 			for _, plugins := range active.PluginSources {
-				hasPreset = hasPreset || len(plugins.StogasRedaction.Presets) > 0
+				hasPreset = hasPreset || len(plugins.Redaction.Presets) > 0
 			}
 			if hasPreset != withRequired {
 				t.Fatal("wrong redaction requirement")

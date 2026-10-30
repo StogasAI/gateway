@@ -472,9 +472,9 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 
 func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	var doc struct {
-		Export         *exportconfig.Config       `json:"stogasExport"`
-		Redaction      map[string]json.RawMessage `json:"stogasRedaction"`
-		TextExtraction *bool                      `json:"stogasTextExtraction"`
+		Export         *exportconfig.Config       `json:"export"`
+		Redaction      map[string]json.RawMessage `json:"redaction"`
+		TextExtraction *bool                      `json:"textExtraction"`
 	}
 	if err := decodeStrict(raw, &doc); err != nil {
 		return nil, configError("invalid plugins: %v", err)
@@ -489,7 +489,7 @@ func compileSourcePlugins(raw []byte) (*Plugins, error) {
 	if err != nil {
 		return nil, err
 	}
-	result := &Plugins{StogasRedaction: selected, StogasTextExtraction: doc.TextExtraction, StogasExport: doc.Export}
+	result := &Plugins{Redaction: selected, TextExtraction: doc.TextExtraction, Export: doc.Export}
 	return result, result.validate()
 }
 
@@ -545,7 +545,7 @@ func compileSourceRedaction(values map[string]json.RawMessage) (*Redaction, erro
 		}
 	}
 	sort.Strings(selected.Presets)
-	compiled := &Plugins{StogasRedaction: selected}
+	compiled := &Plugins{Redaction: selected}
 	if err := compiled.validate(); err != nil {
 		return nil, err
 	}
@@ -1027,7 +1027,7 @@ func (c *Config) ValidatePlugins() error {
 		var literals []redaction.Literal
 		patterns := map[string]bool{}
 		for _, plugins := range c.PluginSources {
-			p := plugins.StogasRedaction
+			p := plugins.Redaction
 			if p == nil {
 				continue
 			}

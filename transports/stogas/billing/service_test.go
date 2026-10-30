@@ -257,7 +257,7 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 		Meters: EventMeters{
 			"input_tokens": PricedMeter("1", "per_mill_tokens", "2000000", "2"),
 		},
-		Plugins:           plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
+		Plugins:           plugins.Metrics{Redaction: &plugins.RedactionMetrics{ItemsRedacted: 2, DurationUS: 17}},
 		ProviderAttempts:  []ProviderAttemptInput{{Provider: "openai", StartedAt: startedAt}},
 		ProviderStartedAt: startedAt,
 		StartedAt:         startedAt,
@@ -272,9 +272,9 @@ func TestNewRequestEventPreservesSettledPricingAudit(t *testing.T) {
 	if event.GrantID == nil || *event.GrantID != grantID {
 		t.Fatalf("expected grant attribution, got %#v", event.GrantID)
 	}
-	if event.Plugins.StogasStructuredPIIRedaction == nil ||
-		event.Plugins.StogasStructuredPIIRedaction.ItemsRedacted != 2 ||
-		event.Plugins.StogasStructuredPIIRedaction.DurationUS != 17 {
+	if event.Plugins.Redaction == nil ||
+		event.Plugins.Redaction.ItemsRedacted != 2 ||
+		event.Plugins.Redaction.DurationUS != 17 {
 		t.Fatalf("expected plugin metrics, got %#v", event.Plugins)
 	}
 }
@@ -675,8 +675,8 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		Performance: RequestPerformance{TotalMS: count, ProviderMS: count, ProviderStartMS: &count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
 			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd}},
-		Plugins: plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{ItemsRedacted: count, DurationUS: count},
-			StogasExport: &plugins.StogasExportMetrics{DurationUS: count}},
+		Plugins: plugins.Metrics{Redaction: &plugins.RedactionMetrics{ItemsRedacted: count, DurationUS: count},
+			Export: &plugins.ExportMetrics{DurationUS: count}},
 	}
 	for i := range MaxMetadataEntries {
 		event.Metadata[quotes(MaxMetadataKeyBytes-2)+fmt.Sprintf("%02d", i)] = quotes(MaxMetadataValueBytes)
@@ -837,9 +837,9 @@ func TestRequestUsagePreservesExactStandardTextAndPluginPresence(t *testing.T) {
 		}
 	}
 	event := testGatewayRequestEvent()
-	event.Plugins = plugins.Metrics{StogasStructuredPIIRedaction: &plugins.StogasStructuredPIIRedactionMetrics{}, StogasExport: &plugins.StogasExportMetrics{}}
+	event.Plugins = plugins.Metrics{Redaction: &plugins.RedactionMetrics{}, Export: &plugins.ExportMetrics{}}
 	payload, err := encodeRequestLog(event, "")
-	if err != nil || !strings.Contains(payload, `"plugins":{"stogas_structured_pii_redaction":{"items_redacted":0,"duration_us":0},"stogas_export":{"duration_us":0}}`) {
+	if err != nil || !strings.Contains(payload, `"plugins":{"redaction":{"items_redacted":0,"duration_us":0},"export":{"duration_us":0}}`) {
 		t.Fatalf("configured plugins with measured zero disappeared: %s, %v", payload, err)
 	}
 }
