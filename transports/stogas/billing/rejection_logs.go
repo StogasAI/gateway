@@ -109,7 +109,7 @@ func NewRejectionEvent(input RejectionInput) RequestEvent {
 		GatewayError:     &EventError{Code: NormalizeStogasErrorCode(input.Code, input.StatusCode), Status: input.StatusCode},
 		ProviderAttempts: []ProviderAttempt{},
 		Usage: RequestUsage{Meters: EventMeters{}, UpstreamCostUSD: ZeroChargeUSD, BilledCostUSD: ZeroChargeUSD,
-			TaxUSD: ZeroChargeUSD, TaxRate: "0", CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero},
+			CacheReadSavingsUSD: &zero, CacheWriteOverheadUSD: &zero},
 		NodeID: input.NodeID, GatewayVersion: input.GatewayVersion,
 	}
 }

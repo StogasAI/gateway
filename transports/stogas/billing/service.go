@@ -11,7 +11,6 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 	"io"
 	"math"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -65,7 +64,7 @@ const authorizeHoldArguments = `
   $24::uuid[]
 `
 
-const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second, tax_rate, tax_rate_id"
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second"
 
 const closeRequestArguments = `
   $1::uuid,
@@ -92,17 +91,13 @@ type authorizeRow struct {
 	// RequestsPerSecond is the organization's platform rate, which results that
 	// checked it report.
 	RequestsPerSecond *int32
-	// TaxRate is the rate an admitted hold fixed for the request's tax, and
-	// TaxRateID its row; nil when no tax applies.
-	TaxRate   *string
-	TaxRateID *string
 }
 
 func (r *authorizeRow) fields() []any {
 	return []any{
 		&r.Result, &r.HoldID, &r.UserID, &r.KeyID, &r.GrantID, &r.OrganizationID, &r.AuthorizedBilledCostUSD,
 		&r.CreatedAt, &r.ExpiresAt, &r.UpstreamByok, &r.UpstreamByokBinding, &r.ConfigCurrent, &r.WaitMS,
-		&r.RequestsPerSecond, &r.TaxRate, &r.TaxRateID,
+		&r.RequestsPerSecond,
 	}
 }
 
@@ -126,12 +121,6 @@ type Authorization struct {
 	// request rate: a request admitted beyond it calls no provider before
 	// StartAt. A move keeps it.
 	StartAt time.Time
-	// taxRate is the hold's tax rate in units of 10^-8; zero charges no tax. A
-	// move keeps it. The request's log reports it as PostgreSQL wrote it, with
-	// the row that names its state and jurisdictions, nil when no tax applies.
-	taxRate     int64
-	taxRateText string
-	taxRateID   *string
 }
 
 type UpstreamTarget struct {
@@ -623,14 +612,7 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if amountErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, amountErr)
 		}
-		taxRate, rateErr := parseTaxRate(row.TaxRate)
-		if rateErr != nil {
-			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, rateErr)
-		}
-		if (taxRate == 0) != (row.TaxRateID == nil) {
-			return nil, fmt.Errorf("%w: database returned a tax rate without its row", ErrGatewayUnavailable)
-		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, taxRate: taxRate, taxRateText: *row.TaxRate, taxRateID: row.TaxRateID, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		if previous != nil {
 			authorization.releaseFinalization = previous.releaseFinalization
 			authorization.StartAt = previous.StartAt
@@ -769,31 +751,6 @@ func parseDatabaseMoney(value *string, field string) (*money.USD, error) {
 		return nil, fmt.Errorf("database returned an invalid %s: %w", field, err)
 	}
 	return parsed, nil
-}
-
-// taxRateUnits is a tax rate's denominator: numeric(9, 8) stores eight decimal
-// places.
-const taxRateUnits = 100_000_000
-
-// parseTaxRate reads the rate an admitted hold fixed, which PostgreSQL returns
-// without trailing zeros: 0, or a fraction below 1.
-func parseTaxRate(value *string) (int64, error) {
-	if value == nil {
-		return 0, fmt.Errorf("database returned no tax rate")
-	}
-	if *value == "0" {
-		return 0, nil
-	}
-	digits, ok := strings.CutPrefix(*value, "0.")
-	if !ok || digits == "" || len(digits) > 8 || strings.HasSuffix(digits, "0") ||
-		strings.Trim(digits, "0123456789") != "" {
-		return 0, fmt.Errorf("database returned an invalid tax rate")
-	}
-	units, err := strconv.ParseInt(digits+strings.Repeat("0", 8-len(digits)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("database returned an invalid tax rate: %w", err)
-	}
-	return units, nil
 }
 
 func derefTime(value *time.Time) time.Time {
