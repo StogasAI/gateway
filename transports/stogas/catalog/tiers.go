@@ -123,17 +123,29 @@ func (v variant) matches(upstream compiledUpstream) bool {
 		(v.mode == "" || upstream.ReasoningMode == v.upstreamMode())
 }
 
-// unavailable is the error for a request whose variant leaves no deployment. The mode applies
-// before the tier, so a model that never runs in the mode names the mode.
-func (v variant) unavailable(modeServed bool) error {
-	switch {
-	case v.mode != "" && !modeServed:
-		return ErrReasoningModeUnavailable
-	case v.tier != "":
-		return ErrServiceTierUnavailable
-	default:
+// unavailable is the error for a request whose variant leaves no deployment. usable says whether
+// the key can use the model at a variant. The error names a field only when the request sent it
+// and another value of that field would serve. The mode applies before the tier, so a model that
+// the key uses only in another mode names the mode.
+func (v variant) unavailable(usable func(variant) bool) error {
+	if v.tier == "" && v.mode == "" {
 		return ErrModelUnavailable
 	}
+	inMode := func(mode string) bool {
+		return slices.ContainsFunc(tierOrder, func(tier string) bool { return usable(variant{tier: tier, mode: mode}) })
+	}
+	other := ModePro
+	if v.mode == ModePro {
+		other = ModeStandard
+	}
+	served := inMode(v.mode)
+	switch {
+	case !served && v.mode != "" && inMode(other):
+		return ErrReasoningModeUnavailable
+	case served && v.tier != "":
+		return ErrServiceTierUnavailable
+	}
+	return ErrModelUnavailable
 }
 
 // requestedMode parses a client reasoning.mode. An omitted value leaves the mode to the model

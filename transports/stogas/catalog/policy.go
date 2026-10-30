@@ -68,6 +68,9 @@ type policyNode struct {
 	fields any
 }
 
+// routingSelectionsForRequest returns the deployments that the requested model selects at the
+// variant. It returns none when the variant leaves no deployment, and the caller names the
+// field.
 func routingSelectionsForRequest(
 	route Route,
 	requestedModel string,
@@ -95,22 +98,16 @@ func routingSelectionsForRequest(
 		return nil, ErrModelUnavailable
 	}
 	selections := make([]routingSelection, 0)
-	modeServed := false
 	for _, provider := range providers {
 		deployments := routingDeploymentsForProvider(snap, route, provider, requestedModel, want)
-		_, servesMode := snap.deploymentForRoute(provider, requestedModel, route, variant{mode: want.mode})
-		modeServed = modeServed || servesMode
 		if trace != nil && len(deployments) == 0 {
-			if servesMode {
+			if _, servesMode := snap.deploymentForRoute(provider, requestedModel, route, variant{mode: want.mode}); servesMode {
 				trace.removeProvider(provider, RemovedServiceTier)
 			} else if want.mode != "" {
 				trace.removeProvider(provider, RemovedReasoningMode)
 			}
 		}
 		selections = append(selections, deployments...)
-	}
-	if len(selections) == 0 {
-		return nil, want.unavailable(modeServed)
 	}
 	return selections, nil
 }
@@ -124,7 +121,6 @@ func routingSelectionsForRequest(
 // it also names providers that serve the group only through another interface.
 func routingSelectionsInPool(snap *snapshot, route Route, want variant, availableCredentials map[string][]int, qualifier []string, group string, trace *routingTrace) ([]routingSelection, error) {
 	tier, mode := cmp.Or(want.tier, TierStandard), want.upstreamMode()
-	modeServed := false
 	selections := make([]routingSelection, 0)
 	skipped := providerSkips{trace: trace}
 	now := time.Now()
@@ -143,10 +139,6 @@ func routingSelectionsInPool(snap *snapshot, route Route, want variant, availabl
 			if group != "" && (!slices.Contains(snap.graph.Models[compiled.ModelID].GroupIDs, group) ||
 				!snap.qualifierMatches(qualifier, routeNode.ProviderID, compiled.ModelID)) {
 				continue
-			}
-			// The mode applies before the tier, at the Standard tier that a pool selects by default.
-			if supported && credentialed && !compiled.ApprovalRequired && compiled.Upstream.ServiceTier == TierStandard {
-				modeServed = true
 			}
 			if compiled.Upstream.ServiceTier != tier {
 				continue
@@ -173,9 +165,6 @@ func routingSelectionsInPool(snap *snapshot, route Route, want variant, availabl
 		skipped.served(selection.provider)
 	}
 	skipped.record()
-	if len(selections) == 0 {
-		return nil, want.unavailable(modeServed)
-	}
 	// Stable ties must not depend on Go map iteration or catalog serialization.
 	sort.Slice(selections, func(i, j int) bool {
 		if selections[i].deployment.ID != selections[j].deployment.ID {
