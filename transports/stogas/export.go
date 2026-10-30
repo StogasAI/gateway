@@ -74,6 +74,6 @@ func finalizeExportMetrics(state *State) {
 		return
 	}
 	if duration := state.Export.Duration(); duration != nil {
-		state.FinalEvent.Plugins.StogasExport = &plugins.StogasExportMetrics{DurationUS: *duration}
+		state.FinalEvent.Plugins.Export = &plugins.ExportMetrics{DurationUS: *duration}
 	}
 }

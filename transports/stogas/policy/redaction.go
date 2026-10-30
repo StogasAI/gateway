@@ -17,12 +17,12 @@ func CompileRedaction(config *Config) (*redaction.Policy, error) {
 	var patterns []redaction.Pattern
 	var custom []redaction.CustomPattern
 	var literals []redaction.Literal
-	if config != nil && config.Plugins != nil && config.Plugins.StogasRedaction != nil {
-		literals = config.Plugins.StogasRedaction.Literals
-		for _, preset := range config.Plugins.StogasRedaction.Presets {
+	if config != nil && config.Plugins != nil && config.Plugins.Redaction != nil {
+		literals = config.Plugins.Redaction.Literals
+		for _, preset := range config.Plugins.Redaction.Presets {
 			patterns = append(patterns, redaction.Pattern(preset))
 		}
-		for _, expression := range config.Plugins.StogasRedaction.CustomPatterns {
+		for _, expression := range config.Plugins.Redaction.CustomPatterns {
 			custom = append(custom, redaction.CustomPattern{Expression: expression})
 		}
 	}

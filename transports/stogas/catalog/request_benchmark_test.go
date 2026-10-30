@@ -68,10 +68,10 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 				"selected_provider": map[string]any{
 					"when":    "provider.id == 'openai'",
 					"limits":  map[string]any{"spend": map[string]any{"usd": "100000"}},
-					"plugins": map[string]any{"stogasRedaction": map[string]any{"email_address": true}},
+					"plugins": map[string]any{"redaction": map[string]any{"email_address": true}},
 				},
 			},
-			"plugins": map[string]any{"stogasRedaction": map[string]any{
+			"plugins": map[string]any{"redaction": map[string]any{
 				"email_address": true, "phone_number": true, "social_security_number": true,
 				"credit_card_number": true, "ip_address": true, "api_keys_and_secrets": true,
 				"bank_identifiers": true, "national_identifiers": true, "health_identifiers": true,

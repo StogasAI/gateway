@@ -80,7 +80,7 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 				p := &Redaction{Presets: []string{}}
 				presets, patterns := map[string]bool{}, map[string]bool{}
 				for _, part := range got.PluginSources {
-					r := part.StogasRedaction
+					r := part.Redaction
 					for _, s := range r.Presets {
 						presets[s] = true
 					}
@@ -98,7 +98,7 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 				sort.Strings(p.Presets)
 				sort.Strings(p.CustomPatterns)
 				p.Literals = redaction.NormalizeLiterals(p.Literals)
-				got.Plugins = &Plugins{StogasRedaction: p}
+				got.Plugins = &Plugins{Redaction: p}
 			}
 			actualJSON, _ := json.Marshal(got)
 			expectedJSON := row.Compiled
@@ -115,9 +115,9 @@ func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {
 func TestSavedSourceRejectsMalformedRuntimePolicy(t *testing.T) {
 	for _, raw := range []string{
 		`null`, `{"version":1}`, `{"version":2}`, `{"version":1,"version":1}`,
-		`{"routing":null}`, `{"plugins":{"stogasRedaction":null}}`,
-		`{"plugins":{"stogasRedaction":{"email_address":null}}}`,
-		`{"plugins":{"stogasRedaction":{"invented":true}}}`,
+		`{"routing":null}`, `{"plugins":{"redaction":null}}`,
+		`{"plugins":{"redaction":{"email_address":null}}}`,
+		`{"plugins":{"redaction":{"invented":true}}}`,
 		`{"routing":{"sortOverridable":false}}`,
 		`{"routing":{"filter":"unknown == 1"}}`,
 		`{"routing":{"retries":-1}}`, `{"routing":{"retries":4}}`, `{"routing":{"retries":1.5}}`, `{"routing":{"retries":null}}`,
@@ -135,13 +135,13 @@ func TestSavedSourceRejectsMalformedRuntimePolicy(t *testing.T) {
 		`{"timeouts":{"totalSeconds":0}}`, `{"timeouts":{"outputIdleSeconds":3601}}`,
 		`{"timeouts":{"totalSeconds":1.5}}`, `{"timeouts":{"outputIdleSeconds":null}}`,
 		`{"delegation":{"request":"yes"}}`,
-		`{"plugins":{"stogasRedaction":{"literals":[]}}}`,
-		`{"plugins":{"stogasRedaction":{"literals":[{"values":[]}]}}}`,
-		`{"plugins":{"stogasRedaction":{"literals":[{"values":["abcdefgh","short"],"fuzzy":true}]}}}`,
-		`{"plugins":{"stogasRedaction":{"literals":[{"values":["abcdefgh"],"fuzzy":true,"wholeWord":false}]}}}`,
+		`{"plugins":{"redaction":{"literals":[]}}}`,
+		`{"plugins":{"redaction":{"literals":[{"values":[]}]}}}`,
+		`{"plugins":{"redaction":{"literals":[{"values":["abcdefgh","short"],"fuzzy":true}]}}}`,
+		`{"plugins":{"redaction":{"literals":[{"values":["abcdefgh"],"fuzzy":true,"wholeWord":false}]}}}`,
 		`{"unexpected":true}`,
 		`{"enabled":false}`, `{"expiresAt":"2027-01-01T00:00:00Z"}`,
-		`{"plugins":{"stogasRedaction":{"literals":[{"text":"foo","surprise":true}]}}}`,
+		`{"plugins":{"redaction":{"literals":[{"text":"foo","surprise":true}]}}}`,
 	} {
 		if _, err := CompileSource([]byte(raw)); err == nil {
 			t.Errorf("accepted %s", raw)
@@ -153,7 +153,7 @@ func TestSavedSourceRejectsMalformedRuntimePolicy(t *testing.T) {
 }
 
 func TestCompositionKeepsParentsImmutableAndChecksCombinedLimits(t *testing.T) {
-	org, err := CompileSource([]byte(`{"routing":{"filter": "provider.id == \"openai\""},"plugins":{"stogasRedaction":{"customPattern":"ABCD"}}}`))
+	org, err := CompileSource([]byte(`{"routing":{"filter": "provider.id == \"openai\""},"plugins":{"redaction":{"customPattern":"ABCD"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

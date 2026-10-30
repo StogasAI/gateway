@@ -3,7 +3,7 @@
     "name": "empty explicit config",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": []
         }
       }
@@ -14,7 +14,7 @@
     "name": "missing destinations",
     "source": {
       "plugins": {
-        "stogasExport": {}
+        "export": {}
       }
     },
     "valid": false
@@ -23,7 +23,7 @@
     "name": "null config",
     "source": {
       "plugins": {
-        "stogasExport": null
+        "export": null
       }
     },
     "valid": false
@@ -32,7 +32,7 @@
     "name": "null destinations",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": null
         }
       }
@@ -43,7 +43,7 @@
     "name": "nine destinations",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/0"
@@ -82,7 +82,7 @@
     "name": "defaults",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces"
@@ -97,7 +97,7 @@
     "name": "headers {'Authorization': 'one', 'authorization': 'two'}",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -116,7 +116,7 @@
     "name": "headers {'Content-Type': 'text/plain'}",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -134,7 +134,7 @@
     "name": "headers {'Idempotency-Key': 'override'}",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -152,7 +152,7 @@
     "name": "headers {'X-Key': 'bad\\r\\nvalue'}",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -170,7 +170,7 @@
     "name": "headers {'Bad Header': 'value'}",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -188,7 +188,7 @@
     "name": "headers {'X-Key': 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -206,7 +206,7 @@
     "name": "null url",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": null
@@ -221,7 +221,7 @@
     "name": "null headers",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -237,7 +237,7 @@
     "name": "without content",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -253,7 +253,7 @@
     "name": "with content",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -269,7 +269,7 @@
     "name": "null content",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -285,7 +285,7 @@
     "name": "URL http://127.0.0.1:4318/v1/traces",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "http://127.0.0.1:4318/v1/traces"
@@ -300,7 +300,7 @@
     "name": "URL http://[::1]:4318/v1/traces",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "http://[::1]:4318/v1/traces"
@@ -315,7 +315,7 @@
     "name": "URL http://collector.example/v1/traces",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "http://collector.example/v1/traces"
@@ -330,7 +330,7 @@
     "name": "URL https://user:password@collector.example/",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://user:password@collector.example/"
@@ -345,7 +345,7 @@
     "name": "URL https://collector.example/#fragment",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/#fragment"
@@ -360,7 +360,7 @@
     "name": "URL file:///tmp/trace",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "file:///tmp/trace"
@@ -375,7 +375,7 @@
     "name": "URL https://",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://"
@@ -390,7 +390,7 @@
     "name": "Unicode header",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://collector.example/v1/traces",
@@ -408,7 +408,7 @@
     "name": "unsupported format",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -424,7 +424,7 @@
     "name": "unsupported encoding",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -440,7 +440,7 @@
     "name": "string content",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -456,7 +456,7 @@
     "name": "unsupported maxCaptureBytes",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -472,7 +472,7 @@
     "name": "unsupported maxRetries",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -488,7 +488,7 @@
     "name": "unsupported sampleRate",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -504,7 +504,7 @@
     "name": "unsupported outcomes",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -522,7 +522,7 @@
     "name": "unsupported errorStatusRanges",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",
@@ -543,7 +543,7 @@
     "name": "unsupported errorCodes",
     "source": {
       "plugins": {
-        "stogasExport": {
+        "export": {
           "destinations": [
             {
               "url": "https://receiver.example/events",

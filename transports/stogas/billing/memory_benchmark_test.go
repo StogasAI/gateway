@@ -84,7 +84,7 @@ func BenchmarkCompiledPolicyCacheFootprint(b *testing.B) {
 			for literal := range literals {
 				literals[literal] = fmt.Sprintf("%012x%012x", index, literal) + strings.Repeat("A", 40)
 			}
-			raw, err := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}})
+			raw, err := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"literals": []map[string]any{{"values": literals}}}}})
 			if err != nil {
 				b.Fatal(err)
 			}

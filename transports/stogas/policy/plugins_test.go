@@ -12,10 +12,10 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 		want    bool
 	}{
 		{"omitted", []string{`{}`}, false},
-		{"required", []string{`{"plugins":{"stogasTextExtraction":true}}`, `{"plugins":{"stogasTextExtraction":false}}`}, true},
-		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"stogasTextExtraction":true}}}}`}, true},
-		{"explicit neutral", []string{`{"rules":{"extract":{"mode":"default","plugins":{"stogasTextExtraction":true}}}}`, `{"plugins":{"stogasTextExtraction":false}}`}, false},
-		{"shared plugin default unit", []string{`{"rules":{"extract":{"mode":"default","plugins":{"stogasTextExtraction":true}}}}`, `{"plugins":{"stogasRedaction":{}}}`}, false},
+		{"required", []string{`{"plugins":{"textExtraction":true}}`, `{"plugins":{"textExtraction":false}}`}, true},
+		{"default", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`}, true},
+		{"explicit neutral", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"textExtraction":false}}`}, false},
+		{"shared plugin default unit", []string{`{"rules":{"extract":{"mode":"default","plugins":{"textExtraction":true}}}}`, `{"plugins":{"redaction":{}}}`}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sources := []ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, `{}`)}}
@@ -48,18 +48,18 @@ func TestTextExtractionRequirementsAndDefaults(t *testing.T) {
 }
 
 func TestTextExtractionRequiresItsOwnRequestPermission(t *testing.T) {
-	request, err := CompileRequest([]byte(`{"plugins":{"stogasTextExtraction":true}}`), "org", nil)
+	request, err := CompileRequest([]byte(`{"plugins":{"textExtraction":true}}`), "org", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, section := range []string{"plugins.stogasRedaction", "plugins.stogasTextExtraction", "plugins"} {
+	for _, section := range []string{"plugins.redaction", "plugins.textExtraction", "plugins"} {
 		source := ruleSource(t, `{"delegation":{"request":["`+section+`"]}}`)
 		base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: source}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, err = ApplyRequest(base, request)
-		if section == "plugins.stogasRedaction" {
+		if section == "plugins.redaction" {
 			if !errors.Is(err, ErrRequestPolicyDenied) {
 				t.Fatalf("redaction permission granted extraction: %v", err)
 			}

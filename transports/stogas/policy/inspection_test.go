@@ -100,7 +100,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 	}
 	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": envelope}})
 	entries := []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"stogasRedaction":{"email_address":true}}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"redaction":{"email_address":true}}}`)},
 		{Scope: RoleScope, ID: "first", Config: encoded},
 		{Scope: RoleScope, ID: "second", Config: encoded},
 		{Scope: KeyScope, Config: json.RawMessage(`{}`)},
@@ -119,7 +119,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 			t.Fatal("inspection changed an encrypted envelope")
 		}
 	}
-	if !reflect.DeepEqual(result.Compiled.Plugins.StogasRedaction.Presets, []string{"email_address"}) {
+	if !reflect.DeepEqual(result.Compiled.Plugins.Redaction.Presets, []string{"email_address"}) {
 		t.Fatal("opaque plugins displaced readable requirements")
 	}
 	after, _ := json.Marshal(entries)
@@ -212,7 +212,7 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 
 func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T) {
 	for _, expression := range []string{`^`, `(?=foo)`, `(a)\1`} {
-		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"customPattern": expression}}})
+		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"customPattern": expression}}})
 		if _, err := InspectSource(raw); err == nil {
 			t.Errorf("accepted an unsafe or unsupported expression %q", expression)
 		}
@@ -235,8 +235,8 @@ func TestInspectionUsesExecutionPatternValidationAndTypedEditErrors(t *testing.T
 func TestInspectionSharesEqualPluginSectionsAcrossDifferentSources(t *testing.T) {
 	inspector := NewInspector(nil, false)
 	for _, entry := range []InspectionSource{
-		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"first\""}}`)},
-		{Scope: KeyScope, Config: json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"second\""}}`)},
+		{Scope: OrganizationScope, Config: json.RawMessage(`{"plugins":{"redaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"first\""}}`)},
+		{Scope: KeyScope, Config: json.RawMessage(`{"plugins":{"redaction":{"literals":[{"values":["alice"]}]}},"routing":{"filter": "provider.id != \"second\""}}`)},
 	} {
 		if err := inspector.Add(entry); err != nil {
 			t.Fatal(err)
@@ -252,7 +252,7 @@ func TestInspectionSharesEqualPluginSectionsAcrossDifferentSources(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Compiled.Routing.Query.Filters) != 2 || len(result.Compiled.Plugins.StogasRedaction.Literals) != 1 {
+	if len(result.Compiled.Routing.Query.Filters) != 2 || len(result.Compiled.Plugins.Redaction.Literals) != 1 {
 		t.Fatal("sharing plugins lost a filter or repeated a literal")
 	}
 }
@@ -292,7 +292,7 @@ func BenchmarkInspectionSharedPolicies(b *testing.B) {
 	for i := range values {
 		values[i] = strings.Repeat("x", 40) + string(rune('一'+i))
 	}
-	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
+	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
 	entries := make([]InspectionSource, 36)
 	for i := range entries {
 		entries[i] = InspectionSource{Scope: RoleScope, Config: raw}
@@ -351,7 +351,7 @@ func TestInspectionSharesDictionaryBudgetAcrossDistinctSources(t *testing.T) {
 			scope = KeyScope
 		}
 		raw, _ := json.Marshal(map[string]any{"routing": map[string]any{"filter": fmt.Sprintf(`model.id != "blocked-%d"`, i)},
-			"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
+			"plugins": map[string]any{"redaction": map[string]any{"literals": []any{map[string]any{"values": values}}}}})
 		if err := inspector.Add(InspectionSource{Scope: scope, Config: raw}); err != nil {
 			t.Fatal(err)
 		}

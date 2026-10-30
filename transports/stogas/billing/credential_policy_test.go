@@ -47,7 +47,7 @@ func credentialPolicySnapshot(t testing.TB, cache *keyConfigCache, organization 
 func TestCredentialPolicyCacheIsolationAndEviction(t *testing.T) {
 	var cache keyConfigCache
 	literal := func(text string) json.RawMessage {
-		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"stogasRedaction": map[string]any{"literals": []any{map[string]any{"values": []string{text}}}}}})
+		raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"literals": []any{map[string]any{"values": []string{text}}}}}})
 		return raw
 	}
 	snapshot := credentialPolicySnapshot(t, &cache, "org", literal("ROOT_PRIVATE"), map[string][]json.RawMessage{"openai": {literal("OPENAI_PRIVATE")}, "azure": {literal("AZURE_PRIVATE")}})
@@ -146,8 +146,8 @@ func TestSameProviderCredentialPolicyIsolationAndSharing(t *testing.T) {
 	var cache keyConfigCache
 	snapshot := credentialPolicySnapshot(t, &cache, "org", json.RawMessage(`null`), map[string][]json.RawMessage{
 		"openai": {
-			json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["FIRST_SECRET"]}]}}}`),
-			json.RawMessage(`{"plugins":{"stogasRedaction":{"literals":[{"values":["SECOND_SECRET"]}]}}}`),
+			json.RawMessage(`{"plugins":{"redaction":{"literals":[{"values":["FIRST_SECRET"]}]}}}`),
+			json.RawMessage(`{"plugins":{"redaction":{"literals":[{"values":["SECOND_SECRET"]}]}}}`),
 		},
 	})
 	defer cache.close()

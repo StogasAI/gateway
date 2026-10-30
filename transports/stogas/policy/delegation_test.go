@@ -115,7 +115,7 @@ func TestEncryptedPluginsNeedEveryPluginPermission(t *testing.T) {
 	}
 	defer key.Clear()
 	plugins := map[string]any{"encrypted": fixture.Envelope}
-	for _, permission := range [][]string{{"plugins.stogasRedaction", "plugins.encrypted"}, {"plugins"}} {
+	for _, permission := range [][]string{{"plugins.redaction", "plugins.encrypted"}, {"plugins"}} {
 		// The ciphertext can hold an export that the parent did not allow.
 		allowed := len(permission) == 1
 		parent, _ := json.Marshal(map[string]any{

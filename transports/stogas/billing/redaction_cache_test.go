@@ -15,7 +15,7 @@ import (
 
 func matcherSnapshot(digest, literal string) *KeyConfigSnapshot {
 	return &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Digest: digest, Config: &policy.Config{
-		Plugins: &policy.Plugins{StogasRedaction: &policy.Redaction{Presets: []string{},
+		Plugins: &policy.Plugins{Redaction: &policy.Redaction{Presets: []string{},
 			Literals: []redaction.Literal{{Text: literal, Fuzzy: true}}}},
 	}}, CredentialsGeneration: 1,
 	}
@@ -135,7 +135,7 @@ func TestRedactionBuildFailureBusyAndIndependentPlans(t *testing.T) {
 		t.Fatalf("duplicate build queued: %v", err)
 	}
 	bad := matcherSnapshot("bad", "ProjectAurora")
-	bad.Config.Plugins.StogasRedaction.CustomPatterns = []string{"("}
+	bad.Config.Plugins.Redaction.CustomPatterns = []string{"("}
 	bad = cache.put("bad", bad, now)
 	if _, err := bad.RedactionPolicy(); err == nil || err == ErrGatewayUnavailable || bad.matchers[0].building {
 		t.Fatalf("independent invalid plan was not validated/cleared: %v", err)

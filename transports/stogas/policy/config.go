@@ -130,11 +130,11 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
-	digestOnce           sync.Once
-	digest               [32]byte
-	StogasExport         *exportconfig.Config `json:"stogasExport,omitempty"`
-	StogasRedaction      *Redaction           `json:"stogasRedaction,omitempty"`
-	StogasTextExtraction *bool                `json:"stogasTextExtraction,omitempty"`
+	digestOnce     sync.Once
+	digest         [32]byte
+	Export         *exportconfig.Config `json:"export,omitempty"`
+	Redaction      *Redaction           `json:"redaction,omitempty"`
+	TextExtraction *bool                `json:"textExtraction,omitempty"`
 }
 
 type Redaction struct {
@@ -280,20 +280,20 @@ func (w *DenyWindow) validate(locations map[string]*time.Location) error {
 
 func (p *Plugins) validate() error {
 	if p != nil {
-		if err := p.StogasExport.Validate(); err != nil {
-			return configError("invalid stogasExport configuration")
+		if err := p.Export.Validate(); err != nil {
+			return configError("invalid export configuration")
 		}
 	}
-	if p == nil || p.StogasRedaction == nil {
+	if p == nil || p.Redaction == nil {
 		if p == nil {
 			return nil
 		}
-		if p.StogasTextExtraction != nil || p.StogasExport != nil {
+		if p.TextExtraction != nil || p.Export != nil {
 			return nil
 		}
 		return configError("plugins require explicit configuration")
 	}
-	selected := p.StogasRedaction
+	selected := p.Redaction
 	if err := redaction.ValidateLiterals(selected.Literals); err != nil {
 		return configError("invalid redaction literals")
 	}

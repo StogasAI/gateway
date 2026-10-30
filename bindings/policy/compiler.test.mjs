@@ -5,12 +5,12 @@ import { inspectPolicy } from './node.mjs';
 test('the JavaScript binding preserves Unicode and recovers after a rejected document', () => {
 	assert.equal(inspectPolicy({ source: { version: 2 } }).error.status, 400);
 	const source = {
-		plugins: { stogasRedaction: { literals: [{ values: ['Žmogus', '日本語', '🛰️'] }] } }
+		plugins: { redaction: { literals: [{ values: ['Žmogus', '日本語', '🛰️'] }] } }
 	};
 	const first = inspectPolicy({ source });
 	assert.ok(!first.error);
 	assert.deepEqual(
-		new Set(first.compiled.plugins.stogasRedaction.literals.map((item) => item.text)),
+		new Set(first.compiled.plugins.redaction.literals.map((item) => item.text)),
 		new Set(['Žmogus', '日本語', '🛰️'])
 	);
 	assert.deepEqual(inspectPolicy({ source }), first);
