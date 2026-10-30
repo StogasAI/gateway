@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -8,21 +8,38 @@ import { pathToFileURL } from 'node:url';
 // by path. Directories and timestamps are not part of the identity.
 export function sourceDigest(directory) {
 	const entries = [];
+	const refuse = (relative) => new Error(`Source contains a link or special file: ${relative}`);
 	const visit = (path, prefix) => {
-		for (const name of readdirSync(path)) {
-			const child = join(path, name);
-			const relative = prefix + name;
-			const stat = lstatSync(child);
-			if (stat.isDirectory()) {
+		for (const entry of readdirSync(path, { withFileTypes: true })) {
+			const child = join(path, entry.name);
+			const relative = prefix + entry.name;
+			if (entry.isDirectory()) {
 				visit(child, `${relative}/`);
-			} else if (stat.isFile()) {
+				continue;
+			}
+			if (!entry.isFile()) throw refuse(relative);
+			// Check and read the same open file, so a file replaced by a link or special file after
+			// the listing is refused rather than followed.
+			let descriptor;
+			try {
+				descriptor = openSync(
+					child,
+					constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+				);
+			} catch (error) {
+				if (error?.code === 'ELOOP' || error?.code === 'EMLINK') throw refuse(relative);
+				throw error;
+			}
+			try {
+				const stat = fstatSync(descriptor);
+				if (!stat.isFile()) throw refuse(relative);
 				entries.push({
 					mode: stat.mode & 0o111 ? 0o755 : 0o644,
 					path: relative,
-					sha256: createHash('sha256').update(readFileSync(child)).digest('hex')
+					sha256: createHash('sha256').update(readFileSync(descriptor)).digest('hex')
 				});
-			} else {
-				throw new Error(`Source contains a link or special file: ${relative}`);
+			} finally {
+				closeSync(descriptor);
 			}
 		}
 	};
