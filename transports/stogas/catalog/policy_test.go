@@ -245,6 +245,52 @@ func TestAllowedCatalogNodesPrecedeServiceTierCompatibility(t *testing.T) {
 	}
 }
 
+// A request names the tier only when the key could use the model at another tier. A group that no
+// credential or allowed node lets the key use is unavailable whatever the tier.
+func TestServiceTierErrorNeedsAnotherTierThatServes(t *testing.T) {
+	loadTestCatalog(t)
+	allowing := func(deployments ...string) *policy.Config {
+		config := policyConfig(2)
+		config.Routing.AllowedCatalogNodes = &policy.AllowedCatalogNodes{Deployments: deployments}
+		return config
+	}
+	openAI, anthropic := map[string][]int{"openai": {0}}, map[string][]int{"anthropic": {0}}
+	for _, test := range []struct {
+		model, tier string
+		config      *policy.Config
+		credentials map[string][]int
+		deployment  string
+		err         error
+	}{
+		{model: "claude", tier: "standard", credentials: openAI, err: ErrModelUnavailable},
+		{model: "claude", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
+		{model: "claude", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
+		{model: "claude", tier: "standard", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
+		{model: "claude", tier: "standard", config: allowing("anthropic-claude-opus-5-5-fast"), err: ErrServiceTierUnavailable},
+		{model: "claude-opus", tier: "fast", config: allowing("anthropic-claude-opus-5-5-fast"), deployment: "anthropic-claude-opus-5-5-fast"},
+		{model: "anthropic/claude-opus-5-5", tier: "fast", credentials: openAI, err: ErrModelUnavailable},
+		{model: "claude-opus-5-5", tier: "flex", credentials: anthropic, err: ErrServiceTierUnavailable},
+		{model: "claude-opus-5-5", tier: "flex", config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
+	} {
+		resolved, err := ResolveRequest(RequestInput{
+			Body:                 []byte(`{"model":"` + test.model + `","messages":[{"role":"user","content":"hello"}],"service_tier":"` + test.tier + `"}`),
+			Method:               "POST",
+			Path:                 "/v1/chat/completions",
+			Policy:               test.config,
+			AvailableCredentials: test.credentials,
+		})
+		if test.err != nil {
+			if !errors.Is(err, test.err) {
+				t.Fatalf("%s at %s error = %v, want %v", test.model, test.tier, err, test.err)
+			}
+			continue
+		}
+		if err != nil || resolved.Deployment.ID != test.deployment {
+			t.Fatalf("%s at %s resolved %#v, err = %v, want %s", test.model, test.tier, resolved, err, test.deployment)
+		}
+	}
+}
+
 func TestRoutingQueryFiltersAndDeterministicallySortsCandidates(t *testing.T) {
 	loadTestCatalog(t)
 	stable := policy.Sort{Direction: "asc", By: "deployment.id"}

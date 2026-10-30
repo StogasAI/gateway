@@ -765,14 +765,12 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	}
 	selections = filterRoutingSelectionsByPolicy(selections, input.Policy, input.trace)
 	if len(selections) == 0 {
-		// The key's allowed nodes removed every selected deployment. Name the mode only when the
-		// key allows none of the deployments that the mode selects at the default tier.
-		modeServed := base.variant.mode == ""
-		if !modeServed {
-			inMode, err := routingSelectionsForRequest(route, base.Model, variant{mode: base.variant.mode}, input.Policy, input.AvailableCredentials, nil)
-			modeServed = err == nil && len(filterRoutingSelectionsByPolicy(inMode, input.Policy, nil)) > 0
-		}
-		return nil, base.variant.unavailable(modeServed)
+		// The variant, a credential or the key's allowed nodes left no deployment. Try the
+		// model's other variants to find which field to name.
+		return nil, base.variant.unavailable(func(other variant) bool {
+			inVariant, err := routingSelectionsForRequest(route, base.Model, other, input.Policy, input.AvailableCredentials, nil)
+			return err == nil && len(filterRoutingSelectionsByPolicy(inVariant, input.Policy, nil)) > 0
+		})
 	}
 	selections, err = filterProviderSelections(selections, providerPreference)
 	if err != nil {

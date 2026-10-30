@@ -549,6 +549,11 @@ func TestReasoningModeSelectsDeployments(t *testing.T) {
 		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"flex"`, config: allowing("openai-gpt-5.6-sol-flex"), err: ErrReasoningModeUnavailable},
 		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"standard"}`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrReasoningModeUnavailable},
 		{fields: `"model":"openai/gpt-5.6-sol"`, config: allowing("openai-gpt-5.6-sol-pro"), err: ErrModelUnavailable},
+		// The key serves Pro only at Flex, so the tier that the request leaves to the model fails.
+		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrModelUnavailable},
+		{fields: `"model":"openai/gpt-5.6-sol","reasoning":{"mode":"pro"},"service_tier":"fast"`, config: allowing("openai-gpt-5.6-sol-pro-flex"), err: ErrServiceTierUnavailable},
+		// A key that can use no Claude model gets no mode named.
+		{fields: `"model":"claude","reasoning":{"mode":"pro"}`, config: allowing("openai-gpt-5.6-sol"), err: ErrModelUnavailable},
 	} {
 		resolution, err := ResolveRequest(RequestInput{Method: "POST", Path: "/v1/responses", Body: []byte(`{"input":"hello",` + test.fields + `}`), Policy: test.config})
 		if test.err != nil {
