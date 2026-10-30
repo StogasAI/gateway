@@ -154,9 +154,6 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 		Usage: RequestUsage{
 			UpstreamCostUSD:       upstreamCostUSD.String(),
 			BilledCostUSD:         billedCostUSD.String(),
-			TaxUSD:                calculateTaxUSD(authorization, billedCostUSD).String(),
-			TaxRate:               authorization.taxRateText,
-			TaxRateID:             authorization.taxRateID,
 			CacheReadSavingsUSD:   cacheReadSavingsUSD,
 			CacheWriteOverheadUSD: cacheWriteOverheadUSD,
 			Meters:                pricing,
@@ -295,12 +292,6 @@ func calculateBilledCostUSD(authorization *Authorization, upstreamCostUSD *money
 		return new(money.USD).Set(upstreamCostUSD)
 	}
 	return new(money.USD).MulRatioCeil(upstreamCostUSD, big.NewInt(2), 100)
-}
-
-// calculateTaxUSD rounds the charge's tax at the hold's rate up once, to 36
-// decimal places, as settlement does.
-func calculateTaxUSD(authorization *Authorization, billedCostUSD *money.USD) *money.USD {
-	return new(money.USD).MulRatioCeil(billedCostUSD, big.NewInt(authorization.taxRate), taxRateUnits)
 }
 
 func isStreamingRequest(requestType string) bool {

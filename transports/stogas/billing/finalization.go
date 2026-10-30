@@ -168,9 +168,6 @@ func (s *Service) FinalizeRequest(authorization *Authorization, event RequestEve
 	event.Usage.UpstreamCostUSD = upstreamCostUSD.String()
 	billedCostUSD := calculateBilledCostUSD(authorization, upstreamCostUSD)
 	event.Usage.BilledCostUSD = billedCostUSD.String()
-	event.Usage.TaxUSD = calculateTaxUSD(authorization, billedCostUSD).String()
-	event.Usage.TaxRate = authorization.taxRateText
-	event.Usage.TaxRateID = authorization.taxRateID
 	payload, err := encodeRequestLog(event, createHoldParamsHash(authorization.ProviderKey, authorization.ProductKey, authorization.UpstreamTargetJSON))
 	if err != nil {
 		s.finalizations.encodingFailed.Store(true)
