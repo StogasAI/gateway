@@ -346,12 +346,14 @@ func TestTaxRoundsUpOnceAsSettlementDoes(t *testing.T) {
 	}
 }
 
-func TestNewRequestEventChargesTaxOnTheBilledCost(t *testing.T) {
+func TestNewRequestEventChargesTaxOnTheBilledCostAndNamesTheRate(t *testing.T) {
 	startedAt := time.Now().Add(-25 * time.Millisecond)
+	rateID := "0198f4cc-6c25-8000-8000-0000000000aa"
 	event := mustNewRequestEvent(t, EventInput{
 		Authorization: &Authorization{
 			AuthorizedBilledCostUSD: mustUSD("10"), RequestID: "request-1",
 			UpstreamByok: "0198f4cc-6c25-8000-8000-000000000001", taxRate: 6_350_000,
+			taxRateText: "0.0635", taxRateID: &rateID,
 		},
 		RequestType:       string(schemas.ChatCompletionRequest),
 		UpstreamCostUSD:   "100",
@@ -363,6 +365,10 @@ func TestNewRequestEventChargesTaxOnTheBilledCost(t *testing.T) {
 	// A BYOK request bills 2% of the provider's cost, and the tax is on that.
 	if event.Usage.BilledCostUSD != "2" || event.Usage.TaxUSD != "0.127" {
 		t.Fatalf("billed %s with tax %s, want 2 with tax 0.127", event.Usage.BilledCostUSD, event.Usage.TaxUSD)
+	}
+	// The log names the rate and its row, which says where the tax is owed.
+	if event.Usage.TaxRate != "0.0635" || event.Usage.TaxRateID == nil || *event.Usage.TaxRateID != rateID {
+		t.Fatalf("tax rate %s with row %v, want 0.0635 with %s", event.Usage.TaxRate, event.Usage.TaxRateID, rateID)
 	}
 }
 

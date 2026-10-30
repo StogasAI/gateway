@@ -155,6 +155,8 @@ func NewRequestEvent(input EventInput) (RequestEvent, error) {
 			UpstreamCostUSD:       upstreamCostUSD.String(),
 			BilledCostUSD:         billedCostUSD.String(),
 			TaxUSD:                calculateTaxUSD(authorization, billedCostUSD).String(),
+			TaxRate:               authorization.taxRateText,
+			TaxRateID:             authorization.taxRateID,
 			CacheReadSavingsUSD:   cacheReadSavingsUSD,
 			CacheWriteOverheadUSD: cacheWriteOverheadUSD,
 			Meters:                pricing,

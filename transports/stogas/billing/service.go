@@ -64,7 +64,7 @@ const authorizeHoldArguments = `
   $24::uuid[]
 `
 
-const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second, tax_rate"
+const authorizeHoldColumns = "result, hold_id, user_id, key_id, grant_id, organization_id, authorized_billed_cost_usd, created_at, expires_at, upstream_byok, upstream_byok_binding, config_current, wait_ms, requests_per_second, tax_rate, tax_rate_id"
 
 const closeRequestArguments = `
   $1::uuid,
@@ -91,15 +91,17 @@ type authorizeRow struct {
 	// RequestsPerSecond is the organization's platform rate, which results that
 	// checked it report.
 	RequestsPerSecond *int32
-	// TaxRate is the rate an admitted hold fixed for the request's tax.
-	TaxRate *string
+	// TaxRate is the rate an admitted hold fixed for the request's tax, and
+	// TaxRateID its row; nil when no tax applies.
+	TaxRate   *string
+	TaxRateID *string
 }
 
 func (r *authorizeRow) fields() []any {
 	return []any{
 		&r.Result, &r.HoldID, &r.UserID, &r.KeyID, &r.GrantID, &r.OrganizationID, &r.AuthorizedBilledCostUSD,
 		&r.CreatedAt, &r.ExpiresAt, &r.UpstreamByok, &r.UpstreamByokBinding, &r.ConfigCurrent, &r.WaitMS,
-		&r.RequestsPerSecond, &r.TaxRate,
+		&r.RequestsPerSecond, &r.TaxRate, &r.TaxRateID,
 	}
 }
 
@@ -124,8 +126,11 @@ type Authorization struct {
 	// StartAt. A move keeps it.
 	StartAt time.Time
 	// taxRate is the hold's tax rate in units of 10^-8; zero charges no tax. A
-	// move keeps it.
-	taxRate int64
+	// move keeps it. The request's log reports it as PostgreSQL wrote it, with
+	// the row that names its state and jurisdictions, nil when no tax applies.
+	taxRate     int64
+	taxRateText string
+	taxRateID   *string
 }
 
 type UpstreamTarget struct {
@@ -621,7 +626,10 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 		if rateErr != nil {
 			return nil, fmt.Errorf("%w: %v", ErrGatewayUnavailable, rateErr)
 		}
-		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, taxRate: taxRate, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
+		if (taxRate == 0) != (row.TaxRateID == nil) {
+			return nil, fmt.Errorf("%w: database returned a tax rate without its row", ErrGatewayUnavailable)
+		}
+		authorization := &Authorization{releaseFinalization: releaseFinalization, holdID: holdID, AuthorizedBilledCostUSD: authorizedBilledCostUSD, taxRate: taxRate, taxRateText: *row.TaxRate, taxRateID: row.TaxRateID, CreatedAt: derefTime(row.CreatedAt), GrantID: grantID, KeyID: keyID, OrganizationID: organizationID, ProductKey: productKey, ProviderKey: providerKey, RequestID: requestID, UpstreamByok: upstreamByok, UpstreamTargetJSON: upstreamTargetJSON, UserID: userID}
 		if previous != nil {
 			authorization.releaseFinalization = previous.releaseFinalization
 			authorization.StartAt = previous.StartAt
