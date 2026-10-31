@@ -1,89 +1,52 @@
 name: Fuzz Campaign
 
+# Runs nightly, and Control's hourly gateway-fuzz-campaign task warns in Admin
+# while the newest campaign failed. Tests run every committed seed, and each
+# crash a campaign finds is committed as one.
 on:
+  schedule:
+    - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions:
+  # The fuzz jobs read the corpora that earlier campaigns kept.
+  actions: read
   contents: read
 
 jobs:
+  targets:
+    name: List fuzz targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      targets: ${{ steps.list.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: transports/go.mod
+          cache-dependency-path: |
+            core/go.sum
+            transports/go.sum
+      - id: list
+        run: echo "targets=$(stogas/scripts/fuzz-targets.sh)" >> "$GITHUB_OUTPUT"
+
   fuzz:
     name: ${{ matrix.target }}
+    needs: targets
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 45
     concurrency:
       group: gateway-fuzz-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      # Leaves runners for other workflows within the Free plan's 20 concurrent jobs.
+      max-parallel: 8
       matrix:
-        include:
-          - module: core
-            package: ./schemas
-            target: FuzzOrderedMapMarshal
-          - module: transports
-            package: ./stogas/catalog
-            target: FuzzValidateRequestJSONNeverPanics
-          - module: transports
-            package: ./stogas/confidential/e2ee
-            target: FuzzOpenRequestNeverPanics
-          - module: transports
-            package: ./stogas/confidential/e2ee
-            target: FuzzDecodeResponseNeverPanics
-          - module: transports
-            package: ./stogas/confidential/channel
-            target: FuzzRecordDecoding
-          - module: transports
-            package: ./stogas/billing
-            target: FuzzNormalizeUpstreamStatus
-          - module: transports
-            package: ./stogas
-            target: FuzzCacheEconomicsMatchIndependentRequestCounterfactual
-          - module: transports
-            package: ./stogas
-            target: FuzzProviderUsageNormalization
-          - module: transports
-            package: ./stogas/policy
-            target: FuzzCompileSourceNeverPanics
-          - module: transports
-            package: ./stogas/policy
-            target: FuzzSourceCanonicalIdentity
-          - module: transports
-            package: ./stogas/policy
-            target: FuzzSourceQuery
-          - module: transports
-            package: ./stogas/policy
-            target: FuzzBlendedPriceExactArithmetic
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzRedactBytes
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzRedactJSON
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzJSONWithoutRedactionPreservesDecodedValues
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzConfiguredRedaction
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzCustomPatternRedaction
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzIPAddressRedaction
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzLiteralSeedCompleteness
-          - module: transports
-            package: ./stogas/plugins/redaction
-            target: FuzzCredentialClassifier
-          - module: transports
-            package: ./stogas/tokenizer
-            target: FuzzEstimateAtMost
-          - module: transports
-            package: ./stogas/rawjson
-            target: FuzzBorrowedContainersPreserveValues
+        include: ${{ fromJSON(needs.targets.outputs.targets) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,25 +58,39 @@ jobs:
             core/go.sum
             transports/go.sum
       - id: verifier
+        if: matrix.verifier
         uses: $/.github/actions/setup-verifier
-        if: matrix.package == './stogas/confidential/channel'
-      - name: Restore generated fuzz corpus
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/go-build/fuzz
-          key: gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-${{ hashFiles('core/go.sum', 'transports/go.sum') }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-${{ hashFiles('core/go.sum', 'transports/go.sum') }}-
-            gateway-fuzz-${{ runner.os }}-${{ matrix.module }}-${{ matrix.target }}-
+      - id: corpus
+        name: Restore the corpus an earlier campaign kept
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMPORT_PATH: ${{ matrix.import }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          dir="$(go env GOCACHE)/fuzz/$IMPORT_PATH/$TARGET"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          stogas/scripts/fuzz-corpus.sh "$dir" "$TARGET"
       - name: Fuzz ${{ matrix.target }}
         working-directory: ${{ matrix.module }}
         env:
           CGO_LDFLAGS: ${{ steps.verifier.outputs.cgo-ldflags }}
-        run: GOWORK=off go test -tags=stogas_gateway -run='^$' -fuzz='^${{ matrix.target }}$' -fuzztime=5m '${{ matrix.package }}'
+          PACKAGE: ${{ matrix.package }}
+          TARGET: ${{ matrix.target }}
+        # A target that the build tags exclude would otherwise pass without running.
+        run: |
+          GOWORK=off go test -tags=stogas_gateway -run='^$' -fuzz="^$TARGET\$" -fuzztime=20m "$PACKAGE" | tee "$RUNNER_TEMP/fuzz.log"
+          ! grep -q 'no fuzz tests to fuzz' "$RUNNER_TEMP/fuzz.log"
+      - name: Keep the corpus
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: success() || failure()
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: ${{ steps.corpus.outputs.dir }}
+          retention-days: 90
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: fuzz-${{ matrix.target }}-${{ github.sha }}
-          path: ${{ matrix.module }}/**/testdata/fuzz/${{ matrix.target }}
+          path: ${{ matrix.dir }}/testdata/fuzz/${{ matrix.target }}
           if-no-files-found: ignore
           retention-days: 30
