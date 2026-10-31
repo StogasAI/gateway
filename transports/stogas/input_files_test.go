@@ -229,7 +229,7 @@ func TestProviderFileIDWithPreparedBYOKHoldsFullInput(t *testing.T) {
 }
 
 func TestAnthropicAttachmentLoopHoldAndProviderToolCaps(t *testing.T) {
-	for _, model := range []string{"anthropic/anthropic-claude-opus-4-8-fast-us", "azure/azure-claude-opus-4-8"} {
+	for _, model := range []string{"anthropic/anthropic-claude-opus-5-fast-us", "azure/azure-claude-opus-4-8"} {
 		for _, tool := range []string{"web_search_20250305", "web_fetch_20260309"} {
 			for _, tc := range []struct {
 				name, cap, cache string
@@ -320,7 +320,7 @@ func TestAnthropicAttachmentLoopHoldAndProviderToolCaps(t *testing.T) {
 }
 
 func TestNativeDocumentsPreserveProviderContent(t *testing.T) {
-	for _, model := range []string{"openai/gpt-5.5", "anthropic/anthropic-claude-opus-4-8-fast-us"} {
+	for _, model := range []string{"openai/gpt-5.5", "anthropic/anthropic-claude-opus-5-fast-us"} {
 		for _, route := range []string{"chat/completions", "responses"} {
 			for _, file := range []struct{ name, fields, expected string }{
 				{"PDF", `"file_data":"data:application/pdf;base64,JVBERi0xLjcK","filename":"note.pdf"`, "JVBERi0xLjcK"},

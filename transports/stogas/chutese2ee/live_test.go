@@ -203,13 +203,13 @@ func liveChutesTargets(t *testing.T) []liveChutesTarget {
 
 	model := strings.TrimSpace(os.Getenv("STOGAS_LIVE_CHUTES_MODEL"))
 	if model == "" {
-		model = "Qwen/Qwen3-32B-TEE"
+		model = "Qwen/Qwen3.6-27B-TEE"
 	}
 	chuteID := strings.TrimSpace(os.Getenv("STOGAS_LIVE_CHUTES_CHUTE_ID"))
 	if chuteID == "" {
-		chuteID = "ac059e33-eb27-541c-b9a9-24b214036475"
+		chuteID = "7aa5e899-c0ba-5482-af48-d3f31d635c9f"
 	}
-	gpuCount := 8
+	gpuCount := 1
 	if raw := strings.TrimSpace(os.Getenv("STOGAS_LIVE_CHUTES_GPU_COUNT")); raw != "" {
 		parsed, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || parsed < 1 || parsed > 16 {

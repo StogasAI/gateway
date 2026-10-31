@@ -45,10 +45,10 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
 	if len(snap.graph.Authors) != 10 ||
-		len(snap.graph.Models) != 42 ||
+		len(snap.graph.Models) != 39 ||
 		len(snap.graph.Providers) != 4 ||
 		len(snap.graph.Routes) != 7 ||
-		len(snap.graph.Deployments) != 212 {
+		len(snap.graph.Deployments) != 207 {
 		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
 			len(snap.graph.Authors),
 			len(snap.graph.Models),
@@ -133,7 +133,7 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
-			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3-32b"].(map[string]any)
+			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3.6-27b"].(map[string]any)
 			route := deployment["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)
 			test.apply(route["dataHandling"].(map[string]any))
 			data, err := json.Marshal(whole)
@@ -485,8 +485,8 @@ func TestServiceTierSpellingsSelectOneTier(t *testing.T) {
 		{fields: `"model":"azure/gpt-5.6-sol","service_tier":"fast"`, deployment: "azure-gpt-5.6-sol-fast", wire: "priority"},
 		{fields: `"model":"azure/gpt-6-astra","service_tier":"flex"`, deployment: "azure-gpt-6-astra-flex", wire: "flex"},
 		{fields: `"model":"openai/gpt-6-astra","service_tier":"ultrafast"`, deployment: "openai-gpt-6-astra-ultrafast", wire: "ultrafast"},
-		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-4-8-fast", wire: "default"},
-		{fields: `"model":"anthropic/claude-opus-4-8","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-4-8", wire: "default"},
+		{fields: `"model":"anthropic/claude-opus-5","service_tier":"fast",` + multiRegion, deployment: "anthropic-claude-opus-5-fast", wire: "default"},
+		{fields: `"model":"anthropic/claude-opus-5","service_tier":"auto",` + multiRegion, deployment: "anthropic-claude-opus-5", wire: "default"},
 		{fields: `"model":"azure/claude-fable-5-1","service_tier":"default"`, deployment: "azure-claude-fable-5-1-anthropic-hosted"},
 		// Azure sells Claude Fast as its own model, so the request names no tier.
 		{fields: `"model":"azure/claude-opus-5-5","service_tier":"fast"`, deployment: "azure-claude-opus-5-5-fast"},
@@ -793,12 +793,12 @@ func TestRequestedTierMovesOnlyModelSelectors(t *testing.T) {
 			t.Fatalf("a requested tier retargeted the exact selector %s to %s", selector, deployment.ID)
 		}
 	}
-	fastUS, ok := testDeploymentForRoute(schemas.Anthropic, "anthropic-claude-opus-4-8-fast-us", RouteResponses)
+	fastUS, ok := testDeploymentForRoute(schemas.Anthropic, "anthropic-claude-opus-5-fast-us", RouteResponses)
 	if !ok {
-		t.Fatal("Claude Opus 4.8 Fast US is missing")
+		t.Fatal("Claude Opus 5 Fast US is missing")
 	}
-	if standardUS, ok := StandardTierDeployment(schemas.Anthropic, RouteResponses, fastUS); !ok || standardUS.ID != "anthropic-claude-opus-4-8-us" {
-		t.Fatalf("Standard sibling of %s = %#v, want anthropic-claude-opus-4-8-us", fastUS.ID, standardUS)
+	if standardUS, ok := StandardTierDeployment(schemas.Anthropic, RouteResponses, fastUS); !ok || standardUS.ID != "anthropic-claude-opus-5-us" {
+		t.Fatalf("Standard sibling of %s = %#v, want anthropic-claude-opus-5-us", fastUS.ID, standardUS)
 	}
 	// Azure's Claude Fast model has its own name but is the same deployment at another tier.
 	azureFastUS, ok := testDeploymentForRoute(schemas.Azure, "azure-claude-opus-5-5-fast-us", RouteResponses)
@@ -1012,19 +1012,11 @@ func TestChutesTEEStatusIsMaterializedPerDeployment(t *testing.T) {
 	loadTestCatalog(t)
 	standard, ok := testDeploymentForRoute(
 		ProviderChutes,
-		"chutes-qwen3-32b",
+		"chutes-qwen3.6-27b",
 		RouteChat,
 	)
 	if !ok || !standard.DataHandling.TEE || standard.DataHandling.TEEVerified {
 		t.Fatalf("unexpected Chutes TEE status: %#v", standard.DataHandling)
-	}
-	nemotron, ok := testDeploymentForRoute(
-		ProviderChutes,
-		"chutes-nemotron-3-nano-omni-30b",
-		RouteChat,
-	)
-	if !ok || !nemotron.DataHandling.TEE || nemotron.DataHandling.TEEVerified {
-		t.Fatalf("unexpected Nemotron Chutes TEE status: %#v", nemotron.DataHandling)
 	}
 }
 
@@ -1245,7 +1237,7 @@ func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) 
 	}
 	graph := whole["graph"].(map[string]any)
 	deployments := graph["deployments"].(map[string]any)
-	deployment := deployments["chutes-qwen3-32b"].(map[string]any)
+	deployment := deployments["chutes-qwen3.6-27b"].(map[string]any)
 	dataHandling := deployment["routes"].(map[string]any)["chutes-chat-completions"].(map[string]any)["dataHandling"].(map[string]any)
 	dataHandling["tee"] = false
 	dataHandling["teeVerified"] = true

@@ -132,10 +132,10 @@ func TestChatPolicyRejectsUnsupportedFields(t *testing.T) {
 		{"anthropic web search options", `{"model":"anthropic-claude-sonnet-4-6","messages":[{"role":"user","content":"hi"}],"web_search_options":{"search_context_size":"low"}}`, "web_search_options is not supported for Anthropic-format"},
 		{"openai repetition penalty", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"repetition_penalty":1.1}`, "repetition_penalty is not supported for OpenAI-format"},
 		{"empty stop sequence", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"stop":[""]}`, "stop sequences must be non-empty"},
-		{"duplicate stop sequence", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["END","END"]}`, "stop must not contain duplicate values"},
-		{"too many portable stop sequences", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop contains too many items"},
-		{"oversized stop sequence", fmt.Sprintf(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["%s"]}`, strings.Repeat("x", maxStopSequenceBytes+1)), "stop values must not exceed"},
-		{"NUL stop sequence", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"stop":["END\u0000"]}`, "stop values must not contain NUL"},
+		{"duplicate stop sequence", `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["END","END"]}`, "stop must not contain duplicate values"},
+		{"too many portable stop sequences", `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["01","02","03","04","05","06","07","08","09","10","11","12","13","14","15","16","17"]}`, "stop contains too many items"},
+		{"oversized stop sequence", fmt.Sprintf(`{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["%s"]}`, strings.Repeat("x", maxStopSequenceBytes+1)), "stop values must not exceed"},
+		{"NUL stop sequence", `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stop":["END\u0000"]}`, "stop values must not contain NUL"},
 		{"prediction unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":"answer","future":true}}`, "prediction must contain only type and content"},
 		{"prediction non-text part", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"prediction":{"type":"content","content":[{"type":"image_url","text":"answer"}]}}`, "must contain only type=text and text"},
 		{"response format unknown field", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object","future":true}}`, "supports only type"},
@@ -1073,8 +1073,8 @@ func TestZeroOutputTokensRequireAllowedAnthropicCacheControl(t *testing.T) {
 
 func TestAnthropicFastDeploymentUsesModelSlugAndStandardTier(t *testing.T) {
 	for _, body := range []string{
-		`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}]}`,
-		`{"model":"anthropic/anthropic-claude-opus-4-8-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"fast"}`,
+		`{"model":"anthropic/anthropic-claude-opus-5-fast","messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"anthropic/anthropic-claude-opus-5-fast","messages":[{"role":"user","content":"hi"}],"service_tier":"fast"}`,
 	} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 			Method: "POST",
@@ -1084,7 +1084,7 @@ func TestAnthropicFastDeploymentUsesModelSlugAndStandardTier(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveRequest returned error: %v", err)
 		}
-		if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast" || resolution.Model != "claude-opus-4-8" {
+		if resolution.Deployment.ID != "anthropic-claude-opus-5-fast" || resolution.Model != "claude-opus-5" {
 			t.Fatalf("unexpected fast deployment resolution: %#v", resolution)
 		}
 		state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -1111,12 +1111,12 @@ func TestAnthropicUSDeploymentSetsInferenceGeoInternally(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","messages":[{"role":"user","content":"hi"}]}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-5-fast-us","messages":[{"role":"user","content":"hi"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" || resolution.Deployment.Upstream.InferenceGeo != "us" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-5-fast-us" || resolution.Deployment.Upstream.InferenceGeo != "us" {
 		t.Fatalf("unexpected US deployment resolution: %#v", resolution.Deployment)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
@@ -1245,7 +1245,7 @@ func TestUnknownTopLevelFieldsAreRefusedBeforeRouting(t *testing.T) {
 		{
 			name:  "Bifrost extra params",
 			path:  "/v1/chat/completions",
-			body:  `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"extra_params":{"model":"attacker-model","max_tokens":9999}}`,
+			body:  `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"extra_params":{"model":"attacker-model","max_tokens":9999}}`,
 			param: "extra_params",
 		},
 		{
@@ -1469,7 +1469,7 @@ func TestRequestSessionIDPrefersTheBodyThenXSessionID(t *testing.T) {
 func TestSessionIDNeverReachesProviders(t *testing.T) {
 	for _, tc := range []struct{ path, body string }{
 		{"/v1/chat/completions", `{"model":"openai/gpt-5.5","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},
-		{"/v1/chat/completions", `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},
+		{"/v1/chat/completions", `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"session_id":"conv-1"}`},
 		{"/v1/responses", `{"model":"openai/gpt-5.5","input":"hi","session_id":"conv-1"}`},
 	} {
 		resolution, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: tc.path, Body: []byte(tc.body)})
@@ -1866,6 +1866,12 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 			body: `{"model":"anthropic-claude-sonnet-4-6","input":"hi","reasoning":{"effort":"xhigh"}}`,
 			want: "max",
 		},
+		{
+			name:      "OpenAI search model rejects reasoning it does not advertise",
+			path:      "/v1/chat/completions",
+			body:      `{"model":"openai/gpt-5-search-api","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`,
+			wantError: true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -1876,8 +1882,8 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 				Body:   []byte(tc.body),
 			})
 			if tc.wantError {
-				if err == nil {
-					t.Fatal("unadvertised reasoning effort was accepted")
+				if err == nil || !strings.Contains(err.Error(), "reasoning is not supported") {
+					t.Fatalf("unadvertised reasoning effort was accepted or failed for another reason: %v", err)
 				}
 				return
 			}
@@ -4555,7 +4561,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 		Method: "POST",
 		Path:   "/v1/responses",
 		Body: []byte(`{
-			"model":"anthropic/anthropic-claude-opus-4-8-fast-us",
+			"model":"anthropic/anthropic-claude-opus-5-fast-us",
 			"input":[{"role":"user","content":[{"type":"input_text","text":"hi","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],
 			"cache_control":{"type":"ephemeral","ttl":"1h"},
 			"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":2}],
@@ -4566,7 +4572,7 @@ func TestAnthropicStackedPricingModifiersHoldCoversUpstreamCost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
 	}
-	if resolution.Deployment.ID != "anthropic-claude-opus-4-8-fast-us" {
+	if resolution.Deployment.ID != "anthropic-claude-opus-5-fast-us" {
 		t.Fatalf("expected fast US deployment, got %s", resolution.Deployment.ID)
 	}
 	state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
