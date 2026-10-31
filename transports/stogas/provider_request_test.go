@@ -638,16 +638,24 @@ func TestPrepareProviderRequestSendsBasicAnthropicWebToolVersions(t *testing.T) 
 }
 
 // OpenAI enforces blocked_domains, alone or beside allowed_domains, so the
-// provider must receive both lists as the client sent them.
+// provider must receive both lists as the client sent them, and the choice to
+// search only cached pages.
 func TestPrepareProviderRequestSendsOpenAIWebSearchDomainFilters(t *testing.T) {
-	for _, filters := range []string{
-		`{"blocked_domains":["example.com"]}`,
-		`{"allowed_domains":["wikipedia.org","britannica.com"],"blocked_domains":["en.wikipedia.org"]}`,
+	for _, item := range []struct{ filters, cached string }{
+		{filters: `{"blocked_domains":["example.com"]}`},
+		{filters: `{"allowed_domains":["wikipedia.org","britannica.com"],"blocked_domains":["en.wikipedia.org"]}`},
+		{filters: `{"allowed_domains":["wikipedia.org"]}`, cached: `false`},
+		{filters: `{"blocked_domains":["example.com"]}`, cached: `true`},
 	} {
-		t.Run(filters, func(t *testing.T) {
+		filters := item.filters
+		tool := `{"type":"web_search","filters":` + filters
+		if item.cached != "" {
+			tool += `,"external_web_access":` + item.cached
+		}
+		t.Run(tool, func(t *testing.T) {
 			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
 				Method: "POST", Path: "/v1/responses",
-				Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"tools":[{"type":"web_search","filters":` + filters + `}]}`),
+				Body: []byte(`{"model":"openai/gpt-5.5","input":"hi","max_output_tokens":16,"tools":[` + tool + `}]}`),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -667,15 +675,17 @@ func TestPrepareProviderRequestSendsOpenAIWebSearchDomainFilters(t *testing.T) {
 			}
 			var payload struct {
 				Tools []struct {
-					Filters json.RawMessage `json:"filters"`
+					Filters           json.RawMessage `json:"filters"`
+					ExternalWebAccess json.RawMessage `json:"external_web_access"`
 				} `json:"tools"`
 			}
 			body := preparedProviderBody(t, ctx, request.ResponsesRequest)
 			if err := json.Unmarshal(body, &payload); err != nil {
 				t.Fatalf("decode prepared body: %v", err)
 			}
-			if len(payload.Tools) != 1 || string(payload.Tools[0].Filters) != filters {
-				t.Fatalf("prepared body lost the domain filters %s: %s", filters, body)
+			if len(payload.Tools) != 1 || string(payload.Tools[0].Filters) != filters ||
+				string(payload.Tools[0].ExternalWebAccess) != item.cached {
+				t.Fatalf("prepared body lost the tool settings %s: %s", tool, body)
 			}
 		})
 	}

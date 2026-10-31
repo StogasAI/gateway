@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"golang.org/x/net/idna"
 )
 
 func validProviderHTTPURL(value string) bool {
@@ -53,11 +55,8 @@ func validateProviderResponsesOutput(state *State, response *schemas.BifrostResp
 		response.Container != nil || response.Error != nil {
 		return ErrProviderResponseMalformed
 	}
-	if response.MaxToolCalls != nil {
-		cap, supplied := responsesExplicitMaxToolCalls(state)
-		if *response.MaxToolCalls < 1 || supplied && *response.MaxToolCalls > cap {
-			return ErrProviderResponseMalformed
-		}
+	if response.MaxToolCalls != nil && (*response.MaxToolCalls < 1 || *response.MaxToolCalls > responsesHostedToolCap(state)) {
+		return ErrProviderResponseMalformed
 	}
 	seenIDs := make(map[string]struct{}, len(response.Output))
 	for index := range response.Output {
@@ -1170,7 +1169,7 @@ func providerResponsesURLAllowed(state *State, wanted schemas.ResponsesToolType,
 	if err != nil || parsed.Hostname() == "" {
 		return false
 	}
-	hostname := strings.ToLower(parsed.Hostname())
+	hostname, domain := providerResultDomain(parsed.Hostname())
 	for _, tool := range state.providerTools().web {
 		if tool.kind != wanted && (wanted != schemas.ResponsesToolTypeWebSearch || tool.kind != schemas.ResponsesToolTypeWebSearchPreview) {
 			continue
@@ -1178,8 +1177,16 @@ func providerResponsesURLAllowed(state *State, wanted schemas.ResponsesToolType,
 		if !tool.filtered {
 			return true
 		}
-		if !tool.valid {
+		// An address or a host that cannot be read is in no listed domain, so
+		// only a tool with a block list alone allows it.
+		if !tool.valid || hostname == "" {
 			return false
+		}
+		if !domain {
+			if len(tool.allowed) == 0 {
+				return true
+			}
+			continue
 		}
 		if providerDomainMatches(hostname, tool.blocked) {
 			continue
@@ -1214,6 +1221,46 @@ func providerResponseDomains(raw json.RawMessage) (map[string]bool, bool) {
 		set[strings.ToLower(strings.TrimSpace(domain))] = true
 	}
 	return set, true
+}
+
+// Browsers map a host before they visit it (UTS #46, as the URL standard
+// applies it), so different spellings of one domain open the same site.
+var providerResultHostProfile = idna.New(idna.MapForLookup(), idna.StrictDomainName(false), idna.BidiRule())
+
+// providerResultDomain returns a result URL's host as the browser visits it and
+// whether that is a domain name rather than an IP address. The host is ASCII in
+// lower case without a trailing dot, which is how filters list domains, and
+// empty when a browser would not open it.
+func providerResultDomain(hostname string) (string, bool) {
+	host, err := providerResultHostProfile.ToASCII(hostname)
+	host = strings.TrimSuffix(host, ".")
+	if err != nil || host == "" {
+		return "", false
+	}
+	if strings.Contains(host, ":") {
+		if net.ParseIP(host) == nil {
+			return "", false
+		}
+		return host, false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789-_") != "" {
+			return "", false
+		}
+	}
+	return host, !hostEndsInNumber(host)
+}
+
+// hostEndsInNumber reports whether the URL standard reads a host as an IPv4
+// address, written in any of the forms it accepts, such as 2130706433 or
+// 0x7f.1, rather than as a domain.
+func hostEndsInNumber(host string) bool {
+	last := host[strings.LastIndexByte(host, '.')+1:]
+	if last != "" && strings.Trim(last, "0123456789") == "" {
+		return true
+	}
+	hex, ok := strings.CutPrefix(strings.ToLower(last), "0x")
+	return ok && strings.Trim(hex, "0123456789abcdef") == ""
 }
 
 // providerDomainMatches reports whether hostname is a listed domain or one of its subdomains.
@@ -1280,8 +1327,7 @@ func validateAndRecordProviderResponsesToolCall(state *State, item *schemas.Resp
 		case schemas.ResponsesMessageTypeWebSearchCall, schemas.ResponsesMessageTypeWebFetchCall:
 			state.responsesDeclaredCalls++
 			state.responsesHostedCalls++
-			cap, supplied := responsesExplicitMaxToolCalls(state)
-			if supplied && !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > cap {
+			if !responsesUsesAnthropicWire(state) && state.responsesHostedCalls > responsesHostedToolCap(state) {
 				return ErrProviderResponseMalformed
 			}
 		}

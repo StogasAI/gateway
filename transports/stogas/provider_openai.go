@@ -389,6 +389,30 @@ func rejectOpenAIResponsesCacheControls(raw map[string]json.RawMessage) error {
 	return nil
 }
 
+func (a OpenAIAdapter) SanitizeRequest(state *State) error {
+	if err := a.DefaultAdapter.SanitizeRequest(state); err != nil {
+		return err
+	}
+	ensureOpenAIResponsesHostedToolCap(state)
+	return nil
+}
+
+// A Responses request with hosted tools and no max_tool_calls sends the default
+// cap, which its hold covers half of.
+func ensureOpenAIResponsesHostedToolCap(state *State) {
+	resolution := state.Resolution
+	if resolution.Route != catalog.RouteResponses || !responsesHostedToolChoiceAllowsCalls(resolution.RawBody()) {
+		return
+	}
+	if _, supplied := responsesExplicitMaxToolCalls(state); supplied {
+		return
+	}
+	toolTypes := effectiveResponsesToolTypes(resolution.RawBody(), resolution.ToolTypes())
+	if usesWebSearchKind(toolTypes, "web_search") || usesWebSearchKind(toolTypes, "web_search_preview") {
+		resolution.EnsureResponsesMaxToolCalls(defaultResponsesHostedToolCap)
+	}
+}
+
 func (a OpenAIAdapter) EstimateHold(state *State) error {
 	if err := a.DefaultAdapter.EstimateHold(state); err != nil {
 		return err

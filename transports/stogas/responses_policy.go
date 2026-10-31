@@ -13,9 +13,12 @@ import (
 )
 
 const (
-	// Financial allowance only; never injected into provider execution controls.
+	// The hosted tool calls that a hold covers when the client sets no cap.
 	defaultResponsesHostedToolCalls = 10
-	maxResponsesToolCalls           = 128
+	// The cap that such a request sends, twice the calls its hold covers, so the
+	// hold is never less than half of what the calls can cost.
+	defaultResponsesHostedToolCap = 2 * defaultResponsesHostedToolCalls
+	maxResponsesToolCalls         = 128
 )
 
 func validateCommonResponsesPolicy(state *State) error {
@@ -443,7 +446,8 @@ func validateResponsesWebSearchTool(state *State, tool map[string]json.RawMessag
 
 	allowed := []string{"type", "search_context_size", "user_location"}
 	if toolType == schemas.ResponsesToolTypeWebSearch {
-		allowed = append(allowed, "filters")
+		// Searching only cached pages changes neither the call fee nor the content billed.
+		allowed = append(allowed, "filters", "external_web_access")
 	}
 	if err := rejectUnsupportedResponsesToolKeys(tool, path, allowed...); err != nil {
 		return err
@@ -622,8 +626,11 @@ func validateResponsesDomainFilters(raw json.RawMessage, path string) error {
 	return nil
 }
 
+// A filter names a domain, and a name that ends in a number is an IPv4 address
+// to browsers, which domain filters do not cover.
 func validWebSearchDomain(domain string) bool {
-	if domain == "" || len(domain) > 253 || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+	if domain == "" || len(domain) > 253 || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") ||
+		hostEndsInNumber(domain) {
 		return false
 	}
 	for _, label := range strings.Split(domain, ".") {
