@@ -339,14 +339,14 @@ func TestPrepareProviderRequestRecordsSettingsWithoutContent(t *testing.T) {
 		{
 			name:  "chat to Chutes reads the fields the gateway sends to Chutes",
 			route: "chat/completions",
-			body: `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+			body: `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
 				"reasoning":{"enabled":false},"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
 			want: `{"max_output_tokens":64,"reasoning_enabled":false,"temperature":0.2,"frequency_penalty":0.5,"repetition_penalty":1.1,"seed":7}`,
 		},
 		{
 			name:  "chat to Chutes leaves out integers that would round in the log",
 			route: "chat/completions",
-			body: `{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
+			body: `{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"secret prompt"}],"max_tokens":64,
 				"seed":9007199254740993,"top_k":-9007199254740992,"temperature":0.2}`,
 			want: `{"max_output_tokens":64,"temperature":0.2}`,
 		},

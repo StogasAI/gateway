@@ -124,8 +124,6 @@ func chutesReasoningEnabledWireControl(deploymentID string, enabled bool) (chute
 		"chutes-gemma-4-31b-turbo",
 		"chutes-glm-5.1",
 		"chutes-kimi-k2.6",
-		"chutes-nemotron-3-nano-omni-30b",
-		"chutes-qwen3-32b",
 		"chutes-qwen3.5-397b-a17b",
 		"chutes-qwen3.6-27b":
 		return chutesReasoningControl{Thinking: &enabled}, true

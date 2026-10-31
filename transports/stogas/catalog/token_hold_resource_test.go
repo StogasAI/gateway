@@ -45,7 +45,7 @@ func TestUniversalContentKeepsCandidateFramingSeparate(t *testing.T) {
 		{"gpt-5.6-sol", 118},
 		{"claude-sonnet-5", 194},
 		{"minimax-m3", 222},
-		{"qwen3-32b", 194},
+		{"qwen3.6-27b", 194},
 		{"qwen3.5-397b-a17b", 194},
 	}
 	for _, reverse := range []bool{false, true} {

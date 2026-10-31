@@ -19,7 +19,7 @@ import (
 
 func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 	state := resolveChutesState(t, `{
-		"model":"chutes/qwen3-32b",
+		"model":"chutes/qwen3.6-27b",
 		"provider":"chutes",
 		"messages":[{"role":"system","content":"Be concise."},{"role":"user","content":"Reply with JSON."}],
 		"metadata":{"tenant":"must-not-reach-provider"},
@@ -72,7 +72,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 		t.Fatalf("decode Chutes wire request: %v", err)
 	}
 	var model string
-	if err := sonic.Unmarshal(body["model"], &model); err != nil || model != "Qwen/Qwen3-32B-TEE" {
+	if err := sonic.Unmarshal(body["model"], &model); err != nil || model != "Qwen/Qwen3.6-27B-TEE" {
 		t.Fatalf("model = %s, want the selected Chutes deployment", body["model"])
 	}
 	assertRawNumber(t, body, "max_tokens", 7)
@@ -100,7 +100,7 @@ func TestChutesChatWireUsesVerifiedOpenAICompatibleFields(t *testing.T) {
 }
 
 func TestChutesChatWireStreamingForcesUsage(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	state := resolveChutesState(t, `{"model":"qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestChutesChatWireStreamingForcesUsage(t *testing.T) {
 }
 
 func TestChutesOmittedOutputLimitUsesObserved1024DefaultForWireAndHold(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"qwen3-32b","messages":[{"role":"user","content":"hi"}]}`)
+	state := resolveChutesState(t, `{"model":"qwen3.6-27b","messages":[{"role":"user","content":"hi"}]}`)
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		t.Fatalf("ValidateRequest returned error: %v", err)
 	}
@@ -285,9 +285,9 @@ func TestChutesReasoningEffortsUseVerifiedWireMapping(t *testing.T) {
 		wantEffort   string
 		wantThinking bool
 	}{
-		{model: "qwen3-32b", requested: "none", wantThinking: false},
-		{model: "qwen3-32b", requested: "low", wantThinking: true},
-		{model: "qwen3-32b", requested: "high", wantThinking: true},
+		{model: "qwen3.6-27b", requested: "none", wantThinking: false},
+		{model: "qwen3.6-27b", requested: "low", wantThinking: true},
+		{model: "qwen3.6-27b", requested: "high", wantThinking: true},
 		{model: "qwen3.8-27b", requested: "none", wantThinking: false},
 		{model: "qwen3.8-27b", requested: "low", wantEffort: "low", wantThinking: true},
 		{model: "qwen3.8-27b", requested: "medium", wantEffort: "medium", wantThinking: true},
@@ -300,8 +300,8 @@ func TestChutesReasoningEffortsUseVerifiedWireMapping(t *testing.T) {
 		{model: "kimi-k3", requested: "low", wantEffort: "low", wantThinking: true},
 		{model: "kimi-k3", requested: "minimal", wantEffort: "low", wantThinking: true},
 		{model: "kimi-k3", requested: "max", wantEffort: "max", wantThinking: true},
-		{model: "nemotron-3-nano-omni-30b", requested: "none", wantThinking: false},
-		{model: "nemotron-3-nano-omni-30b", requested: "high", wantThinking: true},
+		{model: "gemma-4-31b", requested: "none", wantThinking: false},
+		{model: "gemma-4-31b", requested: "high", wantThinking: true},
 	}
 	for _, test := range tests {
 		t.Run(test.model+"/"+test.requested, func(t *testing.T) {
@@ -370,15 +370,6 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 	_, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(chutesBodyForModel("mistral-nemo-instruct-2407", `"reasoning_effort":"high"`)),
-	})
-	if err == nil {
-		t.Fatal("reasoning effort was accepted for a Chutes deployment that does not advertise it")
-	}
-
-	_, err = catalog.ResolveRequest(catalog.RequestInput{
-		Method: "POST",
-		Path:   "/v1/chat/completions",
 		Body:   []byte(chutesBodyForModel("kimi-k3", `"reasoning_effort":"none"`)),
 	})
 	if err == nil {
@@ -389,7 +380,7 @@ func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
 
 func TestChutesBinaryReasoningEnabledControl(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		state := resolveChutesState(t, chutesBodyForModel("qwen3-32b", fmt.Sprintf(`"reasoning":{"enabled":%t}`, enabled)))
+		state := resolveChutesState(t, chutesBodyForModel("qwen3.6-27b", fmt.Sprintf(`"reasoning":{"enabled":%t}`, enabled)))
 		if err := state.Adapter.ValidateRequest(state); err != nil {
 			t.Fatalf("ValidateRequest enabled=%t: %v", enabled, err)
 		}
@@ -518,7 +509,7 @@ func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/chat/completions",
-		Body:   []byte(`{"model":"chutes/qwen3-32b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"routing":{"filter": "provider.id == \"chutes\""}}}`),
+		Body:   []byte(`{"model":"chutes/qwen3.6-27b","messages":[{"role":"user","content":"hi"}],"encryption_keys":{"providers":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},"policy":{"routing":{"filter": "provider.id == \"chutes\""}}}`),
 		Policy: config,
 	})
 	if err != nil {
@@ -536,18 +527,13 @@ func TestChutesRequestMetadataIsConsumedBeforeProviderValidation(t *testing.T) {
 }
 
 func TestChutesModelCapabilitiesGateStructuredOutput(t *testing.T) {
-	state := resolveChutesState(t, `{"model":"mistral-nemo-instruct-2407","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`)
+	state := resolveChutesState(t, chutesBody(`"response_format":{"type":"json_object"}`))
 	if err := state.Adapter.ValidateRequest(state); err != nil {
-		t.Fatalf("Mistral structured output was rejected: %v", err)
+		t.Fatalf("Chutes structured output was rejected: %v", err)
 	}
 	state.Resolution.Deployment.Capabilities.StructuredOutputs = false
 	if err := state.Adapter.ValidateRequest(state); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Fatalf("deployment without structured output was accepted: %v", err)
-	}
-
-	_, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/chat/completions", Body: []byte(`{"model":"chutes/mistral-nemo-instruct-2407","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]}`)})
-	if err == nil || !strings.Contains(err.Error(), "not supported") {
-		t.Fatalf("Mistral deployment without function calling was not rejected during catalog selection: %v", err)
 	}
 }
 
@@ -751,7 +737,7 @@ func resolveChutesState(t *testing.T, body string) *State {
 }
 
 func chutesBody(field string) string {
-	return chutesBodyForModel("qwen3-32b", field)
+	return chutesBodyForModel("qwen3.6-27b", field)
 }
 
 func chutesBodyForModel(model string, field string) string {

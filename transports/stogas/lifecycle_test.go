@@ -4017,7 +4017,7 @@ func TestAnthropicHoldCoversCombinedFastUSCacheAndHostedToolPricing(t *testing.T
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-4-8-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
+		Body:   []byte(`{"model":"anthropic/anthropic-claude-opus-5-fast-us","input":[{"role":"user","content":[{"type":"input_text","text":"hello","cache_control":{"type":"ephemeral","ttl":"1h"}}]}],"tools":[{"type":"web_search_20250305","name":"web_search"}],"max_tool_calls":2,"max_output_tokens":16}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
