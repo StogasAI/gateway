@@ -1733,12 +1733,17 @@ func TestResponsesPolicyRejectsUnsupportedFieldsAndInvalidShapes(t *testing.T) {
 		{"responses duplicate hosted type", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search"},{"type":"web_search_2025_08_26"}]}`, "duplicates another hosted tool"},
 		{"responses custom grammar missing syntax", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD"}}]}`, "format.syntax is required"},
 		{"responses custom bad grammar syntax", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"custom","name":"parse","format":{"type":"grammar","definition":"start: WORD","syntax":"peg"}}]}`, "format.syntax must be lark or regex"},
-		{"openai web search unknown field", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":true}]}`, "external_web_access is not supported"},
+		{"openai web search unknown field", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","return_token_budget":"unlimited"}]}`, "return_token_budget is not supported"},
 		{"openai preview filters", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","filters":{"allowed_domains":["example.com"]}}]}`, "filters is not supported"},
 		{"openai web search invalid domain", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["https://example.com/path"]}}]}`, "contains an invalid domain"},
 		{"openai web search blocked domain path", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["example.com/blog"]}}]}`, "contains an invalid domain"},
 		{"openai overlapping domain filters", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"allowed_domains":["example.com"],"blocked_domains":["Example.com"]}}]}`, "duplicates a domain"},
 		{"anthropic web search domain path", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"allowed_domains":["example.com/blog"]}}]}`, "contains an invalid domain"},
+		{"openai web search cached access not boolean", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","external_web_access":"no"}]}`, "Invalid JSON body"},
+		{"openai web search preview cached access", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search_preview","external_web_access":false}]}`, "tools[0].external_web_access is not supported"},
+		{"anthropic web search cached access", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","external_web_access":false}]}`, "tools[0].external_web_access is not supported"},
+		{"openai web search address filter", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","filters":{"blocked_domains":["127.0.0.1"]}}]}`, "contains an invalid domain"},
+		{"anthropic web search numeric address filter", `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search","filters":{"blocked_domains":["intranet.0x7f"]}}]}`, "contains an invalid domain"},
 		{"openai web search bad location country", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search","user_location":{"type":"approximate","country":"USA"}}]}`, "country must be a two-letter country code"},
 		{"unsupported tool choice", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"code_interpreter"}}`, "tool_choice must select a supported tool"},
 		{"hosted tool choice not declared", `{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"function","name":"lookup"}],"tool_choice":{"type":"web_search_preview"},"max_tool_calls":1}`, "max_tool_calls is supported only for priced hosted Responses tools"},
@@ -3429,7 +3434,9 @@ func TestAnthropicChatMCPToolsetFailsBeforeProviderRequest(t *testing.T) {
 	}
 }
 
-func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) {
+// A request without max_tool_calls sends twice the calls that its hold covers,
+// so the hold is never less than half of what the calls can cost.
+func TestResponsesHostedToolsWithoutACapSendTwiceTheCallsTheHoldCovers(t *testing.T) {
 	cases := []struct {
 		name     string
 		body     string
@@ -3505,14 +3512,15 @@ func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) 
 			}
 			switch tc.provider {
 			case schemas.OpenAI:
-				if bifrostReq.ResponsesRequest.Params.MaxToolCalls != nil {
-					t.Fatalf("unexpected OpenAI execution cap: %#v", bifrostReq.ResponsesRequest.Params.MaxToolCalls)
+				if cap := bifrostReq.ResponsesRequest.Params.MaxToolCalls; cap == nil || *cap != defaultResponsesHostedToolCap {
+					t.Fatalf("OpenAI cap = %#v, want %d", cap, defaultResponsesHostedToolCap)
 				}
-			case schemas.Anthropic:
+			default:
 				if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch == nil ||
-					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != nil {
-					t.Fatalf("unexpected Anthropic search execution cap: %#v", bifrostReq.ResponsesRequest.Params.Tools)
+					bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses == nil ||
+					*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebSearch.MaxUses != defaultResponsesHostedToolCap {
+					t.Fatalf("Claude search cap = %#v, want max_uses %d", bifrostReq.ResponsesRequest.Params.Tools, defaultResponsesHostedToolCap)
 				}
 				wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
 					schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -3522,8 +3530,8 @@ func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) 
 				if bifrostErr != nil {
 					t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 				}
-				if strings.Contains(string(wire), `"max_uses"`) {
-					t.Fatalf("unexpected injected Anthropic max_uses, got %s", string(wire))
+				if !strings.Contains(string(wire), fmt.Sprintf(`"max_uses":%d`, defaultResponsesHostedToolCap)) {
+					t.Fatalf("Claude wire lacks max_uses %d: %s", defaultResponsesHostedToolCap, string(wire))
 				}
 			}
 			if err := state.Adapter.EstimateHold(state); err != nil {
@@ -3538,10 +3546,16 @@ func TestResponsesHostedToolsReserveWithoutInjectingExecutionCaps(t *testing.T) 
 }
 
 func TestAnthropicResponsesExplicitMaxToolCallsBecomesMaxUses(t *testing.T) {
+	for _, model := range []string{"anthropic-claude-sonnet-4-6", "azure-claude-opus-4-8-anthropic-hosted"} {
+		t.Run(model, func(t *testing.T) { testExplicitMaxToolCallsBecomesMaxUses(t, model) })
+	}
+}
+
+func testExplicitMaxToolCallsBecomesMaxUses(t *testing.T, model string) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
-		Body:   []byte(`{"model":"anthropic-claude-sonnet-4-6","input":"hi","max_tool_calls":3,"tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`),
+		Body:   []byte(`{"model":"` + model + `","input":"hi","max_tool_calls":3,"tools":[{"type":"web_search_20250305","name":"web_search"}],"tool_choice":"auto"}`),
 	})
 	if err != nil {
 		t.Fatalf("ResolveRequest returned error: %v", err)
@@ -3572,7 +3586,7 @@ func TestAnthropicResponsesExplicitMaxToolCallsBecomesMaxUses(t *testing.T) {
 	}
 }
 
-func TestAnthropicResponsesWebFetchOmittedCapReservesWithoutMaxUses(t *testing.T) {
+func TestAnthropicResponsesWebFetchOmittedCapSendsTheDefaultCap(t *testing.T) {
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
 		Method: "POST",
 		Path:   "/v1/responses",
@@ -3594,8 +3608,9 @@ func TestAnthropicResponsesWebFetchOmittedCapReservesWithoutMaxUses(t *testing.T
 	}
 	if len(bifrostReq.ResponsesRequest.Params.Tools) != 1 ||
 		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch == nil ||
-		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != nil {
-		t.Fatalf("unexpected Anthropic fetch execution cap: %#v", bifrostReq.ResponsesRequest.Params.Tools)
+		bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses == nil ||
+		*bifrostReq.ResponsesRequest.Params.Tools[0].ResponsesToolWebFetch.MaxUses != defaultResponsesHostedToolCap {
+		t.Fatalf("Claude fetch cap = %#v, want max_uses %d", bifrostReq.ResponsesRequest.Params.Tools, defaultResponsesHostedToolCap)
 	}
 	wire, bifrostErr := anthropicprovider.BuildAnthropicResponsesRequestBody(
 		schemas.NewBifrostContext(context.Background(), schemas.NoDeadline),
@@ -3605,8 +3620,8 @@ func TestAnthropicResponsesWebFetchOmittedCapReservesWithoutMaxUses(t *testing.T
 	if bifrostErr != nil {
 		t.Fatalf("BuildAnthropicResponsesRequestBody returned error: %v", bifrostErr)
 	}
-	if strings.Contains(string(wire), `"max_uses"`) {
-		t.Fatalf("unexpected injected Anthropic max_uses, got %s", string(wire))
+	if !strings.Contains(string(wire), fmt.Sprintf(`"max_uses":%d`, defaultResponsesHostedToolCap)) {
+		t.Fatalf("Claude wire lacks max_uses %d: %s", defaultResponsesHostedToolCap, string(wire))
 	}
 	if err := state.Adapter.EstimateHold(state); err != nil {
 		t.Fatalf("EstimateHold returned error: %v", err)

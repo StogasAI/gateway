@@ -47,6 +47,7 @@ func (a AzureAdapter) SanitizeRequest(state *State) error {
 	}
 	if azureDeploymentUsesAnthropicWire(state) {
 		state.Resolution.ApplyProviderSamplingParameters()
+		ensureAnthropicResponsesHostedToolCap(state)
 	}
 	return nil
 }

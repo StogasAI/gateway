@@ -1640,24 +1640,41 @@ func TestProviderResponsesEnforcesToolChoiceAndCallLimits(t *testing.T) {
 	}
 }
 
-func TestProviderResponsesDoesNotEnforceFinancialToolAllowance(t *testing.T) {
-	for _, model := range []string{"openai/gpt-5.5", "anthropic-claude-sonnet-4-6"} {
-		t.Run(model, func(t *testing.T) {
-			request := `{"model":"` + model + `","input":"hi","tools":[{"type":"web_search"}]}`
-			state := resolvedResponseValidationState(t, request)
-			response := validUnaryResponsesProviderResponse("resp_uncapped")
-			// Cross both the ten-call financial allowance and the former 128-call
-			// execution check; ordinary response resource limits still apply.
-			for i := 0; i < 129; i++ {
-				response.Output = append(response.Output, providerWebSearchOutputItem(fmt.Sprintf("ws_%d", i), "https://example.com/search"))
+// OpenAI must keep to the cap it received, the client's or the default. Claude
+// enforces max_uses itself and reports refused uses as calls with errors, so
+// the call count there is not checked.
+func TestProviderResponsesKeepToTheHostedToolCapSent(t *testing.T) {
+	calls := func(count int) *schemas.BifrostResponsesResponse {
+		response := validUnaryResponsesProviderResponse("resp_calls")
+		for i := 0; i < count; i++ {
+			response.Output = append(response.Output, providerWebSearchOutputItem(fmt.Sprintf("ws_%d", i), "https://example.com/search"))
+		}
+		return response
+	}
+	for _, item := range []struct {
+		request string
+		cap     int
+	}{
+		{`{"model":"openai/gpt-5.5","input":"hi","tools":[{"type":"web_search"}]}`, defaultResponsesHostedToolCap},
+		{`{"model":"openai/gpt-5.5","input":"hi","max_tool_calls":3,"tools":[{"type":"web_search"}]}`, 3},
+	} {
+		if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, item.request), calls(item.cap)); err != nil {
+			t.Fatalf("%d calls within the cap rejected: %v\n%s", item.cap, err, item.request)
+		}
+		if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, item.request), calls(item.cap+1)); !errors.Is(err, ErrProviderResponseMalformed) {
+			t.Fatalf("%d calls above the cap error = %v, want malformed provider response\n%s", item.cap+1, err, item.request)
+		}
+		for echoed, valid := range map[int]bool{item.cap: true, item.cap + 1: false} {
+			response := calls(1)
+			response.MaxToolCalls = schemas.Ptr(echoed)
+			if err := validateProviderResponsesResponse(resolvedResponseValidationState(t, item.request), response); (err == nil) != valid {
+				t.Fatalf("echoed cap %d error = %v, want valid %v\n%s", echoed, err, valid, item.request)
 			}
-			if model == "openai/gpt-5.5" {
-				response.MaxToolCalls = schemas.Ptr(200)
-			}
-			if err := validateProviderResponsesResponse(state, response); err != nil {
-				t.Fatalf("unrequested execution cap rejected provider output: %v", err)
-			}
-		})
+		}
+	}
+	state := resolvedResponseValidationState(t, `{"model":"anthropic-claude-sonnet-4-6","input":"hi","tools":[{"type":"web_search_20250305","name":"web_search"}]}`)
+	if err := validateProviderResponsesResponse(state, calls(129)); err != nil {
+		t.Fatalf("Claude call count rejected: %v", err)
 	}
 }
 

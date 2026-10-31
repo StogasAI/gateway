@@ -770,16 +770,18 @@ func ensureAnthropicResponsesHostedToolCap(state *State) {
 	if !responsesHostedToolChoiceAllowsCalls(state.Resolution.RawBody()) {
 		return
 	}
+	// Without a cap from the client, the tool gets the default one, which its
+	// hold covers half of.
 	cap, supplied := responsesExplicitMaxToolCalls(state)
 	if !supplied {
-		return
+		cap = defaultResponsesHostedToolCap
 	}
 	toolTypes := effectiveResponsesToolTypes(state.Resolution.RawBody(), state.Resolution.ToolTypes())
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebSearch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebSearch)
+		state.Resolution.EnsureResponsesToolMaxUses(cap, supplied, schemas.ResponsesToolTypeWebSearch)
 	}
 	if usesToolType(toolTypes, string(schemas.ResponsesToolTypeWebFetch)) {
-		state.Resolution.EnsureResponsesToolMaxUses(cap, schemas.ResponsesToolTypeWebFetch)
+		state.Resolution.EnsureResponsesToolMaxUses(cap, supplied, schemas.ResponsesToolTypeWebFetch)
 	}
 }
 

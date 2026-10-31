@@ -472,13 +472,22 @@ func actualWebSearchCalls(state *State) int {
 	return signals.WebSearchCalls()
 }
 
-// An execution limit exists only when the caller supplied one. Financial
-// defaults must not reject valid provider output or alter the upstream request.
+// The hosted tool call cap that the caller supplied, if any. The hold covers
+// it; without one, the hold covers defaultResponsesHostedToolCalls and the
+// provider receives defaultResponsesHostedToolCap.
 func responsesExplicitMaxToolCalls(state *State) (int, bool) {
 	if state == nil || state.Resolution == nil {
 		return 0, false
 	}
 	return rawIntegerValue(state.Resolution.RawBody()["max_tool_calls"])
+}
+
+// responsesHostedToolCap is the hosted tool call cap that the provider receives.
+func responsesHostedToolCap(state *State) int {
+	if cap, supplied := responsesExplicitMaxToolCalls(state); supplied {
+		return cap
+	}
+	return defaultResponsesHostedToolCap
 }
 
 func (DefaultAdapter) ValidateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
