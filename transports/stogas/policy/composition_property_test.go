@@ -230,9 +230,9 @@ func TestScalarCompositionMatchesTheReferenceModelInEveryOrder(t *testing.T) {
 	}
 }
 
-// Every policy setting states whom it covers and how two values combine
-// (knowledge/policy.md#design-invariants). A new section fails here until it
-// joins this table, and the table must agree with what composition enforces.
+// Every policy setting states whom it covers and how two values combine. A new
+// section fails here until it joins this table, and the table must agree with
+// what composition enforces.
 func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 	type declared struct {
 		// "candidate" settings may follow a rule that reads the candidate;
