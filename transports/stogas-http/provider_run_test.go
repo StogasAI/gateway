@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -233,5 +234,87 @@ func TestProviderPanicReachesTheOwner(t *testing.T) {
 	}
 	if result.failure == nil || *result.failure.StatusCode != http.StatusInternalServerError || failureActionFor(result.failure, result.ctx, nil) != stopRun {
 		t.Fatal("a provider panic can start another call")
+	}
+}
+
+// Every combination of failure, retry budget, wait and remaining time takes
+// the step that the retry rules state, and asks for a wait only to retry.
+func TestNextStepCoversEveryCombination(t *testing.T) {
+	waits := []time.Duration{0, retryInitialWait, retryMaxWait - 1, retryMaxWait, retryMaxWait + 1, time.Hour}
+	remaining := []time.Duration{0, retryInitialWait, retryMaxWait, retryMaxWait + time.Second, time.Hour}
+	for _, action := range []failureAction{stopRun, nextPair, retryPair} {
+		for retries := 0; retries <= 3; retries++ {
+			for used := 0; used <= retries+1; used++ {
+				for _, wait := range waits {
+					for _, left := range remaining {
+						for _, hasNext := range []bool{false, true} {
+							asked := false
+							step, got := nextStep(action, used, retries, func() time.Duration { asked = true; return wait }, left, hasNext)
+							retry := action == retryPair && used < retries && wait <= retryMaxWait && wait < left
+							want := stepStop
+							switch {
+							case retry:
+								want = stepRetry
+							case action != stopRun && hasNext:
+								want = stepAdvance
+							}
+							if step != want {
+								t.Fatalf("action=%d used=%d/%d wait=%s left=%s next=%v: step %d, want %d", action, used, retries, wait, left, hasNext, step, want)
+							}
+							if (step == stepRetry) != (got > 0 || wait == 0 && retry) || step != stepRetry && got != 0 {
+								t.Fatalf("step %d returned wait %s", step, got)
+							}
+							// The wait, which can be random, is drawn only when a retry is possible.
+							if asked != (action == retryPair && used < retries) {
+								t.Fatalf("wait drawn=%v for action=%d used=%d/%d", asked, action, used, retries)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// A run over a plan of up to three pairs, each with its own retries, never
+// calls a pair more than once plus its retries, never uses more pairs than the
+// plan holds, never retries past the caller's wait, and ends at a final failure.
+func TestRunStepsStayWithinThePlan(t *testing.T) {
+	rng := rand.New(rand.NewPCG(3, 7))
+	actions := []failureAction{stopRun, nextPair, retryPair}
+	for trial := range 20000 {
+		pairs := 1 + rng.IntN(3)
+		budgets := make([]int, pairs)
+		for i := range budgets {
+			budgets[i] = rng.IntN(4)
+		}
+		left := time.Duration(rng.IntN(40)) * time.Second
+		pair, used, calls := 0, 0, make([]int, pairs)
+		for {
+			calls[pair]++
+			action := actions[rng.IntN(len(actions))]
+			wait := time.Duration(rng.IntN(12)) * time.Second
+			step, slept := nextStep(action, used, budgets[pair], func() time.Duration { return wait }, left, pair+1 < pairs)
+			if step == stepRetry {
+				if action != retryPair || slept > retryMaxWait || slept >= left {
+					t.Fatalf("trial %d: retried after action %d with wait %s of %s", trial, action, slept, left)
+				}
+				used++
+				left -= slept
+				continue
+			}
+			if action == stopRun && step != stepStop {
+				t.Fatalf("trial %d: a final failure did not end the run", trial)
+			}
+			if step == stepStop {
+				break
+			}
+			pair, used = pair+1, 0
+		}
+		for i, count := range calls {
+			if count > 1+budgets[i] {
+				t.Fatalf("trial %d: pair %d called %d times with %d retries", trial, i, count, budgets[i])
+			}
+		}
 	}
 }

@@ -272,17 +272,41 @@ func (r *providerRun) next(failure *schemas.BifrostError, attempt *schemas.Bifro
 	if !r.waiting() {
 		return 0, false
 	}
-	action := failureActionFor(failure, attempt, r.client.memory)
-	if action == retryPair && r.retries < r.pair.Resolution.Retries() {
-		if wait := retryWait(r.retries, attempt); wait <= retryMaxWait && wait < r.client.responseWait.remaining() {
-			r.retries++
-			return wait, true
+	step, wait := nextStep(failureActionFor(failure, attempt, r.client.memory), r.retries, r.pair.Resolution.Retries(),
+		func() time.Duration { return retryWait(r.retries, attempt) }, r.client.responseWait.remaining(), r.plan.HasNextPair())
+	switch step {
+	case stepRetry:
+		r.retries++
+		return wait, true
+	case stepAdvance:
+		return 0, r.advance(nil)
+	default:
+		return 0, false
+	}
+}
+
+type runStep uint8
+
+const (
+	stepStop runStep = iota
+	stepRetry
+	stepAdvance
+)
+
+// nextStep decides what follows a failed provider call. The bound pair runs
+// again while its retries last and its wait fits both the longest retry wait
+// and the time the caller still waits; otherwise any failure but a final one
+// passes to the next pair, while one remains.
+func nextStep(action failureAction, used, retries int, wait func() time.Duration, remaining time.Duration, hasNext bool) (runStep, time.Duration) {
+	if action == retryPair && used < retries {
+		if wait := wait(); wait <= retryMaxWait && wait < remaining {
+			return stepRetry, wait
 		}
 	}
-	if action != stopRun && r.plan.HasNextPair() {
-		return 0, r.advance(nil)
+	if action != stopRun && hasNext {
+		return stepAdvance, 0
 	}
-	return 0, false
+	return stepStop, 0
 }
 
 type failureAction uint8
