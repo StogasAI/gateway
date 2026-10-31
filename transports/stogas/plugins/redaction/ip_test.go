@@ -26,11 +26,19 @@ func TestIPAddressPresentations(t *testing.T) {
 		{source: "mapped ::ffff:192.0.2.128", want: "mapped <IP_ADDRESS>"},
 		{source: "zone fe80::1%eth0", want: "zone <IP_ADDRESS>"},
 		{source: "zone fe80::1%eth0.", want: "zone <IP_ADDRESS>."},
+		// A colon may end a zone, and the run after it is matched on its own.
+		{source: "zone fe80::1%eth0:443", want: "zone <IP_ADDRESS>:443"},
+		{source: "zones fe80::1%eth0::2", want: "zones <IP_ADDRESS><IP_ADDRESS>", wantItems: 2},
 		{source: "bracket [2001:db8::1]:443", want: "bracket [<IP_ADDRESS>]:443"},
 		{source: "URL https://[2001:db8::2]/v1", want: "URL https://[<IP_ADDRESS>]/v1"},
 		{source: "cidr 2001:db8::/32", want: "cidr <IP_ADDRESS>/32"},
 		{source: "hex dead:beef:cafe:babe:feed:face:1234:5678", want: "hex <IP_ADDRESS>"},
 		{source: "label IP:192.168.1.1", want: "label IP:<IP_ADDRESS>"},
+		// An IPv6-like run that is not an address must not hide the IPv4 addresses in it.
+		{source: "pair :0.0.0.0:0.0.0.0", want: "pair :<IP_ADDRESS>:<IP_ADDRESS>", wantItems: 2},
+		{source: "tail a::b:c::10.0.0.1", want: "tail a::b:c::<IP_ADDRESS>"},
+		// Its parts are then scanned as a second pass would see them.
+		{source: "prefix 2001:db8::192.0.2.1:", want: "prefix <IP_ADDRESS><IP_ADDRESS>:", wantItems: 2},
 		{source: "::", want: "<IP_ADDRESS>"},
 	}
 	for _, test := range tests {
