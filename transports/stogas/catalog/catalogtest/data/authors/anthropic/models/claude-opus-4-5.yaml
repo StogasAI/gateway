@@ -1,0 +1,17 @@
+models:
+  authorId: anthropic
+  name: Claude Opus 4.5
+  aliases: [claude-opus-4.5]
+  groupIds: [claude-opus]
+  contextWindowTokens: 200000
+  maxOutputTokens: 64000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: optional
+  reasoningEfforts: [low, medium, high]
+  reasoningMaxTokens:
+    minimum: 1024
+    maximum: 63999
+  snapshot: 2025-11-01
+  releaseDate: 2025-11-24
+  knowledgeCutoff: 2025-05-01

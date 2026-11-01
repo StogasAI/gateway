@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"iter"
 	"maps"
 	"slices"
@@ -109,24 +110,42 @@ var callPricingMeters = map[string]bool{
 //go:embed fallback
 var fallbackFiles embed.FS
 
+// Fallback returns the build that the gateway embeds: its root and every part that it names, by
+// SHA-256 in hex.
+func Fallback() ([]byte, map[string][]byte, error) {
+	files, err := fs.Sub(fallbackFiles, "fallback")
+	if err != nil {
+		return nil, nil, err
+	}
+	return ReadBuild(files)
+}
+
+// ReadBuild reads a build's root and every part that it names, by SHA-256 in hex, from the files
+// that the catalog's build writes.
+func ReadBuild(files fs.FS) ([]byte, map[string][]byte, error) {
+	root, err := fs.ReadFile(files, "catalog.json")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read catalog root: %w", err)
+	}
+	named, err := partFiles(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	parts := make(map[string][]byte, len(named))
+	for _, file := range named {
+		if parts[file.SHA256], err = fs.ReadFile(files, "catalog.parts/"+file.SHA256+".json"); err != nil {
+			return nil, nil, fmt.Errorf("read catalog part: %w", err)
+		}
+	}
+	return root, parts, nil
+}
+
 // loadSnapshot reads the fallback with every record, so that no date can stop a gateway from
 // starting; requests still refuse each record once it retires.
 func loadSnapshot() (*snapshot, error) {
-	root, err := fallbackFiles.ReadFile("fallback/catalog.json")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded catalog root: %w", err)
-	}
-	files, err := partFiles(root)
+	root, parts, err := Fallback()
 	if err != nil {
 		return nil, err
-	}
-	parts := make(map[string][]byte, len(files))
-	for _, file := range files {
-		data, err := fallbackFiles.ReadFile("fallback/catalog.parts/" + file.SHA256 + ".json")
-		if err != nil {
-			return nil, fmt.Errorf("read embedded catalog part: %w", err)
-		}
-		parts[file.SHA256] = data
 	}
 	return snapshotFromFiles(root, parts, Identity{}, time.Time{})
 }

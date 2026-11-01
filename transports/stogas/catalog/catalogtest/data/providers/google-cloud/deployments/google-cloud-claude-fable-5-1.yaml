@@ -1,0 +1,25 @@
+# Agent Platform's global endpoint, which routes to any region with capacity.
+# Google keeps prompts and responses for up to 30 days to monitor abuse, under its Advanced AI Safety
+# Addendum, which each project accepts once in Model Garden.
+# Unverified: Google's price list needs an API key. The global prices assume Google matches Anthropic's list
+# prices, as Bedrock does; check them before release.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/google-managed#global-multi-region-and-regional-endpoints
+# and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/fable-5-1
+deployments:
+  modelId: claude-fable-5-1
+  routeIds: [google-cloud-messages]
+  upstream:
+    model: claude-fable-5-1
+    hosting: google
+    inferenceGeo: global
+  pricing:
+    input_tokens:
+      per_mill_tokens: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.25'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '12.5'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '20'
+    output_tokens:
+      per_mill_tokens: '50'

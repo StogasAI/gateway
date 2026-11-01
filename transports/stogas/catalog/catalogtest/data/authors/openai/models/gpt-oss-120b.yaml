@@ -1,0 +1,12 @@
+models:
+  authorId: openai
+  name: gpt-oss-120b
+  groupIds: [gpt-oss]
+  contextWindowTokens: 131072
+  maxOutputTokens: 131072
+  inputModalities: [text]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, medium, high]
+  releaseDate: 2025-08-05
+  knowledgeCutoff: 2024-06-01

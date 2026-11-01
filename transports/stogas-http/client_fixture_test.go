@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	stogas "github.com/maximhq/bifrost/transports/stogas"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/attest"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/channel"
 	"github.com/maximhq/bifrost/transports/stogas/confidential/proofhttp"
@@ -92,25 +92,16 @@ func TestMain(m *testing.M) {
 	}
 }
 
+// The tests read the test catalog. Client conformance serves the catalog that its suite names,
+// with every part that its root names.
 func installFixtureCatalog() error {
 	dir := os.Getenv("STOGAS_CLIENT_FIXTURE_CATALOG_DIR")
 	if dir == "" {
-		dir = "../stogas/catalog/fallback"
+		return catalogtest.Install()
 	}
-	root, err := os.ReadFile(filepath.Join(dir, "catalog.json"))
+	root, parts, err := catalog.ReadBuild(os.DirFS(dir))
 	if err != nil {
 		return err
-	}
-	// The fixture serves every part that its root names.
-	files, err := catalog.PartsInEffect(root, time.Time{})
-	if err != nil {
-		return err
-	}
-	parts := make(map[string][]byte, len(files))
-	for _, file := range files {
-		if parts[file.SHA256], err = os.ReadFile(filepath.Join(dir, "catalog.parts", file.SHA256+".json")); err != nil {
-			return err
-		}
 	}
 	return catalog.InstallApproved(root, parts, catalog.Identity{
 		Sequence: 1,

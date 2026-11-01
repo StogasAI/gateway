@@ -1,0 +1,10 @@
+models:
+  authorId: z-ai
+  name: GLM-5.1
+  groupIds: [glm-5]
+  contextWindowTokens: 202752
+  maxOutputTokens: 202752
+  inputModalities: [text]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2026-04-07

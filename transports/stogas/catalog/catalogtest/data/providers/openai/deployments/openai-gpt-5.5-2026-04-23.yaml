@@ -1,0 +1,15 @@
+deployments:
+  modelId: gpt-5.5-2026-04-23
+  routeIds: [openai-chat-completions, openai-responses]
+  upstream:
+    model: gpt-5.5-2026-04-23
+  pricing:
+    input_tokens:
+      per_mill_tokens: '5'
+      per_mill_context_gt_272k: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+      per_mill_context_gt_272k: '1'
+    output_tokens:
+      per_mill_tokens: '30'
+      per_mill_context_gt_272k: '45'

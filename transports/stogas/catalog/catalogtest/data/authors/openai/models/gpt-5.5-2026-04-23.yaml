@@ -1,0 +1,15 @@
+models:
+  authorId: openai
+  name: GPT-5.5
+  groupIds: [gpt-5.5]
+  contextWindowTokens: 1050000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  capabilities:
+    explicitPromptCaching: false
+  reasoning: optional
+  reasoningEfforts: [low, medium, high, xhigh]
+  snapshot: 2026-04-23
+  releaseDate: 2026-04-23
+  knowledgeCutoff: 2025-12-01

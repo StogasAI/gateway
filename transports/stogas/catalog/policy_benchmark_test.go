@@ -12,10 +12,7 @@ import (
 )
 
 func BenchmarkRoutingCredentialAlternatives(b *testing.B) {
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	base, err := ResolveRequest(RequestInput{Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`), Method: "POST", Path: "/v1/chat/completions"})
@@ -51,10 +48,7 @@ func BenchmarkRoutingCredentialAlternatives(b *testing.B) {
 }
 
 func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	base, err := ResolveRequest(RequestInput{Body: []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`), Method: "POST", Path: "/v1/chat/completions"})
@@ -100,10 +94,7 @@ func BenchmarkRoutingDistinctCredentialPolicies(b *testing.B) {
 // A normal one-blend filter and ordering, including production catalog lookup.
 // The larger benchmark below intentionally repeats many distinct predicates.
 func BenchmarkRoutingSingleBlend(b *testing.B) {
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	base, err := ResolveRequest(RequestInput{AvailableCredentials: map[string][]int{"openai": {0}}, Body: policyChatBody(""), Method: "POST", Path: "/v1/chat/completions"})
@@ -152,10 +143,7 @@ func BenchmarkRoutingSingleBlend(b *testing.B) {
 // intersection, and filter/sort value reuse. Candidate construction, source
 // compilation and tokenization are outside the measured routing pass.
 func BenchmarkRoutingBlendedPrices(b *testing.B) {
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	base, err := ResolveRequest(RequestInput{AvailableCredentials: map[string][]int{"openai": {0}}, Body: policyChatBody(""), Method: "POST", Path: "/v1/chat/completions"})

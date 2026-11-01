@@ -1,0 +1,10 @@
+models:
+  authorId: qwen
+  name: Qwen3 32B
+  groupIds: [qwen3]
+  contextWindowTokens: 131072
+  maxOutputTokens: 131072
+  inputModalities: [text]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2025-04-29

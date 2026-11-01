@@ -1,0 +1,12 @@
+models:
+  authorId: deepseek
+  name: DeepSeek V4 Flash 0731
+  groupIds: [deepseek-v4-flash]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 1048576
+  inputModalities: [text]
+  outputModalities: [text]
+  reasoning: optional
+  reasoningEfforts: [low, high, max]
+  snapshot: 2026-07-31
+  releaseDate: 2026-07-31

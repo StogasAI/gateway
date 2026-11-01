@@ -1,0 +1,20 @@
+providers:
+  name: Chutes
+  credentialModes: [managed, byok]
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: false
+    implicitPromptCaching: true
+    explicitPromptCaching: false
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  dataHandling:
+    processingLocation: world
+    storageLocation: none
+    retentionDays: 0
+    trainingUse: false
+    zeroDataRetention: true
+    tee: true
+    teeVerified: false

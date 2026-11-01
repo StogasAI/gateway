@@ -1,0 +1,18 @@
+deployments:
+  modelId: qwen3.5-397b-a17b
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: Qwen/Qwen3.5-397B-A17B-TEE
+    chuteId: 51a4284a-a5a0-5e44-a9cc-6af5a2abfbcf
+    gpuCount: 8
+  weightPrecision: fp8
+  overrides:
+    contextWindowTokens: 262144
+    maxOutputTokens: 65536
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.45'
+    cached_input_tokens:
+      per_mill_tokens: '0.045'
+    output_tokens:
+      per_mill_tokens: '3'

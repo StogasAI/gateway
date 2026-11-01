@@ -1,0 +1,24 @@
+providers:
+  name: AWS
+  aliases: [amazon-bedrock, bedrock, claude-platform-on-aws]
+  credentialModes: [byok]
+  headquarteredCountry: US
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: false
+    explicitPromptCaching: true
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  # Bedrock neither stores nor logs prompts and completions unless the account turns on invocation logging.
+  # Reviewed 2026-10-31: https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html
+  dataHandling:
+    processingLocation: world
+    storageLocation: none
+    retentionDays: 0
+    trainingUse: false
+    zeroDataRetention: false
+    tee: false
+    teeVerified: false

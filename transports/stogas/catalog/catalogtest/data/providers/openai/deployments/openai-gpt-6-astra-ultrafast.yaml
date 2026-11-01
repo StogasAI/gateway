@@ -1,0 +1,19 @@
+deployments:
+  modelId: gpt-6-astra
+  routeIds: [openai-responses]
+  upstream:
+    model: gpt-6-astra
+    serviceTier: ultrafast
+  pricing:
+    input_tokens:
+      per_mill_tokens: '60'
+      per_mill_context_gt_272k: '120'
+    cached_input_tokens:
+      per_mill_tokens: '6'
+      per_mill_context_gt_272k: '12'
+    cache_write_input_tokens:
+      per_mill_tokens: '75'
+      per_mill_context_gt_272k: '150'
+    output_tokens:
+      per_mill_tokens: '300'
+      per_mill_context_gt_272k: '450'

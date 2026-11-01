@@ -1,0 +1,14 @@
+deployments:
+  modelId: gpt-5-search-api-2025-10-14
+  routeIds: [openai-chat-completions]
+  upstream:
+    model: gpt-5-search-api-2025-10-14
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.25'
+    cached_input_tokens:
+      per_mill_tokens: '0.125'
+    output_tokens:
+      per_mill_tokens: '10'
+    openai_chat_completion_search_model_calls:
+      per_1k_calls: '10'

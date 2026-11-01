@@ -1,0 +1,15 @@
+routes:
+  providerId: anthropic
+  endpoint: https://api.anthropic.com/v1/messages
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  # Native document formats reviewed 2026-10-05: https://platform.claude.com/docs/en/build-with-claude/files
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]
+  dataHandling:
+    endToEndEncrypted: false
+  # Reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing
+  pricing:
+    anthropic_web_search_calls:
+      per_1k_calls: '10'

@@ -1,0 +1,25 @@
+deployments:
+  modelId: claude-sonnet-5-5
+  routeIds: [azure-anthropic-messages]
+  upstream:
+    model: claude-sonnet-5-5
+    modelFormat: Anthropic
+    modelVersion: '2'
+    hosting: azure
+    deploymentType: data_zone_standard_us
+  retirementDate: 2127-09-29
+  overrides:
+    dataHandling:
+      processingLocation: US
+      storageLocation: US
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2.2'
+    cached_input_tokens:
+      per_mill_tokens: '0.11'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '2.75'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '4.4'
+    output_tokens:
+      per_mill_tokens: '11'

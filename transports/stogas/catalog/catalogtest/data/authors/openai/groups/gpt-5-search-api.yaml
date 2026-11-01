@@ -1,0 +1,4 @@
+groups:
+  authorId: openai
+  name: 'GPT-5 Search API'
+  parentIds: [gpt-5]

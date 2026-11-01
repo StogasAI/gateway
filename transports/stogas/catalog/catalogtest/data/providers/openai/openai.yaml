@@ -1,0 +1,22 @@
+providers:
+  name: OpenAI
+  aliases: [open-ai]
+  credentialModes: [byok]
+  headquarteredCountry: US
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: true
+    explicitPromptCaching: true
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  dataHandling:
+    processingLocation: world
+    storageLocation: unknown
+    retentionDays: 30
+    trainingUse: false
+    zeroDataRetention: false
+    tee: false
+    teeVerified: false

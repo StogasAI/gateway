@@ -1,0 +1,10 @@
+models:
+  authorId: minimax
+  name: MiniMax M3
+  groupIds: [minimax]
+  contextWindowTokens: 1048576
+  maxOutputTokens: 1048576
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2026-06-01

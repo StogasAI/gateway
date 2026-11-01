@@ -16,6 +16,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/money"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
@@ -1430,6 +1431,7 @@ func activeCatalogRecords(t *testing.T, kind string) json.RawMessage {
 }
 
 func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		Routes map[string]json.RawMessage `json:"routes"`
 	}
@@ -1617,6 +1619,7 @@ func TestEveryActiveCatalogDeploymentHoldCoversEveryTokenCategory(t *testing.T) 
 }
 
 func TestEveryActiveCatalogDeploymentPricesEveryTokenMeterExactly(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		Routes map[string]struct {
 			Pricing catalog.Pricing `json:"pricing"`
@@ -3146,6 +3149,7 @@ func TestCacheEconomicsFloorNonBenefitsAtZero(t *testing.T) {
 }
 
 func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		Routes map[string]struct {
 			Pricing catalog.Pricing `json:"pricing"`

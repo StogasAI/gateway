@@ -8,6 +8,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 )
 
 func TestAnthropicCumulativeInputAndRequestWideOutput(t *testing.T) {
@@ -517,6 +518,7 @@ func TestAnthropicToolSystemPromptTokenTable(t *testing.T) {
 }
 
 func TestEveryAnthropicWireDeploymentHasToolSystemPromptTokenRow(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		ModelID  string                     `json:"modelId"`
 		Routes   map[string]json.RawMessage `json:"routes"`

@@ -1,0 +1,16 @@
+models:
+  authorId: openai
+  name: GPT-5 Search API
+  groupIds: [gpt-5-search-api]
+  contextWindowTokens: 200000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  capabilities:
+    functionCalling: false
+    parallelFunctionCalling: false
+    explicitPromptCaching: false
+  reasoning: unsupported
+  snapshot: 2025-10-14
+  releaseDate: 2025-10-14
+  knowledgeCutoff: 2024-09-30

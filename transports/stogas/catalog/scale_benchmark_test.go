@@ -16,7 +16,7 @@ import (
 func scaleCatalogBytes(b *testing.B, count int) []byte {
 	b.Helper()
 	var source compiledCatalog
-	if err := decodeStrict(embeddedCatalogJSON, &source, sharedJSON[Pricing]()); err != nil {
+	if err := decodeStrict(testCatalogJSON, &source, sharedJSON[Pricing]()); err != nil {
 		b.Fatal(err)
 	}
 	ids := make([]string, 0, len(source.Graph.Deployments))
@@ -166,7 +166,7 @@ func benchmarkCatalogLoad(b *testing.B, data []byte) {
 // Requests pin the release they resolved against, including its root and
 // parts. Measure that ownership separately from load-time allocations.
 func BenchmarkCatalogReleaseRetained(b *testing.B) {
-	root, parts := embeddedFiles(b)
+	root, parts := testFiles(b)
 	size := len(root)
 	for _, part := range parts {
 		size += len(part)

@@ -1,0 +1,23 @@
+deployments:
+  modelId: gpt-oss-120b
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: gpt-oss-120b
+    modelFormat: OpenAI-OSS
+    modelVersion: '1'
+    hosting: azure
+    deploymentType: data_zone_standard_us
+  retirementDate: 2127-09-15
+  overrides:
+    capabilities:
+      parallelFunctionCalling: false
+      implicitPromptCaching: false
+      explicitPromptCaching: false
+    dataHandling:
+      processingLocation: US
+      storageLocation: US
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.165'
+    output_tokens:
+      per_mill_tokens: '0.66'

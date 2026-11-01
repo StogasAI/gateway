@@ -1,0 +1,9 @@
+routes:
+  providerId: azure
+  interfaces: [chat_completions]
+  inputModalities: [text, image, audio]
+  documentFormats:
+    extensions: []
+    mediaTypes: []
+  dataHandling:
+    endToEndEncrypted: false

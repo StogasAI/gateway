@@ -1,0 +1,25 @@
+# Claude Models on Google Cloud (Anthropic managed) rates usage, web search included, at Anthropic's standard prices.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/about-claude/pricing
+deployments:
+  modelId: claude-fable-5-1
+  routeIds: [google-cloud-messages]
+  upstream:
+    model: claude-fable-5-1
+    hosting: anthropic
+    inferenceGeo: global
+  overrides:
+    dataHandling:
+      retentionDays: 30
+  pricing:
+    anthropic_web_search_calls:
+      per_1k_calls: '10'
+    input_tokens:
+      per_mill_tokens: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.25'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '12.5'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '20'
+    output_tokens:
+      per_mill_tokens: '50'

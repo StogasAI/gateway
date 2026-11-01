@@ -1,0 +1,24 @@
+providers:
+  name: Google Cloud
+  aliases: [vertex, vertex-ai, agent-platform, gcp]
+  credentialModes: [byok]
+  headquarteredCountry: US
+  capabilities:
+    streaming: true
+    functionCalling: true
+    parallelFunctionCalling: true
+    implicitPromptCaching: false
+    explicitPromptCaching: true
+    structuredOutputs: true
+    systemMessages: true
+    toolChoice: true
+  # Request-response logging is a project setting that no request can turn off, so retention is unknown.
+  # Reviewed 2026-10-31: https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention
+  dataHandling:
+    processingLocation: world
+    storageLocation: unknown
+    retentionDays: null
+    trainingUse: false
+    zeroDataRetention: false
+    tee: false
+    teeVerified: false

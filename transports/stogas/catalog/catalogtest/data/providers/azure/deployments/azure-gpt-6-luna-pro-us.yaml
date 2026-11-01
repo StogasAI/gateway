@@ -1,0 +1,28 @@
+deployments:
+  modelId: gpt-6-luna
+  routeIds: [azure-responses]
+  upstream:
+    model: gpt-6-luna
+    modelFormat: OpenAI
+    modelVersion: '2026-09-22'
+    hosting: azure
+    deploymentType: data_zone_standard_us
+    reasoningMode: pro
+  retirementDate: 2128-03-11
+  overrides:
+    dataHandling:
+      processingLocation: US
+      storageLocation: US
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.11'
+      per_mill_context_gt_272k: '0.22'
+    cached_input_tokens:
+      per_mill_tokens: '0.011'
+      per_mill_context_gt_272k: '0.022'
+    cache_write_input_tokens:
+      per_mill_tokens: '0.1375'
+      per_mill_context_gt_272k: '0.275'
+    output_tokens:
+      per_mill_tokens: '0.55'
+      per_mill_context_gt_272k: '0.825'

@@ -12,7 +12,7 @@ import (
 func TestApprovedCatalogReplacesAtomicallyAndRetainsRequestSnapshot(t *testing.T) {
 	prior := active.Load()
 	t.Cleanup(func() { active.Store(prior) })
-	root, parts := embeddedFiles(t)
+	root, parts := testFiles(t)
 	root = bytes.Clone(root)
 	sum := sha256.Sum256(root)
 	identity := Identity{Sequence: 10, Digest: "sha256:" + hex.EncodeToString(sum[:])}

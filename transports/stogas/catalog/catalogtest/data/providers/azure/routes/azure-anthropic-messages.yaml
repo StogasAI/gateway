@@ -1,0 +1,18 @@
+routes:
+  providerId: azure
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  # Native document formats reviewed 2026-10-05: https://platform.claude.com/docs/en/build-with-claude/files
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]
+  dataHandling:
+    endToEndEncrypted: false
+  # Foundry bills Anthropic's per-feature rates; the US Data Zone multiplier applies only to tokens.
+  # Reviewed 2026-10-11: https://platform.claude.com/docs/en/about-claude/pricing#claude-in-microsoft-foundry-pricing
+  pricing:
+    anthropic_web_search_calls:
+      per_1k_calls: '10'
+  overrides:
+    capabilities:
+      implicitPromptCaching: false

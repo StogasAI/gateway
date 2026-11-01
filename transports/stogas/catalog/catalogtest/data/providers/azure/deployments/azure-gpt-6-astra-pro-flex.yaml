@@ -1,0 +1,29 @@
+deployments:
+  modelId: gpt-6-astra
+  routeIds: [azure-responses]
+  upstream:
+    model: gpt-6-astra
+    modelFormat: OpenAI
+    modelVersion: '2026-09-03'
+    hosting: azure
+    deploymentType: global_standard
+    reasoningMode: pro
+    serviceTier: flex
+  retirementDate: 2128-01-11
+  overrides:
+    dataHandling:
+      storageLocation: world
+      retentionDays: null
+  pricing:
+    input_tokens:
+      per_mill_tokens: '5'
+      per_mill_context_gt_272k: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+      per_mill_context_gt_272k: '1'
+    cache_write_input_tokens:
+      per_mill_tokens: '6.25'
+      per_mill_context_gt_272k: '12.5'
+    output_tokens:
+      per_mill_tokens: '25'
+      per_mill_context_gt_272k: '37.5'

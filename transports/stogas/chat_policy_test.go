@@ -20,6 +20,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -1909,6 +1910,7 @@ func TestReasoningEffortAdmissionAcrossCatalogModels(t *testing.T) {
 }
 
 func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		ModelID        string                     `json:"modelId"`
 		RetirementDate *string                    `json:"retirementDate"`
@@ -2213,6 +2215,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 }
 
 func TestEveryAdvertisedManualReasoningBudgetReachesAnthropicWireFormat(t *testing.T) {
+	catalogtest.UseFallback(t)
 	type matrixDeployment struct {
 		Routes map[string]json.RawMessage `json:"routes"`
 	}

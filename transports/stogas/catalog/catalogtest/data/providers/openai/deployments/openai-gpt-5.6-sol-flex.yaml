@@ -1,0 +1,19 @@
+deployments:
+  modelId: gpt-5.6-sol
+  routeIds: [openai-chat-completions, openai-responses]
+  upstream:
+    model: gpt-5.6-sol
+    serviceTier: flex
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2'
+      per_mill_context_gt_272k: '4'
+    cached_input_tokens:
+      per_mill_tokens: '0.2'
+      per_mill_context_gt_272k: '0.4'
+    cache_write_input_tokens:
+      per_mill_tokens: '2.5'
+      per_mill_context_gt_272k: '5'
+    output_tokens:
+      per_mill_tokens: '10'
+      per_mill_context_gt_272k: '15'

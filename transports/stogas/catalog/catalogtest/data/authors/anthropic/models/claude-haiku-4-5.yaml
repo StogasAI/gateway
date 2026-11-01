@@ -1,0 +1,16 @@
+models:
+  authorId: anthropic
+  name: Claude Haiku 4.5
+  aliases: [claude-haiku-4.5]
+  groupIds: [claude-haiku]
+  contextWindowTokens: 200000
+  maxOutputTokens: 64000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: optional
+  reasoningMaxTokens:
+    minimum: 1024
+    maximum: 63999
+  snapshot: 2025-10-01
+  releaseDate: 2025-10-15
+  knowledgeCutoff: 2025-02-01

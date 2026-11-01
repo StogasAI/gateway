@@ -1,0 +1,23 @@
+deployments:
+  modelId: glm-5.2
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: FW-GLM-5.2
+    modelFormat: Fireworks
+    modelVersion: '1'
+    hosting: fireworks
+    deploymentType: data_zone_standard_us
+  overrides:
+    capabilities:
+      parallelFunctionCalling: false
+      explicitPromptCaching: false
+      structuredOutputs: false
+    dataHandling:
+      processingLocation: unknown
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.54'
+    cached_input_tokens:
+      per_mill_tokens: '0.15'
+    output_tokens:
+      per_mill_tokens: '4.84'

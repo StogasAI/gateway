@@ -1,0 +1,29 @@
+deployments:
+  modelId: claude-mythos-5-1
+  routeIds: [azure-anthropic-messages]
+  upstream:
+    model: claude-mythos-5-1
+    modelFormat: Anthropic
+    # Azure hides gated models from unapproved subscriptions; every visible Anthropic-hosted Claude uses version 1.
+    modelVersion: '1'
+    hosting: anthropic
+    deploymentType: global_standard
+  approvalRequired: true
+  overrides:
+    # Foundry offers no max effort for Claude Fable and Mythos; its xhigh gives the same result.
+    # Reviewed 2026-10-14: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models
+    reasoningEfforts: [low, medium, high, xhigh]
+    dataHandling:
+      processingLocation: unknown
+      retentionDays: 30
+  pricing:
+    input_tokens:
+      per_mill_tokens: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.25'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '12.5'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '20'
+    output_tokens:
+      per_mill_tokens: '50'

@@ -1,0 +1,11 @@
+routes:
+  providerId: openai
+  endpoint: https://api.openai.com/v1/chat/completions
+  interfaces: [chat_completions]
+  inputModalities: [text, image, audio]
+  # Native document formats reviewed 2026-10-05: https://developers.openai.com/api/docs/guides/file-inputs
+  documentFormats:
+    extensions: [.pdf]
+    mediaTypes: [application/pdf]
+  dataHandling:
+    endToEndEncrypted: false
