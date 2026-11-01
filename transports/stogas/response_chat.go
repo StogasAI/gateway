@@ -47,7 +47,18 @@ func validateProviderChatDelta(state *State, delta *schemas.ChatStreamResponseCh
 	if delta.Role != nil && *delta.Role != string(schemas.ChatMessageRoleAssistant) {
 		return ErrProviderResponseMalformed
 	}
-	return validateProviderChatToolCalls(state, delta.ToolCalls, true)
+	if err := validateProviderChatToolCalls(state, delta.ToolCalls, true); err != nil {
+		return err
+	}
+	if state != nil {
+		if delta.Content != nil {
+			state.recordChatOutput(*delta.Content)
+		}
+		if delta.Refusal != nil && *delta.Refusal != "" {
+			state.chatRefusal = true
+		}
+	}
+	return nil
 }
 
 func validateProviderReasoningDetails(details []schemas.ChatReasoningDetails) error {

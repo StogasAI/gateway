@@ -23,6 +23,12 @@ const (
 	MeterHostedToolCalls       = "hosted_tool_calls"
 	MeterClientToolCalls       = "client_tool_calls"
 
+	// Checks of returned client tool calls and JSON outputs against the request.
+	MeterCheckedClientToolCalls   = "checked_client_tool_calls"
+	MeterInvalidClientToolCalls   = "invalid_client_tool_calls"
+	MeterCheckedStructuredOutputs = "checked_structured_outputs"
+	MeterInvalidStructuredOutputs = "invalid_structured_outputs"
+
 	MeterInputTokens             = "input_tokens"
 	MeterCachedInputTokens       = "cached_input_tokens"
 	MeterCacheWriteInputTokens   = "cache_write_input_tokens"

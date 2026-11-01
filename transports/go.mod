@@ -19,6 +19,7 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/maximhq/bifrost/core v1.5.21
 	github.com/pires/go-proxyproto v0.15.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/tidwall/sjson v1.2.5
 	github.com/valyala/fasthttp v1.74.0
 	golang.org/x/crypto v0.58.0
@@ -74,7 +75,6 @@ require (
 	github.com/molecule-man/go-brrr v1.1.1 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/savsgio/gotils v0.0.0-20250408102913-196191ec6287 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
