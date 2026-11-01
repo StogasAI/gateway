@@ -115,24 +115,38 @@ func TestPublicBillingErrorNeverReturnsPrivateDetails(t *testing.T) {
 }
 
 func TestBillingUpstreamTargetIncludesCatalogDataBoundaries(t *testing.T) {
-	target := billingUpstreamTarget(&catalog.ResolvedRequest{
-		Provider: schemas.Azure,
-		Deployment: catalog.Deployment{
-			Upstream: catalog.Upstream{
-				DeploymentType: "data_zone_standard_eu",
-				Hosting:        "azure",
-				Model:          "gpt-5.6-sol",
-				ModelFormat:    "OpenAI",
-				ModelVersion:   "2026-07-09",
+	target := func(processing, storage string) *billing.UpstreamTarget {
+		return billingUpstreamTarget(&catalog.ResolvedRequest{
+			Provider: schemas.Azure,
+			Deployment: catalog.Deployment{
+				Upstream: catalog.Upstream{
+					DeploymentType: "data_zone_standard_eu",
+					Hosting:        "azure",
+					Model:          "gpt-5.6-sol",
+					ModelFormat:    "OpenAI",
+					ModelVersion:   "2026-07-09",
+				},
+				DataHandling: catalog.DataHandling{ProcessingLocation: processing, StorageLocation: storage},
+				Locations:    testPlaces,
 			},
-			DataHandling: catalog.DataHandling{
-				ProcessingLocation: "eu",
-				StorageLocation:    "europe",
-			},
-		},
-	})
-	if target == nil || target.ProcessingLocation != "eu" || target.StorageLocation != "europe" {
-		t.Fatalf("Azure billing target omitted data boundaries: %#v", target)
+		})
+	}
+	europe := target("eu", "europe")
+	if europe == nil ||
+		!slices.Equal(europe.ProcessingLocations, []string{"SE", "eu"}) ||
+		!slices.Equal(europe.StorageLocations, []string{"CH", "SE", "eu", "europe"}) {
+		t.Fatalf("Azure billing target omitted data boundaries: %#v", europe)
+	}
+	// World and unknown bound nothing, and a catalog that stores nothing makes the account's
+	// placement irrelevant, so those send no list, which SQL reads as any place.
+	for _, storage := range []string{"world", "unknown", "none"} {
+		if boundless := target("world", storage); boundless.ProcessingLocations != nil || boundless.StorageLocations != nil {
+			t.Fatalf("boundless target for storage %s listed places: %#v", storage, boundless)
+		}
+	}
+	encoded, err := json.Marshal(target("world", "none"))
+	if err != nil || !strings.Contains(string(encoded), `"processingLocations":null,"storageLocations":null`) {
+		t.Fatalf("boundless target encoded as %s (%v)", encoded, err)
 	}
 }
 

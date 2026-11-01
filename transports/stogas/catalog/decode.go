@@ -39,14 +39,16 @@ func sharedJSON[T any]() *json.Unmarshalers {
 	})
 }
 
-// catalogRoot is a release's root: a summary of every record, current or retired, the parts
-// that hold the records that are not whole in it, and the dated states.
+// catalogRoot is a release's root: the places that data handling names, a summary of every
+// record, current or retired, the parts that hold the records that are not whole in it, and the
+// dated states.
 type catalogRoot struct {
-	Schema    string        `json:"schema"`
-	Summaries rootSummaries `json:"summaries"`
-	Parts     []PartFile    `json:"parts"`
-	Periods   shown         `json:"periods"`
-	Schedule  []rootState   `json:"schedule"`
+	Schema    string                  `json:"schema"`
+	Locations map[string]locationNode `json:"locations"`
+	Summaries rootSummaries           `json:"summaries"`
+	Parts     []PartFile              `json:"parts"`
+	Periods   shown                   `json:"periods"`
+	Schedule  []rootState             `json:"schedule"`
 }
 
 // rootSummaries holds the authors and providers whole.
@@ -88,6 +90,13 @@ type groupSummary struct {
 	ParentIDs []string `json:"parentIds"`
 }
 
+// locationNode is what the gateway reads of a location: the places that directly contain it.
+type locationNode struct {
+	Name shown `json:"name"`
+
+	ParentIDs []string `json:"parentIds"`
+}
+
 // rootState is a dated state as the root lists it: when it starts, and the summaries that
 // differ then. The parts hold the records that differ.
 type rootState struct {
@@ -119,12 +128,14 @@ type partGraph struct {
 	Deployments map[string]*compiledDeployment `json:"deployments"`
 }
 
-// compiledCatalog is a release as the gateway reads it at an instant: the graph, how each dated
-// state changes it, and the day that each selector of a record that has retired retired.
+// compiledCatalog is a release as the gateway reads it at an instant: each place with the places
+// that directly contain it, the graph, how each dated state changes it, and the day that each
+// selector of a record that has retired retired.
 type compiledCatalog struct {
-	Graph    compiledGraph     `json:"graph"`
-	Schedule []scheduleEntry   `json:"schedule"`
-	Retired  map[string]string `json:"retired"`
+	Locations map[string][]string `json:"locations"`
+	Graph     compiledGraph       `json:"graph"`
+	Schedule  []scheduleEntry     `json:"schedule"`
+	Retired   map[string]string   `json:"retired"`
 }
 
 // A schedule entry lists every node that differs from the base graph from Start until the

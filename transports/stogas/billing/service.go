@@ -123,14 +123,17 @@ type Authorization struct {
 	StartAt time.Time
 }
 
+// UpstreamTarget is the provider target that a hold binds. ProcessingLocations and
+// StorageLocations list the places that a binding's locations can be, or are nil when any place
+// will do.
 type UpstreamTarget struct {
-	DeploymentType     string `json:"deploymentType"`
-	Hosting            string `json:"hosting"`
-	Model              string `json:"model"`
-	ModelFormat        string `json:"modelFormat"`
-	ModelVersion       string `json:"modelVersion"`
-	ProcessingLocation string `json:"processingLocation"`
-	StorageLocation    string `json:"storageLocation"`
+	DeploymentType      string   `json:"deploymentType"`
+	Hosting             string   `json:"hosting"`
+	Model               string   `json:"model"`
+	ModelFormat         string   `json:"modelFormat"`
+	ModelVersion        string   `json:"modelVersion"`
+	ProcessingLocations []string `json:"processingLocations"`
+	StorageLocations    []string `json:"storageLocations"`
 }
 
 type AzureBinding struct {

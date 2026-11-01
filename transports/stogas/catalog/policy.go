@@ -29,7 +29,7 @@ type policyDeploymentData struct {
 	Capabilities        Capabilities        `json:"capabilities"`
 	ContextWindowTokens int                 `json:"contextWindowTokens"`
 	MaxInputTokens      int                 `json:"maxInputTokens"`
-	DataHandling        DataHandling        `json:"dataHandling"`
+	DataHandling        policyDataHandling  `json:"dataHandling"`
 	InputModalities     []string            `json:"inputModalities"`
 	MaxOutputTokens     int                 `json:"maxOutputTokens"`
 	ModelID             string              `json:"modelId"`
@@ -41,6 +41,14 @@ type policyDeploymentData struct {
 	RetirementDate      *string             `json:"retirementDate"`
 	Upstream            compiledUpstream    `json:"upstream"`
 	WeightPrecision     string              `json:"weightPrecision"`
+}
+
+// policyDataHandling is a deployment's data handling as policies read it, with each location's
+// places: the location and every place that contains it, so that a policy can name a region.
+type policyDataHandling struct {
+	DataHandling     `json:",inline"`
+	ProcessingWithin []string `json:"processingWithin"`
+	StorageWithin    []string `json:"storageWithin"`
 }
 
 type policyRequestData struct {
@@ -683,19 +691,23 @@ func newResolvedPolicyValues(candidate *ResolvedRequest) (*resolvedPolicyValues,
 				Capabilities:        deployment.Capabilities,
 				ContextWindowTokens: deployment.ContextWindowTokens,
 				MaxInputTokens:      deployment.MaxInputTokens,
-				DataHandling:        deployment.DataHandling,
-				InputModalities:     deployment.InputModalities,
-				MaxOutputTokens:     deployment.MaxOutputTokens,
-				ModelID:             deployment.ModelID,
-				OutputModalities:    deployment.OutputModalities,
-				Pricing:             deployment.Pricing,
-				Reasoning:           deployment.Reasoning,
-				ReasoningEfforts:    deployment.ReasoningEfforts,
-				ReasoningMaxTokens:  deployment.ReasoningMaxTokens,
-				RetirementDate:      compiledDeployment.RetirementDate,
-				Upstream:            compiledDeployment.Upstream,
-				ApprovalRequired:    deployment.ApprovalRequired,
-				WeightPrecision:     deployment.WeightPrecision,
+				DataHandling: policyDataHandling{
+					DataHandling:     deployment.DataHandling,
+					ProcessingWithin: deployment.Locations.Containing(deployment.DataHandling.ProcessingLocation),
+					StorageWithin:    deployment.Locations.Containing(deployment.DataHandling.StorageLocation),
+				},
+				InputModalities:    deployment.InputModalities,
+				MaxOutputTokens:    deployment.MaxOutputTokens,
+				ModelID:            deployment.ModelID,
+				OutputModalities:   deployment.OutputModalities,
+				Pricing:            deployment.Pricing,
+				Reasoning:          deployment.Reasoning,
+				ReasoningEfforts:   deployment.ReasoningEfforts,
+				ReasoningMaxTokens: deployment.ReasoningMaxTokens,
+				RetirementDate:     compiledDeployment.RetirementDate,
+				Upstream:           compiledDeployment.Upstream,
+				ApprovalRequired:   deployment.ApprovalRequired,
+				WeightPrecision:    deployment.WeightPrecision,
 			},
 		},
 		"model":    {id: ids.model, fields: model},
@@ -787,37 +799,43 @@ func policyChild(value reflect.Value, name string) (reflect.Value, bool) {
 		return child, child.IsValid()
 	case reflect.Struct:
 		if index, ok := policyFields(value.Type())[name]; ok {
-			return value.Field(index), true
+			return value.FieldByIndex(index), true
 		}
 	}
 	return reflect.Value{}, false
 }
 
-var policyFieldIndexes sync.Map // reflect.Type -> immutable map of JSON names to field indexes
+var policyFieldIndexes sync.Map // reflect.Type -> immutable map of JSON names to field index paths
 
 // policyFields indexes the fields of a struct type by JSON name, so policies parse each type's
-// tags once rather than on every read.
-func policyFields(shape reflect.Type) map[string]int {
+// tags once rather than on every read. The fields of an inline struct read as the struct's own.
+func policyFields(shape reflect.Type) map[string][]int {
 	if fields, ok := policyFieldIndexes.Load(shape); ok {
-		return fields.(map[string]int)
+		return fields.(map[string][]int)
 	}
-	fields := make(map[string]int, shape.NumField())
+	fields := make(map[string][]int, shape.NumField())
 	for index := range shape.NumField() {
 		field := shape.Field(index)
 		if field.PkgPath != "" {
 			continue
 		}
-		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if name == "-" {
+			continue
+		}
+		if field.Anonymous && options == "inline" {
+			for inner, path := range policyFields(field.Type) {
+				fields[inner] = append([]int{index}, path...)
+			}
 			continue
 		}
 		if name == "" {
 			name = field.Name
 		}
-		fields[name] = index
+		fields[name] = []int{index}
 	}
 	stored, _ := policyFieldIndexes.LoadOrStore(shape, fields)
-	return stored.(map[string]int)
+	return stored.(map[string][]int)
 }
 
 func typedPolicyValue(value reflect.Value, fieldType string, path string) (policy.Value, bool) {

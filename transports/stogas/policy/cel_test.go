@@ -92,7 +92,7 @@ func TestCELRejectsUnknownFieldsWrongTypesAndInvalidPriceConstants(t *testing.T)
 // A string that a field can never hold would make its comparison always or never match.
 func TestCELRejectsStringsThatFieldsCannotHold(t *testing.T) {
 	_, err := CompileCEL(`deployment.dataHandling.processingLocation == "EU"`)
-	if err == nil || !strings.Contains(err.Error(), "deployment.dataHandling.processingLocation cannot be 'EU'; use a location value, such as 'eu', 'world' or 'DE'") {
+	if err == nil || !strings.Contains(err.Error(), "deployment.dataHandling.processingLocation cannot be 'EU'; use 'eu'") {
 		t.Fatalf("error = %v", err)
 	}
 	for path := range fieldDomains {

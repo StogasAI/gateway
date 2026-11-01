@@ -909,6 +909,7 @@ func TestProviderExecutionReportsStayWithinAuthorizedClass(t *testing.T) {
 						Deployment: catalog.Deployment{
 							Upstream:     catalog.Upstream{ServiceTier: selectedTier, ModelFormat: tc.modelFormat},
 							DataHandling: catalog.DataHandling{ProcessingLocation: tc.processing},
+							Locations:    testPlaces,
 						},
 					},
 				},

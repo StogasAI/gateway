@@ -277,7 +277,7 @@ func TestPartFilesCheckWhatARootNames(t *testing.T) {
 		return strings.Join(listed, ",")
 	}
 	root := func(parts string) []byte {
-		return []byte(`{"schema":"stogas.catalog.v9","parts":[` + parts + `]}`)
+		return []byte(`{"schema":"stogas.catalog.v10","parts":[` + parts + `]}`)
 	}
 	listed, err := partFiles(root(part(1, 1, "null") + "," + part(2, 3, `"2028-02-29"`)))
 	if want := []PartFile{{name(1), 1, nil}, {name(2), 3, stringPointer("2028-02-29")}}; err != nil || !reflect.DeepEqual(listed, want) {

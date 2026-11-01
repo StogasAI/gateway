@@ -1327,23 +1327,26 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 	deploymentRoute := func(graph map[string]any) map[string]any {
 		return deployment(graph)["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)
 	}
+	const vocabulary = "outside the policy vocabulary"
 	for _, tc := range []struct {
 		name  string
 		apply func(graph map[string]any)
+		want  string
 	}{
-		{"hosting", func(g map[string]any) { upstream(g)["hosting"] = "Azure" }},
-		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }},
-		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }},
+		{"hosting", func(g map[string]any) { upstream(g)["hosting"] = "Azure" }, vocabulary},
+		{"deployment type", func(g map[string]any) { upstream(g)["deploymentType"] = "GlobalStandard" }, vocabulary},
+		{"weight precision", func(g map[string]any) { deployment(g)["weightPrecision"] = "fp7" }, vocabulary},
+		// Locations are the catalog's places, which name the European Union eu.
 		{"processing location", func(g map[string]any) {
 			deploymentRoute(g)["dataHandling"].(map[string]any)["processingLocation"] = "EU"
-		}},
+		}, "names a location that the catalog does not list"},
 		{"extension", func(g map[string]any) {
 			g["routes"].(map[string]any)["azure-chat-completions"].(map[string]any)["documentFormats"] = map[string]any{
 				"extensions": []any{"pdf"}, "mediaTypes": []any{"application/pdf"}}
-		}},
+		}, vocabulary},
 		{"country", func(g map[string]any) {
 			g["authors"].(map[string]any)["openai"].(map[string]any)["headquarteredCountry"] = "USA"
-		}},
+		}, "not a country of the catalog"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var whole map[string]any
@@ -1355,8 +1358,8 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := snapshotFromCatalogBytes(raw); err == nil || !strings.Contains(err.Error(), "outside the policy vocabulary") {
-				t.Fatalf("error = %v", err)
+			if _, err := snapshotFromCatalogBytes(raw); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
 	}

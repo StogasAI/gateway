@@ -23,16 +23,49 @@ var ReasoningEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "ma
 type fieldDomain struct {
 	valid func(string) bool
 	hint  string
+	// meant, when set, names the valid value that differs from a refused one only in case.
+	meant func(string) (string, bool)
+}
+
+// places are the catalog's places when a policy is saved, so that a location that no catalog
+// lists fails at once rather than matching nothing. The gateway leaves them nil and checks only
+// a location's form: its catalog can list places that the compiler that saved a policy did not.
+var places *location.Places
+
+// CheckPlaces makes each location in a policy one of these places, or unknown, or none for
+// storage. Control's policy compiler calls it with the places of the catalog that it embeds.
+func CheckPlaces(known *location.Places) {
+	places = known
+}
+
+func validLocation(value string, storage bool) bool {
+	if places != nil {
+		return places.Valid(value, storage)
+	}
+	return location.Form(value) && (storage || value != location.None)
+}
+
+func meantPlace(value string) (string, bool) {
+	if places == nil {
+		return "", false
+	}
+	return places.Fold(value)
 }
 
 var (
 	catalogID   = patternDomain(`^[a-z0-9][a-z0-9._:-]*$`, "a catalog ID, which uses lowercase letters, digits, '.', '_', ':' and '-'")
 	catalogSlug = patternDomain(`^[a-z0-9][a-z0-9._:+-]*$`, "an alias, which uses lowercase letters, digits, '.', '_', ':', '+' and '-'")
-	country     = fieldDomain{location.Country, "an uppercase ISO country code, such as 'US'"}
+	country     = fieldDomain{func(value string) bool {
+		return location.Country(value) && (places == nil || places.Place(value))
+	}, "an uppercase ISO country code that the catalog lists, such as 'US'", meantPlace}
+	processingLocation = fieldDomain{func(value string) bool { return validLocation(value, false) },
+		"a location that the catalog lists, such as 'eu', 'world', 'unknown' or 'DE'", meantPlace}
+	storageLocation = fieldDomain{func(value string) bool { return validLocation(value, true) },
+		"a location that the catalog lists, such as 'none', 'eu', 'world' or 'DE'", meantPlace}
 	catalogDate = fieldDomain{func(value string) bool {
 		_, err := time.Parse(time.DateOnly, value)
 		return err == nil
-	}, "a date such as '2027-01-31'"}
+	}, "a date such as '2027-01-31'", nil}
 	interfaces = oneOf("chat_completions", "responses")
 	reasoning  = oneOf("unsupported", "optional", "required")
 	modalities = oneOf("text", "image", "audio", "video")
@@ -40,28 +73,28 @@ var (
 )
 
 var fieldDomains = map[string]fieldDomain{
-	"author.id":                   catalogID,
-	"author.aliases":              catalogSlug,
-	"author.headquarteredCountry": country,
-	"model.id":                    catalogID,
-	"model.aliases":               catalogSlug,
-	"model.authorId":              catalogID,
-	"model.groupIds":              catalogID,
-	"model.reasoning":             reasoning,
-	"model.reasoningEfforts":      efforts,
-	"model.releaseDate":           catalogDate,
-	"deployment.id":               catalogID,
-	"deployment.modelId":          catalogID,
-	"deployment.inputModalities":  modalities,
-	"deployment.outputModalities": modalities,
-	"deployment.reasoning":        reasoning,
-	"deployment.reasoningEfforts": efforts,
-	"deployment.retirementDate":   catalogDate,
-	"deployment.weightPrecision":  oneOf("fp32", "bf16", "fp16", "fp8", "fp6", "fp4", "nvfp4", "mxfp4", "int8", "int4", "unknown"),
-	"deployment.dataHandling.processingLocation": {func(value string) bool { return location.Valid(value, false) },
-		"a location value, such as 'eu', 'world' or 'DE'"},
-	"deployment.dataHandling.storageLocation": {func(value string) bool { return location.Valid(value, true) },
-		"a location value, such as 'none', 'eu', 'world' or 'DE'"},
+	"author.id":                                  catalogID,
+	"author.aliases":                             catalogSlug,
+	"author.headquarteredCountry":                country,
+	"model.id":                                   catalogID,
+	"model.aliases":                              catalogSlug,
+	"model.authorId":                             catalogID,
+	"model.groupIds":                             catalogID,
+	"model.reasoning":                            reasoning,
+	"model.reasoningEfforts":                     efforts,
+	"model.releaseDate":                          catalogDate,
+	"deployment.id":                              catalogID,
+	"deployment.modelId":                         catalogID,
+	"deployment.inputModalities":                 modalities,
+	"deployment.outputModalities":                modalities,
+	"deployment.reasoning":                       reasoning,
+	"deployment.reasoningEfforts":                efforts,
+	"deployment.retirementDate":                  catalogDate,
+	"deployment.weightPrecision":                 oneOf("fp32", "bf16", "fp16", "fp8", "fp6", "fp4", "nvfp4", "mxfp4", "int8", "int4", "unknown"),
+	"deployment.dataHandling.processingLocation": processingLocation,
+	"deployment.dataHandling.processingWithin":   processingLocation,
+	"deployment.dataHandling.storageLocation":    storageLocation,
+	"deployment.dataHandling.storageWithin":      storageLocation,
 	"deployment.upstream.chuteId": patternDomain(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
 		"a lowercase UUID"),
 	"deployment.upstream.deploymentType": oneOf("global_standard", "data_zone_standard_us", "data_zone_standard_eu",
@@ -92,11 +125,11 @@ func oneOf(values ...string) fieldDomain {
 	if len(quoted) > 1 {
 		hint = strings.Join(quoted[:len(quoted)-1], ", ") + " or " + hint
 	}
-	return fieldDomain{func(value string) bool { return slices.Contains(values, value) }, hint}
+	return fieldDomain{func(value string) bool { return slices.Contains(values, value) }, hint, nil}
 }
 
 func patternDomain(pattern, hint string) fieldDomain {
-	return fieldDomain{regexp.MustCompile(pattern).MatchString, hint}
+	return fieldDomain{regexp.MustCompile(pattern).MatchString, hint, nil}
 }
 
 // VocabularyPaths lists in order the fields whose values have a vocabulary.
@@ -221,6 +254,11 @@ func checkLiterals(path string, expression ast.Expr) error {
 			continue
 		}
 		if text, ok := value.AsLiteral().(types.String); ok && !domain.valid(string(text)) {
+			if domain.meant != nil {
+				if meant, ok := domain.meant(string(text)); ok && domain.valid(meant) {
+					return configError("%s cannot be '%s'; use '%s'", path, text, meant)
+				}
+			}
 			return configError("%s cannot be '%s'; use %s", path, text, domain.hint)
 		}
 	}

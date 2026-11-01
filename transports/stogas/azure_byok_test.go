@@ -52,6 +52,7 @@ func azureTestResolution() *catalog.ResolvedRequest {
 				ProcessingLocation: "world",
 				StorageLocation:    "unknown",
 			},
+			Locations: testPlaces,
 			Upstream: catalog.Upstream{
 				DeploymentType: "global_standard",
 				Hosting:        "azure",
@@ -278,20 +279,46 @@ func TestAzureDirectKeyAcceptsNarrowerDiscoveredLocations(t *testing.T) {
 
 func TestAzureDirectKeyAcceptsResolvedNoStorageGuarantee(t *testing.T) {
 	binding := azureTestBinding()
-	binding.StorageLocation = "none"
+	binding.StorageLocation = "unknown"
 	resolution := azureTestResolution()
 	resolution.Deployment.DataHandling.StorageLocation = "none"
-	if !validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
-		t.Fatal("resolved catalog no-storage guarantee was rejected")
+	// ARM records only where the account is, so a catalog no-storage guarantee replaces it.
+	served := servingBinding(binding, resolution.Deployment)
+	if served.StorageLocation != "none" || !validAzureBinding(served, resolution.Deployment) {
+		t.Fatalf("resolved catalog no-storage guarantee was rejected: %#v", served)
 	}
-	binding.StorageLocation = "unknown"
-	if validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
+	if validAzureBinding(binding, resolution.Deployment) {
 		t.Fatal("unresolved unknown storage must not establish a no-storage guarantee")
 	}
-	binding.StorageLocation = "none"
-	binding.ProcessingLocation = "none"
-	if validAzureBinding(binding, resolution.Deployment.Upstream, resolution.Deployment.DataHandling) {
+	resolution.Deployment.DataHandling.StorageLocation = "europe"
+	if servingBinding(binding, resolution.Deployment).StorageLocation != "unknown" {
+		t.Fatal("a storage boundary replaced the account's storage location")
+	}
+	served.ProcessingLocation = "none"
+	resolution.Deployment.DataHandling.StorageLocation = "none"
+	if validAzureBinding(served, resolution.Deployment) {
 		t.Fatal("no-storage must not be accepted as a processing location")
+	}
+}
+
+func TestAzureBindingLocationsMustBeCatalogPlaces(t *testing.T) {
+	resolution := azureTestResolution()
+	for _, test := range []struct {
+		processing, storage string
+		want                bool
+	}{
+		{"world", "US", true},
+		// A place that the catalog does not list lies within no boundary but world and unknown, and
+		// even there it is refused, so a misspelled place never passes as a known one.
+		{"world", "ZZ", false},
+		{"ZZ", "US", false},
+		{"unknown", "unknown", true},
+	} {
+		binding := azureTestBinding()
+		binding.ProcessingLocation, binding.StorageLocation = test.processing, test.storage
+		if got := validAzureBinding(binding, resolution.Deployment); got != test.want {
+			t.Errorf("binding processing %s, storage %s: valid = %v, want %v", test.processing, test.storage, got, test.want)
+		}
 	}
 }
 

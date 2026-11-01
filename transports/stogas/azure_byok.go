@@ -13,7 +13,6 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 const (
@@ -62,11 +61,7 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			if item.ModelDeprecationAt != nil && !now.Before(*item.ModelDeprecationAt) {
 				continue
 			}
-			binding := item.AzureBinding
-			if deployment.DataHandling.StorageLocation == "none" {
-				binding.StorageLocation = "none"
-			}
-			if validAzureBinding(binding, deployment.Upstream, deployment.DataHandling) {
+			if validAzureBinding(servingBinding(item.AzureBinding, deployment), deployment) {
 				return true
 			}
 		}
@@ -95,12 +90,8 @@ func azureDirectKey(authorization *billing.Authorization, resolution *catalog.Re
 	if err != nil {
 		return schemas.Key{}, "", billing.ErrByok
 	}
-	binding := authorization.AzureBinding
-	if !validAzureBinding(
-		*binding,
-		resolution.Deployment.Upstream,
-		resolution.Deployment.DataHandling,
-	) {
+	binding := servingBinding(*authorization.AzureBinding, resolution.Deployment)
+	if !validAzureBinding(binding, resolution.Deployment) {
 		return schemas.Key{}, "", billing.ErrByok
 	}
 	return schemas.Key{
@@ -141,17 +132,23 @@ func parseAzureByokCredential(raw string) (azureByokCredential, error) {
 	return credential, nil
 }
 
-func validAzureBinding(
-	binding billing.AzureBinding,
-	upstream catalog.Upstream,
-	dataHandling catalog.DataHandling,
-) bool {
+// servingBinding is a binding as it serves a deployment. A catalog no-storage guarantee makes
+// the account's placement inapplicable, so the binding stores nothing either.
+func servingBinding(binding billing.AzureBinding, deployment catalog.Deployment) billing.AzureBinding {
+	if deployment.DataHandling.StorageLocation == "none" {
+		binding.StorageLocation = "none"
+	}
+	return binding
+}
+
+func validAzureBinding(binding billing.AzureBinding, deployment catalog.Deployment) bool {
+	upstream, dataHandling, places := deployment.Upstream, deployment.DataHandling, deployment.Locations
 	if binding.TokenScope != azureDataScope ||
 		!validAzureDeploymentName(binding.DeploymentName) ||
-		!location.Valid(binding.ProcessingLocation, false) ||
-		!location.Valid(binding.StorageLocation, true) ||
-		!location.Within(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
-		!location.Within(binding.StorageLocation, dataHandling.StorageLocation) ||
+		!places.Valid(binding.ProcessingLocation, false) ||
+		!places.Valid(binding.StorageLocation, true) ||
+		!places.Within(binding.ProcessingLocation, dataHandling.ProcessingLocation) ||
+		!places.Within(binding.StorageLocation, dataHandling.StorageLocation) ||
 		binding.DeploymentType != upstream.DeploymentType ||
 		binding.Hosting != upstream.Hosting ||
 		binding.ModelFormat != upstream.ModelFormat ||

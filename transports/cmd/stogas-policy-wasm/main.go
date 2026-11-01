@@ -4,6 +4,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	_ "time/tzdata"
 	"unsafe"
 
+	"github.com/maximhq/bifrost/transports/stogas/location"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -22,10 +24,22 @@ const maximumInputBytes = 2*policy.MaxStoredSourceBytes + 16<<10
 var input, output []byte
 var inspector *policy.Inspector
 
+// placesJSON is the locations of the catalog that the gateway embeds as its fallback, which
+// `bun stogas gateway catalog` writes beside this file.
+//
+//go:embed places.json
+var placesJSON []byte
+
 func init() {
 	// Leave room in a 128-MiB host for its JavaScript heap and the JSON bridge.
 	// This is GC pacing, not an input-validation or hard memory boundary.
 	debug.SetMemoryLimit(48 << 20)
+	places, err := location.Decode(placesJSON)
+	if err != nil {
+		panic(err)
+	}
+	// A saved policy names only places that the catalog lists.
+	policy.CheckPlaces(places)
 }
 
 //go:wasmexport allocate
