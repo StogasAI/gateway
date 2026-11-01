@@ -65,8 +65,11 @@ func PublicBillingErrorFor(err error) PublicBillingError {
 
 	code := errorType
 	var requestError *gatewaybilling.RequestError
+	var missing *customerkey.MissingError
 	if errors.As(err, &requestError) {
 		code, message = requestError.Code, requestError.Message
+	} else if errors.As(err, &missing) {
+		code, message = "encryption_key_required", missing.Error()
 	} else if errors.Is(err, customerkey.ErrKey) {
 		code, message = "encryption_key_required", customerkey.ErrKey.Error()
 	} else if errors.Is(err, customerkey.ErrEnvelope) {
@@ -168,6 +171,7 @@ func applyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
 	azureTokens azureTokenSource,
+	googleTokens googleTokenSource,
 ) error {
 	if ctx == nil || state == nil || state.Authorization == nil || state.Resolution == nil {
 		return gatewaybilling.ErrByok
@@ -181,8 +185,13 @@ func applyUpstreamCredentials(
 		if authorization.UpstreamByok == "" || authorization.UpstreamByokSecret == "" {
 			return gatewaybilling.ErrByok
 		}
-		if state.Resolution.Provider != schemas.Azure && !validUpstreamAPIKey(authorization.UpstreamByokSecret) {
-			return gatewaybilling.ErrByok
+		// Azure, AWS and Google Cloud secrets are JSON that their own parsers check.
+		switch state.Resolution.Provider {
+		case schemas.Azure, catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		default:
+			if !validUpstreamAPIKey(authorization.UpstreamByokSecret) {
+				return gatewaybilling.ErrByok
+			}
 		}
 		credentialID := authorization.UpstreamByok
 		if credentialID == "" {
@@ -191,12 +200,18 @@ func applyUpstreamCredentials(
 		directKey := schemas.Key{
 			ID:      credentialID,
 			Name:    credentialID,
-			Value:   *schemas.NewSecretVar(authorization.UpstreamByokSecret),
+			Value:   literalSecret(authorization.UpstreamByokSecret),
 			Models:  schemas.WhiteList{"*"},
 			Weight:  1,
 			Enabled: schemas.Ptr(true),
 		}
-		if state.Resolution.Provider == schemas.Azure {
+		switch state.Resolution.Provider {
+		case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+			var err error
+			if directKey, err = applyCloudClaudeRequest(ctx, state, googleTokens); err != nil {
+				return err
+			}
+		case schemas.Azure:
 			var err error
 			var deploymentName string
 			directKey, deploymentName, err = azureDirectKey(authorization, state.Resolution)
@@ -230,6 +245,20 @@ func applyUpstreamCredentials(
 		ctx.SetValue(schemas.BifrostContextKeyDirectKey, directKey)
 	}
 	return nil
+}
+
+// literalSecret passes a credential to core exactly as given. Core's
+// NewSecretVar reads "env." and "vault." values from the host, so a customer
+// key such as "env.CHUTES_API_KEY" would otherwise send the gateway's own
+// secret upstream.
+func literalSecret(value string) schemas.SecretVar {
+	return schemas.SecretVar{Val: value, SecretType: schemas.SecretTypePlainText}
+}
+
+func init() {
+	// Every upstream credential comes from the request's binding. Core must
+	// never fall back to an AWS, Google or Azure identity the machine holds.
+	schemas.UseHostCloudCredentials = false
 }
 
 func FinalizeState(ctx context.Context, billing billingAuthorizer, state *State) {

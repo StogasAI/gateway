@@ -1,1 +1,0 @@
-- chore: upgraded Go to 1.27.3

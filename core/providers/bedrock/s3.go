@@ -41,6 +41,9 @@ func uploadToS3(
 			config.WithCredentialsProvider(creds),
 		)
 	} else {
+		if !schemas.UseHostCloudCredentials {
+			return providerUtils.NewConfigurationError(schemas.ErrHostCloudCredentials.Error())
+		}
 		// Use default credentials chain (IAM role, env vars, etc.)
 		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	}

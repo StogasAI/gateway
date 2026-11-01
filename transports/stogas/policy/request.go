@@ -2,6 +2,8 @@ package policy
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/redaction"
@@ -9,10 +11,14 @@ import (
 
 var ErrRequestPolicyDenied = errors.New("request policy is not permitted by this API key")
 
-// Request is compiled once, then applied to each candidate's immutable saved policy.
+// Request is compiled once, then applied to each candidate's immutable saved
+// policy. An encrypted request policy is decrypted only after a candidate's
+// saved policy permits every section it sets, and then once for all of them.
 type Request struct {
-	source   *Source
-	sections Permission
+	sections  Permission
+	source    *Source
+	open      func() (*Source, error)
+	permitted atomic.Bool
 }
 
 func CompileRequest(raw []byte, organizationID string, key customerkey.Keys) (*Request, error) {
@@ -26,11 +32,25 @@ func CompileRequest(raw []byte, organizationID string, key customerkey.Keys) (*R
 	if document.usedSections&^requestPermissions != 0 {
 		return nil, configError("request policies cannot set limits, delegation, or encryption settings")
 	}
-	source, err := document.Open(organizationID, key)
+	request := &Request{sections: document.usedSections}
+	if document.Encrypted() {
+		request.open = sync.OnceValues(func() (*Source, error) { return document.Open(organizationID, key) })
+		return request, nil
+	}
+	request.source, err = document.Open(organizationID, key)
 	if err != nil {
 		return nil, err
 	}
-	return &Request{source: source, sections: document.usedSections}, nil
+	return request, nil
+}
+
+// opened returns the request's source, decrypting it on first use. Callers
+// check permission first.
+func (r *Request) opened() (*Source, error) {
+	if r.open == nil {
+		return r.source, nil
+	}
+	return r.open()
 }
 
 // ApplyRequest returns a new immutable configuration. Request settings never
@@ -42,7 +62,11 @@ func ApplyRequest(parent *Config, request *Request) (*Config, error) {
 	if parent == nil || request.sections&^Permission(parent.RequestPermission) != 0 {
 		return nil, ErrRequestPolicyDenied
 	}
-	source := request.source
+	request.permitted.Store(true)
+	source, err := request.opened()
+	if err != nil {
+		return nil, err
+	}
 	if source.RequiredEncryptionKeyID != "" && !customerkey.Registered(parent.EncryptionKeys, source.RequiredEncryptionKeyID) {
 		return nil, customerkey.ErrKey
 	}
@@ -54,11 +78,20 @@ func ApplyRequest(parent *Config, request *Request) (*Config, error) {
 	return ComposeSources(sources)
 }
 
+// CompileRedaction compiles the request policy's redaction once ApplyRequest
+// has permitted it.
 func (r *Request) CompileRedaction() (*redaction.Policy, error) {
 	if r == nil {
 		return nil, nil
 	}
-	return CompileRedaction(r.source.Config)
+	if !r.permitted.Load() {
+		return nil, ErrRequestPolicyDenied
+	}
+	source, err := r.opened()
+	if err != nil {
+		return nil, err
+	}
+	return CompileRedaction(source.Config)
 }
 
 func intersectAllowedNodes(parent, child *AllowedCatalogNodes) *AllowedCatalogNodes {

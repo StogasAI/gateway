@@ -104,9 +104,20 @@ type RequestInput struct {
 	// non-cryptographic failures. Invalid encryption keys or content are terminal.
 	// It runs before any redaction or tokenization and must not place a hold.
 	CheckCandidate func(schemas.ModelProvider, int, Deployment) error
+	// CheckRoots receives every pair the request may try, before any is
+	// prepared, and fails when one needs a root the request did not send.
+	CheckRoots func([]PlannedPair) error
 	// ReserveBody accounts for the transformed JSON before typed decoding and
 	// tokenization. The transport keeps this reservation until the request ends.
 	ReserveBody func(int) error
+}
+
+// PlannedPair is a deployment and credential pair the request may try, with
+// its activated policy.
+type PlannedPair struct {
+	Provider   schemas.ModelProvider
+	Credential int
+	Policy     *policy.Config
 }
 
 // RequestPolicy is an immutable policy prepared from the key's cached sources.

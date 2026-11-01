@@ -197,6 +197,8 @@ func reportedInferenceLocation(reported string) string {
 	switch reported {
 	case "us":
 		return "US"
+	case "eu":
+		return "eu"
 	case "global":
 		return location.World
 	}
@@ -487,7 +489,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 	}
 	normalizeUsagePartitions(next)
 	if state.Resolution != nil &&
-		(state.Resolution.Provider == schemas.Anthropic || azureDeploymentUsesAnthropicWire(state)) &&
+		stateUsesClaudeWire(state) &&
 		next.CacheWrite > 0 {
 		combined, ok := addTokenCounts(next.CacheWrite5m, next.CacheWrite)
 		if !ok {

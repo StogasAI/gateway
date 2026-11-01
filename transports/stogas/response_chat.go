@@ -343,7 +343,7 @@ func validProviderFinishReason(state *State, value string) bool {
 		return true
 	case "compaction":
 		return state != nil && state.Resolution != nil &&
-			(state.Resolution.Provider == schemas.Anthropic || state.Resolution.Provider == schemas.Azure) &&
+			stateUsesClaudeWire(state) &&
 			anthropicContextManagementUsesCompaction(state.Resolution.RawBody()["context_management"])
 	default:
 		return false

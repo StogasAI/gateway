@@ -122,7 +122,7 @@ func TestRoutingSimulationNamesWhatRemovedEachCandidate(t *testing.T) {
 				"filter openai/openai-gpt-5.6-sol#1 @0 provider.id == 'azure'",
 			}, code: "model_unavailable"},
 		{name: "any model", credentials: map[string][]int{"openai": {0}},
-			removed: []string{"no_credential anthropic", "no_credential azure", "no_credential chutes"}, code: "model_ambiguous"},
+			removed: []string{"no_credential anthropic", "no_credential aws", "no_credential azure", "no_credential chutes", "no_credential google-cloud"}, code: "model_ambiguous"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			route := RouteChat

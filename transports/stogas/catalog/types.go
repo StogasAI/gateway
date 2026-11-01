@@ -12,13 +12,28 @@ import (
 type Route string
 
 const (
-	RouteChat      Route                 = "chat-completions"
-	RouteResponses Route                 = "responses"
-	ProviderChutes schemas.ModelProvider = "chutes"
-	ProviderAzure  schemas.ModelProvider = schemas.Azure
+	RouteChat           Route                 = "chat-completions"
+	RouteResponses      Route                 = "responses"
+	ProviderChutes      schemas.ModelProvider = "chutes"
+	ProviderAzure       schemas.ModelProvider = schemas.Azure
+	ProviderAWS         schemas.ModelProvider = "aws"
+	ProviderGoogleCloud schemas.ModelProvider = "google-cloud"
 
 	canonicalAuthHeader = "authorization"
 )
+
+// UsesClaudeWire reports whether a provider serves the model over Anthropic's Messages API, which
+// bills cache writes by duration and takes a manual thinking budget. AWS and Google Cloud serve
+// only Claude.
+func UsesClaudeWire(provider schemas.ModelProvider, modelID string) bool {
+	switch provider {
+	case schemas.Anthropic, ProviderAWS, ProviderGoogleCloud:
+		return true
+	case schemas.Azure:
+		return schemas.IsAnthropicModel(modelID)
+	}
+	return false
+}
 
 // Interface is the catalog interface that a route serves, such as chat_completions.
 func (r Route) Interface() string { return strings.ReplaceAll(string(r), "-", "_") }

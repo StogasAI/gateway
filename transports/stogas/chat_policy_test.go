@@ -1580,7 +1580,7 @@ func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t
 			if err := PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 				t.Fatalf("PrepareProviderRequest returned error: %v", err)
 			}
-			if err := applyUpstreamCredentials(bifrostCtx, state, nil); !errors.Is(err, billing.ErrByokRequired) {
+			if err := applyUpstreamCredentials(bifrostCtx, state, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})
@@ -1917,6 +1917,7 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 			InferenceGeo  string `json:"inferenceGeo"`
 			Model         string `json:"model"`
 			ModelFormat   string `json:"modelFormat"`
+			Hosting       string `json:"hosting"`
 			ReasoningMode string `json:"reasoningMode"`
 			ServiceTier   string `json:"serviceTier"`
 		} `json:"upstream"`
@@ -1926,13 +1927,14 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		ProviderID string   `json:"providerId"`
 	}
 	type wirePayload struct {
-		InferenceGeo    string `json:"inference_geo"`
-		MaxTokens       int    `json:"max_tokens"`
-		Model           string `json:"model"`
-		ReasoningEffort string `json:"reasoning_effort"`
-		ServiceTier     string `json:"service_tier"`
-		Speed           string `json:"speed"`
-		Reasoning       struct {
+		AnthropicVersion string `json:"anthropic_version"`
+		InferenceGeo     string `json:"inference_geo"`
+		MaxTokens        int    `json:"max_tokens"`
+		Model            string `json:"model"`
+		ReasoningEffort  string `json:"reasoning_effort"`
+		ServiceTier      string `json:"service_tier"`
+		Speed            string `json:"speed"`
+		Reasoning        struct {
 			Effort string `json:"effort"`
 			Mode   string `json:"mode"`
 		} `json:"reasoning"`
@@ -1968,7 +1970,8 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 		for _, routeID := range slices.Sorted(maps.Keys(source.Routes)) {
 			route := routes[routeID]
 			provider := schemas.ModelProvider(route.ProviderID)
-			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages"
+			cloudClaude := provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud
+			usesAnthropicWire := provider == schemas.Anthropic || routeID == "azure-anthropic-messages" || cloudClaude
 			for _, interfaceName := range route.Interfaces {
 				var (
 					path  string
@@ -2056,6 +2059,16 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 
 						var wireBytes []byte
 						switch {
+						case cloudClaude && interfaceName == "chat_completions":
+							var bifrostErr *schemas.BifrostError
+							if wireBytes, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, false, source.Upstream.Hosting); bifrostErr != nil {
+								t.Fatalf("prepare cloud Claude chat body: %v", bifrostErr)
+							}
+						case cloudClaude && interfaceName == "responses":
+							var bifrostErr *schemas.BifrostError
+							if wireBytes, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, false, source.Upstream.Hosting); bifrostErr != nil {
+								t.Fatalf("prepare cloud Claude Responses body: %v", bifrostErr)
+							}
 						case usesAnthropicWire && interfaceName == "chat_completions":
 							var bifrostErr *schemas.BifrostError
 							wireBytes, bifrostErr = anthropicprovider.BuildAnthropicChatRequestBody(
@@ -2096,8 +2109,13 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 						if err := json.Unmarshal(wireBytes, &wire); err != nil {
 							t.Fatalf("decode provider wire request: %v\n%s", err, wireBytes)
 						}
-						if wire.Model != source.Upstream.Model {
-							t.Fatalf("wire model = %q, want %q", wire.Model, source.Upstream.Model)
+						wantModel := source.Upstream.Model
+						if cloudClaude && source.Upstream.Hosting == hostingGoogle {
+							// Vertex AI names the model in the URL.
+							wantModel = ""
+						}
+						if wire.Model != wantModel {
+							t.Fatalf("wire model = %q, want %q", wire.Model, wantModel)
 						}
 						if wire.Reasoning.Mode != source.Upstream.ReasoningMode {
 							t.Fatalf("wire reasoning mode = %q, want %q\n%s", wire.Reasoning.Mode, source.Upstream.ReasoningMode, wireBytes)
@@ -2133,6 +2151,18 @@ func TestEveryAdvertisedReasoningEffortReachesProviderWireFormat(t *testing.T) {
 							}
 							if wire.Speed != wantSpeed {
 								t.Fatalf("wire speed = %q, want %q", wire.Speed, wantSpeed)
+							}
+						case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+							wantInferenceGeo, wantVersion := "", ""
+							switch source.Upstream.Hosting {
+							case hostingAnthropic:
+								wantInferenceGeo = source.Upstream.InferenceGeo
+							case hostingGoogle:
+								wantVersion = "vertex-2023-10-16"
+							}
+							if wire.ServiceTier != "" || wire.Speed != "" || wire.InferenceGeo != wantInferenceGeo || wire.AnthropicVersion != wantVersion {
+								t.Fatalf("wire cloud Claude axes = tier:%q speed:%q geo:%q version:%q, want geo:%q version:%q",
+									wire.ServiceTier, wire.Speed, wire.InferenceGeo, wire.AnthropicVersion, wantInferenceGeo, wantVersion)
 							}
 						case catalog.ProviderChutes:
 							if wire.MaxTokens != 2048 || wire.ServiceTier != "" || wire.InferenceGeo != "" || wire.Speed != "" {

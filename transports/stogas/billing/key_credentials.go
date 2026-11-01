@@ -24,9 +24,18 @@ type CachedCredential struct {
 	EncryptedSecret string                   `json:"encryptedSecret"`
 	EncryptionKeyID string                   `json:"encryptionKeyId"`
 	Bindings        []AzureCredentialBinding `json:"bindings"`
+	Target          *CloudTarget             `json:"target"`
 	Policy          credentialPolicyRecord   `json:"policy"`
 	policySource    *sharedCredentialPolicy
 	azureBindings   map[azureBindingKey][]*AzureCredentialBinding
+}
+
+// CloudTarget is the public part of an AWS or Google Cloud credential: who may
+// run the model for it, and for AWS the Region it calls. Routing reads it
+// without the secret, and the gateway checks it against the secret before use.
+type CloudTarget struct {
+	Hosting []string `json:"hosting"`
+	Region  string   `json:"region,omitempty"`
 }
 
 // AzureCredentialBinding is decoded once with the immutable credential
@@ -94,6 +103,14 @@ type PreparedCredential struct {
 // must never resolve through a shared managed credential.
 func (p *PreparedCredential) UsesBYOK() bool {
 	return p != nil && (p.selection.Mode == "stored" || p.selection.Mode == "encrypted")
+}
+
+// Target returns the public target of the prepared AWS or Google Cloud credential.
+func (p *PreparedCredential) Target() *CloudTarget {
+	if p == nil || p.selection.Credential == nil {
+		return nil
+	}
+	return p.selection.Credential.Target
 }
 
 func (p *PreparedCredential) Clear() {
@@ -199,22 +216,44 @@ func (s *sharedCredentialPolicy) parse() (*policy.SourceDocument, error) {
 	return s.document, s.err
 }
 
-// AvailableCredentials excludes encrypted credentials whose registered root is
-// absent. Invalid supplied roots or selected ciphertext are terminal failures,
-// even when the policy permits another candidate.
-func (s *KeyConfigSnapshot) AvailableCredentials(keys customerkey.Keys) map[string][]int {
+// AvailableCredentials lists assigned credentials in order. An encrypted one
+// stays in place without its root: planning fails, naming the root, if the
+// request may try it (RequiredRoots). One sealed with an unregistered root is
+// left out.
+func (s *KeyConfigSnapshot) AvailableCredentials() map[string][]int {
 	available := make(map[string][]int)
 	if s == nil || s.Claims == nil || s.Config == nil {
 		return available
 	}
 	for provider, selections := range s.Credentials {
-		for index := range selections {
-			if _, err := s.credentialSelection(provider, index, keys); err == nil {
-				available[provider] = append(available[provider], index)
+		for index, selection := range selections {
+			if selection.Mode == "encrypted" && (selection.ID == "" || selection.Credential == nil || selection.Credential.ID != selection.ID ||
+				!customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
+				continue
 			}
+			available[provider] = append(available[provider], index)
 		}
 	}
 	return available
+}
+
+// RequiredRoots lists the roots one pair needs: its encrypted credential's root,
+// the roots of its encrypted saved policies, and those of the encrypted plugins
+// that config, its activated policy, applies.
+func (s *KeyConfigSnapshot) RequiredRoots(provider string, index int, config *policy.Config) []string {
+	var ids []string
+	if selections := s.Credentials[provider]; index >= 0 && index < len(selections) {
+		if selection := selections[index]; selection.Mode == "encrypted" && selection.Credential != nil {
+			ids = append(ids, selection.Credential.EncryptionKeyID)
+		}
+	}
+	if config != nil {
+		ids = append(ids, config.RequiredEncryptionKeys...)
+		for _, document := range config.ActiveEncryptedPlugins {
+			ids = append(ids, document.EncryptionKeyID())
+		}
+	}
+	return ids
 }
 
 func (s *KeyConfigSnapshot) credentialSelection(provider string, index int, keys customerkey.Keys) (CredentialSelection, error) {
@@ -232,12 +271,19 @@ func (s *KeyConfigSnapshot) credentialSelection(provider string, index int, keys
 	return selection, nil
 }
 
+// credentialProviders names each provider a key may hold credentials for, and whether its
+// credentials carry a cloud target.
+var credentialProviders = map[string]bool{
+	"anthropic": false, "aws": true, "azure": false, "chutes": false, "google-cloud": true, "openai": false,
+}
+
 func validateCredentials(claims *APIKeyClaims, credentials map[string][]CredentialSelection) error {
-	if claims == nil || len(credentials) > 4 {
+	if claims == nil || len(credentials) > len(credentialProviders) {
 		return errors.New("invalid credential snapshot")
 	}
 	for provider, selections := range credentials {
-		if provider != "anthropic" && provider != "azure" && provider != "chutes" && provider != "openai" {
+		cloud, known := credentialProviders[provider]
+		if !known {
 			return errors.New("invalid credential provider")
 		}
 		if len(selections) > 1001 {
@@ -271,6 +317,11 @@ func validateCredentials(claims *APIKeyClaims, credentials map[string][]Credenti
 				}
 				if credential.Policy.Scope != policy.CredentialScope || credential.Policy.ID != credential.ID || credential.Policy.Revision < 1 || len(credential.Policy.Source) == 0 {
 					return errors.New("invalid credential policy")
+				}
+				// Routing reads an AWS or Google Cloud credential's target instead of its secret.
+				if cloud != (credential.Target != nil) ||
+					cloud && (len(credential.Target.Hosting) == 0 || len(credential.Target.Hosting) > 2 || (provider == "aws") != (credential.Target.Region != "")) {
+					return errors.New("invalid credential target")
 				}
 			default:
 				return errors.New("invalid credential selection")

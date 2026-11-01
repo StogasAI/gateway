@@ -499,9 +499,11 @@ func (resp *BifrostResponsesResponse) WithDefaults() *BifrostResponsesResponse {
 		}
 	}
 
-	// Usage - ensure token details exist
-	result.Usage = resp.Usage
-	if result.Usage != nil {
+	// Usage - ensure token details exist. Shaped on a copy: governance prices the caller's
+	// response concurrently, and its iterations carry the advisor passes.
+	if resp.Usage != nil {
+		usage := *resp.Usage
+		result.Usage = &usage
 		result.Usage.Iterations = nil
 		result.Usage.Type = nil
 		if result.Usage.InputTokensDetails == nil {
@@ -1393,6 +1395,10 @@ type ResponsesResponseInputTokens struct {
 	CachedReadTokens        int                          `json:"cached_read_tokens"`
 	CachedWriteTokens       int                          `json:"cached_write_tokens"`
 	CachedWriteTokenDetails *ChatCachedWriteTokenDetails `json:"cached_write_token_details,omitempty"`
+
+	// Parts of AudioTokens that Azure Voice Live handled with Azure Speech, which it bills at their own rates.
+	StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens,omitempty"`
+	CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens,omitempty"`
 }
 
 // UnmarshalJSON maps OpenAI's cached_tokens into CachedReadTokens for compatibility.
@@ -1406,6 +1412,9 @@ func (d *ResponsesResponseInputTokens) UnmarshalJSON(data []byte) error {
 		CachedWriteTokenDetails *ChatCachedWriteTokenDetails `json:"cached_write_token_details"`
 		CachedTokens            *int                         `json:"cached_tokens"`
 		CacheWriteTokens        *int                         `json:"cache_write_tokens"`
+
+		StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens"`
+		CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens"`
 	}
 	if err := Unmarshal(data, &raw); err != nil {
 		return err
@@ -1416,6 +1425,8 @@ func (d *ResponsesResponseInputTokens) UnmarshalJSON(data []byte) error {
 	d.CachedReadTokens = raw.CachedReadTokens
 	d.CachedWriteTokens = raw.CachedWriteTokens
 	d.CachedWriteTokenDetails = raw.CachedWriteTokenDetails
+	d.StandardSpeechAudioTokens = raw.StandardSpeechAudioTokens
+	d.CustomSpeechAudioTokens = raw.CustomSpeechAudioTokens
 	// OpenAI spec providers send just cached_tokens, not separate read and write tokens and we handle them as read tokens in pricing calculations.
 	if raw.CachedTokens != nil && raw.CachedReadTokens == 0 && raw.CachedWriteTokens == 0 {
 		d.CachedReadTokens = *raw.CachedTokens
@@ -1442,6 +1453,9 @@ func (d ResponsesResponseInputTokens) MarshalJSON() ([]byte, error) {
 		// OpenAI's field name for cache writes (mirrors cached_tokens for reads) so the
 		// OpenAI SDK — which reads cache_write_tokens, not cached_write_tokens — finds it.
 		CacheWriteTokens int `json:"cache_write_tokens"`
+
+		StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens,omitempty"`
+		CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens,omitempty"`
 	}
 	return MarshalSorted(raw{
 		TextTokens:              d.TextTokens,
@@ -1452,6 +1466,9 @@ func (d ResponsesResponseInputTokens) MarshalJSON() ([]byte, error) {
 		CachedWriteTokenDetails: d.CachedWriteTokenDetails,
 		CachedTokens:            d.CachedReadTokens,
 		CacheWriteTokens:        d.CachedWriteTokens,
+
+		StandardSpeechAudioTokens: d.StandardSpeechAudioTokens,
+		CustomSpeechAudioTokens:   d.CustomSpeechAudioTokens,
 	})
 }
 
@@ -1465,6 +1482,10 @@ type ResponsesResponseOutputTokens struct {
 	CitationTokens           *int `json:"citation_tokens,omitempty"`
 	// Deprecated: use ResponsesResponseUsage.ToolUsage.WebSearch. Populated, will be removed in 3.0.0.
 	NumSearchQueries *int `json:"num_search_queries,omitempty"`
+
+	// Parts of AudioTokens that Azure Voice Live handled with Azure Speech, which it bills at their own rates.
+	StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens,omitempty"`
+	CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens,omitempty"`
 }
 
 // =============================================================================
@@ -4609,8 +4630,13 @@ type ResponsesShellCallOutputDelta struct {
 // MarshalJSON omits event-scoped fields that are nil so strict Responses
 // clients do not see explicit nulls on unrelated event types. Some event types
 // still intentionally emit empty arrays after WithDefaults populates them.
+// resp is a copy, so defaults set here never reach the caller's event.
 func (resp BifrostResponsesStreamResponse) MarshalJSON() ([]byte, error) {
 	type alias BifrostResponsesStreamResponse
+	// Anthropic/Bedrock carry the thinking signature on a text-less delta; delta is required on the wire.
+	if resp.Type == ResponsesStreamResponseTypeReasoningSummaryTextDelta && resp.Delta == nil {
+		resp.Delta = new("")
+	}
 	encoded, err := Marshal(alias(resp))
 	if err != nil {
 		return nil, err
