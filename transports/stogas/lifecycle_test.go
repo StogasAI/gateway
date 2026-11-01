@@ -205,7 +205,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 					Resolution:    &catalog.ResolvedRequest{Provider: provider},
 				},
 			}
-			if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByokRequired) {
+			if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})
@@ -218,7 +218,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 			Resolution:    &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 		},
 	}
-	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 
@@ -231,12 +231,44 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 			Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 		},
 	}
-	if err := applyUpstreamCredentials(ctx, byokState, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, byokState, nil, nil); err != nil {
 		t.Fatalf("Chutes BYOK returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
 	if !ok || directKey.Value.GetValue() != "cpk_user" {
 		t.Fatalf("Chutes BYOK direct key was not installed: %#v", directKey)
+	}
+}
+
+// A customer key that names a host secret is still the customer's key. Core's
+// NewSecretVar would read "env.CHUTES_API_KEY" from the gateway's environment,
+// which holds the managed Chutes key.
+func TestGatewayNeverUsesHostCloudCredentials(t *testing.T) {
+	if schemas.UseHostCloudCredentials {
+		t.Fatal("core may sign upstream requests with the gateway machine's own cloud identity")
+	}
+}
+
+func TestApplyUpstreamCredentialsSendsHostSecretReferencesLiterally(t *testing.T) {
+	t.Setenv("CHUTES_API_KEY", "cpk_stogas_managed")
+	for _, secret := range []string{"env.CHUTES_API_KEY", "vault.chutes/api-key"} {
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		state := &State{
+			Pair: Pair{
+				Authorization: &billing.Authorization{
+					UpstreamByok:       "0198f4cc-6c25-7000-8000-000000000001",
+					UpstreamByokSecret: secret,
+				},
+				Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
+			},
+		}
+		if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+			t.Fatalf("%s: ApplyUpstreamCredentials returned error: %v", secret, err)
+		}
+		directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
+		if !ok || directKey.Value.GetValue() != secret {
+			t.Fatalf("%s: direct key = %q, want the customer's value unchanged", secret, directKey.Value.GetValue())
+		}
 	}
 }
 
@@ -258,7 +290,7 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 				},
 			}
 
-			if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
+			if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
 				t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 			}
 			directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -292,7 +324,7 @@ func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *tes
 		},
 	}
 
-	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -318,7 +350,7 @@ func TestApplyUpstreamCredentialsRejectsIncompleteBYOKAuthorization(t *testing.T
 		},
 	}
 
-	if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByok) {
 		t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK failure", err)
 	}
 	if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
@@ -339,7 +371,7 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 			},
 		}
 
-		if err := applyUpstreamCredentials(ctx, state, nil); !errors.Is(err, billing.ErrByok) {
+		if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByok) {
 			t.Fatalf("credential %q: ApplyUpstreamCredentials error = %v, want BYOK failure", secret, err)
 		}
 		if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
@@ -3248,12 +3280,15 @@ func TestEveryActiveCatalogDeploymentCacheEconomics(t *testing.T) {
 		}
 	}
 
+	claudeCacheMeters := []string{
+		billing.MeterCachedInputTokens,
+		billing.MeterCacheWrite5mInputTokens,
+		billing.MeterCacheWrite1hInputTokens,
+	}
 	wantProviderMeters := map[string][]string{
-		"anthropic": {
-			billing.MeterCachedInputTokens,
-			billing.MeterCacheWrite5mInputTokens,
-			billing.MeterCacheWrite1hInputTokens,
-		},
+		"anthropic":    claudeCacheMeters,
+		"aws":          claudeCacheMeters,
+		"google-cloud": claudeCacheMeters,
 		"azure": {
 			billing.MeterCachedInputTokens,
 			billing.MeterCacheWriteInputTokens,
@@ -4167,4 +4202,11 @@ func tokenHoldCapacity(state *State, input bool) (int, bool) {
 		found = true
 	}
 	return total, found
+}
+
+func TestMissingRootErrorNamesTheLabels(t *testing.T) {
+	public := PublicBillingErrorFor(&customerkey.MissingError{Labels: []string{"billing", "prod"}})
+	if public.StatusCode != 400 || public.Code != "encryption_key_required" || public.Message != "Supply the registered encryption keys labeled billing, prod" {
+		t.Fatalf("public error = %+v", public)
+	}
 }

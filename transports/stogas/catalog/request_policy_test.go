@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -437,7 +438,7 @@ func TestOrderedCredentialsChooseWithinOneDeployment(t *testing.T) {
 			failed                    bool
 		}{
 			{name: "preference order", indexes: []int{0, 1}, limit: 1, want: 0, attempts: 1},
-			{name: "missing root already excluded", indexes: []int{1}, limit: 1, want: 1, attempts: 1},
+			{name: "unlisted credential left out", indexes: []int{1}, limit: 1, want: 1, attempts: 1},
 			{name: "credential policy excludes first", indexes: []int{0, 1}, limit: 1, firstFiltered: true, want: 1, attempts: 1},
 			{name: "failure cannot fall back by default", indexes: []int{0, 1}, limit: 1, firstFails: true, attempts: 1, failed: true},
 			{name: "explicit preparation fallback", indexes: []int{0, 1}, limit: 2, firstFails: true, want: 1, attempts: 2},
@@ -485,6 +486,51 @@ func TestOrderedCredentialsChooseWithinOneDeployment(t *testing.T) {
 					t.Fatal("resolved request lost or mixed the selected credential's timeout policy")
 				}
 			})
+		}
+	}
+}
+
+// Every pair the fallback count lets the request try must have its roots
+// before any is prepared; pairs beyond that count need none.
+func TestMissingRootsFailBeforeAnyPairIsPrepared(t *testing.T) {
+	loadTestCatalog(t)
+	missing := errors.New("missing root")
+	for _, test := range []struct {
+		limit   int
+		checked []int
+		err     error
+	}{
+		{limit: 1, checked: []int{0}},
+		{limit: 2, checked: []int{0, 1}, err: missing},
+	} {
+		var checked []int
+		prepared := 0
+		resolved, err := ResolveRequest(RequestInput{
+			Body:   []byte(`{"model":"openai-gpt-5.6-sol","messages":[{"role":"user","content":"hello"}]}`),
+			Method: "POST", Path: "/v1/chat/completions", Policy: policyConfig(test.limit),
+			AvailableCredentials: map[string][]int{"openai": {0, 1, 2}},
+			CheckRoots: func(pairs []PlannedPair) error {
+				for _, pair := range pairs {
+					if pair.Provider != schemas.OpenAI || pair.Policy == nil {
+						t.Fatalf("planned pair %+v lost its provider or policy", pair)
+					}
+					checked = append(checked, pair.Credential)
+				}
+				if slices.Contains(checked, 1) {
+					return missing
+				}
+				return nil
+			},
+			CheckCandidate: func(schemas.ModelProvider, int, Deployment) error { prepared++; return nil },
+		})
+		if !slices.Equal(checked, test.checked) || !errors.Is(err, test.err) {
+			t.Fatalf("limit %d: checked %v, error %v", test.limit, checked, err)
+		}
+		if test.err != nil && (prepared != 0 || resolved != nil) {
+			t.Fatalf("limit %d: prepared %d pairs before failing", test.limit, prepared)
+		}
+		if test.err == nil && (err != nil || resolved.CredentialIndex != 0) {
+			t.Fatalf("limit %d: resolved %v, %v", test.limit, resolved, err)
 		}
 	}
 }

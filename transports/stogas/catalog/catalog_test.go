@@ -46,9 +46,9 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 	}
 	if len(snap.graph.Authors) != 10 ||
 		len(snap.graph.Models) != 39 ||
-		len(snap.graph.Providers) != 4 ||
-		len(snap.graph.Routes) != 7 ||
-		len(snap.graph.Deployments) != 207 {
+		len(snap.graph.Providers) != 6 ||
+		len(snap.graph.Routes) != 9 ||
+		len(snap.graph.Deployments) != 214 {
 		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
 			len(snap.graph.Authors),
 			len(snap.graph.Models),

@@ -1,10 +1,7 @@
 package stogas
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
 	"net/url"
 	"regexp"
 	"strings"
@@ -44,7 +41,20 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 			lookups[index] = selection.Credential.AzureBindingLookup()
 		}
 	}
+	cloudTargets := make(map[schemas.ModelProvider][]*billing.CloudTarget, 2)
+	for _, provider := range []schemas.ModelProvider{catalog.ProviderAWS, catalog.ProviderGoogleCloud} {
+		for _, selection := range snapshot.Credentials[string(provider)] {
+			var target *billing.CloudTarget
+			if selection.Credential != nil {
+				target = selection.Credential.Target
+			}
+			cloudTargets[provider] = append(cloudTargets[provider], target)
+		}
+	}
 	return func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) bool {
+		if targets, cloud := cloudTargets[provider]; cloud || provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud {
+			return index >= 0 && index < len(targets) && cloudTargetServes(provider, targets[index], deployment)
+		}
 		if provider != schemas.Azure {
 			return true
 		}
@@ -69,15 +79,19 @@ func CredentialDeploymentFilter(snapshot *billing.KeyConfigSnapshot, now time.Ti
 	}
 }
 
-// ValidatePreparedCredential checks the selected secret before input work.
-func ValidatePreparedCredential(credential *billing.PreparedCredential, provider schemas.ModelProvider) error {
+// ValidatePreparedCredential checks the selected secret before input work. An
+// AWS or Google Cloud secret must serve its registered target and the deployment.
+func ValidatePreparedCredential(credential *billing.PreparedCredential, provider schemas.ModelProvider, deployment catalog.Deployment) error {
 	if credential == nil {
 		return billing.ErrByok
 	}
-	if provider == schemas.Azure {
+	switch provider {
+	case schemas.Azure:
 		if _, err := parseAzureByokCredential(credential.Secret); err != nil {
 			return billing.ErrByok
 		}
+	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		return validateCloudCredential(provider, credential.Secret, credential.Target(), deployment)
 	}
 	return nil
 }
@@ -97,14 +111,14 @@ func azureDirectKey(authorization *billing.Authorization, resolution *catalog.Re
 	return schemas.Key{
 		ID:     authorization.UpstreamByok,
 		Name:   authorization.UpstreamByok,
-		Value:  *schemas.NewSecretVar(""),
+		Value:  literalSecret(""),
 		Models: schemas.WhiteList{binding.DeploymentName},
 		AzureKeyConfig: &schemas.AzureKeyConfig{
-			ClientID:     schemas.NewSecretVar(credential.ClientID),
-			ClientSecret: schemas.NewSecretVar(credential.ClientSecret),
-			Endpoint:     *schemas.NewSecretVar(binding.Endpoint),
+			ClientID:     schemas.Ptr(literalSecret(credential.ClientID)),
+			ClientSecret: schemas.Ptr(literalSecret(credential.ClientSecret)),
+			Endpoint:     literalSecret(binding.Endpoint),
 			Scopes:       []string{binding.TokenScope},
-			TenantID:     schemas.NewSecretVar(credential.TenantID),
+			TenantID:     schemas.Ptr(literalSecret(credential.TenantID)),
 		},
 		Weight:  1,
 		Enabled: schemas.Ptr(true),
@@ -112,14 +126,9 @@ func azureDirectKey(authorization *billing.Authorization, resolution *catalog.Re
 }
 
 func parseAzureByokCredential(raw string) (azureByokCredential, error) {
-	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
-	decoder.DisallowUnknownFields()
 	credential := azureByokCredential{}
-	if err := decoder.Decode(&credential); err != nil {
+	if err := decodeStrictJSON(raw, &credential); err != nil {
 		return azureByokCredential{}, err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return azureByokCredential{}, errors.New("invalid Azure BYOK: trailing JSON")
 	}
 	credential.ClientID = strings.ToLower(strings.TrimSpace(credential.ClientID))
 	credential.TenantID = strings.ToLower(strings.TrimSpace(credential.TenantID))

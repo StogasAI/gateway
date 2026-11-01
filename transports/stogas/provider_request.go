@@ -68,7 +68,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		}
 		sanitizeChatProviderFields(ctx, chat, customerAccount)
 		applyRequiredChatOutputLimit(ctx, resolution, chat)
-		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest)
+		body, bifrostErr = prepareChatProviderBody(ctx, chat, request.RequestType == schemas.ChatCompletionStreamRequest, resolution.Deployment.Upstream.Hosting)
 		settings = billing.ChatRequestSettings(chat.Params)
 	case request.ResponsesRequest != nil && request.ChatRequest == nil:
 		responses := request.ResponsesRequest
@@ -77,7 +77,7 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		}
 		sanitizeResponsesProviderFields(ctx, responses, customerAccount)
 		applyRequiredResponsesOutputLimit(ctx, resolution, responses)
-		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest)
+		body, bifrostErr = prepareResponsesProviderBody(ctx, responses, request.RequestType == schemas.ResponsesStreamRequest, resolution.Deployment.Upstream.Hosting)
 		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
 			body, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
 		}
@@ -191,8 +191,10 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 	}
 }
 
-func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool) ([]byte, *schemas.BifrostError) {
+func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
+	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		return anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
 	case schemas.OpenAI:
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case schemas.Azure:
@@ -216,8 +218,10 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 	}
 }
 
-func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool) ([]byte, *schemas.BifrostError) {
+func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
+	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
+		return prepareAnthropicResponsesBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
 	case schemas.OpenAI:
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Azure:
@@ -286,8 +290,26 @@ func setOpenAIAccessPrograms(body []byte, raw json.RawMessage) ([]byte, *schemas
 	return body, nil
 }
 
+// cloudClaudeBuildConfig shapes the Messages body for whoever runs Claude on AWS
+// or Google Cloud. Bedrock's runtime takes the body that core sends Bedrock
+// Mantle: the inference profile as the model, versions as headers. Vertex AI
+// takes the model in the URL and its own anthropic_version. Anthropic takes its
+// own API's body. The gateway rejects URL sources for the clouds first, so
+// core never fetches one to inline it.
+func cloudClaudeBuildConfig(model, hosting string, streaming bool) anthropicprovider.AnthropicRequestBuildConfig {
+	config := anthropicprovider.AnthropicRequestBuildConfig{Provider: schemas.Anthropic, IsStreaming: streaming}
+	switch hosting {
+	case hostingAWS:
+		config.Provider, config.Model = schemas.BedrockMantle, model
+	case hostingGoogle:
+		config.Provider, config.Model = schemas.Vertex, model
+	}
+	return config
+}
+
 func usesAnthropicWireFormat(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string) bool {
-	return provider == schemas.Anthropic || (provider == schemas.Azure && schemas.IsAnthropicModelFamily(ctx, model))
+	return provider == schemas.Anthropic || provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud ||
+		(provider == schemas.Azure && schemas.IsAnthropicModelFamily(ctx, model))
 }
 
 func prepareOpenAIChatBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool) ([]byte, *schemas.BifrostError) {

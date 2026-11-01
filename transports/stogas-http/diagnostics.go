@@ -15,6 +15,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/azureauth"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 	"github.com/maximhq/bifrost/transports/stogas/plugins/exporter"
 	"net"
 	"net/http"
@@ -32,6 +33,7 @@ type privateNodeDiagnostics struct {
 	Billing                billing.DiagnosticsSnapshot    `json:"billing"`
 	ChutesE2EE             chutese2ee.DiagnosticsSnapshot `json:"chutesE2EE"`
 	GeneratedAt            time.Time                      `json:"generatedAt"`
+	GoogleAuth             googleauth.Diagnostics         `json:"googleAuth"`
 	Listeners              listenerDiagnostics            `json:"listeners"`
 	Process                processDiagnostics             `json:"process"`
 	Requests               requestDiagnostics             `json:"requests"`
@@ -145,6 +147,7 @@ func (s *Server) privateDiagnosticsSnapshot(details bool) privateNodeDiagnostics
 	}
 	if s.runtime != nil {
 		result.AzureAuth = s.runtime.AzureAuthDiagnostics()
+		result.GoogleAuth = s.runtime.GoogleAuthDiagnostics()
 		result.Billing = s.runtime.BillingDiagnostics()
 		if details {
 			result.ChutesE2EE = s.runtime.ChutesE2EEDiagnostics()

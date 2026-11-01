@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 )
 
 func TestSourceQueryCorpus(t *testing.T) {
@@ -148,4 +150,50 @@ func applyRequestJSON(parent *Config, raw []byte) (*Config, error) {
 		return nil, err
 	}
 	return ApplyRequest(parent, request)
+}
+
+// A caller whose saved policies do not permit encrypted request plugins must
+// not make the gateway decrypt them: the denial comes first, whatever root
+// the request sent.
+func TestEncryptedRequestPolicyIsDecryptedOnlyAfterPermission(t *testing.T) {
+	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Root, OrganizationID string
+		Envelope             customerkey.Envelope
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": fixture.Envelope}})
+	for name, permission := range map[string][]string{"denied": {"routing.filter"}, "permitted": {"plugins"}} {
+		t.Run(name, func(t *testing.T) {
+			parent, _ := json.Marshal(map[string]any{
+				"encryption": map[string]any{"keys": map[string]string{"test": fixture.Envelope.KeyID}},
+				"delegation": map[string]any{"request": permission},
+			})
+			base, err := ComposeSources([]ScopedSource{{Scope: OrganizationScope, Value: ruleSource(t, string(parent))}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// No root: opening would fail with ErrKey.
+			request, err := CompileRequest(config, fixture.OrganizationID, nil)
+			if err != nil {
+				t.Fatalf("compiling read the ciphertext: %v", err)
+			}
+			if _, err := request.CompileRedaction(); !errors.Is(err, ErrRequestPolicyDenied) {
+				t.Fatalf("redaction before permission = %v, want denial", err)
+			}
+			_, err = ApplyRequest(base, request)
+			want := ErrRequestPolicyDenied
+			if name == "permitted" {
+				want = customerkey.ErrKey
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("ApplyRequest() = %v, want %v", err, want)
+			}
+		})
+	}
 }

@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -36,22 +35,6 @@ var ignoredHeaders = map[string]struct{}{
 	"transfer-encoding": {},
 }
 
-// signingKeyCache caches derived signing keys to avoid recomputation
-type signingKeyCache struct {
-	cache map[string]cachedKey
-	mu    sync.RWMutex
-}
-
-type cachedKey struct {
-	key       []byte
-	date      string // YYYYMMDD format
-	accessKey string
-}
-
-var keyCache = &signingKeyCache{
-	cache: make(map[string]cachedKey),
-}
-
 // hmacSHA256 computes HMAC-SHA256
 func hmacSHA256(key, data []byte) []byte {
 	h := hmac.New(sha256.New, key)
@@ -68,33 +51,11 @@ func deriveSigningKey(secret, dateStamp, region, service string) []byte {
 	return kSigning
 }
 
-// getSigningKey retrieves or computes the signing key with caching
-func getSigningKey(accessKey, secretKey, dateStamp, region, service string) []byte {
-	cacheKey := fmt.Sprintf("%s/%s/%s/%s", accessKey, dateStamp, region, service)
-
-	keyCache.mu.RLock()
-	if cached, ok := keyCache.cache[cacheKey]; ok && cached.accessKey == accessKey && cached.date == dateStamp {
-		keyCache.mu.RUnlock()
-		return cached.key
-	}
-	keyCache.mu.RUnlock()
-
-	keyCache.mu.Lock()
-	defer keyCache.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if cached, ok := keyCache.cache[cacheKey]; ok && cached.accessKey == accessKey && cached.date == dateStamp {
-		return cached.key
-	}
-
-	key := deriveSigningKey(secretKey, dateStamp, region, service)
-	keyCache.cache[cacheKey] = cachedKey{
-		key:       key,
-		date:      dateStamp,
-		accessKey: accessKey,
-	}
-
-	return key
+// getSigningKey derives the signing key for each request. It is not cached:
+// a cache keyed without the secret would hand one caller's key to another who
+// sends the same access key ID, and deriving it costs four HMACs.
+func getSigningKey(_, secretKey, dateStamp, region, service string) []byte {
+	return deriveSigningKey(secretKey, dateStamp, region, service)
 }
 
 // stripExcessSpaces removes excess spaces from a string
@@ -283,6 +244,9 @@ func signAWSRequestFastHTTP(
 ) *schemas.BifrostError {
 	// Get AWS credentials if not provided
 	if accessKey == "" && secretKey == "" {
+		if !schemas.UseHostCloudCredentials {
+			return providerUtils.NewConfigurationError(schemas.ErrHostCloudCredentials.Error())
+		}
 		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 		if err != nil {
 			return providerUtils.NewBifrostOperationError("failed to load aws config", err)

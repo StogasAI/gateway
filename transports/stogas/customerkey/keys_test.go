@@ -2,7 +2,9 @@ package customerkey
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,5 +64,28 @@ func TestKeyRegistryRejectsAmbiguousLabelsAndIdentifiers(t *testing.T) {
 		if keys, err := ParseKeys(encoded); err == nil || keys != nil {
 			t.Fatal("invalid supplied keys accepted")
 		}
+	}
+}
+
+func TestMissingNamesEachAbsentRootByLabel(t *testing.T) {
+	present, err := Parse("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer present.Clear()
+	absent := strings.Repeat("b", 64)
+	unregistered := strings.Repeat("c", 64)
+	registry := map[string]string{"prod": present.ID(), "billing": absent}
+	keys := Keys{"prod": present}
+	if err := keys.Missing(registry, present.ID(), ""); err != nil {
+		t.Fatalf("Missing() with every root = %v", err)
+	}
+	err = keys.Missing(registry, unregistered, absent, present.ID(), absent)
+	var missing *MissingError
+	if !errors.As(err, &missing) || !errors.Is(err, ErrKey) || !slices.Equal(missing.Labels, []string{"billing", unregistered}) {
+		t.Fatalf("Missing() = %v, want billing and the unregistered ID once each", err)
+	}
+	if want := "Supply the registered encryption keys labeled billing, " + unregistered; err.Error() != want {
+		t.Fatalf("message = %q", err.Error())
 	}
 }

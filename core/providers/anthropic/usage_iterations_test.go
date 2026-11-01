@@ -181,8 +181,13 @@ func TestAnthropicUsageBillingTotalsPreservesMixedRateIterationTopLevel(t *testi
 				},
 			}
 
-			if total := billableAnthropicUsage(usage); total != usage {
+			if total := billableAnthropicUsage(usage); total.InputTokens != 12 || total.OutputTokens != 34 {
 				t.Fatalf("mixed-rate %s iterations must preserve authoritative top-level usage: %#v", iterationType, total)
+			}
+			withCompaction := *usage
+			withCompaction.Iterations = append([]AnthropicUsage{{Type: schemas.Ptr(AnthropicUsageIterationTypeCompaction), InputTokens: 300, OutputTokens: 100}}, usage.Iterations...)
+			if total := billableAnthropicUsage(&withCompaction); total.InputTokens != 312 || total.OutputTokens != 134 {
+				t.Fatalf("mixed-rate %s iterations must still add compaction passes to the top level: %#v", iterationType, total)
 			}
 			converted := ConvertAnthropicUsageToBifrostUsage(usage)
 			if converted.InputTokens != 12 || converted.OutputTokens != 34 || converted.TotalTokens != 46 || len(converted.Iterations) != 2 {

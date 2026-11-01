@@ -12,6 +12,7 @@ import (
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
 	"github.com/maximhq/bifrost/transports/stogas/chutese2ee"
+	"github.com/maximhq/bifrost/transports/stogas/googleauth"
 	"github.com/maximhq/bifrost/transports/stogas/providerio"
 	"github.com/valyala/fasthttp"
 )
@@ -21,11 +22,12 @@ const (
 )
 
 type Runtime struct {
-	client      *bifrost.Bifrost
-	billing     *billing.Service
-	chutesE2EE  *chutese2ee.Transport
-	azureTokens *azureauth.Cache
-	cancel      context.CancelFunc
+	client       *bifrost.Bifrost
+	billing      *billing.Service
+	chutesE2EE   *chutese2ee.Transport
+	azureTokens  *azureauth.Cache
+	googleTokens *googleauth.Cache
+	cancel       context.CancelFunc
 }
 
 // NewRuntime starts the providers and billing. nodeID names the boot that owns
@@ -73,14 +75,21 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		return nil, err
 	}
 
-	return &Runtime{client: client, billing: billingService, chutesE2EE: chutesTransport, azureTokens: azureauth.New(runtimeCtx), cancel: cancel}, nil
+	return &Runtime{
+		client:       client,
+		billing:      billingService,
+		chutesE2EE:   chutesTransport,
+		azureTokens:  azureauth.New(runtimeCtx),
+		googleTokens: googleauth.New(runtimeCtx, confidentialProduction(config)),
+		cancel:       cancel,
+	}, nil
 }
 
 func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *State) error {
 	if r == nil {
 		return billing.ErrGatewayUnavailable
 	}
-	return applyUpstreamCredentials(ctx, state, r.azureTokens)
+	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens)
 }
 
 func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {
@@ -88,6 +97,13 @@ func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {
 		return azureauth.Diagnostics{}
 	}
 	return r.azureTokens.Diagnostics()
+}
+
+func (r *Runtime) GoogleAuthDiagnostics() googleauth.Diagnostics {
+	if r == nil {
+		return googleauth.Diagnostics{}
+	}
+	return r.googleTokens.Diagnostics()
 }
 
 func (r *Runtime) Client() *bifrost.Bifrost {
@@ -148,6 +164,9 @@ func (r *Runtime) Close() {
 	if r.azureTokens != nil {
 		r.azureTokens.Close()
 	}
+	if r.googleTokens != nil {
+		r.googleTokens.Close()
+	}
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -158,8 +177,31 @@ type account struct {
 	providerConfigs map[schemas.ModelProvider]schemas.ProviderConfig
 }
 
+// confidentialProduction reports whether the gateway runs in a confidential
+// guest outside local development, where provider TLS must be post-quantum.
+func confidentialProduction(config Config) bool {
+	return config.Confidential.Enabled && config.Confidential.Environment != "local"
+}
+
+// cloudClaudeConfig serves Claude on AWS or Google Cloud through core's
+// Anthropic provider. Each request names its own URL, so the base URL cannot
+// resolve: a request without one never reaches Anthropic with a cloud credential.
+func cloudClaudeConfig(config Config) schemas.ProviderConfig {
+	providerConfig := newProviderConfig("https://upstream-url-required.invalid", config.AllowPrivateProviderNetwork, false)
+	providerConfig.CustomProviderConfig = &schemas.CustomProviderConfig{
+		BaseProviderType: schemas.Anthropic,
+		AllowedRequests: &schemas.AllowedRequests{
+			ChatCompletion:       true,
+			ChatCompletionStream: true,
+			Responses:            true,
+			ResponsesStream:      true,
+		},
+	}
+	return providerConfig
+}
+
 func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
-	requirePostQuantumTLS := config.Confidential.Enabled && config.Confidential.Environment != "local"
+	requirePostQuantumTLS := confidentialProduction(config)
 	openAIConfig := newProviderConfig(
 		config.OpenAIBaseURL,
 		config.AllowPrivateProviderNetwork,
@@ -194,23 +236,31 @@ func newAccount(config Config, chutesTransport fasthttp.RoundTripper) *account {
 		},
 	}
 	chutesConfig.NetworkConfig.Transport = chutesTransport
+	// Bedrock's runtime endpoint offers only classical key exchange, so AWS
+	// requires TLS 1.3 as Azure does. Every Google endpoint offers X25519MLKEM768.
+	awsConfig := cloudClaudeConfig(config)
+	awsConfig.NetworkConfig.RequireTLS13 = requirePostQuantumTLS
+	googleCloudConfig := cloudClaudeConfig(config)
+	googleCloudConfig.NetworkConfig.RequirePostQuantumTLS = requirePostQuantumTLS
 
 	return &account{
 		keys: map[schemas.ModelProvider]schemas.Key{
 			catalog.ProviderChutes: {
 				ID:      chutesProviderKeyID,
 				Name:    chutesProviderKeyID,
-				Value:   *schemas.NewSecretVar(config.ChutesAPIKey),
+				Value:   literalSecret(config.ChutesAPIKey),
 				Models:  schemas.WhiteList{"*"},
 				Weight:  1,
 				Enabled: schemas.Ptr(true),
 			},
 		},
 		providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{
-			schemas.OpenAI:         openAIConfig,
-			schemas.Anthropic:      anthropicConfig,
-			schemas.Azure:          azureConfig,
-			catalog.ProviderChutes: chutesConfig,
+			schemas.OpenAI:              openAIConfig,
+			schemas.Anthropic:           anthropicConfig,
+			schemas.Azure:               azureConfig,
+			catalog.ProviderChutes:      chutesConfig,
+			catalog.ProviderAWS:         awsConfig,
+			catalog.ProviderGoogleCloud: googleCloudConfig,
 		},
 	}
 }
@@ -220,11 +270,10 @@ func newChutesE2EETransport(config Config) (*chutese2ee.Transport, error) {
 	if err != nil {
 		return nil, err
 	}
-	confidentialProduction := config.Confidential.Enabled && config.Confidential.Environment != "local"
 	return chutese2ee.New(chutese2ee.Options{
 		APIKey:                  config.ChutesAPIKey,
 		APIBaseURL:              apiBaseURL,
-		RequireProductionOrigin: confidentialProduction,
+		RequireProductionOrigin: confidentialProduction(config),
 		RequestTimeout:          billing.GatewayRequestLifetime,
 		ResolveModel: func(upstreamModel string) (chutese2ee.ModelTarget, bool) {
 			deployment, ok := catalog.DeploymentForUpstreamModel(catalog.ProviderChutes, upstreamModel, catalog.RouteChat)
@@ -282,7 +331,7 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 }
 
 func (a *account) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes}, nil
+	return []schemas.ModelProvider{schemas.OpenAI, schemas.Anthropic, schemas.Azure, catalog.ProviderChutes, catalog.ProviderAWS, catalog.ProviderGoogleCloud}, nil
 }
 
 func (a *account) GetKeysForProvider(ctx context.Context, providerKey schemas.ModelProvider) ([]schemas.Key, error) {

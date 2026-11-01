@@ -231,6 +231,18 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			break
 		}
 	}
+	// A missing root fails the request whichever tried pair needs it, before
+	// any provider call, so the outcome does not depend on earlier failures.
+	if input.CheckRoots != nil {
+		tried := plan.choices[:min(len(plan.choices), plan.slots)]
+		pairs := make([]PlannedPair, len(tried))
+		for i, choice := range tried {
+			pairs[i] = PlannedPair{Provider: choice.candidate.Provider, Credential: choice.index, Policy: choice.candidate.policy}
+		}
+		if err := input.CheckRoots(pairs); err != nil {
+			return nil, err
+		}
+	}
 	return plan, nil
 }
 

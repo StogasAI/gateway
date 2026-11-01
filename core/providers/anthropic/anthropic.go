@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -583,7 +584,7 @@ func (provider *AnthropicProvider) ChatCompletion(ctx *schemas.BifrostContext, k
 		},
 		provider.anthropicRequestHeaders(ctx, key),
 		provider.networkConfig.ExtraHeaders,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 	)
 }
@@ -705,7 +706,7 @@ func (provider *AnthropicProvider) ChatCompletionStream(ctx *schemas.BifrostCont
 		provider.GetProviderKey(),
 		postHookRunner,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 		postHookSpanFinalizer,
 	)
@@ -733,8 +734,16 @@ func accumulateAnthropicResponsesUsage(usage *schemas.ResponsesResponseUsage, bi
 		return
 	}
 	if len(usageToProcess.Iterations) > 0 {
-		converted := ConvertAnthropicUsageToBifrostUsage(usageToProcess)
-		usage.Iterations = converted.Iterations
+		usage.Iterations = make([]schemas.ResponsesResponseUsage, len(usageToProcess.Iterations))
+		for i := range usageToProcess.Iterations {
+			if converted := ConvertAnthropicUsageToBifrostUsage(&usageToProcess.Iterations[i]); converted != nil {
+				usage.Iterations[i] = *converted
+			}
+		}
+		// Mirrored so a stream cut before its final chunk still bills the advisor passes.
+		if billedUsage != nil {
+			billedUsage.Iterations = slices.Clone(usage.Iterations)
+		}
 	}
 	usageToProcess = billableAnthropicUsage(usageToProcess)
 	// Web search request count → billed as search queries (server tool use). The
@@ -1262,6 +1271,9 @@ func HandleAnthropicChatCompletionStreaming(
 					if event.Delta != nil && event.Delta.Type == AnthropicStreamDeltaTypeInputJSON && event.Delta.PartialJSON != nil {
 						// Convert tool use delta to content delta
 						content := *event.Delta.PartialJSON
+						// Keep the content length in step so citation spans on
+						// later text blocks stay aligned with the content string.
+						streamState.contentLen += len(content)
 						response := &schemas.BifrostChatResponse{
 							ID:     messageID,
 							Model:  modelName,
@@ -1437,7 +1449,7 @@ func (provider *AnthropicProvider) Responses(ctx *schemas.BifrostContext, key sc
 		},
 		provider.anthropicRequestHeaders(ctx, key),
 		provider.networkConfig.ExtraHeaders,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 	)
 }
@@ -1563,7 +1575,7 @@ func (provider *AnthropicProvider) ResponsesStream(ctx *schemas.BifrostContext, 
 		provider.GetProviderKey(),
 		postHookRunner,
 		nil,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 		postHookSpanFinalizer,
 	)
@@ -1738,6 +1750,11 @@ func HandleAnthropicResponsesStream(
 		sseReader := providerUtils.GetSSEEventReader(ctx, reader)
 		chunkIndex := 0
 
+		// Open this stream's prompt-usage presence ledger. Per stream, because
+		// chunkIndex restarts here and a previous attempt's readings must not be
+		// read against this one's chunks. See streamdeltausage.go.
+		openAnthropicStreamDeltaPromptUsageLedger(ctx)
+
 		lastChunkTime := startTime
 
 		// Track minimal state needed for response format
@@ -1827,6 +1844,17 @@ func HandleAnthropicResponsesStream(
 			}
 			if event.Message != nil && modelName == "" {
 				modelName = event.Message.Model
+			}
+			// Record WHICH prompt-side usage counters this raw message_delta
+			// reported, before the neutral conversion below flattens presence into
+			// zeros. chunkIndex is the sequence number the converter stamps on the
+			// chunk this event produces, so the reading is filed against that chunk
+			// and read back only for it -- the egress consumes chunks
+			// asynchronously, so a later event's reading must not displace an
+			// earlier chunk's. Field presence only -- no value is read. See
+			// streamdeltausage.go.
+			if event.Type == AnthropicStreamEventTypeMessageDelta {
+				recordAnthropicStreamDeltaPromptUsage(ctx, chunkIndex, eventDataBytes)
 			}
 			// Note: response.created and response.in_progress are now emitted by ToBifrostResponsesStream
 			// from the message_start event, so we don't need to call them manually here
@@ -3136,7 +3164,7 @@ func (provider *AnthropicProvider) CountTokens(ctx *schemas.BifrostContext, key 
 		},
 		provider.anthropicRequestHeaders(ctx, key),
 		provider.networkConfig.ExtraHeaders,
-		nil,
+		providerUtils.ContextBodySigner(ctx),
 		provider.logger,
 	)
 }

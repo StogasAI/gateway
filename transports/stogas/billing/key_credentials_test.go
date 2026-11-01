@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/maximhq/bifrost/transports/stogas/customerkey"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -46,7 +47,7 @@ func TestCredentialSelectionRequiresTheOrganizationKey(t *testing.T) {
 	}
 }
 
-func TestEncryptedCredentialEligibilityUsesItsOwnSuppliedRoot(t *testing.T) {
+func TestEncryptedCredentialsKeepTheirPlaceAndNameMissingRoots(t *testing.T) {
 	keys, err := customerkey.ParseKeys(map[string]string{
 		"providers": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
 		"redaction": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -55,32 +56,41 @@ func TestEncryptedCredentialEligibilityUsesItsOwnSuppliedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer keys.Clear()
-	openAIID, chutesID := "01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002"
+	openAIID, chutesID, strayID := "01900000-0000-7000-8000-000000000001", "01900000-0000-7000-8000-000000000002", "01900000-0000-7000-8000-000000000003"
+	registry := map[string]string{"providers": keys["providers"].ID(), "redaction": keys["redaction"].ID()}
 	snapshot := &KeyConfigSnapshot{
-		Claims: &APIKeyClaims{OrganizationID: "org"},
-		PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{
-			"providers": keys["providers"].ID(), "redaction": keys["redaction"].ID(),
-		}}},
+		Claims:         &APIKeyClaims{OrganizationID: "org"},
+		PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: registry}},
 		Credentials: map[string][]CredentialSelection{
-			"openai":    {{Mode: "encrypted", ID: openAIID, Credential: &CachedCredential{ID: openAIID, EncryptionKeyID: keys["providers"].ID(), EncryptedSecret: "invalid ciphertext"}}},
+			"openai": {
+				{Mode: "encrypted", ID: openAIID, Credential: &CachedCredential{ID: openAIID, EncryptionKeyID: keys["providers"].ID(), EncryptedSecret: "invalid ciphertext"}},
+				{Mode: "encrypted", ID: strayID, Credential: &CachedCredential{ID: strayID, EncryptionKeyID: strings.Repeat("a", 64)}},
+			},
 			"chutes":    {{Mode: "encrypted", ID: chutesID, Credential: &CachedCredential{ID: chutesID, EncryptionKeyID: keys["redaction"].ID()}}},
 			"anthropic": {{Mode: "stored"}},
 		},
 	}
+	available := snapshot.AvailableCredentials()
+	if !slices.Equal(available["openai"], []int{0}) || !slices.Equal(available["chutes"], []int{0}) || !slices.Equal(available["anthropic"], []int{0}) {
+		t.Fatalf("available = %v; want each credential sealed with a registered root, whatever the request sent", available)
+	}
+	need := append(snapshot.RequiredRoots("openai", 0, nil), snapshot.RequiredRoots("chutes", 0, nil)...)
 	for _, item := range []struct {
-		keys           customerkey.Keys
-		openai, chutes bool
+		keys customerkey.Keys
+		want []string
 	}{
-		{nil, false, false},
-		{customerkey.Keys{"providers": keys["providers"]}, true, false},
-		{customerkey.Keys{"redaction": keys["redaction"]}, false, true},
-		{keys, true, true},
-		{customerkey.Keys{"wrong_label": keys["providers"]}, false, false},
+		{nil, []string{"providers", "redaction"}},
+		{customerkey.Keys{"providers": keys["providers"]}, []string{"redaction"}},
+		{keys, nil},
 	} {
-		available := snapshot.AvailableCredentials(item.keys)
-		if (len(available["openai"]) != 0) != item.openai || (len(available["chutes"]) != 0) != item.chutes || len(available["anthropic"]) == 0 {
-			t.Fatal("credential eligibility ignored its registered label or required root")
+		err := item.keys.Missing(registry, need...)
+		var missing *customerkey.MissingError
+		if item.want == nil && err != nil || item.want != nil && (!errors.As(err, &missing) || !slices.Equal(missing.Labels, item.want) || !errors.Is(err, customerkey.ErrKey)) {
+			t.Fatalf("Missing() with %d keys = %v, want labels %v", len(item.keys), err, item.want)
 		}
+	}
+	if roots := snapshot.RequiredRoots("anthropic", 0, nil); len(roots) != 0 {
+		t.Fatalf("a stored credential needs roots %v", roots)
 	}
 }
 
@@ -147,6 +157,29 @@ func TestCredentialSnapshotRejectsConfusedScopeAndMaterial(t *testing.T) {
 	if validateCredentials(claims, credentials) == nil {
 		t.Fatal("accepted invalid key identifier")
 	}
+
+	// AWS and Google Cloud credentials route by their target; no other credential has one.
+	for _, test := range []struct {
+		provider string
+		target   *CloudTarget
+		valid    bool
+	}{
+		{"aws", &CloudTarget{Hosting: []string{"anthropic", "aws"}, Region: "us-east-1"}, true},
+		{"aws", nil, false},
+		{"aws", &CloudTarget{Hosting: []string{"aws"}}, false},
+		{"aws", &CloudTarget{Region: "us-east-1"}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google"}}, true},
+		{"google-cloud", &CloudTarget{Hosting: []string{"google"}, Region: "us-east-1"}, false},
+		{"google-cloud", &CloudTarget{Hosting: []string{"anthropic", "google", "aws"}}, false},
+		{"openai", &CloudTarget{Hosting: []string{"aws"}, Region: "us-east-1"}, false},
+	} {
+		credentials := valid()
+		selection := credentials["openai"][0]
+		selection.Credential.Provider, selection.Credential.Target = test.provider, test.target
+		if err := validateCredentials(claims, map[string][]CredentialSelection{test.provider: {selection}}); (err == nil) != test.valid {
+			t.Errorf("%s target %+v: error %v, want valid %t", test.provider, test.target, err, test.valid)
+		}
+	}
 }
 
 func TestCredentialBindingsRejectMalformedSnapshotsDuringDecode(t *testing.T) {
@@ -189,11 +222,11 @@ func TestPrepareCredentialDecryptsLocallyAndBindsTheSnapshot(t *testing.T) {
 	}
 	snapshot.Credentials["chutes"] = []CredentialSelection{{Mode: "managed"}}
 	credential := snapshot.Credentials["openai"][0].Credential
-	if available := snapshot.AvailableCredentials(nil); len(available["openai"]) != 1 || len(available["chutes"]) != 1 || len(available["azure"]) != 0 || len(available["anthropic"]) != 0 {
+	if available := snapshot.AvailableCredentials(); len(available["openai"]) != 1 || len(available["chutes"]) != 1 || len(available["azure"]) != 0 || len(available["anthropic"]) != 0 {
 		t.Fatalf("configured providers: %v", available)
 	}
 	credential.Enabled = false
-	if len(snapshot.AvailableCredentials(nil)["openai"]) == 0 {
+	if len(snapshot.AvailableCredentials()["openai"]) == 0 {
 		t.Fatal("credential failure silently changed initial provider eligibility")
 	}
 	if _, err := service.PrepareCredential(snapshot, "openai", 0, nil); !errors.Is(err, policyResultErrors["credential_disabled"]) {

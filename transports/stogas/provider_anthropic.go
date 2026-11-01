@@ -1151,7 +1151,12 @@ func anthropicToolSystemPromptHoldTokens(model string, toolTypes []string) int {
 }
 
 func anthropicToolSystemPromptTokensForModel(model string) (int, bool) {
-	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(model)), ".", "-")
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	// Bedrock names Claude as an inference profile, such as global.anthropic.claude-fable-5-1.
+	if _, name, profile := strings.Cut(normalized, "anthropic."); profile {
+		normalized = name
+	}
+	normalized = strings.ReplaceAll(normalized, ".", "-")
 	switch {
 	case strings.HasPrefix(normalized, "claude-opus-5-5"):
 		return 286, true

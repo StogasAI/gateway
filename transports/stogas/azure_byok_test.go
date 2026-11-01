@@ -374,7 +374,7 @@ func TestApplyUpstreamCredentialsInstallsAzureBoundKey(t *testing.T) {
 			t.Fatal("incorrect Azure token credential")
 		}
 		return "test-access-token", nil
-	})); err != nil {
+	}), nil); err != nil {
 		t.Fatal(err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)

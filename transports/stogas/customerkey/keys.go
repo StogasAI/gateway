@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -77,6 +78,42 @@ func (keys Keys) Validate(registered map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// MissingError names registered roots that content a request may use needs
+// and the request did not supply. It is an ErrKey.
+type MissingError struct{ Labels []string }
+
+func (e *MissingError) Error() string {
+	return "Supply the registered encryption keys labeled " + strings.Join(e.Labels, ", ")
+}
+
+func (e *MissingError) Unwrap() error { return ErrKey }
+
+// Missing returns a *MissingError naming each root in ids that keys lacks, by
+// its registered label, or nil when none is missing.
+func (keys Keys) Missing(registered map[string]string, ids ...string) error {
+	var labels []string
+	for _, id := range ids {
+		if id == "" || keys.Matches(id) {
+			continue
+		}
+		label := id
+		for name, current := range registered {
+			if current == id {
+				label = name
+				break
+			}
+		}
+		if !slices.Contains(labels, label) {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	slices.Sort(labels)
+	return &MissingError{Labels: labels}
 }
 
 func ValidateRegistry(registered map[string]string) error {

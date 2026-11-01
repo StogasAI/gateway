@@ -422,10 +422,10 @@ func TestPreparedProviderBodySurvivesCredentialInstallationAndDispatchBuilder(t 
 		t.Fatalf("PrepareProviderRequest returned error: %v", err)
 	}
 	prepared := append([]byte(nil), preparedProviderBody(t, ctx, request.ChatRequest)...)
-	if err := applyUpstreamCredentials(ctx, state, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
-	dispatched, bifrostErr := prepareChatProviderBody(ctx, request.ChatRequest, false)
+	dispatched, bifrostErr := prepareChatProviderBody(ctx, request.ChatRequest, false, "")
 	if bifrostErr != nil {
 		t.Fatalf("dispatch builder returned error: %v", bifrostErr)
 	}

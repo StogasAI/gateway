@@ -52,9 +52,17 @@ var compiledRouteContracts = map[string]struct {
 		providerID: "azure",
 		interfaces: []string{"responses"},
 	},
+	"aws-messages": {
+		providerID: "aws",
+		interfaces: []string{"chat_completions", "responses"},
+	},
 	"chutes-chat-completions": {
 		providerID: "chutes",
 		interfaces: []string{"chat_completions"},
+	},
+	"google-cloud-messages": {
+		providerID: "google-cloud",
+		interfaces: []string{"chat_completions", "responses"},
 	},
 	"openai-chat-completions": {
 		providerID: "openai",
@@ -901,6 +909,8 @@ func validateDeploymentUpstreamSelector(deploymentID, providerID string, deploym
 		}
 	case "azure":
 		return validateAzureUpstreamSelector(deploymentID, deployment)
+	case "aws", "google-cloud":
+		return validateCloudClaudeSelector(deploymentID, providerID, deployment)
 	default:
 		return fmt.Errorf("deployment %s uses unsupported provider %s", deploymentID, providerID)
 	}
@@ -920,6 +930,39 @@ func validateAzureUpstreamSelector(deploymentID string, deployment *compiledDepl
 	for routeID := range deployment.Routes {
 		if (routeID == "azure-anthropic-messages") != anthropicWire {
 			return fmt.Errorf("deployment %s has an invalid Azure protocol route", deploymentID)
+		}
+	}
+	return nil
+}
+
+// cloudClaudeHostings names who runs Claude on AWS and Google Cloud: the cloud itself, or
+// Anthropic with the cloud's sign-in and billing. Both take the Messages body on one route, as
+// on Azure; the hosting picks the endpoint and sign-in, so the routing engine weighs them as
+// siblings.
+var cloudClaudeHostings = map[string][]string{
+	"aws":          {"anthropic", "aws"},
+	"google-cloud": {"anthropic", "google"},
+}
+
+// validateCloudClaudeSelector checks Claude on AWS or Google Cloud. inferenceGeo is the cloud's
+// endpoint location or Anthropic's inference geography; only Google's own hosting has an EU pool.
+func validateCloudClaudeSelector(deploymentID, providerID string, deployment *compiledDeployment) error {
+	selector := deployment.Upstream
+	route, hosted := providerID+"-messages", slices.Contains(cloudClaudeHostings[providerID], selector.Hosting)
+	geo := selector.InferenceGeo == "global" || selector.InferenceGeo == "us" ||
+		selector.InferenceGeo == "eu" && selector.Hosting == "google"
+	if !hosted || !geo || !schemas.IsAnthropicModel(deployment.ModelID) ||
+		selector.ChuteID != "" || selector.GPUCount != nil || selector.ReasoningMode != "" ||
+		selector.DeploymentType != "" || selector.ModelFormat != "" || selector.ModelVersion != "" {
+		return fmt.Errorf("deployment %s has an invalid %s upstream selector", deploymentID, providerID)
+	}
+	// Bedrock serves Claude only through inference profiles, whose IDs name the geography.
+	if selector.Hosting == "aws" && !strings.HasPrefix(selector.Model, selector.InferenceGeo+".anthropic.") {
+		return fmt.Errorf("deployment %s must name the %s inference profile of its model", deploymentID, selector.InferenceGeo)
+	}
+	for routeID := range deployment.Routes {
+		if routeID != route {
+			return fmt.Errorf("deployment %s must use route %s", deploymentID, route)
 		}
 	}
 	return nil
@@ -1041,7 +1084,7 @@ func validateDeploymentPricing(owner, providerID, modelID string, route compiled
 	}
 	// Only the Anthropic wire reports cache writes by duration; billing an
 	// unpriced write as ordinary input would undercharge it.
-	if providerID == "anthropic" || (providerID == "azure" && schemas.IsAnthropicModel(modelID)) {
+	if UsesClaudeWire(schemas.ModelProvider(providerID), modelID) {
 		if len(pricing[billing.MeterCacheWriteInputTokens]) > 0 {
 			return fmt.Errorf("%s uses OpenAI cache-write pricing", owner)
 		}
@@ -1153,8 +1196,7 @@ func validateReasoningConfiguration(deploymentID, providerID, modelAuthorID stri
 		}
 	}
 	if budget := deployment.ReasoningMaxTokens; budget != nil {
-		supportsManualBudget := providerID == "anthropic" || (providerID == "azure" && modelAuthorID == "anthropic")
-		if !supportsManualBudget || budget.Minimum < 1 || budget.Maximum < budget.Minimum || budget.Maximum >= deployment.MaxOutputTokens {
+		if !UsesClaudeWire(schemas.ModelProvider(providerID), deployment.ModelID) || budget.Minimum < 1 || budget.Maximum < budget.Minimum || budget.Maximum >= deployment.MaxOutputTokens {
 			return fmt.Errorf("deployment %s has an invalid manual reasoning token limit", deploymentID)
 		}
 	}

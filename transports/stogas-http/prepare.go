@@ -75,7 +75,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		Method:               ctx.request.Method,
 		Path:                 ctx.request.URL.Path,
 		Policy:               keyConfig.Config,
-		AvailableCredentials: keyConfig.AvailableCredentials(credential.EncryptionKeys),
+		AvailableCredentials: keyConfig.AvailableCredentials(),
 		DeploymentEligible:   stogas.CredentialDeploymentFilter(keyConfig, startedAt),
 		LoadRedactionPolicy:  keyConfig.RedactionPolicy,
 		ReserveBody: func(bytes int) error {
@@ -87,10 +87,21 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 		CompileRequestPolicy: func(raw []byte) (*policy.Request, error) {
 			return policy.CompileRequest(raw, keyConfig.Claims.OrganizationID, credential.EncryptionKeys)
 		},
-		CheckCandidate: func(provider schemas.ModelProvider, index int, _ catalog.Deployment) error {
+		CheckRoots: func(pairs []catalog.PlannedPair) error {
+			var ids []string
+			for _, pair := range pairs {
+				ids = append(ids, keyConfig.RequiredRoots(string(pair.Provider), pair.Credential, pair.Policy)...)
+			}
+			if err := credential.EncryptionKeys.Missing(keyConfig.Config.EncryptionKeys, ids...); err != nil {
+				public := stogas.PublicBillingErrorFor(err)
+				return errors.Join(err, catalog.APIError{Code: public.Code, StatusCode: public.StatusCode, Type: public.Type, Message: public.Message})
+			}
+			return nil
+		},
+		CheckCandidate: func(provider schemas.ModelProvider, index int, deployment catalog.Deployment) error {
 			candidate, err := s.runtime.Billing().PrepareCredential(keyConfig, string(provider), index, credential.EncryptionKeys)
 			if err == nil {
-				err = stogas.ValidatePreparedCredential(candidate, provider)
+				err = stogas.ValidatePreparedCredential(candidate, provider, deployment)
 			}
 			if err != nil {
 				candidate.Clear()

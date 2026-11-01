@@ -143,6 +143,15 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 	if id != "" && !state.PreparedCredential.UsesBYOK() {
 		return invalidRequest("Provider file IDs require BYOK")
 	}
+	// Claude that AWS or Google runs has no Files API and fetches no URL.
+	if cloudRunsClaude(state) {
+		if id != "" {
+			return invalidRequest(path + " file IDs are not supported when AWS or Google runs Claude")
+		}
+		if sourceURL != "" && !strings.HasPrefix(sourceURL, "data:") {
+			return invalidRequest(path + " URL sources are not supported when AWS or Google runs Claude; send the content inline")
+		}
+	}
 	if sourceURL != "" && !strings.HasPrefix(sourceURL, "data:") {
 		parsed, err := url.Parse(sourceURL)
 		if err != nil || parsed.Hostname() == "" || parsed.Scheme != "https" && parsed.Scheme != "http" {

@@ -993,9 +993,7 @@ func validateOptionalChatMessageName(state *State, message map[string]json.RawMe
 }
 
 func chatReasoningDetailsInputSupported(state *State) bool {
-	return state != nil && state.Resolution != nil &&
-		(state.Resolution.Provider == schemas.Anthropic ||
-			(state.Resolution.Provider == schemas.Azure && azureDeploymentUsesAnthropicWire(state)))
+	return stateUsesClaudeWire(state)
 }
 
 func chatPlainReasoningInputSupported(state *State) bool {

@@ -665,9 +665,7 @@ func rejectUnsupportedResponsesToolKeys(object map[string]json.RawMessage, path 
 }
 
 func responsesUsesAnthropicWire(state *State) bool {
-	return state != nil && state.Resolution != nil &&
-		(state.Resolution.Provider == schemas.Anthropic ||
-			(state.Resolution.Provider == schemas.Azure && azureDeploymentUsesAnthropicWire(state)))
+	return stateUsesClaudeWire(state)
 }
 
 func validateRawResponsesToolType(state *State, tool map[string]json.RawMessage) error {
