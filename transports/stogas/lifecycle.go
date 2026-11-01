@@ -519,13 +519,16 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 			billing.MeterCacheWriteInputTokens:   observed.CacheWrite,
 			billing.MeterCacheWrite5mInputTokens: observed.CacheWrite5m,
 			billing.MeterCacheWrite1hInputTokens: observed.CacheWrite1h,
-			billing.MeterReasoningTokens:         observed.Reasoning,
 			billing.MeterTotalCacheWriteTokens:   writes,
 		}
 		for key, quantity := range parts {
 			if quantity > 0 {
 				addCount(key, quantity)
 			}
+		}
+		// A provider that reports no split leaves reasoning unknown rather than 0.
+		if observed.reasoningKnown {
+			addCount(billing.MeterReasoningTokens, observed.Reasoning)
 		}
 		ordinary := observed.Prompt - observed.Cached - writes
 		if ordinary >= 0 && observed.inputKnown {

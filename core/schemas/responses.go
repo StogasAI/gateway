@@ -1486,6 +1486,28 @@ type ResponsesResponseOutputTokens struct {
 	// Parts of AudioTokens that Azure Voice Live handled with Azure Speech, which it bills at their own rates.
 	StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens,omitempty"`
 	CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens,omitempty"`
+
+	// ReasoningTokensReported is true when the provider reported reasoning_tokens; see
+	// ChatCompletionTokensDetails.ReasoningTokensReported.
+	ReasoningTokensReported bool `json:"-"`
+}
+
+// UnmarshalJSON records whether the payload carried reasoning_tokens.
+func (d *ResponsesResponseOutputTokens) UnmarshalJSON(data []byte) error {
+	type Alias ResponsesResponseOutputTokens
+	var temp Alias
+	if err := Unmarshal(data, &temp); err != nil {
+		return err
+	}
+	var reported struct {
+		ReasoningTokens json.RawMessage `json:"reasoning_tokens"`
+	}
+	if err := Unmarshal(data, &reported); err != nil {
+		return err
+	}
+	*d = ResponsesResponseOutputTokens(temp)
+	d.ReasoningTokensReported = reportedJSONValue(reported.ReasoningTokens)
+	return nil
 }
 
 // =============================================================================

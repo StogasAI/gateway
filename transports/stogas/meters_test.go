@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"testing"
 
+	anthropicprovider "github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -87,5 +88,75 @@ func TestMeterTotalsDoNotDoubleCountCacheDurationsOrUnknownUsage(t *testing.T) {
 	}
 	if len(metersForState(&State{})) != 0 {
 		t.Fatal("unknown usage became zero")
+	}
+}
+
+func TestReasoningMeterIsZeroOnlyWhenTheProviderReportsIt(t *testing.T) {
+	chat := func(payload string) *schemas.BifrostLLMUsage {
+		var usage schemas.BifrostLLMUsage
+		if err := schemas.Unmarshal([]byte(payload), &usage); err != nil {
+			t.Fatal(err)
+		}
+		usage.NormalizeReasoningTokens()
+		return &usage
+	}
+	responses := func(payload string) *schemas.BifrostLLMUsage {
+		var usage schemas.ResponsesResponseUsage
+		if err := schemas.Unmarshal([]byte(payload), &usage); err != nil {
+			t.Fatal(err)
+		}
+		return usage.ToBifrostLLMUsage()
+	}
+	claude := func(payload string) *schemas.BifrostLLMUsage {
+		var usage anthropicprovider.AnthropicUsage
+		if err := schemas.Unmarshal([]byte(payload), &usage); err != nil {
+			t.Fatal(err)
+		}
+		return anthropicprovider.ConvertAnthropicUsageToBifrostUsage(&usage).ToBifrostLLMUsage()
+	}
+	const counts = `"prompt_tokens":4,"completion_tokens":6,"total_tokens":10`
+	for name, test := range map[string]struct {
+		snapshots []*schemas.BifrostLLMUsage
+		want      string // "" means the meter is absent.
+	}{
+		"reported zero":              {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":0}}`)}, "0"},
+		"reported count":             {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":4}}`)}, "4"},
+		"top-level count":            {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"reasoning_tokens":4}`)}, "4"},
+		"top-level default zero":     {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"reasoning_tokens":0}`)}, ""},
+		"no details":                 {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `}`)}, ""},
+		"details without reasoning":  {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"completion_tokens_details":{"audio_tokens":0}}`)}, ""},
+		"null count":                 {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":null}}`)}, ""},
+		"count above completion":     {[]*schemas.BifrostLLMUsage{chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":9}}`)}, ""},
+		"Responses reported zero":    {[]*schemas.BifrostLLMUsage{responses(`{"input_tokens":4,"output_tokens":6,"total_tokens":10,"output_tokens_details":{"reasoning_tokens":0}}`)}, "0"},
+		"Responses without details":  {[]*schemas.BifrostLLMUsage{responses(`{"input_tokens":4,"output_tokens":6,"total_tokens":10}`)}, ""},
+		"Claude reported zero":       {[]*schemas.BifrostLLMUsage{claude(`{"input_tokens":4,"output_tokens":6,"output_tokens_details":{"thinking_tokens":0}}`)}, "0"},
+		"Claude reported count":      {[]*schemas.BifrostLLMUsage{claude(`{"input_tokens":4,"output_tokens":6,"output_tokens_details":{"thinking_tokens":5}}`)}, "5"},
+		"Claude without a breakdown": {[]*schemas.BifrostLLMUsage{claude(`{"input_tokens":4,"output_tokens":6}`)}, ""},
+		"a later report is kept": {[]*schemas.BifrostLLMUsage{
+			chat(`{` + counts + `}`),
+			chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":0}}`),
+			chat(`{` + counts + `}`),
+		}, "0"},
+		"a count survives a later snapshot without one": {[]*schemas.BifrostLLMUsage{
+			chat(`{` + counts + `,"completion_tokens_details":{"reasoning_tokens":2}}`),
+			chat(`{` + counts + `}`),
+		}, "2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state := &State{}
+			for _, usage := range test.snapshots {
+				setSignalsFromUsage(state, usage)
+			}
+			meters := metersForState(state)
+			meter, ok := meters[billing.MeterReasoningTokens]
+			if test.want == "" && ok || test.want != "" && meter.Quantity != test.want {
+				t.Fatalf("reasoning meter = %#v (present %v), want %q", meter, ok, test.want)
+			}
+			// Output tokens stay completion minus reported reasoning, so unknown reasoning
+			// never changes them.
+			if meters[billing.MeterTotalOutputTokens].Quantity != "6" {
+				t.Fatalf("total output = %#v", meters[billing.MeterTotalOutputTokens])
+			}
+		})
 	}
 }

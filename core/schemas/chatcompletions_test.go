@@ -269,6 +269,62 @@ func TestBifrostLLMUsageNormalizeReasoningTokens(t *testing.T) {
 	nilUsage.NormalizeReasoningTokens()
 }
 
+func TestReasoningTokensReportedSurvivesDecodingConversionAndMerging(t *testing.T) {
+	cases := map[string]bool{
+		`{"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":0}}`:    true,
+		`{"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":2}}`:    true,
+		`{"completion_tokens":3,"completion_tokens_details":{"reasoning_tokens":null}}`: false,
+		`{"completion_tokens":3,"completion_tokens_details":{"audio_tokens":0}}`:        false,
+		`{"completion_tokens":3,"reasoning_tokens":2}`:                                  true,
+		`{"completion_tokens":3}`: false,
+	}
+	for payload, want := range cases {
+		var usage BifrostLLMUsage
+		if err := Unmarshal([]byte(payload), &usage); err != nil {
+			t.Fatal(err)
+		}
+		usage.NormalizeReasoningTokens()
+		got := usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokensReported
+		if got != want {
+			t.Fatalf("%s: reported = %v, want %v", payload, got, want)
+		}
+	}
+
+	var responses ResponsesResponseUsage
+	if err := Unmarshal([]byte(`{"output_tokens":3,"output_tokens_details":{"reasoning_tokens":0}}`), &responses); err != nil {
+		t.Fatal(err)
+	}
+	if !responses.OutputTokensDetails.ReasoningTokensReported {
+		t.Fatal("Responses usage lost the reported count")
+	}
+	chat := responses.ToBifrostLLMUsage()
+	if !chat.CompletionTokensDetails.ReasoningTokensReported {
+		t.Fatal("conversion to Chat usage lost the reported count")
+	}
+	if !chat.ToResponsesResponseUsage().OutputTokensDetails.ReasoningTokensReported {
+		t.Fatal("conversion back to Responses usage lost the reported count")
+	}
+	unreported := &BifrostLLMUsage{CompletionTokens: 1, CompletionTokensDetails: &ChatCompletionTokensDetails{}}
+	if !MergeBifrostLLMUsage(unreported, chat).CompletionTokensDetails.ReasoningTokensReported {
+		t.Fatal("merging lost the reported count")
+	}
+	for details, want := range map[*ChatCompletionTokensDetails]string{
+		chat.CompletionTokensDetails: `{"reasoning_tokens":0}`,
+		{}:                           `{}`,
+		{ReasoningTokens: 2, ReasoningTokensReported: true}: `{"reasoning_tokens":2}`,
+		{AudioTokens: 1, ReasoningTokensReported: true}:     `{"audio_tokens":1,"reasoning_tokens":0}`,
+	} {
+		encoded, err := Marshal(details)
+		if err != nil || string(encoded) != want {
+			t.Fatalf("encoded %s, %v; want %s", encoded, err, want)
+		}
+		var decoded ChatCompletionTokensDetails
+		if err := Unmarshal(encoded, &decoded); err != nil || decoded != *details {
+			t.Fatalf("%s did not round-trip: %#v, %v", encoded, decoded, err)
+		}
+	}
+}
+
 func BenchmarkBifrostLLMUsageUnmarshal(b *testing.B) {
 	cases := map[string][]byte{
 		"openai": []byte(`{"prompt_tokens":1200,"completion_tokens":300,"total_tokens":1500,"prompt_tokens_details":{"cached_tokens":1024,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":180,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}`),

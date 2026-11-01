@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"context"
 	"testing"
 
 	"github.com/bytedance/sonic"
@@ -137,7 +138,8 @@ func TestResponsesAccumulator_MaxMergesRatherThanSums(t *testing.T) {
 // Adaptive thinking that chose not to think streams an explicit thinking_tokens: 0
 // on message_delta. The accumulator must keep that breakdown, as the non-streaming
 // converter does, or the Bedrock invoke stream egress drops output_tokens_details
-// (#7649 follow-up). Billing is unchanged: a zero adds no reasoning cost.
+// (#7649 follow-up). The billing handle keeps it as a reported count, so a stream
+// cut later still records reasoning as 0 rather than unknown; a zero adds no cost.
 func TestResponsesAccumulator_KeepsExplicitZeroThinkingTokens(t *testing.T) {
 	usage := &schemas.ResponsesResponseUsage{}
 	billed := &schemas.BifrostLLMUsage{}
@@ -148,11 +150,12 @@ func TestResponsesAccumulator_KeepsExplicitZeroThinkingTokens(t *testing.T) {
 	if usage.OutputTokensDetails == nil {
 		t.Fatal("OutputTokensDetails is nil; an explicit thinking_tokens: 0 breakdown was dropped in streaming")
 	}
-	if r := usage.OutputTokensDetails.ReasoningTokens; r != 0 {
-		t.Errorf("ReasoningTokens = %d, want 0", r)
+	if r := usage.OutputTokensDetails.ReasoningTokens; r != 0 || !usage.OutputTokensDetails.ReasoningTokensReported {
+		t.Errorf("ReasoningTokens = %d, reported %v; want a reported 0", r, usage.OutputTokensDetails.ReasoningTokensReported)
 	}
-	if billed.CompletionTokensDetails != nil {
-		t.Errorf("billed CompletionTokensDetails = %+v, want nil for a zero breakdown", billed.CompletionTokensDetails)
+	if billed.CompletionTokensDetails == nil || billed.CompletionTokensDetails.ReasoningTokens != 0 ||
+		!billed.CompletionTokensDetails.ReasoningTokensReported {
+		t.Errorf("billed CompletionTokensDetails = %+v, want a reported 0", billed.CompletionTokensDetails)
 	}
 }
 
@@ -161,6 +164,11 @@ func TestResponsesAccumulator_AbsentDetailsStayAbsent(t *testing.T) {
 	accumulateAnthropicResponsesUsage(usage, nil, mustParseUsage(t, `{"input_tokens": 10, "output_tokens": 5}`))
 	if usage.OutputTokensDetails != nil {
 		t.Errorf("OutputTokensDetails = %+v on a stream without a breakdown, want nil", usage.OutputTokensDetails)
+	}
+	billed := &schemas.BifrostLLMUsage{}
+	accumulateAnthropicResponsesUsage(&schemas.ResponsesResponseUsage{}, billed, mustParseUsage(t, `{"input_tokens": 10, "output_tokens": 5}`))
+	if billed.CompletionTokensDetails != nil {
+		t.Errorf("billed CompletionTokensDetails = %+v on a stream without a breakdown, want nil", billed.CompletionTokensDetails)
 	}
 }
 
@@ -206,8 +214,8 @@ func TestResponsesConversion_KeepsExplicitZeroThinkingTokens(t *testing.T) {
 	if got == nil || got.OutputTokensDetails == nil {
 		t.Fatal("OutputTokensDetails is nil; an explicit thinking_tokens: 0 breakdown was dropped")
 	}
-	if got.OutputTokensDetails.ReasoningTokens != 0 {
-		t.Errorf("ReasoningTokens = %d, want 0", got.OutputTokensDetails.ReasoningTokens)
+	if got.OutputTokensDetails.ReasoningTokens != 0 || !got.OutputTokensDetails.ReasoningTokensReported {
+		t.Errorf("ReasoningTokens = %d, reported %v; want a reported 0", got.OutputTokensDetails.ReasoningTokens, got.OutputTokensDetails.ReasoningTokensReported)
 	}
 	if got.OutputTokens != 281 {
 		t.Errorf("OutputTokens = %d, want 281", got.OutputTokens)
@@ -241,7 +249,66 @@ func TestChatConversion_KeepsExplicitZeroThinkingTokens(t *testing.T) {
 	if got.Usage == nil || got.Usage.CompletionTokensDetails == nil {
 		t.Fatal("CompletionTokensDetails is nil; an explicit thinking_tokens: 0 breakdown was dropped")
 	}
-	if got.Usage.CompletionTokensDetails.ReasoningTokens != 0 {
-		t.Errorf("ReasoningTokens = %d, want 0", got.Usage.CompletionTokensDetails.ReasoningTokens)
+	if got.Usage.CompletionTokensDetails.ReasoningTokens != 0 || !got.Usage.CompletionTokensDetails.ReasoningTokensReported {
+		t.Errorf("ReasoningTokens = %d, reported %v; want a reported 0", got.Usage.CompletionTokensDetails.ReasoningTokens, got.Usage.CompletionTokensDetails.ReasoningTokensReported)
+	}
+	if encoded, err := schemas.Marshal(got.Usage.CompletionTokensDetails); err != nil || string(encoded) != `{"reasoning_tokens":0}` {
+		t.Errorf("client completion_tokens_details = %s, %v; want the reported 0", encoded, err)
+	}
+}
+
+func TestPassthroughUsage_KeepsExplicitZeroThinkingTokens(t *testing.T) {
+	got := buildAnthropicPassthroughUsage(mustParseUsage(t, zeroThinkingUsage))
+	if got == nil || got.LLMUsage == nil || got.LLMUsage.CompletionTokensDetails == nil {
+		t.Fatal("CompletionTokensDetails is nil; an explicit thinking_tokens: 0 breakdown was dropped")
+	}
+	if details := got.LLMUsage.CompletionTokensDetails; details.ReasoningTokens != 0 || !details.ReasoningTokensReported {
+		t.Errorf("ReasoningTokens = %d, reported %v; want a reported 0", details.ReasoningTokens, details.ReasoningTokensReported)
+	}
+	if absent := buildAnthropicPassthroughUsage(mustParseUsage(t, `{"input_tokens": 10, "output_tokens": 5}`)); absent.LLMUsage.CompletionTokensDetails != nil {
+		t.Errorf("CompletionTokensDetails = %+v without an upstream breakdown, want nil", absent.LLMUsage.CompletionTokensDetails)
+	}
+}
+
+// The chat stream reads thinking tokens from message_delta itself, apart from the
+// Responses accumulator, so it needs its own check of the explicit zero.
+func TestChatStream_KeepsExplicitZeroThinkingTokens(t *testing.T) {
+	for name, test := range map[string]struct {
+		usage    string
+		reported bool
+	}{
+		"explicit zero": {`{"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}`, true},
+		"no breakdown":  {`{"output_tokens":3}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := anthropicSSEServer(t, anthropicMessageStartPriority+anthropicTextDelta+
+				"event: content_block_stop\n"+`data: {"type":"content_block_stop","index":0}`+"\n\n"+
+				"event: message_delta\n"+
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":`+test.usage+"}\n\n"+
+				"event: message_stop\n"+`data: {"type":"message_stop"}`+"\n\n", false)
+			defer server.Close()
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			stream, bifrostErr := newTruncationTestProvider(server.URL).ChatCompletionStream(ctx, truncationPassthroughPostHook, nil,
+				schemas.Key{Value: *schemas.NewSecretVar("test-key")}, truncationChatRequest())
+			if bifrostErr != nil {
+				t.Fatalf("stream setup failed: %v", bifrostErr)
+			}
+			var usage *schemas.BifrostLLMUsage
+			for _, chunk := range collectTruncationChunks(t, stream) {
+				if chunk.BifrostError != nil {
+					t.Fatalf("unexpected stream error: %+v", chunk.BifrostError)
+				}
+				if chunk.BifrostChatResponse != nil && chunk.BifrostChatResponse.Usage != nil {
+					usage = chunk.BifrostChatResponse.Usage
+				}
+			}
+			if usage == nil {
+				t.Fatal("the stream reported no usage")
+			}
+			reported := usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokensReported
+			if reported != test.reported || usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokens != 0 {
+				t.Fatalf("completion details = %+v; want reported %v with 0 reasoning tokens", usage.CompletionTokensDetails, test.reported)
+			}
+		})
 	}
 }

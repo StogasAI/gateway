@@ -1152,6 +1152,8 @@ func (cu *BifrostLLMUsage) ToResponsesResponseUsage() *ResponsesResponseUsage {
 
 			StandardSpeechAudioTokens: cu.CompletionTokensDetails.StandardSpeechAudioTokens,
 			CustomSpeechAudioTokens:   cu.CompletionTokensDetails.CustomSpeechAudioTokens,
+
+			ReasoningTokensReported: cu.CompletionTokensDetails.ReasoningTokensReported,
 		}
 	}
 	usage.ToolUsage = cu.ToolUsage.DeepCopy()
@@ -1199,6 +1201,8 @@ func (ru *ResponsesResponseUsage) ToBifrostLLMUsage() *BifrostLLMUsage {
 
 			StandardSpeechAudioTokens: ru.OutputTokensDetails.StandardSpeechAudioTokens,
 			CustomSpeechAudioTokens:   ru.OutputTokensDetails.CustomSpeechAudioTokens,
+
+			ReasoningTokensReported: ru.OutputTokensDetails.ReasoningTokensReported,
 		}
 	}
 	usage.ToolUsage = ru.ToolUsage.DeepCopy()

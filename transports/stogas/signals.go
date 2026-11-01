@@ -41,6 +41,9 @@ type StandardSignals struct {
 	WebSearch    int
 	inputKnown   bool
 	outputKnown  bool
+	// reasoningKnown is true once the provider reports how many completion tokens were
+	// reasoning, 0 included. Providers that fold reasoning into completion tokens leave it false.
+	reasoningKnown bool
 
 	webSearchCallIDs map[string]struct{}
 	webSearchEvents  map[string]struct{}
@@ -326,6 +329,8 @@ func signalsFromUsage(usage *schemas.BifrostLLMUsage) *StandardSignals {
 	}
 	next := &StandardSignals{Prompt: promptTokens, Completion: completionTokens, Reasoning: reasoningTokens, Cached: cached, CacheWrite: cacheWrite, CacheWrite5m: cacheWrite5m, CacheWrite1h: cacheWrite1h, WebSearch: webSearch}
 	next.inputKnown, next.outputKnown = promptTokens > 0, completionTokens > 0
+	next.reasoningKnown = reasoningTokens > 0 ||
+		usage.CompletionTokensDetails != nil && usage.CompletionTokensDetails.ReasoningTokensReported
 	if total, ok := addTokenCounts(promptTokens, completionTokens); ok && usage.TotalTokens > 0 && total == usage.TotalTokens {
 		next.inputKnown, next.outputKnown = true, true
 	}
@@ -428,6 +433,7 @@ func normalizeUsagePartitions(signals *StandardSignals) {
 		// Keep the usable completion aggregate and ignore an impossible detail
 		// partition instead of converting provider drift into a request failure.
 		signals.Reasoning = 0
+		signals.reasoningKnown = false
 	}
 }
 
@@ -509,6 +515,7 @@ func setSignalsFromUsage(state *State, usage *schemas.BifrostLLMUsage) {
 func mergeUsageSignals(current, next *StandardSignals) {
 	current.inputKnown = current.inputKnown || next.inputKnown
 	current.outputKnown = current.outputKnown || next.outputKnown
+	current.reasoningKnown = current.reasoningKnown || next.reasoningKnown
 	current.Prompt = max(current.Prompt, next.Prompt)
 	current.Completion = max(current.Completion, next.Completion)
 	current.Reasoning = max(current.Reasoning, next.Reasoning)
