@@ -249,18 +249,13 @@ func TestChutesRejectsUnaccountedAndNonTextFeatures(t *testing.T) {
 		`"top_logprobs":1`,
 		`"web_search_options":{}`,
 	}
+	// The request passes without the field, so each refusal is the field's.
+	if err := validateResolvedChat(t, chutesBody("")); err != nil {
+		t.Fatalf("the Chutes request without a field was refused: %v", err)
+	}
 	for _, field := range cases {
 		t.Run(field, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   "/v1/chat/completions",
-				Body:   []byte(chutesBody(field)),
-			})
-			if err != nil {
-				return
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err == nil {
+			if validateResolvedChat(t, chutesBody(field)) == nil {
 				t.Fatal("unsupported Chutes feature was accepted")
 			}
 		})
@@ -347,22 +342,19 @@ func TestChutesReasoningEffortsUseVerifiedWireMapping(t *testing.T) {
 }
 
 func TestChutesReasoningPolicyRejectsUnreviewedControls(t *testing.T) {
+	// Each request passes without the control, so each refusal is the control's.
+	for _, model := range []string{"glm-5.2", "kimi-k3"} {
+		if err := validateResolvedChat(t, chutesBodyForModel(model, "")); err != nil {
+			t.Fatalf("the %s request without a reasoning control was refused: %v", model, err)
+		}
+	}
 	for _, field := range []string{
 		`"reasoning":{"max_tokens":100}`,
 		`"reasoning_display":"summarized"`,
 		`"reasoning_max_tokens":100`,
 	} {
 		t.Run(field, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   "/v1/chat/completions",
-				Body:   []byte(chutesBodyForModel("glm-5.2", field)),
-			})
-			if err != nil {
-				return
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err == nil {
+			if validateResolvedChat(t, chutesBodyForModel("glm-5.2", field)) == nil {
 				t.Fatal("unsupported Chutes reasoning control was accepted")
 			}
 		})
@@ -468,6 +460,10 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 		"verbosity":                  `"high"`,
 		"web_search_options":         `{}`,
 	}
+	// The request passes without the field, so each refusal is the field's.
+	if err := validateResolvedChat(t, chutesBody("")); err != nil {
+		t.Fatalf("the Chutes request without a field was refused: %v", err)
+	}
 	for field := range catalog.KnownFields(catalog.RouteChat) {
 		// Gateway-only metadata is consumed before provider validation.
 		if chutesAllowedChatFields[field] || field == "policy" || field == "encryption_keys" {
@@ -478,16 +474,7 @@ func TestChutesFieldPolicyIsClosedOverTheSharedChatSurface(t *testing.T) {
 			t.Fatalf("shared field %q has no Chutes policy fixture", field)
 		}
 		t.Run(field, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{
-				Method: "POST",
-				Path:   "/v1/chat/completions",
-				Body:   []byte(chutesBody(fmt.Sprintf("%q:%s", field, value))),
-			})
-			if err != nil {
-				return
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err == nil {
+			if validateResolvedChat(t, chutesBody(fmt.Sprintf("%q:%s", field, value))) == nil {
 				t.Fatalf("shared field %q bypassed the closed Chutes policy", field)
 			}
 		})
@@ -744,8 +731,12 @@ func chutesBody(field string) string {
 	return chutesBodyForModel("qwen3.6-27b", field)
 }
 
+// chutesBodyForModel is a minimal chat request for a model, with a field when one is given.
 func chutesBodyForModel(model string, field string) string {
-	return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],%s}`, model, field)
+	if field != "" {
+		field = "," + field
+	}
+	return fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}]%s}`, model, field)
 }
 
 func assertRawNumber(t *testing.T, body map[string]json.RawMessage, name string, want float64) {

@@ -77,15 +77,14 @@ func TestAzureRejectsMalformedAndMaliciousCacheParameters(t *testing.T) {
 		"other retention":      `"prompt_cache_retention":"30m"`,
 		"unpriced ttl":         `"prompt_cache_options":{"mode":"explicit","ttl":"1h"}`,
 	}
+	const request = `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64`
+	// The request passes without the field, so each refusal is the field's.
+	if err := validateResolvedChat(t, request+`}`); err != nil {
+		t.Fatalf("the Azure request without a cache field was refused: %v", err)
+	}
 	for name, field := range tests {
 		t.Run(name, func(t *testing.T) {
-			body := `{"model":"azure-gpt-5.6-sol","provider":"azure","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":64,` + field + `}`
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(body), Method: "POST", Path: "/v1/chat/completions"})
-			if err != nil {
-				return
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err == nil {
+			if validateResolvedChat(t, request+`,`+field+`}`) == nil {
 				t.Fatal("invalid Azure cache input was accepted")
 			}
 		})
@@ -318,14 +317,13 @@ func TestAzureClaudeRejectsOpenAIOnlyCacheAndMCPFields(t *testing.T) {
 		},
 	}
 
+	// The request passes without the field, so each refusal is the field's.
+	if err := validateResolvedResponses(t, `{"model":"azure-claude-opus-4-8-anthropic-hosted","input":"hi","max_output_tokens":64}`); err != nil {
+		t.Fatalf("the Azure Claude request without a field was refused: %v", err)
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(tc.body), Method: "POST", Path: "/v1/responses"})
-			if err != nil {
-				return
-			}
-			state := NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
-			if err := state.Adapter.ValidateRequest(state); err == nil {
+			if validateResolvedResponses(t, tc.body) == nil {
 				t.Fatal("Azure Claude accepted a field that the Anthropic wire translation cannot preserve")
 			}
 		})
