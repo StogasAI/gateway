@@ -7,8 +7,10 @@ func TestCatalogDecodeRejectsAmbiguousMembers(t *testing.T) {
 		into  any
 		input string
 	}{
-		{&catalogRoot{}, `{"schema":"stogas.catalog.v9","schema":"stogas.catalog.v9"}`},
-		{&catalogRoot{}, `{"schema":"stogas.catalog.v9","Schema":"stogas.catalog.v9"}`},
+		{&catalogRoot{}, `{"schema":"stogas.catalog.v10","schema":"stogas.catalog.v10"}`},
+		{&catalogRoot{}, `{"schema":"stogas.catalog.v10","Schema":"stogas.catalog.v10"}`},
+		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"name":"Earth"}}}`},
+		{&catalogRoot{}, `{"locations":{"world":{"name":"World","parentIds":[],"childIds":[]}}}`},
 		{&catalogRoot{}, `{"summaries":{"deployments":{"a":{"part":0,"retirementDate":null,"notes":""}}}}`},
 		{&catalogRoot{}, `{"summaries":{"providers":{"openai":{"aliases":[],"credentialModes":["byok"],"name":"OpenAI","retirementDate":null,"region":"us"}}}}`},
 		{&catalogPart{}, `{"graph":{"deployments":{"a":{"routes":{"openai-responses":{"pricing":{"input_tokens":{"per_mill_tokens":"1","per_mill_tokens":"2"}}}}}}}}`},

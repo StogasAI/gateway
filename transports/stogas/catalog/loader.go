@@ -17,10 +17,11 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 const (
-	catalogSchema     = "stogas.catalog.v9"
+	catalogSchema     = "stogas.catalog.v10"
 	catalogPartSchema = "stogas.catalog.part.v9"
 	// Evidence approves a release by the digest of its root, and the root names each part by
 	// digest and size. The build refuses a larger root, part or catalog, so the gateway refuses
@@ -377,7 +378,11 @@ func assemble(rootData []byte, files []PartFile, parts map[string][]byte, at tim
 			Routes:      inGraph(changed.Routes, graph.Routes),
 		}}
 	}
-	return compiledCatalog{Graph: graph, Schedule: schedule, Retired: retired}, nil
+	locations := make(map[string][]string, len(root.Locations))
+	for id, node := range root.Locations {
+		locations[id] = node.ParentIDs
+	}
+	return compiledCatalog{Locations: locations, Graph: graph, Schedule: schedule, Retired: retired}, nil
 }
 
 // inAncestorGroups puts each model in every group that contains a group that it names, so that
@@ -450,7 +455,11 @@ func validateRetired(retired map[string]string, base *snapshot) error {
 // snapshotFromCompiled validates a release's base state and each dated state, and indexes them
 // for requests.
 func snapshotFromCompiled(catalog compiledCatalog) (*snapshot, error) {
-	base, err := stateFromGraph(catalog.Graph)
+	places, err := location.Read(catalog.Locations)
+	if err != nil {
+		return nil, err
+	}
+	base, err := stateFromGraph(catalog.Graph, places)
 	if err != nil {
 		return nil, err
 	}
@@ -483,8 +492,11 @@ func (base *snapshot) states() []*snapshot {
 }
 
 // stateFromGraph validates the base catalog state and indexes it for requests.
-func stateFromGraph(graph compiledGraph) (*snapshot, error) {
+func stateFromGraph(graph compiledGraph, places *location.Places) (*snapshot, error) {
 	if err := validateCompiledGraph(graph); err != nil {
+		return nil, err
+	}
+	if err := validateLocations(graph, places); err != nil {
 		return nil, err
 	}
 	modelSelectors := make(map[string]string)
@@ -499,7 +511,7 @@ func stateFromGraph(graph compiledGraph) (*snapshot, error) {
 		}
 	}
 	graph.Routes = indexedRoutes(graph)
-	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors}
+	state := &snapshot{graph: graph, groups: groups, modelSelectors: modelSelectors, places: places}
 	if err := validatePolicyVocabulary(state, graph); err != nil {
 		return nil, err
 	}
@@ -518,10 +530,13 @@ func (base *snapshot) datedState(entry compiledGraph) (*snapshot, error) {
 	if err := validateScheduledNodes(graph, entry); err != nil {
 		return nil, err
 	}
+	if err := validateLocations(entry, base.places); err != nil {
+		return nil, err
+	}
 	if len(entry.Deployments) > 0 || len(entry.Routes) > 0 {
 		graph.Routes = indexedRoutes(graph)
 	}
-	state := &snapshot{graph: graph, groups: base.groups, modelSelectors: base.modelSelectors}
+	state := &snapshot{graph: graph, groups: base.groups, modelSelectors: base.modelSelectors, places: base.places}
 	if err := validatePolicyVocabulary(state, entry); err != nil {
 		return nil, err
 	}
@@ -933,6 +948,30 @@ func validateCanonicalRouteDeployments(graph compiledGraph) error {
 					modelID,
 					baseID,
 				)
+			}
+		}
+	}
+	return nil
+}
+
+// validateLocations checks that a graph names only the catalog's places: each headquarters is a
+// country among them, and each deployment's data handling names one of them or unknown, or none
+// for storage.
+func validateLocations(graph compiledGraph, places *location.Places) error {
+	for id, author := range graph.Authors {
+		if country := author.HeadquarteredCountry; country != "" && (!location.Country(country) || !places.Place(country)) {
+			return fmt.Errorf("author %s is headquartered in %q, which is not a country of the catalog", id, country)
+		}
+	}
+	for id, provider := range graph.Providers {
+		if country := provider.HeadquarteredCountry; country != "" && (!location.Country(country) || !places.Place(country)) {
+			return fmt.Errorf("provider %s is headquartered in %q, which is not a country of the catalog", id, country)
+		}
+	}
+	for deploymentID, deployment := range graph.Deployments {
+		for routeID, route := range deployment.Routes {
+			if !places.Valid(route.DataHandling.ProcessingLocation, false) || !places.Valid(route.DataHandling.StorageLocation, true) {
+				return fmt.Errorf("deployment %s route %s names a location that the catalog does not list", deploymentID, routeID)
 			}
 		}
 	}

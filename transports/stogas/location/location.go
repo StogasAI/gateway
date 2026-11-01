@@ -1,66 +1,195 @@
-// Package location holds the closed vocabulary of data locations: ISO 3166-1 alpha-2 countries,
-// the regions apac, eu and europe, world, unknown, and none for content that is not stored.
+// Package location reads a catalog's locations: world, the regions within it, and ISO 3166
+// countries and their subdivisions, each with the places that directly contain it. A data
+// handling location is a place, unknown when the provider does not say where, or, for storage
+// only, none when the provider keeps nothing.
 package location
 
-import "strings"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"regexp"
+	"slices"
+	"strings"
+)
 
-const countries = "|AD|AE|AF|AG|AI|AL|AM|AO|AQ|AR|AS|AT|AU|AW|AX|AZ|" +
-	"BA|BB|BD|BE|BF|BG|BH|BI|BJ|BL|BM|BN|BO|BQ|BR|BS|BT|BV|BW|BY|BZ|" +
-	"CA|CC|CD|CF|CG|CH|CI|CK|CL|CM|CN|CO|CR|CU|CV|CW|CX|CY|CZ|" +
-	"DE|DJ|DK|DM|DO|DZ|EC|EE|EG|EH|ER|ES|ET|FI|FJ|FK|FM|FO|FR|" +
-	"GA|GB|GD|GE|GF|GG|GH|GI|GL|GM|GN|GP|GQ|GR|GS|GT|GU|GW|GY|" +
-	"HK|HM|HN|HR|HT|HU|ID|IE|IL|IM|IN|IO|IQ|IR|IS|IT|JE|JM|JO|JP|" +
-	"KE|KG|KH|KI|KM|KN|KP|KR|KW|KY|KZ|LA|LB|LC|LI|LK|LR|LS|LT|LU|LV|LY|" +
-	"MA|MC|MD|ME|MF|MG|MH|MK|ML|MM|MN|MO|MP|MQ|MR|MS|MT|MU|MV|MW|MX|MY|MZ|" +
-	"NA|NC|NE|NF|NG|NI|NL|NO|NP|NR|NU|NZ|OM|PA|PE|PF|PG|PH|PK|PL|PM|PN|PR|PS|PT|PW|PY|" +
-	"QA|RE|RO|RS|RU|RW|SA|SB|SC|SD|SE|SG|SH|SI|SJ|SK|SL|SM|SN|SO|SR|SS|ST|SV|SX|SY|SZ|" +
-	"TC|TD|TF|TG|TH|TJ|TK|TL|TM|TN|TO|TR|TT|TV|TW|TZ|UA|UG|UM|US|UY|UZ|" +
-	"VA|VC|VE|VG|VI|VN|VU|WF|WS|YE|YT|ZA|ZM|ZW|"
+const (
+	World   = "world"
+	Unknown = "unknown"
+	None    = "none"
+)
 
-const euCountries = "|AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE|"
+var form = regexp.MustCompile(`^([A-Z]{2}(-[A-Z0-9]{1,3})?|[a-z][a-z0-9]*(-[a-z0-9]+)*)$`)
 
-// Europe contains its EU child, so it includes Cyprus.
-const europeCountries = "|AD|AL|AT|AX|BA|BE|BG|BY|CH|CY|CZ|DE|DK|EE|ES|FI|FO|FR|GB|GG|GI|GR|" +
-	"HR|HU|IE|IM|IS|IT|JE|LI|LT|LU|LV|MC|MD|ME|MK|MT|NL|NO|PL|PT|RO|RS|RU|SE|SI|SJ|SK|SM|UA|VA|"
+// Form reports whether value has the form of a location: an ISO 3166 code such as 'DE' or
+// 'US-CA', or a lowercase name such as 'eu', 'north-america', 'unknown' or 'none'. Only a
+// catalog says which places there are.
+func Form(value string) bool {
+	return form.MatchString(value)
+}
 
-const apacCountries = "|AF|AM|AS|AU|AZ|BD|BN|BT|CC|CK|CN|CX|FJ|FM|GE|GU|HK|ID|IN|IO|JP|KG|KH|KI|KP|KR|KZ|" +
-	"LA|LK|MH|MM|MN|MO|MP|MV|MY|NC|NF|NP|NR|NU|NZ|PF|PG|PH|PK|PN|PW|SB|SG|TH|TJ|TK|TL|TM|TO|TR|TV|TW|UM|UZ|VU|WF|WS|VN|"
-
-// Country reports whether value is an assigned ISO 3166-1 alpha-2 code.
+// Country reports whether value has the form of an ISO 3166-1 alpha-2 code, such as 'US'.
 func Country(value string) bool {
-	return len(value) == 2 && strings.Contains(countries, "|"+value+"|")
+	return len(value) == 2 && 'A' <= value[0] && value[0] <= 'Z' && 'A' <= value[1] && value[1] <= 'Z'
 }
 
-// Valid reports whether value is a location. Only storage uses none, so it needs allowNone.
-func Valid(value string, allowNone bool) bool {
+// Places are a catalog's places.
+type Places struct {
+	// within lists each place with every place that contains it, in order.
+	within map[string][]string
+	// inside lists each place with every place inside it, in order.
+	inside map[string][]string
+	// folded gives each place by its ID in lowercase, which no two places share.
+	folded map[string]string
+}
+
+// Read checks a catalog's places, each with the places that directly contain it: world contains
+// every other place, and no place contains itself.
+func Read(parents map[string][]string) (*Places, error) {
+	if direct, ok := parents[World]; !ok || len(direct) != 0 {
+		return nil, errors.New("the catalog's locations must have world, in no other place")
+	}
+	ids := slices.Sorted(maps.Keys(parents))
+	folded := make(map[string]string, len(ids))
+	for _, id := range ids {
+		direct := parents[id]
+		if !Form(id) || id == Unknown || id == None {
+			return nil, fmt.Errorf("location %q has an invalid ID", id)
+		}
+		if other, ok := folded[strings.ToLower(id)]; ok {
+			return nil, fmt.Errorf("locations %s and %s differ only in case", other, id)
+		}
+		folded[strings.ToLower(id)] = id
+		if id != World && len(direct) == 0 {
+			return nil, fmt.Errorf("location %s lies in no place", id)
+		}
+		for index, parent := range direct {
+			if _, ok := parents[parent]; !ok {
+				return nil, fmt.Errorf("location %s lies in unknown place %s", id, parent)
+			}
+			if slices.Contains(direct[:index], parent) {
+				return nil, fmt.Errorf("location %s repeats place %s", id, parent)
+			}
+		}
+	}
+	places := &Places{within: make(map[string][]string, len(ids)), inside: make(map[string][]string, len(ids)), folded: folded}
+	// A visit finishes a place's parents first, so reaching a place again before its own visit
+	// finishes means that it contains itself.
+	visiting := make(map[string]bool)
+	var visit func(id string) error
+	visit = func(id string) error {
+		if _, done := places.within[id]; done {
+			return nil
+		}
+		if visiting[id] {
+			return fmt.Errorf("location %s lies in itself", id)
+		}
+		visiting[id] = true
+		within := []string{id}
+		for _, parent := range parents[id] {
+			if err := visit(parent); err != nil {
+				return err
+			}
+			for _, place := range places.within[parent] {
+				if !slices.Contains(within, place) {
+					within = append(within, place)
+				}
+			}
+		}
+		slices.Sort(within)
+		places.within[id] = slices.Clip(within)
+		visiting[id] = false
+		return nil
+	}
+	for _, id := range ids {
+		if err := visit(id); err != nil {
+			return nil, err
+		}
+	}
+	for _, id := range ids {
+		for _, place := range places.within[id] {
+			places.inside[place] = append(places.inside[place], id)
+		}
+	}
+	for id, inside := range places.inside {
+		places.inside[id] = slices.Clip(inside)
+	}
+	return places, nil
+}
+
+// Decode reads places as a catalog root lists them: each by its ID, with its name and the places
+// that directly contain it.
+func Decode(data []byte) (*Places, error) {
+	var locations map[string]struct {
+		ParentIDs []string `json:"parentIds"`
+	}
+	if err := json.Unmarshal(data, &locations); err != nil {
+		return nil, err
+	}
+	parents := make(map[string][]string, len(locations))
+	for id, place := range locations {
+		parents[id] = place.ParentIDs
+	}
+	return Read(parents)
+}
+
+// Place reports whether value is one of the places.
+func (p *Places) Place(value string) bool {
+	_, ok := p.within[value]
+	return ok
+}
+
+// Fold gives the place whose ID differs from value only in case, such as 'eu' for 'EU'.
+func (p *Places) Fold(value string) (string, bool) {
+	place, ok := p.folded[strings.ToLower(value)]
+	return place, ok
+}
+
+// Valid reports whether value can be a data handling location: a place or unknown, or none for
+// storage.
+func (p *Places) Valid(value string, storage bool) bool {
+	return p.Place(value) || value == Unknown || storage && value == None
+}
+
+// Within reports whether a location lies within a boundary: it is the boundary or a place inside
+// it, or the boundary is world or unknown, which bound nothing.
+func (p *Places) Within(actual, boundary string) bool {
+	if !p.Valid(actual, true) || !p.Valid(boundary, true) {
+		return false
+	}
+	return actual == boundary || boundary == World || boundary == Unknown ||
+		slices.Contains(p.within[actual], boundary)
+}
+
+var (
+	unknownOnly = []string{Unknown}
+	noneOnly    = []string{None}
+)
+
+// Containing lists a location and every place that contains it, in order. Unknown and none list
+// only themselves.
+func (p *Places) Containing(value string) []string {
 	switch value {
-	case "world", "apac", "eu", "europe", "unknown":
-		return true
-	case "none":
-		return allowNone
+	case Unknown:
+		return unknownOnly
+	case None:
+		return noneOnly
 	}
-	return Country(value)
+	return p.within[value]
 }
 
-// Within reports whether actual is at least as geographically narrow as boundary.
-func Within(actual, boundary string) bool {
-	if !Valid(actual, true) || !Valid(boundary, true) {
-		return false
-	}
-	if actual == boundary || boundary == "world" || boundary == "unknown" {
-		return true
-	}
-	if actual == "unknown" || actual == "world" || actual == "none" || boundary == "none" {
-		return false
-	}
+// Inside lists the locations within a boundary, in order, or returns nil when the boundary is
+// world or unknown, which bound nothing. Only none lies within none.
+func (p *Places) Inside(boundary string) []string {
 	switch boundary {
-	case "eu":
-		return strings.Contains(euCountries, "|"+actual+"|")
-	case "europe":
-		return actual == "eu" || strings.Contains(europeCountries, "|"+actual+"|")
-	case "apac":
-		return strings.Contains(apacCountries, "|"+actual+"|")
-	default:
-		return false
+	case World, Unknown:
+		return nil
+	case None:
+		return noneOnly
 	}
+	if inside, ok := p.inside[boundary]; ok {
+		return inside
+	}
+	return []string{}
 }

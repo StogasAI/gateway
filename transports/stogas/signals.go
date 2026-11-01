@@ -185,7 +185,7 @@ func validateActualExecutionReport(state *State, serviceTier *schemas.BifrostSer
 	// promise that names no narrower location.
 	if inferenceGeo != nil {
 		if reported := strings.ToLower(strings.TrimSpace(*inferenceGeo)); reported != "" &&
-			!location.Within(reportedInferenceLocation(reported), state.Resolution.Deployment.DataHandling.ProcessingLocation) {
+			!state.Resolution.Deployment.Locations.Within(reportedInferenceLocation(reported), state.Resolution.Deployment.DataHandling.ProcessingLocation) {
 			return ErrProviderExecutionMismatch
 		}
 	}
@@ -198,9 +198,9 @@ func reportedInferenceLocation(reported string) string {
 	case "us":
 		return "US"
 	case "global":
-		return "world"
+		return location.World
 	}
-	return "unknown"
+	return location.Unknown
 }
 
 // ValidateCompletedExecution checks stream topology. Missing optional provider

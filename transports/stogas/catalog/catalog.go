@@ -536,6 +536,7 @@ func (s *snapshot) deploymentFromCompiledAt(deploymentID string, route compiledR
 		ReasoningMaxTokens:  reasoningMaxTokens,
 		ReasoningSupported:  deployment.Reasoning != "unsupported",
 		DataHandling:        served.DataHandling,
+		Locations:           s.places,
 		ApprovalRequired:    deployment.ApprovalRequired,
 		WeightPrecision:     deployment.WeightPrecision,
 		snapshot:            s,

@@ -142,16 +142,20 @@ func billingUpstreamTarget(resolution *catalog.ResolvedRequest) *gatewaybilling.
 	if resolution == nil || resolution.Provider != schemas.Azure {
 		return nil
 	}
-	upstream := resolution.Deployment.Upstream
-	return &gatewaybilling.UpstreamTarget{
-		DeploymentType:     upstream.DeploymentType,
-		Hosting:            upstream.Hosting,
-		Model:              upstream.Model,
-		ModelFormat:        upstream.ModelFormat,
-		ModelVersion:       upstream.ModelVersion,
-		ProcessingLocation: resolution.Deployment.DataHandling.ProcessingLocation,
-		StorageLocation:    resolution.Deployment.DataHandling.StorageLocation,
+	upstream, dataHandling, places := resolution.Deployment.Upstream, resolution.Deployment.DataHandling, resolution.Deployment.Locations
+	target := &gatewaybilling.UpstreamTarget{
+		DeploymentType:      upstream.DeploymentType,
+		Hosting:             upstream.Hosting,
+		Model:               upstream.Model,
+		ModelFormat:         upstream.ModelFormat,
+		ModelVersion:        upstream.ModelVersion,
+		ProcessingLocations: places.Inside(dataHandling.ProcessingLocation),
 	}
+	// A catalog no-storage guarantee makes the account's placement inapplicable.
+	if dataHandling.StorageLocation != "none" {
+		target.StorageLocations = places.Inside(dataHandling.StorageLocation)
+	}
+	return target
 }
 
 type azureTokenSource interface {

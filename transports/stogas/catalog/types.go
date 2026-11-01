@@ -6,6 +6,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
+	"github.com/maximhq/bifrost/transports/stogas/location"
 )
 
 type Route string
@@ -57,8 +58,11 @@ type Deployment struct {
 	ReasoningMaxTokens  *ReasoningMaxTokens
 	ReasoningSupported  bool
 	DataHandling        DataHandling
-	ApprovalRequired    bool
-	WeightPrecision     string
+	// Locations are the places of the catalog that the deployment belongs to, which say what
+	// lies within each data handling location.
+	Locations        *location.Places
+	ApprovalRequired bool
+	WeightPrecision  string
 	// snapshot is the catalog state in effect when the request started, so the hold and the
 	// charge use the same facts.
 	snapshot  *snapshot
@@ -113,6 +117,8 @@ type snapshot struct {
 	// release loaded retired, by each selector that named it. The graph no longer holds them.
 	retired  map[string]string
 	schedule []datedState
+	// places are the catalog's locations, which every state shares.
+	places *location.Places
 }
 
 type datedState struct {
