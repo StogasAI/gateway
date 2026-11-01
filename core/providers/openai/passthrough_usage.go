@@ -228,7 +228,8 @@ func buildOAIResponsesUsage(ru *schemas.ResponsesResponseUsage, serviceTier *str
 	}
 	if ru.OutputTokensDetails != nil {
 		usage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{
-			ReasoningTokens: ru.OutputTokensDetails.ReasoningTokens,
+			ReasoningTokens:         ru.OutputTokensDetails.ReasoningTokens,
+			ReasoningTokensReported: ru.OutputTokensDetails.ReasoningTokensReported,
 		}
 		if ru.OutputTokensDetails.NumSearchQueries != nil {
 			usage.CompletionTokensDetails.NumSearchQueries = ru.OutputTokensDetails.NumSearchQueries

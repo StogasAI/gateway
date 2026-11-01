@@ -5467,6 +5467,7 @@ func ConvertAnthropicUsageToBifrostUsage(anthropicUsage *AnthropicUsage) *schema
 			bifrostUsage.OutputTokensDetails = &schemas.ResponsesResponseOutputTokens{}
 		}
 		bifrostUsage.OutputTokensDetails.ReasoningTokens = billingUsage.OutputTokensDetails.ThinkingTokens
+		bifrostUsage.OutputTokensDetails.ReasoningTokensReported = true
 	}
 
 	// Recursively convert iterations

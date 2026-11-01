@@ -113,12 +113,13 @@ func buildAnthropicPassthroughUsage(au *AnthropicUsage) *schemas.BifrostPassthro
 	}
 
 	// Extended-thinking tokens are already inside au.OutputTokens, so CompletionTokens
-	// and TotalTokens above stay as-is.
-	if au.OutputTokensDetails != nil && au.OutputTokensDetails.ThinkingTokens > 0 {
+	// and TotalTokens above stay as-is. An explicit zero is a reported count too.
+	if au.OutputTokensDetails != nil {
 		if usage.CompletionTokensDetails == nil {
 			usage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{}
 		}
 		usage.CompletionTokensDetails.ReasoningTokens = au.OutputTokensDetails.ThinkingTokens
+		usage.CompletionTokensDetails.ReasoningTokensReported = true
 	}
 
 	u := &schemas.BifrostPassthroughUsage{LLMUsage: usage, Iterations: convertAnthropicUsageIterations(iterations)}

@@ -781,20 +781,22 @@ func accumulateAnthropicResponsesUsage(usage *schemas.ResponsesResponseUsage, bi
 	// Extended-thinking tokens. Max-merged (per-request total, not per-event
 	// increment) and mirrored onto the billing handle so a mid-stream cancel or
 	// timeout still reports the reasoning breakdown. An explicit zero (adaptive
-	// thinking that chose not to think) is kept on the response usage like the
-	// non-streaming converter does; billing only needs a non-zero count.
+	// thinking that chose not to think) is kept as a reported count, like the
+	// non-streaming converter does.
 	if usageToProcess.OutputTokensDetails != nil {
 		t := usageToProcess.OutputTokensDetails.ThinkingTokens
 		if usage.OutputTokensDetails == nil {
 			usage.OutputTokensDetails = &schemas.ResponsesResponseOutputTokens{}
 		}
+		usage.OutputTokensDetails.ReasoningTokensReported = true
 		if t > usage.OutputTokensDetails.ReasoningTokens {
 			usage.OutputTokensDetails.ReasoningTokens = t
 		}
-		if billedUsage != nil && t > 0 {
+		if billedUsage != nil {
 			if billedUsage.CompletionTokensDetails == nil {
 				billedUsage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{}
 			}
+			billedUsage.CompletionTokensDetails.ReasoningTokensReported = true
 			if t > billedUsage.CompletionTokensDetails.ReasoningTokens {
 				billedUsage.CompletionTokensDetails.ReasoningTokens = t
 			}
@@ -1165,10 +1167,12 @@ func HandleAnthropicChatCompletionStreaming(
 				// Extended-thinking tokens. Max-merged like the other counters because usage
 				// arrives split across message_start and message_delta; the value is a
 				// per-request total, not a per-event increment, so summing would inflate it.
-				if usageToProcess.OutputTokensDetails != nil && usageToProcess.OutputTokensDetails.ThinkingTokens > 0 {
+				// An explicit zero is a reported count too.
+				if usageToProcess.OutputTokensDetails != nil {
 					if usage.CompletionTokensDetails == nil {
 						usage.CompletionTokensDetails = &schemas.ChatCompletionTokensDetails{}
 					}
+					usage.CompletionTokensDetails.ReasoningTokensReported = true
 					if t := usageToProcess.OutputTokensDetails.ThinkingTokens; t > usage.CompletionTokensDetails.ReasoningTokens {
 						usage.CompletionTokensDetails.ReasoningTokens = t
 					}

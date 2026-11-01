@@ -2011,6 +2011,7 @@ func (u *BifrostLLMUsage) NormalizeReasoningTokens() {
 	if u.CompletionTokensDetails.ReasoningTokens == 0 {
 		u.CompletionTokensDetails.ReasoningTokens = u.ReasoningTokens
 	}
+	u.CompletionTokensDetails.ReasoningTokensReported = true
 	u.ReasoningTokens = 0
 }
 
@@ -2119,6 +2120,47 @@ type ChatCompletionTokensDetails struct {
 	// Parts of AudioTokens that Azure Voice Live handled with Azure Speech, which it bills at their own rates.
 	StandardSpeechAudioTokens int `json:"standard_speech_audio_tokens,omitempty"`
 	CustomSpeechAudioTokens   int `json:"custom_speech_audio_tokens,omitempty"`
+
+	// ReasoningTokensReported is true when the provider reported reasoning_tokens, so that a
+	// reported 0 differs from a provider that does not split reasoning out of completion tokens.
+	ReasoningTokensReported bool `json:"-"`
+}
+
+// UnmarshalJSON records whether the payload carried reasoning_tokens, which the int field alone
+// cannot tell from an absent count.
+func (d *ChatCompletionTokensDetails) UnmarshalJSON(data []byte) error {
+	type Alias ChatCompletionTokensDetails
+	var temp Alias
+	if err := Unmarshal(data, &temp); err != nil {
+		return err
+	}
+	var reported struct {
+		ReasoningTokens json.RawMessage `json:"reasoning_tokens"`
+	}
+	if err := Unmarshal(data, &reported); err != nil {
+		return err
+	}
+	*d = ChatCompletionTokensDetails(temp)
+	d.ReasoningTokensReported = reportedJSONValue(reported.ReasoningTokens)
+	return nil
+}
+
+// MarshalJSON keeps a reported reasoning_tokens of 0, which omitempty would drop.
+func (d ChatCompletionTokensDetails) MarshalJSON() ([]byte, error) {
+	type Alias ChatCompletionTokensDetails
+	if !d.ReasoningTokensReported || d.ReasoningTokens != 0 {
+		return Marshal(Alias(d))
+	}
+	return Marshal(struct {
+		Alias
+		ReasoningTokens int `json:"reasoning_tokens"`
+	}{Alias: Alias(d)})
+}
+
+// reportedJSONValue reports whether a field held a value: present and not null.
+func reportedJSONValue(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	return len(raw) > 0 && !bytes.Equal(raw, []byte("null"))
 }
 
 // BifrostCost splits a request's cost into an input side, an output side, and an
@@ -2201,6 +2243,8 @@ func MergeBifrostLLMUsage(base, add *BifrostLLMUsage) *BifrostLLMUsage {
 
 			StandardSpeechAudioTokens: baseDetails.StandardSpeechAudioTokens + addDetails.StandardSpeechAudioTokens,
 			CustomSpeechAudioTokens:   baseDetails.CustomSpeechAudioTokens + addDetails.CustomSpeechAudioTokens,
+
+			ReasoningTokensReported: baseDetails.ReasoningTokensReported || addDetails.ReasoningTokensReported,
 		}
 		merged.CompletionTokensDetails.CitationTokens = sumOptionalInts(baseDetails.CitationTokens, addDetails.CitationTokens)
 		merged.CompletionTokensDetails.NumSearchQueries = sumOptionalInts(baseDetails.NumSearchQueries, addDetails.NumSearchQueries)
