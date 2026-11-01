@@ -551,6 +551,17 @@ func metersForState(state *State) gatewaybilling.EventMeters {
 	if hostedCalls > 0 || completedOutput {
 		addCount(billing.MeterHostedToolCalls, hostedCalls)
 	}
+	if completedOutput {
+		checks := state.checkOutputs()
+		if checks.toolCalls > 0 {
+			addCount(billing.MeterCheckedClientToolCalls, checks.toolCalls)
+			addCount(billing.MeterInvalidClientToolCalls, checks.invalidToolCalls)
+		}
+		if checks.outputs > 0 {
+			addCount(billing.MeterCheckedStructuredOutputs, checks.outputs)
+			addCount(billing.MeterInvalidStructuredOutputs, checks.invalidOutputs)
+		}
+	}
 
 	return out
 }

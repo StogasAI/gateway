@@ -80,6 +80,7 @@ func validateProviderChatResponse(state *State, response *schemas.BifrostChatRes
 			if err := validateProviderChatToolCompletion(state, *choice.FinishReason); err != nil {
 				return err
 			}
+			state.chatFinishReason = *choice.FinishReason
 			state.chatStreamFinished = true
 			state.chatStreamUsageEnded = response.Usage != nil
 		}
@@ -100,7 +101,11 @@ func validateProviderChatResponse(state *State, response *schemas.BifrostChatRes
 	if err := validateProviderChatMessage(state, choice.ChatNonStreamResponseChoice.Message); err != nil {
 		return err
 	}
-	return validateProviderChatToolCompletion(state, *choice.FinishReason)
+	if err := validateProviderChatToolCompletion(state, *choice.FinishReason); err != nil {
+		return err
+	}
+	state.chatFinishReason = *choice.FinishReason
+	return nil
 }
 
 func emptyProviderChatUsageChoice(choice schemas.BifrostResponseChoice) bool {

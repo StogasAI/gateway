@@ -97,6 +97,15 @@ type State struct {
 	textMaterialObserved    bool
 	responsesTextMaterial   map[int]textMaterial
 
+	// chatFinishReason and chatRefusal describe the validated Chat choice, and
+	// chatOutput keeps streamed content for the structured output check up to
+	// its size bound; chatOutputLong records content past that bound.
+	chatFinishReason string
+	chatRefusal      bool
+	chatOutput       *bytes.Buffer
+	chatOutputLong   bool
+	outputFormat     *structuredOutput
+
 	providerAttemptsMu sync.Mutex
 	providerAttempts   []providerAttemptObservation
 }

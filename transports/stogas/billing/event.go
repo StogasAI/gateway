@@ -509,7 +509,8 @@ func PricedMeter(quantity, rateKey, rateUSD, usd string) EventMeter {
 // IsInformationalMeter identifies quantities that never carry prices.
 func IsInformationalMeter(key string) bool {
 	switch key {
-	case MeterInputTextBytes, MeterInputFileCount, MeterInputFileURLCount, MeterInputInlineFileBytes, MeterOutputTextBytes, MeterReasoningTextBytes, MeterEstimatedInputTokens, MeterTotalInputTokens, MeterTotalOutputTokens, MeterTotalTokens, MeterTotalCacheWriteTokens, MeterHostedToolCalls, MeterClientToolCalls:
+	case MeterInputTextBytes, MeterInputFileCount, MeterInputFileURLCount, MeterInputInlineFileBytes, MeterOutputTextBytes, MeterReasoningTextBytes, MeterEstimatedInputTokens, MeterTotalInputTokens, MeterTotalOutputTokens, MeterTotalTokens, MeterTotalCacheWriteTokens, MeterHostedToolCalls, MeterClientToolCalls,
+		MeterCheckedClientToolCalls, MeterInvalidClientToolCalls, MeterCheckedStructuredOutputs, MeterInvalidStructuredOutputs:
 		return true
 	default:
 		return false
