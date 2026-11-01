@@ -1,0 +1,22 @@
+deployments:
+  modelId: claude-opus-5
+  routeIds: [anthropic-messages]
+  upstream:
+    model: claude-opus-5
+    serviceTier: fast
+    inferenceGeo: us
+  approvalRequired: true
+  overrides:
+    dataHandling:
+      processingLocation: US
+  pricing:
+    input_tokens:
+      per_mill_tokens: '11'
+    cached_input_tokens:
+      per_mill_tokens: '1.1'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '13.75'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '22'
+    output_tokens:
+      per_mill_tokens: '55'

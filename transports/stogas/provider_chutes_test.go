@@ -14,6 +14,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 	"github.com/maximhq/bifrost/transports/stogas/policy"
 )
 
@@ -538,6 +539,7 @@ func TestChutesModelCapabilitiesGateStructuredOutput(t *testing.T) {
 }
 
 func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
+	catalogtest.UseFallback(t)
 	for _, deployment := range currentChutesDeployments(t) {
 		for _, limit := range []struct {
 			name  string
@@ -580,6 +582,7 @@ func TestEveryChutesDeploymentHoldCoversMaximumReportedUsage(t *testing.T) {
 }
 
 func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
+	catalogtest.UseFallback(t)
 	for _, deployment := range currentChutesDeployments(t) {
 		t.Run(deployment.ID, func(t *testing.T) {
 			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"pricing"}]}`, deployment.ModelID))
@@ -632,6 +635,7 @@ func TestEveryChutesDeploymentPricesCompleteUsageExactly(t *testing.T) {
 }
 
 func TestChutesMissingUsageProducesNoCharge(t *testing.T) {
+	catalogtest.UseFallback(t)
 	for _, deployment := range currentChutesDeployments(t) {
 		t.Run(deployment.ID, func(t *testing.T) {
 			state := resolveChutesState(t, fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"missing usage"}]}`, deployment.ModelID))

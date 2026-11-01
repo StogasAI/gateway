@@ -1,0 +1,4 @@
+groups:
+  authorId: qwen
+  name: 'Qwen3.8'
+  parentIds: [qwen]

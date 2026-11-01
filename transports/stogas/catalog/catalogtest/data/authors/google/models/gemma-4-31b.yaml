@@ -1,0 +1,11 @@
+models:
+  authorId: google
+  name: Gemma 4 31B
+  groupIds: [gemma-4]
+  contextWindowTokens: 262144
+  maxOutputTokens: 262144
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2026-03-31
+  knowledgeCutoff: 2025-01-01

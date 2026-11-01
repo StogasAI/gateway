@@ -1,0 +1,4 @@
+groups:
+  authorId: z-ai
+  name: 'GLM-5'
+  parentIds: [glm]

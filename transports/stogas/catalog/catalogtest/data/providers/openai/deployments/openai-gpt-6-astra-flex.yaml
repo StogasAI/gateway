@@ -1,0 +1,19 @@
+deployments:
+  modelId: gpt-6-astra
+  routeIds: [openai-chat-completions, openai-responses]
+  upstream:
+    model: gpt-6-astra
+    serviceTier: flex
+  pricing:
+    input_tokens:
+      per_mill_tokens: '5'
+      per_mill_context_gt_272k: '10'
+    cached_input_tokens:
+      per_mill_tokens: '0.5'
+      per_mill_context_gt_272k: '1'
+    cache_write_input_tokens:
+      per_mill_tokens: '6.25'
+      per_mill_context_gt_272k: '12.5'
+    output_tokens:
+      per_mill_tokens: '25'
+      per_mill_context_gt_272k: '37.5'

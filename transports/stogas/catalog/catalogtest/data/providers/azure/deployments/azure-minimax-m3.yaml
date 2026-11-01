@@ -1,0 +1,23 @@
+deployments:
+  modelId: minimax-m3
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: FW-MiniMax-M3
+    modelFormat: Fireworks
+    modelVersion: '1'
+    hosting: fireworks
+    deploymentType: data_zone_standard_us
+  overrides:
+    capabilities:
+      parallelFunctionCalling: false
+      explicitPromptCaching: false
+      structuredOutputs: false
+    dataHandling:
+      processingLocation: unknown
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.33'
+    cached_input_tokens:
+      per_mill_tokens: '0.066'
+    output_tokens:
+      per_mill_tokens: '1.32'

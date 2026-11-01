@@ -1,0 +1,18 @@
+deployments:
+  modelId: deepseek-v4-flash-0731
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: deepseek-ai/DeepSeek-V4-Flash-0731-TEE
+    chuteId: b4d58772-e72b-55d1-9d73-d30dff6d2ed8
+    gpuCount: 8
+  weightPrecision: fp8
+  overrides:
+    maxOutputTokens: 131072
+    reasoningEfforts: [high, max]
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.44'
+    cached_input_tokens:
+      per_mill_tokens: '0.044'
+    output_tokens:
+      per_mill_tokens: '1.32'

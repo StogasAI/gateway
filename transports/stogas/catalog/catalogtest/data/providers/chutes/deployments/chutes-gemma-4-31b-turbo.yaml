@@ -1,0 +1,18 @@
+deployments:
+  modelId: gemma-4-31b
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: google/gemma-4-31B-turbo-TEE
+    chuteId: 42ee92ba-a537-5a73-8741-876067750db7
+    gpuCount: 1
+  weightPrecision: nvfp4
+  overrides:
+    contextWindowTokens: 131072
+    maxOutputTokens: 65536
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.12'
+    cached_input_tokens:
+      per_mill_tokens: '0.012'
+    output_tokens:
+      per_mill_tokens: '0.37'

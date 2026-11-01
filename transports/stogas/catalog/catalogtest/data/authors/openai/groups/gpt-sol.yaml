@@ -1,0 +1,4 @@
+groups:
+  authorId: openai
+  name: 'GPT Sol'
+  parentIds: [gpt]

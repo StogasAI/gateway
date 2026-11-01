@@ -1,0 +1,15 @@
+models:
+  authorId: openai
+  name: GPT-6 Astra
+  groupIds: [gpt-6, gpt-astra]
+  contextWindowTokens: 1050000
+  maxInputTokens: 922000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, medium, high, xhigh, max]
+  reasoningEffortsByInterface:
+    chat_completions: [low, medium, high, xhigh]
+  releaseDate: 2026-09-03
+  knowledgeCutoff: 2026-04-30

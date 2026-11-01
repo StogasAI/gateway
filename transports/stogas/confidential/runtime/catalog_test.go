@@ -10,16 +10,15 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
+	"github.com/maximhq/bifrost/transports/stogas/catalog/catalogtest"
 )
 
 func TestCatalogArtifactRecoveryValidatesBytesAndFixedPaths(t *testing.T) {
@@ -140,7 +139,7 @@ func TestRejectedCatalogIsNotDownloadedAgain(t *testing.T) {
 }
 
 func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
-	root, parts := fallbackCatalog(t)
+	root, parts := testCatalog(t)
 	artifacts := maps.Clone(parts)
 	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -193,38 +192,24 @@ func TestRefusedCatalogLeavesOlderApprovedCatalogInUse(t *testing.T) {
 	}
 }
 
-// fallbackCatalog is the embedded catalog: its root and every part that it names, by SHA-256 in
-// hex.
-func fallbackCatalog(t *testing.T) (root []byte, parts map[string][]byte) {
+// testCatalog is the test catalog: its root and every part that it names, by SHA-256 in hex.
+func testCatalog(t *testing.T) (root []byte, parts map[string][]byte) {
 	t.Helper()
-	read := func(path string) []byte {
-		data, err := os.ReadFile("../../catalog/fallback/" + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data
-	}
-	root = read("catalog.json")
-	// No record has retired at the zero time, so every part is in effect.
-	files, err := catalog.PartsInEffect(root, time.Time{})
+	root, parts, err := catalogtest.Files()
 	if err != nil {
 		t.Fatal(err)
-	}
-	parts = make(map[string][]byte, len(files))
-	for _, file := range files {
-		parts[file.SHA256] = read("catalog.parts/" + file.SHA256 + ".json")
 	}
 	return root, parts
 }
 
-// changedCatalog is the embedded catalog with an author renamed in its root and a space after
+// changedCatalog is the test catalog with an author renamed in its root and a space after
 // each part at the given positions, which the root names by their new digests and sizes. It
 // returns the root, every part, and the parts that changed.
 func changedCatalog(t *testing.T, author string, positions ...int) (root []byte, parts map[string][]byte, changed []string) {
 	t.Helper()
-	fallback, parts := fallbackCatalog(t)
+	original, parts := testCatalog(t)
 	var listed map[string]any
-	if err := json.Unmarshal(fallback, &listed); err != nil {
+	if err := json.Unmarshal(original, &listed); err != nil {
 		t.Fatal(err)
 	}
 	listed["summaries"].(map[string]any)["authors"].(map[string]any)["anthropic"].(map[string]any)["name"] = author
@@ -265,7 +250,7 @@ func TestNewCatalogDownloadsOnlyThePartsThatChanged(t *testing.T) {
 	gateway.Release.Sequence = 4
 	e.summary.Gateways = []approvedGateway{gateway}
 	// The active catalog is process state; no other test approves these bytes as catalogs 20 to 22.
-	root, parts := fallbackCatalog(t)
+	root, parts := testCatalog(t)
 	if err := catalog.InstallApproved(root, parts, catalog.Identity{Sequence: 20, Digest: "sha256:" + hexDigest(root)}, e.now()); err != nil {
 		t.Fatal(err)
 	}

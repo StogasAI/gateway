@@ -1,0 +1,12 @@
+models:
+  authorId: google
+  name: Gemma 4 26B A4B
+  groupIds: [gemma-4]
+  contextWindowTokens: 262144
+  maxOutputTokens: 262144
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2026-03-31
+  # Google discloses the same January 2025 pre-training cutoff for the Gemma 4 family.
+  knowledgeCutoff: 2025-01-01

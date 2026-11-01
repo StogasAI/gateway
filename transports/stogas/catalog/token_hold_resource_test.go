@@ -7,7 +7,7 @@ import (
 )
 
 func TestEveryRuntimeDeploymentHasUniversalInputEstimate(t *testing.T) {
-	snap := loadTestCatalog(t)
+	snap := useFallback(t)
 	seen := make(map[string]bool)
 	for id, compiled := range snap.graph.Deployments {
 		for routeID := range compiled.Routes {

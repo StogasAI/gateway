@@ -1,0 +1,4 @@
+groups:
+  authorId: deepseek
+  name: 'DeepSeek V4 Flash'
+  parentIds: [deepseek-v4]

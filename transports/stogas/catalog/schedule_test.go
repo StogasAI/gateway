@@ -15,7 +15,7 @@ var promotedChainHash = "sha256:" + strings.Repeat("b", 64)
 func catalogWithSchedule(t *testing.T, schedule []map[string]any) []byte {
 	t.Helper()
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	whole["schedule"] = schedule
@@ -31,7 +31,7 @@ func catalogWithSchedule(t *testing.T, schedule []map[string]any) []byte {
 func promotedDeployment(t *testing.T, deploymentID string) map[string]any {
 	t.Helper()
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
@@ -115,11 +115,11 @@ func TestRequestsUseTheCatalogStateInEffect(t *testing.T) {
 	}
 }
 
-// catalogNode returns a copy of a node of the embedded catalog.
+// catalogNode returns a copy of a node of the test catalog.
 func catalogNode(t *testing.T, kind, id string) map[string]any {
 	t.Helper()
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	return whole["graph"].(map[string]any)[kind].(map[string]any)[id].(map[string]any)

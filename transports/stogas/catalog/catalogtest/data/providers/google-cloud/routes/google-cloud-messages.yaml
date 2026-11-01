@@ -1,0 +1,20 @@
+# Claude on Google Cloud takes the Messages body two ways; each deployment's hosting picks one.
+# Hosting google is Claude on Agent Platform, formerly Vertex AI (Google managed):
+# https://{host}/v1/projects/{project}/locations/{location}/publishers/anthropic/models/{model}:rawPredict.
+# It has no URL sources, Files API, code execution, web fetch, advisor or fallbacks. Its web search is
+# off until an organization policy allows it, sends queries to Brave outside Google's residency and
+# encryption commitments, and has no verified price, so the gateway refuses it.
+# Hosting anthropic is Claude on Google Cloud (Anthropic managed): Anthropic's own Messages API at
+# https://claude.googleapis.com/v1/projects/{project}/locations/global/workspaces/{workspace}/invoke/v1/messages.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/google-managed,
+# https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/claude/web-search
+# and https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/anthropic-managed
+routes:
+  providerId: google-cloud
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]
+  dataHandling:
+    endToEndEncrypted: false

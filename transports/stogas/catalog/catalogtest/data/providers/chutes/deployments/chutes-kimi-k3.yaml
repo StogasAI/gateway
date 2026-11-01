@@ -1,0 +1,17 @@
+deployments:
+  modelId: kimi-k3
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: moonshotai/Kimi-K3-TEE
+    chuteId: 0bb5d4c2-b5da-587d-b88e-62b4839028ec
+    gpuCount: 8
+  weightPrecision: mxfp4
+  overrides:
+    maxOutputTokens: 65535
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.85'
+    cached_input_tokens:
+      per_mill_tokens: '0.185'
+    output_tokens:
+      per_mill_tokens: '9.5'

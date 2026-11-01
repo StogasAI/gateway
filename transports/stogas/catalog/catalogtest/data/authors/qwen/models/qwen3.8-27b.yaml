@@ -1,0 +1,11 @@
+models:
+  authorId: qwen
+  name: Qwen3.8 27B
+  groupIds: [qwen3.8]
+  contextWindowTokens: 1000000
+  maxOutputTokens: 1000000
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: optional
+  reasoningEfforts: [low, medium, xhigh]
+  releaseDate: 2026-08-13

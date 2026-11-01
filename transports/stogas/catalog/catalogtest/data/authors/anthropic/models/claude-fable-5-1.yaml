@@ -1,0 +1,13 @@
+models:
+  authorId: anthropic
+  name: Claude Fable 5.1
+  aliases: [claude-fable-5.1]
+  groupIds: [claude-fable]
+  contextWindowTokens: 1000000
+  maxOutputTokens: 128000
+  inputModalities: [text, image]
+  outputModalities: [text]
+  reasoning: required
+  reasoningEfforts: [low, medium, high, xhigh, max]
+  releaseDate: 2026-09-01
+  knowledgeCutoff: 2026-06-01

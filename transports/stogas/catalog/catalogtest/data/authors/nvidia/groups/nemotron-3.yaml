@@ -1,0 +1,4 @@
+groups:
+  authorId: nvidia
+  name: 'Nemotron 3'
+  parentIds: [nemotron]

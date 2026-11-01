@@ -1,0 +1,28 @@
+deployments:
+  modelId: gpt-6-sol
+  routeIds: [azure-chat-completions, azure-responses]
+  upstream:
+    model: gpt-6-sol
+    modelFormat: OpenAI
+    modelVersion: '2026-09-22'
+    hosting: azure
+    deploymentType: data_zone_standard_us
+    serviceTier: fast
+  retirementDate: 2128-03-11
+  overrides:
+    dataHandling:
+      processingLocation: US
+      storageLocation: US
+  pricing:
+    input_tokens:
+      per_mill_tokens: '4.4'
+      per_mill_context_gt_272k: '8.8'
+    cached_input_tokens:
+      per_mill_tokens: '0.44'
+      per_mill_context_gt_272k: '0.88'
+    cache_write_input_tokens:
+      per_mill_tokens: '5.5'
+      per_mill_context_gt_272k: '11'
+    output_tokens:
+      per_mill_tokens: '22'
+      per_mill_context_gt_272k: '33'

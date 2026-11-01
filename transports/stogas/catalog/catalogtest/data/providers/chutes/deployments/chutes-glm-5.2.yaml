@@ -1,0 +1,17 @@
+deployments:
+  modelId: glm-5.2
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: zai-org/GLM-5.2-TEE
+    chuteId: 08901219-159f-55a7-87cf-9d0d02744668
+    gpuCount: 8
+  weightPrecision: nvfp4
+  overrides:
+    maxOutputTokens: 65535
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.25'
+    cached_input_tokens:
+      per_mill_tokens: '0.125'
+    output_tokens:
+      per_mill_tokens: '3.95'

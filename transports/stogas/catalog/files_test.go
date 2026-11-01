@@ -3,10 +3,13 @@ package catalog
 import (
 	"bytes"
 	"crypto/sha256"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"reflect"
 	"strconv"
 	"strings"
@@ -16,43 +19,52 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 )
 
-// embeddedFiles is the fallback's root and every part that it names, by SHA-256 in hex.
-func embeddedFiles(tb testing.TB) ([]byte, map[string][]byte) {
+// testCatalog is the catalog that the gateway's tests read, which catalogtest installs for the
+// other packages.
+//
+//go:embed catalogtest/generated
+var testCatalog embed.FS
+
+func readTestCatalog() ([]byte, map[string][]byte, error) {
+	files, err := fs.Sub(testCatalog, "catalogtest/generated")
+	if err != nil {
+		return nil, nil, err
+	}
+	return ReadBuild(files)
+}
+
+// testFiles is the test catalog's root and every part that it names, by SHA-256 in hex.
+func testFiles(tb testing.TB) ([]byte, map[string][]byte) {
 	tb.Helper()
-	root, err := fallbackFiles.ReadFile("fallback/catalog.json")
+	root, parts, err := readTestCatalog()
 	if err != nil {
 		tb.Fatal(err)
-	}
-	files, err := partFiles(root)
-	if err != nil {
-		tb.Fatal(err)
-	}
-	parts := make(map[string][]byte, len(files))
-	for _, file := range files {
-		if parts[file.SHA256], err = fallbackFiles.ReadFile("fallback/catalog.parts/" + file.SHA256 + ".json"); err != nil {
-			tb.Fatal(err)
-		}
 	}
 	return root, parts
 }
 
-// embeddedCatalogJSON is the fallback as the gateway reads it, with every record, as one
+// testSnapshot reads the test catalog with every record, as a gateway reads its fallback.
+func testSnapshot(tb testing.TB) *snapshot {
+	tb.Helper()
+	root, parts := testFiles(tb)
+	snap, err := snapshotFromFiles(root, parts, Identity{}, time.Time{})
+	if err != nil {
+		tb.Fatalf("parse the test catalog: %v", err)
+	}
+	return snap
+}
+
+// testCatalogJSON is the test catalog as the gateway reads it, with every record, as one
 // document: the graph, each dated state's changes and the selectors that have retired. Tests
 // change it and read it with snapshotFromCatalogBytes.
-var embeddedCatalogJSON = func() []byte {
-	root, err := fallbackFiles.ReadFile("fallback/catalog.json")
+var testCatalogJSON = func() []byte {
+	root, parts, err := readTestCatalog()
 	if err != nil {
 		panic(err)
 	}
 	files, err := partFiles(root)
 	if err != nil {
 		panic(err)
-	}
-	parts := make(map[string][]byte, len(files))
-	for _, file := range files {
-		if parts[file.SHA256], err = fallbackFiles.ReadFile("fallback/catalog.parts/" + file.SHA256 + ".json"); err != nil {
-			panic(err)
-		}
 	}
 	compiled, err := assemble(root, files, parts, time.Time{})
 	if err != nil {
@@ -64,6 +76,33 @@ var embeddedCatalogJSON = func() []byte {
 	}
 	return data
 }()
+
+// TestMain makes the test catalog the active catalog, as a gateway reads its fallback.
+func TestMain(m *testing.M) {
+	root, parts, err := readTestCatalog()
+	if err != nil {
+		panic(err)
+	}
+	snap, err := snapshotFromFiles(root, parts, Identity{}, time.Time{})
+	if err != nil {
+		panic(err)
+	}
+	active.Store(snap)
+	os.Exit(m.Run())
+}
+
+// useFallback makes the fallback the active catalog until the test ends, for a test that checks
+// the gateway against every record that the gateway can serve.
+func useFallback(tb testing.TB) *snapshot {
+	tb.Helper()
+	snap, err := loadSnapshot()
+	if err != nil {
+		tb.Fatalf("load the fallback: %v", err)
+	}
+	prior := active.Swap(snap)
+	tb.Cleanup(func() { active.Store(prior) })
+	return snap
+}
 
 func snapshotFromCatalogBytes(data []byte) (*snapshot, error) {
 	var compiled compiledCatalog
@@ -80,9 +119,9 @@ type testRelease struct {
 	parts []map[string]any
 }
 
-func embeddedRelease(tb testing.TB) testRelease {
+func testCatalogRelease(tb testing.TB) testRelease {
 	tb.Helper()
-	root, parts := embeddedFiles(tb)
+	root, parts := testFiles(tb)
 	var release testRelease
 	if err := json.Unmarshal(root, &release.root); err != nil {
 		tb.Fatal(err)
@@ -127,19 +166,19 @@ func (r testRelease) files(tb testing.TB) ([]byte, map[string][]byte) {
 	return root, parts
 }
 
-// The fallback's dated part holds the records that retire, the last of them on 2028-03-11, so
-// it leaves at 12:00 UTC on 2028-03-12.
-var datedPartLeaves = time.Date(2028, time.March, 12, 12, 0, 0, 0, time.UTC)
+// The test catalog's dated part holds the records that retire, the last of them on 2128-03-11,
+// so it leaves at 12:00 UTC on 2128-03-12.
+var datedPartLeaves = time.Date(2128, time.March, 12, 12, 0, 0, 0, time.UTC)
 
 func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
-	root, parts := embeddedFiles(t)
+	root, parts := testFiles(t)
 	files, err := partFiles(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dated := files[len(files)-1]
-	if dated.Through == nil || *dated.Through != "2028-03-11" {
-		t.Fatalf("the fallback's last part is not the dated one: %#v", dated)
+	if dated.Through == nil || *dated.Through != "2128-03-11" {
+		t.Fatalf("the test catalog's last part is not the dated one: %#v", dated)
 	}
 	before := datedPartLeaves.Add(-time.Nanosecond)
 	if inEffect, err := PartsInEffect(root, before); err != nil || len(inEffect) != len(files) {
@@ -156,13 +195,13 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployment, ok := snap.graph.Deployments["azure-gpt-6-luna"]; !ok || *deployment.RetirementDate != "2028-03-11" {
-		t.Fatalf("a deployment that retires on 2028-03-11 left before it retired: %#v", deployment)
+	if deployment, ok := snap.graph.Deployments["azure-gpt-6-luna"]; !ok || *deployment.RetirementDate != "2128-03-11" {
+		t.Fatalf("a deployment that retires on 2128-03-11 left before it retired: %#v", deployment)
 	}
 	for selector, date := range map[string]string{
-		"deepseek-v4-flash-0423":       "2028-02-20",
-		"azure-deepseek-v4-flash-0423": "2028-02-20",
-		"azure-gpt-5.6-luna":           "2028-01-11",
+		"deepseek-v4-flash-0423":       "2128-02-20",
+		"azure-deepseek-v4-flash-0423": "2128-02-20",
+		"azure-gpt-5.6-luna":           "2128-01-11",
 	} {
 		if _, served := snap.graph.Deployments[selector]; served {
 			t.Fatalf("retired %s is still in the graph", selector)
@@ -191,7 +230,7 @@ func TestReleaseLeavesRecordsOutOnceTheyRetire(t *testing.T) {
 			t.Fatalf("deployment %s of the dated part is in the graph", id)
 		}
 	}
-	if retiredOn, retired := snap.retiredOn("azure-gpt-6-luna", datedPartLeaves); !retired || retiredOn != "2028-03-11" {
+	if retiredOn, retired := snap.retiredOn("azure-gpt-6-luna", datedPartLeaves); !retired || retiredOn != "2128-03-11" {
 		t.Fatalf("azure-gpt-6-luna retired on %q (%t)", retiredOn, retired)
 	}
 	if _, ok := snap.parts[dated.SHA256]; ok || len(snap.parts) != len(held) {
@@ -322,14 +361,14 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 			r.summary("models", "deepseek-v4-flash-0423")["part"] = 3
 		}, "names no part"},
 		"a record that retires after its part": {func(r testRelease) {
-			r.summary("deployments", deployment)["retirementDate"] = "2028-03-12"
-			r.record("deployments", deployment)["retirementDate"] = "2028-03-12"
+			r.summary("deployments", deployment)["retirementDate"] = "2128-03-12"
+			r.record("deployments", deployment)["retirementDate"] = "2128-03-12"
 		}, "retires after its part"},
 		"a record that never retires in a dated part": {func(r testRelease) {
 			r.summary("routes", "azure-responses")["retirementDate"] = nil
 		}, "retires after its part"},
 		"a deployment whose date differs from its summary": {func(r testRelease) {
-			r.record("deployments", deployment)["retirementDate"] = "2028-03-10"
+			r.record("deployments", deployment)["retirementDate"] = "2128-03-10"
 		}, "another date than its summary"},
 		"a change that the root does not list": {func(r testRelease) {
 			r.parts[0]["schedule"] = []any{map[string]any{"start": "2027-01-01T00:00:00Z", "graph": map[string]any{}}}
@@ -348,7 +387,7 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		}, "unknown"},
 	} {
 		t.Run(problem, func(t *testing.T) {
-			release := embeddedRelease(t)
+			release := testCatalogRelease(t)
 			test.change(release)
 			root, parts := release.files(t)
 			if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err == nil || !strings.Contains(err.Error(), test.message) {
@@ -357,9 +396,9 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 		})
 	}
 
-	root, parts := embeddedRelease(t).files(t)
+	root, parts := testCatalogRelease(t).files(t)
 	if _, err := snapshotFromFiles(root, parts, Identity{}, time.Time{}); err != nil {
-		t.Fatalf("the rewritten fallback was refused: %v", err)
+		t.Fatalf("the rewritten test catalog was refused: %v", err)
 	}
 	for problem, change := range map[string]func(map[string][]byte){
 		"a changed part": func(parts map[string][]byte) {
@@ -387,7 +426,7 @@ func TestReleaseRefusesFilesThatDifferFromTheRoot(t *testing.T) {
 func TestActiveCatalogServesTheRootWithItsRelease(t *testing.T) {
 	prior := active.Load()
 	t.Cleanup(func() { active.Store(prior) })
-	root, parts := embeddedFiles(t)
+	root, parts := testFiles(t)
 	sum := sha256.Sum256(root)
 	identity := Identity{Sequence: 7, Digest: "sha256:" + hex.EncodeToString(sum[:])}
 	if err := InstallApproved(root, parts, identity, time.Now()); err != nil {

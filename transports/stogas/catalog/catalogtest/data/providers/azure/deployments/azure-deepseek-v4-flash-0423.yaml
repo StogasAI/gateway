@@ -1,0 +1,23 @@
+deployments:
+  modelId: deepseek-v4-flash-0423
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: DeepSeek-V4-Flash
+    modelFormat: DeepSeek
+    modelVersion: '2026-04-23'
+    hosting: azure
+    deploymentType: global_standard
+  # Reviewed 2026-10-13: https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure#deepseek-models-sold-by-azure
+  retirementDate: 2128-02-20
+  overrides:
+    contextWindowTokens: 1000000
+    # Probed 2026-10-14: several tool calls per turn, even with parallel_tool_calls false, and json_schema output holds.
+    capabilities:
+      explicitPromptCaching: false
+  pricing:
+    input_tokens:
+      per_mill_tokens: '0.19'
+    cached_input_tokens:
+      per_mill_tokens: '0.028'
+    output_tokens:
+      per_mill_tokens: '0.51'

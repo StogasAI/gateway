@@ -1,0 +1,17 @@
+deployments:
+  modelId: claude-sonnet-5
+  routeIds: [anthropic-messages]
+  upstream:
+    model: claude-sonnet-5
+    inferenceGeo: global
+  pricing:
+    input_tokens:
+      per_mill_tokens: '2'
+    cached_input_tokens:
+      per_mill_tokens: '0.2'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '2.5'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '4'
+    output_tokens:
+      per_mill_tokens: '10'

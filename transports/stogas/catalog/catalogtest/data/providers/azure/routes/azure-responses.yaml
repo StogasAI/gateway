@@ -1,0 +1,10 @@
+routes:
+  providerId: azure
+  interfaces: [responses]
+  inputModalities: [text, image]
+  # Native document formats reviewed 2026-10-05: https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses#file-input
+  documentFormats:
+    extensions: [.pdf]
+    mediaTypes: [application/pdf]
+  dataHandling:
+    endToEndEncrypted: false

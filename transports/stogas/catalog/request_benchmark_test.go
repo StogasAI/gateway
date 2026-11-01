@@ -21,10 +21,7 @@ import (
 // structure and exceed the uncapped estimate. Holds clip to the input ceiling.
 func BenchmarkRequestThreeMillionContext(b *testing.B) {
 	const contextTokens = 3_000_000
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	deployment := *snap.graph.Deployments["openai-gpt-5.6-sol"]
 	deployment.ContextWindowTokens = contextTokens
 	deployment.MaxInputTokens = contextTokens
@@ -199,10 +196,7 @@ func BenchmarkRequestThreeMillionContext(b *testing.B) {
 }
 
 func BenchmarkRequestMessageShape(b *testing.B) {
-	snap, err := loadSnapshot()
-	if err != nil {
-		b.Fatal(err)
-	}
+	snap := testSnapshot(b)
 	previous := active.Swap(snap)
 	b.Cleanup(func() { active.Store(previous) })
 	literals := make([]redaction.Literal, 1000)

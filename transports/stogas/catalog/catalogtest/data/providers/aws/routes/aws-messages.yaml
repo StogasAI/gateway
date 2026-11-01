@@ -1,0 +1,18 @@
+# Claude on AWS takes the Messages body two ways; each deployment's hosting picks one.
+# Hosting aws is Claude in Amazon Bedrock: https://bedrock-runtime.{region}.amazonaws.com/anthropic/v1/messages,
+# called with a global or US inference profile ID. Bedrock-mantle serves Fable 5.1 only in GovCloud.
+# It has no URL sources, Files API, server-side tools, task budgets or fallbacks.
+# Hosting anthropic is Claude Platform on AWS: Anthropic's own Messages API at
+# https://aws-external-anthropic.{region}.api.aws/v1/messages, billed through AWS Marketplace.
+# Reviewed 2026-10-31: https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock,
+# https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-1.html
+# and https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws
+routes:
+  providerId: aws
+  interfaces: [chat_completions, responses]
+  inputModalities: [text, image]
+  documentFormats:
+    extensions: [.csv, .md, .pdf, .txt]
+    mediaTypes: [application/pdf, text/plain]
+  dataHandling:
+    endToEndEncrypted: false

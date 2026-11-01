@@ -1,0 +1,23 @@
+deployments:
+  modelId: deepseek-v4-pro
+  routeIds: [azure-chat-completions]
+  upstream:
+    model: FW-DeepSeek-V4-Pro
+    modelFormat: Fireworks
+    modelVersion: '1'
+    hosting: fireworks
+    deploymentType: data_zone_standard_us
+  overrides:
+    capabilities:
+      parallelFunctionCalling: false
+      explicitPromptCaching: false
+      structuredOutputs: false
+    dataHandling:
+      processingLocation: unknown
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1.925'
+    cached_input_tokens:
+      per_mill_tokens: '0.165'
+    output_tokens:
+      per_mill_tokens: '3.828'

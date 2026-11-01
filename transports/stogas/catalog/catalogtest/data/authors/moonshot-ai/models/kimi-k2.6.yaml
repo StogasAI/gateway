@@ -1,0 +1,10 @@
+models:
+  authorId: moonshot-ai
+  name: Kimi K2.6
+  groupIds: [kimi-k2]
+  contextWindowTokens: 262144
+  maxOutputTokens: 262144
+  inputModalities: [text, image, video]
+  outputModalities: [text]
+  reasoning: optional
+  releaseDate: 2026-04-21

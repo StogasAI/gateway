@@ -1,0 +1,23 @@
+deployments:
+  modelId: claude-mythos-5-1
+  routeIds: [anthropic-messages]
+  upstream:
+    model: claude-mythos-5-1
+    inferenceGeo: us
+  approvalRequired: true
+  overrides:
+    dataHandling:
+      processingLocation: US
+      storageLocation: unknown
+      retentionDays: 30
+  pricing:
+    input_tokens:
+      per_mill_tokens: '11'
+    cached_input_tokens:
+      per_mill_tokens: '0.275'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '13.75'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '22'
+    output_tokens:
+      per_mill_tokens: '55'

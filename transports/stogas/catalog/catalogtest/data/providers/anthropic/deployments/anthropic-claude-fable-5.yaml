@@ -1,0 +1,21 @@
+deployments:
+  modelId: claude-fable-5
+  routeIds: [anthropic-messages]
+  upstream:
+    model: claude-fable-5
+    inferenceGeo: global
+  overrides:
+    dataHandling:
+      storageLocation: unknown
+      retentionDays: 30
+  pricing:
+    input_tokens:
+      per_mill_tokens: '10'
+    cached_input_tokens:
+      per_mill_tokens: '1'
+    cache_write_5m_input_tokens:
+      per_mill_tokens: '12.5'
+    cache_write_1h_input_tokens:
+      per_mill_tokens: '20'
+    output_tokens:
+      per_mill_tokens: '50'

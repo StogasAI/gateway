@@ -1,0 +1,793 @@
+# The places that data handling names. Each place but world lists the places that directly
+# contain it, and lies in every place that contains those. A country lists its smallest
+# regions; a subdivision such as US-CA lists its country. A place lies in every place that holds
+# all the places directly inside it, as southeast-asia lies in apac.
+#
+# The continents and the regions within them follow the territory containment of Unicode CLDR 48,
+# from UN M.49, except that europe holds every eu member, Cyprus included. No standard defines
+# apac: it is CLDR Asia and Oceania without the Arab states, Israel, Iran, Cyprus and HM, plus IO.
+# CLDR data is under the Unicode License v3 (https://www.unicode.org/license.txt):
+# https://github.com/unicode-org/cldr-json/blob/48.0.0/cldr-json/cldr-core/supplemental/territoryContainment.json
+locations:
+  world:
+    name: World
+  africa:
+    name: Africa
+    parentIds: [world]
+  asia:
+    name: Asia
+    parentIds: [world]
+  europe:
+    name: Europe
+    parentIds: [world]
+  north-america:
+    name: North America
+    parentIds: [world]
+  oceania:
+    name: Oceania
+    parentIds: [world]
+  south-america:
+    name: South America
+    parentIds: [world]
+  apac:
+    name: Asia-Pacific
+    parentIds: [world]
+  caribbean:
+    name: Caribbean
+    parentIds: [north-america]
+  central-america:
+    name: Central America
+    parentIds: [north-america]
+  eu:
+    name: European Union
+    parentIds: [europe]
+  southeast-asia:
+    name: Southeast Asia
+    parentIds: [apac, asia]
+  AD:
+    name: Andorra
+    parentIds: [europe]
+  AE:
+    name: United Arab Emirates
+    parentIds: [asia]
+  AF:
+    name: Afghanistan
+    parentIds: [apac, asia]
+  AG:
+    name: 'Antigua & Barbuda'
+    parentIds: [caribbean]
+  AI:
+    name: Anguilla
+    parentIds: [caribbean]
+  AL:
+    name: Albania
+    parentIds: [europe]
+  AM:
+    name: Armenia
+    parentIds: [apac, asia]
+  AO:
+    name: Angola
+    parentIds: [africa]
+  AQ:
+    name: Antarctica
+    parentIds: [world]
+  AR:
+    name: Argentina
+    parentIds: [south-america]
+  AS:
+    name: American Samoa
+    parentIds: [apac, oceania]
+  AT:
+    name: Austria
+    parentIds: [eu]
+  AU:
+    name: Australia
+    parentIds: [apac, oceania]
+  AW:
+    name: Aruba
+    parentIds: [caribbean]
+  AX:
+    name: Åland Islands
+    parentIds: [europe]
+  AZ:
+    name: Azerbaijan
+    parentIds: [apac, asia]
+  BA:
+    name: 'Bosnia & Herzegovina'
+    parentIds: [europe]
+  BB:
+    name: Barbados
+    parentIds: [caribbean]
+  BD:
+    name: Bangladesh
+    parentIds: [apac, asia]
+  BE:
+    name: Belgium
+    parentIds: [eu]
+  BF:
+    name: Burkina Faso
+    parentIds: [africa]
+  BG:
+    name: Bulgaria
+    parentIds: [eu]
+  BH:
+    name: Bahrain
+    parentIds: [asia]
+  BI:
+    name: Burundi
+    parentIds: [africa]
+  BJ:
+    name: Benin
+    parentIds: [africa]
+  BL:
+    name: St. Barthélemy
+    parentIds: [caribbean]
+  BM:
+    name: Bermuda
+    parentIds: [north-america]
+  BN:
+    name: Brunei
+    parentIds: [southeast-asia]
+  BO:
+    name: Bolivia
+    parentIds: [south-america]
+  BQ:
+    name: Caribbean Netherlands
+    parentIds: [caribbean]
+  BR:
+    name: Brazil
+    parentIds: [south-america]
+  BS:
+    name: Bahamas
+    parentIds: [caribbean]
+  BT:
+    name: Bhutan
+    parentIds: [apac, asia]
+  BV:
+    name: Bouvet Island
+    parentIds: [south-america]
+  BW:
+    name: Botswana
+    parentIds: [africa]
+  BY:
+    name: Belarus
+    parentIds: [europe]
+  BZ:
+    name: Belize
+    parentIds: [central-america]
+  CA:
+    name: Canada
+    parentIds: [north-america]
+  CC:
+    name: Cocos (Keeling) Islands
+    parentIds: [apac, oceania]
+  CD:
+    name: Congo - Kinshasa
+    parentIds: [africa]
+  CF:
+    name: Central African Republic
+    parentIds: [africa]
+  CG:
+    name: Congo - Brazzaville
+    parentIds: [africa]
+  CH:
+    name: Switzerland
+    parentIds: [europe]
+  CI:
+    name: Côte d’Ivoire
+    parentIds: [africa]
+  CK:
+    name: Cook Islands
+    parentIds: [apac, oceania]
+  CL:
+    name: Chile
+    parentIds: [south-america]
+  CM:
+    name: Cameroon
+    parentIds: [africa]
+  CN:
+    name: China
+    parentIds: [apac, asia]
+  CO:
+    name: Colombia
+    parentIds: [south-america]
+  CR:
+    name: Costa Rica
+    parentIds: [central-america]
+  CU:
+    name: Cuba
+    parentIds: [caribbean]
+  CV:
+    name: Cape Verde
+    parentIds: [africa]
+  CW:
+    name: Curaçao
+    parentIds: [caribbean]
+  CX:
+    name: Christmas Island
+    parentIds: [apac, oceania]
+  CY:
+    name: Cyprus
+    parentIds: [asia, eu]
+  CZ:
+    name: Czechia
+    parentIds: [eu]
+  DE:
+    name: Germany
+    parentIds: [eu]
+  DJ:
+    name: Djibouti
+    parentIds: [africa]
+  DK:
+    name: Denmark
+    parentIds: [eu]
+  DM:
+    name: Dominica
+    parentIds: [caribbean]
+  DO:
+    name: Dominican Republic
+    parentIds: [caribbean]
+  DZ:
+    name: Algeria
+    parentIds: [africa]
+  EC:
+    name: Ecuador
+    parentIds: [south-america]
+  EE:
+    name: Estonia
+    parentIds: [eu]
+  EG:
+    name: Egypt
+    parentIds: [africa]
+  EH:
+    name: Western Sahara
+    parentIds: [africa]
+  ER:
+    name: Eritrea
+    parentIds: [africa]
+  ES:
+    name: Spain
+    parentIds: [eu]
+  ET:
+    name: Ethiopia
+    parentIds: [africa]
+  FI:
+    name: Finland
+    parentIds: [eu]
+  FJ:
+    name: Fiji
+    parentIds: [apac, oceania]
+  FK:
+    name: Falkland Islands
+    parentIds: [south-america]
+  FM:
+    name: Micronesia
+    parentIds: [apac, oceania]
+  FO:
+    name: Faroe Islands
+    parentIds: [europe]
+  FR:
+    name: France
+    parentIds: [eu]
+  GA:
+    name: Gabon
+    parentIds: [africa]
+  GB:
+    name: United Kingdom
+    parentIds: [europe]
+  GD:
+    name: Grenada
+    parentIds: [caribbean]
+  GE:
+    name: Georgia
+    parentIds: [apac, asia]
+  GF:
+    name: French Guiana
+    parentIds: [south-america]
+  GG:
+    name: Guernsey
+    parentIds: [europe]
+  GH:
+    name: Ghana
+    parentIds: [africa]
+  GI:
+    name: Gibraltar
+    parentIds: [europe]
+  GL:
+    name: Greenland
+    parentIds: [north-america]
+  GM:
+    name: Gambia
+    parentIds: [africa]
+  GN:
+    name: Guinea
+    parentIds: [africa]
+  GP:
+    name: Guadeloupe
+    parentIds: [caribbean]
+  GQ:
+    name: Equatorial Guinea
+    parentIds: [africa]
+  GR:
+    name: Greece
+    parentIds: [eu]
+  GS:
+    name: 'South Georgia & South Sandwich Islands'
+    parentIds: [south-america]
+  GT:
+    name: Guatemala
+    parentIds: [central-america]
+  GU:
+    name: Guam
+    parentIds: [apac, oceania]
+  GW:
+    name: Guinea-Bissau
+    parentIds: [africa]
+  GY:
+    name: Guyana
+    parentIds: [south-america]
+  HK:
+    name: Hong Kong SAR China
+    parentIds: [apac, asia]
+  HM:
+    name: 'Heard & McDonald Islands'
+    parentIds: [oceania]
+  HN:
+    name: Honduras
+    parentIds: [central-america]
+  HR:
+    name: Croatia
+    parentIds: [eu]
+  HT:
+    name: Haiti
+    parentIds: [caribbean]
+  HU:
+    name: Hungary
+    parentIds: [eu]
+  ID:
+    name: Indonesia
+    parentIds: [southeast-asia]
+  IE:
+    name: Ireland
+    parentIds: [eu]
+  IL:
+    name: Israel
+    parentIds: [asia]
+  IM:
+    name: Isle of Man
+    parentIds: [europe]
+  IN:
+    name: India
+    parentIds: [apac, asia]
+  IO:
+    name: British Indian Ocean Territory
+    parentIds: [africa, apac]
+  IQ:
+    name: Iraq
+    parentIds: [asia]
+  IR:
+    name: Iran
+    parentIds: [asia]
+  IS:
+    name: Iceland
+    parentIds: [europe]
+  IT:
+    name: Italy
+    parentIds: [eu]
+  JE:
+    name: Jersey
+    parentIds: [europe]
+  JM:
+    name: Jamaica
+    parentIds: [caribbean]
+  JO:
+    name: Jordan
+    parentIds: [asia]
+  JP:
+    name: Japan
+    parentIds: [apac, asia]
+  KE:
+    name: Kenya
+    parentIds: [africa]
+  KG:
+    name: Kyrgyzstan
+    parentIds: [apac, asia]
+  KH:
+    name: Cambodia
+    parentIds: [southeast-asia]
+  KI:
+    name: Kiribati
+    parentIds: [apac, oceania]
+  KM:
+    name: Comoros
+    parentIds: [africa]
+  KN:
+    name: 'St. Kitts & Nevis'
+    parentIds: [caribbean]
+  KP:
+    name: North Korea
+    parentIds: [apac, asia]
+  KR:
+    name: South Korea
+    parentIds: [apac, asia]
+  KW:
+    name: Kuwait
+    parentIds: [asia]
+  KY:
+    name: Cayman Islands
+    parentIds: [caribbean]
+  KZ:
+    name: Kazakhstan
+    parentIds: [apac, asia]
+  LA:
+    name: Laos
+    parentIds: [southeast-asia]
+  LB:
+    name: Lebanon
+    parentIds: [asia]
+  LC:
+    name: St. Lucia
+    parentIds: [caribbean]
+  LI:
+    name: Liechtenstein
+    parentIds: [europe]
+  LK:
+    name: Sri Lanka
+    parentIds: [apac, asia]
+  LR:
+    name: Liberia
+    parentIds: [africa]
+  LS:
+    name: Lesotho
+    parentIds: [africa]
+  LT:
+    name: Lithuania
+    parentIds: [eu]
+  LU:
+    name: Luxembourg
+    parentIds: [eu]
+  LV:
+    name: Latvia
+    parentIds: [eu]
+  LY:
+    name: Libya
+    parentIds: [africa]
+  MA:
+    name: Morocco
+    parentIds: [africa]
+  MC:
+    name: Monaco
+    parentIds: [europe]
+  MD:
+    name: Moldova
+    parentIds: [europe]
+  ME:
+    name: Montenegro
+    parentIds: [europe]
+  MF:
+    name: St. Martin
+    parentIds: [caribbean]
+  MG:
+    name: Madagascar
+    parentIds: [africa]
+  MH:
+    name: Marshall Islands
+    parentIds: [apac, oceania]
+  MK:
+    name: North Macedonia
+    parentIds: [europe]
+  ML:
+    name: Mali
+    parentIds: [africa]
+  MM:
+    name: Myanmar (Burma)
+    parentIds: [southeast-asia]
+  MN:
+    name: Mongolia
+    parentIds: [apac, asia]
+  MO:
+    name: Macao SAR China
+    parentIds: [apac, asia]
+  MP:
+    name: Northern Mariana Islands
+    parentIds: [apac, oceania]
+  MQ:
+    name: Martinique
+    parentIds: [caribbean]
+  MR:
+    name: Mauritania
+    parentIds: [africa]
+  MS:
+    name: Montserrat
+    parentIds: [caribbean]
+  MT:
+    name: Malta
+    parentIds: [eu]
+  MU:
+    name: Mauritius
+    parentIds: [africa]
+  MV:
+    name: Maldives
+    parentIds: [apac, asia]
+  MW:
+    name: Malawi
+    parentIds: [africa]
+  MX:
+    name: Mexico
+    parentIds: [central-america]
+  MY:
+    name: Malaysia
+    parentIds: [southeast-asia]
+  MZ:
+    name: Mozambique
+    parentIds: [africa]
+  NA:
+    name: Namibia
+    parentIds: [africa]
+  NC:
+    name: New Caledonia
+    parentIds: [apac, oceania]
+  NE:
+    name: Niger
+    parentIds: [africa]
+  NF:
+    name: Norfolk Island
+    parentIds: [apac, oceania]
+  NG:
+    name: Nigeria
+    parentIds: [africa]
+  NI:
+    name: Nicaragua
+    parentIds: [central-america]
+  NL:
+    name: Netherlands
+    parentIds: [eu]
+  'NO':
+    name: Norway
+    parentIds: [europe]
+  NP:
+    name: Nepal
+    parentIds: [apac, asia]
+  NR:
+    name: Nauru
+    parentIds: [apac, oceania]
+  NU:
+    name: Niue
+    parentIds: [apac, oceania]
+  NZ:
+    name: New Zealand
+    parentIds: [apac, oceania]
+  OM:
+    name: Oman
+    parentIds: [asia]
+  PA:
+    name: Panama
+    parentIds: [central-america]
+  PE:
+    name: Peru
+    parentIds: [south-america]
+  PF:
+    name: French Polynesia
+    parentIds: [apac, oceania]
+  PG:
+    name: Papua New Guinea
+    parentIds: [apac, oceania]
+  PH:
+    name: Philippines
+    parentIds: [southeast-asia]
+  PK:
+    name: Pakistan
+    parentIds: [apac, asia]
+  PL:
+    name: Poland
+    parentIds: [eu]
+  PM:
+    name: 'St. Pierre & Miquelon'
+    parentIds: [north-america]
+  PN:
+    name: Pitcairn Islands
+    parentIds: [apac, oceania]
+  PR:
+    name: Puerto Rico
+    parentIds: [caribbean]
+  PS:
+    name: Palestinian Territories
+    parentIds: [asia]
+  PT:
+    name: Portugal
+    parentIds: [eu]
+  PW:
+    name: Palau
+    parentIds: [apac, oceania]
+  PY:
+    name: Paraguay
+    parentIds: [south-america]
+  QA:
+    name: Qatar
+    parentIds: [asia]
+  RE:
+    name: Réunion
+    parentIds: [africa]
+  RO:
+    name: Romania
+    parentIds: [eu]
+  RS:
+    name: Serbia
+    parentIds: [europe]
+  RU:
+    name: Russia
+    parentIds: [europe]
+  RW:
+    name: Rwanda
+    parentIds: [africa]
+  SA:
+    name: Saudi Arabia
+    parentIds: [asia]
+  SB:
+    name: Solomon Islands
+    parentIds: [apac, oceania]
+  SC:
+    name: Seychelles
+    parentIds: [africa]
+  SD:
+    name: Sudan
+    parentIds: [africa]
+  SE:
+    name: Sweden
+    parentIds: [eu]
+  SG:
+    name: Singapore
+    parentIds: [southeast-asia]
+  SH:
+    name: St. Helena
+    parentIds: [africa]
+  SI:
+    name: Slovenia
+    parentIds: [eu]
+  SJ:
+    name: 'Svalbard & Jan Mayen'
+    parentIds: [europe]
+  SK:
+    name: Slovakia
+    parentIds: [eu]
+  SL:
+    name: Sierra Leone
+    parentIds: [africa]
+  SM:
+    name: San Marino
+    parentIds: [europe]
+  SN:
+    name: Senegal
+    parentIds: [africa]
+  SO:
+    name: Somalia
+    parentIds: [africa]
+  SR:
+    name: Suriname
+    parentIds: [south-america]
+  SS:
+    name: South Sudan
+    parentIds: [africa]
+  ST:
+    name: 'São Tomé & Príncipe'
+    parentIds: [africa]
+  SV:
+    name: El Salvador
+    parentIds: [central-america]
+  SX:
+    name: Sint Maarten
+    parentIds: [caribbean]
+  SY:
+    name: Syria
+    parentIds: [asia]
+  SZ:
+    name: Eswatini
+    parentIds: [africa]
+  TC:
+    name: 'Turks & Caicos Islands'
+    parentIds: [caribbean]
+  TD:
+    name: Chad
+    parentIds: [africa]
+  TF:
+    name: French Southern Territories
+    parentIds: [africa]
+  TG:
+    name: Togo
+    parentIds: [africa]
+  TH:
+    name: Thailand
+    parentIds: [southeast-asia]
+  TJ:
+    name: Tajikistan
+    parentIds: [apac, asia]
+  TK:
+    name: Tokelau
+    parentIds: [apac, oceania]
+  TL:
+    name: Timor-Leste
+    parentIds: [southeast-asia]
+  TM:
+    name: Turkmenistan
+    parentIds: [apac, asia]
+  TN:
+    name: Tunisia
+    parentIds: [africa]
+  TO:
+    name: Tonga
+    parentIds: [apac, oceania]
+  TR:
+    name: Türkiye
+    parentIds: [apac, asia]
+  TT:
+    name: 'Trinidad & Tobago'
+    parentIds: [caribbean]
+  TV:
+    name: Tuvalu
+    parentIds: [apac, oceania]
+  TW:
+    name: Taiwan
+    parentIds: [apac, asia]
+  TZ:
+    name: Tanzania
+    parentIds: [africa]
+  UA:
+    name: Ukraine
+    parentIds: [europe]
+  UG:
+    name: Uganda
+    parentIds: [africa]
+  UM:
+    name: U.S. Outlying Islands
+    parentIds: [apac, oceania]
+  US:
+    name: United States
+    parentIds: [north-america]
+  UY:
+    name: Uruguay
+    parentIds: [south-america]
+  UZ:
+    name: Uzbekistan
+    parentIds: [apac, asia]
+  VA:
+    name: Vatican City
+    parentIds: [europe]
+  VC:
+    name: 'St. Vincent & Grenadines'
+    parentIds: [caribbean]
+  VE:
+    name: Venezuela
+    parentIds: [south-america]
+  VG:
+    name: British Virgin Islands
+    parentIds: [caribbean]
+  VI:
+    name: U.S. Virgin Islands
+    parentIds: [caribbean]
+  VN:
+    name: Vietnam
+    parentIds: [southeast-asia]
+  VU:
+    name: Vanuatu
+    parentIds: [apac, oceania]
+  WF:
+    name: 'Wallis & Futuna'
+    parentIds: [apac, oceania]
+  WS:
+    name: Samoa
+    parentIds: [apac, oceania]
+  YE:
+    name: Yemen
+    parentIds: [asia]
+  YT:
+    name: Mayotte
+    parentIds: [africa]
+  ZA:
+    name: South Africa
+    parentIds: [africa]
+  ZM:
+    name: Zambia
+    parentIds: [africa]
+  ZW:
+    name: Zimbabwe
+    parentIds: [africa]

@@ -39,28 +39,64 @@ func TestClientHeaderCatalogOmitsRemovedProviderSecrets(t *testing.T) {
 	}
 }
 
-func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
-	snap := loadTestCatalog(t)
+// A gateway serves the fallback until it approves a release, so the fallback loads with every
+// record that its root lists, but for models without a deployment.
+func TestFallbackLoadsEveryRecordThatItsRootLists(t *testing.T) {
+	root, _, err := Fallback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := loadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if snap.identity.Sequence != 0 || !strings.HasPrefix(snap.identity.Digest, "sha256:") {
 		t.Fatalf("unexpected fallback identity: %#v", snap.identity)
 	}
-	if len(snap.graph.Authors) != 10 ||
-		len(snap.graph.Models) != 39 ||
-		len(snap.graph.Providers) != 6 ||
-		len(snap.graph.Routes) != 9 ||
-		len(snap.graph.Deployments) != 214 {
-		t.Fatalf("unexpected catalog graph sizes: authors=%d models=%d providers=%d routes=%d deployments=%d",
-			len(snap.graph.Authors),
-			len(snap.graph.Models),
-			len(snap.graph.Providers),
-			len(snap.graph.Routes),
-			len(snap.graph.Deployments),
-		)
+	var listed struct {
+		Summaries map[string]map[string]json.RawMessage `json:"summaries"`
+	}
+	if err := json.Unmarshal(root, &listed); err != nil {
+		t.Fatal(err)
+	}
+	deployed := map[string]json.RawMessage{}
+	for _, deployment := range snap.graph.Deployments {
+		deployed[deployment.ModelID] = listed.Summaries["models"][deployment.ModelID]
+	}
+	for kind, same := range map[string]bool{
+		"authors":     sameIDs(snap.graph.Authors, listed.Summaries["authors"]),
+		"models":      sameIDs(snap.graph.Models, deployed),
+		"providers":   sameIDs(snap.graph.Providers, listed.Summaries["providers"]),
+		"routes":      sameIDs(snap.graph.Routes, listed.Summaries["routes"]),
+		"deployments": sameIDs(snap.graph.Deployments, listed.Summaries["deployments"]),
+	} {
+		if !same {
+			t.Errorf("the fallback's graph holds other %s than its root lists", kind)
+		}
 	}
 	if _, exists := snap.graph.Deployments["openai-gpt-4o-search-preview-2025-03-11"]; exists {
 		t.Fatal("retired search preview deployment must not remain in the current catalog")
 	}
+}
+
+func sameIDs[Record any](records map[string]Record, listed map[string]json.RawMessage) bool {
+	if len(records) != len(listed) {
+		return false
+	}
+	for id := range listed {
+		if _, ok := records[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func TestAzureEUDataZoneKeepsDataInEurope(t *testing.T) {
+	snap := loadTestCatalog(t)
 	euDeployment := snap.graph.Deployments["azure-gpt-5.6-sol-eu"]
+	if len(euDeployment.Routes) == 0 {
+		t.Fatal("the test catalog has no Azure EU Data Zone deployment")
+	}
 	for routeID, route := range euDeployment.Routes {
 		if handling := route.DataHandling; handling.ProcessingLocation != "europe" || handling.StorageLocation != "europe" {
 			t.Fatalf("Azure EU Data Zone route %s has invalid boundaries: %#v", routeID, handling)
@@ -69,7 +105,7 @@ func TestEmbeddedCatalogLoadsCompleteGraph(t *testing.T) {
 }
 
 func TestGraphLeavesOutModelsWithoutDeployments(t *testing.T) {
-	root, _ := embeddedFiles(t)
+	root, _ := testFiles(t)
 	var listed struct {
 		Summaries struct {
 			Models map[string]json.RawMessage `json:"models"`
@@ -89,7 +125,7 @@ func TestGraphLeavesOutModelsWithoutDeployments(t *testing.T) {
 		}
 	}
 	if len(snap.graph.Models) == len(listed.Summaries.Models) {
-		t.Fatal("the fallback lists no model without a deployment, so this test checks nothing")
+		t.Fatal("the test catalog lists no model without a deployment, so this test checks nothing")
 	}
 }
 
@@ -102,7 +138,7 @@ func TestSnapshotValidationKeepsProviderTargetsStructural(t *testing.T) {
 	} {
 		t.Run(deploymentID, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)[deploymentID].(map[string]any)
@@ -130,7 +166,7 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["chutes-qwen3.6-27b"].(map[string]any)
@@ -150,7 +186,7 @@ func TestSnapshotValidationRejectsContradictoryZeroDataRetention(t *testing.T) {
 
 func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	deployments := whole["graph"].(map[string]any)["deployments"].(map[string]any)
@@ -158,7 +194,7 @@ func TestSnapshotValidationAllowsUncachedPricingOnlyWhenCachingIsUnavailable(t *
 	if _, present := uncached["pricing"].(map[string]any)[billing.MeterCachedInputTokens]; present {
 		t.Fatal("test fixture unexpectedly has a cached-input price")
 	}
-	if _, err := snapshotFromCatalogBytes(embeddedCatalogJSON); err != nil {
+	if _, err := snapshotFromCatalogBytes(testCatalogJSON); err != nil {
 		t.Fatalf("uncached deployment was rejected: %v", err)
 	}
 
@@ -956,7 +992,7 @@ func TestResolvedRequestPinsCatalogIdentityAndFiveNodeChain(t *testing.T) {
 // The public catalog states each route's facts with its provider's facts applied, and each
 // deployment's facts per route, so readers never combine nodes themselves.
 func TestCatalogStatesDataHandlingOnRoutes(t *testing.T) {
-	release := embeddedRelease(t)
+	release := testCatalogRelease(t)
 	for id, provider := range release.root["summaries"].(map[string]any)["providers"].(map[string]any) {
 		if _, ok := provider.(map[string]any)["dataHandling"]; ok {
 			t.Fatalf("provider %s repeats facts that its routes state", id)
@@ -1022,7 +1058,7 @@ func TestChutesTEEStatusIsMaterializedPerDeployment(t *testing.T) {
 
 func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1058,7 +1094,7 @@ func TestDeploymentDataHandlingIsMaterializedForTheSelectedRoute(t *testing.T) {
 
 func TestSnapshotValidationRejectsBrokenReferences(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1081,7 +1117,7 @@ func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
 	for _, limit := range []any{nil, 0, -1, 1050001} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.6-sol"].(map[string]any)
@@ -1104,7 +1140,7 @@ func TestSnapshotValidationRequiresBoundedInputCeiling(t *testing.T) {
 func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
 	for _, hash := range []string{"", "invalid", "sha256:" + strings.Repeat("a", 63)} {
 		var whole compiledCatalog
-		if err := decodeStrict(embeddedCatalogJSON, &whole, sharedJSON[Pricing]()); err != nil {
+		if err := decodeStrict(testCatalogJSON, &whole, sharedJSON[Pricing]()); err != nil {
 			t.Fatal(err)
 		}
 		route := whole.Graph.Deployments["openai-gpt-5.5-2026-04-23"].Routes["openai-responses"]
@@ -1118,7 +1154,7 @@ func TestSnapshotValidationRequiresEachResolvedChain(t *testing.T) {
 
 func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1141,7 +1177,7 @@ func TestSnapshotValidationBoundsExplicitAliases(t *testing.T) {
 
 func TestSnapshotValidationAllowsDistinctSignedAzureModelSelectors(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1162,7 +1198,7 @@ func TestSnapshotValidationPreservesExactUSDRates(t *testing.T) {
 	for _, rate := range []string{"0", "0.001", "0.042", "0.000000000000000000000000000000000001", "1000000000000", "-1", "01", "0.010", "1e15", "1000000000000.000000000000000000000000000000000001"} {
 		t.Run(rate, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
@@ -1214,7 +1250,7 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			deployment := whole["graph"].(map[string]any)["deployments"].(map[string]any)["openai-gpt-5.5-2026-04-23"].(map[string]any)
@@ -1232,7 +1268,7 @@ func TestSnapshotValidationRejectsUnbillablePricingAndReasoning(t *testing.T) {
 
 func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1253,7 +1289,7 @@ func TestSnapshotValidationRejectsVerifiedTEEWithoutTEEProcessing(t *testing.T) 
 
 func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1275,7 +1311,7 @@ func TestSnapshotValidationRejectsReasoningThatWeakensTheModel(t *testing.T) {
 
 func TestSnapshotValidationRejectsRoutesWithoutCompiledTransportContracts(t *testing.T) {
 	var whole map[string]any
-	if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+	if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 		t.Fatal(err)
 	}
 	graph := whole["graph"].(map[string]any)
@@ -1309,10 +1345,7 @@ func TestCatalogErrorsRemainPubliclyStable(t *testing.T) {
 
 func loadTestCatalog(t *testing.T) *snapshot {
 	t.Helper()
-	snap, err := loadSnapshot()
-	if err != nil {
-		t.Fatalf("parse embedded catalog: %v", err)
-	}
+	snap := testSnapshot(t)
 	active.Store(snap)
 	return snap
 }
@@ -1350,7 +1383,7 @@ func TestSnapshotRejectsValuesThatPoliciesCannotName(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			tc.apply(whole["graph"].(map[string]any))
@@ -1379,7 +1412,7 @@ func TestSnapshotRejectsIncompleteOrAmbiguousFileFormats(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var whole map[string]any
-			if err := json.Unmarshal(embeddedCatalogJSON, &whole); err != nil {
+			if err := json.Unmarshal(testCatalogJSON, &whole); err != nil {
 				t.Fatal(err)
 			}
 			tc.apply(whole["graph"].(map[string]any)["routes"].(map[string]any)["openai-responses"].(map[string]any))

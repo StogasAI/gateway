@@ -1,0 +1,12 @@
+models:
+  authorId: mistral-ai
+  name: Mistral NeMo Instruct 2407
+  groupIds: [mistral-nemo]
+  contextWindowTokens: 131072
+  maxOutputTokens: 131072
+  inputModalities: [text]
+  outputModalities: [text]
+  reasoning: unsupported
+  snapshot: 2024-07-01
+  releaseDate: 2024-07-18
+  knowledgeCutoff: 2024-04-01

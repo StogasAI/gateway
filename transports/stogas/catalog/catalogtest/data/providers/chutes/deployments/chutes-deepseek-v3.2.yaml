@@ -1,0 +1,18 @@
+deployments:
+  modelId: deepseek-v3.2
+  routeIds: [chutes-chat-completions]
+  upstream:
+    model: deepseek-ai/DeepSeek-V3.2-TEE
+    chuteId: 398651e1-5f85-5e50-a513-7c5324e8e839
+    gpuCount: 8
+  weightPrecision: fp8
+  overrides:
+    contextWindowTokens: 131072
+    maxOutputTokens: 65536
+  pricing:
+    input_tokens:
+      per_mill_tokens: '1'
+    cached_input_tokens:
+      per_mill_tokens: '0.1'
+    output_tokens:
+      per_mill_tokens: '1'
