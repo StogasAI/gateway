@@ -28,6 +28,7 @@ type simulationPair struct {
 	Deployment string                `json:"deployment"`
 	Model      string                `json:"model"`
 	Credential int                   `json:"credential"`
+	Retries    int                   `json:"retries"`
 }
 
 type simulationRemoval struct {
@@ -226,7 +227,7 @@ func (s *Server) simulatePolicy(ctx *requestContext) {
 		return
 	}
 	for _, pair := range simulation.Pairs {
-		result.Pairs = append(result.Pairs, simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Model: pair.Deployment.ModelID, Credential: pair.Credential})
+		result.Pairs = append(result.Pairs, simulationPair{Provider: pair.Provider, Deployment: pair.Deployment.ID, Model: pair.Deployment.ModelID, Credential: pair.Credential, Retries: pair.Retries})
 	}
 	first := chains[simulationCandidate{simulation.Pairs[0].Provider, simulation.Pairs[0].Credential}]
 	result.Tried, result.Fallbacks = simulation.Tried, simulation.Fallbacks
