@@ -256,17 +256,31 @@ func (s *KeyConfigSnapshot) RequiredRoots(provider string, index int, config *po
 	return ids
 }
 
-func (s *KeyConfigSnapshot) credentialSelection(provider string, index int, keys customerkey.Keys) (CredentialSelection, error) {
+// assignedSelection returns an assigned credential if every root the request
+// sent is right. Its policy needs no root, so planning names a missing one only
+// for the pairs the request may try (RequiredRoots).
+func (s *KeyConfigSnapshot) assignedSelection(provider string, index int, keys customerkey.Keys) (CredentialSelection, error) {
 	selections := s.Credentials[provider]
 	if index < 0 || index >= len(selections) {
 		return CredentialSelection{}, ErrByokRequired
 	}
 	selection := selections[index]
-	if selection.Mode == "encrypted" {
-		if selection.ID == "" || selection.Credential == nil || selection.Credential.ID != selection.ID || s.Config == nil ||
-			keys.Validate(s.Config.EncryptionKeys) != nil || !customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID) || !keys.Matches(selection.Credential.EncryptionKeyID) {
-			return CredentialSelection{}, customerkey.ErrKey
-		}
+	if selection.Mode == "encrypted" && (selection.ID == "" || selection.Credential == nil || selection.Credential.ID != selection.ID || s.Config == nil ||
+		keys.Validate(s.Config.EncryptionKeys) != nil || !customerkey.Registered(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)) {
+		return CredentialSelection{}, customerkey.ErrKey
+	}
+	return selection, nil
+}
+
+// credentialSelection also needs the root that opens an encrypted secret and
+// names it when the request did not send it.
+func (s *KeyConfigSnapshot) credentialSelection(provider string, index int, keys customerkey.Keys) (CredentialSelection, error) {
+	selection, err := s.assignedSelection(provider, index, keys)
+	if err == nil && selection.Mode == "encrypted" {
+		err = keys.Missing(s.Config.EncryptionKeys, selection.Credential.EncryptionKeyID)
+	}
+	if err != nil {
+		return CredentialSelection{}, err
 	}
 	return selection, nil
 }
@@ -370,7 +384,7 @@ func (s *KeyConfigSnapshot) PolicyForCredential(provider string, index int, key 
 	if err := budget.AddConfig(s.Config); err != nil {
 		return nil, err
 	}
-	selection, err := s.credentialSelection(provider, index, key)
+	selection, err := s.assignedSelection(provider, index, key)
 	if err != nil {
 		return nil, err
 	}
