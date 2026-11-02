@@ -194,7 +194,19 @@ func providerEndUserIDs(ctx *schemas.BifrostContext, provider schemas.ModelProvi
 func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostChatRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
-		return anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
+		body, bifrostErr := anthropicprovider.BuildAnthropicChatRequestBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
+		if bifrostErr != nil {
+			return nil, bifrostErr
+		}
+		strict := map[string]bool{}
+		if request.Params != nil {
+			for _, tool := range request.Params.Tools {
+				if tool.Function != nil && tool.Function.Strict != nil && *tool.Function.Strict {
+					strict[tool.Function.Name] = true
+				}
+			}
+		}
+		return restoreStrictTools(body, hosting, strict)
 	case schemas.OpenAI:
 		return prepareOpenAIChatBody(ctx, request, streaming)
 	case schemas.Azure:
@@ -221,7 +233,20 @@ func prepareChatProviderBody(ctx *schemas.BifrostContext, request *schemas.Bifro
 func prepareResponsesProviderBody(ctx *schemas.BifrostContext, request *schemas.BifrostResponsesRequest, streaming bool, hosting string) ([]byte, *schemas.BifrostError) {
 	switch request.Provider {
 	case catalog.ProviderAWS, catalog.ProviderGoogleCloud:
-		return prepareAnthropicResponsesBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
+		body, bifrostErr := prepareAnthropicResponsesBody(ctx, request, cloudClaudeBuildConfig(request.Model, hosting, streaming))
+		if bifrostErr != nil {
+			return nil, bifrostErr
+		}
+		strict := map[string]bool{}
+		if request.Params != nil {
+			for _, tool := range request.Params.Tools {
+				if tool.Type == schemas.ResponsesToolTypeFunction && tool.Name != nil && tool.ResponsesToolFunction != nil &&
+					tool.ResponsesToolFunction.Strict != nil && *tool.ResponsesToolFunction.Strict {
+					strict[*tool.Name] = true
+				}
+			}
+		}
+		return restoreStrictTools(body, hosting, strict)
 	case schemas.OpenAI:
 		return prepareOpenAIResponsesBody(ctx, request, streaming)
 	case schemas.Azure:
@@ -305,6 +330,27 @@ func cloudClaudeBuildConfig(model, hosting string, streaming bool) anthropicprov
 		config.Provider, config.Model = schemas.Vertex, model
 	}
 	return config
+}
+
+// restoreStrictTools keeps each tool the client made strict where AWS or Google
+// runs Claude. Core's tables mark strict tool use unsupported on both shapes it
+// borrows, but Anthropic documents it as stable on Bedrock and on Google Cloud,
+// and Bedrock accepted it live without a beta header.
+func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]byte, *schemas.BifrostError) {
+	if hosting != hostingAWS && hosting != hostingGoogle {
+		return body, nil
+	}
+	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
+		toolType := tool.Get("type").String()
+		if !strict[tool.Get("name").String()] || (toolType != "" && toolType != "custom") || tool.Get("strict").Exists() {
+			continue
+		}
+		var err error
+		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".strict", true); err != nil {
+			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		}
+	}
+	return body, nil
 }
 
 func usesAnthropicWireFormat(ctx *schemas.BifrostContext, provider schemas.ModelProvider, model string) bool {
