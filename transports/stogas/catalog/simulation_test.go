@@ -204,6 +204,44 @@ func TestRoutingSimulationLocatesOrderAndFallbacks(t *testing.T) {
 	}
 }
 
+func TestRoutingSimulationGivesEachPairTheRetriesOfItsPolicy(t *testing.T) {
+	loadTestCatalog(t)
+	source, err := policy.CompileSource([]byte(`{"rules":{"openai":{"when":"provider.id == 'openai'","routing":{"retries":2}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := policy.ComposeSources([]policy.ScopedSource{{Scope: policy.OrganizationScope, Value: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[schemas.ModelProvider]int{"azure": 0, "openai": 2}
+	simulation := SimulateRouting(RequestInput{Policy: config, AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}}}, RouteChat, "gpt-5.6-sol", "", "")
+	seen := map[schemas.ModelProvider]bool{}
+	for _, pair := range simulation.Pairs {
+		seen[pair.Provider] = true
+		if pair.Retries != want[pair.Provider] {
+			t.Errorf("%s#%d has %d retries, want %d", pair.Deployment.ID, pair.Credential, pair.Retries, want[pair.Provider])
+		}
+	}
+	if simulation.Err != nil || !seen["azure"] || !seen["openai"] {
+		t.Fatalf("pairs %v, error %v", describePairs(simulation.Pairs), simulation.Err)
+	}
+	// A request that uses a provider's pair takes the retries that the
+	// simulation shows for it.
+	for provider, retries := range want {
+		input := RequestInput{Policy: config, AvailableCredentials: map[string][]int{string(provider): {0}}, Path: "/v1/chat/completions", Method: "POST"}
+		input.Body, _ = json.Marshal(map[string]any{"model": "gpt-5.6-sol", "messages": []map[string]string{{"role": "user", "content": "hello"}}})
+		input.CheckCandidate = func(schemas.ModelProvider, int, Deployment) error { return nil }
+		resolved, err := ResolveRequest(input)
+		if err != nil {
+			t.Fatalf("%s request: %v", provider, err)
+		}
+		if resolved.retries != retries {
+			t.Fatalf("%s request takes %d retries, want %d", provider, resolved.retries, retries)
+		}
+	}
+}
+
 func TestRoutingSimulationBoundsItsRemovals(t *testing.T) {
 	loadTestCatalog(t)
 	source, err := policy.CompileSource([]byte(`{"routing":{"filter":"provider.id == 'none'"}}`))

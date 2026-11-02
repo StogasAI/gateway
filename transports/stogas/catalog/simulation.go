@@ -61,6 +61,9 @@ type SimulatedPair struct {
 	Provider   schemas.ModelProvider
 	Deployment Deployment
 	Credential int
+	// Retries is routing.retries in the pair's policy, which a request
+	// takes when it uses the pair.
+	Retries int
 }
 
 // RoutingSimulation shows how routing treats a request that names only a
@@ -103,7 +106,11 @@ func SimulateRouting(input RequestInput, route Route, model, tier, mode string) 
 		return result
 	}
 	for _, choice := range plan.choices {
-		result.Pairs = append(result.Pairs, SimulatedPair{Provider: choice.candidate.Provider, Deployment: choice.candidate.Deployment, Credential: choice.index})
+		pair := SimulatedPair{Provider: choice.candidate.Provider, Deployment: choice.candidate.Deployment, Credential: choice.index}
+		if config := choice.candidate.policy; config != nil {
+			pair.Retries = config.Routing.Retries
+		}
+		result.Pairs = append(result.Pairs, pair)
 	}
 	result.Tried, result.Fallbacks = min(plan.slots, len(plan.choices)), plan.slots-1
 	if config := plan.choices[0].candidate.policy; config != nil {
