@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"strings"
 
@@ -125,7 +125,9 @@ func (d Destination) Identity() [32]byte {
 func (d Destination) ExportHeaders() map[string]string {
 	result := make(map[string]string, len(d.Headers))
 	for name, value := range d.Headers {
-		result[http.CanonicalHeaderKey(name)] = value
+		// http.CanonicalHeaderKey calls this, but importing net/http here would add 1.4 MB to
+		// the policy compiler's WebAssembly.
+		result[textproto.CanonicalMIMEHeaderKey(name)] = value
 	}
 	return result
 }
