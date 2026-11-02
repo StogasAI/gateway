@@ -2,7 +2,10 @@ package billing
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -36,6 +39,34 @@ type PolicyVersion struct {
 
 type PolicyVersions []PolicyVersion
 
+// LoggedPolicyVersion names the exact source a request applied. Holds keep the
+// plain version, because Postgres compares that list with the one it rebuilds.
+type LoggedPolicyVersion struct {
+	PolicyVersion
+	SHA256 string `json:"sha256"`
+}
+
+type LoggedPolicyVersions []LoggedPolicyVersion
+
+// SHA256 names the list in RFC 8785 form. A receipt signs this one hash rather
+// than up to 36 entries, and anyone can recompute it from the request log.
+func (v LoggedPolicyVersions) SHA256() string {
+	// Strings and integers always marshal, so canonicalizing cannot fail.
+	raw, _ := json.Marshal(v)
+	canonical := jsontext.Value(raw)
+	_ = canonical.Canonicalize()
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
+}
+
+func loggedVersions(versions PolicyVersions, sources []*sharedPolicySource) *LoggedPolicyVersions {
+	logged := make(LoggedPolicyVersions, len(versions))
+	for i, version := range versions {
+		logged[i] = LoggedPolicyVersion{PolicyVersion: version, SHA256: sources[i].value.Digest}
+	}
+	return &logged
+}
+
 func (v PolicyVersion) identity() string { return string(v.Scope) + ":" + v.ID }
 
 type policySourceRecord struct {
@@ -48,6 +79,7 @@ type policySourceRecord struct {
 // A selected credential adds its own source without changing other candidates.
 type PolicySnapshot struct {
 	Versions   *PolicyVersions
+	Logged     *LoggedPolicyVersions
 	Config     *policy.Config
 	Digest     string
 	cacheBytes int64
@@ -288,7 +320,7 @@ func (s *Service) composeKeyConfig(row keyConfigRow, pins policySourcePins, encr
 	return &KeyConfigSnapshot{
 		Claims: row.Claims,
 		PolicySnapshot: PolicySnapshot{
-			Versions: &versions, Config: compiled, Digest: digest,
+			Versions: &versions, Logged: loggedVersions(versions, sources), Config: compiled, Digest: digest,
 			cacheBytes: compiled.CompositionBytes(),
 			sourceRefs: sources,
 		},

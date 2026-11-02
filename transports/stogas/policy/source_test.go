@@ -2,6 +2,8 @@ package policy
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"reflect"
@@ -37,6 +39,47 @@ func FuzzSourceCanonicalIdentity(f *testing.F) {
 			t.Fatalf("canonical identity differs from independent JCS implementation: %v", err)
 		}
 	})
+}
+
+// Control names each saved revision by the same hash in config_sha256 and
+// checks these vectors too, so a log's hash finds the revision it applied.
+func TestSourceDigestsMatchSharedVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/canonical-sha256.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct {
+		Valid []struct {
+			Name      string `json:"name"`
+			JSON      string `json:"json"`
+			Canonical string `json:"canonical"`
+			SHA256    string `json:"sha256"`
+		} `json:"valid"`
+		Invalid []struct {
+			Name string `json:"name"`
+			JSON string `json:"json"`
+		} `json:"invalid"`
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, vector := range vectors.Valid {
+		document, err := ParseSourceDocument([]byte(vector.JSON))
+		if err != nil {
+			t.Fatalf("%s: %v", vector.Name, err)
+		}
+		independent, err := jsoncanonicalizer.Transform([]byte(vector.JSON))
+		sum := sha256.Sum256([]byte(vector.Canonical))
+		if err != nil || string(independent) != vector.Canonical || string(document.CanonicalJSON()) != vector.Canonical+"\n" ||
+			hex.EncodeToString(sum[:]) != vector.SHA256 || document.Digest() != vector.SHA256 {
+			t.Fatalf("%s: canonical form or digest differs from the shared vector", vector.Name)
+		}
+	}
+	for _, vector := range vectors.Invalid {
+		if _, err := ParseSourceDocument([]byte(vector.JSON)); err == nil {
+			t.Fatalf("%s: accepted", vector.Name)
+		}
+	}
 }
 
 func TestSavedSourceCompositionMatchesCompilerCorpus(t *testing.T) {

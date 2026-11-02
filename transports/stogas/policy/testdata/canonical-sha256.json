@@ -1,0 +1,50 @@
+{
+  "valid": [
+    {
+      "name": "An empty policy, which Postgres stores as null",
+      "json": "{}",
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "Postgres text order and spacing",
+      "json": "{\"routing\": {\"filter\": \"true\"}, \"input\": {\"asciiOnly\": true}}",
+      "canonical": "{\"input\":{\"asciiOnly\":true},\"routing\":{\"filter\":\"true\"}}",
+      "sha256": "d73e774ea486ee0defb5c8321e164704650b578be7fb8b94dfe0ef8eaf9babb9"
+    },
+    {
+      "name": "UTF-16 key order puts a surrogate pair before U+E000",
+      "json": "{\"limits\":{\"custom\":{\"\\ue000\":1,\"\\ud83d\\ude00\":2,\"z\":3,\"\u00e9\":4}}}",
+      "canonical": "{\"limits\":{\"custom\":{\"z\":3,\"\u00e9\":4,\"\ud83d\ude00\":2,\"\ue000\":1}}}",
+      "sha256": "502acde08d4576dd982eed791fd46e50548507620118892ddc3e9ccc6c950edb"
+    },
+    {
+      "name": "ECMAScript number forms",
+      "json": "{\"limits\":{\"custom\":{\"big\":1e21,\"decimal\":1000000000000000000000,\"tiny\":5e-324,\"negativeZero\":-0,\"one\":1.0,\"hundred\":1E+2,\"fraction\":0.1,\"precise\":9007199254740993}}}",
+      "canonical": "{\"limits\":{\"custom\":{\"big\":1e+21,\"decimal\":1e+21,\"fraction\":0.1,\"hundred\":100,\"negativeZero\":0,\"one\":1,\"precise\":9007199254740992,\"tiny\":5e-324}}}",
+      "sha256": "b1942a38b29d8ba68913db1374577ead36be187f6ae5496455429c402edb0792"
+    },
+    {
+      "name": "String escapes, separators and non-ASCII text",
+      "json": "{\"limits\":{\"custom\":{\"text\":\"\\u0001\\u001f\\b\\t\\n\\f\\r\\\"\\\\\\/<>&\\u007f\\u2028\\u2029\\u00e9\\ud83d\\ude00\"}}}",
+      "canonical": "{\"limits\":{\"custom\":{\"text\":\"\\u0001\\u001f\\b\\t\\n\\f\\r\\\"\\\\/<>&\u007f\u2028\u2029\u00e9\ud83d\ude00\"}}}",
+      "sha256": "5508841e91fbb9db204cd965f76bf98c025a84a62a084072a9ac0d8ebf106db6"
+    },
+    {
+      "name": "Encrypted plugins hash as stored, without decryption",
+      "json": "{\"routing\":{\"filter\":\"true\"},\"plugins\":{\"encrypted\":{\"version\":1,\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\"}}}",
+      "canonical": "{\"plugins\":{\"encrypted\":{\"blob\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"keyId\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"nonce\":\"AAAAAAAAAAAAAAAA\",\"salt\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"version\":1}},\"routing\":{\"filter\":\"true\"}}",
+      "sha256": "c55e8480489fe167f8adab710af16ec2650ee93ac2a1272aef96094f37e943a0"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "A lone surrogate escape",
+      "json": "{\"limits\":{\"custom\":{\"text\":\"\\ud800\"}}}"
+    },
+    {
+      "name": "A number outside finite IEEE 754",
+      "json": "{\"limits\":{\"custom\":{\"huge\":1e400}}}"
+    }
+  ]
+}

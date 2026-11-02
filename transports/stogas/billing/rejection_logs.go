@@ -28,7 +28,7 @@ const (
 
 // Rejections never retain credentials, bodies, provider text, or arbitrary labels.
 type RejectionInput struct {
-	PolicyVersions *PolicyVersions
+	PolicyVersions *LoggedPolicyVersions
 	Claims         *APIKeyClaims
 	RequestID      string
 	RequestType    string

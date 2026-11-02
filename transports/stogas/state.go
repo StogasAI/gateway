@@ -28,7 +28,7 @@ type Pair struct {
 	Adapter            Adapter
 	Hold               HoldEstimate
 	PreparedCredential *billing.PreparedCredential
-	PolicyVersions     *billing.PolicyVersions
+	PolicyVersions     *billing.LoggedPolicyVersions
 	Authorization      *billing.Authorization
 	RequestSettings    billing.RequestSettings
 	Model              string

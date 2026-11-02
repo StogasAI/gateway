@@ -18,7 +18,7 @@ const (
 )
 
 type EventInput struct {
-	PolicyVersions        *PolicyVersions
+	PolicyVersions        *LoggedPolicyVersions
 	UpstreamCostUSD       string
 	Authorization         *Authorization
 	Cancelled             bool
