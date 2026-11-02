@@ -116,7 +116,11 @@ type Authorization struct {
 	UpstreamByok            string
 	UpstreamByokSecret      string
 	AzureBinding            *AzureBinding
-	UpstreamTargetJSON      string
+	// AzureAccountID is the account whose deployments the gateway checks, and AzureVerifiedAt
+	// the last confirmation of the credential's targets, zero when there was none.
+	AzureAccountID     string
+	AzureVerifiedAt    time.Time
+	UpstreamTargetJSON string
 	// PostgreSQL spreads an organization's requests over time at its platform
 	// request rate: a request admitted beyond it calls no provider before
 	// StartAt. A move keeps it.
@@ -137,6 +141,8 @@ type UpstreamTarget struct {
 }
 
 type AzureBinding struct {
+	// ID names the target in a hold; cached configuration leaves it empty.
+	ID                 string `json:"id,omitempty"`
 	DeploymentName     string `json:"deploymentName"`
 	DeploymentType     string `json:"deploymentType"`
 	Endpoint           string `json:"endpoint"`
@@ -150,8 +156,10 @@ type AzureBinding struct {
 }
 
 type azureBoundBinding struct {
-	Binding AzureBinding `json:"binding"`
-	Schema  string       `json:"schema"`
+	AccountID  string       `json:"accountId"`
+	Binding    AzureBinding `json:"binding"`
+	Schema     string       `json:"schema"`
+	VerifiedAt *time.Time   `json:"verifiedAt"`
 }
 
 func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
@@ -165,6 +173,8 @@ func parseAzureBoundBinding(raw string) (azureBoundBinding, error) {
 		return azureBoundBinding{}, errors.New("invalid Azure binding: trailing JSON")
 	}
 	if value.Schema != "stogas.azure-binding.v1" ||
+		value.AccountID == "" ||
+		value.Binding.ID == "" ||
 		value.Binding.DeploymentName == "" ||
 		value.Binding.DeploymentType == "" ||
 		value.Binding.Endpoint == "" ||
@@ -204,6 +214,8 @@ type Service struct {
 	keepFailedLogQuery         string
 	sanctionedSourceQuery      string
 	sanctionedNetworksQuery    string
+	claimAzureCheckQuery       string
+	recordAzureCheckQuery      string
 	// Each hold records the boot that owns it, so Control can release the
 	// holds of a boot that stopped.
 	nodeID                  string
@@ -257,6 +269,8 @@ func NewService(
 		keepFailedLogQuery:      db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
 		sanctionedSourceQuery:   db.functionQuery("gateway_sanctioned_networks_source", "*", ""),
 		sanctionedNetworksQuery: db.functionQuery("gateway_sanctioned_networks", "first_address, last_address", ""),
+		claimAzureCheckQuery:    db.functionQuery("gateway_claim_azure_check", "claimed, verified_at, started_at, unavailable", "$1::uuid, make_interval(secs => $2::double precision)"),
+		recordAzureCheckQuery:   db.functionQuery("gateway_record_azure_check", "result, unavailable", "$1::uuid, $2::timestamptz, $3::jsonb"),
 		inferenceTokenPublicKey: publicKey,
 		nodeID:                  nodeID,
 		apiKeyPepper:            apiKeyPepper,
@@ -273,6 +287,8 @@ func NewService(
 		service.keepFailedLogQuery,
 		service.sanctionedSourceQuery,
 		service.sanctionedNetworksQuery,
+		service.claimAzureCheckQuery,
+		service.recordAzureCheckQuery,
 	); err != nil {
 		db.Close()
 		return nil, err
@@ -423,7 +439,7 @@ func PairRefused(err error) bool {
 		return false
 	}
 	switch refusal {
-	case ErrInsufficientBalance, ErrByok, ErrByokRequired, ErrByokTarget, errByokNotAllowed:
+	case ErrInsufficientBalance, ErrByok, ErrByokRequired, ErrByokTarget, ErrByokTargetChanged, errByokNotAllowed:
 		return true
 	}
 	// Other policy results are limits, except a disabled or expired scope that
@@ -642,6 +658,10 @@ func (s *Service) authorizeResolvedRequest(ctx context.Context, apiKeyHash strin
 					return authorization, ErrByok
 				}
 				authorization.AzureBinding = &bound.Binding
+				authorization.AzureAccountID = bound.AccountID
+				if bound.VerifiedAt != nil {
+					authorization.AzureVerifiedAt = *bound.VerifiedAt
+				}
 			} else if row.UpstreamByokBinding != nil {
 				return authorization, ErrByok
 			}

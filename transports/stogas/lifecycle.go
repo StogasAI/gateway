@@ -166,12 +166,15 @@ type azureTokenSource interface {
 }
 
 // applyUpstreamCredentials installs the request-scoped provider credential and
-// binds provider-owned target names before the provider body is serialized.
+// binds provider-owned target names before the provider body is serialized. An
+// Azure target is confirmed against its account's deployments first; tests
+// without azureChecks skip that.
 func applyUpstreamCredentials(
 	ctx *schemas.BifrostContext,
 	state *State,
 	azureTokens azureTokenSource,
 	googleTokens googleTokenSource,
+	azureChecks azureTargetChecker,
 ) error {
 	if ctx == nil || state == nil || state.Authorization == nil || state.Resolution == nil {
 		return gatewaybilling.ErrByok
@@ -225,6 +228,21 @@ func applyUpstreamCredentials(
 				return gatewaybilling.ErrGatewayUnavailable
 			}
 			azure := directKey.AzureKeyConfig
+			if azureChecks != nil {
+				if err := azureChecks.Confirm(ctx, azureCheckTarget{
+					ByokID:     authorization.UpstreamByok,
+					BindingID:  authorization.AzureBinding.ID,
+					AccountID:  authorization.AzureAccountID,
+					VerifiedAt: authorization.AzureVerifiedAt,
+					Credential: azureauth.Credential{
+						TenantID: azure.TenantID.GetValue(),
+						ClientID: azure.ClientID.GetValue(),
+						Secret:   azure.ClientSecret.GetValue(),
+					},
+				}); err != nil {
+					return err
+				}
+			}
 			token, err := azureTokens.Token(ctx, azureauth.Credential{
 				TenantID: azure.TenantID.GetValue(),
 				ClientID: azure.ClientID.GetValue(),

@@ -29,6 +29,7 @@ var (
 	ErrByok                = &RequestError{"byok_unavailable", "BYOK key is unavailable", 503}
 	ErrByokRequired        = &RequestError{"byok_required", "A BYOK key is required for this provider", 400}
 	ErrByokTarget          = &RequestError{"byok_target_unavailable", "The assigned BYOK credential does not provide this deployment", 400}
+	ErrByokTargetChanged   = &RequestError{"byok_target_changed", "The assigned Azure deployment now serves another model, version or SKU. Choose its new target in the dashboard.", 400}
 	ErrByokKeyUnregistered = &RequestError{"byok_key_unregistered", "The credential's encryption key is not registered in the organization policy", 400}
 	ErrDashboardKeyDenied  = &RequestError{"dashboard_key_denied", "API key is not available to this dashboard session", 403}
 	ErrGatewayUnavailable  = &RequestError{"gateway_unavailable", "The gateway is temporarily unavailable. Retry the request later.", 503}
@@ -71,7 +72,8 @@ var databaseRefusals = func() map[string]*RequestError {
 		"invalid_key": ErrInvalidAPIKey, "key_secret_replaced": ErrAPIKeyOldSecret,
 		"insufficient_balance": ErrInsufficientBalance, "byok_disabled": ErrByok,
 		"byok_required": ErrByokRequired, "byok_target_unavailable": ErrByokTarget,
-		"byok_not_allowed": errByokNotAllowed, "dashboard_forbidden": ErrDashboardKeyDenied,
+		"byok_target_changed": ErrByokTargetChanged,
+		"byok_not_allowed":    errByokNotAllowed, "dashboard_forbidden": ErrDashboardKeyDenied,
 		"key_configuration_too_large": ErrAPIKeyConfigSize, "platform_rate_limited": ErrPlatformRateLimit,
 	}
 	maps.Copy(refusals, policyResultErrors)
@@ -94,7 +96,7 @@ func NormalizeStogasErrorCode(code string, status int) string {
 	}
 	switch code {
 	case "billing_price_invalid", "encryption_key_required", "encrypted_content_invalid",
-		"byok_not_allowed", "byok_required", "byok_target_unavailable", "byok_unavailable",
+		"byok_not_allowed", "byok_required", "byok_target_changed", "byok_target_unavailable", "byok_unavailable",
 		"catalog_unavailable", "dashboard_key_denied", "gateway_capacity_exceeded", "gateway_draining",
 		"gateway_unavailable", "input_ascii_required", "insufficient_balance", "internal_error",
 		"invalid_api_key", "invalid_json", "invalid_request", "key_configuration_changed", "key_configuration_too_large", "key_secret_replaced", "policy_work_limit_exceeded",
