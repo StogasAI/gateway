@@ -143,6 +143,9 @@ type ResolvedRequest struct {
 	Deployment      Deployment
 	ExportConfig    *exportconfig.Config
 
+	// The catalog model that Model named before SetWireModel bound a customer's deployment.
+	reportedModel string
+
 	chat               *openaiprovider.OpenAIChatRequest
 	inputTokenLimit    int
 	inputTokenEstimate *int
@@ -425,7 +428,8 @@ func (r *ResolvedRequest) StructuredPIIRedactionSummary() *redaction.Summary {
 
 // SetWireModel binds the already authorized catalog deployment to the exact
 // customer deployment name used on the provider request. It does not change
-// the catalog deployment, pricing, or receipt identity.
+// the catalog deployment, pricing, receipt identity or the model that the
+// provider must report.
 func (r *ResolvedRequest) SetWireModel(model string) error {
 	if r == nil {
 		return ErrUnsupportedRequest
@@ -434,8 +438,23 @@ func (r *ResolvedRequest) SetWireModel(model string) error {
 	if model == "" || len(model) > 256 || strings.ContainsAny(model, "\x00\r\n") {
 		return ErrModelUnavailable
 	}
+	if r.reportedModel == "" {
+		r.reportedModel = r.Model
+	}
 	r.Model = model
 	return nil
+}
+
+// ReportedModel is the model that the provider must report serving: the catalog's upstream
+// model, also once the wire names a customer's deployment.
+func (r *ResolvedRequest) ReportedModel() string {
+	if r == nil {
+		return ""
+	}
+	if r.reportedModel != "" {
+		return r.reportedModel
+	}
+	return r.Model
 }
 
 func (r *ResolvedRequest) HasWebSearchOptions() bool {

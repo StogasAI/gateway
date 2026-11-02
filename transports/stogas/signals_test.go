@@ -1143,6 +1143,7 @@ func TestProviderModelRevisionCompatibility(t *testing.T) {
 	for _, test := range []struct {
 		expected string
 		actual   string
+		version  string
 		want     bool
 	}{
 		{expected: "claude-sonnet-4-6", actual: "claude-sonnet-4-6-20251112", want: true},
@@ -1151,10 +1152,97 @@ func TestProviderModelRevisionCompatibility(t *testing.T) {
 		{expected: "gpt-5.5", actual: "gpt-5.5-mini"},
 		{expected: "gpt-5.5", actual: "gpt-5.5-2026-04-23-extra"},
 		{expected: "gpt-5.5", actual: "gpt-5-nano-2025-08-07"},
+		// A pinned dated version, as an Azure deployment has, admits only its own date.
+		{expected: "gpt-5.6-sol", actual: "gpt-5.6-sol-2026-07-09", version: "2026-07-09", want: true},
+		{expected: "gpt-5.6-sol", actual: "gpt-5.6-sol-20260709", version: "2026-07-09", want: true},
+		{expected: "gpt-5.6-sol", actual: "gpt-5.6-sol", version: "2026-07-09", want: true},
+		{expected: "gpt-5.6-sol", actual: "gpt-5.6-sol-2026-09-30", version: "2026-07-09"},
+		{expected: "gpt-5.6-sol", actual: "gpt-5.6-sol-20260930", version: "2026-07-09"},
+		// A version that is not a date leaves revision dates to the provider.
+		{expected: "claude-haiku-5-5", actual: "claude-haiku-5-5-20260815", version: "2", want: true},
 	} {
-		if got := providerModelMatchesSelected(test.expected, test.actual); got != test.want {
-			t.Fatalf("providerModelMatchesSelected(%q, %q) = %t, want %t", test.expected, test.actual, got, test.want)
+		if got := providerModelMatchesSelected(test.expected, test.actual, test.version); got != test.want {
+			t.Fatalf("providerModelMatchesSelected(%q, %q, %q) = %t, want %t", test.expected, test.actual, test.version, got, test.want)
 		}
+	}
+}
+
+// Customers name their Azure deployments. Azure Chat Completions reports the OpenAI model and
+// version that served, while Azure Responses, and Chat Completions for other model formats, repeat
+// the deployment name, as a staging probe observed on November 2, 2026.
+func TestAzureBoundDeploymentModelReports(t *testing.T) {
+	bound := func(route catalog.Route, format, deployment string) *State {
+		t.Helper()
+		model, version := "gpt-5.6-sol", "2026-07-09"
+		if format == "DeepSeek" {
+			model, version = "DeepSeek-V4-Flash", "2026-04-23"
+		}
+		resolution := &catalog.ResolvedRequest{
+			Route:    route,
+			Model:    model,
+			Provider: schemas.Azure,
+			Deployment: catalog.Deployment{Upstream: catalog.Upstream{
+				Model:        model,
+				ModelFormat:  format,
+				ModelVersion: version,
+			}},
+		}
+		if err := resolution.SetWireModel(deployment); err != nil {
+			t.Fatal(err)
+		}
+		if resolution.Model != deployment || resolution.ReportedModel() != model {
+			t.Fatalf("bound wire model %q reports %q", resolution.Model, resolution.ReportedModel())
+		}
+		return &State{Pair: Pair{Resolution: resolution}}
+	}
+	for _, test := range []struct {
+		route      catalog.Route
+		format     string
+		deployment string
+		reported   string
+		accepted   bool
+	}{
+		// Chat Completions reports the served model under any name.
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-sol-2026-07-09", accepted: true},
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "gpt-5.6-sol-2026-01-15", reported: "gpt-5.6-sol-2026-07-09", accepted: true},
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-sol", accepted: true},
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "probe-keep", reported: "probe-keep"},
+		// Azure upgraded the deployment, or an Instant model took the requests of a colliding name.
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-sol-2026-09-30"},
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "gpt-5.6-sol-2026-09-30", reported: "gpt-5.6-sol-2026-09-30"},
+		{route: catalog.RouteChat, format: "OpenAI", deployment: "gpt-5.6-luna-2026-07-09", reported: "gpt-5.6-luna-2026-07-09"},
+		// Responses repeats the name, whatever it reads as.
+		{route: catalog.RouteResponses, format: "OpenAI", deployment: "probe-keep", reported: "probe-keep", accepted: true},
+		{route: catalog.RouteResponses, format: "OpenAI", deployment: "gpt-5.6-sol-2026-01-15", reported: "gpt-5.6-sol-2026-01-15", accepted: true},
+		{route: catalog.RouteResponses, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-sol-2026-07-09", accepted: true},
+		{route: catalog.RouteResponses, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-sol-2026-09-30"},
+		{route: catalog.RouteResponses, format: "OpenAI", deployment: "probe-keep", reported: "gpt-5.6-luna-2026-07-09"},
+		// So does Chat Completions for other formats.
+		{route: catalog.RouteChat, format: "DeepSeek", deployment: "probe-flash", reported: "probe-flash", accepted: true},
+		{route: catalog.RouteChat, format: "DeepSeek", deployment: "probe-flash", reported: "DeepSeek-V4-Flash", accepted: true},
+		{route: catalog.RouteChat, format: "DeepSeek", deployment: "probe-flash", reported: "DeepSeek-V4-Pro"},
+	} {
+		err := validateActualResponseModel(bound(test.route, test.format, test.deployment), test.reported)
+		if (err == nil) != test.accepted || (err != nil && !errors.Is(err, ErrProviderExecutionMismatch)) {
+			t.Fatalf("%s %s deployment %q reporting %q: error %v, want accepted %t", test.route, test.format, test.deployment, test.reported, err, test.accepted)
+		}
+	}
+
+	// Streamed chunks are checked the same way: Azure's first chunk reports no model.
+	ingest := func(state *State, reported string, finish bool) error {
+		chunk := validChatProviderChunk("chatcmpl_azure_model", finish)
+		chunk.Model = reported
+		return (DefaultAdapter{}).IngestChunk(state, &schemas.BifrostStreamChunk{BifrostChatResponse: chunk})
+	}
+	state := bound(catalog.RouteChat, "OpenAI", "probe-keep")
+	if err := ingest(state, "", false); err != nil {
+		t.Fatalf("Azure chunk reporting no model: %v", err)
+	}
+	if err := ingest(state, "gpt-5.6-sol-2026-07-09", true); err != nil {
+		t.Fatalf("Azure chunk reporting the served model: %v", err)
+	}
+	if err := ingest(bound(catalog.RouteChat, "OpenAI", "probe-keep"), "probe-keep", false); !errors.Is(err, ErrProviderExecutionMismatch) {
+		t.Fatalf("Azure chat chunk repeating the deployment name: %v", err)
 	}
 }
 
