@@ -121,3 +121,44 @@ test('conditional opaque rules preserve their source identity without retaining 
 	changed[1].config.rules.z_opaque.plugins.encrypted.blob = envelope(3).blob;
 	assert.notEqual(inspectPolicy({ sources: changed }).digest, first.digest);
 });
+
+test('a compiler that traps is replaced on the next call without compiling the module again', () => {
+	const source = { input: { asciiOnly: true } };
+	const expected = inspectPolicy({ source });
+	// An input past the limit fails before the compiler reads it, and the next call starts afresh.
+	assert.throws(() => inspectPolicy({ source: { padding: 'x'.repeat(1 << 20) } }), /input limit/);
+	const { Instance, Module } = WebAssembly;
+	let instances = 0;
+	let modules = 0;
+	// The first new instance traps as a Go panic does, and every later call into it fails too.
+	WebAssembly.Instance = function (module, imports) {
+		const instance = new Instance(module, imports);
+		if (++instances > 1) return instance;
+		let trapped = false;
+		const trap =
+			(name) =>
+			(...args) => {
+				if (trapped || name === 'inspect') {
+					trapped = true;
+					throw new WebAssembly.RuntimeError('unreachable');
+				}
+				return instance.exports[name](...args);
+			};
+		const exports = { ...instance.exports };
+		for (const name of ['allocate', 'inspect', 'release']) exports[name] = trap(name);
+		return { exports };
+	};
+	WebAssembly.Module = function (...args) {
+		modules += 1;
+		return new Module(...args);
+	};
+	try {
+		assert.throws(() => inspectPolicy({ source }), WebAssembly.RuntimeError);
+		assert.deepEqual(inspectPolicy({ source }), expected);
+		assert.equal(instances, 2);
+		assert.equal(modules, 0);
+	} finally {
+		WebAssembly.Instance = Instance;
+		WebAssembly.Module = Module;
+	}
+});
