@@ -138,6 +138,74 @@ func TestPreparedAnthropicThinkingDisplayPreservesCallerChoice(t *testing.T) {
 	}
 }
 
+// Claude Haiku 4.5 takes a thinking budget but no effort levels, so an effort reaches Anthropic as
+// its share of the output token limit, and the request log shows the budget that was sent.
+func TestPreparedBudgetOnlyReasoningSendsTheEffortAsAThinkingBudget(t *testing.T) {
+	const chat = `"messages":[{"role":"user","content":"hello"}],`
+	for _, test := range []struct {
+		route, fields string
+		thinking      string
+		budget        int
+		maxTokens     int
+	}{
+		{"chat/completions", chat + `"reasoning_effort":"high"`, "enabled", 51404, 64000},
+		{"chat/completions", chat + `"reasoning":{"enabled":true}`, "enabled", 27788, 64000},
+		{"chat/completions", chat + `"max_completion_tokens":4096,"reasoning":{"effort":"high"}`, "enabled", 3481, 4096},
+		{"chat/completions", chat + `"reasoning":{"effort":"none"}`, "disabled", 0, 64000},
+		{"chat/completions", chat + `"reasoning":{"enabled":false}`, "disabled", 0, 64000},
+		{"responses", `"input":"hello","reasoning":{"effort":"low"}`, "enabled", 10470, 64000},
+		{"responses", `"input":"hello","max_output_tokens":2048,"reasoning":{"effort":"max"}`, "enabled", 2047, 2048},
+		{"responses", `"input":"hello","reasoning":{"effort":"none"}`, "disabled", 0, 64000},
+	} {
+		t.Run(test.route+"/"+test.fields, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{Method: "POST", Path: "/v1/" + test.route,
+				Body: []byte(`{"model":"anthropic-claude-haiku-4-5-20251001",` + test.fields + `}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Adapter.SanitizeRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			var body []byte
+			if request.ChatRequest != nil {
+				body = preparedProviderBody(t, ctx, request.ChatRequest)
+			} else {
+				body = preparedProviderBody(t, ctx, request.ResponsesRequest)
+			}
+			var wire struct {
+				MaxTokens int `json:"max_tokens"`
+				Thinking  struct {
+					Type         string `json:"type"`
+					BudgetTokens int    `json:"budget_tokens"`
+				} `json:"thinking"`
+			}
+			if err := json.Unmarshal(body, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Thinking.Type != test.thinking || wire.Thinking.BudgetTokens != test.budget || wire.MaxTokens != test.maxTokens {
+				t.Fatalf("Anthropic received %s", body)
+			}
+			logged := state.RequestSettings.ReasoningMaxTokens
+			if test.budget > 0 && (logged == nil || *logged != test.budget) || test.budget == 0 && logged != nil {
+				t.Fatalf("the request log shows a reasoning budget of %v, want %d", logged, test.budget)
+			}
+		})
+	}
+}
+
 func TestPrepareProviderRequestSendsEndUserIDsOnlyToCustomerAccountsAndAppliesStorePolicy(t *testing.T) {
 	_, customer := customerOpenAICredential(t)
 	managed, err := (&billing.Service{}).PrepareCredential(&billing.KeyConfigSnapshot{

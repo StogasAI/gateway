@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -925,35 +926,117 @@ func TestGroupsSelectTheirNewestModel(t *testing.T) {
 func TestReasoningAdmissionMapsCanonicalControlsWithoutInventingBinaryEfforts(t *testing.T) {
 	loadTestCatalog(t)
 	optional := Deployment{Reasoning: "optional", ReasoningEfforts: []string{"minimal", "low", "medium", "high"}}
-	if got, err := normalizeReasoningEffort("high", optional); err != nil || got.Effort == nil || *got.Effort != "high" {
+	if got, err := normalizeReasoningEffort("high", optional, 64000); err != nil || got.Effort == nil || *got.Effort != "high" {
 		t.Fatalf("accepted effort = %#v, err=%v", got, err)
 	}
-	if got, err := normalizeReasoningEffort("max", optional); err != nil || got.Effort == nil || *got.Effort != "high" {
+	if got, err := normalizeReasoningEffort("max", optional, 64000); err != nil || got.Effort == nil || *got.Effort != "high" {
 		t.Fatalf("higher effort did not map down: %#v err=%v", got, err)
 	}
-	if got, err := normalizeReasoningEffort("none", optional); err != nil || got.Effort == nil || *got.Effort != "none" {
+	if got, err := normalizeReasoningEffort("none", optional, 64000); err != nil || got.Effort == nil || *got.Effort != "none" {
 		t.Fatalf("optional reasoning was not disabled: %#v err=%v", got, err)
 	}
 	binary := Deployment{Reasoning: "optional"}
-	if got, err := normalizeReasoningEffort("minimal", binary); err != nil || got.Enabled == nil || !*got.Enabled || got.Effort != nil {
+	if got, err := normalizeReasoningEffort("minimal", binary, 64000); err != nil || got.Enabled == nil || !*got.Enabled || got.Effort != nil {
 		t.Fatalf("positive binary reasoning did not map to enabled: %#v err=%v", got, err)
 	}
-	if got, err := normalizeReasoningEffort("none", binary); err != nil || got.Enabled == nil || *got.Enabled || got.Effort != nil {
+	if got, err := normalizeReasoningEffort("none", binary, 64000); err != nil || got.Enabled == nil || *got.Enabled || got.Effort != nil {
 		t.Fatalf("binary reasoning did not map none to disabled: %#v err=%v", got, err)
 	}
 	twoLevels := Deployment{Reasoning: "optional", ReasoningEfforts: []string{"high", "max"}}
-	if got, err := normalizeReasoningEffort("xhigh", twoLevels); err != nil || got.Effort == nil || *got.Effort != "max" {
+	if got, err := normalizeReasoningEffort("xhigh", twoLevels, 64000); err != nil || got.Effort == nil || *got.Effort != "max" {
 		t.Fatalf("upward tie did not map to max: %#v err=%v", got, err)
 	}
 	requiredWithoutLevels := Deployment{Reasoning: "required"}
-	if _, err := normalizeReasoningEffort("high", requiredWithoutLevels); err == nil {
+	if _, err := normalizeReasoningEffort("high", requiredWithoutLevels, 64000); err == nil {
 		t.Fatal("effort was accepted for always-on reasoning without level control")
 	}
-	if _, err := normalizeReasoningEffort("none", Deployment{Reasoning: "required", ReasoningEfforts: []string{"low", "high"}}); err == nil {
+	if _, err := normalizeReasoningEffort("none", Deployment{Reasoning: "required", ReasoningEfforts: []string{"low", "high"}}, 64000); err == nil {
 		t.Fatal("required reasoning was disabled")
 	}
-	if _, err := normalizeReasoningEffort("ultra", optional); err == nil {
+	if _, err := normalizeReasoningEffort("ultra", optional, 64000); err == nil {
 		t.Fatal("non-canonical effort was accepted")
+	}
+}
+
+// A deployment that takes a budget but no levels gets each positive effort as its share of the output
+// token limit above the minimum, so the effort reaches every provider as the same number.
+func TestReasoningEffortSelectsABudgetWhereADeploymentHasNoLevels(t *testing.T) {
+	budgeted := Deployment{Reasoning: "optional", ReasoningMaxTokens: &ReasoningMaxTokens{Minimum: 1024, Maximum: 63999}}
+	for effort, want := range map[string]int{
+		"minimal": 2598, "low": 10470, "medium": 27788, "high": 51404, "xhigh": 58961, "max": 63999,
+	} {
+		got, err := normalizeReasoningEffort(effort, budgeted, 64000)
+		if err != nil || got.MaxTokens == nil || *got.MaxTokens != want || got.Effort != nil || got.Enabled != nil {
+			t.Fatalf("%s = %#v, err=%v, want a budget of %d", effort, got, err, want)
+		}
+	}
+	for _, test := range []struct {
+		name       string
+		effort     string
+		deployment Deployment
+		limit      int
+		want       int
+	}{
+		{"a smaller output token limit", "high", budgeted, 4096, 3481},
+		{"the deployment maximum", "max", Deployment{Reasoning: "optional", ReasoningMaxTokens: &ReasoningMaxTokens{Minimum: 1024, Maximum: 32000}}, 64000, 32000},
+		{"one token above the minimum", "max", budgeted, 1025, 1024},
+		{"an always-on deployment", "low", Deployment{Reasoning: "required", ReasoningMaxTokens: budgeted.ReasoningMaxTokens}, 64000, 10470},
+	} {
+		got, err := normalizeReasoningEffort(test.effort, test.deployment, test.limit)
+		if err != nil || got.MaxTokens == nil || *got.MaxTokens != test.want {
+			t.Fatalf("%s: %#v, err=%v, want a budget of %d", test.name, got, err, test.want)
+		}
+	}
+	if _, err := normalizeReasoningEffort("low", budgeted, 1024); err == nil {
+		t.Fatal("a budget was accepted that does not fit below the output token limit")
+	}
+	if got, err := normalizeReasoningEffort("none", budgeted, 64000); err != nil || got.Effort == nil || *got.Effort != "none" || got.Enabled != nil || got.MaxTokens != nil {
+		t.Fatalf("none = %#v, err=%v, want the effort none", got, err)
+	}
+	if got, err := normalizeReasoningEnabled(true, budgeted, 64000); err != nil || got.MaxTokens == nil || *got.MaxTokens != 27788 {
+		t.Fatalf("enabled = %#v, err=%v, want the medium budget", got, err)
+	}
+
+	effort := func(value string) *string { return &value }
+	enabled := func(value bool) *bool { return &value }
+	for _, test := range []struct {
+		name      string
+		reasoning schemas.ChatReasoning
+		want      schemas.ChatReasoning
+	}{
+		{"an effort", schemas.ChatReasoning{Effort: effort("high")}, schemas.ChatReasoning{MaxTokens: schemas.Ptr(51404)}},
+		{"reasoning on", schemas.ChatReasoning{Enabled: enabled(true)}, schemas.ChatReasoning{MaxTokens: schemas.Ptr(27788)}},
+		{"reasoning on with an effort", schemas.ChatReasoning{Enabled: enabled(true), Effort: effort("low")}, schemas.ChatReasoning{MaxTokens: schemas.Ptr(10470)}},
+		{"reasoning off", schemas.ChatReasoning{Enabled: enabled(false)}, schemas.ChatReasoning{Effort: effort("none")}},
+		{"a manual budget", schemas.ChatReasoning{MaxTokens: schemas.Ptr(2048)}, schemas.ChatReasoning{MaxTokens: schemas.Ptr(2048)}},
+	} {
+		reasoning := test.reasoning
+		if err := normalizeChatReasoning(&reasoning, budgeted, 64000); err != nil || !reflect.DeepEqual(reasoning, test.want) {
+			t.Fatalf("chat with %s = %#v, err=%v, want %#v", test.name, reasoning, err, test.want)
+		}
+	}
+
+	for _, test := range []struct {
+		name      string
+		reasoning schemas.ResponsesParametersReasoning
+		want      schemas.ResponsesParametersReasoning
+	}{
+		{"an effort", schemas.ResponsesParametersReasoning{Effort: effort("low")}, schemas.ResponsesParametersReasoning{MaxTokens: schemas.Ptr(10470)}},
+		{"reasoning off", schemas.ResponsesParametersReasoning{Effort: effort("none")}, schemas.ResponsesParametersReasoning{Effort: effort("none")}},
+		{"a manual budget", schemas.ResponsesParametersReasoning{MaxTokens: schemas.Ptr(2048)}, schemas.ResponsesParametersReasoning{MaxTokens: schemas.Ptr(2048)}},
+	} {
+		reasoning := test.reasoning
+		if err := normalizeResponsesReasoning(&reasoning, budgeted, 64000); err != nil || !reflect.DeepEqual(reasoning, test.want) {
+			t.Fatalf("Responses with %s = %#v, err=%v, want %#v", test.name, reasoning, err, test.want)
+		}
+	}
+	both := schemas.ResponsesParametersReasoning{Effort: effort("low"), MaxTokens: schemas.Ptr(2048)}
+	if err := normalizeResponsesReasoning(&both, budgeted, 64000); err == nil {
+		t.Fatal("Responses accepted an effort together with a manual budget")
+	}
+	binary := schemas.ResponsesParametersReasoning{Effort: effort("low")}
+	if err := normalizeResponsesReasoning(&binary, Deployment{Reasoning: "optional"}, 64000); err == nil {
+		t.Fatal("Responses accepted an effort for a deployment that only turns reasoning on and off")
 	}
 }
 
