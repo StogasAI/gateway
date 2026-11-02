@@ -543,17 +543,35 @@ func validateActualResponseModel(state *State, model string) error {
 	if model == "" {
 		return nil
 	}
-	expected := strings.TrimSpace(state.Resolution.Model)
+	resolution := state.Resolution
+	expected := strings.TrimSpace(resolution.ReportedModel())
 	if expected == "" {
 		return nil
 	}
-	if !providerModelMatchesSelected(expected, model) || (state.ActualModel != "" && state.ActualModel != model) {
+	// A reply that repeats the deployment name tells nothing about the model, except from an API
+	// that reports the model that served.
+	echo := model == strings.TrimSpace(resolution.Model) && !reportsServedModel(resolution)
+	if !(echo || providerModelMatchesSelected(expected, model, resolution.Deployment.Upstream.ModelVersion)) ||
+		(state.ActualModel != "" && state.ActualModel != model) {
 		return ErrProviderExecutionMismatch
 	}
 	return nil
 }
 
-func providerModelMatchesSelected(expected, actual string) bool {
+// reportsServedModel reports whether the provider names the model that served the request rather
+// than repeating the deployment name that the request used. Azure Chat Completions reports an
+// OpenAI model with its version under any deployment name. Azure Responses, and Chat Completions
+// for other model formats, repeat the name, so even a name that reads as another model or version
+// is no evidence.
+func reportsServedModel(resolution *catalog.ResolvedRequest) bool {
+	return resolution.Provider == schemas.Azure && resolution.Route == catalog.RouteChat &&
+		resolution.Deployment.Upstream.ModelFormat == "OpenAI"
+}
+
+// providerModelMatchesSelected accepts the selected model alone or with a revision date. When the
+// catalog pins a dated version, as Azure deployments do, the date must be that version, so a
+// deployment that Azure upgraded cannot answer for the version that was bound.
+func providerModelMatchesSelected(expected, actual, version string) bool {
 	if actual == expected {
 		return true
 	}
@@ -562,11 +580,22 @@ func providerModelMatchesSelected(expected, actual string) bool {
 		return false
 	}
 	suffix := strings.TrimPrefix(actual, prefix)
-	if len(suffix) == 8 {
-		return asciiDigits(suffix)
+	if !revisionDate(suffix) {
+		return false
 	}
-	return len(suffix) == 10 && suffix[4] == '-' && suffix[7] == '-' &&
-		asciiDigits(suffix[:4]) && asciiDigits(suffix[5:7]) && asciiDigits(suffix[8:])
+	if len(version) != 10 || !revisionDate(version) {
+		return true
+	}
+	return suffix == version || suffix == strings.ReplaceAll(version, "-", "")
+}
+
+// revisionDate reports whether value is a date as providers suffix it: YYYYMMDD or YYYY-MM-DD.
+func revisionDate(value string) bool {
+	if len(value) == 8 {
+		return asciiDigits(value)
+	}
+	return len(value) == 10 && value[4] == '-' && value[7] == '-' &&
+		asciiDigits(value[:4]) && asciiDigits(value[5:7]) && asciiDigits(value[8:])
 }
 
 func asciiDigits(value string) bool {
