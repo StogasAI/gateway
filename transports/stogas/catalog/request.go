@@ -29,6 +29,7 @@ var (
 	ErrCatalogUnavailable       = APIError{Code: "catalog_unavailable", StatusCode: http.StatusInternalServerError, Type: ErrorTypeInternal, Message: "Catalog unavailable"}
 	ErrInvalidJSON              = APIError{Code: "invalid_json", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Invalid JSON body"}
 	ErrModelAmbiguous           = APIError{Code: "model_ambiguous", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Several models match; specify a model, or add a routing order or sort"}
+	ErrByokTargetUnavailable    = APIError{Code: "byok_target_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No assigned BYOK credential provides a deployment of this model. Check each credential's Region, hostings and Azure deployments."}
 	ErrModelUnavailable         = APIError{Code: "model_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "No deployment is available for this request. Check the model, provider credentials and routing policies."}
 	ErrProviderUnavailable      = APIError{Code: "provider_unavailable", StatusCode: http.StatusBadRequest, Type: ErrorTypeInvalidRequest, Message: "Provider is not available"}
 	ErrScheduleDenied           = APIError{Code: "schedule_denied", StatusCode: http.StatusForbidden, Type: "permission_denied", Message: "Request is not allowed at this time"}
