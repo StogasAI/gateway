@@ -1581,7 +1581,7 @@ func TestApplyUpstreamCredentialsRejectsManagedCredentialsForBYOKOnlyProviders(t
 			if err := PrepareProviderRequest(bifrostCtx, state, bifrostReq); err != nil {
 				t.Fatalf("PrepareProviderRequest returned error: %v", err)
 			}
-			if err := applyUpstreamCredentials(bifrostCtx, state, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
+			if err := applyUpstreamCredentials(bifrostCtx, state, nil, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})

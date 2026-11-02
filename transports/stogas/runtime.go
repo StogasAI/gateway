@@ -26,6 +26,7 @@ type Runtime struct {
 	billing      *billing.Service
 	chutesE2EE   *chutese2ee.Transport
 	azureTokens  *azureauth.Cache
+	azureChecks  *AzureChecks
 	googleTokens *googleauth.Cache
 	cancel       context.CancelFunc
 }
@@ -75,11 +76,13 @@ func NewRuntime(ctx context.Context, config Config, nodeID string) (*Runtime, er
 		return nil, err
 	}
 
+	azureTokens := azureauth.New(runtimeCtx)
 	return &Runtime{
 		client:       client,
 		billing:      billingService,
 		chutesE2EE:   chutesTransport,
-		azureTokens:  azureauth.New(runtimeCtx),
+		azureTokens:  azureTokens,
+		azureChecks:  NewAzureChecks(runtimeCtx, billingService, azureTokens),
 		googleTokens: googleauth.New(runtimeCtx, confidentialProduction(config)),
 		cancel:       cancel,
 	}, nil
@@ -89,7 +92,7 @@ func (r *Runtime) ApplyUpstreamCredentials(ctx *schemas.BifrostContext, state *S
 	if r == nil {
 		return billing.ErrGatewayUnavailable
 	}
-	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens)
+	return applyUpstreamCredentials(ctx, state, r.azureTokens, r.googleTokens, r.azureChecks)
 }
 
 func (r *Runtime) AzureAuthDiagnostics() azureauth.Diagnostics {

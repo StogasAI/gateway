@@ -466,7 +466,7 @@ func TestApplyCloudClaudeRequestKeepsBetaHeadersAndSendsNoKey(t *testing.T) {
 	ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
 	beta := map[string][]string{"anthropic-beta": {"compact-2026-01-12"}}
 	ctx.SetValue(schemas.BifrostContextKeyExtraHeaders, beta)
-	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	headers, _ := ctx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
@@ -491,14 +491,14 @@ func TestApplyCloudClaudeRequestKeepsBetaHeadersAndSendsNoKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	state.Authorization.UpstreamByokSecret = indented.String()
-	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil, nil); err != nil {
 		t.Fatalf("indented credential: %v", err)
 	}
 
 	// A secret that cannot serve the routed deployment is refused before any
 	// provider call, whatever the registered target claimed.
 	state.Authorization.UpstreamByokSecret = awsIAMSecret(t, "us-east-1", "")
-	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil); !errors.Is(err, billing.ErrByokTarget) {
+	if err := applyUpstreamCredentials(schemas.NewBifrostContext(context.Background(), schemas.NoDeadline), state, nil, nil, nil); !errors.Is(err, billing.ErrByokTarget) {
 		t.Fatalf("error %v", err)
 	}
 }

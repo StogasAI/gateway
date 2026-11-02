@@ -206,7 +206,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 					Resolution:    &catalog.ResolvedRequest{Provider: provider},
 				},
 			}
-			if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
+			if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); !errors.Is(err, billing.ErrByokRequired) {
 				t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK required", err)
 			}
 		})
@@ -219,7 +219,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 			Resolution:    &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 		},
 	}
-	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 
@@ -232,7 +232,7 @@ func TestApplyUpstreamCredentialsAllowsManagedAndByokChutes(t *testing.T) {
 			Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 		},
 	}
-	if err := applyUpstreamCredentials(ctx, byokState, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, byokState, nil, nil, nil); err != nil {
 		t.Fatalf("Chutes BYOK returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -263,7 +263,7 @@ func TestApplyUpstreamCredentialsSendsHostSecretReferencesLiterally(t *testing.T
 				Resolution: &catalog.ResolvedRequest{Provider: catalog.ProviderChutes},
 			},
 		}
-		if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+		if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
 			t.Fatalf("%s: ApplyUpstreamCredentials returned error: %v", secret, err)
 		}
 		directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -291,7 +291,7 @@ func TestApplyUpstreamCredentialsInstallsBYOKKey(t *testing.T) {
 				},
 			}
 
-			if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+			if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
 				t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 			}
 			directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -325,7 +325,7 @@ func TestApplyUpstreamCredentialsUsesPassThroughCredentialHashAttribution(t *tes
 		},
 	}
 
-	if err := applyUpstreamCredentials(ctx, state, nil, nil); err != nil {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); err != nil {
 		t.Fatalf("ApplyUpstreamCredentials returned error: %v", err)
 	}
 	directKey, ok := ctx.Value(schemas.BifrostContextKeyDirectKey).(schemas.Key)
@@ -351,7 +351,7 @@ func TestApplyUpstreamCredentialsRejectsIncompleteBYOKAuthorization(t *testing.T
 		},
 	}
 
-	if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByok) {
+	if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); !errors.Is(err, billing.ErrByok) {
 		t.Fatalf("ApplyUpstreamCredentials error = %v, want BYOK failure", err)
 	}
 	if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {
@@ -372,7 +372,7 @@ func TestApplyUpstreamCredentialsRejectsUnsafeProviderCredential(t *testing.T) {
 			},
 		}
 
-		if err := applyUpstreamCredentials(ctx, state, nil, nil); !errors.Is(err, billing.ErrByok) {
+		if err := applyUpstreamCredentials(ctx, state, nil, nil, nil); !errors.Is(err, billing.ErrByok) {
 			t.Fatalf("credential %q: ApplyUpstreamCredentials error = %v, want BYOK failure", secret, err)
 		}
 		if directKey := ctx.Value(schemas.BifrostContextKeyDirectKey); directKey != nil {

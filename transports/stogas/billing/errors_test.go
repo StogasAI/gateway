@@ -20,6 +20,7 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 		{"grant_disabled", 403},
 		{"key_configuration_too_large", 400},
 		{"key_secret_replaced", 401},
+		{"byok_target_changed", 400},
 	} {
 		t.Run(test.code, func(t *testing.T) {
 			var public *RequestError
@@ -33,6 +34,10 @@ func TestPolicyDenialsKeepTheirScopeAndHTTPMeaning(t *testing.T) {
 	}
 	if authorizationResultError("private_scope_spend_limit", nil) != nil || NormalizeStogasErrorCode("private_scope_spend_limit", 500) != "internal_error" {
 		t.Fatal("an unrecognized scope entered the public error vocabulary")
+	}
+	// Another pair can serve a request whose Azure deployment changed.
+	if !PairRefused(authorizationResultError("byok_target_changed", nil)) {
+		t.Fatal("a changed Azure target stopped the request")
 	}
 	if authorizationResultError("key_spend_limit", nil) != ErrAPIKeySpendLimit || !errors.Is(authorizationResultError("key_rate_limited", nil), ErrAPIKeyRateLimit) {
 		t.Fatal("key admission errors lost their identity")
