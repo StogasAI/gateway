@@ -48,7 +48,11 @@ func (a AzureAdapter) SanitizeRequest(state *State) error {
 	if azureDeploymentUsesAnthropicWire(state) {
 		state.Resolution.ApplyProviderSamplingParameters()
 		ensureAnthropicResponsesHostedToolCap(state)
+		return nil
 	}
+	// The OpenAI format carries reasoning only as reasoning_effort, whose "none" turns reasoning
+	// off, as Fireworks documents for the models it serves. Reasoning on leaves the model's default.
+	state.Resolution.SendReasoningOffAsEffort()
 	return nil
 }
 
