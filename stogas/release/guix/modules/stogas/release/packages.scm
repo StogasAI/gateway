@@ -1,7 +1,7 @@
 (define-module (stogas release packages)
   #:use-module (gnu packages)
   #:use-module ((gnu packages firmware) #:select (ovmf-x86-64))
-  #:use-module ((gnu packages rust) #:select (rust-1.95))
+  #:use-module ((gnu packages rust) #:select (rust-1.98))
   #:use-module (guix base16)
   #:use-module (guix base32)
   #:use-module ((guix build-system cargo) #:select (crate-name->package-name
@@ -373,7 +373,7 @@ OUTPUTS files that BUILD leaves in TARGET."
                                                 #$install-directory)))
                  '#$outputs))))))
       ;; This Rust ships without rustdoc, so tests skip doctests.
-      (native-inputs (list rust-1.95 (list rust-1.95 "cargo")))
+      (native-inputs (list rust-1.98 (list rust-1.98 "cargo")))
       (home-page home-page)
       (synopsis synopsis)
       (description synopsis)
