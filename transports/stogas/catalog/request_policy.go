@@ -49,6 +49,8 @@ type requestVariants struct {
 	reserveBody   func(int) error
 	inputBytes    int
 	budget        policy.SourceBudget
+	// attachments are the request's attachments, where they can narrow the candidates.
+	attachments []Attachment
 }
 
 // pairChoice is one deployment and credential in routing order.
@@ -196,6 +198,13 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 						entry.Origin = &origin
 					}
 					trace.removePair(selection, index, original, entry)
+				}
+				continue
+			}
+			// A simulation sends no messages, so no pair leaves here without a record.
+			if err := attachmentsError(variants.attachments, selection, value.Config); err != nil {
+				if firstErr == nil {
+					firstErr = err
 				}
 				continue
 			}

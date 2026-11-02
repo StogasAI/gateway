@@ -24,12 +24,8 @@ func stateUsesClaudeWire(state *State) bool {
 // cloudRunsClaude reports whether AWS or Google runs the model itself rather
 // than Anthropic.
 func cloudRunsClaude(state *State) bool {
-	if state == nil || state.Resolution == nil {
-		return false
-	}
-	provider := state.Resolution.Provider
-	return (provider == catalog.ProviderAWS || provider == catalog.ProviderGoogleCloud) &&
-		state.Resolution.Deployment.Upstream.Hosting != hostingAnthropic
+	return state != nil && state.Resolution != nil &&
+		catalog.CloudRunsClaude(state.Resolution.Provider, state.Resolution.Deployment)
 }
 
 func (a CloudClaudeAdapter) ValidateRequest(state *State) error {

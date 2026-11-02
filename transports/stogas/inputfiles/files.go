@@ -238,7 +238,7 @@ func (p *processor) block(block map[string]json.RawMessage, responses bool) (jso
 	if err != nil {
 		return nil, err
 	}
-	if document && p.extract && textMediaType(mediaType) {
+	if document && p.extract && TextMediaType(mediaType) {
 		// Every UTF-8 byte may require six JSON bytes. The existing request lease
 		// also covers simultaneous encoded and decoded representations.
 		p.expansion += base64.StdEncoding.DecodedLen(len(payload)) * 6
@@ -342,7 +342,8 @@ func stringField(fields map[string]json.RawMessage, key string) string {
 	return value
 }
 
-func textMediaType(value string) bool {
+// TextMediaType reports whether text extraction reads a file of the media type as text.
+func TextMediaType(value string) bool {
 	value = strings.ToLower(value)
 	return strings.HasPrefix(value, "text/") || value == "application/json" || value == "application/xml" || strings.HasSuffix(value, "+json") || strings.HasSuffix(value, "+xml")
 }
