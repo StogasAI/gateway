@@ -45,6 +45,19 @@ func TestCredentialSelectionRequiresTheOrganizationKey(t *testing.T) {
 			}
 		})
 	}
+	// Applying the credential's policy needs no root, so planning can name a
+	// missing one for the pairs it tries. A wrong root still fails at once.
+	snapshot := &KeyConfigSnapshot{PolicySnapshot: PolicySnapshot{Config: &policy.Config{EncryptionKeys: map[string]string{"default": key.ID()}}}, Credentials: map[string][]CredentialSelection{"chutes": {registered}}}
+	if _, err := snapshot.assignedSelection("chutes", 0, nil); err != nil {
+		t.Fatalf("applying the policy needed the credential's root: %v", err)
+	}
+	if _, err := snapshot.assignedSelection("chutes", 0, customerkey.Keys{"default": wrong}); !errors.Is(err, customerkey.ErrKey) {
+		t.Fatalf("applying the policy accepted a wrong root: %v", err)
+	}
+	var missing *customerkey.MissingError
+	if _, err := snapshot.credentialSelection("chutes", 0, nil); !errors.As(err, &missing) || !slices.Equal(missing.Labels, []string{"default"}) {
+		t.Fatalf("preparing without the root = %v, want it named", err)
+	}
 }
 
 func TestEncryptedCredentialsKeepTheirPlaceAndNameMissingRoots(t *testing.T) {
