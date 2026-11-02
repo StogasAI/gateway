@@ -87,6 +87,17 @@ func googleSecret(t *testing.T, workspace string) string {
 // resolveCloudState resolves a request to one cataloged cloud deployment.
 func resolveCloudState(t *testing.T, path, deploymentID, extra string) *State {
 	t.Helper()
+	state, err := resolveCloudRequest(t, path, deploymentID, extra)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", deploymentID, err)
+	}
+	return state
+}
+
+// resolveCloudRequest routes a request for Claude at the deployment's provider with a credential
+// that serves only that deployment.
+func resolveCloudRequest(t *testing.T, path, deploymentID, extra string) (*State, error) {
+	t.Helper()
 	provider, _, _ := strings.Cut(deploymentID, "-claude")
 	body := `{` + extra + `"model":"` + provider + `/claude-fable-5-1"}`
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{
@@ -97,12 +108,12 @@ func resolveCloudState(t *testing.T, path, deploymentID, extra string) *State {
 		},
 	})
 	if err != nil {
-		t.Fatalf("resolve %s: %v", deploymentID, err)
+		return nil, err
 	}
 	if resolution.Deployment.ID != deploymentID {
 		t.Fatalf("resolved %s, want %s", resolution.Deployment.ID, deploymentID)
 	}
-	return NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider))
+	return NewState(resolution, "sk-test", nil, AdapterFor(resolution.Provider)), nil
 }
 
 func cloudDeployment(t *testing.T, deploymentID string) catalog.Deployment {
@@ -536,13 +547,18 @@ func TestCloudClaudeAdapterRefusesWhatTheCloudLacks(t *testing.T) {
 		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":"hi","task_budget":{"type":"tokens","total":20000},`, ""},
 		{"google-cloud-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_search"}],`, "Hosted tools are not supported when AWS or Google runs Claude"},
 		{"aws-claude-fable-5-1", "/v1/responses", `"input":"hi","tools":[{"type":"web_fetch"}],`, "Hosted tools are not supported when AWS or Google runs Claude"},
-		{"aws-claude-fable-5-1", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "Provider file IDs require BYOK"},
+		{"aws-claude-fable-5-1", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "file IDs are not supported when AWS or Google runs Claude"},
+		{"aws-claude-fable-5-1-anthropic-hosted", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_file","file_id":"file_123"}]}],`, "Provider file IDs require BYOK"},
 		{"aws-claude-fable-5-1-us", "/v1/responses", `"input":[{"role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"}]}],`, "URL sources are not supported when AWS or Google runs Claude; send the content inline"},
 		{"google-cloud-claude-fable-5-1-us", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, "URL sources are not supported when AWS or Google runs Claude; send the content inline"},
 		{"google-cloud-claude-fable-5-1-anthropic-hosted", "/v1/chat/completions", `"messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}],`, ""},
 	} {
-		state := resolveCloudState(t, test.path, test.deployment, test.body)
-		err := state.Adapter.ValidateRequest(state)
+		// The model's deployments at AWS and Google read attachments differently, so routing
+		// refuses a part that the cloud cannot read before the adapter does.
+		state, err := resolveCloudRequest(t, test.path, test.deployment, test.body)
+		if err == nil {
+			err = state.Adapter.ValidateRequest(state)
+		}
 		if test.want == "" && err != nil || test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
 			t.Errorf("%s %s: error %v, want %q", test.deployment, test.body, err, test.want)
 		}

@@ -3,12 +3,9 @@ package stogas
 import (
 	"encoding/json"
 	"net/url"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
-	"github.com/maximhq/bifrost/transports/stogas/inputfiles"
 	"github.com/maximhq/bifrost/transports/stogas/rawjson"
 )
 
@@ -20,7 +17,6 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 	}
 	kind := rawString(block["type"])
 	file := block
-	modality := ""
 	switch kind {
 	case "image_url":
 		if err := rejectUnsupportedInputKeys(block, path, "type", "image_url", "cache_control", "prompt_cache_breakpoint"); err != nil {
@@ -34,12 +30,10 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		if err := rejectUnsupportedInputKeys(file, path+".image_url", "url", "detail"); err != nil {
 			return err
 		}
-		modality = "image"
 	case "input_image":
 		if err := rejectUnsupportedInputKeys(block, path, "type", "image_url", "file_id", "detail", "cache_control", "prompt_cache_breakpoint"); err != nil {
 			return err
 		}
-		modality = "image"
 	case "input_audio":
 		if err := rejectUnsupportedInputKeys(block, path, "type", "input_audio"); err != nil {
 			return err
@@ -52,7 +46,6 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 		if err := rejectUnsupportedInputKeys(file, path+".input_audio", "data", "format"); err != nil {
 			return err
 		}
-		modality = "audio"
 	case "file", "input_file":
 		if !responses {
 			if err := rejectUnsupportedInputKeys(block, path, "type", "file", "cache_control", "prompt_cache_breakpoint"); err != nil {
@@ -98,59 +91,19 @@ func validateNativeAttachment(state *State, block map[string]json.RawMessage, pa
 	case "file", "input_file":
 		sourceURL, data, id = values["file_url"], values["file_data"], values["file_id"]
 	}
-	if kind == "input_image" && id != "" && responsesUsesAnthropicWire(state) {
-		return invalidRequest(path + " image file IDs are not supported by this route")
+	// Routing skipped the deployments that this check refuses, where another could read the part.
+	attachment := catalog.Attachment{
+		Path: path, Kind: kind, Responses: responses, URL: sourceURL, Data: data, ID: id,
+		Filename: values["filename"], FileType: values["file_type"],
 	}
-	if kind == "file" || kind == "input_file" {
-		if sourceURL != "" && !responses && !responsesUsesAnthropicWire(state) {
-			return invalidRequest(path + " file URLs require Responses or an Anthropic-format deployment")
-		}
-		if rawJSONValueSet(file["file_type"]) && !responsesUsesAnthropicWire(state) {
-			return invalidRequest(path + " native files must declare MIME type in a base64 data URL, not file_type")
-		}
-		formats := state.Resolution.Deployment.DocumentFormats
-		if len(formats.MediaTypes) == 0 {
-			return invalidRequest(path + " native files are not supported by this deployment")
-		}
-		if data != "" {
-			extension := strings.ToLower(filepath.Ext(values["filename"]))
-			mediaType, _, err := inputfiles.ParseInline(data, values["file_type"])
-			if err != nil {
-				return invalidRequest(path + " has an invalid declared file type")
-			}
-			if mediaType != "" && mediaType != "application/octet-stream" {
-				if !slices.Contains(formats.MediaTypes, mediaType) {
-					return invalidRequest(path + " native file media type is not supported by this deployment")
-				}
-			} else if !slices.Contains(formats.Extensions, extension) {
-				return invalidRequest(path + " requires a supported file media type or filename extension")
-			}
-			if responsesUsesAnthropicWire(state) {
-				// Core treats untyped raw base64 as PDF, and raw file_type text/plain
-				// as literal text. A data URL keeps native text bytes unambiguous.
-				if mediaType == "application/octet-stream" || (!strings.HasPrefix(data, "data:") && mediaType != "application/pdf" && !(mediaType == "" && extension == ".pdf")) {
-					return invalidRequest(path + " native text files require a typed base64 data URL")
-				}
-			}
-		}
-		if strings.HasPrefix(sourceURL, "data:") {
-			return invalidRequest(path + " inline files must use file_data")
-		}
+	if err := catalog.AttachmentError(state.Resolution.Provider, state.Resolution.Deployment, attachment); err != nil {
+		return err
 	}
-	if modality != "" && !slices.Contains(state.Resolution.Deployment.InputModalities, modality) {
-		return invalidRequest(path + " " + modality + " input is not supported by the selected deployment")
+	if (kind == "file" || kind == "input_file") && strings.HasPrefix(sourceURL, "data:") {
+		return invalidRequest(path + " inline files must use file_data")
 	}
 	if id != "" && !state.PreparedCredential.UsesBYOK() {
 		return invalidRequest("Provider file IDs require BYOK")
-	}
-	// Claude that AWS or Google runs has no Files API and fetches no URL.
-	if cloudRunsClaude(state) {
-		if id != "" {
-			return invalidRequest(path + " file IDs are not supported when AWS or Google runs Claude")
-		}
-		if sourceURL != "" && !strings.HasPrefix(sourceURL, "data:") {
-			return invalidRequest(path + " URL sources are not supported when AWS or Google runs Claude; send the content inline")
-		}
 	}
 	if sourceURL != "" && !strings.HasPrefix(sourceURL, "data:") {
 		parsed, err := url.Parse(sourceURL)

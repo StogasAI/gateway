@@ -829,6 +829,7 @@ func planRoutes(input RequestInput, route Route, rawData map[string]json.RawMess
 	variants := &requestVariants{
 		base: RequestPolicy{Config: input.Policy, RedactionPolicy: input.RedactionPolicy, LoadRedactionPolicy: input.LoadRedactionPolicy},
 		load: input.CredentialPolicy, requestPolicy: requestPolicy, fields: rawData, route: route, selections: selections, reserveBody: input.ReserveBody, inputBytes: len(input.Body),
+		attachments: requestAttachments(rawData, route, selections),
 	}
 	return planRequest(input, route, base.Model, providerPreference, variants)
 }
