@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -105,7 +106,8 @@ func parseAWSByokCredential(raw string) (awsByokCredential, error) {
 		valid = valid && credential.APIKey == "" &&
 			awsAccessKeyIDPattern.MatchString(credential.AccessKeyID) && awsSecretKeyPattern.MatchString(credential.SecretAccessKey)
 	} else {
-		valid = valid && validUpstreamAPIKey(credential.APIKey)
+		// A short-term Bedrock API key expires within 12 hours, so it cannot be stored.
+		valid = valid && validUpstreamAPIKey(credential.APIKey) && !strings.HasPrefix(credential.APIKey, "bedrock-api-key-")
 	}
 	if !valid {
 		return awsByokCredential{}, errors.New("invalid AWS BYOK")
@@ -226,9 +228,6 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 		switch upstream.Hosting {
 		case hostingAWS:
 			request.url = "https://bedrock-runtime." + credential.Region + ".amazonaws.com/anthropic/v1/messages"
-			if credential.APIKey != "" {
-				request.signer = staticHeaders("x-api-key", credential.APIKey)
-			}
 		case hostingAnthropic:
 			if credential.WorkspaceID == "" {
 				return cloudRequest{}, billing.ErrByokTarget
@@ -236,13 +235,14 @@ func cloudClaudeRequest(ctx context.Context, provider schemas.ModelProvider, sec
 			request.url = "https://aws-external-anthropic." + credential.Region + ".api.aws/v1/messages"
 			request.headers["anthropic-workspace-id"] = credential.WorkspaceID
 			service = "aws-external-anthropic"
-			if credential.APIKey != "" {
-				request.signer = staticHeaders("Authorization", "Bearer "+credential.APIKey)
-			}
 		default:
 			return cloudRequest{}, billing.ErrByokTarget
 		}
-		if credential.APIKey == "" {
+		// Both offerings take an API key as a bearer token; Bedrock also takes
+		// x-api-key, but AWS documents the bearer form for every Bedrock API.
+		if credential.APIKey != "" {
+			request.signer = staticHeaders("Authorization", "Bearer "+credential.APIKey)
+		} else {
 			request.signer = sigV4Signer(aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey}, service, credential.Region, request.url)
 		}
 		return request, nil

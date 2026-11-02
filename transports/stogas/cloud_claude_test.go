@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/transports/stogas/billing"
 	"github.com/maximhq/bifrost/transports/stogas/catalog"
@@ -168,6 +169,7 @@ func TestCloudCredentialsRejectEveryMalformedSecret(t *testing.T) {
 		"AWS no sign-in":             {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1"})},
 		"AWS bad workspace":          {catalog.ProviderAWS, cloudSecret(t, with(iam, "workspaceId", "workspace-1"))},
 		"AWS API key with space":     {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "apiKey": "two words"})},
+		"AWS short-term API key":     {catalog.ProviderAWS, cloudSecret(t, map[string]string{"schema": awsByokSchema, "region": "us-east-1", "apiKey": "bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29t"})},
 		"Google unknown field":       {catalog.ProviderGoogleCloud, cloudSecret(t, with(google, "tokenUri", "https://example.com/token"))},
 		"Google bad project":         {catalog.ProviderGoogleCloud, cloudSecret(t, with(google, "projectId", "Stogas/../x"))},
 		"Google user email":          {catalog.ProviderGoogleCloud, cloudSecret(t, with(google, "clientEmail", "person@example.com"))},
@@ -311,7 +313,7 @@ func TestCloudClaudeRequestReachesEachOfferingWithItsOwnSignIn(t *testing.T) {
 		{
 			name: "Bedrock with an API key", provider: catalog.ProviderAWS, secret: awsAPIKeySecret(t, "us-east-1", ""),
 			deployment: "aws-claude-fable-5-1-us", url: "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages",
-			headers: map[string]string{}, auth: map[string]string{"x-api-key": "customer-api-key"},
+			headers: map[string]string{}, auth: map[string]string{"Authorization": "Bearer customer-api-key"},
 		},
 		{
 			name: "Claude Platform with an IAM key", provider: catalog.ProviderAWS, secret: awsIAMSecret(t, "us-west-2", testWorkspaceID),
@@ -573,38 +575,67 @@ func TestCloudClaudeAdapterSendsGeographyOnlyToAnthropic(t *testing.T) {
 	}
 }
 
-// Every hosting gets the output format natively, but core drops strict from tools
-// where AWS or Google runs Claude, because its tables mark strict tool use
-// unsupported there. The edge-cases note describes this; update it when it changes.
-func TestCloudClaudeKeepsStrictToolsOnlyWhereAnthropicRunsClaude(t *testing.T) {
-	body := `"messages":[{"role":"user","content":"hi"}],` +
-		`"response_format":{"type":"json_schema","json_schema":{"name":"answer","strict":true,"schema":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"],"additionalProperties":false}}},` +
-		`"tools":[{"type":"function","function":{"name":"lookup","strict":true,"parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}}}],`
-	for deployment, strict := range map[string]bool{
-		"aws-claude-fable-5-1":                           false,
-		"google-cloud-claude-fable-5-1":                  false,
-		"aws-claude-fable-5-1-anthropic-hosted":          true,
-		"google-cloud-claude-fable-5-1-anthropic-hosted": true,
-	} {
-		state := resolveCloudState(t, "/v1/chat/completions", deployment, body)
-		if err := state.Adapter.ValidateRequest(state); err != nil {
-			t.Fatalf("%s: %v", deployment, err)
-		}
-		if err := state.Adapter.SanitizeRequest(state); err != nil {
-			t.Fatalf("%s: %v", deployment, err)
-		}
-		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
-		request, err := state.Resolution.ToBifrost(ctx)
-		if err != nil {
-			t.Fatalf("%s: %v", deployment, err)
-		}
-		wire, bifrostErr := prepareChatProviderBody(ctx, request.ChatRequest, false, state.Resolution.Deployment.Upstream.Hosting)
-		if bifrostErr != nil {
-			t.Fatalf("%s: %v", deployment, bifrostErr.Error)
-		}
-		text := string(wire)
-		if !strings.Contains(text, `"output_config"`) || strings.Contains(text, `"bf_so_`) || strings.Contains(text, `"strict":true`) != strict {
-			t.Errorf("%s: wire %s", deployment, text)
+// Every hosting gets the output format natively and keeps the client's strict
+// tools, although core's tables drop strict where AWS or Google runs Claude.
+// Core opts Google's tools into fine-grained streaming, streaming or not, and
+// leaves Bedrock's Messages shape alone, which streams tool input finely
+// without it. The edge-cases note describes both; update it when they change.
+func TestCloudClaudeKeepsStrictToolsOnEveryHosting(t *testing.T) {
+	format := `"type":"json_schema","strict":true,"schema":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"],"additionalProperties":false}`
+	parameters := `"parameters":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
+	routes := map[string]string{
+		"/v1/chat/completions": `"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_schema","json_schema":{"name":"answer",` + format[len(`"type":"json_schema",`):] + `}},` +
+			`"tools":[{"type":"function","function":{"name":"lookup","strict":true,` + parameters + `}},{"type":"function","function":{"name":"loose",` + parameters + `}}],`,
+		"/v1/responses": `"input":"hi","text":{"format":{"name":"answer",` + format + `}},` +
+			`"tools":[{"type":"function","name":"lookup","strict":true,` + parameters + `},{"type":"function","name":"loose","strict":false,` + parameters + `}],`,
+	}
+	for path, body := range routes {
+		for deployment, eager := range map[string]bool{
+			"aws-claude-fable-5-1":                           false,
+			"aws-claude-fable-5-1-us":                        false,
+			"google-cloud-claude-fable-5-1":                  true,
+			"aws-claude-fable-5-1-anthropic-hosted":          false,
+			"google-cloud-claude-fable-5-1-anthropic-hosted": false,
+		} {
+			for _, streaming := range []bool{false, true} {
+				state := resolveCloudState(t, path, deployment, body)
+				if err := state.Adapter.ValidateRequest(state); err != nil {
+					t.Fatalf("%s %s: %v", path, deployment, err)
+				}
+				if err := state.Adapter.SanitizeRequest(state); err != nil {
+					t.Fatalf("%s %s: %v", path, deployment, err)
+				}
+				ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+				request, err := state.Resolution.ToBifrost(ctx)
+				if err != nil {
+					t.Fatalf("%s %s: %v", path, deployment, err)
+				}
+				hosting := state.Resolution.Deployment.Upstream.Hosting
+				var wire []byte
+				var bifrostErr *schemas.BifrostError
+				if request.ChatRequest != nil {
+					wire, bifrostErr = prepareChatProviderBody(ctx, request.ChatRequest, streaming, hosting)
+				} else {
+					wire, bifrostErr = prepareResponsesProviderBody(ctx, request.ResponsesRequest, streaming, hosting)
+				}
+				if bifrostErr != nil {
+					t.Fatalf("%s %s: %v", path, deployment, bifrostErr.Error)
+				}
+				tools := providerutils.GetJSONField(wire, "tools").Array()
+				if len(tools) != 2 || !providerutils.JSONFieldExists(wire, "output_config.format") || strings.Contains(string(wire), `"bf_so_`) {
+					t.Fatalf("%s %s: wire %s", path, deployment, wire)
+				}
+				lookup, loose := tools[0], tools[1]
+				if lookup.Get("name").String() != "lookup" || !lookup.Get("strict").Bool() || loose.Get("strict").Bool() {
+					t.Errorf("%s %s: strict lost or added: %s", path, deployment, wire)
+				}
+				if lookup.Get("eager_input_streaming").Bool() != eager || loose.Get("eager_input_streaming").Bool() != eager {
+					t.Errorf("%s %s streaming %v: eager_input_streaming want %v: %s", path, deployment, streaming, eager, wire)
+				}
+				if strings.Contains(string(wire), "structured-outputs-") || hosting == hostingAWS && strings.Contains(string(wire), "anthropic_beta") {
+					t.Errorf("%s %s: unneeded beta: %s", path, deployment, wire)
+				}
+			}
 		}
 	}
 }
