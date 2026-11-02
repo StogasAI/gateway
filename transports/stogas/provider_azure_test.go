@@ -362,6 +362,51 @@ func TestAzureClaudeHoldCoversAnthropicCacheWriteAndToolOverhead(t *testing.T) {
 	}
 }
 
+// MiniMax M3 on Azure only turns reasoning on and off. The OpenAI format carries reasoning only as
+// reasoning_effort, so reasoning off is the effort "none", and reasoning on leaves the model's
+// default.
+func TestAzureBinaryReasoningReachesTheOpenAIWire(t *testing.T) {
+	for _, test := range []struct {
+		reasoning string
+		want      string
+	}{
+		{`"reasoning":{"enabled":false}`, "none"},
+		{`"reasoning":{"effort":"none"}`, "none"},
+		{`"reasoning_effort":"none"`, "none"},
+		{`"reasoning":{"enabled":true}`, ""},
+		{`"reasoning":{"effort":"high"}`, ""},
+		{`"max_completion_tokens":64`, ""},
+	} {
+		t.Run(test.reasoning, func(t *testing.T) {
+			state := resolveAzureState(t, "/v1/chat/completions",
+				`{"model":"azure-minimax-m3","messages":[{"role":"user","content":"hi"}],`+test.reasoning+`}`)
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, state.Resolution.RequestType)
+			request, err := state.Resolution.ToBifrost(ctx)
+			if err != nil {
+				t.Fatalf("ToBifrost returned error: %v", err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatalf("PrepareProviderRequest returned error: %v", err)
+			}
+			body := preparedProviderBody(t, ctx, request.ChatRequest)
+			var wire map[string]json.RawMessage
+			if err := sonic.Unmarshal(body, &wire); err != nil {
+				t.Fatalf("decode Azure wire request: %v", err)
+			}
+			effort, sent := wire["reasoning_effort"]
+			if rawString(effort) != test.want || sent != (test.want != "") {
+				t.Fatalf("Azure received reasoning_effort %s, want %q: %s", effort, test.want, body)
+			}
+			for _, field := range []string{"reasoning", "thinking", "chat_template_kwargs"} {
+				if _, exists := wire[field]; exists {
+					t.Fatalf("Azure received %s: %s", field, body)
+				}
+			}
+		})
+	}
+}
+
 func resolveAzureState(t *testing.T, path string, body string) *State {
 	t.Helper()
 	resolution, err := catalog.ResolveRequest(catalog.RequestInput{Body: []byte(body), Method: "POST", Path: path})

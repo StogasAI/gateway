@@ -1517,6 +1517,17 @@ func (r *ResolvedRequest) ReasoningEnabled() (bool, bool) {
 	return *r.chat.ChatParameters.Reasoning.Enabled, true
 }
 
+// SendReasoningOffAsEffort sends a binary reasoning-off control as the effort "none", for a wire
+// format that carries reasoning only as an effort.
+func (r *ResolvedRequest) SendReasoningOffAsEffort() {
+	if enabled, ok := r.ReasoningEnabled(); !ok || enabled {
+		return
+	}
+	effort := "none"
+	r.chat.ChatParameters.Reasoning.Effort = &effort
+	r.chat.ChatParameters.Reasoning.Enabled = nil
+}
+
 // PrepareChutesChatWire applies Chutes-specific output and reasoning fields.
 // The resolved output limit remains the billing hold limit.
 func (r *ResolvedRequest) PrepareChutesChatWire(
