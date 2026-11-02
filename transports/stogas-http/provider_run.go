@@ -120,9 +120,9 @@ func (r *providerRun) prepare(pair *providerPair, resolution *catalog.ResolvedRe
 	if err != nil {
 		return billingFailure{err}
 	}
-	state.PolicyVersions = selected.Versions
+	state.PolicyVersions = selected.Logged
 	if r.held == nil {
-		r.client.policyVersions = selected.Versions
+		r.client.policyVersions = selected.Logged
 	}
 	if err := state.Adapter.ValidateRequest(state); err != nil {
 		return err

@@ -41,7 +41,7 @@ func (s *Server) startRun(ctx *requestContext, startedAt time.Time, preparation 
 	}
 	keyConfig, err := s.keyConfigForCredential(credential)
 	if keyConfig != nil {
-		ctx.policyVersions = keyConfig.Versions
+		ctx.policyVersions = keyConfig.Logged
 		if credential.Dashboard != nil && keyConfig.Claims != nil {
 			ctx.claims = keyConfig.Claims
 		}

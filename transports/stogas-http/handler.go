@@ -18,7 +18,7 @@ type requestContext struct {
 	response              *publicResponse
 	credential            *apiCredential
 	claims                *billing.APIKeyClaims
-	policyVersions        *billing.PolicyVersions
+	policyVersions        *billing.LoggedPolicyVersions
 	dashboard             *billing.DashboardCredential
 	encrypted             bool
 	requestID             string

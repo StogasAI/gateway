@@ -97,13 +97,14 @@ func TestRuleFragmentsPreserveCanonicalIdentityAndStrictFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The identity excludes the document file's trailing newline.
+	digest := sha256.Sum256(expected)
 	expected = append(expected, '\n')
 	parent, err := ParseSourceDocument([]byte(`{"rules":{"selected":` + settings + `}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	fragment := parent.rules["selected"].source
-	digest := sha256.Sum256(expected)
 	if !bytes.Equal(fragment.CanonicalJSON(), expected) || fragment.Digest() != hex.EncodeToString(digest[:]) {
 		t.Fatal("rule fragment changed canonical bytes or identity")
 	}

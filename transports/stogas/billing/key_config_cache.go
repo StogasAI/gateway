@@ -292,6 +292,9 @@ func policyReferenceBytes(snapshot *PolicySnapshot) int64 {
 	if snapshot.Versions != nil {
 		bytes += int64(cap(*snapshot.Versions)) * int64(unsafe.Sizeof(PolicyVersion{}))
 	}
+	if snapshot.Logged != nil {
+		bytes += int64(cap(*snapshot.Logged)) * int64(unsafe.Sizeof(LoggedPolicyVersion{}))
+	}
 	return bytes
 }
 

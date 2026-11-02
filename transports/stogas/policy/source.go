@@ -306,7 +306,9 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	if contentBytes > MaxSourceBytes {
 		return nil, configError("source configuration exceeds size limit")
 	}
-	sum := sha256.Sum256(canonical)
+	// Logs, receipts and Control's config_sha256 name this digest, so like every
+	// RFC 8785 identity it excludes the document file's trailing newline.
+	sum := sha256.Sum256(bytes.TrimSuffix(canonical, []byte{'\n'}))
 	document.digest = hex.EncodeToString(sum[:])
 	document.size = sourceSize{digest: document.digest, settings: len(canonical), plugins: make(map[[32]byte]int)}
 	if raw := fields["plugins"]; raw != nil {
@@ -804,7 +806,7 @@ func ChainDigest(sources []ScopedSource) string {
 		values[i] = [2]string{string(source.Scope), source.Value.Digest}
 	}
 	raw, _ := json.Marshal(values)
-	sum := sha256.Sum256(append(raw, '\n'))
+	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
 

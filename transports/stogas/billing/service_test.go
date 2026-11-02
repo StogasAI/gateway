@@ -602,7 +602,7 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 			ResponseFormat: setting, Include: include, ToolChoice: setting, ParallelToolCalls: &flag, MaxToolCalls: &integer, Truncation: setting,
 		},
 		SessionID: quotes(MaxSessionIDBytes), Metadata: map[string]string{}, Transport: TransportAttestedTLS, Cancelled: true, ClientStopMS: &count, CatalogVersion: new(uint64(1<<64 - 1)),
-		PolicyVersions: &PolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
+		PolicyVersions: &LoggedPolicyVersions{}, NodeID: strings.Repeat("f", 64), GatewayVersion: "v" + strings.Repeat("9", 31),
 		Performance: RequestPerformance{TotalMS: count, ProviderMS: count, ProviderStartMS: &count, FirstOutputMS: &count, TTFTMS: &count},
 		Usage: RequestUsage{UpstreamCostUSD: usd, BilledCostUSD: usd, CacheReadSavingsUSD: &usd, CacheWriteOverheadUSD: &usd, Meters: EventMeters{},
 			StandardTextTokens: StandardTextTokens{Input: &usd, Reasoning: &usd, Output: &usd}},
@@ -613,7 +613,9 @@ func TestLargestRequestLogFitsTheLimit(t *testing.T) {
 		event.Metadata[quotes(MaxMetadataKeyBytes-2)+fmt.Sprintf("%02d", i)] = quotes(MaxMetadataValueBytes)
 	}
 	for range 36 {
-		*event.PolicyVersions = append(*event.PolicyVersions, PolicyVersion{Scope: "credential", ID: uuid.NewString(), Revision: 1<<31 - 1})
+		*event.PolicyVersions = append(*event.PolicyVersions, LoggedPolicyVersion{
+			PolicyVersion: PolicyVersion{Scope: "credential", ID: uuid.NewString(), Revision: 1<<31 - 1}, SHA256: strings.Repeat("f", 64),
+		})
 	}
 	for range 12 {
 		status := 599

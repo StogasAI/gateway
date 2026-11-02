@@ -445,7 +445,7 @@ func (s *KeyConfigSnapshot) selectionPolicy(selection CredentialSelection, now t
 	if err := budget.AddConfig(config); err != nil {
 		return nil, err
 	}
-	compiled = &PolicySnapshot{Versions: &versions, Config: config, Digest: digest, sourceRefs: refs, cacheBytes: config.CompositionBytes()}
+	compiled = &PolicySnapshot{Versions: &versions, Logged: loggedVersions(versions, refs), Config: config, Digest: digest, sourceRefs: refs, cacheBytes: config.CompositionBytes()}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if previous := s.credentialPolicies[selection.ID]; previous != nil {

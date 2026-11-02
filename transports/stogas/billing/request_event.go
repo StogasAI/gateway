@@ -55,31 +55,31 @@ const (
 )
 
 type RequestEvent struct {
-	SchemaVersion    uint8              `json:"schema_version"`
-	RequestID        string             `json:"request_id"`
-	CreatedAt        string             `json:"created_at"`
-	LastRequestAt    string             `json:"last_request_at"`
-	RequestCount     uint32             `json:"request_count"`
-	GatewayError     *EventError        `json:"gateway_error"`
-	APIKeyID         string             `json:"api_key_id"`
-	GrantID          *string            `json:"grant_id"`
-	MemberID         string             `json:"member_id"`
-	OrganizationID   string             `json:"organization_id"`
-	RequestType      string             `json:"request_type"`
-	RequestSettings  RequestSettings    `json:"request_settings"`
-	SessionID        string             `json:"session_id"`
-	Metadata         map[string]string  `json:"metadata"`
-	Transport        string             `json:"transport"`
-	Cancelled        bool               `json:"cancelled"`
-	ClientStopMS     *uint32            `json:"client_stop_ms"`
-	CatalogVersion   *uint64            `json:"catalog_version"`
-	PolicyVersions   *PolicyVersions    `json:"policy_versions"`
-	ProviderAttempts []ProviderAttempt  `json:"provider_attempts"`
-	NodeID           string             `json:"node_id"`
-	Performance      RequestPerformance `json:"performance"`
-	Usage            RequestUsage       `json:"usage"`
-	Plugins          plugins.Metrics    `json:"plugins,omitzero"`
-	GatewayVersion   string             `json:"gateway_version"`
+	SchemaVersion    uint8                 `json:"schema_version"`
+	RequestID        string                `json:"request_id"`
+	CreatedAt        string                `json:"created_at"`
+	LastRequestAt    string                `json:"last_request_at"`
+	RequestCount     uint32                `json:"request_count"`
+	GatewayError     *EventError           `json:"gateway_error"`
+	APIKeyID         string                `json:"api_key_id"`
+	GrantID          *string               `json:"grant_id"`
+	MemberID         string                `json:"member_id"`
+	OrganizationID   string                `json:"organization_id"`
+	RequestType      string                `json:"request_type"`
+	RequestSettings  RequestSettings       `json:"request_settings"`
+	SessionID        string                `json:"session_id"`
+	Metadata         map[string]string     `json:"metadata"`
+	Transport        string                `json:"transport"`
+	Cancelled        bool                  `json:"cancelled"`
+	ClientStopMS     *uint32               `json:"client_stop_ms"`
+	CatalogVersion   *uint64               `json:"catalog_version"`
+	PolicyVersions   *LoggedPolicyVersions `json:"policy_versions"`
+	ProviderAttempts []ProviderAttempt     `json:"provider_attempts"`
+	NodeID           string                `json:"node_id"`
+	Performance      RequestPerformance    `json:"performance"`
+	Usage            RequestUsage          `json:"usage"`
+	Plugins          plugins.Metrics       `json:"plugins,omitzero"`
+	GatewayVersion   string                `json:"gateway_version"`
 }
 
 // RequestSettings records the settings that control what the model generates,
@@ -334,7 +334,9 @@ type EventMeter struct {
 
 type EventMeters map[string]EventMeter
 
-const requestLogMaxEventBytes = 64 * 1024
+// The largest log the contract allows is about 65 KiB. Postgres stores its
+// text up to half as long again, within its 128 KiB check.
+const requestLogMaxEventBytes = 72 * 1024
 
 // settlementLog carries the hold binding, which settlement checks and removes
 // before the log reaches customer history.

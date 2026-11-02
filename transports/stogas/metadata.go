@@ -33,9 +33,13 @@ func FinalMetadata(ctx context.Context, state *State) proof.Metadata {
 	return metadata
 }
 
-// recordMetadata copies the request record's time, timing, usage and costs.
+// recordMetadata copies the request record's time, timing, usage and costs,
+// and the hash of the policies it names.
 func recordMetadata(metadata *proof.Metadata, event *billing.RequestEvent) {
 	metadata.CreatedAt = event.CreatedAt
+	if event.PolicyVersions != nil {
+		metadata.PolicyVersionsSHA256 = event.PolicyVersions.SHA256()
+	}
 	metadata.Timing = proof.Timing{TotalMS: event.Performance.TotalMS, ProviderMS: event.Performance.ProviderMS, TTFTMS: event.Performance.TTFTMS}
 	metadata.Meters = event.Usage.Meters
 	metadata.UpstreamCostUSD, metadata.BilledCostUSD = event.Usage.UpstreamCostUSD, event.Usage.BilledCostUSD
