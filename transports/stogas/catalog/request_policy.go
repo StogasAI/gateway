@@ -90,6 +90,10 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	credentials := make(map[*ResolvedRequest][]int, len(variants.selections))
 	ranks := make(map[credentialCandidate]int)
 	var firstErr error
+	// When no credential serves any candidate, the request says so. Once one
+	// pair passes this check, a policy may be what removed the rest, so the
+	// request keeps the general error and the simulator names each cause.
+	targetRemoved, targetPassed := false, false
 	for _, selection := range variants.selections {
 		template := ResolvedRequest{
 			Route: route, RequestedModel: model, Provider: selection.provider, Deployment: selection.deployment,
@@ -116,9 +120,11 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 			}
 			ranks[credentialCandidate{selection.provider, index}] = rank
 			if input.DeploymentEligible != nil && !input.DeploymentEligible(selection.provider, index, selection.deployment) {
+				targetRemoved = true
 				trace.removePair(selection, index, nil, RemovedCandidate{Reason: RemovedCredentialTarget})
 				continue
 			}
+			targetPassed = true
 			value, err := variants.policyFor(selection.provider, index)
 			if err != nil {
 				if errors.Is(err, customerkey.ErrKey) || errors.Is(err, customerkey.ErrEnvelope) {
@@ -203,6 +209,9 @@ func planRequest(input RequestInput, route Route, model string, preference Provi
 	}
 	if len(candidates.filtered) == 0 && firstErr != nil {
 		return nil, firstErr
+	}
+	if len(candidates.filtered) == 0 && targetRemoved && !targetPassed {
+		return nil, ErrByokTargetUnavailable
 	}
 	ordered, err := candidates.finish(preference)
 	if err != nil {

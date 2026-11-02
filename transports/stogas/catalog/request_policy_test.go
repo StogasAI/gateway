@@ -40,7 +40,8 @@ func TestCredentialEligibilityPrecedesPoliciesAndDefaultOrder(t *testing.T) {
 			{name: "exact selection retains policy", model: "openai-gpt-5.6-sol", providers: map[string][]int{"openai": {0}}, filter: `provider.id == 'azure'`, code: "model_unavailable"},
 			{name: "policy narrows one region", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `deployment.id == 'azure-gpt-5.6-sol-eu'`, deployment: "azure-gpt-5.6-sol-eu"},
 			{name: "policy cannot restore missing provider", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, filter: `provider.id == 'openai'`, code: "model_unavailable"},
-			{name: "exact selection retains credential targets", model: "azure-gpt-5.6-sol-us", providers: map[string][]int{"azure": {0}}, azureTarget: "azure-gpt-5.6-sol", code: "model_unavailable"},
+			{name: "exact selection retains credential targets", model: "azure-gpt-5.6-sol-us", providers: map[string][]int{"azure": {0}}, azureTarget: "azure-gpt-5.6-sol", code: "byok_target_unavailable"},
+			{name: "a policy and a target leave the general error", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, azureTarget: "azure-gpt-5.6-sol", filter: `deployment.id == 'azure-gpt-5.6-sol-eu'`, code: "model_unavailable"},
 			{name: "provider order chooses unique first group", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}, "openai": {0}}, extra: `,"provider":{"order":["openai","azure"]}`, deployment: "openai-gpt-5.6-sol"},
 			{name: "missing first provider is ineligible", model: "gpt-5.6-sol", providers: map[string][]int{"azure": {0}}, azureTarget: "azure-gpt-5.6-sol", extra: `,"provider":{"order":["openai","azure"]}`, deployment: "azure-gpt-5.6-sol"},
 		} {
@@ -200,8 +201,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 	// The catalog states an Azure deployment type and no OpenAI deployment type.
 	undecided := `{"typed":{"when":"deployment.upstream.deploymentType == 'global_standard'","input":{"asciiOnly":true}}}`
 	for _, test := range []struct {
-		name, rules, order, want, code string
-		credentials                    bool
+		name, rules, order, want, code, serves string
+		credentials                            bool
 	}{
 		{name: "deny period leaves another provider", rules: denied("provider.id == 'azure'"), order: "azure", want: "openai-gpt-5.6-sol"},
 		{name: "deny period leaves another credential", rules: denied("provider.id == 'openai'"), want: "openai-gpt-5.6-sol", credentials: true},
@@ -209,6 +210,8 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 		{name: "undecided condition leaves another provider", rules: undecided, order: "openai", want: "azure-gpt-5.6-sol"},
 		{name: "undecided condition leaves another credential", rules: undecided, want: "openai-gpt-5.6-sol", credentials: true},
 		{name: "undecided condition on every candidate", rules: `{"geo":{"when":"deployment.upstream.inferenceGeo == 'us'","input":{"asciiOnly":true}}}`, order: "azure", code: "invalid_request"},
+		{name: "no credential serves the deployments", rules: `{"unused":{"when":"provider.id == 'chutes'","input":{"asciiOnly":true}}}`, order: "azure", code: "byok_target_unavailable", serves: "none"},
+		{name: "a filter and a missing target leave the general error", rules: `{"only":{"routing":{"filter":"provider.id == 'azure'"}}}`, order: "azure", code: "model_unavailable", serves: "openai-gpt-5.6-sol"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			preferred := map[string]string{"azure": `"azure","openai"`, "openai": `"openai","azure"`}[test.order]
@@ -216,6 +219,9 @@ func TestConditionalRulesExcludeOnlyTheirCandidates(t *testing.T) {
 				Body: policyChatBody(`,"provider":{"order":[` + preferred + `]}`), Method: "POST", Path: "/v1/chat/completions",
 				Policy: compose(test.rules), AvailableCredentials: map[string][]int{"azure": {0}, "openai": {0}},
 				DeploymentEligible: func(_ schemas.ModelProvider, _ int, deployment Deployment) bool {
+					if test.serves != "" {
+						return deployment.ID == test.serves
+					}
 					return deployment.ID == "openai-gpt-5.6-sol" || deployment.ID == "azure-gpt-5.6-sol"
 				},
 			}
