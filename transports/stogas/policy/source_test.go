@@ -41,8 +41,8 @@ func FuzzSourceCanonicalIdentity(f *testing.F) {
 	})
 }
 
-// Control names each saved revision by the same hash in config_sha256 and
-// checks these vectors too, so a log's hash finds the revision it applied.
+// Control keeps each saved revision under this hash in policy_version.sha256, and
+// a log's hash finds that revision only while both sides match these vectors.
 func TestSourceDigestsMatchSharedVectors(t *testing.T) {
 	raw, err := os.ReadFile("testdata/canonical-sha256.json")
 	if err != nil {
