@@ -164,7 +164,7 @@ func (c *Config) Activate(values Values) (*Config, error) {
 	}
 	active := append([]ScopedSource{}, c.sources...)
 	var matches []RuleMatch
-	var opaque []*SourceDocument
+	var opaque []EncryptedPlugins
 	for index, entry := range c.sources {
 		for _, rule := range entry.Value.Rules {
 			if rule.When == nil {
@@ -203,8 +203,12 @@ func (c *Config) Activate(values Values) (*Config, error) {
 		return nil, err
 	}
 	for _, entry := range active {
-		if entry.Value.encryptedPlugins != nil && (!entry.Value.defaultSettings || out.requiredSettings&pluginPermissions == 0) {
-			opaque = append(opaque, entry.Value.encryptedPlugins)
+		// A default's encrypted plugin applies unless a requirement sets the
+		// same plugin, as its readable plugins do.
+		if document := entry.Value.encryptedPlugins; document != nil {
+			if units := out.allowedSettings(entry.Value) & document.EncryptedUnits(); units != 0 {
+				opaque = append(opaque, EncryptedPlugins{Document: document, Units: units})
+			}
 		}
 	}
 	out.ActiveRules, out.ActiveEncryptedPlugins = matches, opaque
@@ -212,21 +216,22 @@ func (c *Config) Activate(values Values) (*Config, error) {
 	return out, nil
 }
 
-const pluginPermissions = permissionPlugins | permissionEncryptedPlugins | permissionTextExtraction | permissionExport
+// pluginPermissions are every plugin section, the permission to encrypt one
+// among them.
+const pluginPermissions = pluginUnits | permissionEncryptedPlugins
 const orderingPermissions = permissionOrder | permissionSort
 
 // One order, fallback count and total wait apply to every candidate of a
 // request. Each call's output idle wait and retries come from its own pair.
 const requestWidePermissions = orderingPermissions | permissionFallbacks | permissionTotalTimeout
 
+// settingsMask turns sections into the kinds of setting that combine. Each
+// plugin is its own kind, encrypted or not; the orderings are one.
 func settingsMask(value Permission) Permission {
-	if value&pluginPermissions != 0 {
-		value |= pluginPermissions
-	}
 	if value&orderingPermissions != 0 {
 		value |= orderingPermissions
 	}
-	return value & requestPermissions
+	return value & requestPermissions &^ permissionEncryptedPlugins
 }
 
 // ExpressionBytes charges every immutable program once per source.

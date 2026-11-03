@@ -2,15 +2,13 @@ package billing
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hkdf"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -37,7 +35,7 @@ func encryptedPolicyFixture(t testing.TB) ([]json.RawMessage, string, customerke
 		t.Fatal(err)
 	}
 	t.Cleanup(key.Clear)
-	source, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": fixture.Envelope}})
+	source, _ := json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"redaction": map[string]any{"encrypted": fixture.Envelope}}})
 	return []json.RawMessage{source, json.RawMessage(`null`), json.RawMessage(`{}`)}, fixture.OrganizationID, key
 }
 
@@ -114,7 +112,7 @@ func TestConditionalEncryptedPluginRequiresOnlyItsActiveRoot(t *testing.T) {
 	raw[0], _ = json.Marshal(fields)
 	validation := &Service{}
 	unchecked, err := validation.ValidatePolicySources(validationSources(raw), org, nil)
-	if err != nil || unchecked.Status != "partial" || len(unchecked.UncheckedPlugins) != 1 || unchecked.UncheckedPlugins[0].Rule != "private" {
+	if err != nil || unchecked.Status != "partial" || len(unchecked.UncheckedPlugins) != 1 || unchecked.UncheckedPlugins[0] != (UncheckedPolicyPlugin{PolicyValidationReference: PolicyValidationReference{Scope: policy.OrganizationScope}, Rule: "private", Plugin: "redaction"}) {
 		t.Fatalf("conditional plugin incorrectly certified: %+v %v", unchecked, err)
 	}
 	checked, err := validation.ValidatePolicySources(validationSources(raw), org, keys)
@@ -169,7 +167,7 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 			t.Fatal(err)
 		}
 		if supplied == nil {
-			if got.Status != "partial" || len(got.UncheckedPlugins) != 1 || got.UncheckedPlugins[0].Scope != policy.OrganizationScope {
+			if got.Status != "partial" || len(got.UncheckedPlugins) != 1 || got.UncheckedPlugins[0] != (UncheckedPolicyPlugin{PolicyValidationReference: PolicyValidationReference{Scope: policy.OrganizationScope}, Plugin: "redaction"}) {
 				t.Fatalf("opaque content certified: %+v", got)
 			}
 		} else if got.Status != "valid" || len(got.UncheckedPlugins) != 0 {
@@ -190,6 +188,77 @@ func TestOptionalValidationDistinguishesUncheckedFromInvalid(t *testing.T) {
 	}
 	if _, err := s.ValidatePolicySources(validationSources(raw), "other-org", key); !errors.Is(err, customerkey.ErrEnvelope) {
 		t.Fatal("wrong organization accepted", err)
+	}
+	if s.keyConfigs.bytes != 0 {
+		t.Fatal("temporary validation retained secret plans")
+	}
+}
+
+// Each plugin may use its own root. A check opens the plugins whose root it
+// received, names the others, and still checks every readable setting.
+func TestPolicyValidationOpensEachPluginWithItsOwnRoot(t *testing.T) {
+	const org = "test-organization"
+	roots := map[string][]byte{"exports": make([]byte, 32), "redactions": make([]byte, 32)}
+	encoded := map[string]string{}
+	for name, root := range roots {
+		for i := range root {
+			root[i] = byte(i + len(name))
+		}
+		encoded[name] = base64.RawURLEncoding.EncodeToString(root)
+	}
+	keys, err := customerkey.ParseKeys(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(keys.Clear)
+	export := sealTestEnvelope(t, roots["exports"], keys["exports"].ID(), org, "plugins/export", `{"destinations":[{"url":"https://collector.example/v1/traces","headers":{"Authorization":"Bearer private"}}]}`)
+	redaction := sealTestEnvelope(t, roots["redactions"], keys["redactions"].ID(), org, "plugins/redaction", `{"literals":[{"values":["CUSTOMER_PRIVATE_VALUE"]}]}`)
+	registry := map[string]any{"keys": map[string]string{"exports": keys["exports"].ID(), "redactions": keys["redactions"].ID()}}
+	plugins := map[string]any{"textExtraction": true, "export": map[string]any{"encrypted": json.RawMessage(export)}, "redaction": map[string]any{"encrypted": json.RawMessage(redaction)}}
+	base, _ := json.Marshal(map[string]any{"encryption": registry, "plugins": plugins})
+	rule, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": plugins}}})
+	s := &Service{}
+	for _, test := range []struct {
+		sent    []string
+		missing []string
+	}{
+		{nil, []string{"export", "redaction"}},
+		{[]string{"exports"}, []string{"redaction"}},
+		{[]string{"redactions"}, []string{"export"}},
+		{[]string{"exports", "redactions"}, nil},
+	} {
+		sent := customerkey.Keys{}
+		for _, name := range test.sent {
+			sent[name] = keys[name]
+		}
+		got, err := s.ValidatePolicySources(validationSources([]json.RawMessage{base, json.RawMessage(`null`), rule}), org, sent)
+		if err != nil {
+			t.Fatalf("roots %v: %v", test.sent, err)
+		}
+		var want []UncheckedPolicyPlugin
+		for _, plugin := range test.missing {
+			want = append(want, UncheckedPolicyPlugin{PolicyValidationReference: PolicyValidationReference{Scope: policy.OrganizationScope}, Plugin: plugin})
+		}
+		for _, plugin := range test.missing {
+			want = append(want, UncheckedPolicyPlugin{PolicyValidationReference: PolicyValidationReference{Scope: policy.KeyScope}, Rule: "private", Plugin: plugin})
+		}
+		status := "valid"
+		if len(want) > 0 {
+			status = "partial"
+		}
+		if got.Status != status || !reflect.DeepEqual(got.UncheckedPlugins, append([]UncheckedPolicyPlugin{}, want...)) {
+			t.Fatalf("roots %v: %+v, want %s %+v", test.sent, got, status, want)
+		}
+	}
+	// A readable setting that fails its checks still fails without any root.
+	invalid, _ := json.Marshal(map[string]any{"rules": map[string]any{"private": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"textExtraction": "yes", "redaction": plugins["redaction"]}}}})
+	if _, err := s.ValidatePolicySources(validationSources([]json.RawMessage{base, json.RawMessage(`null`), invalid}), org, nil); err == nil {
+		t.Fatal("a readable plugin beside an unchecked one escaped its check")
+	}
+	// Ciphertext moved under another plugin does not open.
+	swapped, _ := json.Marshal(map[string]any{"encryption": registry, "plugins": map[string]any{"export": plugins["redaction"]}})
+	if _, err := s.ValidatePolicySources(validationSources([]json.RawMessage{swapped, json.RawMessage(`null`), json.RawMessage(`{}`)}), org, keys); !errors.Is(err, customerkey.ErrEnvelope) {
+		t.Fatalf("redaction ciphertext opened as an export: %v", err)
 	}
 	if s.keyConfigs.bytes != 0 {
 		t.Fatal("temporary validation retained secret plans")
@@ -262,18 +331,10 @@ func BenchmarkEncryptedPolicyFullDictionary(b *testing.B) {
 	for i := range literals {
 		literals[i] = fmt.Sprintf("%064x", sha256.Sum256([]byte(fmt.Sprint(i))))
 	}
-	plaintext, _ := json.Marshal(map[string]any{"redaction": map[string]any{"literals": []map[string]any{{"values": literals, "fuzzy": true}}}})
+	plaintext, _ := json.Marshal(map[string]any{"literals": []map[string]any{{"values": literals, "fuzzy": true}}})
 	root, _ := base64.RawURLEncoding.DecodeString("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-	salt, nonce := make([]byte, 32), make([]byte, 12)
-	context := "stogas.customer-content.v1\x00" + org + "\x00plugins\x00" + key["default"].ID()
-	derived, err := hkdf.Key(sha256.New, root, salt, context, 32)
-	if err != nil {
-		b.Fatal(err)
-	}
-	block, _ := aes.NewCipher(derived)
-	aead, _ := cipher.NewGCM(block)
-	envelope := customerkey.Envelope{Version: 1, KeyID: key["default"].ID(), Salt: base64.RawURLEncoding.EncodeToString(salt), Nonce: base64.RawURLEncoding.EncodeToString(nonce), Blob: base64.RawURLEncoding.EncodeToString(aead.Seal(nil, nonce, plaintext, []byte(context)))}
-	raw[0], _ = json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"encrypted": envelope}})
+	envelope := sealTestEnvelope(b, root, key["default"].ID(), org, "plugins/redaction", string(plaintext))
+	raw[0], _ = json.Marshal(map[string]any{"encryption": map[string]any{"keys": map[string]string{"default": key["default"].ID()}}, "plugins": map[string]any{"redaction": map[string]any{"encrypted": json.RawMessage(envelope)}}})
 	s := &Service{}
 	b.SetBytes(int64(len(plaintext)))
 	for b.Loop() {

@@ -100,7 +100,7 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 		Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 		Blob:  base64.RawURLEncoding.EncodeToString(make([]byte, MaxSourceBytes-1024)),
 	}
-	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": envelope}})
+	encoded, _ := json.Marshal(map[string]any{"plugins": map[string]any{"redaction": map[string]any{"encrypted": envelope}}})
 	entries := []InspectionSource{
 		{Scope: OrganizationScope, Config: json.RawMessage(`{"encryption":{"keys":{"default":"` + envelope.KeyID + `"}},"plugins":{"redaction":{"email_address":true}}}`)},
 		{Scope: RoleScope, ID: "first", Config: encoded},
@@ -117,8 +117,8 @@ func TestInspectionPreservesOpaqueSourcesWithoutChargingTheirEncodingToCompiledS
 		t.Fatalf("opaque identities changed: %v", opaque)
 	}
 	for _, item := range opaque {
-		if !reflect.DeepEqual(item["encrypted"], &envelope) {
-			t.Fatal("inspection changed an encrypted envelope")
+		if item["plugin"] != "redaction" || !reflect.DeepEqual(item["encrypted"], envelope) {
+			t.Fatal("inspection changed an encrypted envelope or lost its plugin")
 		}
 	}
 	if !reflect.DeepEqual(result.Compiled.Plugins.Redaction.Presets, []string{"email_address"}) {
@@ -143,7 +143,7 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 				envelope := customerkey.Envelope{Version: 1, KeyID: strings.Repeat("a", 64),
 					Salt: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 					Blob: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{byte(index)}, 250_000))}
-				plugins := map[string]any{"encrypted": envelope}
+				plugins := map[string]any{"export": map[string]any{"encrypted": envelope}}
 				doc := map[string]any{}
 				if conditional {
 					doc["rules"] = map[string]any{"selected": map[string]any{"plugins": plugins}}
@@ -182,23 +182,8 @@ func TestEncryptedSectionsShareTheCombinedByteBudget(t *testing.T) {
 }
 
 func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
-	raw, err := os.ReadFile("../customerkey/testdata/webcrypto.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture struct {
-		Root, OrganizationID string
-		Envelope             customerkey.Envelope
-	}
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	key, err := customerkey.Parse(fixture.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer key.Clear()
-	raw, _ = json.Marshal(map[string]any{"plugins": map[string]any{"encrypted": fixture.Envelope}})
+	fixture, key := loadWebcryptoFixture(t)
+	raw, _ := json.Marshal(map[string]any{"plugins": map[string]any{"textExtraction": true, "redaction": map[string]any{"encrypted": fixture.Envelope}}})
 	document, err := ParseSourceDocument(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +192,9 @@ func TestOpenedSourceKeepsTheSavedCiphertextBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(opened.size, document.size) || opened.Config.Plugins == nil {
-		t.Fatal("opening changed the saved budget or lost the decrypted plugin")
+	plugins := opened.Config.Plugins
+	if !reflect.DeepEqual(opened.size, document.size) || plugins == nil || plugins.Redaction == nil || plugins.TextExtraction == nil || !*plugins.TextExtraction {
+		t.Fatal("opening changed the saved budget or lost a readable or decrypted plugin")
 	}
 }
 
@@ -374,7 +360,7 @@ func BenchmarkInspectionOpaqueRules(b *testing.B) {
 		envelope := customerkey.Envelope{Version: 1, KeyID: keyID,
 			Salt: base64.RawURLEncoding.EncodeToString(make([]byte, 32)), Nonce: base64.RawURLEncoding.EncodeToString(make([]byte, 12)),
 			Blob: base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{byte(i)}, 14_000))}
-		doc := map[string]any{"rules": map[string]any{"selected": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"encrypted": envelope}}}}
+		doc := map[string]any{"rules": map[string]any{"selected": map[string]any{"when": `provider.id == "openai"`, "plugins": map[string]any{"redaction": map[string]any{"encrypted": envelope}}}}}
 		entries[i].Scope = RoleScope
 		if i == 0 {
 			entries[i].Scope = OrganizationScope
@@ -457,7 +443,7 @@ func TestInspectionShowsWhichPolicySetsEachSortCriterion(t *testing.T) {
 
 func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	org := `{"plugins":{"textExtraction":false},"timeouts":{"totalSeconds":900},"rules":{"openai":{"when":"provider.id == 'openai'","timeouts":{"outputIdleSeconds":60}}}}`
-	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"credit_card_number":true}},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
+	key := `{"routing":{"retries":1},"rules":{"prefs":{"mode":"default","plugins":{"redaction":{"credit_card_number":true},"textExtraction":true},"timeouts":{"totalSeconds":60,"outputIdleSeconds":30},"routing":{"retries":2,"sort":[{"by":"provider.id"}]}}}}`
 	inspection, err := InspectSources([]InspectionSource{
 		{Scope: OrganizationScope, Config: json.RawMessage(org)},
 		{Scope: KeyScope, ID: "key", Config: json.RawMessage(key)},
@@ -467,12 +453,13 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	}
 	organization := map[string]any{"scope": OrganizationScope}
 	own := map[string]any{"scope": KeyScope, "id": "key"}
-	// Any required plugin setting replaces every default plugin setting, a
-	// condition limits the replacement to the requests it matches, and the
-	// key's own requirement replaces its own default. Nothing requires an
-	// ordering, so the default sort applies.
+	// A required plugin replaces the same plugin's default and no other: the
+	// key's default redaction still applies. A condition limits the
+	// replacement to the requests it matches, and the key's own requirement
+	// replaces its own default. Nothing requires an ordering, so the default
+	// sort applies.
 	want := []map[string]any{
-		{"setting": "plugins", "policy": organization},
+		{"setting": "plugins.textExtraction", "policy": organization},
 		{"setting": "routing.retries", "policy": own},
 		{"setting": "timeouts.outputIdleSeconds", "policy": organization, "rule": "openai", "conditional": true},
 		{"setting": "timeouts.totalSeconds", "policy": organization},
@@ -483,7 +470,7 @@ func TestInspectionShowsWhichRequirementsReplaceDefaults(t *testing.T) {
 	}
 	// The key hears about the organization's requirements, not its own.
 	notes := []InspectionNote{
-		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins", "timeouts.totalSeconds"}},
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction", "timeouts.totalSeconds"}},
 		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"timeouts.outputIdleSeconds"}, Rules: []string{"openai"}},
 	}
 	if !reflect.DeepEqual(inspection.Notes, notes) {
@@ -598,13 +585,13 @@ func TestInspectionBoundsReplacedDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules, _ = inspection.Effective["rules"].([]map[string]any)
-	want = []map[string]any{{"setting": "plugins", "policy": map[string]any{"scope": OrganizationScope}, "others": 1}}
+	want = []map[string]any{{"setting": "plugins.textExtraction", "policy": map[string]any{"scope": OrganizationScope}, "others": 1}}
 	if !reflect.DeepEqual(rules[len(rules)-1]["replaced"], want) {
 		t.Fatalf("replaced: %+v", rules[len(rules)-1]["replaced"])
 	}
 	notes := []InspectionNote{
-		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins"}},
-		{Kind: "replaced", Scope: FolderScope, ID: "folder", Sections: []string{"plugins"}},
+		{Kind: "replaced", Scope: OrganizationScope, Sections: []string{"plugins.textExtraction"}},
+		{Kind: "replaced", Scope: FolderScope, ID: "folder", Sections: []string{"plugins.textExtraction"}},
 	}
 	if !reflect.DeepEqual(inspection.Notes, notes) {
 		t.Fatalf("notes: %+v", inspection.Notes)

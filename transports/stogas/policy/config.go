@@ -57,8 +57,8 @@ var (
 )
 
 type Config struct {
-	ActiveRules            []RuleMatch       `json:"-"`
-	ActiveEncryptedPlugins []*SourceDocument `json:"-"`
+	ActiveRules            []RuleMatch        `json:"-"`
+	ActiveEncryptedPlugins []EncryptedPlugins `json:"-"`
 	sources                []ScopedSource
 	hasRules               bool
 	activated              bool
@@ -144,17 +144,58 @@ type DenyWindow struct {
 }
 
 type Plugins struct {
-	digestOnce     sync.Once
-	digest         [32]byte
 	Export         *exportconfig.Config `json:"export,omitempty"`
 	Redaction      *Redaction           `json:"redaction,omitempty"`
 	TextExtraction *bool                `json:"textExtraction,omitempty"`
 }
 
 type Redaction struct {
+	digestOnce     sync.Once
+	digest         [32]byte
 	CustomPatterns []string            `json:"customPatterns,omitempty"`
 	Presets        []string            `json:"presets"`
 	Literals       []redaction.Literal `json:"literals,omitempty"`
+}
+
+// pluginUnits are the plugins that combine on their own: a required plugin
+// setting replaces only the defaults of the same plugin.
+const pluginUnits = permissionRedaction | permissionTextExtraction | permissionExport
+
+func (p *Plugins) units() Permission {
+	var units Permission
+	if p != nil && p.Redaction != nil {
+		units |= permissionRedaction
+	}
+	if p != nil && p.TextExtraction != nil {
+		units |= permissionTextExtraction
+	}
+	if p != nil && p.Export != nil {
+		units |= permissionExport
+	}
+	return units
+}
+
+// only returns the plugins among units, sharing their settings, or nil when
+// none of them is set.
+func (p *Plugins) only(units Permission) *Plugins {
+	set := p.units()
+	if set&units == 0 {
+		return nil
+	}
+	if set&^units == 0 {
+		return p
+	}
+	part := &Plugins{}
+	if units&permissionRedaction != 0 {
+		part.Redaction = p.Redaction
+	}
+	if units&permissionTextExtraction != 0 {
+		part.TextExtraction = p.TextExtraction
+	}
+	if units&permissionExport != 0 {
+		part.Export = p.Export
+	}
+	return part
 }
 
 func (c *Config) validate() error {
@@ -549,19 +590,22 @@ func stringSet(values ...string) map[string]bool {
 	return result
 }
 
-// CacheDigest hashes immutable plugin settings once across requests.
-func (p *Plugins) CacheDigest() [32]byte {
-	if p == nil {
+// RedactionDigest identifies the matcher that the redaction settings compile
+// to, hashing them once across requests. A matcher depends on them alone, so
+// plugin sections that differ only in export or text extraction share one.
+func (p *Plugins) RedactionDigest() [32]byte {
+	if p == nil || p.Redaction == nil {
 		return sha256.Sum256(nil)
 	}
-	p.digestOnce.Do(func() {
+	r := p.Redaction
+	r.digestOnce.Do(func() {
 		raw, _ := json.Marshal(struct {
-			Version int
-			Plugins *Plugins
-		}{CompilerVersion, p})
-		p.digest = sha256.Sum256(raw)
+			Version   int
+			Redaction *Redaction
+		}{CompilerVersion, r})
+		r.digest = sha256.Sum256(raw)
 	})
-	return p.digest
+	return r.digest
 }
 
 func (c *Config) Activated() bool { return c != nil && c.activated }

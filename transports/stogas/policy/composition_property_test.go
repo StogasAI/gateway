@@ -259,7 +259,7 @@ func TestEverySettingDeclaresItsScopeAndCombination(t *testing.T) {
 		"input":                         {"candidate", "any true requires ASCII"},
 		"limits":                        {"saved", "every limit applies"},
 		"plugins.redaction":             {"candidate", "union of presets and expressions"},
-		"plugins.encrypted":             {"candidate", "every section applies"},
+		"plugins.encrypted":             {"candidate", "hides an export or redaction, which then combines as readable"},
 		"plugins.textExtraction":        {"candidate", "any true extracts"},
 		"plugins.export":                {"candidate", "union of destinations"},
 		"routing.filter":                {"candidate", "every filter must match"},

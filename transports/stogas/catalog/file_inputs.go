@@ -139,13 +139,13 @@ func CloudRunsClaude(provider schemas.ModelProvider, deployment Deployment) bool
 }
 
 // attachmentsError reports the first attachment that a pair cannot read. A pair whose policy
-// turns text files into prompt text reads each inline text file, and so may a pair whose
-// encrypted plugins open only when the request runs.
+// turns text files into prompt text reads each inline text file. Text extraction is never
+// encrypted, so routing knows it before any plugin is opened.
 func attachmentsError(attachments []Attachment, selection routingSelection, config *policy.Config) error {
 	if len(attachments) == 0 {
 		return nil
 	}
-	extracts := config.TextExtractionEnabled() || config != nil && len(config.ActiveEncryptedPlugins) > 0
+	extracts := config.TextExtractionEnabled()
 	for _, attachment := range attachments {
 		if attachment.text && extracts {
 			continue

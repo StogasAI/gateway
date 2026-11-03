@@ -6,13 +6,20 @@ func CompileRedaction(config *Config) (*redaction.Policy, error) {
 	if config != nil && len(config.PluginSources) > 0 {
 		parts := make([]*redaction.Policy, 0, len(config.PluginSources))
 		for _, plugins := range config.PluginSources {
+			// Export and text extraction compile to no matcher.
+			if plugins == nil || plugins.Redaction == nil {
+				continue
+			}
 			part, err := CompileRedaction(&Config{Plugins: plugins})
 			if err != nil {
 				return nil, err
 			}
 			parts = append(parts, part)
 		}
-		return redaction.CombinePolicies(parts)
+		if len(parts) > 0 {
+			return redaction.CombinePolicies(parts)
+		}
+		return redaction.CompilePolicy(redaction.Options{})
 	}
 	var patterns []redaction.Pattern
 	var custom []redaction.CustomPattern

@@ -18,9 +18,12 @@ type PolicyValidation struct {
 	UncheckedPlugins []UncheckedPolicyPlugin `json:"uncheckedPlugins"`
 }
 
+// UncheckedPolicyPlugin names an encrypted plugin whose root the check did not
+// receive: export or redaction, in the policy itself or in one of its rules.
 type UncheckedPolicyPlugin struct {
 	PolicyValidationReference
-	Rule string `json:"rule,omitempty"`
+	Rule   string `json:"rule,omitempty"`
+	Plugin string `json:"plugin"`
 }
 
 func (s *Service) AuthorizePolicyValidation(ctx context.Context, rawKey string, dashboard *DashboardCredential) (*APIKeyClaims, error) {
@@ -112,35 +115,46 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 		if json.Unmarshal(source, &doc) != nil {
 			return nil, policy.ErrInvalidConfig
 		}
-		var plugins map[string]json.RawMessage
-		if json.Unmarshal(doc["plugins"], &plugins) == nil && plugins["encrypted"] != nil {
-			if _, err := policy.ParseSourceDocument(source); err != nil {
-				return nil, err
+		document, err := policy.ParseSourceDocument(source)
+		if err != nil {
+			return nil, err
+		}
+		if document.Encrypted() && entry.Scope == policy.OrganizationScope {
+			var encryption struct {
+				Keys map[string]string `json:"keys"`
 			}
-			var envelope customerkey.Envelope
-			if json.Unmarshal(plugins["encrypted"], &envelope) != nil {
-				return nil, customerkey.ErrEnvelope
-			}
-			if entry.Scope == policy.OrganizationScope {
-				var encryption struct {
-					Keys map[string]string `json:"keys"`
-				}
-				if json.Unmarshal(doc["encryption"], &encryption) != nil {
-					return nil, customerkey.ErrKey
-				}
-				registered = encryption.Keys
-			}
-			if !customerkey.Registered(registered, envelope.KeyID) {
+			if json.Unmarshal(doc["encryption"], &encryption) != nil {
 				return nil, customerkey.ErrKey
 			}
-			if !key.Matches(envelope.KeyID) {
-				delete(doc, "plugins")
-				source, _ = json.Marshal(doc)
-				result.Status = "partial"
-				result.UncheckedPlugins = append(result.UncheckedPlugins, UncheckedPolicyPlugin{PolicyValidationReference: entry.PolicyValidationReference})
-			}
+			registered = encryption.Keys
 		}
-		compiled, err := s.keyConfigs.acquireSource(source, organizationID, key)
+		// Check the rest of the policy without each plugin whose root is missing.
+		var plugins map[string]json.RawMessage
+		for _, plugin := range document.EncryptedPlugins() {
+			if !customerkey.Registered(registered, plugin.Envelope.KeyID) {
+				return nil, customerkey.ErrKey
+			}
+			if key.Matches(plugin.Envelope.KeyID) {
+				continue
+			}
+			if plugins == nil && json.Unmarshal(doc["plugins"], &plugins) != nil {
+				return nil, policy.ErrInvalidConfig
+			}
+			delete(plugins, plugin.Name)
+			result.Status = "partial"
+			result.UncheckedPlugins = append(result.UncheckedPlugins, UncheckedPolicyPlugin{PolicyValidationReference: entry.PolicyValidationReference, Plugin: plugin.Name})
+		}
+		var compiled *sharedPolicySource
+		if plugins == nil {
+			compiled, err = s.keyConfigs.acquireSourceDocument(document, source, organizationID, key, false)
+		} else {
+			doc["plugins"], _ = json.Marshal(plugins)
+			if len(plugins) == 0 {
+				delete(doc, "plugins")
+			}
+			source, _ = json.Marshal(doc)
+			compiled, err = s.keyConfigs.acquireSource(source, organizationID, key)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -172,15 +186,23 @@ func (s *Service) ValidatePolicySources(raw []PolicyValidationSource, organizati
 			if rule.Encrypted == nil {
 				continue
 			}
-			if !customerkey.Registered(registered, rule.Encrypted.EncryptionKeyID()) {
-				return nil, customerkey.ErrKey
-			}
-			if !key.Matches(rule.Encrypted.EncryptionKeyID()) {
+			var units policy.Permission
+			for _, plugin := range rule.Encrypted.EncryptedPlugins() {
+				if !customerkey.Registered(registered, plugin.Envelope.KeyID) {
+					return nil, customerkey.ErrKey
+				}
+				if key.Matches(plugin.Envelope.KeyID) {
+					units |= plugin.Unit
+					continue
+				}
 				result.Status = "partial"
-				result.UncheckedPlugins = append(result.UncheckedPlugins, UncheckedPolicyPlugin{PolicyValidationReference: entry.PolicyValidationReference, Rule: rule.Name})
+				result.UncheckedPlugins = append(result.UncheckedPlugins, UncheckedPolicyPlugin{PolicyValidationReference: entry.PolicyValidationReference, Rule: rule.Name, Plugin: plugin.Name})
+			}
+			if units == 0 {
 				continue
 			}
-			opened, err := s.keyConfigs.acquireSource(rule.Encrypted.CanonicalJSON(), organizationID, key)
+			// The rule's readable plugins are already in its compiled settings.
+			opened, err := s.keyConfigs.acquireEncryptedPlugins(policy.EncryptedPlugins{Document: rule.Encrypted, Units: units}, organizationID, key)
 			if err != nil {
 				return nil, err
 			}

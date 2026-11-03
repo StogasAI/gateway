@@ -21,12 +21,13 @@ type sharedRedactionPlan struct {
 	building bool
 }
 
+// redactionPlanDigest identifies a matcher by the redaction settings alone.
 func redactionPlanDigest(config *policy.Config) [32]byte {
 	var plugins *policy.Plugins
 	if config != nil {
 		plugins = config.Plugins
 	}
-	return plugins.CacheDigest()
+	return plugins.RedactionDigest()
 }
 
 func redactionSourcesDigest(config *policy.Config) [32]byte {
@@ -39,6 +40,9 @@ func redactionSourcesDigest(config *policy.Config) [32]byte {
 	}
 	parts := make([]string, 0, len(sections))
 	for _, plugins := range sections {
+		if plugins == nil || plugins.Redaction == nil {
+			continue
+		}
 		digest := redactionPlanDigest(&policy.Config{Plugins: plugins})
 		parts = append(parts, string(digest[:]))
 	}
@@ -168,11 +172,13 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 	}
 	var opened []*sharedPolicySource
 	defer func() { c.releaseSources(opened) }()
-	for _, document := range config.ActiveEncryptedPlugins {
-		if !customerkey.Registered(config.EncryptionKeys, document.EncryptionKeyID()) {
-			return nil, customerkey.ErrKey
+	for _, encrypted := range config.ActiveEncryptedPlugins {
+		for _, id := range encrypted.EncryptionKeyIDs() {
+			if !customerkey.Registered(config.EncryptionKeys, id) {
+				return nil, customerkey.ErrKey
+			}
 		}
-		source, err := c.acquireSourceDocument(document, nil, snapshot.Claims.OrganizationID, keys, false)
+		source, err := c.acquireEncryptedPlugins(encrypted, snapshot.Claims.OrganizationID, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +204,8 @@ func (snapshot *KeyConfigSnapshot) ActivePlugins(config *policy.Config, keys cus
 	}
 	parts := make([]*redaction.Policy, 0, len(sections))
 	for _, plugins := range sections {
-		if plugins == nil {
+		// Export and text extraction compile to no matcher.
+		if plugins == nil || plugins.Redaction == nil {
 			continue
 		}
 		c.mu.Lock()

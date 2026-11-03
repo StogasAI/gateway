@@ -75,7 +75,7 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 		}{
 			{"opt in", `"textExtraction":true`, "aGVsbG8=", false, false, false},
 			{"redaction after extraction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, false},
-			{"encrypted extraction and redaction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
+			{"encrypted redaction after extraction", `"textExtraction":true,"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, false, true},
 			{"ASCII after extraction", `"textExtraction":true`, "w6k=", true, true, false},
 			{"opaque cannot bypass ASCII", `"textExtraction":false`, "aGVsbG8=", true, true, false},
 			{"opaque cannot bypass redaction", `"redaction":{"customPattern":"hello"}`, "aGVsbG8=", false, true, false},
@@ -94,10 +94,10 @@ func TestTextExtractionPrecedesASCIIAndRedaction(t *testing.T) {
 					}
 					defer key.Clear()
 					// Independently generated with Node crypto for this organization and purpose.
-					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"eIEI9xLZeoLnTN4AooFabdKSWecKwFnfQIqMtq6iLibJ5zKhQw99hJ3zyPdSZGSEVvzqFLP5wF31yYjT-iqNXNb138WGqOu_2PBgVpU"}`
-					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"encrypted":` + envelope + `}}`)
+					const envelope = `{"version":1,"keyId":"3a1121028ba40964d5f10b47662650a021d736bd671f4083b5066d9bd51c9ef0","salt":"AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM","nonce":"BAQEBAQEBAQEBAQE","blob":"MUgKUlBwNjuw0aMvsAVKMdfwJ_mzeyhYggR0-E20ahBYWNcbmyo_HmA"}`
+					document := []byte(`{"encryption":{"keys":{"default":"` + key.ID() + `"}},"plugins":{"textExtraction":true,"redaction":{"encrypted":` + envelope + `}}}`)
 					if _, missingErr := policy.OpenSource(document, "org-test", nil); missingErr == nil {
-						t.Fatal("encrypted extraction accepted without key")
+						t.Fatal("encrypted redaction accepted without key")
 					}
 					source, err = policy.OpenSource(document, "org-test", customerkey.Keys{"default": key})
 				} else {

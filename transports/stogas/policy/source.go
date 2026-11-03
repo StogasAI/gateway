@@ -32,18 +32,20 @@ var policyName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 // contains the instructions the gateway enforces. A shared source never gains
 // defaults that depend on its organization/grant/key position.
 type Source struct {
-	Rules                   []Rule
-	settings                Permission
-	defaultSettings         bool
-	defaultOrdering         *ordering
-	encryptedPlugins        *SourceDocument
-	EncryptionKeys          map[string]string
-	RequiredEncryptionKeyID string
-	Config                  *Config
-	Digest                  string
-	Delegation              *Delegation
-	previewRuleBytes        int
-	size                    sourceSize
+	Rules            []Rule
+	settings         Permission
+	defaultSettings  bool
+	defaultOrdering  *ordering
+	encryptedPlugins *SourceDocument
+	EncryptionKeys   map[string]string
+	// RequiredEncryptionKeyIDs names the roots of the plugins that opening
+	// this source decrypted.
+	RequiredEncryptionKeyIDs []string
+	Config                   *Config
+	Digest                   string
+	Delegation               *Delegation
+	previewRuleBytes         int
+	size                     sourceSize
 }
 
 // ordering is a policy's routing.sort, with routing.order as its leading
@@ -78,9 +80,14 @@ func (s *Source) takeOrdering(rule string) *ordering {
 // SourceDocument retains the checked canonical bytes until compilation. Its
 // immutable identity lets callers find an existing source before compiling it.
 type SourceDocument struct {
-	canonical        []byte
-	digest           string
-	encrypted        *customerkey.Envelope
+	canonical []byte
+	digest    string
+	// encrypted holds, in name order, the plugins whose settings a customer
+	// key encrypts; readablePlugins is the plugins section without them.
+	encrypted       []encryptedPlugin
+	readablePlugins json.RawMessage
+	// pluginDelta is how much longer the plugins section is once decrypted.
+	pluginDelta      int
 	fields           map[string]json.RawMessage
 	rules            map[string]ruleDocument
 	usedSections     Permission
@@ -89,10 +96,40 @@ type SourceDocument struct {
 	size             sourceSize
 }
 
+// encryptedPlugin is one plugin's settings under a customer key.
 type encryptedPlugin struct {
+	name     string
+	unit     Permission
 	envelope customerkey.Envelope
-	bytes    int
+	// bytes counts the envelope's JSON, which previews leave to their host.
+	bytes int
 }
+
+// plaintextBytes is the decrypted settings' length: the decoded ciphertext
+// without its 16-byte tag.
+func (p encryptedPlugin) plaintextBytes() int { return len(p.envelope.Blob)*3/4 - 16 }
+
+// encryptablePlugins are the plugins whose settings a customer key can
+// encrypt, each on its own. A text extraction switch has no secret, and its
+// ciphertext's length would show which way it is set.
+var encryptablePlugins = []struct {
+	name string
+	unit Permission
+}{{"export", permissionExport}, {"redaction", permissionRedaction}}
+
+// pluginPurpose binds a plugin's ciphertext to that plugin, so that moving it
+// under another plugin cannot decrypt it.
+func pluginPurpose(name string) string { return "plugins/" + name }
+
+// EncryptedPlugins is the encrypted plugin settings of one policy or rule
+// that apply to a request: the plugins in Units.
+type EncryptedPlugins struct {
+	Document *SourceDocument
+	Units    Permission
+}
+
+// EncryptionKeyIDs names the roots that open the applied plugins.
+func (e EncryptedPlugins) EncryptionKeyIDs() []string { return e.Document.encryptionKeyIDs(e.Units) }
 
 // Budget distinct source settings and plugin sections. Ciphertext counts by
 // decoded plaintext length; its contents cannot prove equality before opening.
@@ -201,12 +238,44 @@ type sourceBody struct {
 
 func (d *SourceDocument) Digest() string        { return d.digest }
 func (d *SourceDocument) CanonicalJSON() []byte { return bytes.Clone(d.canonical) }
-func (d *SourceDocument) Encrypted() bool       { return d.encrypted != nil }
-func (d *SourceDocument) EncryptionKeyID() string {
-	if d.encrypted == nil {
-		return ""
+func (d *SourceDocument) Encrypted() bool       { return len(d.encrypted) > 0 }
+
+// EncryptedUnits are the plugins whose settings this document encrypts.
+func (d *SourceDocument) EncryptedUnits() Permission {
+	var units Permission
+	for _, plugin := range d.encrypted {
+		units |= plugin.unit
 	}
-	return d.encrypted.KeyID
+	return units
+}
+
+// EncryptionKeyIDs names, once each, the roots of every encrypted plugin.
+func (d *SourceDocument) EncryptionKeyIDs() []string { return d.encryptionKeyIDs(pluginUnits) }
+
+func (d *SourceDocument) encryptionKeyIDs(units Permission) []string {
+	var ids []string
+	for _, plugin := range d.encrypted {
+		if plugin.unit&units != 0 && !slices.Contains(ids, plugin.envelope.KeyID) {
+			ids = append(ids, plugin.envelope.KeyID)
+		}
+	}
+	return ids
+}
+
+// EncryptedPlugin is one encrypted plugin of a document. A policy check opens
+// the plugins whose root it has and names the others.
+type EncryptedPlugin struct {
+	Name     string
+	Unit     Permission
+	Envelope customerkey.Envelope
+}
+
+func (d *SourceDocument) EncryptedPlugins() []EncryptedPlugin {
+	plugins := make([]EncryptedPlugin, len(d.encrypted))
+	for i, plugin := range d.encrypted {
+		plugins[i] = EncryptedPlugin{Name: plugin.name, Unit: plugin.unit, Envelope: plugin.envelope}
+	}
+	return plugins
 }
 
 // ParseSourceDocument bounds input before canonicalizing. PostgreSQL jsonb
@@ -263,27 +332,10 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	var pluginIdentity [32]byte
 	if plugins := fields["plugins"]; len(plugins) > 0 {
 		pluginIdentity = sha256.Sum256(plugins)
-		if cached, ok := envelopes[pluginIdentity]; ok {
-			document.encrypted, document.envelopeBytes = &cached.envelope, cached.bytes
-		} else {
-			var section map[string]json.RawMessage
-			if jsonv2.Unmarshal(plugins, &section) == nil && section["encrypted"] != nil {
-				var envelope customerkey.Envelope
-				// v2 matches field names exactly. Every envelope member is required
-				// and Validate rejects its zero value, including JSON null.
-				if len(section) != 1 || jsonv2.Unmarshal(section["encrypted"], &envelope, jsonv2.RejectUnknownMembers(true)) != nil || envelope.Validate(MaxSourceBytes) != nil {
-					return nil, configError("invalid encrypted plugins")
-				}
-				document.encrypted = &envelope
-				document.envelopeBytes = len(section["encrypted"])
-				if envelopes != nil {
-					envelopes[pluginIdentity] = encryptedPlugin{envelope, document.envelopeBytes}
-				}
-			}
+		if err := document.parsePlugins(plugins, envelopes); err != nil {
+			return nil, err
 		}
-		if document.Encrypted() {
-			contentBytes += len(document.encrypted.Blob)*3/4 - 16 - len(plugins)
-		}
+		contentBytes += document.pluginDelta
 	}
 	// Flat rules share the source's content budget. Ciphertext length counts
 	// decoded plugin bytes, just as it does for the root plugin section.
@@ -294,10 +346,8 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	}
 	document.previewRuleBytes = len(fields["rules"])
 	for _, rule := range document.rules {
-		if child := rule.source; child.Encrypted() {
-			contentBytes += len(child.encrypted.Blob)*3/4 - 16 - len(child.fields["plugins"])
-			document.previewRuleBytes -= child.envelopeBytes
-		}
+		contentBytes += rule.source.pluginDelta
+		document.previewRuleBytes -= rule.source.envelopeBytes
 	}
 	if contentBytes > MaxSourceBytes {
 		return nil, configError("source configuration exceeds size limit")
@@ -310,11 +360,7 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	document.size = sourceSize{digest: document.digest, settings: len(canonical), plugins: make(map[[32]byte]int)}
 	if raw := fields["plugins"]; raw != nil {
 		document.size.settings -= len(raw)
-		size := len(raw)
-		if document.Encrypted() {
-			size = len(document.encrypted.Blob)*3/4 - 16
-		}
-		document.size.plugins[pluginIdentity] = size
+		document.size.plugins[pluginIdentity] = len(raw) + document.pluginDelta
 	}
 	for _, rule := range document.rules {
 		document.size.settings -= len(rule.source.fields["plugins"])
@@ -324,6 +370,61 @@ func sourceDocument(canonical []byte, fields map[string]json.RawMessage, envelop
 	}
 	document.usedSections = document.sections()
 	return document, nil
+}
+
+// parsePlugins finds the plugins whose settings a customer key encrypts. Each
+// holds only its envelope, as {"encrypted": envelope}; the rest of the section
+// stays readable and compiles with the policy's other settings.
+func (d *SourceDocument) parsePlugins(raw json.RawMessage, envelopes map[[32]byte]encryptedPlugin) error {
+	d.readablePlugins = raw
+	var section map[string]json.RawMessage
+	if jsonv2.Unmarshal(raw, &section) != nil || section == nil {
+		// Readable compilation reports the invalid section.
+		return nil
+	}
+	if section["encrypted"] != nil {
+		return configError("encrypt plugins.export or plugins.redaction on its own")
+	}
+	for _, plugin := range encryptablePlugins {
+		member := section[plugin.name]
+		if member == nil {
+			continue
+		}
+		identity := sha256.Sum256(member)
+		parsed, cached := envelopes[identity]
+		if !cached {
+			var fields map[string]json.RawMessage
+			if jsonv2.Unmarshal(member, &fields) != nil || fields["encrypted"] == nil {
+				continue
+			}
+			// v2 matches field names exactly. Every envelope member is required
+			// and Validate rejects its zero value, including JSON null.
+			if len(fields) != 1 || jsonv2.Unmarshal(fields["encrypted"], &parsed.envelope, jsonv2.RejectUnknownMembers(true)) != nil || parsed.envelope.Validate(MaxSourceBytes) != nil {
+				return configError("invalid encrypted %s plugin", plugin.name)
+			}
+			parsed.bytes = len(fields["encrypted"])
+			if envelopes != nil {
+				envelopes[identity] = parsed
+			}
+		}
+		parsed.name, parsed.unit = plugin.name, plugin.unit
+		d.encrypted = append(d.encrypted, parsed)
+		d.envelopeBytes += parsed.bytes
+		d.pluginDelta += parsed.plaintextBytes() - len(member)
+		delete(section, plugin.name)
+	}
+	if d.Encrypted() {
+		d.readablePlugins = nil
+		if len(section) > 0 {
+			d.readablePlugins = canonicalObject(section)
+		}
+	}
+	return nil
+}
+
+// canonicalObject joins canonical members into a canonical JSON object.
+func canonicalObject(fields map[string]json.RawMessage) json.RawMessage {
+	return bytes.TrimSuffix(canonicalSourceFields(fields), []byte{'\n'})
 }
 
 // All field names are the ASCII source-schema names and all values are already
@@ -451,7 +552,7 @@ func (d *SourceDocument) compile(plugins map[[32]byte]*Plugins, compiler *celCom
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	if raw := d.fields["plugins"]; len(raw) > 0 && !d.Encrypted() {
+	if raw := d.readablePlugins; len(raw) > 0 {
 		identity := sha256.Sum256(raw)
 		config.Plugins = plugins[identity]
 		if config.Plugins == nil {
@@ -575,34 +676,84 @@ func OpenSource(raw []byte, organizationID string, key customerkey.Keys) (*Sourc
 	return document.Open(organizationID, key)
 }
 
+// Open compiles the whole policy with every encrypted plugin decrypted, as a
+// request policy or a policy check needs it.
 func (d *SourceDocument) Open(organizationID string, key customerkey.Keys) (*Source, error) {
-	if d.encrypted == nil {
+	if !d.Encrypted() {
 		return d.compile(nil, &celCompiler{prepare: true})
 	}
-	envelope := *d.encrypted
-	plaintext, err := key.Open(envelope, organizationID, "plugins", MaxSourceBytes)
+	// The readable settings hide nothing, so their errors keep their detail.
+	source, err := d.compile(nil, &celCompiler{prepare: true})
 	if err != nil {
 		return nil, err
 	}
-	defer clear(plaintext)
-	if !jsontext.Value(plaintext).IsValid() {
-		return nil, configError("invalid encrypted plugin JSON")
-	}
-	source, err := d.compile(nil, &celCompiler{prepare: true})
+	source.Config.Plugins, source.RequiredEncryptionKeyIDs, err = d.openPlugins(organizationID, key, pluginUnits, d.readablePlugins)
 	if err != nil {
-		return nil, configError("invalid encrypted plugin configuration")
+		return nil, err
 	}
-	source.Config.Plugins, err = compileSourcePlugins(plaintext)
-	if err != nil {
-		return nil, configError("invalid encrypted plugin configuration")
-	}
-	source.Digest, source.RequiredEncryptionKeyID = d.digest, envelope.KeyID
+	source.Digest = d.digest
 	// Opening does not change the saved collection's byte accounting. A new
 	// nonce or padding still consumed ciphertext processing before decryption.
 	nodes := source.size.nodes
 	source.size = d.size
 	source.size.nodes = nodes
 	return source, nil
+}
+
+// OpenPlugins decrypts only the plugins in units, for a request that applies
+// them. Its configuration holds those plugins alone: the policy's readable
+// plugins already compose with its other settings.
+func (d *SourceDocument) OpenPlugins(organizationID string, key customerkey.Keys, units Permission) (*Source, error) {
+	plugins, ids, err := d.openPlugins(organizationID, key, units, nil)
+	if err != nil {
+		return nil, err
+	}
+	config := &Config{Schema: "stogas.key-config.compiled.v1", CompilerVersion: CompilerVersion, Routing: Routing{Fallbacks: DefaultFallbacks}, Plugins: plugins}
+	return &Source{Config: config, Digest: d.digest, RequiredEncryptionKeyIDs: ids, size: d.size}, nil
+}
+
+// openPlugins decrypts each plugin in units with its own purpose and compiles
+// it with the readable plugins, if any. Settings that fail to decrypt or
+// compile report no detail, so that errors cannot show hidden values.
+func (d *SourceDocument) openPlugins(organizationID string, key customerkey.Keys, units Permission, readable json.RawMessage) (*Plugins, []string, error) {
+	section := map[string]json.RawMessage{}
+	if len(readable) > 0 && jsonv2.Unmarshal(readable, &section) != nil {
+		return nil, nil, configError("invalid plugins")
+	}
+	var opened [][]byte
+	defer func() {
+		for _, plaintext := range opened {
+			clear(plaintext)
+		}
+	}()
+	var ids []string
+	for _, plugin := range d.encrypted {
+		if plugin.unit&units == 0 {
+			continue
+		}
+		plaintext, err := key.Open(plugin.envelope, organizationID, pluginPurpose(plugin.name), MaxSourceBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		opened = append(opened, plaintext)
+		if !jsontext.Value(plaintext).IsValid() {
+			return nil, nil, configError("invalid encrypted plugin JSON")
+		}
+		section[plugin.name] = plaintext
+		if !slices.Contains(ids, plugin.envelope.KeyID) {
+			ids = append(ids, plugin.envelope.KeyID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil, configError("no encrypted plugin applies")
+	}
+	combined := canonicalSourceFields(section)
+	defer clear(combined)
+	plugins, err := compileSourcePlugins(combined)
+	if err != nil {
+		return nil, nil, configError("invalid encrypted plugin configuration")
+	}
+	return plugins, ids, nil
 }
 
 // encoding/json accepts case-insensitive aliases even with
@@ -842,16 +993,30 @@ func ComposeSources(sources []ScopedSource) (*Config, error) {
 	out.sources = append([]ScopedSource{}, sources...)
 	for _, entry := range sources {
 		out.hasRules = out.hasRules || len(entry.Value.Rules) > 0 || entry.Value.encryptedPlugins != nil
-		if encrypted := entry.Value.encryptedPlugins; encrypted != nil && !customerkey.Registered(out.EncryptionKeys, encrypted.EncryptionKeyID()) {
+		if !registered(out.EncryptionKeys, entry.Value.encryptedPlugins) {
 			return nil, customerkey.ErrKey
 		}
 		for _, rule := range entry.Value.Rules {
-			if rule.Encrypted != nil && !customerkey.Registered(out.EncryptionKeys, rule.Encrypted.EncryptionKeyID()) {
+			if !registered(out.EncryptionKeys, rule.Encrypted) {
 				return nil, customerkey.ErrKey
 			}
 		}
 	}
 	return out, nil
+}
+
+// registered reports whether the organization policy registers the root of
+// every encrypted plugin in document.
+func registered(keys map[string]string, document *SourceDocument) bool {
+	if document == nil {
+		return true
+	}
+	for _, id := range document.EncryptionKeyIDs() {
+		if !customerkey.Registered(keys, id) {
+			return false
+		}
+	}
+	return true
 }
 
 func composeSettings(sources []ScopedSource) (*Config, error) {
@@ -895,12 +1060,12 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if scope != OrganizationScope && source.EncryptionKeys != nil {
 			return nil, configError("only organization policy may register encryption keys")
 		}
-		if source.RequiredEncryptionKeyID != "" {
-			if !customerkey.Registered(out.EncryptionKeys, source.RequiredEncryptionKeyID) {
+		for _, id := range source.RequiredEncryptionKeyIDs {
+			if !customerkey.Registered(out.EncryptionKeys, id) {
 				return nil, customerkey.ErrKey
 			}
-			if !slices.Contains(out.RequiredEncryptionKeys, source.RequiredEncryptionKeyID) {
-				out.RequiredEncryptionKeys = append(out.RequiredEncryptionKeys, source.RequiredEncryptionKeyID)
+			if !slices.Contains(out.RequiredEncryptionKeys, id) {
+				out.RequiredEncryptionKeys = append(out.RequiredEncryptionKeys, id)
 			}
 		}
 		if err := source.Delegation.validateScope(scope); err != nil {
@@ -971,9 +1136,10 @@ func composeSettings(sources []ScopedSource) (*Config, error) {
 		if q := config.Routing.Query; q != nil && allowed&permissionFilter != 0 {
 			filters = append(filters, q.Filters...)
 		}
-		if allowed&pluginPermissions != 0 && config.Plugins != nil && !seenPlugins[config.Plugins] {
-			out.PluginSources = append(out.PluginSources, config.Plugins)
-			seenPlugins[config.Plugins] = true
+		// A default yields only the plugins that a requirement sets.
+		if plugins := config.Plugins.only(allowed & pluginUnits); plugins != nil && !seenPlugins[plugins] {
+			out.PluginSources = append(out.PluginSources, plugins)
+			seenPlugins[plugins] = true
 		}
 	}
 	if !hasRequestPermission {

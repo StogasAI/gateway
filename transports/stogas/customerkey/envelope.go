@@ -90,7 +90,8 @@ func (e Envelope) Validate(maxPlaintext int) error {
 	return nil
 }
 
-// Open binds ciphertext to its organization and purpose (plugins or byok/provider).
+// Open binds ciphertext to its organization and purpose (plugins/export,
+// plugins/redaction or byok/<provider>).
 // Errors deliberately omit decrypted content and cryptographic material.
 func (k *Key) Open(e Envelope, organizationID, purpose string, maxPlaintext int) ([]byte, error) {
 	if err := e.Validate(maxPlaintext); err != nil {
