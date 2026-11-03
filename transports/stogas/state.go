@@ -167,6 +167,7 @@ type providerAttemptObservation struct {
 	CompletedAt      time.Time
 	Response         *schemas.BifrostResponse
 	Error            *schemas.BifrostError
+	Upstream         billing.UpstreamRecord
 }
 
 type HoldEstimate struct {
@@ -349,6 +350,17 @@ func (s *State) finishProviderAttempt(index int, completedAt time.Time, response
 	attempt.Error = bifrostErr
 }
 
+func (s *State) setProviderAttemptUpstream(index int, record billing.UpstreamRecord) {
+	if s == nil || index < 0 {
+		return
+	}
+	s.providerAttemptsMu.Lock()
+	defer s.providerAttemptsMu.Unlock()
+	if index < len(s.providerAttempts) {
+		s.providerAttempts[index].Upstream = record
+	}
+}
+
 func (s *State) completeLatestProviderAttempt(completedAt time.Time) {
 	s.providerAttemptsMu.Lock()
 	defer s.providerAttemptsMu.Unlock()
@@ -381,6 +393,7 @@ func (s *State) providerAttemptInputs() []billing.ProviderAttemptInput {
 			CompletedAt:              attempt.CompletedAt,
 			Response:                 attempt.Response,
 			Error:                    attempt.Error,
+			Upstream:                 attempt.Upstream,
 		}
 	}
 	// The final outcome belongs to the last call, which ran on the bound pair.

@@ -467,7 +467,7 @@ func TestProviderAttemptStatusUsesCanonicalResponseTerminal(t *testing.T) {
 }
 
 func TestProviderTelemetryCannotExpandTheRequestLog(t *testing.T) {
-	requestID := strings.Repeat("r", maxProviderRequestIDBytes+1)
+	requestID := strings.Repeat("r", maxProviderResponseIDBytes+1)
 	finishReason := strings.Repeat("f", maxProviderReasonBytes+1)
 	response := &schemas.BifrostResponse{ChatResponse: &schemas.BifrostChatResponse{
 		ID: requestID,
@@ -478,8 +478,13 @@ func TestProviderTelemetryCannotExpandTheRequestLog(t *testing.T) {
 	attempts := requestProviderAttempts(EventInput{ProviderAttempts: []ProviderAttemptInput{{
 		Provider: strings.Repeat("p", maxProviderNameBytes+1),
 		Response: response,
+		Upstream: UpstreamRecord{
+			RequestID: strings.Repeat("q", maxProviderRequestIDBytes+1),
+			Model:     "gpt-5\n2026",
+		},
 	}}}, time.Unix(1, 0), 1)
-	if len(attempts) != 1 || attempts[0].Provider != "" || attempts[0].ProviderRequestID != "" || attempts[0].FinishReason != "" {
+	if len(attempts) != 1 || attempts[0].Provider != "" || attempts[0].ProviderResponseID != "" || attempts[0].FinishReason != "" ||
+		attempts[0].ProviderRequestID != "" || attempts[0].ProviderModel != "" {
 		t.Fatalf("oversized provider telemetry was retained: %#v", attempts)
 	}
 

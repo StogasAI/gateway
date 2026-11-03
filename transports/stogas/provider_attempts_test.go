@@ -198,11 +198,132 @@ func TestProviderAttemptTracerFeedsRetrySequenceIntoFinalEvent(t *testing.T) {
 	if firstAttempt.Status != "provider_error" || retryAttempt.Status != "success" {
 		t.Fatalf("provider attempt statuses = %q,%q", firstAttempt.Status, retryAttempt.Status)
 	}
-	if retryAttempt.ProviderRequestID != "provider-request" {
-		t.Fatalf("final provider request ID = %q", retryAttempt.ProviderRequestID)
+	if retryAttempt.ProviderResponseID != "provider-request" {
+		t.Fatalf("final provider response ID = %q", retryAttempt.ProviderResponseID)
 	}
 	if providerMS := event.Performance.ProviderMS; providerMS != 145 {
 		t.Fatalf("provider stage = %d, want 145", providerMS)
+	}
+}
+
+// Each attempt records the provider's own request ID, which its support uses to find the call.
+// A call that gets no reply has none, rather than the previous call's.
+func TestBifrostRetriesRecordEachCallsProviderRequestID(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit := hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch hit {
+		case 1:
+			w.Header().Set("X-Request-Id", "req_first")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"upstream unavailable","type":"server_error"}}`)
+		case 2:
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = connection.Close()
+			}
+		default:
+			w.Header().Set("X-Request-Id", "req_last")
+			_, _ = fmt.Fprint(w, `{"id":"chatcmpl-last","object":"chat.completion","created":1,"model":"gpt-5-2026-01-01","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	providerConfig := newProviderConfig(server.URL, true, false)
+	providerConfig.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
+	providerConfig.NetworkConfig.MaxRetries = 2
+	providerConfig.NetworkConfig.RetryBackoffInitial = time.Millisecond
+	providerConfig.NetworkConfig.RetryBackoffMax = time.Millisecond
+	client, err := bifrost.Init(context.Background(), schemas.BifrostConfig{
+		Account: &account{
+			keys: map[schemas.ModelProvider]schemas.Key{schemas.OpenAI: {
+				ID: "openai-test", Name: "openai-test", Value: *schemas.NewSecretVar("sk-test"),
+				Models: schemas.WhiteList{"*"}, Weight: 1, Enabled: schemas.Ptr(true),
+			}},
+			providerConfigs: map[schemas.ModelProvider]schemas.ProviderConfig{schemas.OpenAI: providerConfig},
+		},
+		InitialPoolSize: 1,
+		Logger:          bifrost.NewDefaultLogger(schemas.LogLevelError),
+		Tracer:          newProviderAttemptTracer(schemas.DefaultTracer()),
+	})
+	if err != nil {
+		t.Fatalf("initialize Bifrost: %v", err)
+	}
+	t.Cleanup(client.Shutdown)
+
+	state := &State{
+		Pair: Pair{
+			Resolution: &catalog.ResolvedRequest{
+				Route: catalog.RouteChat, RequestType: schemas.ChatCompletionRequest, Provider: schemas.OpenAI, Model: "gpt-5",
+			},
+			Authorization: &billing.Authorization{
+				AuthorizedBilledCostUSD: new(money.USD), ProviderKey: "openai", RequestID: "request-provider-ids",
+			},
+		},
+		StartedAt: time.Now().UTC(), RequestType: string(schemas.ChatCompletionRequest), UpstreamCostUSD: "0",
+	}
+	ctx := schemas.NewBifrostContext(context.Background(), time.Now().Add(10*time.Second))
+	SetState(ctx, state)
+	state.MarkProviderStarted()
+	response, bifrostErr := client.ChatCompletionRequest(ctx, &schemas.BifrostChatRequest{
+		Provider: schemas.OpenAI,
+		Model:    "gpt-5",
+		Input: []schemas.ChatMessage{{
+			Role:    schemas.ChatMessageRoleUser,
+			Content: &schemas.ChatMessageContent{ContentStr: schemas.Ptr("hello")},
+		}},
+	})
+	state.MarkProviderCompleted()
+	if bifrostErr != nil {
+		t.Fatalf("retries returned error after %d requests: %s", hits.Load(), bifrostErr.GetErrorString())
+	}
+	state.Response = &schemas.BifrostResponse{ChatResponse: response}
+
+	event := PrepareFinalState(state)
+	if event == nil || hits.Load() != 3 || len(event.ProviderAttempts) != 3 {
+		t.Fatalf("hits=%d event=%#v", hits.Load(), event)
+	}
+	for index, want := range []billing.ProviderAttempt{
+		{ProviderRequestID: "req_first"},
+		{},
+		{ProviderRequestID: "req_last", ProviderResponseID: "chatcmpl-last", ProviderModel: "gpt-5-2026-01-01"},
+	} {
+		got := event.ProviderAttempts[index]
+		if got.ProviderRequestID != want.ProviderRequestID || got.ProviderResponseID != want.ProviderResponseID ||
+			got.ProviderModel != want.ProviderModel {
+			t.Errorf("attempt %d = %#v, want provider IDs %#v", index, got, want)
+		}
+	}
+}
+
+func TestUpstreamRecordReadsEachProvidersHeaders(t *testing.T) {
+	reply := &schemas.BifrostResponse{ResponsesResponse: &schemas.BifrostResponsesResponse{Model: "customer-sol"}}
+	for _, test := range []struct {
+		provider schemas.ModelProvider
+		headers  map[string]string
+		want     billing.UpstreamRecord
+	}{
+		{schemas.OpenAI, map[string]string{"X-Request-Id": "req_1"}, billing.UpstreamRecord{RequestID: "req_1", Model: "customer-sol"}},
+		{schemas.Anthropic, map[string]string{"Request-Id": "req_011", "X-Request-Id": "proxy"}, billing.UpstreamRecord{RequestID: "req_011", Model: "customer-sol"}},
+		// Azure's reply names the deployment that the customer chose, so only its header names
+		// the model. x-ms-region may name the account's location rather than where the call ran,
+		// so the record leaves it out.
+		{schemas.Azure, map[string]string{
+			"x-request-id": "x-1", "apim-request-id": "apim-1",
+			"x-ms-served-model": "gpt-5.6-sol-2026-07-09", "x-ms-region": "West US 3",
+		}, billing.UpstreamRecord{RequestID: "apim-1", Model: "gpt-5.6-sol-2026-07-09"}},
+		{schemas.Azure, map[string]string{"x-request-id": "x-1"}, billing.UpstreamRecord{RequestID: "x-1"}},
+		{catalog.ProviderAWS, map[string]string{"request-id": "req_2", "X-Amzn-Requestid": "aws-2"}, billing.UpstreamRecord{RequestID: "aws-2", Model: "customer-sol"}},
+		{catalog.ProviderGoogleCloud, nil, billing.UpstreamRecord{Model: "customer-sol"}},
+	} {
+		ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+		if test.headers != nil {
+			ctx.SetValue(schemas.BifrostContextKeyProviderResponseHeaders, test.headers)
+		}
+		if got := readUpstreamRecord(ctx, &catalog.ResolvedRequest{Provider: test.provider}, reply); got != test.want {
+			t.Errorf("%s %v: record = %#v, want %#v", test.provider, test.headers, got, test.want)
+		}
 	}
 }
 
@@ -335,11 +456,11 @@ func TestChutesSafeRetriesRetainEachInvocationInFinalEvent(t *testing.T) {
 		if got.Provider != "chutes" || got.Status != want.status || got.StatusCode == nil || *got.StatusCode != want.code || got.LatencyMS != want.ms {
 			t.Fatalf("attempt %d = %#v, want %#v", i, got, want)
 		}
-		if i < 2 && got.ProviderRequestID != "" {
+		if i < 2 && got.ProviderResponseID != "" {
 			t.Fatalf("final response leaked onto rejected attempt: %#v", got)
 		}
 	}
-	if last := event.ProviderAttempts[2]; last.ProviderRequestID != "completed-invocation" {
+	if last := event.ProviderAttempts[2]; last.ProviderResponseID != "completed-invocation" {
 		t.Fatalf("final invocation missing response identity: %#v", last)
 	}
 }
