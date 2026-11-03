@@ -91,6 +91,7 @@ type NetworkConfig struct {
 	AllowPrivateNetwork            bool                 `json:"allow_private_network,omitempty"`          // Allow connections to RFC 1918 private IPs (for k8s pods, LAN deployments). Link-local (169.254.x.x) is always blocked.
 	RequireTLS13                   bool                 `json:"require_tls_13,omitempty"`                 // Require TLS 1.3 without requiring a specific key exchange.
 	RequirePostQuantumTLS          bool                 `json:"require_post_quantum_tls,omitempty"`       // Require TLS 1.3 with the X25519MLKEM768 hybrid key exchange and no classical fallback.
+	SingleAttempt                  bool                 `json:"single_attempt,omitempty"`                 // Make exactly one provider call per request: no retries, no walk to another key and no encrypted-reasoning strip. The caller makes every retry itself.
 }
 
 // UnmarshalJSON customizes JSON unmarshaling for NetworkConfig.
@@ -119,6 +120,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 		AllowPrivateNetwork            bool                 `json:"allow_private_network,omitempty"`
 		RequireTLS13                   bool                 `json:"require_tls_13,omitempty"`
 		RequirePostQuantumTLS          bool                 `json:"require_post_quantum_tls,omitempty"`
+		SingleAttempt                  bool                 `json:"single_attempt,omitempty"`
 	}
 
 	var alias NetworkConfigAlias
@@ -142,6 +144,7 @@ func (nc *NetworkConfig) UnmarshalJSON(data []byte) error {
 	nc.AllowPrivateNetwork = alias.AllowPrivateNetwork
 	nc.RequireTLS13 = alias.RequireTLS13
 	nc.RequirePostQuantumTLS = alias.RequirePostQuantumTLS
+	nc.SingleAttempt = alias.SingleAttempt
 
 	// Parse RetryBackoffInitial: string → ParseDuration, integer → milliseconds (legacy)
 	if len(alias.RetryBackoffInitial) > 0 && string(alias.RetryBackoffInitial) != "null" {
@@ -233,6 +236,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		AllowPrivateNetwork            bool              `json:"allow_private_network,omitempty"`
 		RequireTLS13                   bool              `json:"require_tls_13,omitempty"`
 		RequirePostQuantumTLS          bool              `json:"require_post_quantum_tls,omitempty"`
+		SingleAttempt                  bool              `json:"single_attempt,omitempty"`
 	}
 
 	alias := NetworkConfigAlias{
@@ -253,6 +257,7 @@ func (nc NetworkConfig) MarshalJSON() ([]byte, error) {
 		AllowPrivateNetwork:        nc.AllowPrivateNetwork,
 		RequireTLS13:               nc.RequireTLS13,
 		RequirePostQuantumTLS:      nc.RequirePostQuantumTLS,
+		SingleAttempt:              nc.SingleAttempt,
 	}
 	if nc.CACertPEM != nil {
 		alias.CACertPEM = SecretVarAsString(nc.CACertPEM)

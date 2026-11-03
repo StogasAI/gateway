@@ -1119,6 +1119,7 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 		CACertPEM:                      NewSecretVar("-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----"),
 		RequireTLS13:                   true,
 		RequirePostQuantumTLS:          true,
+		SingleAttempt:                  true,
 	}
 
 	data, err := json.Marshal(nc)
@@ -1132,6 +1133,7 @@ func TestNetworkConfig_TLSFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, nc.CACertPEM.GetValue(), decoded.CACertPEM.GetValue(), "ca_cert_pem should round-trip")
 	assert.True(t, decoded.RequireTLS13, "require_tls_13 should round-trip")
 	assert.True(t, decoded.RequirePostQuantumTLS, "require_post_quantum_tls should round-trip")
+	assert.True(t, decoded.SingleAttempt, "single_attempt should round-trip")
 	assert.Contains(t, string(data), `"insecure_skip_verify":true`)
 	assert.Contains(t, string(data), `"ca_cert_pem"`)
 	assert.Contains(t, string(data), `"require_tls_13":true`)

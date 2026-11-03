@@ -364,9 +364,11 @@ func newProviderConfig(baseURL string, allowPrivateNetwork, requirePostQuantumTL
 		NetworkConfig: schemas.DefaultNetworkConfig,
 	}
 	config.NetworkConfig.DefaultRequestTimeoutInSeconds = int(billing.GatewayRequestLifetime.Seconds())
-	// Core never retries. The gateway makes each retry and fallback itself, so
-	// every provider call is an attempt in the request log.
+	// Core never retries, walks to another key or rewrites a refused body. The
+	// gateway makes each retry and fallback itself, so every provider call is an
+	// attempt in the request log and carries the body the gateway prepared.
 	config.NetworkConfig.MaxRetries = 0
+	config.NetworkConfig.SingleAttempt = true
 	if baseURL != "" {
 		config.NetworkConfig.BaseURL = baseURL
 	}
