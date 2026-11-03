@@ -81,6 +81,9 @@ func PrepareProviderRequest(ctx *schemas.BifrostContext, state *State, request *
 		if bifrostErr == nil && resolution.Provider == schemas.OpenAI {
 			body, bifrostErr = setOpenAIAccessPrograms(body, resolution.RawBody()["access_programs"])
 		}
+		if bifrostErr == nil && !usesAnthropicWireFormat(ctx, resolution.Provider, resolution.Model) {
+			body, bifrostErr = keepDefaultStrict(body, resolution.RawTools())
+		}
 		settings = billing.ResponsesRequestSettings(responses.Params)
 		for _, tool := range resolution.HostedTools() {
 			settings.HostedTools = append(settings.HostedTools, string(tool))
@@ -350,6 +353,32 @@ func restoreStrictTools(body []byte, hosting string, strict map[string]bool) ([]
 		}
 		var err error
 		if body, err = providerutils.SetJSONField(body, "tools."+strconv.Itoa(index)+".strict", true); err != nil {
+			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
+		}
+	}
+	return body, nil
+}
+
+// keepDefaultStrict leaves `strict` out of each function tool where the client
+// left it out of a Responses request. OpenAI then makes the tool strict when its
+// schema allows, as it does for a direct call. Core sends `"strict": false`,
+// which turns that off.
+func keepDefaultStrict(body []byte, rawTools []map[string]json.RawMessage) ([]byte, *schemas.BifrostError) {
+	omitted := map[string]bool{}
+	for _, tool := range rawTools {
+		if _, ok := tool["strict"]; !ok && strings.TrimSpace(rawString(tool["type"])) == string(schemas.ResponsesToolTypeFunction) {
+			omitted[rawString(tool["name"])] = true
+		}
+	}
+	if len(omitted) == 0 {
+		return body, nil
+	}
+	for index, tool := range providerutils.GetJSONField(body, "tools").Array() {
+		if tool.Get("type").String() != string(schemas.ResponsesToolTypeFunction) || !omitted[tool.Get("name").String()] || !tool.Get("strict").Exists() {
+			continue
+		}
+		var err error
+		if body, err = providerutils.DeleteJSONField(body, "tools."+strconv.Itoa(index)+".strict"); err != nil {
 			return nil, providerutils.NewBifrostOperationError(schemas.ErrProviderRequestMarshal, err)
 		}
 	}

@@ -822,6 +822,60 @@ func TestOpenAIAccessProgramsReachOnlyOpenAI(t *testing.T) {
 	}
 }
 
+// OpenAI makes a Responses function tool strict when the client leaves `strict`
+// out and the schema allows it; false and null keep it non-strict.
+func TestResponsesFunctionToolsKeepTheClientsStrict(t *testing.T) {
+	const parameters = `{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`
+	for _, model := range []string{"openai/gpt-5.5", "azure-gpt-5.6-sol"} {
+		t.Run(model, func(t *testing.T) {
+			resolved, err := catalog.ResolveRequest(catalog.RequestInput{
+				Method: "POST", Path: "/v1/responses",
+				Body: []byte(`{"model":"` + model + `","input":"hi","max_output_tokens":16,"tools":[` +
+					`{"type":"function","name":"left_out","parameters":` + parameters + `},` +
+					`{"type":"function","name":"null","parameters":` + parameters + `,"strict":null},` +
+					`{"type":"function","name":"off","parameters":` + parameters + `,"strict":false},` +
+					`{"type":"function","name":"on","parameters":` + parameters + `,"strict":true}]}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := NewState(resolved, "sk-test", nil, AdapterFor(resolved.Provider))
+			if err := state.Adapter.ValidateRequest(state); err != nil {
+				t.Fatal(err)
+			}
+			ctx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			ctx.SetValue(schemas.BifrostContextKeyHTTPRequestType, resolved.RequestType)
+			request, err := resolved.ToBifrost(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := PrepareProviderRequest(ctx, state, request); err != nil {
+				t.Fatal(err)
+			}
+			body := preparedProviderBody(t, ctx, request.ResponsesRequest)
+			var payload struct {
+				Tools []map[string]json.RawMessage `json:"tools"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("decode prepared body: %v", err)
+			}
+			want := map[string]string{"left_out": "", "null": "false", "off": "false", "on": "true"}
+			if len(payload.Tools) != len(want) {
+				t.Fatalf("tools = %d, want %d: %s", len(payload.Tools), len(want), body)
+			}
+			for _, tool := range payload.Tools {
+				var name string
+				if err := json.Unmarshal(tool["name"], &name); err != nil {
+					t.Fatal(err)
+				}
+				if got := string(tool["strict"]); got != want[name] {
+					t.Fatalf("%s strict = %q, want %q: %s", name, got, want[name], body)
+				}
+			}
+		})
+	}
+}
+
 // Codex sends client_metadata on every Responses request. It is accepted and
 // never sent to a provider.
 func TestClientMetadataNeverReachesProvider(t *testing.T) {
