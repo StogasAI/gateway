@@ -228,7 +228,6 @@ type Service struct {
 	authorizeHoldsQuery        string
 	closeRequestQuery          string
 	keyConfigQuery             string
-	keyConfigCurrentQuery      string
 	toolQueries                chan struct{}
 	keyConfigs                 keyConfigCache
 	keyConfigFlights           singleflight.Group
@@ -305,7 +304,6 @@ func NewService(
 		authorizeHoldsQuery:       db.functionQuery("authorize_gateway_holds", "ordinal, "+authorizeHoldColumns, "$1::jsonb, $2::uuid[]"),
 		closeRequestQuery:         db.functionQuery("close_gateway_request", "*", closeRequestArguments),
 		keyConfigQuery:            db.functionQuery("gateway_api_key_config", keyConfigColumns, keyConfigArguments),
-		keyConfigCurrentQuery:     db.functionQuery("gateway_key_config_current", "config_current", "$1::text, $2::bigint, $3::jsonb"),
 		toolQueries:               make(chan struct{}, poolConns/3),
 		settleQuery:               db.functionQuery("settle_gateway_request_logs", "request_id, result", "$1::json, $2::json"),
 		keepFailedLogQuery:        db.functionQuery("keep_failed_gateway_request_log", "*", "$1::uuid, $2::json"),
@@ -331,7 +329,6 @@ func NewService(
 		service.authorizeHoldsQuery,
 		service.closeRequestQuery,
 		service.keyConfigQuery,
-		service.keyConfigCurrentQuery,
 		service.settleQuery,
 		service.keepFailedLogQuery,
 		service.storeLogBatchQuery,

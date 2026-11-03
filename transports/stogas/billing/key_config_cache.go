@@ -32,10 +32,6 @@ type keyConfigCacheEntry struct {
 	invalidated bool
 	snapshot    *KeyConfigSnapshot
 	weight      int64
-	// When a request that the snapshot refused last asked whether the snapshot is current, and
-	// that question while it is open, which other refused requests wait for.
-	refusalCheckedAt time.Time
-	refusalCheck     chan struct{}
 }
 
 // Key entries and short-lived source pins own cached references. Removing the final reference drops
@@ -300,58 +296,6 @@ func policyReferenceBytes(snapshot *PolicySnapshot) int64 {
 		bytes += int64(cap(*snapshot.Logged)) * int64(unsafe.Sizeof(LoggedPolicyVersion{}))
 	}
 	return bytes
-}
-
-// refusalCheck tells a request that snapshot refused how to learn whether newer settings would
-// serve it. A newer snapshot that the cache holds is returned to route by. fetch means that the
-// cache no longer holds a current snapshot for key, because a hold found this one stale, it
-// expired or capacity evicted it, so the request reads the settings as a new request would.
-// Otherwise one caller a keyConfigRefusalCheckInterval gets a question with asks set: it asks
-// the database whether snapshot is still current and then calls answerRefusalCheck. Callers
-// while that question is open get it without asks and wait for the answer. A snapshot that a
-// read, a hold or such a check confirmed within the interval answers for itself, and the other
-// callers keep their refusals.
-func (c *keyConfigCache) refusalCheck(key string, snapshot *KeyConfigSnapshot, now time.Time) (newer *KeyConfigSnapshot, fetch bool, question chan struct{}, asks bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, false, nil, false
-	}
-	element := c.entries[key]
-	if element == nil {
-		return nil, true, nil, false
-	}
-	entry := element.Value.(keyConfigCacheEntry)
-	if entry.invalidated || !now.Before(entry.expiresAt) || entry.snapshot.Config == nil {
-		return nil, true, nil, false
-	}
-	if entry.snapshot != snapshot {
-		return entry.snapshot, false, nil, false
-	}
-	if entry.refusalCheck != nil {
-		return nil, false, entry.refusalCheck, false
-	}
-	if now.Sub(entry.expiresAt.Add(-keyConfigCacheTTL)) < keyConfigRefusalCheckInterval ||
-		now.Sub(entry.refusalCheckedAt) < keyConfigRefusalCheckInterval {
-		return nil, false, nil, false
-	}
-	entry.refusalCheckedAt, entry.refusalCheck = now, make(chan struct{})
-	element.Value = entry
-	return nil, false, entry.refusalCheck, true
-}
-
-// answerRefusalCheck closes a question that refusalCheck opened, after the asker confirmed or
-// invalidated the snapshot, so the requests that waited for it look again.
-func (c *keyConfigCache) answerRefusalCheck(key string, question chan struct{}) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if element := c.entries[key]; element != nil {
-		if entry := element.Value.(keyConfigCacheEntry); entry.refusalCheck == question {
-			entry.refusalCheck = nil
-			element.Value = entry
-		}
-	}
-	close(question)
 }
 
 // Returns true only to the first caller that invalidates this exact snapshot.
