@@ -67,6 +67,9 @@ func TestFailureActionFor(t *testing.T) {
 		{name: "model retired", failure: failure(http.StatusGone, ""), want: nextPair},
 		{name: "model decommissioned", failure: failure(http.StatusBadRequest, "model_decommissioned"), want: nextPair},
 		{name: "invalid request", failure: failure(http.StatusBadRequest, ""), want: stopRun},
+		{name: "workspace that refuses the deployment's inference geo", failure: anthropicRefusal(http.StatusBadRequest, "inference_geo 'global' is not allowed for this workspace. Allowed values: ['us']"), headers: map[string]string{"x-should-retry": "false"}, want: nextPair},
+		{name: "account spend limit", failure: anthropicRefusal(http.StatusBadRequest, "You have reached your specified workspace API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."), want: nextPair},
+		{name: "spend cap", failure: anthropicRefusal(http.StatusTooManyRequests, "You have reached your API usage limits: your organization has crossed its monthly API usage threshold."), want: nextPair},
 		{name: "context length", failure: failure(http.StatusBadRequest, "context_length_exceeded"), want: stopRun},
 		{name: "content filter", failure: failure(http.StatusBadRequest, "content_filter"), want: stopRun},
 		{name: "cancelled", failure: cancelled, want: stopRun},
@@ -85,6 +88,15 @@ func TestFailureActionFor(t *testing.T) {
 			t.Errorf("%s: action = %d, want %d", test.name, got, test.want)
 		}
 	}
+}
+
+// anthropicRefusal is an Anthropic error that only its message ties to the key's account.
+func anthropicRefusal(status int, message string) *schemas.BifrostError {
+	errorType := "invalid_request_error"
+	if status == http.StatusTooManyRequests {
+		errorType = "rate_limit_error"
+	}
+	return &schemas.BifrostError{StatusCode: schemas.Ptr(status), Error: &schemas.ErrorField{Type: schemas.Ptr(errorType), Message: message}}
 }
 
 func TestAzureReplyThatNamesAnotherVersionFailsItsCall(t *testing.T) {

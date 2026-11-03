@@ -366,8 +366,12 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "authentication_error"
 	case identifiers.has("permission_error", "permission_denied", "forbidden", "upstream_access_denied"):
 		return "permission_error"
-	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required"):
+	case identifiers.has("billing_error", "insufficient_quota", "over_budget", "upstream_quota_exceeded", "payment_required",
+		// Anthropic's monthly spend cap, a 429 that retries cannot pass until the next month.
+		"enforced_spend_limit_reached"):
 		return "over_budget"
+	case accountRefusal(bifrostErr) != "":
+		return accountRefusal(bifrostErr)
 	case identifiers.has("rate_limit_error", "rate_limited", "too_many_requests", "upstream_rate_limit_error", "rate_limit_exceeded"):
 		return "rate_limited"
 	case identifiers.has("content_filter", "content_filter_error", "safety_error", "content_policy_violation", "refusal", "cyber_policy"):
@@ -415,6 +419,33 @@ func NormalizeUpstreamStatus(bifrostErr *schemas.BifrostError) string {
 		return "provider_error"
 	}
 }
+
+// accountRefusal reads the refusals that only their message tells apart from a refused request,
+// for the account behind the key rather than the request: Anthropic's spend cap and the spend
+// limits that an account's owner sets
+// (https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit), a credit
+// balance too low to start, and an inference_geo that the key's workspace does not allow (400
+// "inference_geo 'global' is not allowed for this workspace. Allowed values: ['us']", November
+// 3, 2026). Another pair can serve such a request, so they read as the account's quota and
+// access errors.
+func accountRefusal(bifrostErr *schemas.BifrostError) string {
+	if bifrostErr.Error == nil || len(bifrostErr.Error.Message) > maxAccountRefusalBytes {
+		return ""
+	}
+	message := strings.ToLower(strings.TrimSpace(bifrostErr.Error.Message))
+	switch {
+	case strings.HasPrefix(message, "you have reached your ") && strings.Contains(message, "api usage limits"),
+		strings.HasPrefix(message, "your credit balance is too low"):
+		return "over_budget"
+	case strings.HasPrefix(message, "inference_geo ") && strings.Contains(message, " is not allowed for this workspace"):
+		return "permission_error"
+	}
+	return ""
+}
+
+// maxAccountRefusalBytes bounds the messages that accountRefusal reads; Anthropic's are under 300
+// bytes.
+const maxAccountRefusalBytes = 1024
 
 type errorIdentifierSet map[string]struct{}
 
