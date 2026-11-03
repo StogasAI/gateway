@@ -63,13 +63,39 @@ func TestOnlyDatabaseRefusalsHoldBack(t *testing.T) {
 	}
 	for _, code := range []string{
 		"insufficient_balance", "key_rate_limited", "organization_spend_limit", "member_token_limit",
-		"key_concurrency_limit", "key_disabled", "byok_unavailable", "dashboard_key_denied",
-		"organization_restricted",
+		"key_concurrency_limit", "credential_disabled", "byok_unavailable", "dashboard_key_denied",
 	} {
 		s := &Service{}
 		s.RecordRefusal(claims, nil, code)
 		if err := s.refusals.get(claims.admissionKey, time.Now()); !errors.Is(err, ErrRateLimit) {
 			t.Errorf("%s did not hold the secret back: %v", code, err)
+		}
+	}
+}
+
+// A refusal that every request of an API key gets comes back from memory as
+// itself until the hold-back ends, so a client never retries it as a rate
+// limit. A dashboard session can select other keys, so it waits generically.
+func TestKeyRefusalsRepeatDuringTheHoldBack(t *testing.T) {
+	claims := &APIKeyClaims{admissionKey: "api:secret"}
+	dashboard := &DashboardCredential{ActorUserID: "actor", SessionID: "session"}
+	for _, want := range []*RequestError{
+		ErrOrganizationRestricted, ErrAPIKeyDisabled, ErrAPIKeyExpired, ErrGrantDisabled,
+		policyResultErrors["organization_disabled"], policyResultErrors["member_expired"], ErrAPIKeyConfigSize,
+	} {
+		s := &Service{}
+		now := time.Now()
+		s.RecordRefusal(claims, nil, want.Code)
+		var retry *retryAfterError
+		if err := s.refusals.get(claims.admissionKey, now); !errors.Is(err, want) || errors.As(err, &retry) {
+			t.Errorf("%s came back as %v", want.Code, err)
+		}
+		if err := s.refusals.get(claims.admissionKey, now.Add(time.Second)); err != nil {
+			t.Errorf("%s outlasted the hold-back: %v", want.Code, err)
+		}
+		s.RecordRefusal(claims, dashboard, want.Code)
+		if err := s.refusals.get(dashboardAdmissionKey(dashboard), now); !errors.Is(err, ErrRateLimit) {
+			t.Errorf("%s did not hold the dashboard session back: %v", want.Code, err)
 		}
 	}
 }

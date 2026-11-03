@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,25 @@ const (
 	// spend the organization's local request allowance.
 	refusedAPIKeyDuration = time.Minute
 )
+
+// keyRefusals are the database refusals that every request of an API key gets,
+// whatever it asks: its organization's restriction, an oversized configuration,
+// and a disabled or expired scope other than a credential's, which every pair
+// shares (PairRefused). Memory repeats them during the hold-back, so a client
+// never reads one as a rate limit to retry. A balance, a limit or a credential
+// can refuse one request and pass another.
+var keyRefusals = func() map[string]*RequestError {
+	refusals := map[string]*RequestError{
+		ErrOrganizationRestricted.Code: ErrOrganizationRestricted,
+		ErrAPIKeyConfigSize.Code:       ErrAPIKeyConfigSize,
+	}
+	for code, refusal := range policyResultErrors {
+		if !strings.HasPrefix(code, "credential_") && (strings.HasSuffix(code, "_disabled") || strings.HasSuffix(code, "_expired")) {
+			refusals[code] = refusal
+		}
+	}
+	return refusals
+}()
 
 // callerAdmissionKey names the credential that refusals apply to: the verified
 // API key secret, or the dashboard actor's session. Sibling keys, a key's
@@ -57,6 +77,11 @@ func (s *Service) RecordRefusal(claims *APIKeyClaims, dashboard *DashboardCreden
 				s.refusals.record(claims.admissionKey, refusal, refusedAPIKeyDuration, time.Now())
 				return
 			}
+		}
+		// A dashboard session can select other keys, so its hold-back stays generic.
+		if refusal := keyRefusals[code]; refusal != nil {
+			s.refusals.record(claims.admissionKey, refusal, refusalHoldBack, time.Now())
+			return
 		}
 	}
 	s.refusals.record(callerAdmissionKey(claims, dashboard), nil, refusalHoldBack, time.Now())
